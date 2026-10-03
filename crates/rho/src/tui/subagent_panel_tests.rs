@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 use ratatui::{layout::Rect, text::Line};
@@ -44,55 +44,19 @@ fn activity_span_style(line: &Line<'_>, activity: &str) -> ratatui::style::Style
         .unwrap_or_default()
 }
 
-// Covers: a just-finished agent stays through the linger window, then drops.
-// Owner: pure unit (subagent linger)
-#[test]
-fn subagent_linger_keeps_then_drops_around_deadline() {
-    let mut panel = SubagentPanel::default();
-    let t0 = Instant::now();
-    assert!(panel.ingest(vec![snapshot("aa0001", "worker", RunState::Running, 4)], t0,));
-    assert_eq!(panel.count(), 1);
-
-    assert!(panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)], t0));
-    assert_eq!(panel.count(), 0);
-    assert!(panel.is_active());
-    assert_eq!(panel.lines(80, 8, "attach", false, t0).len(), 1);
-
-    let before = t0 + activity::LINGER_OK - Duration::from_millis(1);
-    assert!(!panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)], before,));
-    assert_eq!(
-        panel
-            .lines(80, 8, "attach", false, t0 + activity::LINGER_OK)
-            .len(),
-        0
-    );
-    assert!(panel.ingest(
-        vec![snapshot("aa0001", "worker", RunState::Ok, 4)],
-        t0 + activity::LINGER_OK
-    ));
-    assert!(!panel.is_active());
-}
-
-// Covers: spinner agent count ignores lingering rows.
+// Covers: spinner agent count ignores finished, undelivered rows.
 // Owner: pure unit (subagent count)
 #[test]
-fn count_excludes_lingering_rows() {
+fn count_excludes_finished_rows() {
     let mut panel = SubagentPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![
-            snapshot("live01", "worker", RunState::Running, 2),
-            snapshot("done01", "explorer", RunState::Running, 3),
-        ],
-        now,
-    );
-    panel.ingest(
-        vec![
-            snapshot("live01", "worker", RunState::Running, 2),
-            snapshot("done01", "explorer", RunState::Error, 3),
-        ],
-        now,
-    );
+    panel.ingest(vec![
+        snapshot("live01", "worker", RunState::Running, 2),
+        snapshot("done01", "explorer", RunState::Running, 3),
+    ]);
+    panel.ingest(vec![
+        snapshot("live01", "worker", RunState::Running, 2),
+        snapshot("done01", "explorer", RunState::Error, 3),
+    ]);
     assert_eq!(panel.count(), 1);
     assert_eq!(panel.desired_height(), 2);
     assert!(panel.candidates().iter().all(|c| c.run_id == "live01"));
@@ -103,41 +67,33 @@ fn count_excludes_lingering_rows() {
 #[test]
 fn subagent_overflow_summary_opens_attach_picker() {
     let mut panel = SubagentPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![
-            snapshot("aa0001", "worker", RunState::Running, 1),
-            snapshot("aa0002", "explorer", RunState::Running, 1),
-            snapshot("aa0003", "reviewer", RunState::Running, 1),
-        ],
-        now,
-    );
-    assert_eq!(panel.lines(80, 8, "attach", false, now).len(), 2);
+    panel.ingest(vec![
+        snapshot("aa0001", "worker", RunState::Running, 1),
+        snapshot("aa0002", "explorer", RunState::Running, 1),
+        snapshot("aa0003", "reviewer", RunState::Running, 1),
+    ]);
+    assert_eq!(panel.lines(80, 8, "attach", false).len(), 2);
 
     let area = Rect::new(0, 0, 80, 2);
     assert_eq!(
-        panel.attach_target_at(area, 1, 1, now),
+        panel.attach_target_at(area, 1, 1),
         Some(SubagentPointerTarget::OpenAttachPicker)
     );
     assert!(matches!(
-        panel.attach_target_at(area, 1, 0, now),
+        panel.attach_target_at(area, 1, 0),
         Some(SubagentPointerTarget::Run(_))
     ));
 }
 
-// Covers: lingering rows occupy height but are not attachable.
+// Covers: finished, undelivered rows occupy height but are not attachable.
 // Owner: pure unit (attach gating)
 #[test]
-fn lingering_subagent_rows_are_not_clickable() {
+fn finished_subagent_rows_are_not_clickable() {
     let mut panel = SubagentPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![snapshot("aa0001", "worker", RunState::Running, 4)],
-        now,
-    );
-    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)], now);
+    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Running, 4)]);
+    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)]);
     let area = Rect::new(0, 0, 80, 1);
-    assert_eq!(panel.attach_target_at(area, 1, 0, now), None);
+    assert_eq!(panel.attach_target_at(area, 1, 0), None);
     assert!(panel.candidates().is_empty());
 }
 
@@ -146,16 +102,12 @@ fn lingering_subagent_rows_are_not_clickable() {
 #[test]
 fn hover_trailing_keeps_elapsed() {
     let mut panel = SubagentPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![snapshot("aa0001", "worker", RunState::Running, 4)],
-        now,
-    );
+    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Running, 4)]);
     panel.set_hovered(Some("aa0001"));
-    let text = line_text(&panel.lines(80, 8, "attach", false, now)[0]);
+    let text = line_text(&panel.lines(80, 8, "attach", false)[0]);
     assert!(text.trim_end().ends_with("4s"), "{text:?}");
     assert_eq!(
-        panel.highlighted_row(8, now),
+        panel.highlighted_row(8),
         Some((0, activity::RailRowState::Hovered))
     );
 }
@@ -167,13 +119,9 @@ fn subagent_verdict_styles_paint_on_wide_rows() {
     let _guard = theme::theme_test_lock();
     Theme::apply_committed("one-half-dark");
     let mut panel = SubagentPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![snapshot("aa0001", "worker", RunState::Running, 4)],
-        now,
-    );
-    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Error, 4)], now);
-    let line = &panel.lines(80, 8, "attach", false, now)[0];
+    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Running, 4)]);
+    panel.ingest(vec![snapshot("aa0001", "worker", RunState::Error, 4)]);
+    let line = &panel.lines(80, 8, "attach", false)[0];
     assert_eq!(
         activity_span_style(line, "✗ error"),
         Theme::activity_rail().patch(Theme::activity_rail_error())

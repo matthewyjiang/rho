@@ -4,7 +4,6 @@ use super::{
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
-use crate::tools::RAIL_TERMINAL_RETENTION;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
     collections::{HashMap, VecDeque},
@@ -44,6 +43,13 @@ pub(super) struct Record {
 }
 
 impl Record {
+    /// Finished, with a result not yet delivered to the parent (as a
+    /// notification or through an agent poll). Drives both automatic delivery
+    /// and the host rail row.
+    fn result_pending(&self) -> bool {
+        terminal(self.state) && !self.observed
+    }
+
     fn host_timing(&self) -> (u64, Option<u64>) {
         if terminal(self.state) {
             let elapsed = self
@@ -280,10 +286,12 @@ impl ProcessManager {
     /// True when a finished process is waiting to be delivered to the model.
     /// Running jobs are excluded: the idle loop sleeps on [`Self::notified_owned`].
     pub fn has_pending_notification(&self) -> bool {
-        self.inner.lock().unwrap().records.values().any(|record| {
-            let record = record.lock().unwrap();
-            terminal(record.state) && !record.observed
-        })
+        self.inner
+            .lock()
+            .unwrap()
+            .records
+            .values()
+            .any(|record| record.lock().unwrap().result_pending())
     }
 
     /// Drains unobserved terminal processes, oldest first.
@@ -294,7 +302,7 @@ impl ProcessManager {
             .values()
             .filter_map(|record| {
                 let mut record = record.lock().unwrap();
-                if !terminal(record.state) || record.observed {
+                if !record.result_pending() {
                     return None;
                 }
                 record.observed = true;
@@ -379,8 +387,12 @@ impl ProcessManager {
         }
     }
 
-    /// Live `Starting`/`Running` records plus recently completed terminal
-    /// records, oldest first.
+    /// Live `Starting`/`Running` records plus terminal records whose result
+    /// has not been delivered yet, oldest first.
+    ///
+    /// A terminal row leaves once its result is observed (notification card or
+    /// agent poll), so the rail drops it in the same repaint that lands the
+    /// result in the transcript.
     ///
     /// Host UI uses this to render the activity rail. It is not a tool action.
     pub(crate) fn live_summaries(&self) -> Vec<super::LiveProcessSummary> {
@@ -393,11 +405,8 @@ impl ProcessManager {
             .filter_map(|record| {
                 let record = record.lock().unwrap();
                 let is_terminal = terminal(record.state);
-                if is_terminal {
-                    let completed = record.completed?;
-                    if completed.elapsed() >= RAIL_TERMINAL_RETENTION {
-                        return None;
-                    }
+                if is_terminal && !record.result_pending() {
+                    return None;
                 }
                 let (elapsed_seconds, quiet_seconds) = record.host_timing();
                 let exit_code = is_terminal.then_some(record.exit_code).flatten();

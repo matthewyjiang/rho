@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use ratatui::{
     layout::Rect,
     text::{Line, Span},
@@ -7,7 +5,7 @@ use ratatui::{
 
 use super::{
     activity,
-    linger_rail::{LingerRail, RailHit, RailItem, RailPointerPolicy},
+    stacked_rail::{RailHit, RailItem, RailPointerPolicy, StackedRail},
     theme::Theme,
 };
 use crate::{
@@ -55,13 +53,13 @@ impl SubagentPointerTarget {
 
 #[derive(Clone, Debug)]
 pub(super) struct SubagentPanel {
-    rail: LingerRail<RunningSubagent>,
+    rail: StackedRail<RunningSubagent>,
 }
 
 impl Default for SubagentPanel {
     fn default() -> Self {
         Self {
-            rail: LingerRail::new(RailPointerPolicy::LiveAndOverflow {
+            rail: StackedRail::new(RailPointerPolicy::LiveAndOverflow {
                 overflow_id: OPEN_ATTACH_PICKER_ID,
             }),
         }
@@ -69,18 +67,16 @@ impl Default for SubagentPanel {
 }
 
 impl SubagentPanel {
-    pub(super) fn update(&mut self, manager: Option<&SubagentManager>, now: Instant) -> bool {
+    /// Refresh from the manager for the parent `session_id`, whose deliveries
+    /// retire finished rows.
+    pub(super) fn update(&mut self, manager: Option<&SubagentManager>, session_id: &str) -> bool {
         let snapshots = manager
-            .map(SubagentManager::rail_summaries)
+            .map(|manager| manager.rail_summaries(session_id))
             .unwrap_or_default();
-        self.ingest(snapshots, now)
+        self.ingest(snapshots)
     }
 
-    pub(super) fn ingest(
-        &mut self,
-        snapshots: Vec<crate::tools::agent::SubagentSnapshot>,
-        now: Instant,
-    ) -> bool {
+    pub(super) fn ingest(&mut self, snapshots: Vec<crate::tools::agent::SubagentSnapshot>) -> bool {
         let agents = snapshots
             .into_iter()
             .map(|snapshot| RunningSubagent {
@@ -93,7 +89,7 @@ impl SubagentPanel {
                 status: snapshot.status,
             })
             .collect();
-        self.rail.ingest(agents, now)
+        self.rail.ingest(agents)
     }
 
     pub(super) fn count(&self) -> usize {
@@ -130,12 +126,8 @@ impl SubagentPanel {
         self.rail.pressed_id()
     }
 
-    pub(super) fn highlighted_row(
-        &self,
-        height: usize,
-        now: Instant,
-    ) -> Option<(usize, activity::RailRowState)> {
-        self.rail.highlighted_row(height, now)
+    pub(super) fn highlighted_row(&self, height: usize) -> Option<(usize, activity::RailRowState)> {
+        self.rail.highlighted_row(height)
     }
 
     pub(super) fn candidates(&self) -> Vec<super::attach_picker::AttachCandidate> {
@@ -156,9 +148,8 @@ impl SubagentPanel {
         area: Rect,
         column: u16,
         row: u16,
-        now: Instant,
     ) -> Option<SubagentPointerTarget> {
-        match self.rail.hit_at(area, column, row, now)? {
+        match self.rail.hit_at(area, column, row)? {
             RailHit::Overflow => Some(SubagentPointerTarget::OpenAttachPicker),
             RailHit::Item(run_id) => self
                 .rail
@@ -180,13 +171,12 @@ impl SubagentPanel {
         height: usize,
         action_hint: &str,
         continues_below: bool,
-        now: Instant,
     ) -> Vec<Line<'static>> {
         if !self.rail.is_active() || width == 0 || height == 0 {
             return Vec::new();
         }
 
-        let (rows, hidden) = self.rail.visible(height, now);
+        let (rows, hidden) = self.rail.visible(height);
         let visible_count = rows.len() + usize::from(hidden.is_some());
         let mut lines = Vec::with_capacity(visible_count);
         for (index, agent) in rows.into_iter().enumerate() {
@@ -226,15 +216,6 @@ impl RailItem for RunningSubagent {
 
     fn is_failure(&self) -> bool {
         self.state == RunState::Error
-    }
-
-    fn linger(&self) -> Duration {
-        match self.state {
-            RunState::Error => activity::LINGER_FAIL,
-            RunState::Ok | RunState::Stopped | RunState::Starting | RunState::Running => {
-                activity::LINGER_OK
-            }
-        }
     }
 }
 

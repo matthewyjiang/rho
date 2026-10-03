@@ -1,6 +1,30 @@
 use super::*;
 use std::time::Duration;
 
+/// Waits for exit through the host view, which, unlike `poll`, leaves the
+/// result undelivered.
+async fn exited_undelivered(manager: &ProcessManager, id: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if terminal(manager.host_view(id).unwrap().snapshot.state) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "process did not become terminal"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
+fn rail_ids(manager: &ProcessManager) -> Vec<String> {
+    manager
+        .live_summaries()
+        .into_iter()
+        .map(|summary| summary.process_id)
+        .collect()
+}
+
 // Covers: host peek must not mark a terminal process observed.
 // Owner: process manager host view
 #[tokio::test]
@@ -10,18 +34,7 @@ async fn host_view_does_not_mark_terminal_observed() {
         .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let view = manager.host_view(&started.process_id).unwrap();
-        if terminal(view.snapshot.state) {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "process did not become terminal"
-        );
-        tokio::task::yield_now().await;
-    }
+    exited_undelivered(&manager, &started.process_id).await;
     assert!(manager.has_pending_notification());
     let view = manager.host_view(&started.process_id).unwrap();
     pretty_assertions::assert_eq!(view.snapshot.state, State::Exited);
@@ -102,17 +115,17 @@ async fn live_summaries_orders_oldest_first() {
     eventually(&manager, &second.process_id).await;
 }
 
-// Covers: a just-finished process must linger on the rail with a frozen elapsed
-// duration and its exit code, not disappear or keep ticking.
+// Covers: a finished, undelivered process stays on the rail with a frozen
+// elapsed duration and its exit code, not disappear or keep ticking.
 // Owner: process manager
 #[tokio::test]
-async fn live_summaries_lingers_terminal_rows_with_frozen_elapsed_and_exit_code() {
+async fn live_summaries_keeps_terminal_rows_with_frozen_elapsed_and_exit_code() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
         .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
         .await
         .unwrap();
-    eventually(&manager, &started.process_id).await;
+    exited_undelivered(&manager, &started.process_id).await;
 
     let summaries = manager.live_summaries();
     assert_eq!(summaries.len(), 1);
@@ -140,6 +153,41 @@ async fn live_summaries_lingers_terminal_rows_with_frozen_elapsed_and_exit_code(
         "elapsed_seconds={}",
         summaries[0].elapsed_seconds
     );
+}
+
+// Covers: a finished row leaves the rail when its result is delivered, either
+// as a notification or through an agent poll, not on a timer; a rolled-back
+// notification puts it back.
+// Owner: process manager host list
+#[tokio::test]
+async fn live_summaries_keep_terminal_rows_until_delivered() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let notified = manager
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let polled = manager
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    exited_undelivered(&manager, &notified.process_id).await;
+    exited_undelivered(&manager, &polled.process_id).await;
+    pretty_assertions::assert_eq!(
+        rail_ids(&manager),
+        vec![notified.process_id.clone(), polled.process_id.clone()]
+    );
+
+    manager
+        .poll(&polled.process_id, None, Duration::ZERO)
+        .await
+        .unwrap();
+    pretty_assertions::assert_eq!(rail_ids(&manager), vec![notified.process_id.clone()]);
+
+    let delivered = manager.take_notifications();
+    pretty_assertions::assert_eq!(rail_ids(&manager), Vec::<String>::new());
+
+    manager.restore_notifications(&delivered);
+    pretty_assertions::assert_eq!(rail_ids(&manager), vec![notified.process_id]);
 }
 
 // Covers: the rail reports seconds-since-output for live jobs, and None when

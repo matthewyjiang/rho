@@ -518,13 +518,14 @@ impl App {
         // Tick the occupant first so a journal read error cannot leave panel
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
-        let now = Instant::now();
-        let panel_changed = self.subagent_panel.update(agent.subagents(), now);
+        let panel_changed = self
+            .subagent_panel
+            .update(agent.subagents(), agent.session_id().as_str());
         if panel_changed {
             self.refresh_attach_picker();
         }
         changed |= panel_changed;
-        changed |= self.process_panel.update(agent.processes(), now);
+        changed |= self.process_panel.update(agent.processes());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

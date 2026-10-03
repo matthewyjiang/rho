@@ -184,7 +184,7 @@ fn counts(subagent_count: usize, job_count: usize) -> BackgroundCounts {
 }
 
 // Covers: idle with no background work must not keep an activity rail;
-// parent vs background vs linger-only choose distinct variants.
+// parent vs background vs finished-only choose distinct variants.
 // Owner: pure unit (status construction)
 #[test]
 fn from_parent_and_background_selects_variant() {
@@ -196,7 +196,7 @@ fn from_parent_and_background_selects_variant() {
     );
     assert_eq!(
         ActivityStatus::from_parent_and_background(None, counts(0, 0), true),
-        Some(ActivityStatus::Linger)
+        Some(ActivityStatus::FinishedRowsOnly)
     );
     let cases = [
         (
@@ -326,7 +326,7 @@ fn activity_status_labels_shrink_to_bare_spinner() {
     }
 }
 
-// Covers: rail overflow keeps live rows, then lingering failures, in original order.
+// Covers: rail overflow keeps live rows, then finished failures, in original order.
 // Owner: pure unit (rail row selection)
 #[test]
 fn select_capped_rail_rows_prioritizes_live_then_failures() {
@@ -338,7 +338,7 @@ fn select_capped_rail_rows_prioritizes_live_then_failures() {
     }
     let rows = [
         Row {
-            id: "ok-linger",
+            id: "ok-finished",
             live: false,
             fail: false,
         },
@@ -348,7 +348,7 @@ fn select_capped_rail_rows_prioritizes_live_then_failures() {
             fail: false,
         },
         Row {
-            id: "fail-linger",
+            id: "fail-finished",
             live: false,
             fail: true,
         },
@@ -363,7 +363,7 @@ fn select_capped_rail_rows_prioritizes_live_then_failures() {
     assert_eq!(hidden, Some(3));
     assert_eq!(rows[indices[0]].id, "live-a");
 
-    let lingering = [
+    let finished = [
         Row {
             id: "ok",
             live: false,
@@ -380,7 +380,7 @@ fn select_capped_rail_rows_prioritizes_live_then_failures() {
             fail: false,
         },
     ];
-    let (indices, hidden) = select_capped_rail_rows(&lingering, 8, |row| row.live, |row| row.fail);
+    let (indices, hidden) = select_capped_rail_rows(&finished, 8, |row| row.live, |row| row.fail);
     assert_eq!(indices, [1]);
     assert_eq!(hidden, Some(2));
 }

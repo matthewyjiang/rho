@@ -252,7 +252,6 @@ impl App {
         band: StackedBand,
         width: usize,
         layout: &super::screen_layout::ScreenLayout,
-        now: Instant,
     ) -> Vec<Line<'static>> {
         let height = layout.band(band).height as usize;
         if height == 0 {
@@ -264,11 +263,10 @@ impl App {
                 height,
                 super::subagent_attach::ACTION_HINT,
                 layout.rail_continues_below(band),
-                now,
             ),
             StackedBand::Processes => {
                 self.process_panel
-                    .lines(width, height, layout.rail_continues_below(band), now)
+                    .lines(width, height, layout.rail_continues_below(band))
             }
             StackedBand::PendingInput => self
                 .pending_input_lines(width)
@@ -283,11 +281,10 @@ impl App {
         &self,
         band: StackedBand,
         height: usize,
-        now: Instant,
     ) -> Option<(usize, super::activity::RailRowState)> {
         match band {
-            StackedBand::Subagents => self.subagent_panel.highlighted_row(height, now),
-            StackedBand::Processes => self.process_panel.highlighted_row(height, now),
+            StackedBand::Subagents => self.subagent_panel.highlighted_row(height),
+            StackedBand::Processes => self.process_panel.highlighted_row(height),
             StackedBand::PendingInput => None,
         }
     }
@@ -334,10 +331,9 @@ impl App {
             if rect.height == 0 {
                 continue;
             }
-            let lines = self.stacked_band_lines(band, width, layout, now);
+            let lines = self.stacked_band_lines(band, width, layout);
             frame.render_widget(Paragraph::new(lines).style(band.style()), rect);
-            if let Some((row, state)) = self.stacked_band_highlight(band, rect.height as usize, now)
-            {
+            if let Some((row, state)) = self.stacked_band_highlight(band, rect.height as usize) {
                 paint_rail_highlight(frame, rect, row, state);
             }
         }
@@ -578,7 +574,7 @@ impl App {
                 self.jump_to_bottom_line(width);
         }
         for band in StackedBand::ORDER {
-            lines.extend(self.stacked_band_lines(band, width, &layout, now));
+            lines.extend(self.stacked_band_lines(band, width, &layout));
         }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, ComposerDividerSlot::Top));

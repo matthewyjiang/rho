@@ -42,17 +42,6 @@ pub(super) enum RailRowState {
     Pressed,
 }
 
-/// Long enough to register the ✓ while reading; short enough not to squat rail
-/// rows.
-pub(super) const LINGER_OK: Duration = Duration::from_secs(2);
-/// A failure verdict is the one thing the rail must not let you miss.
-pub(super) const LINGER_FAIL: Duration = Duration::from_secs(5);
-
-const _: () = assert!(
-    LINGER_FAIL.as_secs() < crate::tools::RAIL_TERMINAL_RETENTION.as_secs(),
-    "UI linger must drop a row before the manager forgets it"
-);
-
 /// One stacked activity-rail row. Identity styling stays at the call site.
 pub(super) struct RailRow {
     pub(super) connector: &'static str,
@@ -152,7 +141,7 @@ pub(super) fn overflow_label(hidden: usize, singular: &str, plural: &str) -> Str
 
 /// Indices to paint when a panel has more rows than `height` / the shared cap.
 ///
-/// Live rows win over lingering rows. Lingering failures win over lingering
+/// Live rows win over finished rows. Finished failures win over finished
 /// successes. Original order is preserved among the rows that remain. When
 /// anything is hidden, the last visible slot is reserved for a summary.
 pub(super) fn select_capped_rail_rows<T>(
@@ -184,11 +173,6 @@ pub(super) fn select_capped_rail_rows<T>(
     order.sort_unstable();
     let hidden = rows.len() - order.len();
     (order, Some(hidden))
-}
-
-/// Whether a terminal rail row should still occupy a slot.
-pub(super) fn linger_active(first_seen: Instant, now: Instant, linger: Duration) -> bool {
-    now.saturating_duration_since(first_seen) < linger
 }
 
 /// Transcript rows reserved under the history panel while bottom-following with
@@ -290,7 +274,8 @@ pub(super) enum ActivityStatus {
         background: BackgroundCounts,
     },
     Background(BackgroundCounts),
-    Linger,
+    /// Nothing is running, but the rail still shows finished, undelivered rows.
+    FinishedRowsOnly,
 }
 
 impl ActivityStatus {
@@ -306,7 +291,7 @@ impl ActivityStatus {
                 background,
             }),
             (None, false, _) => Some(Self::Background(background)),
-            (None, true, true) => Some(Self::Linger),
+            (None, true, true) => Some(Self::FinishedRowsOnly),
             (None, true, false) => None,
         }
     }
@@ -338,7 +323,7 @@ fn activity_status_labels(status: ActivityStatus) -> Vec<String> {
             background,
         } => parent_background_rungs(spinner, &phase_label(phase, retry), background),
         ActivityStatus::Background(background) => background_only_rungs(spinner, background),
-        ActivityStatus::Linger => vec![spinner.into()],
+        ActivityStatus::FinishedRowsOnly => vec![spinner.into()],
     }
 }
 

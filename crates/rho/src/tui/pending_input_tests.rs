@@ -283,9 +283,8 @@ fn pending_input_renders_below_subagent_and_process_rails() {
     };
 
     let mut app = test_app();
-    let now = Instant::now();
-    app.subagent_panel.ingest(
-        vec![crate::tools::agent::SubagentSnapshot {
+    app.subagent_panel
+        .ingest(vec![crate::tools::agent::SubagentSnapshot {
             prior_notices: Vec::new(),
             id: "run-1".into(),
             agent_id: "explorer".into(),
@@ -297,24 +296,19 @@ fn pending_input_renders_below_subagent_and_process_rails() {
                 last_activity: Some("read".into()),
                 ..RunStatus::default()
             },
-        }],
-        now,
-    );
-    app.process_panel.ingest(
-        vec![LiveProcessSummary {
-            process_id: "proc-1".into(),
-            command: "cargo build".into(),
-            state: State::Running,
-            elapsed_seconds: 5,
-            quiet_seconds: None,
-            exit_code: None,
-        }],
-        now,
-    );
+        }]);
+    app.process_panel.ingest(vec![LiveProcessSummary {
+        process_id: "proc-1".into(),
+        command: "cargo build".into(),
+        state: State::Running,
+        elapsed_seconds: 5,
+        quiet_seconds: None,
+        exit_code: None,
+    }]);
     app.pending.push_follow_up(prompt("queued follow up"));
 
     let rendered = app
-        .active_lines_at_for_height(80, 24, now)
+        .active_lines_at_for_height(80, 24, Instant::now())
         .iter()
         .map(line_text)
         .collect::<Vec<_>>();
@@ -344,22 +338,18 @@ fn process_rail_closes_the_tree_even_with_pending_input_below() {
     use crate::tools::process::{LiveProcessSummary, State};
 
     let mut app = test_app();
-    let now = Instant::now();
-    app.process_panel.ingest(
-        vec![LiveProcessSummary {
-            process_id: "proc-1".into(),
-            command: "cargo build".into(),
-            state: State::Running,
-            elapsed_seconds: 5,
-            quiet_seconds: None,
-            exit_code: None,
-        }],
-        now,
-    );
+    app.process_panel.ingest(vec![LiveProcessSummary {
+        process_id: "proc-1".into(),
+        command: "cargo build".into(),
+        state: State::Running,
+        elapsed_seconds: 5,
+        quiet_seconds: None,
+        exit_code: None,
+    }]);
     app.pending.push_follow_up(prompt("queued follow up"));
 
     let rendered = app
-        .active_lines_at_for_height(80, 24, now)
+        .active_lines_at_for_height(80, 24, Instant::now())
         .iter()
         .map(line_text)
         .collect::<Vec<_>>();

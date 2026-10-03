@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use ratatui::{
     layout::Rect,
     text::{Line, Span},
@@ -7,7 +5,7 @@ use ratatui::{
 
 use super::{
     activity,
-    linger_rail::{LingerRail, RailHit, RailItem, RailPointerPolicy},
+    stacked_rail::{RailHit, RailItem, RailPointerPolicy, StackedRail},
     theme::Theme,
 };
 use crate::{
@@ -33,26 +31,28 @@ pub(super) struct ProcessPeekTarget {
 /// Live managed processes shown in the activity rail.
 #[derive(Clone)]
 pub(super) struct ProcessPanel {
-    rail: LingerRail<LiveProcessSummary>,
+    rail: StackedRail<LiveProcessSummary>,
     manager: Option<ProcessManager>,
 }
 
 impl Default for ProcessPanel {
     fn default() -> Self {
         Self {
-            rail: LingerRail::new(RailPointerPolicy::LiveOrLinger),
+            rail: StackedRail::new(RailPointerPolicy::LiveOrFinished),
             manager: None,
         }
     }
 }
 
 impl ProcessPanel {
-    pub(super) fn update(&mut self, manager: Option<&ProcessManager>, now: Instant) -> bool {
+    /// Refresh from the manager. Finished rows stay until their result is
+    /// delivered, then leave with the result card.
+    pub(super) fn update(&mut self, manager: Option<&ProcessManager>) -> bool {
         self.manager = manager.cloned();
         let processes = manager
             .map(ProcessManager::live_summaries)
             .unwrap_or_default();
-        self.ingest(processes, now)
+        self.ingest(processes)
     }
 
     pub(super) fn manager(&self) -> Option<&ProcessManager> {
@@ -72,8 +72,8 @@ impl ProcessPanel {
             .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
-    pub(super) fn ingest(&mut self, processes: Vec<LiveProcessSummary>, now: Instant) -> bool {
-        self.rail.ingest(processes, now)
+    pub(super) fn ingest(&mut self, processes: Vec<LiveProcessSummary>) -> bool {
+        self.rail.ingest(processes)
     }
 
     pub(super) fn is_active(&self) -> bool {
@@ -110,12 +110,8 @@ impl ProcessPanel {
         self.rail.pressed_id()
     }
 
-    pub(super) fn highlighted_row(
-        &self,
-        height: usize,
-        now: Instant,
-    ) -> Option<(usize, activity::RailRowState)> {
-        self.rail.highlighted_row(height, now)
+    pub(super) fn highlighted_row(&self, height: usize) -> Option<(usize, activity::RailRowState)> {
+        self.rail.highlighted_row(height)
     }
 
     pub(super) fn peek_target_at(
@@ -123,9 +119,8 @@ impl ProcessPanel {
         area: Rect,
         column: u16,
         row: u16,
-        now: Instant,
     ) -> Option<ProcessPeekTarget> {
-        match self.rail.hit_at(area, column, row, now)? {
+        match self.rail.hit_at(area, column, row)? {
             RailHit::Item(process_id) => Some(ProcessPeekTarget { process_id }),
             RailHit::Overflow => None,
         }
@@ -143,13 +138,12 @@ impl ProcessPanel {
         width: usize,
         height: usize,
         continues_below: bool,
-        now: Instant,
     ) -> Vec<Line<'static>> {
         if !self.rail.is_active() || width == 0 || height == 0 {
             return Vec::new();
         }
 
-        let (rows, hidden) = self.rail.visible(height, now);
+        let (rows, hidden) = self.rail.visible(height);
         let visible_count = rows.len() + usize::from(hidden.is_some());
         let mut lines = Vec::with_capacity(visible_count);
         for (offset, process) in rows.into_iter().enumerate() {
@@ -184,14 +178,6 @@ impl RailItem for LiveProcessSummary {
 
     fn is_failure(&self) -> bool {
         !self.state.is_live() && !is_process_success(self)
-    }
-
-    fn linger(&self) -> Duration {
-        if is_process_success(self) {
-            activity::LINGER_OK
-        } else {
-            activity::LINGER_FAIL
-        }
     }
 }
 
