@@ -1,5 +1,6 @@
 use super::*;
 use rho_providers::auth::login_dispatch::ProviderAuthentication;
+use rho_providers::model::provider_models::ProviderModelEndpoint;
 
 pub(super) struct ProviderActivation {
     pub(super) provider: String,
@@ -170,5 +171,52 @@ impl App {
                 "stored credentials, but saving auth mode failed: {err}"
             )));
         }
+    }
+
+    /// Refreshes a provider's model list right after login, when it has a
+    /// refreshable list, and reports the count or the failure.
+    pub(super) async fn refresh_model_list_after_login(
+        &mut self,
+        target: &LoginTarget,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
+            return Ok(());
+        };
+        if !descriptor.supports_model_refresh() {
+            return Ok(());
+        }
+
+        self.set_status(format!("refreshing {} model list", target.provider));
+        terminal.draw(|frame| self.draw(frame))?;
+        let config = self.info.services.config_repository.load()?;
+        let endpoint = config.resolved_provider_endpoint(&target.provider);
+        let model_endpoint = endpoint.as_ref().map_or(
+            ProviderModelEndpoint::ProviderOwned,
+            ProviderModelEndpoint::OpenAiCompatible,
+        );
+        match refresh_provider_models_with_store(
+            &target.provider,
+            &target.auth,
+            self.credential_store.as_ref(),
+            model_endpoint,
+        )
+        .await
+        {
+            Ok(refresh) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "refreshed {} model list: {} models",
+                    refresh.provider,
+                    refresh.models.len()
+                )));
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials for {}, but failed to refresh its model list: {err}",
+                    target.provider
+                )));
+            }
+        }
+        Ok(())
     }
 }

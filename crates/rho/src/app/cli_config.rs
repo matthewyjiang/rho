@@ -363,6 +363,7 @@ fn apply_provider_override(
     let profile = provider::resolve_provider_reference(provider)
         .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
     let provider = profile.provider_name();
+    crate::config::ensure_serves_chat(provider)?;
     let auth = Some(profile.auth_id());
     let model = if has_model_override {
         None

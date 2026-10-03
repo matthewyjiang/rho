@@ -108,6 +108,9 @@ fn map_selection_error(error: ModelSelectionError, asked: &str) -> AcpError {
             format!("model '{model}' is ambiguous for value '{asked}'")
         }
         ModelSelectionError::Empty => format!("model value '{asked}' is empty"),
+        ModelSelectionError::DecisionOnly { provider } => {
+            format!("provider '{provider}' serves decision models, not chat (value '{asked}')")
+        }
         ModelSelectionError::UnavailableModel {
             provider,
             model,

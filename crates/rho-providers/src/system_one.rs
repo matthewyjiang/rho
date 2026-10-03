@@ -48,6 +48,20 @@ impl SystemOneLimits {
         max_body_bytes: Some(64 * 1024),
         state_budget: Some(10_500),
     };
+
+    /// TypeSafe's hosted Jev.
+    ///
+    /// TypeSafe answers 400 `max_tokens_exceeded` past its context: 32,507
+    /// input tokens passed and 33,4xx failed. It has no body limit short of
+    /// that (a 400 KB body fails on tokens, not size). The permission screen's
+    /// instructions and question take 621 input and 35 output tokens, and
+    /// Jev's tokenizer matches clef's (0.30 tokens per char of code on both),
+    /// so Ollama's 0.37-per-char worst case holds. So the state budget is
+    /// (32,507 - 1,024) / 1.5 = 20,988, rounded down.
+    pub const TYPESAFE: Self = Self {
+        max_body_bytes: None,
+        state_budget: Some(20_500),
+    };
 }
 
 /// A decision model on a System One server.

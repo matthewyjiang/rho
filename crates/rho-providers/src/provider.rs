@@ -23,6 +23,7 @@ pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
 pub const META_MUSE_TOKENS_ACCOUNT: &str = "provider:meta:muse";
 pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 pub const MINIMAX_API_KEY_ACCOUNT: &str = "provider:minimax:api-key";
+pub const TYPESAFE_API_KEY_ACCOUNT: &str = "provider:typesafe:api-key";
 
 /// Auth profile id meaning "this provider needs no credential".
 pub const KEYLESS_AUTH: &str = "none";
@@ -42,6 +43,8 @@ pub const META_API_BASE: &str = "https://api.meta.ai/v1";
 pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/zen/go/v1";
 /// MiniMax Anthropic-compatible base (`/messages` and `/models`).
 pub const MINIMAX_API_BASE: &str = "https://api.minimax.io/anthropic/v1";
+/// TypeSafe System One base (`/systemone`), which serves the Jev decision models.
+pub const TYPESAFE_API_BASE: &str = "https://api.typesafe.ai/v1";
 /// Placeholder only. Config-defined hosts must take their API base from application config.
 pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
 
@@ -65,6 +68,13 @@ pub enum OpenAiRuntimeAuth {
 ///
 /// Owned on [`ProviderDescriptor`] so adding a provider is a single table row
 /// rather than a parallel match arm in the registry.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): mark ProviderRuntime `#[non_exhaustive]` so new runtimes are minor-compatible.
+///
+/// New runtimes land in minor releases, as the repo has added providers since
+/// 1.x; an exhaustive match outside this crate breaks on each one until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderRuntime {
     OpenAi {
@@ -90,6 +100,12 @@ pub enum ProviderRuntime {
     Google,
     GithubCopilot,
     Xai,
+    /// A decision-model host: it serves the System One API
+    /// ([`crate::system_one`]) at `{default_api_base}/systemone`, and no chat
+    /// models, so chat model selection and construction refuse it.
+    SystemOne {
+        default_api_base: &'static str,
+    },
 }
 
 impl ProviderRuntime {
@@ -105,7 +121,8 @@ impl ProviderRuntime {
             | Self::Anthropic
             | Self::Google
             | Self::GithubCopilot
-            | Self::Xai => CatalogConstruction::Runtime,
+            | Self::Xai
+            | Self::SystemOne { .. } => CatalogConstruction::Runtime,
         }
     }
 }
@@ -127,6 +144,13 @@ const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId:
 ///
 /// Config-defined OpenAI-compatible hosts share [`Self::OpenAiCompatible`].
 /// Distinguish those hosts by [`ProviderDescriptor::name`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): mark ProviderId `#[non_exhaustive]` so new providers are minor-compatible.
+///
+/// New providers land in minor releases, as the repo has added providers since
+/// 1.x; an exhaustive match outside this crate breaks on each one until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
     Ollama,
@@ -145,6 +169,7 @@ pub enum ProviderId {
     Meta,
     OpenCodeGo,
     MiniMax,
+    TypeSafe,
     OpenAiCompatible,
 }
 
@@ -527,6 +552,11 @@ impl ProviderDescriptor {
             .any(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
     }
 
+    /// False for a decision-model host, which serves no chat models.
+    pub fn serves_chat(self) -> bool {
+        !matches!(self.runtime, ProviderRuntime::SystemOne { .. })
+    }
+
     /// Config-defined OpenAI-compatible hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         self.id == ProviderId::OpenAiCompatible
@@ -616,7 +646,8 @@ impl ProviderDescriptor {
             | ProviderId::QwenTokenPlan
             | ProviderId::Meta
             | ProviderId::OpenCodeGo
-            | ProviderId::MiniMax => UnknownEffortPolicy::Omit,
+            | ProviderId::MiniMax
+            | ProviderId::TypeSafe => UnknownEffortPolicy::Omit,
         }
     }
 }

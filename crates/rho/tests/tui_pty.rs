@@ -759,6 +759,11 @@ fn first_launch_walks_the_full_screen_setup() {
 }
 
 #[test]
+fn first_launch_setup_survives_a_decision_host_sign_in() {
+    assert_pass("first_run_decision_host");
+}
+
+#[test]
 fn first_launch_setup_can_be_skipped_into_a_session() {
     assert_pass("first_run_setup_skipped");
 }

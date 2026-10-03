@@ -2,8 +2,8 @@
 //!
 //! A feature that can use a decision model names it in its own
 //! `[internal_agents.<entry>]` table: a provider, a model, and an auth mode.
-//! Only Ollama serves the System One API among Rho's providers, so it is the
-//! only host.
+//! The provider must be one of [`HOSTS`], the providers whose servers speak
+//! the System One API.
 
 use anyhow::Context;
 use rho_providers::{
@@ -15,24 +15,47 @@ use rho_sdk::{decision::DecisionModel, SecretString};
 
 use crate::{config::Config, credential_store::AppCredentialStore};
 
-/// The only provider whose server speaks the System One API.
-const HOST_PROVIDER: &str = "ollama";
+/// A provider whose server speaks the System One API, with what it accepts.
+struct Host {
+    provider: &'static str,
+    limits: SystemOneLimits,
+}
+
+/// Cloudflare Workers AI also serves Clef, but truncates every state to its
+/// first 2,048 tokens (measured on clef and clef-flash, whatever the state's
+/// shape), which drops the pending call the permission screen judges.
+const HOSTS: &[Host] = &[
+    Host {
+        provider: "ollama",
+        limits: SystemOneLimits::OLLAMA,
+    },
+    Host {
+        provider: "typesafe",
+        limits: SystemOneLimits::TYPESAFE,
+    },
+];
+
+/// The host providers, for messages.
+const HOST_NAMES: &str = "ollama or typesafe";
 
 /// An unusable decision-model entry. Messages name only configured values,
 /// never secrets, so a feature can show them to the user.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ConfigError {
     #[error(
-        "[internal_agents.{entry}] must name a decision model on provider {HOST_PROVIDER}, got {configured}"
+        "[internal_agents.{entry}] must name a decision model on provider {HOST_NAMES}, got {configured}"
     )]
     UnsupportedProvider {
         entry: &'static str,
         configured: String,
     },
-    #[error(
-        "[internal_agents.{entry}] auth `{auth}` is not supported; use `none` or `ollama-api-key`"
-    )]
-    UnsupportedAuth { entry: &'static str, auth: String },
+    #[error("[internal_agents.{entry}] auth `{auth}` is not supported; use {supported}")]
+    UnsupportedAuth {
+        entry: &'static str,
+        auth: String,
+        /// The host's auth modes, as `` `a` or `b` ``.
+        supported: String,
+    },
     #[error("[internal_agents.{entry}]: {message}")]
     MissingApiKey {
         entry: &'static str,
@@ -49,42 +72,60 @@ pub(crate) fn resolve(
     let Some(configured) = config.internal_agent_model(entry) else {
         return Ok(None);
     };
-    let selection = configured
+    let (selection, host) = configured
         .rho()
-        .filter(|selection| selection.provider == HOST_PROVIDER)
+        .and_then(|selection| {
+            let host = HOSTS
+                .iter()
+                .find(|host| host.provider == selection.provider)?;
+            Some((selection, host))
+        })
         .ok_or_else(|| ConfigError::UnsupportedProvider {
             entry,
             configured: configured.display_reference(),
         })?;
     let api_key = api_key(
         entry,
+        host.provider,
         &selection.auth,
         &|name| std::env::var(name).ok(),
         &AppCredentialStore,
     )?;
     let api_base = config
-        .resolved_provider_endpoint(HOST_PROVIDER)
-        .context("ollama has no API base URL")?;
-    let model = SystemOneModel::new(&api_base, selection.model.clone(), api_key)?
-        .with_limits(SystemOneLimits::OLLAMA);
+        .resolved_provider_endpoint(host.provider)
+        .with_context(|| format!("{} has no API base URL", host.provider))?;
+    let model =
+        SystemOneModel::new(&api_base, selection.model.clone(), api_key)?.with_limits(host.limits);
     Ok(Some(Box::new(model)))
 }
 
-/// The API key for Ollama's `auth` mode, read the way the Ollama provider
-/// reads it: a nonblank environment variable, else the credential store.
+/// The API key for `provider`'s `auth` mode, read the way chat providers
+/// read it: a nonblank environment variable, else the credential store.
 fn api_key(
     entry: &'static str,
+    provider: &str,
     auth: &str,
     env: &dyn Fn(&str) -> Option<String>,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<Option<SecretString>> {
+    let descriptor = provider_descriptor(provider)
+        .with_context(|| format!("decision host {provider} is not a registered provider"))?;
     let unsupported = || ConfigError::UnsupportedAuth {
         entry,
         auth: auth.into(),
+        supported: descriptor
+            .auth_modes()
+            .filter(|mode| {
+                matches!(
+                    mode.auth_kind,
+                    ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. }
+                )
+            })
+            .map(|mode| format!("`{}`", mode.id))
+            .collect::<Vec<_>>()
+            .join(" or "),
     };
-    let mode = provider_descriptor(HOST_PROVIDER)
-        .and_then(|descriptor| descriptor.auth_modes().find(|mode| mode.id == auth))
-        .ok_or_else(unsupported)?;
+    let mode = descriptor.auth_mode(auth).ok_or_else(unsupported)?;
     match mode.auth_kind {
         ProviderAuthKind::None => Ok(None),
         ProviderAuthKind::ApiKey {

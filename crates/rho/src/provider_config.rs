@@ -259,6 +259,7 @@ impl Config {
             &mut self.model,
             None,
         )?;
+        ensure_serves_chat(&self.provider)?;
         // Delegating selections have no Rho provider or auth to normalize; the
         // claude binary owns both.
         for (id, selection) in &mut self.internal_agents {
@@ -315,10 +316,15 @@ impl Config {
             .cloned()
             .or_else(
                 || match rho_providers::model::registry::provider_runtime(provider) {
-                    Some(rho_providers::model::registry::ProviderRuntime::OpenAiCompatible {
-                        default_api_base,
-                        ..
-                    }) => Some(
+                    Some(
+                        rho_providers::model::registry::ProviderRuntime::OpenAiCompatible {
+                            default_api_base,
+                            ..
+                        }
+                        | rho_providers::model::registry::ProviderRuntime::SystemOne {
+                            default_api_base,
+                        },
+                    ) => Some(
                         Url::parse(default_api_base)
                             .expect("built-in provider API bases must be valid URLs"),
                     ),
@@ -326,6 +332,23 @@ impl Config {
                 },
             )
     }
+}
+
+/// Fails when `provider` is a decision-model host, which cannot hold a
+/// conversation. Decision-model entries such as the permission screen name
+/// those hosts in `[internal_agents]` and are not checked here.
+pub(crate) fn ensure_serves_chat(provider: &str) -> anyhow::Result<()> {
+    if rho_providers::provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| !descriptor.serves_chat())
+    {
+        return Err(
+            rho_providers::model::catalog::ModelSelectionError::DecisionOnly {
+                provider: provider.into(),
+            }
+            .into(),
+        );
+    }
+    Ok(())
 }
 
 fn normalize_selection(

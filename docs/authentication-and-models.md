@@ -35,6 +35,7 @@ Rho's implemented providers are:
 | `meta` | `meta-api-key`, `meta-muse` | [Meta Model API](/providers/meta) |
 | `minimax` | `minimax-api-key` | [MiniMax](/providers/minimax) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
+| `typesafe` | `typesafe-api-key` | [TypeSafe](/providers/typesafe), decision models only |
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
