@@ -74,10 +74,7 @@ impl App {
         // The runtime has already recorded the transition in model and durable
         // display history. Mirror it before saving the preference.
         self.insert_entry(&Entry::Notice(display));
-        self.info
-            .services
-            .diagnostics
-            .update_tools(&agent.tool_specs());
+        self.mirror_codemode_diagnostics(agent);
         if let Err(error) = self
             .info
             .services
@@ -91,10 +88,7 @@ impl App {
                     if let Some(reverse) = reverse {
                         self.insert_entry(&Entry::Notice(reverse));
                     }
-                    self.info
-                        .services
-                        .diagnostics
-                        .update_tools(&agent.tool_specs());
+                    self.mirror_codemode_diagnostics(agent);
                     format!("could not save codemode setting: {error}")
                 }
                 Err(compensation_error) => format!(
@@ -107,6 +101,13 @@ impl App {
         }
         self.report_codemode(requested);
         Ok(())
+    }
+
+    /// Keeps the `rho` diagnostics tool list and mode in step with the runtime.
+    fn mirror_codemode_diagnostics(&self, agent: &impl CodemodeRuntime) {
+        let diagnostics = &self.info.services.diagnostics;
+        diagnostics.update_tools(&agent.tool_specs());
+        diagnostics.update_codemode_mode(agent.codemode_mode());
     }
 
     fn report_codemode(&mut self, mode: CodemodeMode) {

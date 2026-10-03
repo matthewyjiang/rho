@@ -34,11 +34,19 @@ impl CodemodeRuntime for FakeRuntime {
     }
 }
 
+/// `codemode_mode` as the `rho` diagnostics tool reports it.
+fn diagnosed_mode(app: &App) -> String {
+    let config: serde_json::Value =
+        serde_json::from_str(&app.info.services.diagnostics.response("config").unwrap()).unwrap();
+    config["codemode_mode"].as_str().unwrap().to_string()
+}
+
 fn invocation(command: &str) -> CommandInvocation {
     parse_command(command).unwrap().unwrap()
 }
 
-// Covers: /codemode on|only reach the runtime and persist as codemode.mode;
+// Covers: /codemode on|only reach the runtime, persist as codemode.mode, and
+// update the `rho` diagnostics mirror;
 // bare /codemode and /codemode status only report; unknown modes (old `off`,
 // Pi-less `yolo`) are rejected and change nothing.
 // Owner: /codemode command
@@ -127,8 +135,13 @@ fn codemode_command_applies_and_persists_requested_mode() {
             .iter()
             .any(|entry| matches!(entry, Entry::Error(_)));
         assert_eq!(
-            (runtime.calls, saved, rejected),
-            (case.calls, case.saved, case.rejected),
+            (runtime.calls, saved, rejected, diagnosed_mode(&app)),
+            (
+                case.calls,
+                case.saved,
+                case.rejected,
+                case.saved.as_str().to_string()
+            ),
             "{}",
             case.command
         );
@@ -161,6 +174,7 @@ async fn failed_codemode_save_keeps_compensation_histories_aligned() {
         .unwrap();
 
     assert_eq!(runtime.codemode_mode(), CodemodeMode::On);
+    assert_eq!(diagnosed_mode(&app), "on");
     assert_eq!(runtime.tool_specs(), specs_before);
     assert_eq!(
         app.info
