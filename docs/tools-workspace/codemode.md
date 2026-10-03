@@ -44,8 +44,8 @@ it to the direct list.
 
 Set the mode in [configuration](/configuration#codemode) or with
 `/codemode on|only` in the [interactive TUI](/interactive-tui). The command
-applies to the next model request and saves the preference. Bare `/codemode`
-shows the current mode.
+applies to the next model request and saves the preference. `/codemode status`
+(or bare `/codemode`) shows the current mode in the status bar.
 
 ## Permissions
 

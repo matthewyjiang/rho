@@ -86,6 +86,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "enable_subagents": true,
             "agent_concurrency": 10,
             "advisor_mode": false,
+            "codemode_mode": "on",
             "edit_tool": "str_replace",
             "rtk": true,
             "source": "live values used by this process; restart-only settings may differ from saved config"

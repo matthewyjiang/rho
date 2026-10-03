@@ -88,6 +88,7 @@ pub struct SanitizedConfig {
     pub enable_subagents: bool,
     pub agent_concurrency: usize,
     pub advisor_mode: bool,
+    pub codemode_mode: String,
     pub rtk: bool,
     pub source: String,
 }
@@ -108,6 +109,7 @@ impl From<&Config> for SanitizedConfig {
             enable_subagents: config.enable_subagents,
             agent_concurrency: config.agent_concurrency,
             advisor_mode: config.advisor_mode,
+            codemode_mode: config.codemode.mode.as_str().into(),
             rtk: config.rtk,
             source: "live values used by this process; restart-only settings may differ from saved config"
                 .into(),
@@ -378,6 +380,12 @@ impl RuntimeDiagnostics {
     /// the mirror follows every change instead of the startup value.
     pub fn update_advisor_mode(&self, advisor_mode: bool) {
         self.write().config.advisor_mode = advisor_mode;
+    }
+
+    /// `/codemode` applies to the next model request, so the mirror follows
+    /// every change instead of the startup value.
+    pub fn update_codemode_mode(&self, mode: crate::config::CodemodeMode) {
+        self.write().config.codemode_mode = mode.as_str().into();
     }
 
     /// Agent concurrency can change mid-session, so the mirror follows the live

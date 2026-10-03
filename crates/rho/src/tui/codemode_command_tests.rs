@@ -34,13 +34,21 @@ impl CodemodeRuntime for FakeRuntime {
     }
 }
 
+/// `codemode_mode` as the `rho` diagnostics tool reports it.
+fn diagnosed_mode(app: &App) -> String {
+    let config: serde_json::Value =
+        serde_json::from_str(&app.info.services.diagnostics.response("config").unwrap()).unwrap();
+    config["codemode_mode"].as_str().unwrap().to_string()
+}
+
 fn invocation(command: &str) -> CommandInvocation {
     parse_command(command).unwrap().unwrap()
 }
 
-// Covers: /codemode on|only reach the runtime and persist as codemode.mode;
-// bare /codemode only reports; unknown modes (old `off`, Pi-less `yolo`)
-// change nothing.
+// Covers: /codemode on|only reach the runtime, persist as codemode.mode, and
+// update the `rho` diagnostics mirror;
+// bare /codemode and /codemode status only report; unknown modes (old `off`,
+// Pi-less `yolo`) are rejected and change nothing.
 // Owner: /codemode command
 #[test]
 fn codemode_command_applies_and_persists_requested_mode() {
@@ -50,6 +58,7 @@ fn codemode_command_applies_and_persists_requested_mode() {
         initially: CodemodeMode,
         calls: Vec<CodemodeMode>,
         saved: CodemodeMode,
+        rejected: bool,
     }
     let cases = [
         Case {
@@ -57,36 +66,49 @@ fn codemode_command_applies_and_persists_requested_mode() {
             initially: On,
             calls: vec![Only],
             saved: Only,
+            rejected: false,
         },
         Case {
             command: "/codemode on",
             initially: Only,
             calls: vec![On],
             saved: On,
+            rejected: false,
         },
         Case {
             command: "/codemode",
             initially: Only,
             calls: vec![],
             saved: On,
+            rejected: false,
+        },
+        Case {
+            command: "/codemode status",
+            initially: Only,
+            calls: vec![],
+            saved: On,
+            rejected: false,
         },
         Case {
             command: "/codemode only",
             initially: Only,
             calls: vec![Only],
             saved: On,
+            rejected: false,
         },
         Case {
             command: "/codemode off",
             initially: On,
             calls: vec![],
             saved: On,
+            rejected: true,
         },
         Case {
             command: "/codemode yolo",
             initially: On,
             calls: vec![],
             saved: On,
+            rejected: true,
         },
     ];
     for case in cases {
@@ -107,9 +129,19 @@ fn codemode_command_applies_and_persists_requested_mode() {
             .unwrap()
             .codemode
             .mode;
+        let rejected = app
+            .history
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, Entry::Error(_)));
         assert_eq!(
-            (runtime.calls, saved),
-            (case.calls, case.saved),
+            (runtime.calls, saved, rejected, diagnosed_mode(&app)),
+            (
+                case.calls,
+                case.saved,
+                case.rejected,
+                case.saved.as_str().to_string()
+            ),
             "{}",
             case.command
         );
@@ -142,6 +174,7 @@ async fn failed_codemode_save_keeps_compensation_histories_aligned() {
         .unwrap();
 
     assert_eq!(runtime.codemode_mode(), CodemodeMode::On);
+    assert_eq!(diagnosed_mode(&app), "on");
     assert_eq!(runtime.tool_specs(), specs_before);
     assert_eq!(
         app.info
