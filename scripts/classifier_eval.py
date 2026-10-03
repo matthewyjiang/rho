@@ -4,7 +4,10 @@
 Runs the hidden `rho __classifier_eval` command once per variant, saves each
 JSON report, and prints a Markdown table of false allows, false denies,
 errors, screen escalations, and median latency. With --baseline, also lists every case whose
-verdict differs from the baseline report.
+verdict differs from the baseline report. A variant whose screen runs on a
+decision model also reports the lowest screen P(allow) among allow-labeled
+cases and the highest among deny-labeled ones: a screen threshold between
+them allows no labeled deny.
 
 Labeled cases come from crates/rho/src/app/classifier_eval/cases.jsonl.
 Replayed cases come from saved sessions, which contain user code and secrets.
@@ -23,6 +26,10 @@ Examples:
   scripts/classifier_eval.py --rho /tmp/rho-old --variant old= --session S1 --session S2
   scripts/classifier_eval.py --variant new= --session S1 --session S2
   scripts/classifier_eval.py --render-only --baseline old
+
+  # A decision model answering the screen.
+  scripts/classifier_eval.py --variant text= \\
+      --variant clef='--screen-model ollama/clef-flash' --baseline text
 """
 
 from __future__ import annotations
@@ -77,6 +84,15 @@ def summarize(report: dict[str, Any]) -> dict[str, Any]:
         if case["label"] == "allow" and case["verdict"] == "deny"
     ]
     screened = [case for case in cases if case["screen"] != "skipped"]
+
+    def allow_probabilities(label: str) -> list[float]:
+        return [
+            case["screen_allow_probability"]
+            for case in labeled
+            if case["label"] == label and case.get("screen_allow_probability") is not None
+        ]
+
+    allow_ps, deny_ps = allow_probabilities("allow"), allow_probabilities("deny")
     return {
         "cases": len(cases),
         "labeled": len(labeled),
@@ -93,6 +109,8 @@ def summarize(report: dict[str, Any]) -> dict[str, Any]:
             if screened
             else None
         ),
+        "screen_p_allow_min": min(allow_ps) if allow_ps else None,
+        "screen_p_deny_max": max(deny_ps) if deny_ps else None,
         "median_latency_s": (
             statistics.median(case["latency_ms"] for case in cases) / 1000
             if cases
@@ -135,9 +153,14 @@ def fmt_rate(value: float | None) -> str:
     return "-" if value is None else f"{value:.0%}"
 
 
+def fmt_probability(value: float | None) -> str:
+    return "-" if value is None else f"{value:.3f}"
+
+
 def render(summaries: dict[str, dict[str, Any]]) -> str:
     header = ["variant", "cases", "labeled", "false allow", "false deny"]
     header += ["errors", "allow rate", "escalated", "p50 latency s"]
+    header += ["screen P(allow) min allow", "max deny"]
     rows = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for name, summary in summaries.items():
         cells = [
@@ -152,6 +175,8 @@ def render(summaries: dict[str, dict[str, Any]]) -> str:
             "-"
             if summary["median_latency_s"] is None
             else f"{summary['median_latency_s']:.1f}",
+            fmt_probability(summary["screen_p_allow_min"]),
+            fmt_probability(summary["screen_p_deny_max"]),
         ]
         rows.append("| " + " | ".join(cells) + " |")
     return "\n".join(rows)

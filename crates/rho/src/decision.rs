@@ -8,6 +8,12 @@
 //! far; the protocol's `noul` and `score` types land with their first user.
 
 pub(crate) mod llm;
+mod model;
+mod resolve;
+pub(crate) mod system_one;
+
+pub(crate) use model::DecisionModel;
+pub(crate) use resolve::{resolve, ConfigError};
 
 use std::collections::HashMap;
 
@@ -108,5 +114,24 @@ pub(crate) struct ChoiceOption {
     pub description: &'static str,
 }
 
-/// The chosen option for each question, keyed by question ID.
-pub(crate) type Answers = HashMap<&'static str, &'static ChoiceOption>;
+/// One question's answer: the chosen option and, from a model that reports
+/// them, its probability for each option.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Answer {
+    pub option: &'static ChoiceOption,
+    /// `None` from a model that reports no probabilities, such as a text
+    /// model; never a stand-in of 1.0 for the chosen option.
+    pub probabilities: Option<HashMap<&'static str, f64>>,
+}
+
+impl Answer {
+    /// The model's probability for `option_id`, zero when it reported none
+    /// for that option; `None` when the model reports no probabilities.
+    pub(crate) fn probability(&self, option_id: &str) -> Option<f64> {
+        let probabilities = self.probabilities.as_ref()?;
+        Some(probabilities.get(option_id).copied().unwrap_or(0.0))
+    }
+}
+
+/// The answer to each question, keyed by question ID.
+pub(crate) type Answers = HashMap<&'static str, Answer>;

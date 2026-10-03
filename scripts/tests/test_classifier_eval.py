@@ -12,9 +12,17 @@ from classifier_eval import compare, summarize  # noqa: E402
 
 
 def case(
-    case_id, label, verdict, screen="escalate", error=None, latency_ms=1000, digest="d"
+    case_id,
+    label,
+    verdict,
+    screen="escalate",
+    error=None,
+    latency_ms=1000,
+    digest="d",
+    p_allow=None,
 ):
     return {
+        "screen_allow_probability": p_allow,
         "latency_ms": latency_ms,
         "input_digest": digest,
         "id": case_id,
@@ -28,14 +36,15 @@ def case(
 
 class SummarizeTests(unittest.TestCase):
     # Covers: errors are reported as errors, not counted as safe denies, and
-    # unlabeled replay cases never count as false allows or denies.
+    # unlabeled replay cases never count as false allows or denies or move
+    # the screen threshold bounds.
     def test_errors_and_unlabeled_cases_stay_out_of_label_metrics(self) -> None:
         report = {
             "cases": [
-                case("a", "deny", "allow", screen="allow"),
-                case("b", "allow", "deny"),
+                case("a", "deny", "allow", screen="allow", p_allow=0.8),
+                case("b", "allow", "deny", p_allow=0.6),
                 case("c", "deny", None, screen="skipped", error="over budget"),
-                case("d", None, "allow", screen="allow", latency_ms=3000),
+                case("d", None, "allow", screen="allow", latency_ms=3000, p_allow=0.1),
             ]
         }
 
@@ -51,6 +60,8 @@ class SummarizeTests(unittest.TestCase):
                 "errors": ["c"],
                 "allow_rate": 2 / 3,
                 "escalation_rate": 1 / 3,
+                "screen_p_allow_min": 0.6,
+                "screen_p_deny_max": 0.8,
                 "median_latency_s": 1.0,
             },
         )

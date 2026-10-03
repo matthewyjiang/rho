@@ -609,6 +609,9 @@ pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::
             "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
         );
     }
+    if config.permission_mode == PermissionMode::Auto {
+        crate::permission_classifier::check_screen_config(config)?;
+    }
     Ok(())
 }
 

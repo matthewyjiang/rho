@@ -148,8 +148,28 @@ fn answers_are_exactly_the_final_answer_line() {
     for (style, text, expected) in cases {
         let actual = parse_answers(text, &questions, style)
             .ok()
-            .map(|answers| [answers["color"].id, answers["size"].id]);
+            .map(|answers| [answers["color"].option.id, answers["size"].option.id]);
         assert_eq!(actual, expected, "{style:?} {text}");
+    }
+}
+
+// Covers: a parse error never repeats response text, which may hold secrets
+// from the state.
+// Owner: decision protocol LLM adapter.
+#[test]
+fn parse_errors_do_not_repeat_the_response() {
+    const SECRET: &str = "sk-echoed";
+    let questions = [COLOR, SIZE];
+    let responses = [
+        format!("\"{SECRET}\""),
+        format!(r#"{{"{SECRET}":"red","{SECRET}":"red"}}"#),
+        format!(r#"{{"color":"{SECRET}","size":"large"}}"#),
+        format!(r#"{{"color":"red","{SECRET}":"large"}}"#),
+    ];
+    for response in responses {
+        let error = parse_answers(&response, &questions, AnswerStyle::Direct).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(!error.contains(SECRET), "{error}");
     }
 }
 
