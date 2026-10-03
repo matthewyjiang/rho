@@ -133,11 +133,12 @@ impl AttachmentDisplaySettings {
         self.max_tool_output_lines
     }
 
-    /// Zen hides tools and reasoning. Hide-reasoning alone suppresses reasoning text.
+    /// Zen hides tools and reasoning, but keeps conversation notifications like the
+    /// interactive transcript. Hide-reasoning alone suppresses reasoning text.
     fn hides_entry(&self, entry: &Entry) -> bool {
         match entry {
             Entry::Reasoning(_) => !self.displays_reasoning_output(),
-            Entry::Tool(_) => !self.shows_work_chrome(),
+            Entry::Tool(tool) => !self.shows_work_chrome() && !tool.visible_in_zen(),
             _ => false,
         }
     }
