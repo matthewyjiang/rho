@@ -20,7 +20,7 @@ use {
 use super::{
     acp,
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation, automation_protocol, cli_config, compaction_eval, computer_cli,
+    automation, automation_protocol, classifier_eval, cli_config, compaction_eval, computer_cli,
     config_repository::ConfigRepository,
     doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
@@ -199,6 +199,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     if let Some(Command::CompactionEval(args)) = &cli.command {
         return Ok(EarlyDispatch::Handled(
             compaction_eval::run(args, cli).await,
+        ));
+    }
+    if let Some(Command::ClassifierEval(args)) = &cli.command {
+        return Ok(EarlyDispatch::Handled(
+            classifier_eval::run(args, cli).await,
         ));
     }
     if let Some(Command::Attach { id }) = &cli.command {

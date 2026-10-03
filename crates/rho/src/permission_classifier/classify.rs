@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::{anyhow, bail, Context};
 use rho_providers::{
@@ -21,7 +21,7 @@ use crate::{
 };
 
 use super::{
-    parse_classifier_verdict, parse_screen_verdict, render_classifier_transcript,
+    parse_classifier_verdict, parse_screen_verdict, transcript::render_with_pending_call,
     ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_PROMPT,
     CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
 };
@@ -45,43 +45,111 @@ pub(crate) async fn classify_capability_request(
     config: &Config,
     request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    match try_classify_capability_request(config, request).await {
-        Ok(verdict) => verdict,
-        Err(error) => classifier_unavailable(error),
+    let result = match ClassifierModel::resolve(config).await {
+        Ok(model) => model.classify(request).await.result,
+        Err(error) => Err(error),
+    };
+    result.unwrap_or_else(classifier_unavailable)
+}
+
+/// The configured classifier model, ready to classify requests.
+pub(crate) struct ClassifierModel {
+    provider: Arc<dyn ModelProvider>,
+    reasoning: ReasoningLevel,
+    budget: TranscriptBudget,
+}
+
+impl ClassifierModel {
+    /// Builds the `[internal_agents.permission-classifier]` model.
+    pub(crate) async fn resolve(config: &Config) -> anyhow::Result<Self> {
+        let model = config
+            .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
+            .ok_or_else(|| anyhow!("{PERMISSION_CLASSIFIER_AGENT_ID} model is not configured"))?;
+        let reasoning = effective_internal_agent_reasoning(PERMISSION_CLASSIFIER_AGENT_ID, model);
+        let InternalAgentTarget::Rho(selection) = &model.target else {
+            bail!("{PERMISSION_CLASSIFIER_AGENT_ID} cannot run on Claude Code runtime");
+        };
+        let provider = build_provider(
+            &selection.provider,
+            &selection.model,
+            reasoning,
+            &selection.auth,
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "failed to build {PERMISSION_CLASSIFIER_AGENT_ID} provider; check configured credentials"
+            )
+        })?;
+        // Read the window after building the provider: catalog-driven
+        // providers hydrate the model catalog during construction.
+        let budget = transcript_budget(
+            cached_model_metadata(&selection.provider, &selection.model)
+                .and_then(|metadata| metadata.display_context_window()),
+        );
+        Ok(Self {
+            provider,
+            reasoning,
+            budget,
+        })
+    }
+
+    pub(crate) fn provider(&self) -> &dyn ModelProvider {
+        self.provider.as_ref()
+    }
+
+    /// Review-stage reasoning; the screen always runs at [`ReasoningLevel::Low`].
+    pub(crate) fn reasoning(&self) -> ReasoningLevel {
+        self.reasoning
+    }
+
+    pub(crate) async fn classify(&self, request: ClassifyRequest<'_>) -> ClassifierTrace {
+        let pending_call_id = request.pending.tool_call_id().map(|id| id.as_str());
+        run_pipeline(
+            self.provider.as_ref(),
+            self.reasoning,
+            self.budget,
+            pending_call_id,
+            &request,
+        )
+        .await
+    }
+
+    /// [`Self::classify`] for a request the SDK did not build, such as a
+    /// replayed call, whose tool call ID cannot be attached to it.
+    pub(crate) async fn classify_with_pending_call(
+        &self,
+        request: ClassifyRequest<'_>,
+        pending_call_id: &str,
+    ) -> ClassifierTrace {
+        run_pipeline(
+            self.provider.as_ref(),
+            self.reasoning,
+            self.budget,
+            Some(pending_call_id),
+            &request,
+        )
+        .await
     }
 }
 
-async fn try_classify_capability_request(
-    config: &Config,
-    request: ClassifyRequest<'_>,
-) -> anyhow::Result<ClassifierVerdict> {
-    let model = config
-        .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
-        .ok_or_else(|| anyhow!("{PERMISSION_CLASSIFIER_AGENT_ID} model is not configured"))?;
-    let reasoning = effective_internal_agent_reasoning(PERMISSION_CLASSIFIER_AGENT_ID, model);
-    let InternalAgentTarget::Rho(selection) = &model.target else {
-        bail!("{PERMISSION_CLASSIFIER_AGENT_ID} cannot run on Claude Code runtime");
-    };
-    let provider = build_provider(
-        &selection.provider,
-        &selection.model,
-        reasoning,
-        &selection.auth,
-    )
-    .await
-    .map_err(|_| {
-        anyhow!(
-            "failed to build {PERMISSION_CLASSIFIER_AGENT_ID} provider; check configured credentials"
-        )
-    })?;
-    // Read the window after building the provider: catalog-driven providers
-    // hydrate the model catalog during construction.
-    let budget = transcript_budget(
-        cached_model_metadata(&selection.provider, &selection.model)
-            .and_then(|metadata| metadata.display_context_window()),
-    );
-    try_classify_capability_request_with_provider(provider.as_ref(), reasoning, budget, request)
-        .await
+/// What one classification did at each stage. Production acts only on
+/// `result`; the classifier eval also reports the screen outcome.
+pub(crate) struct ClassifierTrace {
+    pub screen: ScreenOutcome,
+    /// `Err` fails closed in production, as "classifier unavailable" or as
+    /// the over-budget reason.
+    pub result: anyhow::Result<ClassifierVerdict>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScreenOutcome {
+    /// The transcript could not be rendered, so no stage ran.
+    Skipped,
+    Allowed,
+    Escalated,
+    /// The screen call or its parse failed; the review decided.
+    Failed,
 }
 
 #[cfg(test)]
@@ -91,11 +159,11 @@ pub(super) async fn classify_capability_request_with_provider(
     budget: TranscriptBudget,
     request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    match try_classify_capability_request_with_provider(provider, reasoning, budget, request).await
-    {
-        Ok(verdict) => verdict,
-        Err(error) => classifier_unavailable(error),
-    }
+    let pending_call_id = request.pending.tool_call_id().map(|id| id.as_str());
+    run_pipeline(provider, reasoning, budget, pending_call_id, &request)
+        .await
+        .result
+        .unwrap_or_else(classifier_unavailable)
 }
 
 /// Transcript budget for a classifier model with `context_window` tokens.
@@ -130,17 +198,27 @@ pub(super) fn transcript_budget(context_window: Option<u64>) -> TranscriptBudget
 /// effort stay the same, which is the default Low classifier reasoning. Raising
 /// review reasoning keeps the common-path screen cheap and forgoes that cache
 /// hit: Anthropic invalidates message-block cache when thinking or effort change.
-async fn try_classify_capability_request_with_provider(
+async fn run_pipeline(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
     budget: TranscriptBudget,
-    request: ClassifyRequest<'_>,
-) -> anyhow::Result<ClassifierVerdict> {
-    let transcript = render_classifier_transcript(request.history, request.pending, budget)?;
+    pending_call_id: Option<&str>,
+    request: &ClassifyRequest<'_>,
+) -> ClassifierTrace {
+    let transcript =
+        match render_with_pending_call(request.history, request.pending, pending_call_id, budget) {
+            Ok(transcript) => transcript,
+            Err(error) => {
+                return ClassifierTrace {
+                    screen: ScreenOutcome::Skipped,
+                    result: Err(error),
+                }
+            }
+        };
 
     let screen = run_stage(
         provider,
-        &request,
+        request,
         StageSpec {
             usage_purpose: "permission-classifier-screen",
             reasoning: ReasoningLevel::Low,
@@ -148,27 +226,37 @@ async fn try_classify_capability_request_with_provider(
         },
     )
     .await;
-    match screen.as_deref().map(parse_screen_verdict) {
-        Ok(ScreenVerdict::Allow) => return Ok(ClassifierVerdict::Allow),
-        Ok(ScreenVerdict::Escalate) => {}
+    let screen = match screen.as_deref().map(parse_screen_verdict) {
+        Ok(ScreenVerdict::Allow) => {
+            return ClassifierTrace {
+                screen: ScreenOutcome::Allowed,
+                result: Ok(ClassifierVerdict::Allow),
+            }
+        }
+        Ok(ScreenVerdict::Escalate) => ScreenOutcome::Escalated,
         Err(error) => {
             // A broken screen must not decide anything; stage 2 still runs and
             // fails closed on its own if it also breaks.
             tracing::warn!(error = %error, "permission classifier screen failed; running review");
+            ScreenOutcome::Failed
         }
-    }
+    };
 
     let review = run_stage(
         provider,
-        &request,
+        request,
         StageSpec {
             usage_purpose: "permission-classifier-review",
             reasoning,
             input: stage_input(&transcript, CLASSIFIER_REVIEW_INSTRUCTION),
         },
     )
-    .await?;
-    parse_classifier_verdict(&review).context("permission classifier returned an invalid response")
+    .await;
+    let result = review.and_then(|review| {
+        parse_classifier_verdict(&review)
+            .context("permission classifier returned an invalid response")
+    });
+    ClassifierTrace { screen, result }
 }
 
 struct StageSpec {

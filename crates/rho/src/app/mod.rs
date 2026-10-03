@@ -6,6 +6,7 @@ pub(crate) mod agent_executor;
 mod automation;
 pub(crate) mod automation_protocol;
 mod bootstrap;
+mod classifier_eval;
 mod cli_config;
 mod compaction_eval;
 mod computer_cli;

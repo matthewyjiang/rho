@@ -141,12 +141,7 @@ struct EvalSetup {
 
 impl EvalSetup {
     async fn load(args: &CompactionEvalArgs, cli: &Cli) -> anyhow::Result<Self> {
-        let repository = ConfigRepository::new(cli.config.clone());
-        let mut config = repository.load()?;
-        config.providers.activate()?;
-        let config_path = super::bootstrap::absolute_config_path(&repository)?;
-        crate::credential_store::initialize_from_config(&mut config, &config_path)?;
-        super::cli_config::apply_overrides_allowing_empty_cache(&mut config, cli)?;
+        let config = load_eval_config(cli)?;
 
         let mut compaction = CompactionConfig::from(&config);
         if let Some(percent) = args.threshold_percent {
@@ -507,7 +502,19 @@ async fn build(
         })
 }
 
-fn split_reference(reference: &str) -> anyhow::Result<(&str, &str)> {
+/// Loads config with credentials and root CLI overrides applied, as the
+/// offline evals need it.
+pub(super) fn load_eval_config(cli: &Cli) -> anyhow::Result<Config> {
+    let repository = ConfigRepository::new(cli.config.clone());
+    let mut config = repository.load()?;
+    config.providers.activate()?;
+    let config_path = super::bootstrap::absolute_config_path(&repository)?;
+    crate::credential_store::initialize_from_config(&mut config, &config_path)?;
+    super::cli_config::apply_overrides_allowing_empty_cache(&mut config, cli)?;
+    Ok(config)
+}
+
+pub(super) fn split_reference(reference: &str) -> anyhow::Result<(&str, &str)> {
     reference
         .split_once('/')
         .filter(|(provider, model)| !provider.is_empty() && !model.is_empty())
@@ -515,7 +522,7 @@ fn split_reference(reference: &str) -> anyhow::Result<(&str, &str)> {
 }
 
 /// The configured auth for the current provider, else the provider's first.
-fn default_auth(config: &Config, provider: &str) -> String {
+pub(super) fn default_auth(config: &Config, provider: &str) -> String {
     if provider == config.provider {
         return config.auth.clone();
     }
