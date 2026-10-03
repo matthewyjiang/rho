@@ -34,8 +34,8 @@ use super::super::{
     theme::Theme,
     tool_card_hover,
     usage_cost::AttemptAwareRunUsage,
-    Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
-    HISTORY_SCROLLBAR_REVEAL_DURATION,
+    zen_tool_run, Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry,
+    HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 #[cfg(test)]
 use super::chrome::format_run_cost;
@@ -133,11 +133,12 @@ impl AttachmentDisplaySettings {
         self.max_tool_output_lines
     }
 
-    /// Zen hides tools and reasoning. Hide-reasoning alone suppresses reasoning text.
+    /// Zen hides tools and reasoning, but keeps conversation notifications like the
+    /// interactive transcript. Hide-reasoning alone suppresses reasoning text.
     fn hides_entry(&self, entry: &Entry) -> bool {
         match entry {
             Entry::Reasoning(_) => !self.displays_reasoning_output(),
-            Entry::Tool(_) => !self.shows_work_chrome(),
+            Entry::Tool(tool) => !self.shows_work_chrome() && !tool.visible_in_zen(),
             _ => false,
         }
     }
@@ -825,8 +826,15 @@ impl AttachmentApp {
             .transcript
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !self.display.hides_entry(entry))
-            .map(|(index, entry)| HistoryItem::Transcript { index, entry })
+            .filter_map(|(index, entry)| {
+                if !self.display.hides_entry(entry) {
+                    return Some(HistoryItem::Transcript { index, entry });
+                }
+                zen_tool_run::summary_row_at(&self.transcript, index, |entry| {
+                    self.display.hides_entry(entry)
+                })
+                .map(HistoryItem::Ephemeral)
+            })
             .collect::<Vec<_>>();
         if self.display.shows_work_chrome() {
             items.extend(self.pending_order.iter().filter_map(|key| {

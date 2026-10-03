@@ -264,6 +264,66 @@ fn history_lines_follow_display_settings() {
     assert!(zen.iter().all(|line| !line.contains("read_file")));
     assert!(zen.iter().any(|line| line.contains("answer")));
     assert!(zen.iter().any(|line| line.contains("task")));
+    // The hidden tool still leaves one summary row where its card was.
+    let summary = line_text(&crate::tui::render::entry_lines(
+        &zen_tool_run::summary_entry(1),
+        80,
+        app.display.max_tool_output_lines,
+        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+    ));
+    assert_eq!(zen[zen.len() - summary.len()..], summary[..]);
+}
+
+// Covers: attach zen keeps conversation notifications visible, splitting tool
+// runs around them like the interactive transcript.
+// Owner: AttachmentDisplaySettings + paint_history.
+#[test]
+fn zen_keeps_conversation_notifications_between_tool_summaries() {
+    let (_directory, mut app) = test_app();
+    app.display.zen_mode = true;
+    let tool = || AttachmentEvent::ToolFinished {
+        key: None,
+        presentation: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+        )
+        .into(),
+    };
+    let card = crate::presentation::parent_message_card(
+        "keep going".into(),
+        crate::presentation::NotificationDelivery::Received,
+        "detail".into(),
+    );
+    app.apply_event(tool());
+    app.apply_event(AttachmentEvent::Message(Box::new(card.clone())));
+    app.apply_event(tool());
+
+    let notification = Entry::Tool(ToolEntry::new(
+        crate::presentation::Presentation::Notification(Box::new(card)),
+        /*expanded*/ false,
+        /*image*/ None,
+        /*started_at*/ None,
+    ));
+    let expected = [
+        zen_tool_run::summary_entry(1),
+        notification,
+        zen_tool_run::summary_entry(1),
+    ]
+    .iter()
+    .flat_map(|entry| {
+        crate::tui::render::entry_lines(
+            entry,
+            80,
+            app.display.max_tool_output_lines,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+        )
+    })
+    .collect::<Vec<_>>();
+    assert_eq!(
+        line_text(&app.paint_history(80).lines),
+        line_text(&expected)
+    );
 }
 
 // Covers: max_tool_output_lines comes from display settings, not a local constant.

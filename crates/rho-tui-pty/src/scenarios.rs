@@ -83,6 +83,7 @@ mod workflow;
 mod workflow_hub_legacy;
 mod workspace_rewind;
 mod write_stream;
+mod zen_tool_run;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
 use advisor::{
@@ -179,6 +180,7 @@ use workflow_hub_legacy::{
     setup_workflow_hub_legacy_run, WORKFLOW_HUB_LEGACY_RUN_ID, WORKFLOW_HUB_LEGACY_RUN_STEPS,
 };
 use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
+use zen_tool_run::ZEN_TOOL_RUN_SUMMARY_SCENARIO;
 
 use crate::{
     harness::WaitTimeout,
@@ -416,6 +418,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     NO_SAVE_SESSION_SCENARIO,
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
+    ZEN_TOOL_RUN_SUMMARY_SCENARIO,
     HEADER_HINTS_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
     AGENT_PROMPT_SCENARIO,
