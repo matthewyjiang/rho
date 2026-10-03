@@ -40,7 +40,12 @@ Set the model under **Agent behavior** in `/config`, or as `[internal_agents.per
 
 ### Decision-model screen
 
-A decision model such as Cloudflare's Clef can answer the screen instead of the classifier model. A decision model answers a fixed question with a probability rather than writing text, so the screen is faster and takes no output tokens. Rho runs it through Ollama's System One API, at `/v1/systemone` on the configured `[providers.ollama]` server. Pull the model there first, for example `ollama pull clef`.
+A decision model such as Cloudflare's Clef or TypeSafe's Jev can answer the screen instead of the classifier model. A decision model answers a fixed question with a probability for each option rather than writing a review, so the screen is faster. Rho asks it over the System One API, on one of two hosts:
+
+- **Ollama**, at `/v1/systemone` on the configured `[providers.ollama]` server. Pull the model there first, for example `ollama pull clef`.
+- **[TypeSafe](/providers/typesafe)**, which hosts Jev. Sign in with `/login typesafe`, then use `provider = "typesafe"`, `model = "jev-latest"`, and `auth = "typesafe-api-key"`.
+
+Cloudflare Workers AI also serves Clef, but it truncates every state to its first 2,048 tokens, which would cut off the pending request, so Rho does not use it.
 
 ```toml
 [internal_agents.permission-classifier-screen]
@@ -48,7 +53,7 @@ provider = "ollama"
 model = "clef"
 ```
 
-The screen allows only when the model picks `allow` with probability at least 0.97. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Ollama rejects input over the model's `num_ctx` (16,384 tokens for Clef) instead of truncating it, so the screen reads its own transcript, fitted to about 10,500 estimated tokens: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why. `[internal_agents.permission-classifier-screen]` takes `auth = "none"` or `auth = "ollama-api-key"`, like the Ollama provider. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
+The screen allows only when the model picks `allow` with probability at least 0.97. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Both hosts reject input over the model's context instead of truncating it: 16,384 tokens for Clef at Ollama's default `num_ctx`, and about 32,500 on TypeSafe. So the screen reads its own transcript, fitted to about 10,500 estimated tokens on Ollama or 20,500 on TypeSafe: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why. `[internal_agents.permission-classifier-screen]` takes the host provider's auth: `none` or `ollama-api-key` on Ollama, `typesafe-api-key` on TypeSafe. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
 
 ## Change the mode
 

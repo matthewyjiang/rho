@@ -65,7 +65,7 @@ fn api_key_prefers_a_nonblank_env_var_then_the_store() {
                 .map(str::to_owned)
         };
 
-        let result = api_key(ENTRY, "ollama-api-key", &env_lookup, store);
+        let result = api_key(ENTRY, "ollama", "ollama-api-key", &env_lookup, store);
 
         let actual = match &result {
             Ok(key) => key.as_ref().map(SecretString::expose_secret),

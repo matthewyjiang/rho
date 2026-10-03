@@ -396,6 +396,45 @@ fn cli_auth_override_wins_after_model_provider_auth() {
     assert_eq!(cfg.auth, "api-key");
 }
 
+// Covers: a decision-model host cannot become the conversation's provider,
+// whether named by --provider, swapped in by --auth after a chat --model, or
+// set in config, and the error names it rather than a missing model cache.
+// Owner: app startup selection
+#[test]
+fn decision_model_host_is_refused_as_the_chat_provider() {
+    let refused = "provider 'typesafe' serves decision models, not chat models";
+    let cli_cases = [
+        (
+            "--provider",
+            Cli {
+                provider: Some("typesafe".into()),
+                ..test_cli()
+            },
+        ),
+        (
+            "--auth after a chat --model",
+            Cli {
+                model: Some("openai-codex/gpt-5.5".into()),
+                auth: Some("typesafe-api-key".into()),
+                ..test_cli()
+            },
+        ),
+    ];
+    for (name, cli) in cli_cases {
+        let mut cfg = Config::default();
+
+        let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+
+        assert_eq!(format!("{error:#}"), refused, "{name}");
+    }
+
+    let error = Config::parse_settings(
+        "provider = \"typesafe\"\nmodel = \"jev-latest\"\nauth = \"typesafe-api-key\"\n",
+    )
+    .unwrap_err();
+    assert_eq!(format!("{error:#}"), refused, "config");
+}
+
 #[test]
 fn authenticated_kimi_capabilities_normalize_stored_reasoning_without_disabling_it() {
     let cache_dir = unique_cache_dir("kimi-normalization");

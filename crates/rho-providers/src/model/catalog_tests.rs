@@ -472,6 +472,27 @@ fn unknown_provider_is_rejected() {
     );
 }
 
+// Covers: a decision-model host chosen as the chat model is refused by name,
+// not reported as a missing model or an unknown provider.
+// Owner: model catalog
+#[test]
+fn decision_only_provider_is_not_a_chat_model() {
+    let err = resolve_model_selection_for_auths(
+        "typesafe/jev-latest",
+        "openai",
+        "codex",
+        &["typesafe-api-key".into()],
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        err,
+        ModelSelectionError::DecisionOnly {
+            provider: "typesafe".into()
+        }
+    );
+}
+
 // Covers: descriptor default wins over lexicographic first cached model when present
 // Owner: model catalog
 #[test]

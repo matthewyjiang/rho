@@ -4915,7 +4915,7 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "2.13.1"
+version = "2.14.0"
 dependencies = [
  "anyhow",
  "async-trait",

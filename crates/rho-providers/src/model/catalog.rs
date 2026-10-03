@@ -43,6 +43,14 @@ pub struct ModelSelection {
     pub from_catalog: bool,
 }
 
+/// Why a `provider/model` reference cannot be the chat model.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): mark ModelSelectionError `#[non_exhaustive]` so new variants are minor-compatible.
+///
+/// New variants land in minor releases, as `DecisionOnly` did in 2.14; an
+/// exhaustive match outside this crate breaks on each one until then.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ModelSelectionError {
     #[error("unknown provider '{provider}' for model selection")]
@@ -51,6 +59,8 @@ pub enum ModelSelectionError {
     AmbiguousModel { model: String },
     #[error("model selection cannot be empty")]
     Empty,
+    #[error("provider '{provider}' serves decision models, not chat models")]
+    DecisionOnly { provider: String },
     #[error("model '{model}' is not available for provider '{provider}'. {hint}")]
     UnavailableModel {
         provider: String,
@@ -543,6 +553,11 @@ fn resolve_model_selection_for_provider_from(
     };
     if !implemented_providers().contains(&provider) {
         return Err(ModelSelectionError::UnknownProvider {
+            provider: provider.to_string(),
+        });
+    }
+    if provider::provider_descriptor(provider).is_some_and(|descriptor| !descriptor.serves_chat()) {
+        return Err(ModelSelectionError::DecisionOnly {
             provider: provider.to_string(),
         });
     }

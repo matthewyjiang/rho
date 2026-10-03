@@ -122,8 +122,8 @@ use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
 use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
 use first_run::{
-    setup_prompt_template, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS, FIRST_RUN_SIGNIN_ENV,
-    FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
+    setup_prompt_template, FIRST_RUN_DECISION_HOST_STEPS, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS,
+    FIRST_RUN_SIGNIN_ENV, FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
 };
 use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
@@ -777,6 +777,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Walk a first launch through the full-screen sign-in and model steps",
         DEFAULT_SIZE,
         FIRST_RUN_SETUP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_env(FIRST_RUN_SIGNIN_ENV)
+    .with_setup(first_run::setup_without_credential_store),
+    Scenario::new(
+        "first_run_decision_host",
+        "Sign in to a decision-model host at first launch, then finish setup with a chat provider",
+        DEFAULT_SIZE,
+        FIRST_RUN_DECISION_HOST_STEPS,
         /*smoke*/ false,
     )
     .with_env(FIRST_RUN_SIGNIN_ENV)

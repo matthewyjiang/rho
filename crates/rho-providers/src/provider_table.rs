@@ -16,7 +16,7 @@ use super::{
     OPENAI_API_KEY_ACCOUNT, OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
     OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT, POOLSIDE_API_BASE,
     POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE, QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
-    XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
+    TYPESAFE_API_BASE, TYPESAFE_API_KEY_ACCOUNT, XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -483,6 +483,34 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         openai_compatible_api: OpenAiCompatibleApi::AnthropicMessages,
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: Some("MiniMax-M3"),
+    },
+    // Decision models only (Jev). No static catalog entries and no refresh, so
+    // chat model lists never show it.
+    ProviderDescriptor {
+        id: ProviderId::TypeSafe,
+        runtime: ProviderRuntime::SystemOne {
+            default_api_base: TYPESAFE_API_BASE,
+        },
+        name: "typesafe",
+        display_name: "TypeSafe",
+        auth_modes: &[AuthMode {
+            id: "typesafe-api-key",
+            login_label: "TypeSafe API key",
+            auth_kind: ProviderAuthKind::ApiKey {
+                env_var: "TYPESAFE_API_KEY",
+                account: TYPESAFE_API_KEY_ACCOUNT,
+                entry_label: "TypeSafe API key",
+                missing_message: "missing TypeSafe API key; run /login typesafe in the TUI or set TYPESAFE_API_KEY as a CI/dev override",
+            },
+        }],
+        model_source: ProviderModelSource::StaticCatalog,
+        model_refresh: None,
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "typesafe",
+        catalog_lookup: CatalogLookupMode::Slug,
+        openai_compatible_api: OpenAiCompatibleApi::ChatCompletions,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        default_model: None,
     },
     ProviderDescriptor {
         id: ProviderId::Xai,

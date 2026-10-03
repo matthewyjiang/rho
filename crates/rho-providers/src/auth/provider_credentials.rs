@@ -150,6 +150,11 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                 };
                 Ok(ProviderCredential::OpenAiCompatible(auth))
             }
+            // Decision-model hosts serve no chat models; model selection
+            // refuses them before this point.
+            ProviderRuntime::SystemOne { .. } => {
+                Err(ModelError::UnsupportedProvider(provider.to_string()))
+            }
             ProviderRuntime::Xai => {
                 let (source, tokens) = match selected.auth_kind {
                     ProviderAuthKind::ApiKey { .. } => (

@@ -374,7 +374,7 @@ async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
     assert_eq!((screen_state, review_state), (fitted, full));
 }
 
-// Covers: a screen entry that is not an Ollama model, or uses an auth mode
+// Covers: a screen entry that is not on a decision-model host, or uses an auth mode
 // the screen cannot send, fails the config check naming the configured value
 // instead of being ignored, and a classification under it denies with that
 // reason.
@@ -387,7 +387,7 @@ async fn unusable_decision_screen_config_is_reported() {
         (
             Some(("anthropic", "claude-haiku-4-5", "none")),
             Err(format!(
-                "[internal_agents.{DECISION_SCREEN_ID}] must name a decision model on provider ollama, got anthropic/claude-haiku-4-5"
+                "[internal_agents.{DECISION_SCREEN_ID}] must name a decision model on provider ollama or typesafe, got anthropic/claude-haiku-4-5"
             )),
         ),
         (

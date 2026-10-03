@@ -145,6 +145,74 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// Covers: signing in to a decision-model host, which has no chat models,
+// leaves setup on its sign-in step with the provider menu open, so a chat
+// provider can still finish setup.
+// Owner: interactive setup and login lifecycle.
+pub(super) const FIRST_RUN_DECISION_HOST_STEPS: &[Step] = &[
+    Step::Phase("setup_opens_on_sign_in"),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: STARTUP,
+    },
+    Step::Phase("sign_in_to_decision_host"),
+    Step::TypeText("typesafe"),
+    Step::WaitText {
+        text: "TypeSafe",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Local file",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char('f')),
+    Step::WaitText {
+        text: "enter TypeSafe API key",
+        timeout: SETTLE,
+    },
+    Step::TypeText("ts-fixture-key"),
+    Step::Key(Key::Enter),
+    Step::Phase("provider_menu_reopens"),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Sign in to a provider"),
+    Step::Custom(assert_session_chrome_hidden),
+    Step::Phase("sign_in_to_chat_provider"),
+    Step::TypeText("openai"),
+    Step::WaitText {
+        text: "OpenAI",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "enter OpenAI API key",
+        timeout: SETTLE,
+    },
+    Step::TypeText("sk-fixture-key"),
+    Step::Key(Key::Enter),
+    Step::Phase("choose_model"),
+    Step::WaitText {
+        text: "select model",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::Phase("hand_off_to_session"),
+    Step::WaitText {
+        text: "Type a message",
+        timeout: STARTUP,
+    },
+    Step::Phase("exit"),
+    Step::ExitCommand,
+];
+
 /// Esc at the first step leaves setup for a normal session, so a user who does
 /// not want to sign in yet is never stuck on a screen with no way out.
 pub(super) const FIRST_RUN_SKIP_STEPS: &[Step] = &[

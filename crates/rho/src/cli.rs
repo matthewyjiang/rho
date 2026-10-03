@@ -308,7 +308,8 @@ pub struct ClassifierEvalArgs {
     /// and whose auth is kept when the provider matches.
     #[arg(long, value_name = "MODEL")]
     pub model: Option<String>,
-    /// Decision model that answers the screen, as `ollama/model`. Default:
+    /// Decision model that answers the screen, as `ollama/model` or
+    /// `typesafe/model`. Default:
     /// `[internal_agents.permission-classifier-screen]`, or the classifier
     /// model when that is unset.
     #[arg(long, value_name = "MODEL")]
