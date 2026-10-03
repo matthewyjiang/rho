@@ -2,10 +2,7 @@ use std::{
     future::Future,
     path::PathBuf,
     pin::Pin,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc, RwLock,
-    },
+    sync::{Arc, Mutex, MutexGuard, RwLock},
 };
 
 use rho_sdk::{
@@ -35,7 +32,9 @@ pub(crate) type ClassifyFn =
 
 pub(crate) struct ClassificationInput {
     pub(crate) config: Config,
-    pub(crate) request: ApprovalRequest,
+    /// Shared so the handler gets the request back to escalate it when the
+    /// verdict lands after the deny budget is spent.
+    pub(crate) request: Arc<ApprovalRequest>,
     pub(crate) workspace_path: PathBuf,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
 }
@@ -43,12 +42,14 @@ pub(crate) struct ClassificationInput {
 /// Approval handler that classifies Auto-mode capability requests.
 ///
 /// History and cancellation come from [`ApprovalRequest::context`]. The only
-/// mutable run state is the deny counters, which [`Self::isolate`] resets so
-/// concurrent workflow agents do not share them.
+/// mutable run state is the deny budget, which [`Self::isolate`] resets so
+/// concurrent workflow agents do not share it.
 ///
 /// Requests arrive concurrently ([`ApprovalConcurrency::Concurrent`]), so
 /// parallel tool calls are classified at once instead of queueing behind each
-/// other's review. Escalations to the human still go one at a time.
+/// other's review. Verdicts settle into the budget in completion order, as if
+/// the requests had run one after another in that order, and escalations to
+/// the human go one at a time.
 pub(crate) struct ClassifierApprovalHandler {
     config: RwLock<Config>,
     workspace_path: PathBuf,
@@ -56,11 +57,43 @@ pub(crate) struct ClassifierApprovalHandler {
     classifier: ClassifyFn,
     inner: Option<Arc<dyn ApprovalHandler>>,
     session_writes: Option<SessionWriteLog>,
-    consecutive_denials: AtomicU32,
-    total_denials: AtomicU32,
+    budget: Mutex<DenyBudget>,
     /// Held while a request is escalated, so the human sees one prompt at a
-    /// time and a waiter can see the budgets that answer reset.
+    /// time and a waiter can see the budget that answer reset.
     escalation: tokio::sync::Mutex<()>,
+}
+
+/// Classifier denials counted toward escalating to a human (or cancelling
+/// headless).
+#[derive(Default)]
+struct DenyBudget {
+    consecutive: u32,
+    total: u32,
+}
+
+impl DenyBudget {
+    /// True once either limit is reached. Stays true until a human answers,
+    /// because only a recorded allow resets the streak and [`Self::settle`]
+    /// records nothing once spent.
+    fn is_spent(&self) -> bool {
+        self.consecutive >= CONSECUTIVE_DENY_ESCALATION || self.total >= TOTAL_DENY_ESCALATION
+    }
+
+    /// Records `verdict`, or returns false when the budget is already spent
+    /// and the request that produced it must escalate instead.
+    fn settle(&mut self, verdict: &ClassifierVerdict) -> bool {
+        if self.is_spent() {
+            return false;
+        }
+        match verdict {
+            ClassifierVerdict::Allow => self.consecutive = 0,
+            ClassifierVerdict::Deny { .. } => {
+                self.consecutive += 1;
+                self.total += 1;
+            }
+        }
+        true
+    }
 }
 
 impl ClassifierApprovalHandler {
@@ -78,8 +111,7 @@ impl ClassifierApprovalHandler {
             classifier: default_classifier(),
             inner,
             session_writes,
-            consecutive_denials: AtomicU32::new(0),
-            total_denials: AtomicU32::new(0),
+            budget: Mutex::default(),
             escalation: tokio::sync::Mutex::default(),
         }
     }
@@ -113,8 +145,7 @@ impl ClassifierApprovalHandler {
             classifier,
             inner,
             session_writes: None,
-            consecutive_denials: AtomicU32::new(0),
-            total_denials: AtomicU32::new(0),
+            budget: Mutex::default(),
             escalation: tokio::sync::Mutex::default(),
         }
     }
@@ -168,13 +199,12 @@ impl ClassifierApprovalHandler {
             classifier: Arc::clone(&self.classifier),
             inner: self.inner.clone(),
             session_writes,
-            consecutive_denials: AtomicU32::new(0),
-            total_denials: AtomicU32::new(0),
+            budget: Mutex::default(),
             escalation: tokio::sync::Mutex::default(),
         })
     }
 
-    fn input_for(&self, request: ApprovalRequest) -> ClassificationInput {
+    fn input_for(&self, request: Arc<ApprovalRequest>) -> ClassificationInput {
         let config = self
             .config
             .read()
@@ -188,10 +218,43 @@ impl ClassifierApprovalHandler {
         }
     }
 
-    /// True once either deny budget is spent.
-    fn should_escalate(&self) -> bool {
-        self.consecutive_denials.load(Ordering::Relaxed) >= CONSECUTIVE_DENY_ESCALATION
-            || self.total_denials.load(Ordering::Relaxed) >= TOTAL_DENY_ESCALATION
+    fn budget(&self) -> MutexGuard<'_, DenyBudget> {
+        self.budget
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Escalates `request` if the budget is still spent once it is this
+    /// request's turn to escalate. Gives the request back when a human answer
+    /// reset the budget while it waited.
+    async fn escalate_while_spent(
+        &self,
+        request: ApprovalRequest,
+    ) -> Result<ApprovalDecision, ApprovalRequest> {
+        let _escalation = self.escalation.lock().await;
+        if !self.budget().is_spent() {
+            return Err(request);
+        }
+        let decision = self.escalate_or_deny_headless(request).await;
+        if self.inner.is_some() {
+            *self.budget() = DenyBudget::default();
+        }
+        Ok(decision)
+    }
+
+    /// The decision for a verdict the budget recorded.
+    fn decide(&self, verdict: ClassifierVerdict, request: &ApprovalRequest) -> ApprovalDecision {
+        match verdict {
+            ClassifierVerdict::Allow => {
+                if let Some(writes) = &self.session_writes {
+                    writes.remember(request.capability(), WriteAuthority::Classifier);
+                }
+                ApprovalDecision::AllowOnce
+            }
+            ClassifierVerdict::Deny { reason } => ApprovalDecision::Deny {
+                reason: deny_and_continue_reason(reason),
+            },
+        }
     }
 
     async fn escalate_or_deny_headless(&self, request: ApprovalRequest) -> ApprovalDecision {
@@ -220,36 +283,29 @@ impl ClassifierApprovalHandler {
 impl ApprovalHandler for ClassifierApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {
-            if self.should_escalate() {
-                let _escalation = self.escalation.lock().await;
-                // A human answer given while this request waited reset the
-                // budgets, so it goes back to the classifier instead.
-                if self.should_escalate() {
-                    let decision = self.escalate_or_deny_headless(request).await;
-                    if self.inner.is_some() {
-                        self.consecutive_denials.store(0, Ordering::Relaxed);
-                        self.total_denials.store(0, Ordering::Relaxed);
-                    }
-                    return decision;
+            let mut request = request;
+            // A request that arrives after the budget is spent skips the
+            // classifier.
+            if self.budget().is_spent() {
+                match self.escalate_while_spent(request).await {
+                    Ok(decision) => return decision,
+                    Err(returned) => request = returned,
                 }
             }
 
-            let capability = request.capability().clone();
-            let verdict = (self.classifier)(self.input_for(request)).await;
-            match verdict {
-                ClassifierVerdict::Allow => {
-                    self.consecutive_denials.store(0, Ordering::Relaxed);
-                    if let Some(writes) = &self.session_writes {
-                        writes.remember(&capability, WriteAuthority::Classifier);
-                    }
-                    ApprovalDecision::AllowOnce
+            let shared = Arc::new(request);
+            let verdict = (self.classifier)(self.input_for(Arc::clone(&shared))).await;
+            let mut request = Arc::try_unwrap(shared).unwrap_or_else(|shared| (*shared).clone());
+            // A verdict that lands after concurrent denials spent the budget
+            // escalates like a request that arrives after them, so a late
+            // allow cannot reset a streak that was already due.
+            loop {
+                if self.budget().settle(&verdict) {
+                    return self.decide(verdict, &request);
                 }
-                ClassifierVerdict::Deny { reason } => {
-                    self.consecutive_denials.fetch_add(1, Ordering::Relaxed);
-                    self.total_denials.fetch_add(1, Ordering::Relaxed);
-                    ApprovalDecision::Deny {
-                        reason: deny_and_continue_reason(reason),
-                    }
+                match self.escalate_while_spent(request).await {
+                    Ok(decision) => return decision,
+                    Err(returned) => request = returned,
                 }
             }
         })

@@ -61,7 +61,7 @@ impl ScriptedClassifier {
         let histories = Arc::clone(&self.histories);
         let cancelled = Arc::clone(&self.cancelled);
         Arc::new(move |input: ClassificationInput| {
-            calls.lock().unwrap().push(input.request.clone());
+            calls.lock().unwrap().push((*input.request).clone());
             histories
                 .lock()
                 .unwrap()
@@ -483,4 +483,63 @@ async fn concurrent_escalations_prompt_the_human_once() {
         classifier.call_count(),
         CONSECUTIVE_DENY_ESCALATION as usize + 1
     );
+}
+
+// Covers: verdicts settle in completion order. With four classifications in
+// flight, a late allow that lands after three concurrent denials spent the
+// budget must escalate (here: headless cancel) instead of being trusted.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn late_allow_after_concurrent_denials_spend_the_budget_escalates() {
+    let pending: Arc<Mutex<VecDeque<tokio::sync::oneshot::Receiver<ClassifierVerdict>>>> =
+        Arc::default();
+    let mut verdicts = Vec::new();
+    for _ in 0..=CONSECUTIVE_DENY_ESCALATION {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        verdicts.push(sender);
+        pending.lock().unwrap().push_back(receiver);
+    }
+    let classify: ClassifyFn = {
+        let pending = Arc::clone(&pending);
+        Arc::new(move |_: ClassificationInput| {
+            let verdict = pending
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("one gate per call");
+            Box::pin(async move { verdict.await.expect("test sends every verdict") })
+        })
+    };
+    let handler = Arc::new(ClassifierApprovalHandler::for_tests(classify, None));
+    let cancellation = CancellationToken::new();
+    let mut tasks: VecDeque<_> = (0..=CONSECUTIVE_DENY_ESCALATION)
+        .map(|_| {
+            let handler = Arc::clone(&handler);
+            let request = request().with_context(context_with(Vec::new(), cancellation.clone()));
+            tokio::spawn(async move { handler.request(request).await })
+        })
+        .collect();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !pending.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("every request is classifying at once");
+    let late_allow = verdicts.pop().unwrap();
+    for (index, deny) in verdicts.into_iter().enumerate() {
+        deny.send(ClassifierVerdict::Deny {
+            reason: format!("deny {index}"),
+        })
+        .unwrap();
+        let decision = tasks.pop_front().unwrap().await.unwrap();
+        assert!(matches!(decision, ApprovalDecision::Deny { .. }));
+    }
+    assert!(!cancellation.is_cancelled());
+    late_allow.send(ClassifierVerdict::Allow).unwrap();
+    let decision = tasks.pop_front().unwrap().await.unwrap();
+
+    assert!(matches!(decision, ApprovalDecision::Deny { .. }));
+    assert!(cancellation.is_cancelled());
 }

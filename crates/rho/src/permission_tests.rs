@@ -705,7 +705,9 @@ fn carried_across_keeps_writes_only_for_the_same_grantor() {
 }
 
 // Covers: a human grant is accepted in Auto, but a classifier grant is never
-// accepted in Allow edits.
+// accepted in Allow edits, and a later classifier grant for the same path
+// (a concurrent classification landing after a human escalation) must not
+// downgrade the human one.
 // Owner: application permission policy
 #[test]
 fn human_grants_are_stronger_than_classifier_grants() {
@@ -717,6 +719,7 @@ fn human_grants_are_stronger_than_classifier_grants() {
 
     let writes = SessionWriteLog::default();
     writes.remember(&created_write, WriteAuthority::Human);
+    writes.remember(&created_write, WriteAuthority::Classifier);
     for mode in [PermissionMode::Auto, PermissionMode::AllowEdits] {
         let policy = mode
             .workspace_policy(writes.clone())

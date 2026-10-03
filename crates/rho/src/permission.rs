@@ -231,8 +231,9 @@ impl PermissionMode {
     }
 }
 
-/// Who granted a remembered in-workspace write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Who granted a remembered in-workspace write, declared weakest first so the
+/// ordering is grant strength: a person outranks the classifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum WriteAuthority {
     /// Auto-mode classifier (or its human escalation).
     Classifier,
@@ -281,10 +282,14 @@ impl SessionWriteLog {
         let Some(path) = rememberable_workspace_write(request, self) else {
             return;
         };
+        // Never downgrade: a classifier allow that lands after a human grant
+        // for the same path must not take away what the human allowed.
         self.paths
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(path, authority);
+            .entry(path)
+            .and_modify(|existing| *existing = (*existing).max(authority))
+            .or_insert(authority);
     }
 
     /// Approvals stay with the session when both modes can remember writes.
