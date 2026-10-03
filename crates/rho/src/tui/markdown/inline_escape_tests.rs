@@ -5,6 +5,8 @@ use pretty_assertions::assert_eq;
 // contents cannot be distinguished by the PTY's plain-text assertion.
 #[test]
 fn escape_aware_inline_spans() {
+    // Expected styles come from the global theme; hold it steady.
+    let _guard = crate::tui::theme::theme_test_lock();
     let plain = Theme::text();
     let italic = Theme::markdown_italic();
     let bold = Theme::markdown_bold();

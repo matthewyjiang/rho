@@ -78,6 +78,8 @@ fn classifies_streaming_heading_prefixes_without_committing_early() {
 
 #[test]
 fn preserves_heading_style_across_unicode_wrapping() {
+    // Rendered and expected styles both come from the global theme.
+    let _guard = crate::tui::theme::theme_test_lock();
     let content = "你🙂".repeat(20);
     let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(&format!("### {content}"), 7, &mut fence_state);
