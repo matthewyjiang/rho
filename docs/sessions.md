@@ -81,8 +81,9 @@ capability, including the default agent. Unlike workspace file search, it asks
 for read access to the session storage directory. Checked permission modes may
 ask for approval or deny that outside-workspace read.
 
-Search and read exclude the current session. `action = "recall"` is the one
-current-session action: it returns the original text of a tool result that
+Search and read exclude the current session unless you pass
+`"scope":"current"` (see [Searching the current session](#searching-the-current-session)).
+`action = "recall"` returns the original text of a tool result that
 compaction elided, by the `recall_id` in its stub. Originals are saved in the
 session folder under `recall/`. See
 [Tool-result elision](/configuration/compaction#tool-result-elision).
@@ -103,7 +104,7 @@ Search defaults to the same Git repository, including linked worktrees. Matches
 from the current worktree come first, then BM25 relevance with stable tie breaks.
 Use `"scope":"worktree"` for just this worktree or `"scope":"all"` to search
 across projects. Outside Git, the default scope is the exact working directory.
-The current session is always excluded, including from explicit reads.
+These scopes always exclude the current session, including from explicit reads.
 
 Queries are literal AND terms with English stemming. They are not regular
 expressions, arbitrary substring searches, or SQLite FTS expressions. Use a
@@ -136,6 +137,33 @@ Search again if a read rejects a stale anchor.
 Offsets count Unicode characters, not bytes. Output obeys the configured
 tool byte budget; a too-large read reports the budget and requested size instead
 of silently dropping text.
+
+The `sessions` tool's own calls and results are never indexed, so earlier
+searches do not show up as matches for later ones.
+
+### Searching the current session
+
+Compaction replaces older turns with a summary, but the transcript keeps the
+originals. Use `"scope":"current"` to search them. When the `sessions` tool is
+available, the system prompt tells the agent to do this instead of guessing
+when an earlier detail is no longer in context.
+
+```json
+{"action":"search","query":"migration plan","scope":"current"}
+```
+
+Because there is only one session, current-scope search pages matching
+messages rather than session groups: it returns the session handle,
+`total_matches`, and up to `limit` excerpts in `matches`, with `next_offset`
+for the rest. A message repeated in a later turn is a separate match. Read a
+match with the same scope; reads default to `repo`, which excludes this session:
+
+```json
+{"action":"read","session":"<returned handle>","anchor":"<returned anchor>","scope":"current"}
+```
+
+Only saved turns are searchable. The turn in progress is saved when it ends or
+when compaction runs during it.
 
 Only recorded display evidence is indexed. Model snapshots, provider envelopes,
 repeated tool schemas in those envelopes, token accounting, reasoning and media

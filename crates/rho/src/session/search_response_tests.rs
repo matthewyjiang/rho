@@ -29,6 +29,7 @@ fn page_budget_accounts_for_wire_bytes_and_stops_at_the_first_rejected_group() {
     for (offset, text) in [(0, "plain"), (9, "\"\\\n\0é🦀"), (99, "longer evidence")] {
         let make_page = |budget| {
             Page::new(
+                Sessions,
                 Context::new(Refresh::default()),
                 Scope::All,
                 offset,
@@ -86,6 +87,7 @@ fn complete_pages_use_the_exact_budget_without_a_reduction_notice() {
     ] {
         let assemble = |budget| {
             let mut page = Page::new(
+                Sessions,
                 Context::new(Refresh::default()),
                 Scope::All,
                 offset,

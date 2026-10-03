@@ -200,6 +200,16 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 "#,
         );
     }
+    if tools
+        .iter()
+        .any(|tool| tool.name == crate::session::search::TOOL_NAME)
+    {
+        text.push_str(
+            r#"
+Compaction summarizes older turns, so earlier details can drop out of context. When you need something from earlier in this conversation that is no longer visible, such as an exact error, command, decision, path, or note, search for it with the `sessions` tool using `scope: "current"`, then read a match's `anchor` with the returned `session` and the same `scope: "current"`, instead of guessing or redoing the work. Elided tool-result stubs carry a `recall_id` for `action: "recall"`.
+"#,
+        );
+    }
 
     let mut sources = vec![PromptSource {
         kind: PromptSourceKind::Base,
@@ -851,10 +861,11 @@ mod tests {
     #[test]
     fn tool_gated_sections_follow_the_tool_list() {
         // One stable marker per gated section; the wording is reviewed in PRs.
-        const SECTIONS: [(&str, &str); 3] = [
+        const SECTIONS: [(&str, &str); 4] = [
             ("grep", "`grep` tool"),
             ("edit", "live file-edit tool"),
             ("agent", "Work directly by default"),
+            ("sessions", "`sessions` tool"),
         ];
         let project = TempDir::new().unwrap();
         for (tools, expected) in [
@@ -864,6 +875,7 @@ mod tests {
             (&["apply_patch"][..], &["edit"][..]),
             (&["str_replace"][..], &["edit"][..]),
             (&["agent"][..], &["agent"][..]),
+            (&["sessions"][..], &["sessions"][..]),
         ] {
             let specs: Vec<ToolSpec> = tools
                 .iter()

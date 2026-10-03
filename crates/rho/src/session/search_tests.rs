@@ -472,6 +472,76 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
     .is_err());
 }
 
+// Covers: scope current must reach only this session's saved turns (e.g. ones
+// compaction summarized away), page its matching messages rather than one
+// two-excerpt group, keep a repeated turn as its own hit, and allow reads.
+// Owner: session search contract.
+#[test]
+fn current_scope_pages_only_this_sessions_messages() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let prior = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    prior
+        .append_message(&Message::user_text("noteword prior"))
+        .unwrap();
+    let current = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    // The last note repeats the first in a later turn.
+    let notes = ["noteword one", "noteword two", "noteword one"];
+    for note in notes {
+        current.append_message(&Message::user_text(note)).unwrap();
+    }
+    let search = |offset: usize| {
+        run(
+            root.path(),
+            cwd.path(),
+            current.id(),
+            json!({"action":"search","query":"noteword","scope":"current","limit":2,"offset":offset}),
+        )
+    };
+    let texts = |page: &Value| {
+        page["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|excerpt| excerpt["text"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let (first, second) = (search(0), search(2));
+    assert_eq!(
+        (
+            first["total_matches"].clone(),
+            first["next_offset"].clone(),
+            second["next_offset"].clone()
+        ),
+        (json!(3), json!(2), Value::Null)
+    );
+    let mut found = [texts(&first), texts(&second)].concat();
+    found.sort();
+    let mut expected = notes.map(str::to_owned).to_vec();
+    expected.sort();
+    assert_eq!(found, expected);
+    let read = json!({"action":"read","session":first["session"],
+        "anchor":first["matches"][0]["anchor"],"scope":"current"});
+    assert_eq!(
+        run(root.path(), cwd.path(), current.id(), read.clone())["text"],
+        first["matches"][0]["text"]
+    );
+    // The same handle stays invisible to every other scope.
+    for scope in ["repo", "all"] {
+        let mut read = read.clone();
+        read["scope"] = json!(scope);
+        assert!(execute(
+            root.path(),
+            cwd.path(),
+            current.id(),
+            serde_json::from_value(read).unwrap(),
+            rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+            &CancellationToken::new()
+        )
+        .is_err());
+    }
+}
+
 // Covers: Unicode paging and error evidence must survive compaction envelopes;
 // offsets need to expand the actual match rather than the start of a huge log.
 #[test]
@@ -537,16 +607,39 @@ fn display_record_formats_preserve_roles_and_visible_omissions() {
         let record = json!({"type":kind,"display_messages":[{"message":{"EnrichedAssistant":{
             "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
         assert_eq!(
-            search_evidence::extract(&record, 16)
+            search_evidence::Extractor::default()
+                .extract(&record, 16)
                 .into_iter()
                 .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
                 .collect::<Vec<_>>(),
             vec![("assistant".into(), "answer".into(), 1)]
         );
     }
+    // The sessions tool's own calls and results (here split across records)
+    // would make every later search find its predecessors.
+    let call = |id: &str, name: &str| json!({"ToolCall":{"id":id,"name":name,"arguments":{}}});
+    let result = |id: &str| json!({"message":{"ToolResult":{"id":id,"ok":true,"content":"out"}}});
+    let mut extractor = search_evidence::Extractor::default();
+    let records = [
+        json!({"type":"node","display_messages":[
+            {"message":{"Assistant":[call("s1", "sessions")]}},
+            {"message":{"Assistant":[{"Text":"note"}, call("s2", "sessions"), call("b1", "bash")]}}]}),
+        json!({"type":"node","display_messages":[result("s1"), result("s2"), result("b1")]}),
+    ];
+    assert_eq!(
+        records
+            .iter()
+            .flat_map(|record| extractor.extract(record, 0))
+            .map(|evidence| (evidence.role, evidence.text))
+            .collect::<Vec<_>>(),
+        vec![
+            ("assistant".into(), "note\ntool_call bash {}".into()),
+            ("tool_result".into(), "out".into())
+        ]
+    );
     for kind in ["session", "replace_history", "set_leaf", "upgrade"] {
         assert_eq!(
-            search_evidence::extract(
+            search_evidence::Extractor::default().extract(
                 &json!({"type":kind,"messages":[{"User":[{"Text":"secret"}]}]}),
                 0
             ),

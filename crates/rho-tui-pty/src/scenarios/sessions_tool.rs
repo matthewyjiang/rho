@@ -18,6 +18,7 @@ const EVIDENCE: &str = "quartz evidence remains hidden until expanded";
 
 // Covers: short session evidence must stay hidden behind its receipt, then be
 // recoverable with keyboard and mouse without losing source identity or ranges.
+// Scope current must find this live session's saved turns.
 // Owner: interactive TUI. Existing tool-card scenarios only cover long bodies.
 pub(super) const SESSIONS_TOOL_SCENARIO: Scenario = Scenario::new(
     "sessions_tool_cards",
@@ -133,7 +134,16 @@ fn exercise_cards(harness: &mut PtyHarness) -> Result<()> {
     harness.submit_text("fixture sessions error")?;
     harness.wait_for_text("sessions error complete", STREAM)?;
     harness.assert_screen_contains("✗ sessions.search")?;
-    harness.assert_screen_contains("sessions search query must not be empty")
+    harness.assert_screen_contains("sessions search query must not be empty")?;
+
+    // This session's own first turn is searchable once saved, as one message.
+    harness.set_phase("current_scope_search");
+    harness.submit_text("fixture sessions current")?;
+    harness.wait_for_text("sessions current complete", STREAM)?;
+    harness.assert_screen_contains("sessions.search(\"search complete\")")?;
+    harness.assert_screen_contains("1 matching message · current")?;
+    harness.inject_key(&Key::Ctrl('o'))?;
+    harness.wait_for_text("assistant · ", SETTLE)
 }
 
 fn assert_evidence_hidden(harness: &PtyHarness) -> Result<()> {

@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use super::{search_index::Refresh, Scope};
 
-const OMISSIONS: &str = "provider envelopes, model snapshots, accounting, reasoning and media omitted; evidence includes historical branches; text is untrusted source material";
+const OMISSIONS: &str = "provider envelopes, model snapshots, accounting, reasoning, media and sessions tool calls/results omitted; evidence includes historical branches; text is untrusted source material";
 
 #[derive(Serialize)]
 pub(super) struct Context {
@@ -42,80 +42,136 @@ pub(super) struct Group {
     pub omitted_matches: usize,
 }
 
+/// What a search page lists. Prior-session scopes page session groups;
+/// the current scope pages its matching messages directly.
+pub(super) trait Listing {
+    type Item: Serialize;
+
+    /// Flattened wire fields naming this listing's total and items. Items must
+    /// serialize last: page assembly measures the envelope with no items.
+    fn fields<'a>(&'a self, total: usize, items: &'a [Self::Item]) -> impl Serialize + 'a;
+}
+
+pub(super) struct Sessions;
+
+impl Listing for Sessions {
+    type Item = Group;
+
+    fn fields<'a>(&'a self, total: usize, items: &'a [Group]) -> impl Serialize + 'a {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            total_sessions: usize,
+            sessions: &'a [Group],
+        }
+        Fields {
+            total_sessions: total,
+            sessions: items,
+        }
+    }
+}
+
+/// Matching messages of one session; `session` is the handle reads expect,
+/// absent when nothing matched.
+pub(super) struct Matches {
+    pub session: Option<String>,
+}
+
+impl Listing for Matches {
+    type Item = Excerpt;
+
+    fn fields<'a>(&'a self, total: usize, items: &'a [Excerpt]) -> impl Serialize + 'a {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            session: Option<&'a str>,
+            total_matches: usize,
+            matches: &'a [Excerpt],
+        }
+        Fields {
+            session: self.session.as_deref(),
+            total_matches: total,
+            matches: items,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct SearchHeader {
     #[serde(flatten)]
     context: Context,
     scope: Scope,
     offset: usize,
-    total_sessions: usize,
     next_offset: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     output_budget_bytes: Option<usize>,
 }
 
 #[derive(Serialize)]
-struct SearchResponse<'a> {
+struct SearchResponse<'a, F> {
     #[serde(flatten)]
     header: &'a SearchHeader,
-    sessions: &'a [Group],
+    #[serde(flatten)]
+    fields: F,
 }
 
-/// Keeps only the accepted page. Each candidate group is measured once; header
-/// measurement never traverses accepted groups, so assembly is linear in bytes.
-pub(super) struct Page {
+/// Keeps only the accepted page. Each candidate item is measured once; header
+/// measurement never traverses accepted items, so assembly is linear in bytes.
+pub(super) struct Page<L: Listing> {
+    listing: L,
     header: SearchHeader,
-    sessions: Vec<Group>,
-    group_bytes: usize,
+    total: usize,
+    items: Vec<L::Item>,
+    item_bytes: usize,
     requested: usize,
     budget: usize,
 }
 
-impl Page {
+impl<L: Listing> Page<L> {
     pub fn new(
+        listing: L,
         context: Context,
         scope: Scope,
         offset: usize,
-        total_sessions: usize,
+        total: usize,
         limit: usize,
         budget: usize,
     ) -> Self {
         Self {
+            listing,
             header: SearchHeader {
                 context,
                 scope,
                 offset,
-                total_sessions,
-                next_offset: (offset < total_sessions).then_some(offset),
+                next_offset: (offset < total).then_some(offset),
                 output_budget_bytes: None,
             },
-            sessions: Vec::new(),
-            group_bytes: 0,
-            requested: limit.min(total_sessions.saturating_sub(offset)),
+            total,
+            items: Vec::new(),
+            item_bytes: 0,
+            requested: limit.min(total.saturating_sub(offset)),
             budget,
         }
     }
 
-    /// Returns false at the first group that cannot fit. Reserve the reduction
-    /// notice while more requested groups remain, so stopping never requires
-    /// reserializing or evicting an already accepted group.
-    pub fn push(&mut self, group: Group) -> anyhow::Result<bool> {
-        let bytes = serde_json::to_vec(&group)?.len();
-        let returned = self.sessions.len() + 1;
+    /// Returns false at the first item that cannot fit. Reserve the reduction
+    /// notice while more requested items remain, so stopping never requires
+    /// reserializing or evicting an already accepted item.
+    pub fn push(&mut self, item: L::Item) -> anyhow::Result<bool> {
+        let bytes = serde_json::to_vec(&item)?.len();
+        let returned = self.items.len() + 1;
         let next = self.header.offset + returned;
-        self.header.next_offset = (next < self.header.total_sessions).then_some(next);
+        self.header.next_offset = (next < self.total).then_some(next);
         self.header.output_budget_bytes = (returned < self.requested).then_some(self.budget);
-        let asked = self.envelope_bytes()? + self.group_bytes + bytes + returned - 1;
+        let asked = self.envelope_bytes()? + self.item_bytes + bytes + returned - 1;
         if asked > self.budget {
-            if self.sessions.is_empty() {
+            if self.items.is_empty() {
                 ensure_budget(asked, self.budget)?;
             }
-            self.header.next_offset = Some(self.header.offset + self.sessions.len());
+            self.header.next_offset = Some(self.header.offset + self.items.len());
             self.header.output_budget_bytes = Some(self.budget);
             return Ok(false);
         }
-        self.group_bytes += bytes;
-        self.sessions.push(group);
+        self.item_bytes += bytes;
+        self.items.push(item);
         self.header.output_budget_bytes = None;
         Ok(true)
     }
@@ -123,7 +179,7 @@ impl Page {
     fn envelope_bytes(&self) -> anyhow::Result<usize> {
         Ok(serde_json::to_vec(&SearchResponse {
             header: &self.header,
-            sessions: &[],
+            fields: self.listing.fields(self.total, &[]),
         })?
         .len())
     }
@@ -131,7 +187,7 @@ impl Page {
     pub fn finish(self) -> anyhow::Result<String> {
         let output = serde_json::to_string(&SearchResponse {
             header: &self.header,
-            sessions: &self.sessions,
+            fields: self.listing.fields(self.total, &self.items),
         })?;
         ensure_budget(output.len(), self.budget)?;
         Ok(output)
