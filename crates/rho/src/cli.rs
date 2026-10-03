@@ -282,6 +282,35 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
     /// command: `scripts/compaction_eval.py` drives it.
     #[command(name = "__compaction_eval", hide = true)]
     CompactionEval(CompactionEvalArgs),
+    /// Offline permission classifier eval. A development tool, not a public
+    /// command: `scripts/classifier_eval.py` drives it.
+    #[command(name = "__classifier_eval", hide = true)]
+    ClassifierEval(ClassifierEvalArgs),
+}
+
+/// Settings for one permission classifier eval run. Cases come from labeled
+/// case files, saved sessions, or both.
+#[derive(clap::Args, Debug)]
+pub struct ClassifierEvalArgs {
+    /// Labeled case file (JSON Lines).
+    #[arg(long = "cases", value_name = "PATH")]
+    pub cases: Vec<PathBuf>,
+    /// Saved session transcript (`session.jsonl`) or its session folder.
+    /// Its `bash` and `write` calls replay as unlabeled cases.
+    #[arg(long = "session", value_name = "PATH")]
+    pub sessions: Vec<PathBuf>,
+    /// Replayed calls per session, spread evenly through it.
+    #[arg(long, value_name = "N", default_value = "5")]
+    pub per_session: NonZeroUsize,
+    /// Classifier model as `provider/model`. Default:
+    /// `[internal_agents.permission-classifier]`, whose reasoning is kept.
+    #[arg(long, value_name = "MODEL")]
+    pub model: Option<String>,
+    /// Cases classified at once. Latency is per case, and concurrent
+    /// requests queue at the provider: on 15 cases against openai-codex,
+    /// eight at once raised median latency from 1.6 s to 11.3 s.
+    #[arg(long, value_name = "N", default_value = "1")]
+    pub jobs: NonZeroUsize,
 }
 
 /// Settings for one compaction eval run. Unset compaction settings come from

@@ -1,13 +1,13 @@
 //! Read-only access to a saved transcript's uncompacted model history, for the
-//! offline compaction eval. Never takes a session lease or writes.
+//! offline compaction and classifier evals. Never takes a session lease or writes.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rho_providers::model::Message;
 
 use super::{
     layout::{session_id_from_path, SessionUnit},
-    persistence::insert_interrupted_tool_placeholders,
+    persistence::{insert_interrupted_tool_placeholders, read_session_cwd},
     tree::{SessionNodeKind, SessionTree},
 };
 
@@ -40,4 +40,12 @@ pub(crate) fn load(path: &Path) -> anyhow::Result<(String, Vec<ReplayPoint>)> {
         }
     }
     Ok((id, points))
+}
+
+/// Workspace directory a saved session ran in.
+pub(crate) fn session_cwd(path: &Path) -> anyhow::Result<PathBuf> {
+    let transcript = SessionUnit::from_path(path)
+        .ok_or_else(|| anyhow::anyhow!("not a session transcript: {}", path.display()))?
+        .transcript_path();
+    read_session_cwd(&transcript)
 }

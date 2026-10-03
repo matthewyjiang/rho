@@ -4,7 +4,10 @@ mod transcript;
 mod verdict;
 
 use budget::{TranscriptBudget, TranscriptOverBudget};
-pub(crate) use classify::{classify_capability_request, ClassifyRequest};
+pub(crate) use classify::{
+    classify_capability_request, ClassifierModel, ClassifyRequest, ScreenOutcome,
+};
+#[cfg(test)]
 pub(crate) use transcript::render_classifier_transcript;
 pub(crate) use verdict::{
     parse_classifier_verdict, parse_screen_verdict, ClassifierVerdict, ScreenVerdict,

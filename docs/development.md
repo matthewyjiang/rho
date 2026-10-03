@@ -294,6 +294,30 @@ The script prints a Markdown table: mean probe scores, post-compaction size as a
 
 Saved sessions contain your code and any secrets you pasted or printed. The eval sends them to the models you configure, the same way the original session did. Reports quote transcript excerpts, so keep them local and never commit them. Eval requests do not reach the usage ledger or `compaction_events`, and elided tool results go to a temporary directory that is deleted after each point.
 
+## Permission classifier eval
+
+The Auto-mode permission classifier has an offline eval for prompt, protocol, and model changes. It runs the production classifier pipeline on two kinds of cases:
+
+- **Labeled cases** in `crates/rho/src/app/classifier_eval/cases.jsonl` measure false allows and false denies. They cover routine requests, questionnaire consent, scope creep, destructive commands, exfiltration, and injected claims of approval.
+- **Replayed calls** from saved sessions are unlabeled. Each `bash` command and `write` call becomes a case whose history ends at that call, as it does when approval is requested. Edits to existing tracked files usually pass the Allow edits gate, so other edit tools are not replayed. Calls the tool would reject before asking for approval are skipped. Production resolves symlinks before deciding whether a path is inside the workspace, and replay decides from the path text, so a write through a symlink can land in a different scope than it did live. Comparing two reports on the same sessions lists every decision a change flips.
+
+```bash
+cargo build -p rho-coding-agent -j 8
+python3 scripts/classifier_eval.py --recent 20 --per-session 5 \
+  --variant current= \
+  --variant other='--model PROVIDER/MODEL' --baseline current
+```
+
+Each `--variant` passes arguments to the hidden `rho __classifier_eval` command. `--model provider/model` swaps the classifier model and keeps the configured reasoning override. To compare two builds, run each with its own `--rho` and variant name into the same `--out`, then use `--render-only --baseline NAME`. Pass fixed `--session` paths for those runs, because `--recent` can pick different sessions between runs.
+
+Variants run in parallel, and each classifies one case at a time by default. Latency is measured per case, and concurrent requests queue at the provider. On 15 cases against `openai-codex/gpt-6-luna`, `--jobs 8` raised the median from 1.6 s to 11.3 s with no errors and identical verdicts. Raise `--jobs` for a faster run when latency does not matter.
+
+The script prints false allows, false denies, errors, allow and screen-escalation rates, and median latency per variant, then the IDs behind each count. A failed classification counts as an error, not a deny. Production denies it, but counting it as a correct deny would let a broken variant look safe. With `--baseline`, the script also lists flipped cases with their commands or paths. Each case carries a digest of the input the classifier saw. A case that only one report has, or whose digest changed (for example, a replayed session that grew between runs), is listed separately instead of counted as a flip, and the script exits nonzero.
+
+Each line in the case file holds `id`, `label` (`allow` or `deny`), `category`, a `note` that explains the label, a `history` of `{"user": ...}`, `{"call": {"id", "name", "arguments"}}`, and `{"result": {"id", "content", "ok"}}` entries, and a `pending` request: `{"kind": "process", "command": ...}`, `{"kind": "write", "path": ..., "content": ...}`, or `{"kind": "read", "path": ...}`. Paths resolve against `/workspace`, and a path outside it is an unrestricted request. The eval appends the pending call as the last assistant message.
+
+Replayed sessions contain your code and secrets. They go only to the classifier models the variants configure, and reports under `--out` (default `/tmp/rho-classifier-eval`, private permissions) quote commands and paths. Keep reports local and never commit them. Eval requests do not reach the usage ledger.
+
 ## Provider identity and auth modes
 
 A provider identifies one API or product surface. If two login methods use the same API base, wire protocol, and model catalog, add both to that provider's `auth_modes` list rather than adding a second provider. The first mode is the default. Keep separate providers when endpoints, protocols, catalogs, or product surfaces differ. For example, OpenRouter API-key and OAuth access share `openrouter`, while the OpenAI API and Codex remain `openai` and `openai-codex`.

@@ -37,12 +37,8 @@ struct CallOccurrence<'a> {
     lifecycle: CallLifecycle,
 }
 
-/// Renders the classifier transcript and fits it into `budget`.
-///
-/// Answered and aborted calls are capped and droppable. Unanswered calls and
-/// answered calls sharing the pending call's ID stay whole, because their
-/// arguments may describe the action being classified. Over-budget failures
-/// surface as a [`super::TranscriptOverBudget`] inside the returned error.
+/// [`render_with_pending_call`] with the ID the SDK attached to `pending`.
+#[cfg(test)]
 pub(crate) fn render_classifier_transcript(
     history: &[Message],
     pending: &ApprovalRequest,
@@ -52,8 +48,15 @@ pub(crate) fn render_classifier_transcript(
     render_with_pending_call(history, pending, pending_call_id, budget)
 }
 
-/// [`render_classifier_transcript`] with the pending call ID passed in, since
-/// only the SDK can attach one to an [`ApprovalRequest`].
+/// Renders the classifier transcript and fits it into `budget`.
+///
+/// Answered and aborted calls are capped and droppable. Unanswered calls and
+/// answered calls sharing `pending_call_id` stay whole, because their
+/// arguments may describe the action being classified. Over-budget failures
+/// surface as a [`super::TranscriptOverBudget`] inside the returned error.
+///
+/// The ID is a parameter because only the SDK can attach one to an
+/// [`ApprovalRequest`]; the classifier eval supplies replayed call IDs.
 pub(super) fn render_with_pending_call(
     history: &[Message],
     pending: &ApprovalRequest,
