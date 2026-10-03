@@ -430,6 +430,39 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
     );
 }
 
+// Covers: an agent pin to a decision-model host, by provider or by auth,
+// fails at bind instead of becoming a conversation provider that cannot chat.
+// Owner: agent binding
+#[test]
+fn agent_pin_to_a_decision_model_host_is_refused() {
+    let pins = [
+        ("provider", Some("typesafe"), None),
+        ("auth", None, Some("typesafe-api-key")),
+    ];
+    for (name, provider, auth) in pins {
+        let error = AgentBinder::bind(
+            definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
+                provider: provider.map(str::to_owned),
+                model: "jev-latest".into(),
+                auth: auth.map(str::to_owned),
+                fast: false,
+            })),
+            AgentInvocation {
+                role: AgentRole::InteractiveRoot,
+                available_tools: capabilities(),
+            },
+            &Config::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "agent 'test': provider 'typesafe' serves decision models, not chat models",
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn undefined_agent_model_alias_names_agent_and_reference() {
     let error = AgentBinder::bind(

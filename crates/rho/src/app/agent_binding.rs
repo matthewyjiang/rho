@@ -678,6 +678,10 @@ fn apply_rho_model_policy(
                 selection.auth.as_deref(),
                 store,
             )?;
+            // Config load and CLI overrides already refused a decision-model
+            // host; a pin replaces the provider after both.
+            crate::config::ensure_serves_chat(&config.provider)
+                .map_err(|error| anyhow::anyhow!("agent '{agent_id}': {error}"))?;
             config.model = resolved.model;
             Ok(())
         }
