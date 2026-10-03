@@ -252,7 +252,11 @@ def main() -> int:
     summaries = {}
     for name, report in loaded.items():
         summaries[name] = summarize(report)
-        print(f"{name}: {report['model']} reasoning={report['reasoning']}", file=sys.stderr)
+        print(
+            f"{name}: {report['model']} auth={report['auth']} "
+            f"reasoning={report['reasoning']}",
+            file=sys.stderr,
+        )
     print(render(summaries))
     for name, summary in summaries.items():
         for kind in ("false_allows", "false_denies", "errors"):

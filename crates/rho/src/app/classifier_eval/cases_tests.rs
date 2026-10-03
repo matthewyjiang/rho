@@ -5,6 +5,7 @@ use rho_providers::model::{AbortedAssistant, ContentBlock, Message, ToolCall, To
 use rho_sdk::{CapabilityOperation, CapabilityRequest, PathScope};
 
 use super::cases::{parse_fixture_cases, replay_cases, Decision};
+use crate::session::replay_points::HistorySegment;
 
 /// Path and scope of a path request; process requests return the command.
 /// Paths compare by component, so the assertions hold on Windows too.
@@ -105,7 +106,8 @@ fn committed_cases_load() {
 // Covers: replay picks only calls that reach the classifier, never aborted
 // ones or ones the tool rejects before approval, keeps each call's own ID, and
 // ends each history at the call's assistant message so the call is unanswered,
-// as it is when approval is requested.
+// as it is when approval is requested. Calls after a compaction replay on the
+// compacted history, and calls kept across it are not replayed twice.
 // Owner: classifier eval session replay.
 #[test]
 fn replay_ends_each_history_at_its_unanswered_call() {
@@ -149,7 +151,27 @@ fn replay_ends_each_history_at_its_unanswered_call() {
         ]),
     ];
 
-    let cases = replay_cases("s", Path::new("/repo"), &history, /*per_session*/ 5);
+    let compacted = vec![
+        Message::User(vec![ContentBlock::Text("summary stand-in".into())]),
+        history[1].clone(),
+        Message::Assistant(vec![call(
+            "call_0",
+            "bash",
+            serde_json::json!({"command": "make"}),
+        )]),
+    ];
+    let segments = [
+        HistorySegment {
+            messages: history,
+            new_from: 0,
+        },
+        HistorySegment {
+            messages: compacted,
+            new_from: 2,
+        },
+    ];
+
+    let cases = replay_cases("s", Path::new("/repo"), &segments, /*per_session*/ 5);
 
     let described: Vec<_> = cases
         .iter()
@@ -166,13 +188,13 @@ fn replay_ends_each_history_at_its_unanswered_call() {
         described,
         vec![
             (
-                "s:1:call_0".to_owned(),
+                "s:0.1:call_0".to_owned(),
                 "call_0".to_owned(),
                 2,
                 (PathBuf::from("ls"), None)
             ),
             (
-                "s:4:call_1".to_owned(),
+                "s:0.4:call_1".to_owned(),
                 "call_1".to_owned(),
                 5,
                 (
@@ -180,11 +202,17 @@ fn replay_ends_each_history_at_its_unanswered_call() {
                     Some(PathScope::UnrestrictedFilesystem)
                 )
             ),
+            (
+                "s:1.2:call_0".to_owned(),
+                "call_0".to_owned(),
+                3,
+                (PathBuf::from("make"), None)
+            ),
         ]
     );
-    let last = replay_cases("s", Path::new("/repo"), &history, /*per_session*/ 1);
+    let last = replay_cases("s", Path::new("/repo"), &segments, /*per_session*/ 1);
     assert_eq!(
         last.iter().map(|case| case.id.as_str()).collect::<Vec<_>>(),
-        ["s:4:call_1"]
+        ["s:1.2:call_0"]
     );
 }

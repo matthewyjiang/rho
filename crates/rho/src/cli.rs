@@ -299,11 +299,13 @@ pub struct ClassifierEvalArgs {
     /// Its `bash` and `write` calls replay as unlabeled cases.
     #[arg(long = "session", value_name = "PATH")]
     pub sessions: Vec<PathBuf>,
-    /// Replayed calls per session, spread evenly through it.
+    /// Replayed calls per session, spread evenly through its whole active
+    /// path, including turns after a compaction.
     #[arg(long, value_name = "N", default_value = "5")]
     pub per_session: NonZeroUsize,
     /// Classifier model as `provider/model`. Default:
-    /// `[internal_agents.permission-classifier]`, whose reasoning is kept.
+    /// `[internal_agents.permission-classifier]`, whose reasoning is kept,
+    /// and whose auth is kept when the provider matches.
     #[arg(long, value_name = "MODEL")]
     pub model: Option<String>,
     /// Cases classified at once. Latency is per case, and concurrent

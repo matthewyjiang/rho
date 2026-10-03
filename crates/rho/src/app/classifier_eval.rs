@@ -36,6 +36,11 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
         select_classifier_model(&mut config, reference)?;
     }
     let model = ClassifierModel::resolve(&config).await?;
+    let auth = config
+        .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
+        .and_then(InternalAgentModelConfig::rho)
+        .map(|selection| selection.auth.clone())
+        .unwrap_or_default();
 
     let mut eval_cases = Vec::new();
     for path in &args.cases {
@@ -70,6 +75,7 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
     let report = Report {
         schema_version: REPORT_SCHEMA_VERSION,
         model: rho_providers::provider::model_reference(&identity.provider, &identity.model),
+        auth,
         reasoning: model.reasoning().to_string(),
         cases: reports,
     };
@@ -78,17 +84,18 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
 }
 
 /// Points the classifier at `reference`, keeping any configured reasoning
-/// override so a model comparison changes one thing at a time.
+/// override, and the configured auth when the provider stays the same, so a
+/// model comparison changes one thing at a time.
 fn select_classifier_model(config: &mut Config, reference: &str) -> anyhow::Result<()> {
     let (provider, model) = split_reference(reference)?;
-    let reasoning = config
-        .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
-        .and_then(|selection| selection.reasoning);
-    let mut selection = InternalAgentModelConfig::new(
-        provider.into(),
-        model.into(),
-        default_auth(config, provider),
-    );
+    let current = config.internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID);
+    let reasoning = current.and_then(|selection| selection.reasoning);
+    let auth = current
+        .and_then(InternalAgentModelConfig::rho)
+        .filter(|selection| selection.provider == provider)
+        .map(|selection| selection.auth.clone())
+        .unwrap_or_else(|| default_auth(config, provider));
+    let mut selection = InternalAgentModelConfig::new(provider.into(), model.into(), auth);
     selection.reasoning = reasoning;
     config.set_internal_agent_model_config(PERMISSION_CLASSIFIER_AGENT_ID, selection);
     Ok(())
@@ -149,6 +156,7 @@ fn input_digest(case: &EvalCase) -> String {
 struct Report {
     schema_version: u32,
     model: String,
+    auth: String,
     reasoning: String,
     cases: Vec<CaseReport>,
 }

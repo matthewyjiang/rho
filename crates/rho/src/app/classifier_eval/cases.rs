@@ -23,7 +23,10 @@ use rho_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{history_message::HistoryMessage, session::replay_points};
+use crate::{
+    history_message::HistoryMessage,
+    session::replay_points::{self, HistorySegment},
+};
 
 /// Workspace root every fixture case runs in.
 const FIXTURE_WORKSPACE: &str = "/workspace";
@@ -91,54 +94,55 @@ pub(super) fn parse_fixture_cases(text: &str) -> anyhow::Result<Vec<EvalCase>> {
 }
 
 /// Replays up to `per_session` eligible calls from a saved session, spread
-/// evenly through its history before the first compaction.
+/// evenly through its whole active path.
 pub(super) fn replay_session(path: &Path, per_session: usize) -> anyhow::Result<Vec<EvalCase>> {
-    let (session_id, points) = replay_points::load(path)?;
+    let (session_id, segments) = replay_points::segments(path)?;
     let cwd = replay_points::session_cwd(path)?;
-    Ok(points
-        .last()
-        .map(|point| replay_cases(&session_id, &cwd, &point.messages, per_session))
-        .unwrap_or_default())
+    Ok(replay_cases(&session_id, &cwd, &segments, per_session))
 }
 
 /// Each case's history ends with the assistant message holding its call, so
-/// the call is unanswered, as it is when approval is requested. Aborted calls
-/// never asked for approval and are skipped.
+/// the call is unanswered, as it is when approval is requested. A call is
+/// replayed from the compaction segment it was made in, after any summary
+/// that preceded it. Aborted calls never asked for approval and are skipped.
 pub(super) fn replay_cases(
     session_id: &str,
     cwd: &Path,
-    history: &[Message],
+    segments: &[HistorySegment],
     per_session: usize,
 ) -> Vec<EvalCase> {
     let mut eligible = Vec::new();
-    for (index, message) in history.iter().enumerate() {
-        let blocks = match HistoryMessage::of(message) {
-            HistoryMessage::Assistant(blocks) => blocks,
-            HistoryMessage::EnrichedAssistant(assistant) => assistant.content.as_slice(),
-            HistoryMessage::AbortedAssistant(_)
-            | HistoryMessage::System(_)
-            | HistoryMessage::User(_)
-            | HistoryMessage::CompactionSummary(_)
-            | HistoryMessage::ToolResult(_)
-            | HistoryMessage::ToolImageSupplement(_) => continue,
-        };
-        for block in blocks {
-            let ContentBlock::ToolCall(call) = block else {
-                continue;
+    for (segment_index, segment) in segments.iter().enumerate() {
+        let history = &segment.messages;
+        for (index, message) in history.iter().enumerate().skip(segment.new_from) {
+            let blocks = match HistoryMessage::of(message) {
+                HistoryMessage::Assistant(blocks) => blocks,
+                HistoryMessage::EnrichedAssistant(assistant) => assistant.content.as_slice(),
+                HistoryMessage::AbortedAssistant(_)
+                | HistoryMessage::System(_)
+                | HistoryMessage::User(_)
+                | HistoryMessage::CompactionSummary(_)
+                | HistoryMessage::ToolResult(_)
+                | HistoryMessage::ToolImageSupplement(_) => continue,
             };
-            if let Some((capability, summary)) = replay_request(call, cwd) {
-                eligible.push((index, &call.id, capability, summary));
+            for block in blocks {
+                let ContentBlock::ToolCall(call) = block else {
+                    continue;
+                };
+                if let Some((capability, summary)) = replay_request(call, cwd) {
+                    eligible.push((segment_index, history, index, &call.id, capability, summary));
+                }
             }
         }
     }
     spread_evenly(eligible.len(), per_session)
         .into_iter()
         .map(|choice| {
-            let (index, call_id, capability, summary) = &eligible[choice];
+            let (segment_index, history, index, call_id, capability, summary) = &eligible[choice];
             EvalCase {
-                // Call IDs can repeat across responses; the message index keeps
-                // the case ID unique.
-                id: format!("{session_id}:{index}:{call_id}"),
+                // Call IDs can repeat across responses; the segment and message
+                // index keep the case ID unique.
+                id: format!("{session_id}:{segment_index}.{index}:{call_id}"),
                 source: CaseSource::Replay,
                 category: None,
                 label: None,

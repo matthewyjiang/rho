@@ -299,7 +299,7 @@ Saved sessions contain your code and any secrets you pasted or printed. The eval
 The Auto-mode permission classifier has an offline eval for prompt, protocol, and model changes. It runs the production classifier pipeline on two kinds of cases:
 
 - **Labeled cases** in `crates/rho/src/app/classifier_eval/cases.jsonl` measure false allows and false denies. They cover routine requests, questionnaire consent, scope creep, destructive commands, exfiltration, and injected claims of approval.
-- **Replayed calls** from saved sessions are unlabeled. Each `bash` command and `write` call becomes a case whose history ends at that call, as it does when approval is requested. Edits to existing tracked files usually pass the Allow edits gate, so other edit tools are not replayed. Calls the tool would reject before asking for approval are skipped. Production resolves symlinks before deciding whether a path is inside the workspace, and replay decides from the path text, so a write through a symlink can land in a different scope than it did live. Comparing two reports on the same sessions lists every decision a change flips.
+- **Replayed calls** from saved sessions are unlabeled. Each `bash` command and `write` call becomes a case whose history ends at that call, as it does when approval is requested. Calls after a compaction are replayed on the compacted history the live classifier saw. Edits to existing tracked files usually pass the Allow edits gate, so other edit tools are not replayed. Calls the tool would reject before asking for approval are skipped. Production resolves symlinks before deciding whether a path is inside the workspace, and replay decides from the path text, so a write through a symlink can land in a different scope than it did live. Comparing two reports on the same sessions lists every decision a change flips.
 
 ```bash
 cargo build -p rho-coding-agent -j 8
@@ -308,7 +308,7 @@ python3 scripts/classifier_eval.py --recent 20 --per-session 5 \
   --variant other='--model PROVIDER/MODEL' --baseline current
 ```
 
-Each `--variant` passes arguments to the hidden `rho __classifier_eval` command. `--model provider/model` swaps the classifier model and keeps the configured reasoning override. To compare two builds, run each with its own `--rho` and variant name into the same `--out`, then use `--render-only --baseline NAME`. Pass fixed `--session` paths for those runs, because `--recent` can pick different sessions between runs.
+Each `--variant` passes arguments to the hidden `rho __classifier_eval` command. `--model provider/model` swaps the classifier model. It keeps the configured reasoning override, and keeps the classifier's auth when the provider is the same; the report records the auth that ran. To compare two builds, run each with its own `--rho` and variant name into the same `--out`, then use `--render-only --baseline NAME`. Pass fixed `--session` paths for those runs, because `--recent` can pick different sessions between runs.
 
 Variants run in parallel, and each classifies one case at a time by default. Latency is measured per case, and concurrent requests queue at the provider. On 15 cases against `openai-codex/gpt-6-luna`, `--jobs 8` raised the median from 1.6 s to 11.3 s with no errors and identical verdicts. Raise `--jobs` for a faster run when latency does not matter.
 
