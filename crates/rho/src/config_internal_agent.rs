@@ -5,12 +5,25 @@
 
 use {crate::model_aliases::ModelAliases, rho_providers::reasoning::ReasoningLevel};
 
+/// How a decision-model entry, such as the permission screen, asks its model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelKind {
+    /// Over the System One API, on a decision-model host.
+    Decision,
+    /// As a chat model, through the text adapter.
+    Text,
+}
+
 /// Provider selection for an internal agent that runs on Rho's own stack.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RhoInternalAgentModel {
     pub provider: String,
     pub model: String,
     pub auth: String,
+    /// The `kind` key. Only decision-model entries read it; `None` takes the
+    /// entry's default.
+    pub kind: Option<ModelKind>,
     pub(super) model_alias: Option<String>,
 }
 
@@ -48,6 +61,7 @@ impl InternalAgentModelConfig {
                 provider,
                 model,
                 auth,
+                kind: None,
                 model_alias: None,
             }),
             reasoning: None,

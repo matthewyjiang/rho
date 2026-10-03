@@ -45,6 +45,16 @@ pub(super) enum InternalAgentModelPickerOrigin {
     /// no classifier model. Selection keeps Auto; cancel falls back to
     /// Supervised. Opens alone in the composer (no parent picker).
     PermissionModeStartup,
+    /// The permission screen's picker, opened from its config row; returns to
+    /// config.
+    PermissionScreenModelConfigRow,
+    /// The permission screen's picker, opened by Auto setup from the config
+    /// picker's permission mode row once a classifier model is picked. Esc
+    /// keeps the classifier model; either way returns to config.
+    PermissionScreenSetupConfigRow,
+    /// The permission screen's picker, opened by `/permissions auto` once a
+    /// classifier model is picked. Opens alone in the composer.
+    PermissionScreenSetupCommand,
 }
 
 impl InternalAgentModelPickerOrigin {
@@ -56,6 +66,7 @@ impl InternalAgentModelPickerOrigin {
                 | Self::AdvisorModelCommand
                 | Self::PermissionModeStartup
                 | Self::PermissionModeCommand
+                | Self::PermissionScreenSetupCommand
         )
     }
 }

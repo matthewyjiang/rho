@@ -111,12 +111,14 @@ struct PersistedInternalAgentModelConfig<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     auth: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<super::ModelKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ReasoningLevel>,
 }
 
 impl<'a> PersistedInternalAgentModelConfig<'a> {
     fn new(selection: &'a InternalAgentModelConfig, aliases: &'a ModelAliases) -> Self {
-        let (runtime, provider, model, auth) = match &selection.target {
+        let (runtime, provider, model, auth, kind) = match &selection.target {
             InternalAgentTarget::Rho(rho) => (
                 None,
                 Some(rho.provider.as_str()),
@@ -125,11 +127,13 @@ impl<'a> PersistedInternalAgentModelConfig<'a> {
                     &rho.model,
                 )),
                 Some(rho.auth.as_str()),
+                rho.kind,
             ),
             InternalAgentTarget::ClaudeCli { model } => (
                 Some(CLAUDE_CLI_RUNTIME_KEY),
                 None,
                 model.as_deref().map(Cow::Borrowed),
+                None,
                 None,
             ),
         };
@@ -138,6 +142,7 @@ impl<'a> PersistedInternalAgentModelConfig<'a> {
             provider,
             model,
             auth,
+            kind,
             reasoning: selection.reasoning,
         }
     }

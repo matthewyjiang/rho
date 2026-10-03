@@ -5,5 +5,7 @@
 mod resolve;
 mod text_model;
 
-pub(crate) use resolve::{resolve, ConfigError};
+pub(crate) use resolve::{
+    discovered_decision_model, entry_kind, kind_mismatch, resolve, ConfigError, EntryModel,
+};
 pub(crate) use text_model::TextModel;

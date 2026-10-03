@@ -22,7 +22,8 @@ pub(crate) use report::{
 };
 
 use crate::{
-    clipboard::ClipboardDoctorReport, plugins::PluginLoadReport, tools::mcp::McpSessionReport,
+    clipboard::ClipboardDoctorReport, config::InternalAgentModelConfig, plugins::PluginLoadReport,
+    tools::mcp::McpSessionReport,
 };
 
 /// Everything the instant checks need, borrowed from the host.
@@ -38,6 +39,8 @@ pub(crate) struct DoctorInputs<'a> {
     pub(crate) clipboard: &'a ClipboardDoctorReport,
     pub(crate) mcp_report: &'a McpSessionReport,
     pub(crate) plugins_report: &'a PluginLoadReport,
+    /// The permission screen's configured model, when it is not the classifier's.
+    pub(crate) permission_screen: Option<&'a InternalAgentModelConfig>,
     /// Probes the host will run, rendered as `Checking` rows until they finish.
     pub(crate) probes: &'a [DoctorProbeId],
 }
@@ -58,6 +61,11 @@ pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
         inputs.auth,
         inputs.available_auths,
     ));
+    rows.extend(
+        inputs
+            .permission_screen
+            .map(checks::permission_screen_check),
+    );
     rows.push(checks::herdr_check(inputs.herdr));
     rows.push(checks::path_check(
         DoctorCheckId::ConfigPath,

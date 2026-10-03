@@ -37,7 +37,7 @@ pub(crate) use google::{thinking_policy, ThinkingPolicy};
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
 #[path = "provider_models/ollama.rs"]
-mod ollama;
+pub(super) mod ollama;
 #[path = "provider_models/openai_compatible.rs"]
 mod openai_compatible;
 #[path = "provider_models/request_auth.rs"]
@@ -573,7 +573,18 @@ fn parse_github_copilot_models(
     Ok(models)
 }
 
-fn provider_models_client() -> Result<reqwest::Client, ModelError> {
+// Share request authentication without exposing the credential-bearing auth type.
+pub(super) async fn authorized_models_get(
+    client: &reqwest::Client,
+    url: Url,
+    mode: provider::AuthMode,
+    store: &dyn CredentialStore,
+) -> Result<reqwest::RequestBuilder, ModelError> {
+    let auth = request_auth::load(mode, store, client).await?;
+    request_auth::authorize_get(client, url, &auth)
+}
+
+pub(super) fn provider_models_client() -> Result<reqwest::Client, ModelError> {
     Ok(crate::reqwest_client_builder()
         .timeout(Duration::from_secs(5))
         .build()?)
@@ -623,7 +634,7 @@ struct OpenAiModel {
     kimi_reasoning: kimi_capabilities::KimiReasoningMetadata,
 }
 
-fn open_provider_models_cache() -> rusqlite::Result<Connection> {
+pub(super) fn open_provider_models_cache() -> rusqlite::Result<Connection> {
     let path = provider_models_sqlite_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);

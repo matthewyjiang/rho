@@ -23,6 +23,7 @@ use super::{
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
     clipboard::ClipboardDoctorReport,
+    config::InternalAgentModelConfig,
     cursor_runtime::auth::{CursorAuthError, CursorAuthStatus, CursorProbeSnapshot},
     herdr::HerdrReporter,
     plugins::{PluginLoadReport, PluginLoadSummary},
@@ -304,6 +305,20 @@ pub(super) fn selected_model_check(
     } else {
         DoctorCheck::new(id, "Selected model", DoctorStatus::Fail, "unavailable")
             .with_hint(format!("{reference} using {auth} authentication"))
+    }
+}
+
+/// Warns when the permission screen's entry asks a model as the wrong kind,
+/// judged by the decision models its provider listed at the last refresh.
+pub(super) fn permission_screen_check(configured: &InternalAgentModelConfig) -> DoctorCheck {
+    let id = DoctorCheckId::PermissionScreen;
+    let reference = configured.display_reference();
+    match configured.rho().and_then(crate::decision::kind_mismatch) {
+        Some(mismatch) => DoctorCheck::new(id, "Permission screen model", DoctorStatus::Warn, mismatch)
+            .with_hint(format!(
+                "set kind in [internal_agents.permission-classifier-screen] or pick {reference} again in /config"
+            )),
+        None => DoctorCheck::new(id, "Permission screen model", DoctorStatus::Ok, reference),
     }
 }
 

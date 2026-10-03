@@ -294,6 +294,13 @@ impl App {
             return Ok(());
         };
         let id = target.id.as_str();
+        if id == crate::permission_classifier::DECISION_SCREEN_ID {
+            let selected =
+                self.commit_screen_model(model_picker::parse_internal_agent_model_row(value))?;
+            return self
+                .finish_internal_agent_model_flow(target, selected, agent)
+                .await;
+        }
         let selected = match model_picker::parse_internal_agent_model_row(value) {
             model_picker::InternalAgentModelRow::Conversation => {
                 self.select_internal_agent_model(id, None)?;
@@ -302,6 +309,11 @@ impl App {
             model_picker::InternalAgentModelRow::ClaudeCode { model } => {
                 self.select_internal_agent_claude_model(id, model)?;
                 true
+            }
+            // Only the permission screen's picker lists decision models.
+            model_picker::InternalAgentModelRow::Decision { .. } => {
+                self.set_status(format!("internal agent {id} cannot use a decision model"));
+                false
             }
             model_picker::InternalAgentModelRow::RhoModel(reference) => {
                 self.refresh_available_auths();
@@ -456,8 +468,10 @@ impl App {
             if sessions_picker {
                 self.sessions_hub_state.navigate_back();
             }
-            if internal_agent_model_picker {
-                self.cancel_permission_classifier_model_prompt(/*restore_input*/ false);
+            if internal_agent_model_picker
+                && !self.cancel_permission_classifier_model_prompt(/*restore_input*/ false)
+            {
+                self.cancel_screen_model_prompt(/*restore_input*/ false);
             }
         } else {
             if sessions_picker {
@@ -466,6 +480,7 @@ impl App {
             self.input_ui.set_composer(ComposerMode::Input);
             if !self.cancel_advisor_model_prompt()
                 && !self.cancel_permission_classifier_model_prompt(/*restore_input*/ true)
+                && !self.cancel_screen_model_prompt(/*restore_input*/ true)
             {
                 self.set_status(if running { "running" } else { "ready" });
             }

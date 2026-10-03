@@ -146,6 +146,20 @@ pub(super) enum InternalAgentModelRow {
     ClaudeCode { model: Option<String> },
     /// A Rho `provider/model` reference to resolve against the catalog.
     RhoModel(String),
+    /// A decision model, asked over the System One API.
+    Decision { provider: String, model: String },
+}
+
+/// Prefix of a decision-model row value, which is not a chat-model reference.
+const DECISION_ROW_PREFIX: &str = "decision:";
+
+/// The row value a decision-model row carries. Inverse of the decision arm of
+/// [`parse_internal_agent_model_row`].
+fn decision_row_value(provider: &str, model: &str) -> String {
+    format!(
+        "{DECISION_ROW_PREFIX}{}",
+        rho_providers::provider::model_reference(provider, model)
+    )
 }
 
 /// The row value a Claude Code row carries. Inverse of the Claude Code arm of
@@ -160,6 +174,15 @@ fn claude_code_row_value(model: Option<&str>) -> String {
 pub(super) fn parse_internal_agent_model_row(value: &str) -> InternalAgentModelRow {
     if value == USE_CONVERSATION_MODEL {
         return InternalAgentModelRow::Conversation;
+    }
+    if let Some((provider, model)) = value
+        .strip_prefix(DECISION_ROW_PREFIX)
+        .and_then(|reference| reference.split_once('/'))
+    {
+        return InternalAgentModelRow::Decision {
+            provider: provider.into(),
+            model: model.into(),
+        };
     }
     match value
         .strip_prefix(CLAUDE_CLI_RUNTIME_KEY)
@@ -280,6 +303,121 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
     };
     catalog.selected = wanted_value
         .and_then(|value| catalog.items.iter().position(|item| item.value == value))
+        .unwrap_or(0);
+    catalog.into_internal_agent_models()
+}
+
+/// Which row the permission screen's picker marks as selected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ScreenSelection {
+    /// No entry: the classifier's own model answers the screen.
+    Classifier,
+    Decision {
+        provider: String,
+        model: String,
+    },
+    Text {
+        provider: String,
+        model: String,
+    },
+}
+
+pub(super) struct ScreenPickerInputs<'a> {
+    pub(super) current: ScreenSelection,
+    /// The classifier's `provider/model`, which answers the screen by default.
+    pub(super) classifier: Option<String>,
+    /// Discovered decision models, as `(provider, model)`.
+    pub(super) decision_models: Vec<(String, String)>,
+    pub(super) favorite_models: &'a [String],
+    pub(super) available_auths: &'a [String],
+    pub(super) scope: ModelPickerScope,
+    pub(super) keybindings: &'a Keybindings,
+}
+
+/// The permission screen's model picker: the classifier's own model first,
+/// then decision models, then the chat catalog as text models.
+pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
+    let ScreenPickerInputs {
+        current,
+        classifier,
+        decision_models,
+        favorite_models,
+        available_auths,
+        scope,
+        keybindings,
+    } = inputs;
+    let (text_provider, text_model) = match &current {
+        ScreenSelection::Text { provider, model } => (provider.as_str(), model.as_str()),
+        ScreenSelection::Classifier | ScreenSelection::Decision { .. } => ("", ""),
+    };
+    let mut catalog = model_catalog(
+        "Select permission screen model",
+        CurrentModel {
+            provider: text_provider,
+            model: text_model,
+            badge: "selected",
+        },
+        favorite_models,
+        available_auths,
+        scope,
+        keybindings,
+    );
+    for item in &mut catalog.items {
+        item.section = Some("Text models".into());
+    }
+    let selected_badge = |selected: bool| {
+        selected.then(|| PickerBadge {
+            text: "selected".into(),
+            tone: PickerBadgeTone::Selected,
+        })
+    };
+    let mut leading = vec![PickerItem {
+        section: None,
+        label: "Same as classifier".into(),
+        detail: Some(
+            match &classifier {
+                Some(classifier) => format!("The classifier model, {classifier}, answers the screen at low reasoning and shares its prompt cache with the review."),
+                None => "The classifier model answers the screen at low reasoning and shares its prompt cache with the review.".into(),
+            }
+            .into(),
+        ),
+        preview: None,
+        badge: selected_badge(current == ScreenSelection::Classifier),
+        value: USE_CONVERSATION_MODEL.into(),
+        selection_verb: None,
+        allow_filter_completion: false,
+    }];
+    leading.extend(decision_models.iter().map(|(provider, model)| {
+        let selected = matches!(
+            &current,
+            ScreenSelection::Decision { provider: p, model: m } if p == provider && m == model
+        );
+        PickerItem {
+            section: Some("Decision models".into()),
+            label: rho_providers::provider::model_reference(provider, model),
+            detail: Some(
+                "Answers with a probability over the System One API, without writing a review."
+                    .into(),
+            ),
+            preview: None,
+            badge: selected_badge(selected),
+            value: decision_row_value(provider, model),
+            selection_verb: None,
+            allow_filter_completion: true,
+        }
+    }));
+    catalog.items.splice(0..0, leading);
+    let wanted = match &current {
+        ScreenSelection::Classifier => USE_CONVERSATION_MODEL.to_string(),
+        ScreenSelection::Decision { provider, model } => decision_row_value(provider, model),
+        ScreenSelection::Text { provider, model } => {
+            rho_providers::provider::model_reference(provider, model)
+        }
+    };
+    catalog.selected = catalog
+        .items
+        .iter()
+        .position(|item| item.value == wanted)
         .unwrap_or(0);
     catalog.into_internal_agent_models()
 }

@@ -1,6 +1,7 @@
 use ratatui::DefaultTerminal;
 
 use rho_providers::credentials::available_auth_modes;
+use rho_providers::model::decision_models::lists_decision_models;
 use rho_providers::model::provider_models::{
     refresh_provider_models_with_store, ProviderModelEndpoint,
 };
@@ -15,7 +16,7 @@ use super::{
     InteractiveModelSelection, InteractiveRuntime, ModelSelection,
 };
 
-fn refresh_auth_for_provider(
+pub(super) fn refresh_auth_for_provider(
     descriptor: &'static provider::ProviderDescriptor,
     preferred_auth: &str,
     available_auths: &[String],
@@ -112,7 +113,9 @@ impl App {
             self.refresh_available_auths();
             provider::providers()
                 .iter()
-                .filter(|descriptor| descriptor.supports_model_refresh())
+                .filter(|descriptor| {
+                    descriptor.supports_model_refresh() || lists_decision_models(descriptor.name)
+                })
                 .filter(|descriptor| {
                     descriptor
                         .auth_modes()
@@ -155,6 +158,14 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
         let config = self.info.services.config_repository.load()?;
         for (provider, auth) in providers {
+            if lists_decision_models(&provider) {
+                self.refresh_decision_models(&provider, &auth).await?;
+            }
+            if !provider::provider_descriptor(&provider)
+                .is_some_and(|descriptor| descriptor.supports_model_refresh())
+            {
+                continue;
+            }
             let endpoint = config.resolved_provider_endpoint(&provider);
             let model_endpoint = endpoint.as_ref().map_or(
                 ProviderModelEndpoint::ProviderOwned,
@@ -244,7 +255,12 @@ impl App {
             ),
             _ => return Ok(()),
         };
-        if value.is_empty() {
+        // Only chat-model rows pin; the permission screen's picker also lists
+        // decision models and a classifier row.
+        if !matches!(
+            super::model_picker::parse_internal_agent_model_row(&value),
+            super::model_picker::InternalAgentModelRow::RhoModel(_)
+        ) {
             return Ok(());
         }
         let Some(favorite) = favorites::favorite_model_from_value(&value) else {
@@ -518,13 +534,53 @@ impl App {
                 let status = self.status().to_string();
                 self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)?;
                 self.set_status(status);
+                if selected
+                    && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
+                {
+                    self.open_screen_model_picker(
+                        InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow,
+                    );
+                }
             }
-            InternalAgentModelPickerOrigin::PermissionModeStartup
-            | InternalAgentModelPickerOrigin::PermissionModeCommand => {
+            InternalAgentModelPickerOrigin::PermissionModeCommand => {
                 let origin = target.origin;
                 self.internal_agent_model_target = None;
                 self.finish_permission_classifier_model_selection(selected, origin, agent)
                     .await?;
+                if selected
+                    && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
+                {
+                    self.open_screen_model_picker(
+                        InternalAgentModelPickerOrigin::PermissionScreenSetupCommand,
+                    );
+                }
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                let origin = target.origin;
+                self.internal_agent_model_target = None;
+                self.finish_permission_classifier_model_selection(selected, origin, agent)
+                    .await?;
+            }
+            InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
+            | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow => {
+                self.internal_agent_model_target = None;
+                if selected {
+                    self.sync_permission_classifier_runtime_config(agent);
+                }
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(match target.origin {
+                    InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow => {
+                        config_picker::PERMISSION_SCREEN_MODEL_VALUE
+                    }
+                    _ => config_picker::PERMISSION_MODE_VALUE,
+                })?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
+                self.internal_agent_model_target = None;
+                if selected {
+                    self.sync_permission_classifier_runtime_config(agent);
+                }
             }
             InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
                 self.internal_agent_model_target = None;
