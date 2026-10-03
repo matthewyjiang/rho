@@ -415,9 +415,13 @@ pub enum WorkflowCommand {
         /// Confirm the frozen graph without an interactive prompt.
         #[arg(long)]
         yes: bool,
-        /// Confirm that no prior process remains and relaunch uncertain attempts.
+        /// Confirm that no prior process remains and recover uncertain attempts.
+        /// A Rho agent attempt continues from its last checkpoint; others restart.
         #[arg(long)]
         recover_uncertain: bool,
+        /// Report how each uncertain attempt would recover without changing the run.
+        #[arg(long)]
+        dry_run: bool,
         /// Select text or JSON Lines instead of the workflow TUI.
         #[arg(long, value_enum)]
         output: Option<WorkflowRunFormat>,

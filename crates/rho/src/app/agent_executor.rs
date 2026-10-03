@@ -50,6 +50,8 @@ pub(crate) struct FrozenAgentLaunchRequest {
     pub(crate) run_id: String,
     pub(crate) output_file: PathBuf,
     pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
+    /// Step checkpoints for a Rho runtime agent. Claude and Cursor runs ignore it.
+    pub(crate) checkpoint: Option<automation::SessionCheckpoint>,
 }
 
 /// How a live handle can accept parent plain-text messages.
@@ -343,6 +345,7 @@ impl AgentExecutor {
             notice_target,
             frozen_cli: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            checkpoint: None,
         })
     }
 
@@ -376,6 +379,7 @@ impl AgentExecutor {
             notice_target: None,
             frozen_cli,
             hook_host_labels: request.hook_host_labels,
+            checkpoint: request.checkpoint,
         })
     }
 
@@ -390,6 +394,7 @@ impl AgentExecutor {
             notice_target,
             frozen_cli,
             hook_host_labels,
+            checkpoint,
         } = request;
 
         let capacity_class = bound.runtime().capacity_class();
@@ -514,6 +519,7 @@ impl AgentExecutor {
                         hook_host_labels,
                         approval_session,
                         approval_classifier,
+                        checkpoint,
                     })
                     .await
                 }
@@ -572,6 +578,7 @@ struct BoundLaunchRequest {
     notice_target: Option<rho_sdk::SessionId>,
     frozen_cli: Option<FrozenCliLaunch>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
+    checkpoint: Option<automation::SessionCheckpoint>,
 }
 
 struct FrozenCliLaunch {
@@ -702,6 +709,7 @@ struct RhoAgentRun {
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
     approval_session: Option<rho_sdk::ApprovalSession>,
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
+    checkpoint: Option<automation::SessionCheckpoint>,
 }
 
 /// Drive a delegated run through Rho's own automation loop.
@@ -726,6 +734,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         hook_host_labels,
         approval_session,
         approval_classifier,
+        checkpoint,
     } = run;
 
     super::cli_config::prepare_model_metadata(
@@ -793,6 +802,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         approval_session,
         approval_classifier,
         hook_host_labels,
+        checkpoint,
     };
     let result =
         automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;

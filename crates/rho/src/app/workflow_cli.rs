@@ -30,6 +30,7 @@ use super::{
 
 #[cfg(test)]
 use super::workflow_runtime::WorkflowRunner;
+use super::workflow_runtime::{AttemptRecovery, ResetReason};
 
 #[path = "workflow_cli/cancel.rs"]
 mod cancel;
@@ -113,8 +114,12 @@ pub(super) async fn run(command: &WorkflowCommand, cli: &Cli) -> anyhow::Result<
             run_id,
             yes,
             recover_uncertain,
+            dry_run,
             output,
         } => {
+            if *dry_run {
+                return print_recovery_preview(run_id, *output, cli.config.clone());
+            }
             run_resume(
                 run_id,
                 *yes,
@@ -453,6 +458,42 @@ async fn run_resume(
         ),
     )?;
     runtime::execute_run(run, recovery, output, config_path).await
+}
+
+fn print_recovery_preview(
+    prefix: &str,
+    output: Option<WorkflowRunFormat>,
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let ops = WorkflowOps::open(std::env::current_dir()?, config_path)?;
+    let run_id = ops.load_run_prefix(prefix)?.manifest.run_id;
+    let preview =
+        crate::app::workflow_runtime::preview_recovery(&crate::paths::rho_dir()?, run_id)?;
+    match output {
+        Some(WorkflowRunFormat::Jsonl) => write_json_document(&preview),
+        None | Some(WorkflowRunFormat::Text) => {
+            println!("recovery preview for workflow run {run_id}");
+            if preview.needs_confirmation {
+                println!("resume needs --recover-uncertain");
+            }
+            for attempt in &preview.attempts {
+                let action = match &attempt.recovery {
+                    AttemptRecovery::Continue { .. } => "continue from its last checkpoint",
+                    AttemptRecovery::Reset { reason } => match reason {
+                        ResetReason::CancellationRequested => "restart: cancellation was requested",
+                        ResetReason::CommandNode => "restart: command node",
+                        ResetReason::ForeignAgent => {
+                            "restart: Claude and Cursor agents do not checkpoint"
+                        }
+                        ResetReason::NoCheckpoint => "restart: no checkpoint was saved",
+                        ResetReason::UnreadableCheckpoint => "restart: checkpoint is unreadable",
+                    },
+                };
+                println!("{} attempt {}: {action}", attempt.node, attempt.attempt);
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(debug_assertions)]

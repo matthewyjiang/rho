@@ -135,7 +135,7 @@ rho workflow plan <FILE> [--input KEY=JSON]... [--output text|json]
 rho workflow run <PLAN_ID> [--yes] [--output text|jsonl]
 rho workflow status <RUN_ID> [--output text|json]
 rho workflow cancel <RUN_ID>
-rho workflow resume <RUN_ID> [--yes] [--recover-uncertain] [--output text|jsonl]
+rho workflow resume <RUN_ID> [--yes] [--recover-uncertain] [--dry-run] [--output text|jsonl]
 ```
 
 CLI help is the source of truth for supported flags and recovery actions.
@@ -245,12 +245,24 @@ successful nodes.
 ```bash
 rho workflow resume 0190... --yes --output jsonl
 rho workflow resume 0190... --recover-uncertain --yes --output jsonl
+rho workflow resume 0190... --dry-run
 ```
 
 Rho can start a new attempt for a node that was cleanly cancelled. If an old
 process ended without a clean ownership record, the run enters
 `needs_recovery`. Inspect status, confirm that no prior process remains, and
 pass `--recover-uncertain`. Rho does not guess whether uncertain work completed.
+
+A Rho agent node saves its session at every step. After confirmation, such a
+node continues the same attempt from its last checkpoint. Read-only built-in
+tool calls that were in flight run again. Every other in-flight call, such as an
+edit, shell command, network call, or MCP tool, is reported to the agent as
+interrupted and is not run again. Command nodes, Claude and Cursor agents,
+agents without a checkpoint, and runs with a pending cancellation start a new
+attempt instead.
+
+`--dry-run` reports what resume would do with each uncertain attempt and changes
+nothing. With `--output jsonl` it prints one JSON document.
 
 The top-level `rho --resume` flag is for chat sessions. It does not resume a
 workflow.

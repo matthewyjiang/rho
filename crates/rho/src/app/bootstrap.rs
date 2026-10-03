@@ -406,6 +406,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             approval_session: None,
             approval_classifier: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            checkpoint: None,
         },
     )
     .await

@@ -31,8 +31,8 @@ use tokio::{
 use super::{
     classify_error, classify_run_terminal, complete_run, ensure_headless_auto_classifier_model,
     headless_approval_session, headless_auto_classifier, prompt_from_reader,
-    terminal_error_message, AutomationExit, RunArtifactIdentity, RunReporter, RunTerminal,
-    MAX_STEPS_MESSAGE,
+    terminal_error_message, AutomationExit, RunArtifactIdentity, RunEntry, RunReporter,
+    RunTerminal, MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::permission_classifier_handler::{
@@ -439,7 +439,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
 
     let outcome = complete_run(
         &session,
-        "continue".into(),
+        RunEntry::Prompt("continue".into()),
         HeadlessRunDeps {
             reporter: None,
             external_cancellation: None,
@@ -638,7 +638,7 @@ async fn headless_run_fails_closed_without_host_input_responder() {
         Duration::from_secs(2),
         complete_run(
             &session,
-            "ask".into(),
+            RunEntry::Prompt("ask".into()),
             HeadlessRunDeps {
                 reporter: None,
                 external_cancellation: None,
@@ -687,7 +687,7 @@ async fn headless_run_answers_host_input_through_generic_responder() {
         Duration::from_secs(2),
         complete_run(
             &session,
-            "ask".into(),
+            RunEntry::Prompt("ask".into()),
             HeadlessRunDeps {
                 reporter: None,
                 external_cancellation: None,
@@ -747,7 +747,7 @@ async fn headless_run_drains_events_while_waiting_for_parent_host_input() {
         async move {
             complete_run(
                 &session,
-                "ask".into(),
+                RunEntry::Prompt("ask".into()),
                 HeadlessRunDeps {
                     reporter: None,
                     external_cancellation: None,
@@ -847,7 +847,7 @@ async fn headless_run_drains_events_while_waiting_for_respond_ack() {
     let drive = tokio::spawn(async move {
         complete_run(
             &session,
-            "ask".into(),
+            RunEntry::Prompt("ask".into()),
             HeadlessRunDeps {
                 reporter: None,
                 external_cancellation: None,

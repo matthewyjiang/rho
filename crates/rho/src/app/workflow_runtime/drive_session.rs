@@ -3,20 +3,22 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::task::JoinSet;
 
 use crate::workflow::{
-    attempt_directory, next_actions, AttemptNumber, AttemptRecord, AttemptState, ExternalOwner,
-    NodeTerminalState, RunId, RunLifecycle, SchedulerAction, SchedulerCapacity, StoredRun,
-    TaskInstanceId, WorkflowEvent, WorkflowStore, WorkspaceAccess, ATTEMPT_VERSION,
+    attempt_directory, next_actions, AttemptNumber, AttemptState, ExternalOwner, NodeTerminalState,
+    RunId, RunLifecycle, SchedulerAction, SchedulerCapacity, StoredRun, TaskInstanceId,
+    WorkflowEvent, WorkflowStore, WorkspaceAccess,
 };
 
 use super::{
-    artifacts::write_json,
     cancellation::{
         cancel_waiting_nodes, latest_cancellation_request, latest_pending_cancellation_request,
         read_cancellation_request, run_directory, CROSS_PROCESS_CANCEL_POLL,
     },
-    journal::RunJournal,
+    journal::{write_attempt, RunJournal},
     prepared::{PreparedExecution, PreparedInvocation},
-    recovery::{mark_attempt_uncertain, recover_completed_transitions, recover_state, ResumePlan},
+    recovery::{
+        discard_checkpoint, mark_attempt_uncertain, recover_completed_transitions, recover_state,
+        replay_event_tail, ContinuedAttempt, ResumePlan,
+    },
     runner::{send_event, RecoveryDecision, WorkflowRunner},
     CheckoutGate, CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,
     RuntimeError, RuntimeEvent,
@@ -47,6 +49,8 @@ struct DriveSession<'a> {
     cancellation_request_id: Option<String>,
     checkout: CheckoutGate,
     tasks: JoinSet<Result<NodeTaskOutput, RuntimeError>>,
+    /// Uncertain attempts that recovery chose to continue; dispatched first.
+    continued: Vec<ContinuedAttempt>,
 }
 
 pub(super) async fn drive(
@@ -83,11 +87,7 @@ impl<'a> DriveSession<'a> {
         // reducer for the authoritative tail and reuse these events for cancellation.
         let cancellation_request_id = latest_cancellation_request(&records);
         let pending_cancellation = latest_pending_cancellation_request(&records);
-        let tail = records.last().map_or(0, |record| record.sequence);
-        if tail != run.state.last_event_sequence {
-            run.state.state =
-                crate::workflow::derive_snapshot(&run.graph, &records, tail, &directory)?;
-            run.state.last_event_sequence = tail;
+        if replay_event_tail(&mut run, &records, &directory)? {
             store.save_state(&mut guard, &run.state)?;
         }
         let mut journal = RunJournal {
@@ -104,7 +104,7 @@ impl<'a> DriveSession<'a> {
         if matches!(plan, ResumePlan::Finished) {
             return Ok(DriveStart::Finished(Box::new(journal.run)));
         }
-        recover_state(
+        let continued = recover_state(
             &mut journal,
             plan,
             recovery,
@@ -134,10 +134,12 @@ impl<'a> DriveSession<'a> {
             cancellation_request_id,
             checkout,
             tasks: JoinSet::new(),
+            continued,
         })))
     }
 
     async fn run_loop(mut self) -> Result<StoredRun, RuntimeError> {
+        self.continue_attempts()?;
         loop {
             self.handle_cancellation_edge()?;
             if self.journal.run.state.state.cancellation_requested {
@@ -239,7 +241,6 @@ impl<'a> DriveSession<'a> {
             &node,
             &self.journal.run.state.state,
         );
-        let run_id = self.journal.run.manifest.run_id;
         let attempt = self.journal.run.state.state.next_attempt(&node)?;
         self.journal.commit(WorkflowEvent::LaunchIntended {
             node: node.clone(),
@@ -252,7 +253,7 @@ impl<'a> DriveSession<'a> {
         crate::workflow::ensure_directory_beneath(&self.journal.directory, relative_attempt)?;
         write_attempt(
             &self.journal.directory,
-            &attempt_directory,
+            &node,
             attempt,
             AttemptState::LaunchIntended,
         )?;
@@ -261,7 +262,7 @@ impl<'a> DriveSession<'a> {
         };
         write_attempt(
             &self.journal.directory,
-            &attempt_directory,
+            &node,
             attempt,
             AttemptState::Started {
                 owner: owner.clone(),
@@ -272,6 +273,46 @@ impl<'a> DriveSession<'a> {
             attempt,
             owner,
         })?;
+        self.start_attempt(node, attempt, access, invocation, /* resume */ None)
+    }
+
+    /// Dispatches attempts that recovery chose to continue from their checkpoint.
+    /// Their `status.json` already names this process as owner.
+    fn continue_attempts(&mut self) -> Result<(), RuntimeError> {
+        for ContinuedAttempt {
+            node,
+            attempt,
+            snapshot,
+        } in std::mem::take(&mut self.continued)
+        {
+            let access = self
+                .journal
+                .run
+                .graph
+                .leaf(&node)
+                .ok_or_else(|| RuntimeError::LaunchMetadata { node: node.clone() })?
+                .node
+                .access;
+            let invocation = PreparedInvocation::prepare(
+                &self.journal.run.graph,
+                &node,
+                &self.journal.run.state.state,
+            );
+            self.start_attempt(node, attempt, access, invocation, Some(snapshot))?;
+        }
+        Ok(())
+    }
+
+    /// Announces a started attempt and spawns its executor once the attempt is durable.
+    fn start_attempt(
+        &mut self,
+        node: TaskInstanceId,
+        attempt: AttemptNumber,
+        access: WorkspaceAccess,
+        invocation: Result<PreparedInvocation<PreparedExecution>, RuntimeError>,
+        resume: Option<rho_sdk::SessionSnapshot>,
+    ) -> Result<(), RuntimeError> {
+        let run_id = self.journal.run.manifest.run_id;
         self.attempt_started_at.insert(node.clone(), Instant::now());
         if let Some(hooks) = &self.runner.hooks {
             self.journal.commit(WorkflowEvent::HookObserved {
@@ -319,9 +360,10 @@ impl<'a> DriveSession<'a> {
             node: node.clone(),
             attempt,
             workspace: self.runner.workspace.clone(),
-            attempt_directory,
+            attempt_directory: attempt_directory(&self.journal.directory, &node, attempt),
             cancellation: self.runner.cancellation.clone(),
             progress,
+            resume,
         };
         let agents = Arc::clone(&self.runner.agents);
         let commands = Arc::clone(&self.runner.commands);
@@ -440,10 +482,9 @@ impl<'a> DriveSession<'a> {
         };
         let completion = result.completion(attempt);
         let outcome = completion.outcome;
-        let attempt_directory = attempt_directory(&self.journal.directory, &node, attempt);
         write_attempt(
             &self.journal.directory,
-            &attempt_directory,
+            &node,
             attempt,
             AttemptState::Completed {
                 completion: Box::new(completion.clone()),
@@ -460,6 +501,7 @@ impl<'a> DriveSession<'a> {
             node: node.clone(),
             completion: Box::new(completion.clone()),
         })?;
+        discard_checkpoint(&self.journal.directory, &node, attempt);
         if let Some(hooks) = &self.runner.hooks {
             let artifacts = completion.artifacts.references();
             self.journal.commit(WorkflowEvent::HookObserved {
@@ -563,22 +605,4 @@ fn available_capacity(graph: &crate::workflow::FrozenWorkflow) -> SchedulerCapac
         agents: graph.scheduler.max_parallel_agents,
         commands: graph.scheduler.max_parallel_commands,
     }
-}
-
-fn write_attempt(
-    run_directory: &std::path::Path,
-    attempt_directory: &std::path::Path,
-    attempt: AttemptNumber,
-    state: AttemptState,
-) -> Result<(), RuntimeError> {
-    write_json(
-        run_directory,
-        &attempt_directory.join("status.json"),
-        &AttemptRecord {
-            schema_version: ATTEMPT_VERSION,
-            attempt,
-            state,
-        },
-    )
-    .map(|_| ())
 }

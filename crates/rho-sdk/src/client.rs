@@ -460,6 +460,7 @@ impl RhoBuilder {
             lifecycle: Arc::new(RuntimeLifecycle::default()),
             boundary_inputs: None,
             tool_visibility: self.tool_visibility,
+            checkpoint_store: None,
         })
     }
 }
@@ -494,6 +495,8 @@ pub struct Rho {
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
     /// Advertised subset per model request; `None` advertises every tool.
     pub(crate) tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,
+    /// Per-session step checkpoints; see [`crate::Session::set_checkpoint_store`].
+    pub(crate) checkpoint_store: Option<Arc<dyn crate::SessionStore>>,
 }
 
 impl Rho {

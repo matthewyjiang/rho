@@ -25,25 +25,14 @@ pub struct UserInput {
     content: Vec<ContentBlock>,
 }
 
-pub(crate) struct RunStart {
-    pub(crate) input: UserInput,
-    pub(crate) initial_tool_call: Option<ToolCall>,
-}
-
-impl RunStart {
-    pub(crate) fn user(input: UserInput) -> Self {
-        Self {
-            input,
-            initial_tool_call: None,
-        }
-    }
-
-    fn with_tool_call(input: UserInput, tool_call: ToolCall) -> Self {
-        Self {
-            input,
-            initial_tool_call: Some(tool_call),
-        }
-    }
+/// How a run begins.
+pub(crate) enum RunStart {
+    /// Append user input, then ask the model.
+    User(UserInput),
+    /// Append user input, then run a host-requested tool call before the model.
+    WithToolCall { input: UserInput, call: ToolCall },
+    /// Keep committed history as is. Unanswered tool calls are settled first.
+    Continue,
 }
 
 impl UserInput {
@@ -553,7 +542,38 @@ impl Session {
     }
 
     pub async fn start(&self, input: UserInput) -> Result<Run, Error> {
-        self.start_run(RunStart::user(input)).await
+        self.start_run(RunStart::User(input)).await
+    }
+
+    /// Continues from committed history without appending another user message.
+    ///
+    /// Use this after restoring a snapshot saved by a checkpoint store when the
+    /// previous run stopped mid-turn. Tool calls in that history without a result
+    /// are settled first: built-in tools that declare only read capabilities run
+    /// again, and every other call gets an interrupted result instead of a second
+    /// execution, since it may already have had effects.
+    pub async fn continue_history(&self) -> Result<Run, Error> {
+        self.start_run(RunStart::Continue).await
+    }
+
+    /// Installs or removes a step checkpoint store while the session is idle.
+    ///
+    /// With a store, each run commits its working history and saves the session
+    /// snapshot before every provider request and again after each model reply,
+    /// before that reply's tool calls start. A process that dies mid-run can
+    /// restore the last saved snapshot and call [`Session::continue_history`].
+    /// A failed save fails the run.
+    pub fn set_checkpoint_store(
+        &self,
+        store: Option<Arc<dyn crate::SessionStore>>,
+    ) -> Result<(), Error> {
+        let _inactive = self.core.lock_inactive()?;
+        self.core
+            .runtime
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .checkpoint_store = store;
+        Ok(())
     }
 
     /// Installs an opt-in host checkpoint channel while the session is idle.
@@ -585,8 +605,11 @@ impl Session {
                     .into(),
             });
         }
-        self.start_run(RunStart::with_tool_call(input, tool_call))
-            .await
+        self.start_run(RunStart::WithToolCall {
+            input,
+            call: tool_call,
+        })
+        .await
     }
 
     async fn start_run(&self, start: RunStart) -> Result<Run, Error> {
