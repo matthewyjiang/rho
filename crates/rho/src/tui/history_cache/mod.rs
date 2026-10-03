@@ -13,7 +13,7 @@ use super::{
     message_render::{render_assistant_content, render_reasoning_content},
     render::{apply_markdown_images, pad_display_line, render_entry_with_options, TrailingBlank},
     rendered_entry::RenderedEntry,
-    Entry,
+    zen_tool_run, Entry,
 };
 
 /// Content renderer for an entry kind that supports incremental appends.
@@ -101,6 +101,11 @@ impl HistoryRenderSettings {
             | Entry::Changelog(_)
             | Entry::Error(_) => false,
         }
+    }
+
+    /// Hidden entries that fold into one zen tool-run summary row.
+    fn collapses_into_tool_run(self, entry: &Entry) -> bool {
+        self.zen_mode && self.hides_entry(entry)
     }
 
     /// Width or theme changes reflow or restyle every cached line.
@@ -532,9 +537,8 @@ impl HistoryLineCache {
         }
         let cached = cached_entry_from_render(
             prepare_cache_entry_render(
-                entry,
+                entries,
                 index,
-                entries.len(),
                 settings,
                 self.open_stream_tail,
                 image_resolver,
@@ -651,11 +655,17 @@ impl HistoryLineCache {
         {
             return;
         }
+        // A zen run summary counts the tools after it. Rebuild from the start of
+        // the run touching `rebuild_from` so its count follows appends and edits.
+        let rebuild_from = zen_tool_run::run_start(entries, rebuild_from, |entry| {
+            settings.collapses_into_tool_run(entry)
+        })
+        .max(self.measured_from);
         let cache_rebuild = rebuild_from.saturating_sub(self.measured_from);
         self.truncate_entries_to(cache_rebuild);
 
-        for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
-            self.push_rendered_entry(entry_index, entry, entries.len(), settings, image_resolver);
+        for entry_index in rebuild_from..entries.len() {
+            self.push_rendered_entry(entries, entry_index, settings, image_resolver);
         }
     }
 
@@ -694,9 +704,8 @@ impl HistoryLineCache {
             let entry = &entries[index];
             self.entries[cache_index] = cached_entry_from_render(
                 prepare_cache_entry_render(
-                    entry,
+                    entries,
                     index,
-                    entries.len(),
                     settings,
                     self.open_stream_tail,
                     image_resolver,
@@ -714,9 +723,8 @@ impl HistoryLineCache {
 
     fn push_rendered_entry(
         &mut self,
+        entries: &[Entry],
         entry_index: usize,
-        entry: &Entry,
-        entries_len: usize,
         settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
     ) {
@@ -726,17 +734,17 @@ impl HistoryLineCache {
         }
         self.projected_code_blocks = None;
         let range_start = self.total_lines();
+        let entry = &entries[entry_index];
         let cached = cached_entry_from_render(
             prepare_cache_entry_render(
-                entry,
+                entries,
                 entry_index,
-                entries_len,
                 settings,
                 self.open_stream_tail,
                 image_resolver,
             ),
             entry,
-            entry_index + 1 == entries_len,
+            entry_index + 1 == entries.len(),
             settings.width,
             self.open_stream_tail,
         );
@@ -838,8 +846,9 @@ pub(super) fn append_entry_segment_into(
 
 /// Shared entry render for full rebuild and surgical resplice paths.
 ///
-/// Returns `None` for hidden entries. Code-block line numbers and image
-/// placements are relative to the entry start.
+/// Returns `None` for hidden entries, except a zen tool run's anchor, which
+/// paints the run summary. Code-block line numbers and image placements are
+/// relative to the entry start.
 struct PreparedCacheEntry {
     lines: Vec<Line<'static>>,
     code_blocks: Vec<CachedCodeBlock>,
@@ -872,26 +881,30 @@ fn cached_entry_from_render(
 }
 
 fn prepare_cache_entry_render(
-    entry: &Entry,
+    entries: &[Entry],
     entry_index: usize,
-    entries_len: usize,
     settings: HistoryRenderSettings,
     open_stream_tail: bool,
     image_resolver: EntryImageResolver<'_>,
 ) -> Option<PreparedCacheEntry> {
-    if settings.hides_entry(entry) {
-        return None;
-    }
-    // Keep the duration receipt when text is hidden, without changing stored reasoning.
-    // `hides_entry` already dropped hidden reasoning that has no receipt.
-    let summary = match entry {
-        Entry::Reasoning(reasoning) if !settings.show_reasoning_output => reasoning
-            .thought_for
-            .map(|duration| Entry::Reasoning(super::ReasoningEntry::summary_only(duration))),
-        _ => None,
+    let entry = &entries[entry_index];
+    let summary = if settings.hides_entry(entry) {
+        let tools = zen_tool_run::summary_at(entries, entry_index, |entry| {
+            settings.collapses_into_tool_run(entry)
+        })?;
+        Some(zen_tool_run::summary_entry(tools))
+    } else {
+        // Keep the duration receipt when text is hidden, without changing stored reasoning.
+        // `hides_entry` already dropped hidden reasoning that has no receipt.
+        match entry {
+            Entry::Reasoning(reasoning) if !settings.show_reasoning_output => reasoning
+                .thought_for
+                .map(|duration| Entry::Reasoning(super::ReasoningEntry::summary_only(duration))),
+            _ => None,
+        }
     };
     let entry = summary.as_ref().unwrap_or(entry);
-    let trailing_blank = if open_stream_tail && entry_index + 1 == entries_len {
+    let trailing_blank = if open_stream_tail && entry_index + 1 == entries.len() {
         TrailingBlank::Omit
     } else {
         TrailingBlank::Include

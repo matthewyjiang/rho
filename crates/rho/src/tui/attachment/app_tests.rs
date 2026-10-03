@@ -264,6 +264,14 @@ fn history_lines_follow_display_settings() {
     assert!(zen.iter().all(|line| !line.contains("read_file")));
     assert!(zen.iter().any(|line| line.contains("answer")));
     assert!(zen.iter().any(|line| line.contains("task")));
+    // The hidden tool still leaves one summary row between output sections.
+    let summary = line_text(&crate::tui::render::entry_lines(
+        &zen_tool_run::summary_entry(1),
+        80,
+        app.display.max_tool_output_lines,
+        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+    ));
+    assert_eq!(zen[zen.len() - summary.len()..], summary[..]);
 }
 
 // Covers: max_tool_output_lines comes from display settings, not a local constant.

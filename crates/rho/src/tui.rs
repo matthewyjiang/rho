@@ -235,6 +235,7 @@ mod workflow_hub;
 // through terminal suspend when starting or resuming a run.
 pub(crate) mod workflow;
 mod workspace;
+mod zen_tool_run;
 
 mod types;
 use types::*;

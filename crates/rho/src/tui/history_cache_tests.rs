@@ -832,16 +832,8 @@ fn entry_appended_under_open_tail_restores_previous_tail_blank() {
     assert_eq!(lines, fresh_lines);
 }
 
-// Covers: zen mode suppresses tool/reasoning lines while keeping entry indices stable.
-// Owner: history line cache display policy.
-#[test]
-fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
-    // Rendered lines are compared across separate render passes; hold the lock
-    // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
-    use crate::tui::{ReasoningEntry, ToolEntry};
-
-    let tool = Entry::Tool(ToolEntry::new(
+fn zen_test_tool() -> Entry {
+    Entry::Tool(crate::tui::ToolEntry::new(
         rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
@@ -850,10 +842,41 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
         false,
         None,
         None,
-    ));
+    ))
+}
+
+fn all_lines(
+    cache: &mut HistoryLineCache,
+    entries: &[Entry],
+    settings: HistoryRenderSettings,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    cache.extend_visible_lines(
+        entries,
+        settings,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut lines,
+        &no_images,
+    );
+    lines
+}
+
+// Covers: zen mode folds tool/reasoning lines into one run summary while keeping
+// entry indices stable.
+// Owner: history line cache display policy.
+#[test]
+fn zen_mode_collapses_tool_and_reasoning_lines_and_restores_them() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
+    use crate::tui::ReasoningEntry;
+
     let entries = vec![
         Entry::User("hi".into()),
-        tool,
+        zen_test_tool(),
         Entry::Reasoning(ReasoningEntry::new("secret plan")),
         Entry::Assistant("hello".into()),
     ];
@@ -862,26 +885,49 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
     let full = cache.line_count(&entries, settings(40), &no_images);
     assert!(full > 2);
 
-    let zen_count = cache.line_count(&entries, settings_with(40, 10, true), &no_images);
-    let user_lines = entry_lines(
-        &entries[0],
-        40,
-        10,
-        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
-    )
-    .len();
-    let assistant_lines = entry_lines(
-        &entries[3],
-        40,
-        10,
-        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
-    )
-    .len();
-    assert_eq!(zen_count, user_lines + assistant_lines);
+    let zen = all_lines(&mut cache, &entries, settings_with(40, 10, true));
+    let image_height = crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT;
+    let expected = [
+        entries[0].clone(),
+        crate::tui::zen_tool_run::summary_entry(1),
+        entries[3].clone(),
+    ]
+    .iter()
+    .flat_map(|entry| entry_lines(entry, 40, 10, image_height))
+    .collect::<Vec<_>>();
+    assert_eq!(zen, expected);
 
     // Toggling zen off rebuilds the suppressed entries.
     let restored = cache.line_count(&entries, settings(40), &no_images);
     assert_eq!(restored, full);
+}
+
+// Covers: a warm zen cache refreshes the run summary count when later tools
+// append to or drop from the run, matching a cold render.
+// Owner: history line cache display policy.
+#[test]
+fn zen_run_summary_tracks_appended_and_removed_tools() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    use crate::tui::ReasoningEntry;
+
+    let zen = settings_with(40, 10, true);
+    let mut entries = vec![Entry::Assistant("before".into()), zen_test_tool()];
+    let mut cache = HistoryLineCache::default();
+    all_lines(&mut cache, &entries, zen);
+
+    let steps: [fn(&mut Vec<Entry>); 3] = [
+        |entries| entries.push(Entry::Reasoning(ReasoningEntry::new("more"))),
+        |entries| entries.push(zen_test_tool()),
+        |entries| {
+            entries.truncate(2);
+        },
+    ];
+    for step in steps {
+        step(&mut entries);
+        let warm = all_lines(&mut cache, &entries, zen);
+        let cold = all_lines(&mut HistoryLineCache::default(), &entries, zen);
+        assert_eq!(warm, cold);
+    }
 }
 
 // Covers: tool expand/collapse resplices only the toggled card; later assistant

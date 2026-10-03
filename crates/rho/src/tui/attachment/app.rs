@@ -34,8 +34,8 @@ use super::super::{
     theme::Theme,
     tool_card_hover,
     usage_cost::AttemptAwareRunUsage,
-    Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
-    HISTORY_SCROLLBAR_REVEAL_DURATION,
+    zen_tool_run, Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry,
+    HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 #[cfg(test)]
 use super::chrome::format_run_cost;
@@ -825,8 +825,18 @@ impl AttachmentApp {
             .transcript
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !self.display.hides_entry(entry))
-            .map(|(index, entry)| HistoryItem::Transcript { index, entry })
+            .filter_map(|(index, entry)| {
+                if !self.display.hides_entry(entry) {
+                    return Some(HistoryItem::Transcript { index, entry });
+                }
+                if !self.display.zen_mode {
+                    return None;
+                }
+                zen_tool_run::summary_at(&self.transcript, index, |entry| {
+                    self.display.hides_entry(entry)
+                })
+                .map(|tools| HistoryItem::Ephemeral(zen_tool_run::summary_entry(tools)))
+            })
             .collect::<Vec<_>>();
         if self.display.shows_work_chrome() {
             items.extend(self.pending_order.iter().filter_map(|key| {
