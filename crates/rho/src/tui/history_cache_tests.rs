@@ -366,12 +366,12 @@ fn incrementally_extends_open_fence_without_rehighlighting_committed_lines() {
 fn paint_cached(
     cache: &mut HistoryLineCache,
     entries: &[Entry],
-    width: usize,
+    settings: HistoryRenderSettings,
 ) -> Vec<ratatui::text::Line<'static>> {
     let mut lines = Vec::new();
     cache.extend_visible_lines(
         entries,
-        settings(width),
+        settings,
         HistoryLineSlice {
             start: 0,
             count: usize::MAX,
@@ -398,7 +398,7 @@ fn incrementally_keeps_prose_after_a_closed_fence() {
     let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("```rust\nlet value = 1;\n".into())];
-    let _ = paint_cached(&mut cache, &entries, 80);
+    let _ = paint_cached(&mut cache, &entries, settings(80));
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -406,7 +406,7 @@ fn incrementally_keeps_prose_after_a_closed_fence() {
     text.push_str("```\nThe function");
     cache.entry_appended(0);
     assert_eq!(
-        paint_cached(&mut cache, &entries, 80),
+        paint_cached(&mut cache, &entries, settings(80)),
         expected_entry_lines(&entries[0], 80)
     );
 }
@@ -427,7 +427,7 @@ fn incrementally_extends_table_rows_without_rendering_drift() {
         "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
     )];
     assert_eq!(
-        paint_cached(&mut cache, &entries, 40),
+        paint_cached(&mut cache, &entries, settings(40)),
         expected_entry_lines(&entries[0], 40)
     );
 
@@ -437,7 +437,7 @@ fn incrementally_extends_table_rows_without_rendering_drift() {
     text.push_str("| agent | 2 |\n");
     cache.entry_appended(0);
     assert_eq!(
-        paint_cached(&mut cache, &entries, 40),
+        paint_cached(&mut cache, &entries, settings(40)),
         expected_entry_lines(&entries[0], 40)
     );
 }
@@ -451,7 +451,7 @@ fn incrementally_reflows_a_table_when_a_later_cell_is_wider() {
     let mut entries = vec![Entry::Assistant(
         "| A | B |\n| --- | --- |\n| x | y |\n".into(),
     )];
-    let _ = paint_cached(&mut cache, &entries, 40);
+    let _ = paint_cached(&mut cache, &entries, settings(40));
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -459,7 +459,7 @@ fn incrementally_reflows_a_table_when_a_later_cell_is_wider() {
     text.push_str("| much-longer-cell | z |\n");
     cache.entry_appended(0);
     assert_eq!(
-        paint_cached(&mut cache, &entries, 40),
+        paint_cached(&mut cache, &entries, settings(40)),
         expected_entry_lines(&entries[0], 40)
     );
 }
@@ -473,7 +473,7 @@ fn incrementally_keeps_prose_after_a_table() {
     let mut entries = vec![Entry::Assistant(
         "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
     )];
-    let _ = paint_cached(&mut cache, &entries, 40);
+    let _ = paint_cached(&mut cache, &entries, settings(40));
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -481,7 +481,7 @@ fn incrementally_keeps_prose_after_a_table() {
     text.push_str("After the table");
     cache.entry_appended(0);
     assert_eq!(
-        paint_cached(&mut cache, &entries, 40),
+        paint_cached(&mut cache, &entries, settings(40)),
         expected_entry_lines(&entries[0], 40)
     );
 }
@@ -580,7 +580,7 @@ fn incrementally_repaints_open_mermaid_from_the_header() {
     let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("```mermaid\nflowchart LR\n".into())];
-    let _ = paint_cached(&mut cache, &entries, 80);
+    let _ = paint_cached(&mut cache, &entries, settings(80));
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -588,7 +588,7 @@ fn incrementally_repaints_open_mermaid_from_the_header() {
     text.push_str("A[Parse] --> B[Render]\n");
     cache.entry_appended(0);
     assert_eq!(
-        paint_cached(&mut cache, &entries, 80),
+        paint_cached(&mut cache, &entries, settings(80)),
         expected_entry_lines(&entries[0], 80)
     );
 
@@ -598,7 +598,7 @@ fn incrementally_repaints_open_mermaid_from_the_header() {
     text.push_str("A -->\n");
     cache.entry_appended(0);
     assert_eq!(
-        paint_cached(&mut cache, &entries, 80),
+        paint_cached(&mut cache, &entries, settings(80)),
         expected_entry_lines(&entries[0], 80)
     );
 }
@@ -611,7 +611,7 @@ fn mermaid_incomplete_append_refreshes_copy_without_rerender() {
     let mut entries = vec![Entry::Assistant(
         "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n".into(),
     )];
-    let before = paint_cached(&mut cache, &entries, 80);
+    let before = paint_cached(&mut cache, &entries, settings(80));
     assert_eq!(
         cache.code_blocks(&entries, settings(80), &no_images)[0]
             .text
@@ -624,7 +624,7 @@ fn mermaid_incomplete_append_refreshes_copy_without_rerender() {
     };
     text.push_str("C[Copy]");
     cache.entry_appended(0);
-    assert_eq!(paint_cached(&mut cache, &entries, 80), before);
+    assert_eq!(paint_cached(&mut cache, &entries, settings(80)), before);
     assert_eq!(
         cache.code_blocks(&entries, settings(80), &no_images)[0]
             .text
@@ -845,25 +845,6 @@ fn zen_test_tool() -> Entry {
     ))
 }
 
-fn all_lines(
-    cache: &mut HistoryLineCache,
-    entries: &[Entry],
-    settings: HistoryRenderSettings,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    cache.extend_visible_lines(
-        entries,
-        settings,
-        HistoryLineSlice {
-            start: 0,
-            count: usize::MAX,
-        },
-        &mut lines,
-        &no_images,
-    );
-    lines
-}
-
 // Covers: zen mode folds tool/reasoning lines into one run summary while keeping
 // entry indices stable.
 // Owner: history line cache display policy.
@@ -885,7 +866,7 @@ fn zen_mode_collapses_tool_and_reasoning_lines_and_restores_them() {
     let full = cache.line_count(&entries, settings(40), &no_images);
     assert!(full > 2);
 
-    let zen = all_lines(&mut cache, &entries, settings_with(40, 10, true));
+    let zen = paint_cached(&mut cache, &entries, settings_with(40, 10, true));
     let image_height = crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT;
     let expected = [
         entries[0].clone(),
@@ -913,7 +894,7 @@ fn zen_run_summary_tracks_appended_and_removed_tools() {
     let zen = settings_with(40, 10, true);
     let mut entries = vec![Entry::Assistant("before".into()), zen_test_tool()];
     let mut cache = HistoryLineCache::default();
-    all_lines(&mut cache, &entries, zen);
+    paint_cached(&mut cache, &entries, zen);
 
     let steps: [fn(&mut Vec<Entry>); 3] = [
         |entries| entries.push(Entry::Reasoning(ReasoningEntry::new("more"))),
@@ -924,8 +905,8 @@ fn zen_run_summary_tracks_appended_and_removed_tools() {
     ];
     for step in steps {
         step(&mut entries);
-        let warm = all_lines(&mut cache, &entries, zen);
-        let cold = all_lines(&mut HistoryLineCache::default(), &entries, zen);
+        let warm = paint_cached(&mut cache, &entries, zen);
+        let cold = paint_cached(&mut HistoryLineCache::default(), &entries, zen);
         assert_eq!(warm, cold);
     }
 }

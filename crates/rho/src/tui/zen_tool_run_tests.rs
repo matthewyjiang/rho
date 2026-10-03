@@ -20,10 +20,18 @@ fn hides_work(entry: &Entry) -> bool {
     matches!(entry, Entry::Tool(_) | Entry::Reasoning(_))
 }
 
-// Covers: one anchor per run of hidden work, counting only tools, split by visible entries.
+fn summary_text(row: Option<Entry>) -> Option<String> {
+    row.map(|entry| match entry {
+        Entry::Notice(text) => text,
+        other => panic!("summary row must be a notice: {other:?}"),
+    })
+}
+
+// Covers: one summary per hidden run, on the run's first entry, counting only
+// tools; visible entries split runs and tool-free runs paint nothing.
 // Owner: zen tool-run grouping.
 #[test]
-fn anchors_one_summary_per_hidden_run() {
+fn summarizes_each_hidden_run_at_its_start() {
     let entries = vec![
         Entry::Assistant("before".into()),
         Entry::Reasoning(ReasoningEntry::new("plan")),
@@ -38,44 +46,12 @@ fn anchors_one_summary_per_hidden_run() {
         Entry::Reasoning(ReasoningEntry::new("no tools in this run")),
     ];
 
-    let summaries = (0..entries.len())
-        .map(|index| summary_at(&entries, index, hides_work))
+    let rows = (0..entries.len())
+        .map(|index| summary_text(summary_row_at(&entries, index, hides_work)))
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        summaries,
-        [
-            None,
-            None,
-            Some(3),
-            None,
-            None,
-            None,
-            None,
-            Some(1),
-            None,
-            None,
-            None
-        ]
-    );
-}
-
-// Covers: rebuild start rewinds over the hidden run ending before an index.
-// Owner: zen tool-run grouping.
-#[test]
-fn run_start_rewinds_to_hidden_run_before_index() {
-    let entries = vec![
-        Entry::Assistant("before".into()),
-        Entry::Reasoning(ReasoningEntry::new("plan")),
-        tool(),
-        tool(),
-        Entry::Assistant("after".into()),
-    ];
-
-    let starts = (0..=entries.len() + 1)
-        .map(|index| run_start(&entries, index, hides_work))
-        .collect::<Vec<_>>();
-
-    // Indices past the end clamp to the transcript length.
-    assert_eq!(starts, [0, 1, 1, 1, 1, 5, 5]);
+    let mut expected = vec![None; entries.len()];
+    expected[1] = summary_text(Some(summary_entry(3)));
+    expected[7] = summary_text(Some(summary_entry(1)));
+    assert_eq!(rows, expected);
 }

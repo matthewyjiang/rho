@@ -2,54 +2,44 @@
 //! between them) into one summary row, so assistant output written before and
 //! after tool use stays visibly separate.
 //!
-//! A run is a maximal span of consecutive hidden entries. Its summary row is
-//! anchored on the run's first tool entry; every other hidden entry paints
-//! nothing. Callers pass their own `hides` policy and only use these helpers
-//! while zen is on.
+//! A run is a maximal span of consecutive hidden entries. Its first entry paints
+//! the summary row; every other hidden entry paints nothing. Only hidden tools
+//! are counted, and tools hide only in zen, so callers pass their plain `hides`
+//! policy without a separate zen check: outside zen every run has zero tools and
+//! paints nothing.
 
 use super::Entry;
 
-/// Tool count for the summary row anchored at `index`.
-///
-/// `None` unless `index` is a hidden tool with no earlier hidden tool in the
-/// same run.
-pub(super) fn summary_at(
+/// Summary row painted at `index`, or `None` unless `index` starts a hidden run
+/// containing at least one tool.
+pub(super) fn summary_row_at(
     entries: &[Entry],
     index: usize,
     hides: impl Fn(&Entry) -> bool,
-) -> Option<usize> {
-    let entry = entries.get(index)?;
-    if !matches!(entry, Entry::Tool(_)) || !hides(entry) {
+) -> Option<Entry> {
+    let starts_run = hides(entries.get(index)?) && (index == 0 || !hides(&entries[index - 1]));
+    if !starts_run {
         return None;
     }
-    let earlier_tool = entries[..index]
+    let tools = entries[index..]
         .iter()
-        .rev()
         .take_while(|entry| hides(entry))
-        .any(|entry| matches!(entry, Entry::Tool(_)));
-    if earlier_tool {
-        return None;
-    }
-    Some(
-        entries[index..]
-            .iter()
-            .take_while(|entry| hides(entry))
-            .filter(|entry| matches!(entry, Entry::Tool(_)))
-            .count(),
-    )
+        .filter(|entry| matches!(entry, Entry::Tool(_)))
+        .count();
+    (tools > 0).then(|| summary_entry(tools))
 }
 
 /// Start of the hidden run that ends right before `index`, or `index` itself.
 ///
 /// A change at `index` can grow or shrink the run before it, so rebuilding
-/// from here refreshes that run's anchored count.
+/// from here refreshes that run's summary row.
 pub(super) fn run_start(entries: &[Entry], index: usize, hides: impl Fn(&Entry) -> bool) -> usize {
-    let end = index.min(entries.len());
-    end - entries[..end]
-        .iter()
-        .rev()
-        .take_while(|entry| hides(entry))
-        .count()
+    index
+        - entries[..index]
+            .iter()
+            .rev()
+            .take_while(|entry| hides(entry))
+            .count()
 }
 
 /// Summary row painted in place of a run of `tools` hidden tool cards.

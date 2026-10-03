@@ -829,13 +829,10 @@ impl AttachmentApp {
                 if !self.display.hides_entry(entry) {
                     return Some(HistoryItem::Transcript { index, entry });
                 }
-                if !self.display.zen_mode {
-                    return None;
-                }
-                zen_tool_run::summary_at(&self.transcript, index, |entry| {
+                zen_tool_run::summary_row_at(&self.transcript, index, |entry| {
                     self.display.hides_entry(entry)
                 })
-                .map(|tools| HistoryItem::Ephemeral(zen_tool_run::summary_entry(tools)))
+                .map(HistoryItem::Ephemeral)
             })
             .collect::<Vec<_>>();
         if self.display.shows_work_chrome() {

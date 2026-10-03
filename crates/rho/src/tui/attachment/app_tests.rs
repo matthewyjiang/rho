@@ -264,7 +264,7 @@ fn history_lines_follow_display_settings() {
     assert!(zen.iter().all(|line| !line.contains("read_file")));
     assert!(zen.iter().any(|line| line.contains("answer")));
     assert!(zen.iter().any(|line| line.contains("task")));
-    // The hidden tool still leaves one summary row between output sections.
+    // The hidden tool still leaves one summary row where its card was.
     let summary = line_text(&crate::tui::render::entry_lines(
         &zen_tool_run::summary_entry(1),
         80,

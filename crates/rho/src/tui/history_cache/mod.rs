@@ -103,11 +103,6 @@ impl HistoryRenderSettings {
         }
     }
 
-    /// Hidden entries that fold into one zen tool-run summary row.
-    fn collapses_into_tool_run(self, entry: &Entry) -> bool {
-        self.zen_mode && self.hides_entry(entry)
-    }
-
     /// Width or theme changes reflow or restyle every cached line.
     pub(super) fn requires_full_rebuild(self, previous: Self) -> bool {
         self.width != previous.width || self.theme_generation != previous.theme_generation
@@ -180,7 +175,8 @@ impl HistoryLineCache {
     /// cache is cold or already suffix-dirty.
     ///
     /// Used when tool cards toggle expand/collapse (height changes, content of
-    /// later entries does not).
+    /// later entries does not). Callers must not change which entries are
+    /// hidden: a hidden run's summary row is only refreshed by suffix rebuilds.
     pub(super) fn resplice_entries(&mut self, indices: impl IntoIterator<Item = usize>) {
         self.appended_entry = None;
         if self.dirty_from.is_some() {
@@ -527,26 +523,20 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) -> Option<CachedEntry> {
         let index = self.measured_from.checked_sub(1)?;
-        let Some(entry) = entries.get(index) else {
+        if index >= entries.len() {
             self.measured_from = 0;
             return None;
-        };
+        }
         #[cfg(test)]
         {
             self.entry_renders = self.entry_renders.saturating_add(1);
         }
-        let cached = cached_entry_from_render(
-            prepare_cache_entry_render(
-                entries,
-                index,
-                settings,
-                self.open_stream_tail,
-                image_resolver,
-            ),
-            entry,
-            index + 1 == entries.len(),
-            settings.width,
+        let cached = render_cache_entry(
+            entries,
+            index,
+            settings,
             self.open_stream_tail,
+            image_resolver,
         );
         self.measured_from = index;
         Some(cached)
@@ -655,12 +645,11 @@ impl HistoryLineCache {
         {
             return;
         }
-        // A zen run summary counts the tools after it. Rebuild from the start of
-        // the run touching `rebuild_from` so its count follows appends and edits.
-        let rebuild_from = zen_tool_run::run_start(entries, rebuild_from, |entry| {
-            settings.collapses_into_tool_run(entry)
-        })
-        .max(self.measured_from);
+        // A hidden run's summary row counts the tools after it. Rebuild from the
+        // start of the run touching `rebuild_from` so its count follows edits.
+        let rebuild_from =
+            zen_tool_run::run_start(entries, rebuild_from, |entry| settings.hides_entry(entry))
+                .max(self.measured_from);
         let cache_rebuild = rebuild_from.saturating_sub(self.measured_from);
         self.truncate_entries_to(cache_rebuild);
 
@@ -701,19 +690,12 @@ impl HistoryLineCache {
             {
                 self.entry_renders = self.entry_renders.saturating_add(1);
             }
-            let entry = &entries[index];
-            self.entries[cache_index] = cached_entry_from_render(
-                prepare_cache_entry_render(
-                    entries,
-                    index,
-                    settings,
-                    self.open_stream_tail,
-                    image_resolver,
-                ),
-                entry,
-                index + 1 == entries.len(),
-                settings.width,
+            self.entries[cache_index] = render_cache_entry(
+                entries,
+                index,
+                settings,
                 self.open_stream_tail,
+                image_resolver,
             );
         }
 
@@ -734,19 +716,12 @@ impl HistoryLineCache {
         }
         self.projected_code_blocks = None;
         let range_start = self.total_lines();
-        let entry = &entries[entry_index];
-        let cached = cached_entry_from_render(
-            prepare_cache_entry_render(
-                entries,
-                entry_index,
-                settings,
-                self.open_stream_tail,
-                image_resolver,
-            ),
-            entry,
-            entry_index + 1 == entries.len(),
-            settings.width,
+        let cached = render_cache_entry(
+            entries,
+            entry_index,
+            settings,
             self.open_stream_tail,
+            image_resolver,
         );
         let line_count = cached.lines.len();
         self.entries.push(cached);
@@ -846,53 +821,25 @@ pub(super) fn append_entry_segment_into(
 
 /// Shared entry render for full rebuild and surgical resplice paths.
 ///
-/// Returns `None` for hidden entries, except a zen tool run's anchor, which
-/// paints the run summary. Code-block line numbers and image placements are
-/// relative to the entry start.
-struct PreparedCacheEntry {
-    lines: Vec<Line<'static>>,
-    code_blocks: Vec<CachedCodeBlock>,
-    image_placement: Option<RenderedImagePlacements>,
-    depends_on_image_height: bool,
-}
-
-fn cached_entry_from_render(
-    prepared: Option<PreparedCacheEntry>,
-    entry: &Entry,
-    is_last: bool,
-    width: usize,
-    open_stream_tail: bool,
-) -> CachedEntry {
-    let Some(rendered) = prepared else {
-        return CachedEntry::default();
-    };
-    let has_trailing_blank = !(open_stream_tail && is_last);
-    let content_line_count = rendered
-        .lines
-        .len()
-        .saturating_sub(usize::from(has_trailing_blank));
-    CachedEntry {
-        lines: rendered.lines,
-        code_blocks: rendered.code_blocks,
-        image_placement: rendered.image_placement,
-        incremental: incremental::incremental_cache_for(entry, is_last, width, content_line_count),
-        depends_on_image_height: rendered.depends_on_image_height,
-    }
-}
-
-fn prepare_cache_entry_render(
+/// Hidden entries cache no lines, except the first entry of a hidden run, which
+/// paints the run summary. Incremental append state follows the entry actually
+/// painted. Code-block line numbers and image placements are relative to the
+/// entry start.
+fn render_cache_entry(
     entries: &[Entry],
     entry_index: usize,
     settings: HistoryRenderSettings,
     open_stream_tail: bool,
     image_resolver: EntryImageResolver<'_>,
-) -> Option<PreparedCacheEntry> {
+) -> CachedEntry {
     let entry = &entries[entry_index];
-    let summary = if settings.hides_entry(entry) {
-        let tools = zen_tool_run::summary_at(entries, entry_index, |entry| {
-            settings.collapses_into_tool_run(entry)
-        })?;
-        Some(zen_tool_run::summary_entry(tools))
+    let substitute = if settings.hides_entry(entry) {
+        let Some(summary) =
+            zen_tool_run::summary_row_at(entries, entry_index, |entry| settings.hides_entry(entry))
+        else {
+            return CachedEntry::default();
+        };
+        Some(summary)
     } else {
         // Keep the duration receipt when text is hidden, without changing stored reasoning.
         // `hides_entry` already dropped hidden reasoning that has no receipt.
@@ -903,11 +850,13 @@ fn prepare_cache_entry_render(
             _ => None,
         }
     };
-    let entry = summary.as_ref().unwrap_or(entry);
-    let trailing_blank = if open_stream_tail && entry_index + 1 == entries.len() {
-        TrailingBlank::Omit
-    } else {
+    let entry = substitute.as_ref().unwrap_or(entry);
+    let is_last = entry_index + 1 == entries.len();
+    let has_trailing_blank = !(open_stream_tail && is_last);
+    let trailing_blank = if has_trailing_blank {
         TrailingBlank::Include
+    } else {
+        TrailingBlank::Omit
     };
     let mut rendered = render_entry_with_options(
         entry,
@@ -948,12 +897,22 @@ fn prepare_cache_entry_render(
             text: Arc::from(block.text),
         })
         .collect();
-    Some(PreparedCacheEntry {
+    let content_line_count = rendered
+        .lines
+        .len()
+        .saturating_sub(usize::from(has_trailing_blank));
+    CachedEntry {
+        incremental: incremental::incremental_cache_for(
+            entry,
+            is_last,
+            settings.width,
+            content_line_count,
+        ),
         lines: rendered.lines,
         code_blocks,
         image_placement: rendered.image_placement,
         depends_on_image_height,
-    })
+    }
 }
 
 #[cfg(test)]
