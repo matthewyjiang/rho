@@ -127,7 +127,8 @@ async fn decide_sends_the_api_request_and_reads_each_answer_type() {
 
 // Covers: a server error, an answer that is not an answer of its question's
 // type to an asked question, an answer to a question not asked, a repeated
-// key, probabilities that are not a distribution, or a missing or extra
+// key, probabilities that are not a distribution, a choice that is not the
+// most likely option, or a missing or extra
 // probability is an error, never a default or strengthened answer, and
 // the error never repeats response text, where a server or proxy may echo
 // the API key.
@@ -157,6 +158,7 @@ async fn unusable_responses_are_errors() {
             json!({"answers": {"verdict": {"type": "noul", "noul": 0.9}}}).to_string(),
         ),
         (200, choice("yes", json!({"yes": 1.0, "no": 1.0}))),
+        (200, choice("yes", json!({"yes": 0.25, "no": 0.75}))),
         (
             200,
             json!({"answers": {

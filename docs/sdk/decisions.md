@@ -45,7 +45,7 @@ A decision model reports a probability for every possible answer. A noul answer 
 
 A text model reports no probabilities, and its `probability()` and `probabilities()` return `None` rather than a stand-in certainty. A caller that sets a probability threshold decides what a text model's answer means.
 
-Answer constructors reject probabilities that are not a distribution: each must be within 0 to 1, and together they must total 1, give or take 0.005 per probability for servers that round to 2 decimals (TypeSafe does). A broken response therefore cannot become a stronger answer. `DecisionRequest::check_answers` checks that answers fit the request's questions: their count, kind, option or level, and one probability per option or level. Call it before acting on answers from a model you did not write.
+Answer constructors reject probabilities that are not a distribution: each must be within 0 to 1, and together they must total 1, give or take 0.005 per probability for servers that round to 2 decimals (TypeSafe does). A choice that reports probabilities must also be a most likely option, ties included. A broken response therefore cannot become a stronger answer. `DecisionRequest::check_answers` checks that answers fit the request's questions: their count, kind, option or level, and one probability per option or level. Call it before acting on answers from a model you did not write.
 
 ## Text models
 

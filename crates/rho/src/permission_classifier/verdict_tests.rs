@@ -65,7 +65,7 @@ fn only_a_screen_allow_skips_review() {
             ScreenVerdict::Escalate,
         ),
         (
-            answer_with_allow_probability(&SCREEN_QUESTION, "escalate", Some(1.0)),
+            answer_with_allow_probability(&SCREEN_QUESTION, "escalate", Some(0.4)),
             ScreenVerdict::Escalate,
         ),
     ];

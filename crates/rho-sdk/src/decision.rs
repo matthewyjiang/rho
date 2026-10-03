@@ -118,11 +118,14 @@ impl<'a> DecisionRequest<'a> {
                             .probabilities()
                             .is_none_or(|probabilities| probabilities.len() == options.len())
                 }
+                // With probabilities, the value is a weighted level that the
+                // distribution tolerance can lift just past the top level, so
+                // only a whole level is bounded.
                 (QuestionKind::Score(levels), Answer::Score(answer)) => {
-                    answer.value <= (levels.len() - 1) as f64
-                        && answer
-                            .probabilities()
-                            .is_none_or(|probabilities| probabilities.len() == levels.len())
+                    match answer.probabilities() {
+                        Some(probabilities) => probabilities.len() == levels.len(),
+                        None => answer.value <= (levels.len() - 1) as f64,
+                    }
                 }
                 (
                     QuestionKind::Noul(_) | QuestionKind::Choice(_) | QuestionKind::Score(_),
@@ -400,11 +403,17 @@ impl ChoiceAnswer {
     }
 
     /// A model's choice with its probability for each option, in option
-    /// order; `None` unless `option` indexes `probabilities` and they are a
-    /// distribution: each within 0 to 1, totaling 1 within 0.005 per
-    /// probability.
+    /// order; `None` unless they are a distribution (each within 0 to 1,
+    /// totaling 1 within 0.005 per probability) and `option` has the highest
+    /// probability, tied or not. Rounding never reorders probabilities, so a
+    /// server that rounds still passes.
     pub fn from_probabilities(option: usize, probabilities: Vec<f64>) -> Option<Self> {
-        (option < probabilities.len() && valid_distribution(&probabilities)).then_some(Self {
+        let chosen = *probabilities.get(option)?;
+        (valid_distribution(&probabilities)
+            && probabilities
+                .iter()
+                .all(|&probability| probability <= chosen))
+        .then_some(Self {
             option,
             probabilities: Some(probabilities),
         })

@@ -105,8 +105,8 @@ fn requests_outside_the_shared_server_limits_fail_the_check() {
 }
 
 // Covers: an answer cannot carry a probability outside 0 to 1, a choice
-// outside its probabilities, or probabilities that do not total 1 beyond
-// 2-decimal rounding, so a broken model response can never become a stronger
+// that is not a most likely option, or probabilities that do not total 1
+// beyond 2-decimal rounding, so a broken model response can never become a stronger
 // answer; a score is the probability-weighted level.
 // Owner: SDK decision answers.
 #[test]
@@ -136,6 +136,8 @@ fn answers_hold_only_valid_probabilities() {
         (0, vec![1.0, 1.0], false),
         (0, vec![0.5, 0.3], false),
         (0, vec![0.33, 0.33, 0.33], true),
+        (0, vec![0.25, 0.75], false),
+        (0, vec![0.5, 0.5], true),
     ];
     for (option, probabilities, valid) in choice_cases {
         let answer = ChoiceAnswer::from_probabilities(option, probabilities.clone());
@@ -204,6 +206,14 @@ fn answers_that_do_not_fit_the_request_fail_the_check() {
                 fitting_level.clone(),
             ],
             false,
+        ),
+        (
+            "weighted level past the top within the tolerance",
+            vec![
+                pick(ChoiceAnswer::from_option(1)),
+                level(ScoreAnswer::from_probabilities(vec![0.0, 0.01, 1.0]).unwrap()),
+            ],
+            true,
         ),
         (
             "level out of range",
