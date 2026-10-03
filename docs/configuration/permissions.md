@@ -34,6 +34,8 @@ Auto needs a classifier model. Rho does not pick one. `/config` and interactive 
 
 The classifier sees completed questionnaire answers next to the questions. Approving an action there covers that action, not unrelated ones. You do not need to repeat it in chat. Unanswered questions and defaults are not consent. Ordinary tool output stays out of the classifier transcript.
 
+Earlier tool calls appear in the transcript with each string argument cut to 500 characters. The call being classified stays whole. When the model catalog knows the classifier model's context window and the transcript still does not fit, the oldest earlier tool calls are left out first. User messages, questionnaire answers, and the pending request are never left out. If they alone do not fit, the classifier denies the request and reports the estimated tokens and the limit. When the served limit is smaller than the catalog window, such as a local Ollama `num_ctx`, set `usable_context_window` in [local model metadata](/configuration#local-model-metadata).
+
 Set the model under **Agent behavior** in `/config`, or as `[internal_agents.permission-classifier]`.
 
 ## Change the mode

@@ -7,12 +7,62 @@ use rho_sdk::{
     PathScope,
 };
 
+use super::budget::{
+    cap_string_leaves, fit_transcript, Retention, TranscriptBudget, TranscriptLine,
+    COMPLETED_CALL_STRING_CAP_CHARS,
+};
+
+/// One transcript record in history order. Tool-call lines are rendered after
+/// the walk, once each occurrence's lifecycle is known.
+enum Entry {
+    Line(TranscriptLine),
+    Call(usize),
+}
+
+/// Lifecycle of one tool-call occurrence.
+///
+/// Call IDs are not unique across responses (lenient adapters reuse
+/// `call_{index}`). A result answers only the latest executable occurrence of
+/// its ID, and only once, so duplicate results cannot reach older calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallLifecycle {
+    Unanswered,
+    Answered,
+    /// Part of an aborted turn; it never ran and never will.
+    Aborted,
+}
+
+struct CallOccurrence<'a> {
+    call: &'a ToolCall,
+    lifecycle: CallLifecycle,
+}
+
+/// Renders the classifier transcript and fits it into `budget`.
+///
+/// Answered and aborted calls are capped and droppable. Unanswered calls and
+/// answered calls sharing the pending call's ID stay whole, because their
+/// arguments may describe the action being classified. Over-budget failures
+/// surface as a [`super::TranscriptOverBudget`] inside the returned error.
 pub(crate) fn render_classifier_transcript(
     history: &[Message],
     pending: &ApprovalRequest,
+    budget: TranscriptBudget,
 ) -> anyhow::Result<String> {
-    let mut lines = Vec::new();
-    let mut pending_calls = HashMap::new();
+    let pending_call_id = pending.tool_call_id().map(|id| id.as_str());
+    render_with_pending_call(history, pending, pending_call_id, budget)
+}
+
+/// [`render_classifier_transcript`] with the pending call ID passed in, since
+/// only the SDK can attach one to an [`ApprovalRequest`].
+pub(super) fn render_with_pending_call(
+    history: &[Message],
+    pending: &ApprovalRequest,
+    pending_call_id: Option<&str>,
+    budget: TranscriptBudget,
+) -> anyhow::Result<String> {
+    let mut entries = Vec::new();
+    let mut calls = Vec::new();
+    let mut latest_executable: HashMap<&str, usize> = HashMap::new();
 
     for message in history {
         match HistoryMessage::of(message) {
@@ -23,66 +73,145 @@ pub(crate) fn render_classifier_transcript(
             | HistoryMessage::CompactionSummary(_) => {}
             HistoryMessage::User(blocks) => {
                 for block in blocks {
-                    match block {
-                        ContentBlock::Text(text) => {
-                            lines.push(record("user", &[("text", json_str(text))])?)
-                        }
-                        ContentBlock::Image(_) => {
-                            lines.push(record("user", &[("text", json_str("[image omitted]"))])?)
-                        }
-                        ContentBlock::ToolCall(_) => {}
-                    }
+                    let text = match block {
+                        ContentBlock::Text(text) => text.as_str(),
+                        ContentBlock::Image(_) => "[image omitted]",
+                        ContentBlock::ToolCall(_) => continue,
+                    };
+                    entries.push(Entry::Line(required(record(
+                        "user",
+                        &[("text", json_str(text))],
+                    )?)));
                 }
             }
             HistoryMessage::Assistant(blocks) => {
-                append_tool_calls(&mut lines, &mut pending_calls, blocks)?;
+                let lifecycle = CallLifecycle::Unanswered;
+                push_calls(
+                    &mut entries,
+                    &mut calls,
+                    &mut latest_executable,
+                    blocks,
+                    lifecycle,
+                );
             }
             HistoryMessage::EnrichedAssistant(assistant) => {
-                append_tool_calls(&mut lines, &mut pending_calls, &assistant.content)?;
+                let lifecycle = CallLifecycle::Unanswered;
+                let blocks = &assistant.content;
+                push_calls(
+                    &mut entries,
+                    &mut calls,
+                    &mut latest_executable,
+                    blocks,
+                    lifecycle,
+                );
             }
             HistoryMessage::AbortedAssistant(aborted) => {
-                append_tool_calls(&mut lines, &mut pending_calls, &aborted.content)?;
+                let lifecycle = CallLifecycle::Aborted;
+                let blocks = &aborted.content;
+                push_calls(
+                    &mut entries,
+                    &mut calls,
+                    &mut latest_executable,
+                    blocks,
+                    lifecycle,
+                );
             }
             HistoryMessage::ToolResult(result) => {
-                if let Some(call) = pending_calls.remove(result.id.as_str()) {
-                    append_questionnaire_answers(&mut lines, call, result)?;
+                let Some(&index) = latest_executable.get(result.id.as_str()) else {
+                    continue;
+                };
+                let occurrence: &mut CallOccurrence = &mut calls[index];
+                if occurrence.lifecycle != CallLifecycle::Unanswered {
+                    continue;
                 }
+                occurrence.lifecycle = CallLifecycle::Answered;
+                append_questionnaire_answers(&mut entries, occurrence.call, result)?;
             }
         }
     }
 
-    lines.push("pending_capability:".into());
-    lines.extend(format_pending_capability(pending)?);
+    let mut lines = Vec::with_capacity(entries.len());
+    for entry in entries {
+        lines.push(match entry {
+            Entry::Line(line) => line,
+            Entry::Call(index) => {
+                let occurrence = &calls[index];
+                let in_flight = match occurrence.lifecycle {
+                    CallLifecycle::Unanswered => true,
+                    // A detached job can ask after its call was answered, and
+                    // reused IDs make the asking occurrence ambiguous, so
+                    // every answered match of the pending ID stays whole.
+                    CallLifecycle::Answered => pending_call_id == Some(occurrence.call.id.as_str()),
+                    CallLifecycle::Aborted => false,
+                };
+                let retention = if in_flight {
+                    Retention::Required
+                } else {
+                    Retention::Droppable
+                };
+                tool_call_line(occurrence.call, retention)?
+            }
+        });
+    }
 
-    Ok(lines.join("\n"))
+    let mut tail = vec!["pending_capability:".to_owned()];
+    tail.extend(format_pending_capability(pending)?);
+
+    Ok(fit_transcript(lines, tail, budget)?)
 }
 
-fn append_tool_calls<'a>(
-    lines: &mut Vec<String>,
-    pending_calls: &mut HashMap<&'a str, &'a ToolCall>,
+/// Aborted calls never ran, so they never become the target of a result.
+fn push_calls<'a>(
+    entries: &mut Vec<Entry>,
+    calls: &mut Vec<CallOccurrence<'a>>,
+    latest_executable: &mut HashMap<&'a str, usize>,
     blocks: &'a [ContentBlock],
-) -> anyhow::Result<()> {
+    lifecycle: CallLifecycle,
+) {
     for block in blocks {
         let ContentBlock::ToolCall(call) = block else {
             continue;
         };
-        pending_calls.insert(&call.id, call);
-        lines.push(record(
+        let index = calls.len();
+        calls.push(CallOccurrence { call, lifecycle });
+        if lifecycle != CallLifecycle::Aborted {
+            latest_executable.insert(&call.id, index);
+        }
+        entries.push(Entry::Call(index));
+    }
+}
+
+/// Droppable calls are history, not the action under review, so their
+/// string arguments are capped.
+fn tool_call_line(call: &ToolCall, retention: Retention) -> anyhow::Result<TranscriptLine> {
+    let arguments = match retention {
+        Retention::Required => call.arguments.clone(),
+        Retention::Droppable => cap_string_leaves(&call.arguments, COMPLETED_CALL_STRING_CAP_CHARS),
+    };
+    Ok(TranscriptLine {
+        text: record(
             "tool_call",
             &[
                 ("call_id", json_str(&call.id)),
                 ("name", json_str(&call.name)),
-                ("arguments", call.arguments.to_string()),
+                ("arguments", arguments.to_string()),
             ],
-        )?);
+        )?,
+        retention,
+    })
+}
+
+fn required(text: String) -> TranscriptLine {
+    TranscriptLine {
+        text,
+        retention: Retention::Required,
     }
-    Ok(())
 }
 
 /// Only the questionnaire host-input bridge supplies answer evidence. Pair by
-/// call ID, parse its structured response, and omit every other tool body.
+/// call occurrence, parse its structured response, and omit every other tool body.
 fn append_questionnaire_answers(
-    lines: &mut Vec<String>,
+    entries: &mut Vec<Entry>,
     call: &ToolCall,
     result: &ToolResult,
 ) -> anyhow::Result<()> {
@@ -101,7 +230,7 @@ fn append_questionnaire_answers(
         let Some(question) = request.questions.iter().find(|q| q.id == answer.id) else {
             continue;
         };
-        lines.push(record(
+        entries.push(Entry::Line(required(record(
             "questionnaire_answer",
             &[
                 ("call_id", json_str(&call.id)),
@@ -109,7 +238,7 @@ fn append_questionnaire_answers(
                 ("question", json_str(&question.question)),
                 ("answer", answer.answer.to_string()),
             ],
-        )?);
+        )?)));
     }
     Ok(())
 }
