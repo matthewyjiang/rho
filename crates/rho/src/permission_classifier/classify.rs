@@ -2,9 +2,10 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context};
 use rho_providers::{
-    model::{ContentBlock, Message},
+    model::{models_dev::cached_model_metadata, ContentBlock, Message},
     reasoning::ReasoningLevel,
 };
+use rho_sdk::model::context::estimate_text_tokens;
 use rho_sdk::{
     provider::ModelProvider, ApprovalRequest, CancellationToken, ProviderRequestUsageRecording,
     SessionId,
@@ -21,8 +22,15 @@ use crate::{
 
 use super::{
     parse_classifier_verdict, parse_screen_verdict, render_classifier_transcript,
-    ClassifierVerdict, ScreenVerdict, CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
+    ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_PROMPT,
+    CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
 };
+
+/// Context reserved for the classifier's own output when sizing the transcript.
+///
+/// Usage ledger receipt: 398 review calls peaked at 5,348 output tokens
+/// (p99 954); screens peaked at 924. 8,192 covers the observed peak.
+const CLASSIFIER_OUTPUT_RESERVE_TOKENS: u64 = 8_192;
 
 pub(crate) struct ClassifyRequest<'a> {
     pub history: &'a [Message],
@@ -66,19 +74,45 @@ async fn try_classify_capability_request(
             "failed to build {PERMISSION_CLASSIFIER_AGENT_ID} provider; check configured credentials"
         )
     })?;
-    try_classify_capability_request_with_provider(provider.as_ref(), reasoning, request).await
+    // Read the window after building the provider: catalog-driven providers
+    // hydrate the model catalog during construction.
+    let budget = transcript_budget(
+        cached_model_metadata(&selection.provider, &selection.model)
+            .and_then(|metadata| metadata.display_context_window()),
+    );
+    try_classify_capability_request_with_provider(provider.as_ref(), reasoning, budget, request)
+        .await
 }
 
 #[cfg(test)]
 pub(super) async fn classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
+    budget: TranscriptBudget,
     request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    match try_classify_capability_request_with_provider(provider, reasoning, request).await {
+    match try_classify_capability_request_with_provider(provider, reasoning, budget, request).await
+    {
         Ok(verdict) => verdict,
         Err(error) => classifier_unavailable(error),
     }
+}
+
+/// Transcript budget for a classifier model with `context_window` tokens.
+///
+/// Subtracts the shared system prompt, the longer stage instruction, and
+/// [`CLASSIFIER_OUTPUT_RESERVE_TOKENS`]. An unknown window leaves the
+/// transcript unbounded; the provider still rejects oversize requests.
+pub(super) fn transcript_budget(context_window: Option<u64>) -> TranscriptBudget {
+    let Some(window) = context_window else {
+        return TranscriptBudget::Unbounded;
+    };
+    let instruction_tokens = estimate_text_tokens(CLASSIFIER_SCREEN_INSTRUCTION)
+        .max(estimate_text_tokens(CLASSIFIER_REVIEW_INSTRUCTION));
+    let overhead = estimate_text_tokens(CLASSIFIER_PROMPT)
+        .saturating_add(instruction_tokens)
+        .saturating_add(CLASSIFIER_OUTPUT_RESERVE_TOKENS);
+    TranscriptBudget::Tokens(window.saturating_sub(overhead))
 }
 
 /// Runs the two-stage pipeline: a cheap screen, then a reasoned review.
@@ -99,9 +133,10 @@ pub(super) async fn classify_capability_request_with_provider(
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
+    budget: TranscriptBudget,
     request: ClassifyRequest<'_>,
 ) -> anyhow::Result<ClassifierVerdict> {
-    let transcript = render_classifier_transcript(request.history, request.pending)?;
+    let transcript = render_classifier_transcript(request.history, request.pending, budget)?;
 
     let screen = run_stage(
         provider,
@@ -172,9 +207,17 @@ async fn run_stage(
     Ok(result.texts.join("\n"))
 }
 
-fn classifier_unavailable(error: impl std::fmt::Display) -> ClassifierVerdict {
-    // Keep details out of the executor-facing deny reason; credential and
-    // provider response bodies can show up in Display output.
+fn classifier_unavailable(error: anyhow::Error) -> ClassifierVerdict {
+    // An over-budget transcript carries only token counts, so the limit and
+    // the asked size can be shown instead of hidden behind "unavailable".
+    if let Some(over_budget) = error.downcast_ref::<TranscriptOverBudget>() {
+        tracing::warn!(error = %over_budget, "permission classifier transcript over budget");
+        return ClassifierVerdict::Deny {
+            reason: over_budget.to_string(),
+        };
+    }
+    // Keep other details out of the executor-facing deny reason; credential
+    // and provider response bodies can show up in Display output.
     tracing::warn!(error = %error, "permission classifier unavailable");
     ClassifierVerdict::Deny {
         reason: "classifier unavailable".into(),

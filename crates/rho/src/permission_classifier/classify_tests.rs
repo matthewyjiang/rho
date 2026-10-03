@@ -11,8 +11,9 @@ use rho_sdk::{
 
 use super::{
     classify::{classify_capability_request_with_provider, ClassifyRequest},
-    classify_capability_request, render_classifier_transcript, ClassifierVerdict,
-    CLASSIFIER_PROMPT, CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
+    classify_capability_request, render_classifier_transcript, ClassifierVerdict, TranscriptBudget,
+    TranscriptOverBudget, CLASSIFIER_PROMPT, CLASSIFIER_REVIEW_INSTRUCTION,
+    CLASSIFIER_SCREEN_INSTRUCTION,
 };
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
@@ -68,6 +69,7 @@ fn unavailable() -> ClassifierVerdict {
 async fn run_pipeline(
     provider: &ScriptedProvider,
     reasoning: ReasoningLevel,
+    budget: TranscriptBudget,
 ) -> (
     ClassifierVerdict,
     Vec<rho_sdk::provider::RecordedModelRequest>,
@@ -78,6 +80,7 @@ async fn run_pipeline(
     let verdict = classify_capability_request_with_provider(
         provider,
         reasoning,
+        budget,
         ClassifyRequest {
             history: &history,
             pending: &pending,
@@ -158,7 +161,12 @@ async fn screen_result_decides_whether_review_runs() {
 
     for (name, turns, expected, expected_requests) in cases {
         let provider = ScriptedProvider::new(ModelIdentity::new("provider", "api", "model"), turns);
-        let (verdict, requests) = run_pipeline(&provider, ReasoningLevel::Medium).await;
+        let (verdict, requests) = run_pipeline(
+            &provider,
+            ReasoningLevel::Medium,
+            TranscriptBudget::Unbounded,
+        )
+        .await;
         assert_eq!(verdict, expected, "{name}");
         assert_eq!(requests.len(), expected_requests, "{name}");
     }
@@ -172,9 +180,15 @@ async fn screen_stays_low_reasoning_while_review_uses_configured_level() {
         ModelIdentity::new("provider", "api", "model"),
         [text_turn("escalate"), text_turn(r#"{"decision":"allow"}"#)],
     );
-    let transcript = render_classifier_transcript(&sample_history(), &pending_write()).unwrap();
+    let transcript = render_classifier_transcript(
+        &sample_history(),
+        &pending_write(),
+        TranscriptBudget::Unbounded,
+    )
+    .unwrap();
 
-    let (verdict, requests) = run_pipeline(&provider, ReasoningLevel::High).await;
+    let (verdict, requests) =
+        run_pipeline(&provider, ReasoningLevel::High, TranscriptBudget::Unbounded).await;
 
     assert_eq!(verdict, ClassifierVerdict::Allow);
     assert_eq!(
@@ -201,6 +215,34 @@ async fn screen_stays_low_reasoning_while_review_uses_configured_level() {
     assert_eq!(requests[1].reasoning_level, ReasoningLevel::High);
     assert!(requests[0].tools.is_empty());
     assert!(requests[1].tools.is_empty());
+}
+
+// Covers: a transcript that cannot fit the classifier context denies with the
+// asked and allowed token counts, without sending an oversize request
+// Owner: permission classifier two-stage pipeline
+#[tokio::test]
+async fn over_budget_transcript_denies_visibly_without_a_model_call() {
+    let provider = ScriptedProvider::new(ModelIdentity::new("provider", "api", "model"), []);
+
+    let (verdict, requests) =
+        run_pipeline(&provider, ReasoningLevel::Low, TranscriptBudget::Tokens(1)).await;
+
+    let over_budget = render_classifier_transcript(
+        &sample_history(),
+        &pending_write(),
+        TranscriptBudget::Tokens(1),
+    )
+    .unwrap_err()
+    .downcast::<TranscriptOverBudget>()
+    .unwrap();
+    assert_eq!(over_budget.limit_tokens, 1);
+    assert_eq!(
+        verdict,
+        ClassifierVerdict::Deny {
+            reason: over_budget.to_string()
+        }
+    );
+    assert!(requests.is_empty());
 }
 
 // Covers: an unset classifier model cannot fall back to the executor model

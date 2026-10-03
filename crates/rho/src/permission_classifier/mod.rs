@@ -1,7 +1,9 @@
+mod budget;
 mod classify;
 mod transcript;
 mod verdict;
 
+use budget::{TranscriptBudget, TranscriptOverBudget};
 pub(crate) use classify::{classify_capability_request, ClassifyRequest};
 pub(crate) use transcript::render_classifier_transcript;
 pub(crate) use verdict::{
