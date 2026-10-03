@@ -4,34 +4,43 @@ use super::{
     review_verdict, screen_verdict, verdict::SCREEN_ALLOW_THRESHOLD, ClassifierVerdict,
     ScreenVerdict, REVIEW_QUESTION, SCREEN_QUESTION,
 };
-use crate::decision::{Answer, Answers};
+use rho_sdk::decision::{Answer, ChoiceAnswer, ChoiceOption, Question, QuestionKind};
 
-fn answer(
-    question_id: &'static str,
-    option_id: &str,
-    options: &'static [crate::decision::ChoiceOption],
-) -> Answers {
-    answer_with_allow_probability(question_id, option_id, options, /*allow*/ None)
+fn options(question: &Question<'static>) -> &'static [ChoiceOption<'static>] {
+    match question.kind {
+        QuestionKind::Choice(options) => options,
+        QuestionKind::Noul(_) | QuestionKind::Score(_) => panic!("not a choice question"),
+    }
 }
 
+fn answer(question: &Question<'static>, option_id: &str) -> Vec<Answer> {
+    answer_with_allow_probability(question, option_id, /*allow*/ None)
+}
+
+/// An answer choosing `option_id`, with probabilities when `allow` is set:
+/// `allow` for the `allow` option and the rest spread over the others.
 fn answer_with_allow_probability(
-    question_id: &'static str,
+    question: &Question<'static>,
     option_id: &str,
-    options: &'static [crate::decision::ChoiceOption],
     allow: Option<f64>,
-) -> Answers {
+) -> Vec<Answer> {
+    let options = options(question);
     let option = options
         .iter()
-        .find(|option| option.id == option_id)
+        .position(|option| option.id == option_id)
         .unwrap();
-    let probabilities = allow.map(|allow| [("allow", allow)].into());
-    Answers::from([(
-        question_id,
-        Answer {
-            option,
-            probabilities,
-        },
-    )])
+    let answer = match allow {
+        None => ChoiceAnswer::from_option(option),
+        Some(allow) => {
+            let rest = (1.0 - allow) / (options.len() - 1) as f64;
+            let probabilities = options
+                .iter()
+                .map(|option| if option.id == "allow" { allow } else { rest })
+                .collect();
+            ChoiceAnswer::from_probabilities(option, probabilities).unwrap()
+        }
+    };
+    vec![Answer::Choice(answer)]
 }
 
 // Covers: only the `allow` option skips review, and from a model that reports
@@ -40,21 +49,23 @@ fn answer_with_allow_probability(
 // Owner: permission classifier screen answers.
 #[test]
 fn only_a_screen_allow_skips_review() {
-    let (id, options) = (SCREEN_QUESTION.id, SCREEN_QUESTION.options);
     let cases = [
-        (answer(id, "allow", options), ScreenVerdict::Allow),
-        (answer(id, "escalate", options), ScreenVerdict::Escalate),
-        (Answers::new(), ScreenVerdict::Escalate),
+        (answer(&SCREEN_QUESTION, "allow"), ScreenVerdict::Allow),
         (
-            answer_with_allow_probability(id, "allow", options, Some(SCREEN_ALLOW_THRESHOLD)),
+            answer(&SCREEN_QUESTION, "escalate"),
+            ScreenVerdict::Escalate,
+        ),
+        (Vec::new(), ScreenVerdict::Escalate),
+        (
+            answer_with_allow_probability(&SCREEN_QUESTION, "allow", Some(SCREEN_ALLOW_THRESHOLD)),
             ScreenVerdict::Allow,
         ),
         (
-            answer_with_allow_probability(id, "allow", options, Some(0.96)),
+            answer_with_allow_probability(&SCREEN_QUESTION, "allow", Some(0.96)),
             ScreenVerdict::Escalate,
         ),
         (
-            answer_with_allow_probability(id, "escalate", options, Some(1.0)),
+            answer_with_allow_probability(&SCREEN_QUESTION, "escalate", Some(0.4)),
             ScreenVerdict::Escalate,
         ),
     ];
@@ -70,17 +81,15 @@ fn only_a_screen_allow_skips_review() {
 // Owner: permission classifier review answers.
 #[test]
 fn every_review_option_but_allow_denies_with_its_description() {
-    let verdicts: Vec<_> = REVIEW_QUESTION
-        .options
+    let verdicts: Vec<_> = options(&REVIEW_QUESTION)
         .iter()
         .map(|option| {
-            let answers = answer(REVIEW_QUESTION.id, option.id, REVIEW_QUESTION.options);
+            let answers = answer(&REVIEW_QUESTION, option.id);
             (option.id, review_verdict(&answers).unwrap())
         })
         .collect();
 
-    let expected: Vec<_> = REVIEW_QUESTION
-        .options
+    let expected: Vec<_> = options(&REVIEW_QUESTION)
         .iter()
         .map(|option| {
             let verdict = match option.id {
@@ -93,5 +102,5 @@ fn every_review_option_but_allow_denies_with_its_description() {
         })
         .collect();
     assert_eq!(verdicts, expected);
-    assert!(review_verdict(&Answers::new()).is_err());
+    assert!(review_verdict(&[]).is_err());
 }

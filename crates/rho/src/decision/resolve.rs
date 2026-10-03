@@ -8,10 +8,11 @@
 use anyhow::Context;
 use rho_providers::{
     provider::{provider_descriptor, ProviderAuthKind},
+    system_one::{SystemOneLimits, SystemOneModel},
     CredentialStore,
 };
+use rho_sdk::{decision::DecisionModel, SecretString};
 
-use super::{system_one::SystemOneModel, DecisionModel};
 use crate::{config::Config, credential_store::AppCredentialStore};
 
 /// The only provider whose server speaks the System One API.
@@ -64,7 +65,8 @@ pub(crate) fn resolve(
     let api_base = config
         .resolved_provider_endpoint(HOST_PROVIDER)
         .context("ollama has no API base URL")?;
-    let model = SystemOneModel::new(&api_base, selection.model.clone(), api_key)?;
+    let model = SystemOneModel::new(&api_base, selection.model.clone(), api_key)?
+        .with_limits(SystemOneLimits::OLLAMA);
     Ok(Some(Box::new(model)))
 }
 
@@ -75,7 +77,7 @@ fn api_key(
     auth: &str,
     env: &dyn Fn(&str) -> Option<String>,
     store: &dyn CredentialStore,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<SecretString>> {
     let unsupported = || ConfigError::UnsupportedAuth {
         entry,
         auth: auth.into(),
@@ -92,7 +94,7 @@ fn api_key(
             ..
         } => {
             if let Some(key) = env(env_var).filter(|key| !key.trim().is_empty()) {
-                return Ok(Some(key));
+                return Ok(Some(SecretString::new(key)));
             }
             let key = store
                 .get_secret(account)?
@@ -101,7 +103,7 @@ fn api_key(
                     entry,
                     message: missing_message,
                 })?;
-            Ok(Some(key))
+            Ok(Some(SecretString::new(key)))
         }
         ProviderAuthKind::CodexOAuth { .. }
         | ProviderAuthKind::GithubCopilotDevice { .. }

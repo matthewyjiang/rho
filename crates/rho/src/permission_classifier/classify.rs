@@ -22,10 +22,10 @@ use super::{
     ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_POLICY,
     REVIEW_QUESTION, SCREEN_QUESTION,
 };
-use crate::decision::{
-    self,
-    llm::{self, AnswerStyle, TextModel},
-    ChoiceQuestion, DecisionModel, DecisionRequest,
+use crate::decision::{self, TextModel};
+use rho_sdk::decision::{
+    text::{questions_block, system_prompt, AnswerStyle},
+    Answer, DecisionModel, DecisionRequest, Question,
 };
 
 /// Config entry, `[internal_agents.permission-classifier-screen]`, naming a
@@ -208,10 +208,10 @@ pub(super) fn transcript_budget(context_window: Option<u64>) -> TranscriptBudget
     };
     let questions_tokens = [SCREEN_STAGE, REVIEW_STAGE]
         .iter()
-        .map(|stage| estimate_text_tokens(&llm::questions_block(stage.questions, stage.style)))
+        .map(|stage| estimate_text_tokens(&questions_block(stage.questions, stage.style)))
         .max()
         .unwrap_or_default();
-    let overhead = estimate_text_tokens(&llm::system_prompt(CLASSIFIER_POLICY))
+    let overhead = estimate_text_tokens(&system_prompt(CLASSIFIER_POLICY))
         .saturating_add(questions_tokens)
         .saturating_add(CLASSIFIER_OUTPUT_RESERVE_TOKENS);
     TranscriptBudget::Tokens(window.saturating_sub(overhead))
@@ -334,7 +334,7 @@ async fn run_screen(
 /// One classifier stage: the questions it asks and how the model answers.
 struct Stage {
     usage_purpose: &'static str,
-    questions: &'static [ChoiceQuestion],
+    questions: &'static [Question<'static>],
     style: AnswerStyle,
 }
 
@@ -375,13 +375,11 @@ async fn ask(
     request: &ClassifyRequest<'_>,
     state: &str,
     stage: &Stage,
-) -> anyhow::Result<decision::Answers> {
-    let decision = DecisionRequest {
-        instructions: CLASSIFIER_POLICY,
-        state,
-        questions: stage.questions,
-    };
-    model.decide(decision, &request.cancellation).await
+) -> anyhow::Result<Vec<Answer>> {
+    let decision = DecisionRequest::new(CLASSIFIER_POLICY, state, stage.questions);
+    let answers = model.decide(decision, &request.cancellation).await?;
+    decision.check_answers(&answers)?;
+    Ok(answers)
 }
 
 fn classifier_unavailable(error: anyhow::Error) -> ClassifierVerdict {
