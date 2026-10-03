@@ -1,8 +1,12 @@
-use std::path::Path;
+use std::{path::Path, sync::Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_providers::reasoning::ReasoningLevel;
 use rho_sdk::{
+    decision::{
+        Answer, ChoiceAnswer, DecisionError, DecisionFuture, DecisionModel, DecisionRequest,
+        QuestionKind,
+    },
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolResult},
     provider::{ScriptedProvider, ScriptedTurn},
     ApprovalRequest, CancellationToken, CapabilityRequest, CapabilitySource, ProviderError,
@@ -18,10 +22,6 @@ use super::{
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
     config::{Config, InternalAgentModelConfig},
-    decision::{
-        system_one::{test_server::serve_once, SystemOneModel},
-        DecisionModel,
-    },
 };
 
 fn source(name: &str) -> CapabilitySource {
@@ -65,8 +65,10 @@ fn failed_turn() -> ScriptedTurn {
 }
 
 fn deny(option_id: &str) -> ClassifierVerdict {
-    let option = REVIEW_QUESTION
-        .options
+    let QuestionKind::Choice(options) = REVIEW_QUESTION.kind else {
+        panic!("the review is a choice question");
+    };
+    let option = options
         .iter()
         .find(|option| option.id == option_id)
         .unwrap();
@@ -201,13 +203,54 @@ async fn screen_result_decides_whether_review_runs() {
     }
 }
 
-fn screen_response(choice: &str, allow_probability: f64) -> String {
-    serde_json::json!({"answers": {"screen": {
-        "type": "choice",
-        "choice": choice,
-        "probabilities": {"allow": allow_probability, "escalate": 1.0 - allow_probability},
-    }}})
-    .to_string()
+/// A decision model that answers the screen once with `result` and records
+/// the state it read.
+struct FakeScreen {
+    result: Mutex<Option<Result<Vec<Answer>, DecisionError>>>,
+    state_budget: Option<u64>,
+    states: Mutex<Vec<String>>,
+}
+
+impl FakeScreen {
+    fn new(result: Result<Vec<Answer>, DecisionError>, state_budget: Option<u64>) -> Self {
+        Self {
+            result: Mutex::new(Some(result)),
+            state_budget,
+            states: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// A screen choosing `choice` (`0` allow, `1` escalate) with
+    /// `allow_probability`.
+    fn answering(choice: usize, allow_probability: f64) -> Self {
+        let answer = ChoiceAnswer::from_probabilities(
+            choice,
+            vec![allow_probability, 1.0 - allow_probability],
+        )
+        .unwrap();
+        Self::new(Ok(vec![Answer::Choice(answer)]), /*state_budget*/ None)
+    }
+}
+
+impl DecisionModel for FakeScreen {
+    fn decide<'a>(
+        &'a self,
+        request: DecisionRequest<'a>,
+        _cancellation: &'a CancellationToken,
+    ) -> DecisionFuture<'a> {
+        self.states.lock().unwrap().push(request.state.to_owned());
+        let result = self
+            .result
+            .lock()
+            .unwrap()
+            .take()
+            .expect("screen asked twice");
+        Box::pin(async move { result })
+    }
+
+    fn state_budget(&self) -> Option<u64> {
+        self.state_budget
+    }
 }
 
 // Covers: a decision-model screen allows without a text-model call only on a
@@ -219,34 +262,34 @@ async fn decision_screen_skips_review_only_on_a_confident_allow() {
     let threshold = super::verdict::SCREEN_ALLOW_THRESHOLD;
     let cases = [
         (
-            200,
-            screen_response("allow", threshold),
+            "confident allow",
+            FakeScreen::answering(0, threshold),
             ClassifierVerdict::Allow,
             0,
         ),
         (
-            200,
-            screen_response("allow", threshold - 0.01),
+            "less confident allow",
+            FakeScreen::answering(0, threshold - 0.01),
             deny("deny_scope_expansion"),
             1,
         ),
         (
-            200,
-            screen_response("escalate", 0.2),
+            "escalate",
+            FakeScreen::answering(1, 0.2),
             deny("deny_scope_expansion"),
             1,
         ),
         (
-            500,
-            r#"{"error":"boom"}"#.to_owned(),
+            "server error",
+            FakeScreen::new(
+                Err(DecisionError::Status { status: 500 }),
+                /*state_budget*/ None,
+            ),
             deny("deny_scope_expansion"),
             1,
         ),
     ];
-    for (status, response, expected, review_requests) in cases {
-        let (base, server) = serve_once(status, response.clone()).await;
-        let screen_model =
-            SystemOneModel::new(&base, "clef-flash".into(), /*api_key*/ None).unwrap();
+    for (name, screen_model, expected, review_requests) in cases {
         let provider = ScriptedProvider::new(
             ModelIdentity::new("provider", "api", "model"),
             [text_turn(REVIEW_DENY)],
@@ -260,11 +303,10 @@ async fn decision_screen_skips_review_only_on_a_confident_allow() {
         )
         .await;
 
-        server.await.unwrap();
         assert_eq!(
             (verdict, requests.len()),
             (expected, review_requests),
-            "{response}"
+            "{name}"
         );
     }
 }
@@ -288,8 +330,10 @@ async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
             content: "done".into(),
         }));
     }
-    let (base, server) = serve_once(200, screen_response("escalate", 0.1)).await;
-    let screen_model = SystemOneModel::new(&base, "clef".into(), /*api_key*/ None).unwrap();
+    let screen_model = FakeScreen::new(
+        Ok(vec![Answer::Choice(ChoiceAnswer::from_option(1))]),
+        Some(10_500),
+    );
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
         [text_turn(REVIEW_ALLOW)],
@@ -313,10 +357,7 @@ async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
     )
     .await;
 
-    let screen_state = server.await.unwrap().body["state"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let screen_state = screen_model.states.lock().unwrap().concat();
     let review_state = match provider.recorded_requests()[0].messages.as_slice() {
         [_, Message::User(blocks)] => match blocks.first() {
             Some(ContentBlock::Text(text)) => text.clone(),
@@ -324,7 +365,7 @@ async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
         },
         other => panic!("unexpected messages {other:?}"),
     };
-    let screen_budget = TranscriptBudget::Tokens(screen_model.state_budget().unwrap());
+    let screen_budget = TranscriptBudget::Tokens(10_500);
     let fitted = render_classifier_transcript(&history, &pending, screen_budget).unwrap();
     let full =
         render_classifier_transcript(&history, &pending, TranscriptBudget::Unbounded).unwrap();

@@ -5,6 +5,8 @@ use rho_providers::{
     CredentialStore,
 };
 
+use rho_sdk::SecretString;
+
 use super::{api_key, ConfigError};
 
 const ENTRY: &str = "feature-screen";
@@ -66,7 +68,7 @@ fn api_key_prefers_a_nonblank_env_var_then_the_store() {
         let result = api_key(ENTRY, "ollama-api-key", &env_lookup, store);
 
         let actual = match &result {
-            Ok(key) => key.as_deref(),
+            Ok(key) => key.as_ref().map(SecretString::expose_secret),
             Err(error) => {
                 assert!(
                     matches!(

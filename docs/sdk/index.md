@@ -28,6 +28,7 @@ The crate is published on [crates.io](https://crates.io/crates/rho-sdk). These p
 | Cancellation | Shared cooperative token, run cancellation handle, runtime shutdown, and safe run-drop fallback |
 | Compaction | Host-supplied `Compactor`, optional automatic policy, explicit manual compaction |
 | Hooks | `hooks` module: observer, pre-tool gate, bounded envelopes, host labels |
+| Decisions | `decision` module: typed noul, choice, and score questions; `DecisionModel` trait; text-model adapter. See [decisions](/sdk/decisions) |
 | Usage | Optional `ProviderRequestUsageRecorder` for physical request accounting |
 | Persistence | Versioned JSON `SessionSnapshot` and `InMemorySessionStore`, with no SQLite requirement |
 | Security | No sensitive capability by default; workspace, policy, approval handler, provider, and tools are host supplied |

@@ -10,15 +10,17 @@ use tokio::{
 use url::Url;
 
 /// The request a [`serve_once`] server received.
-pub(crate) struct Received {
+pub(super) struct Received {
     pub request_line: String,
     pub authorization: Option<String>,
     pub body: Value,
+    /// The body as sent, which keeps key order that `body` may not.
+    pub raw_body: String,
 }
 
 /// Serves one HTTP request with `status` and `body` under the returned base,
 /// `http://127.0.0.1:PORT/v1`.
-pub(crate) async fn serve_once(
+pub(super) async fn serve_once(
     status: u16,
     body: String,
 ) -> (Url, tokio::task::JoinHandle<Received>) {
@@ -60,6 +62,8 @@ pub(crate) async fn serve_once(
                 request_line: head.lines().next().unwrap().to_owned(),
                 authorization: header("authorization"),
                 body: serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap(),
+                raw_body: String::from_utf8(bytes[header_end..header_end + length].to_vec())
+                    .unwrap(),
             }
         })
         .await

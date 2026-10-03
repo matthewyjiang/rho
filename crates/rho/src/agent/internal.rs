@@ -92,7 +92,7 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     .to_string(),
                 // The classifier sends this per request from its decision
                 // request; the definition carries the same text.
-                prompt: PromptPolicy::Replace(crate::decision::llm::system_prompt(
+                prompt: PromptPolicy::Replace(rho_sdk::decision::text::system_prompt(
                     crate::permission_classifier::CLASSIFIER_POLICY,
                 )),
                 runtime: AgentRuntimeSpec::Rho {

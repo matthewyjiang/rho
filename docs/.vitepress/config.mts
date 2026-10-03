@@ -203,6 +203,7 @@ const sdkSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Providers', link: '/sdk/providers' },
       { text: 'Tools and capabilities', link: '/sdk/tools' },
       { text: 'Hooks', link: '/sdk/hooks' },
+      { text: 'Decisions', link: '/sdk/decisions' },
       { text: 'Sessions and persistence', link: '/sdk/sessions-and-persistence' },
       { text: 'Events and cancellation', link: '/sdk/events-and-cancellation' },
       { text: 'Runtime boundary inputs', link: '/sdk/boundary-inputs' },

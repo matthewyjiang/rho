@@ -94,6 +94,11 @@
 //! tools receive [`AuthorizedToolContext`](crate::tool::AuthorizedToolContext),
 //! which cannot request capabilities beyond their prepared declaration.
 //!
+//! A [`DecisionModel`](crate::decision::DecisionModel) answers typed questions
+//! about a state, either from a decision model over the System One API or from
+//! any `ModelProvider` through
+//! [`TextDecisionModel`](crate::decision::text::TextDecisionModel).
+//!
 //! # Session snapshots
 //!
 //! [`Session::snapshot`](crate::Session::snapshot) produces a versioned,
@@ -134,6 +139,7 @@ mod client;
 mod compaction;
 mod compaction_decision;
 mod context_estimate;
+pub mod decision;
 mod diagnostics;
 mod error;
 mod event;
