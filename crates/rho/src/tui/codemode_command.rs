@@ -1,8 +1,9 @@
-//! `/codemode [on|only]`: Pi's `codemode.mode` for the always-registered
+//! `/codemode [status|on|only]`: Pi's `codemode.mode` for the always-registered
 //! `codemode` tool.
 //!
 //! `on` declares direct tools next to `codemode`; `only` hides them so the
-//! model composes through `codemode`. Bare `/codemode` reports the mode. There
+//! model composes through `codemode`. `status` or bare `/codemode` reports the
+//! mode. There
 //! is no mode that removes `codemode` and no `yolo` level: nested calls
 //! inherit the session permission mode, so `/permissions` is the only
 //! permission ladder.
@@ -11,7 +12,7 @@ use crate::config::CodemodeMode;
 
 use super::{App, CommandInvocation, Entry, InteractiveRuntime};
 
-const CODEMODE_USAGE: &str = "usage: /codemode [on|only]";
+const CODEMODE_USAGE: &str = "usage: /codemode [status|on|only]";
 
 /// Runtime side of `/codemode`. Implementors apply the mode to the next model
 /// request and return transcript notice text when it changed.
@@ -45,7 +46,8 @@ impl App {
         agent: &mut impl CodemodeRuntime,
     ) -> anyhow::Result<()> {
         let current = agent.codemode_mode();
-        if invocation.args.trim().is_empty() {
+        let args = invocation.args.trim();
+        if args.is_empty() || args.eq_ignore_ascii_case("status") {
             self.report_codemode(current);
             return Ok(());
         }

@@ -39,8 +39,8 @@ fn invocation(command: &str) -> CommandInvocation {
 }
 
 // Covers: /codemode on|only reach the runtime and persist as codemode.mode;
-// bare /codemode only reports; unknown modes (old `off`, Pi-less `yolo`)
-// change nothing.
+// bare /codemode and /codemode status only report; unknown modes (old `off`,
+// Pi-less `yolo`) are rejected and change nothing.
 // Owner: /codemode command
 #[test]
 fn codemode_command_applies_and_persists_requested_mode() {
@@ -50,6 +50,7 @@ fn codemode_command_applies_and_persists_requested_mode() {
         initially: CodemodeMode,
         calls: Vec<CodemodeMode>,
         saved: CodemodeMode,
+        rejected: bool,
     }
     let cases = [
         Case {
@@ -57,36 +58,49 @@ fn codemode_command_applies_and_persists_requested_mode() {
             initially: On,
             calls: vec![Only],
             saved: Only,
+            rejected: false,
         },
         Case {
             command: "/codemode on",
             initially: Only,
             calls: vec![On],
             saved: On,
+            rejected: false,
         },
         Case {
             command: "/codemode",
             initially: Only,
             calls: vec![],
             saved: On,
+            rejected: false,
+        },
+        Case {
+            command: "/codemode status",
+            initially: Only,
+            calls: vec![],
+            saved: On,
+            rejected: false,
         },
         Case {
             command: "/codemode only",
             initially: Only,
             calls: vec![Only],
             saved: On,
+            rejected: false,
         },
         Case {
             command: "/codemode off",
             initially: On,
             calls: vec![],
             saved: On,
+            rejected: true,
         },
         Case {
             command: "/codemode yolo",
             initially: On,
             calls: vec![],
             saved: On,
+            rejected: true,
         },
     ];
     for case in cases {
@@ -107,9 +121,14 @@ fn codemode_command_applies_and_persists_requested_mode() {
             .unwrap()
             .codemode
             .mode;
+        let rejected = app
+            .history
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, Entry::Error(_)));
         assert_eq!(
-            (runtime.calls, saved),
-            (case.calls, case.saved),
+            (runtime.calls, saved, rejected),
+            (case.calls, case.saved, case.rejected),
             "{}",
             case.command
         );

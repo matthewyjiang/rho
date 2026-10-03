@@ -194,6 +194,11 @@ const PERMISSIONS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
 
 const CODEMODE_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
+        completion: "/codemode status",
+        usage: "/codemode status",
+        description: "show the current codemode mode",
+    },
+    CommandArgumentChoice {
         completion: "/codemode on",
         usage: "/codemode on",
         description: "declare direct tools next to codemode; use either",
@@ -274,7 +279,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Codemode,
         name: "codemode",
-        usage: "/codemode [on|only]",
+        usage: "/codemode [status|on|only]",
         description: "compose tools in a Starlark script; nested calls follow /permissions",
         argument_choices: CODEMODE_ARGUMENT_CHOICES,
     },
