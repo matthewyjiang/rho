@@ -95,7 +95,7 @@ struct ProcessGroupGuard {
 
 impl ProcessSupervisor for ProcessGroupGuard {
     fn prepare(command: &mut Command) {
-        command.process_group(0);
+        crate::process_session::start_new_session(command.as_std_mut());
     }
 
     fn attach(child: &tokio::process::Child) -> Result<Self, ToolError> {
@@ -118,7 +118,7 @@ fn kill_process_group(pid: Option<u32>) {
     let Some(pid) = pid.and_then(|pid| i32::try_from(pid).ok()) else {
         return;
     };
-    // A negative PID targets the process group created with `process_group(0)`.
+    // A negative PID targets the process group created by `start_new_session`.
     let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
 }
 
@@ -165,6 +165,29 @@ mod tests {
         assert!(
             !result.content.contains("timeout"),
             "read timed out waiting for stdin instead of seeing EOF: {}",
+            result.content
+        );
+    }
+
+    // Covers: an agent command can take the TUI's terminal foreground and stop rho.
+    // Owner: bash tool child isolation.
+    #[tokio::test]
+    async fn command_runs_in_its_own_session() {
+        // The command's process group equals its session only when the tool
+        // started a new session, so it cannot reach the host's terminal.
+        let result = Bash::new(false)
+            .call(
+                json!({"command": "python3 -c 'import os; print(\"own-session\" if os.getsid(0) == os.getpgid(0) else \"host-session\")'"}),
+                test_context(),
+                "call_1".into(),
+            )
+            .await
+            .unwrap();
+
+        assert!(result.ok, "command failed: {}", result.content);
+        assert!(
+            result.content.contains("own-session"),
+            "command shares the host session: {}",
             result.content
         );
     }

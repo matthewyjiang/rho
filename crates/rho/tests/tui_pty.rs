@@ -162,6 +162,13 @@ fn smoke_startup_prompt_stream_exit() {
     assert_pass("startup_prompt_stream_exit");
 }
 
+// Covers: a shell child that grabs the terminal foreground suspends the TUI.
+// Owner: interactive lifecycle and child process isolation.
+#[test]
+fn shell_keeps_terminal() {
+    assert_pass("shell_keeps_terminal");
+}
+
 // Covers: unsaved conversations never persist, including after /new and exit.
 // Owner: interactive session lifecycle and filesystem effects.
 #[test]

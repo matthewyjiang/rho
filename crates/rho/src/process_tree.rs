@@ -1,6 +1,7 @@
 //! Per-platform supervision of a child and everything it starts.
 //!
-//! Unix gets a process group, Windows a kill-on-close job. Windows starts the
+//! Unix gets a new session (and so a process group) without a controlling
+//! terminal, Windows a kill-on-close job. Windows starts the
 //! child suspended, assigns it to the job, and only then resumes its primary
 //! thread. Dropping the owner terminates descendants, including on cancellation.
 
@@ -27,7 +28,7 @@ pub(crate) struct SupervisedTree {
 #[cfg(unix)]
 impl ProcessTree for SupervisedTree {
     fn prepare(command: &mut Command) {
-        command.process_group(0);
+        rho_tools::process_session::start_new_session(command.as_std_mut());
     }
 
     fn attach(child: &tokio::process::Child) -> std::io::Result<Self> {
@@ -38,7 +39,7 @@ impl ProcessTree for SupervisedTree {
         let Some(pid) = self.pid.take().and_then(|pid| i32::try_from(pid).ok()) else {
             return;
         };
-        // A negative PID targets the group created by `process_group(0)`, so
+        // A negative PID targets the group created by `start_new_session`, so
         // descendants die with the child rather than surviving it.
         let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
     }

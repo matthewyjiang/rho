@@ -75,6 +75,8 @@ mod steering;
 mod streaming_controls;
 mod subagent_rail;
 mod supervised_approval;
+#[cfg(unix)]
+mod terminal_ownership;
 mod text_selection;
 mod tool_card_hover;
 mod type_during_stream;
@@ -865,6 +867,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     quiet_subagent::STREAMING_NOTICE_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::COMPLETION_AFTER_NEW_SCENARIO,
+    #[cfg(unix)]
+    terminal_ownership::SHELL_KEEPS_TERMINAL_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     boundary_notifications::SCENARIO,
     calibrated_context::SCENARIO,
