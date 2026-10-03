@@ -26,9 +26,9 @@ The status line shows **Bypass** in warning style. The other modes appear dim.
 
 Auto uses the Allow edits gate. A classifier model reviews what that gate does not allow, instead of opening the approval UI.
 
-The classifier has two stages. A fast low-reasoning screen answers `allow` or `escalate` in one token. Only an escalation pays for a second review at the configured classifier reasoning level. The stages share a transcript cache breakpoint, so raising that reasoning keeps the screen cheap and skips a message-cache hit on the review.
+The classifier has two stages. A fast low-reasoning screen answers `allow` or `escalate` without explaining itself. Only an escalation pays for a second review at the configured classifier reasoning level. The review picks one fixed option: allow, or deny because the action was not requested, expands scope, could destroy or expose data, or has unclear intent. The stages share a transcript cache breakpoint, so raising that reasoning keeps the screen cheap and skips a message-cache hit on the review.
 
-A denial returns a tool error and the run continues. After three consecutive denials, or twenty total, Rho opens the human approval prompt in the TUI, or fails closed in a headless run. A human decision clears both counts.
+A denial returns a tool error with the chosen option's fixed reason, so the classifier model cannot pass its own text to the agent, and the run continues. After three consecutive denials, or twenty total, Rho opens the human approval prompt in the TUI, or fails closed in a headless run. A human decision clears both counts.
 
 Auto needs a classifier model. Rho does not pick one. `/config` and interactive startup open the picker when none is set. Headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised.
 

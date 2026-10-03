@@ -1,65 +1,73 @@
 use pretty_assertions::assert_eq;
 
-use super::{parse_classifier_verdict, parse_screen_verdict, ClassifierVerdict, ScreenVerdict};
+use super::{
+    review_verdict, screen_verdict, ClassifierVerdict, ScreenVerdict, REVIEW_QUESTION,
+    SCREEN_QUESTION,
+};
+use crate::decision::Answers;
 
-// Covers: only an exact `allow` may skip the reasoned review; any other screen output escalates
-// Owner: permission classifier screen parsing
+fn answer(
+    question_id: &'static str,
+    option_id: &str,
+    options: &'static [crate::decision::ChoiceOption],
+) -> Answers {
+    let option = options
+        .iter()
+        .find(|option| option.id == option_id)
+        .unwrap();
+    Answers::from([(question_id, option)])
+}
+
+// Covers: only the `allow` option skips review; anything else escalates.
+// Owner: permission classifier screen answers.
 #[test]
-fn screen_output_only_allows_on_an_exact_allow() {
+fn only_a_screen_allow_skips_review() {
+    let options = SCREEN_QUESTION.options;
     let cases = [
-        ("allow", ScreenVerdict::Allow),
-        ("Allow ", ScreenVerdict::Allow),
-        ("\nALLOW\n", ScreenVerdict::Allow),
-        ("escalate", ScreenVerdict::Escalate),
-        ("allow this one", ScreenVerdict::Escalate),
-        ("\"allow\"", ScreenVerdict::Escalate),
-        ("", ScreenVerdict::Escalate),
+        (
+            answer(SCREEN_QUESTION.id, "allow", options),
+            ScreenVerdict::Allow,
+        ),
+        (
+            answer(SCREEN_QUESTION.id, "escalate", options),
+            ScreenVerdict::Escalate,
+        ),
+        (Answers::new(), ScreenVerdict::Escalate),
     ];
 
-    for (text, expected) in cases {
-        assert_eq!(parse_screen_verdict(text), expected, "input {text:?}");
+    for (answers, expected) in cases {
+        assert_eq!(screen_verdict(&answers), expected, "{answers:?}");
     }
 }
 
+// Covers: only the `allow` option allows; every other option denies with its
+// own description as the agent-facing reason, so no model-written text
+// reaches the agent. A missing answer is an error, which fails closed.
+// Owner: permission classifier review answers.
 #[test]
-fn parses_allow_and_deny_verdicts_from_json() {
-    assert_eq!(
-        parse_classifier_verdict(r#"{"decision":"allow"}"#).unwrap(),
-        ClassifierVerdict::Allow
-    );
-    assert_eq!(
-        parse_classifier_verdict(r#"{"decision":"deny","reason":"outside user intent"}"#).unwrap(),
-        ClassifierVerdict::Deny {
-            reason: "outside user intent".into()
-        }
-    );
-}
+fn every_review_option_but_allow_denies_with_its_description() {
+    let verdicts: Vec<_> = REVIEW_QUESTION
+        .options
+        .iter()
+        .map(|option| {
+            let answers = answer(REVIEW_QUESTION.id, option.id, REVIEW_QUESTION.options);
+            (option.id, review_verdict(&answers).unwrap())
+        })
+        .collect();
 
-#[test]
-fn extracts_json_object_from_surrounding_prose() {
-    assert_eq!(
-        parse_classifier_verdict(
-            "Here is my decision:\n```json\n{\"decision\":\"allow\"}\n```\nThanks."
-        )
-        .unwrap(),
-        ClassifierVerdict::Allow
-    );
-    assert_eq!(
-        parse_classifier_verdict(
-            "Decision: {\"decision\":\"deny\",\"reason\":\"not requested by the user\"} done."
-        )
-        .unwrap(),
-        ClassifierVerdict::Deny {
-            reason: "not requested by the user".into()
-        }
-    );
-}
-
-#[test]
-fn rejects_invalid_verdict_details() {
-    assert!(parse_classifier_verdict("").is_err());
-    assert!(parse_classifier_verdict(r#"{"decision":"deny","reason":"  "}"#).is_err());
-    assert!(parse_classifier_verdict(r#"{"decision":"maybe","reason":"unclear"}"#).is_err());
-    assert!(parse_classifier_verdict("no json here").is_err());
-    assert!(parse_classifier_verdict("} {").is_err());
+    let expected: Vec<_> = REVIEW_QUESTION
+        .options
+        .iter()
+        .map(|option| {
+            let verdict = match option.id {
+                "allow" => ClassifierVerdict::Allow,
+                _ => ClassifierVerdict::Deny {
+                    reason: option.description.to_owned(),
+                },
+            };
+            (option.id, verdict)
+        })
+        .collect();
+    assert_eq!(verdicts, expected);
+    assert!(review_verdict(&Answers::new()).is_err());
 }

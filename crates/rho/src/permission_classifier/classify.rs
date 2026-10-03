@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::{anyhow, bail, Context};
 use rho_providers::{
-    model::{models_dev::cached_model_metadata, ContentBlock, Message},
+    model::{models_dev::cached_model_metadata, Message},
     reasoning::ReasoningLevel,
 };
 use rho_sdk::model::context::estimate_text_tokens;
@@ -14,16 +14,20 @@ use rho_sdk::{
 use crate::{
     agent::{
         effective_internal_agent_reasoning, internal_definition, run_one_shot_with_provider,
-        OneShotAgentRequest, PERMISSION_CLASSIFIER_AGENT_ID,
+        OneShotAgentRequest, PromptPolicy, PERMISSION_CLASSIFIER_AGENT_ID,
     },
     config::{Config, InternalAgentTarget},
     credential_store::build_provider,
 };
 
 use super::{
-    parse_classifier_verdict, parse_screen_verdict, transcript::render_with_pending_call,
-    ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_PROMPT,
-    CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
+    review_verdict, screen_verdict, transcript::render_with_pending_call, ClassifierVerdict,
+    ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_POLICY, REVIEW_QUESTION,
+    SCREEN_QUESTION,
+};
+use crate::decision::{
+    llm::{self, AnswerStyle},
+    Answers, ChoiceQuestion, DecisionRequest,
 };
 
 /// Context reserved for the classifier's own output when sizing the transcript.
@@ -168,31 +172,35 @@ pub(super) async fn classify_capability_request_with_provider(
 
 /// Transcript budget for a classifier model with `context_window` tokens.
 ///
-/// Subtracts the shared system prompt, the longer stage instruction, and
+/// Subtracts the shared system prompt, the longer stage questions block, and
 /// [`CLASSIFIER_OUTPUT_RESERVE_TOKENS`]. An unknown window leaves the
 /// transcript unbounded; the provider still rejects oversize requests.
 pub(super) fn transcript_budget(context_window: Option<u64>) -> TranscriptBudget {
     let Some(window) = context_window else {
         return TranscriptBudget::Unbounded;
     };
-    let instruction_tokens = estimate_text_tokens(CLASSIFIER_SCREEN_INSTRUCTION)
-        .max(estimate_text_tokens(CLASSIFIER_REVIEW_INSTRUCTION));
-    let overhead = estimate_text_tokens(CLASSIFIER_PROMPT)
-        .saturating_add(instruction_tokens)
+    let questions_tokens = [SCREEN_STAGE, REVIEW_STAGE]
+        .iter()
+        .map(|stage| estimate_text_tokens(&llm::questions_block(stage.questions, stage.style)))
+        .max()
+        .unwrap_or_default();
+    let overhead = estimate_text_tokens(&llm::system_prompt(CLASSIFIER_POLICY))
+        .saturating_add(questions_tokens)
         .saturating_add(CLASSIFIER_OUTPUT_RESERVE_TOKENS);
     TranscriptBudget::Tokens(window.saturating_sub(overhead))
 }
 
 /// Runs the two-stage pipeline: a cheap screen, then a reasoned review.
 ///
-/// Stage 1 answers `allow` or `escalate` in one token at [`ReasoningLevel::Low`].
-/// Only an escalation (or a stage 1 provider error) pays for stage 2, which uses
-/// the configured reasoning level.
+/// Both stages are decision requests over the rendered transcript, answered
+/// by the text model through [`llm`]. Stage 1 answers `allow` or `escalate`
+/// directly at [`ReasoningLevel::Low`]. Only an escalation (or a stage 1
+/// failure) pays for stage 2, which reasons at the configured level.
 ///
 /// Cache-prefix layout: both stages send the same system prompt and the same
-/// rendered transcript as the first user text block. The stage instruction is a
-/// second user text block so the last byte-identical block can be the cache
-/// breakpoint. Never move a stage instruction into the system prompt.
+/// rendered transcript as the first user text block. The stage's questions are
+/// a second user text block so the last byte-identical block can be the cache
+/// breakpoint. Never move a stage's questions into the system prompt.
 ///
 /// That layout can reuse stage 1's message-cache prefix only when thinking and
 /// effort stay the same, which is the default Low classifier reasoning. Raising
@@ -219,14 +227,12 @@ async fn run_pipeline(
     let screen = run_stage(
         provider,
         request,
-        StageSpec {
-            usage_purpose: "permission-classifier-screen",
-            reasoning: ReasoningLevel::Low,
-            input: stage_input(&transcript, CLASSIFIER_SCREEN_INSTRUCTION),
-        },
+        &transcript,
+        &SCREEN_STAGE,
+        ReasoningLevel::Low,
     )
     .await;
-    let screen = match screen.as_deref().map(parse_screen_verdict) {
+    let screen = match screen.map(|answers| screen_verdict(&answers)) {
         Ok(ScreenVerdict::Allow) => {
             return ClassifierTrace {
                 screen: ScreenOutcome::Allowed,
@@ -242,48 +248,52 @@ async fn run_pipeline(
         }
     };
 
-    let review = run_stage(
-        provider,
-        request,
-        StageSpec {
-            usage_purpose: "permission-classifier-review",
-            reasoning,
-            input: stage_input(&transcript, CLASSIFIER_REVIEW_INSTRUCTION),
-        },
-    )
-    .await;
-    let result = review.and_then(|review| {
-        parse_classifier_verdict(&review)
-            .context("permission classifier returned an invalid response")
-    });
+    let result = run_stage(provider, request, &transcript, &REVIEW_STAGE, reasoning)
+        .await
+        .and_then(|answers| review_verdict(&answers));
     ClassifierTrace { screen, result }
 }
 
-struct StageSpec {
+/// One classifier stage: the questions it asks and how the model answers.
+struct Stage {
     usage_purpose: &'static str,
-    reasoning: ReasoningLevel,
-    input: Vec<ContentBlock>,
+    questions: &'static [ChoiceQuestion],
+    style: AnswerStyle,
 }
 
-fn stage_input(transcript: &str, instruction: &str) -> Vec<ContentBlock> {
-    vec![
-        ContentBlock::Text(transcript.to_owned()),
-        ContentBlock::Text(instruction.to_owned()),
-    ]
-}
+const SCREEN_STAGE: Stage = Stage {
+    usage_purpose: "permission-classifier-screen",
+    questions: std::slice::from_ref(&SCREEN_QUESTION),
+    style: AnswerStyle::Direct,
+};
+
+const REVIEW_STAGE: Stage = Stage {
+    usage_purpose: "permission-classifier-review",
+    questions: std::slice::from_ref(&REVIEW_QUESTION),
+    style: AnswerStyle::Reasoned,
+};
 
 async fn run_stage(
     provider: &dyn ModelProvider,
     request: &ClassifyRequest<'_>,
-    stage: StageSpec,
-) -> anyhow::Result<String> {
+    transcript: &str,
+    stage: &Stage,
+    reasoning: ReasoningLevel,
+) -> anyhow::Result<Answers> {
+    let decision = DecisionRequest {
+        instructions: CLASSIFIER_POLICY,
+        state: transcript,
+        questions: stage.questions,
+    };
+    let mut definition = internal_definition(PERMISSION_CLASSIFIER_AGENT_ID).clone();
+    definition.prompt = PromptPolicy::Replace(llm::system_prompt(decision.instructions));
     let result = run_one_shot_with_provider(
         provider,
         OneShotAgentRequest {
-            definition: internal_definition(PERMISSION_CLASSIFIER_AGENT_ID),
+            definition: &definition,
             usage_purpose: stage.usage_purpose,
-            reasoning: Some(stage.reasoning),
-            input: stage.input,
+            reasoning: Some(reasoning),
+            input: llm::input(decision, stage.style),
             cancellation: request.cancellation.clone(),
             session_id: request.session_id,
             workspace_path: request.workspace_path,
@@ -292,7 +302,8 @@ async fn run_stage(
         /*updates*/ None,
     )
     .await?;
-    Ok(result.texts.join("\n"))
+    llm::parse_answers(&result.texts.join("\n"), stage.questions, stage.style)
+        .context("permission classifier returned an invalid response")
 }
 
 fn classifier_unavailable(error: anyhow::Error) -> ClassifierVerdict {
