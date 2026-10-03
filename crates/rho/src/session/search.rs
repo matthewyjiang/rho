@@ -9,6 +9,10 @@ use serde::Deserialize;
 pub(crate) use super::search_scope::Scope;
 use super::{search_index, workspace_scope::Workspace};
 
+/// Model-facing name of the tool serving this module. Search excludes that
+/// tool's own calls and results from evidence, so the name lives here.
+pub(crate) const TOOL_NAME: &str = "sessions";
+
 #[path = "search_response.rs"]
 mod response;
 pub(super) use response::ensure_budget;
@@ -112,40 +116,33 @@ pub(crate) fn execute(
             limit,
             offset,
             ..
-        } if matches!(scope, Scope::Current) => search_current(
-            &transaction,
-            &workspace,
-            current,
-            SearchTarget {
+        } => {
+            let target = SearchTarget {
                 query: &query,
                 scope,
                 limit,
                 offset,
-            },
-            context,
-            max_output_bytes,
-            cancellation,
-        )?,
-        Request::Search {
-            query,
-            scope,
-            limit,
-            offset,
-            ..
-        } => search(
-            &transaction,
-            &workspace,
-            current,
-            SearchTarget {
-                query: &query,
-                scope,
-                limit,
-                offset,
-            },
-            context,
-            max_output_bytes,
-            cancellation,
-        )?,
+            };
+            match scope {
+                Scope::Current => search_current(
+                    &transaction,
+                    current,
+                    target,
+                    context,
+                    max_output_bytes,
+                    cancellation,
+                )?,
+                Scope::Repo | Scope::Worktree | Scope::All => search(
+                    &transaction,
+                    &workspace,
+                    current,
+                    target,
+                    context,
+                    max_output_bytes,
+                    cancellation,
+                )?,
+            }
+        }
         Request::Read {
             session,
             anchor,
@@ -174,7 +171,8 @@ pub(crate) fn execute(
 }
 
 /// SQL predicate over `files f` binding ?2 to the scope value and ?3 to the
-/// current session id. Only `Current` admits the current session.
+/// current session id. Only `Current` admits the current session; its search
+/// filters by session handle instead (see `search_current`), reads use this.
 fn scoped(scope: Scope, workspace: &Workspace) -> (&'static str, String) {
     match scope {
         Scope::Repo => (
@@ -336,7 +334,6 @@ fn search(
 /// Identical role/text evidence (repeated across records) is listed once.
 fn search_current(
     connection: &Connection,
-    workspace: &Workspace,
     current: &str,
     target: SearchTarget<'_>,
     context: Context,
@@ -350,43 +347,41 @@ fn search_current(
         offset,
     } = target;
     let query = fts_query(query);
-    let (predicate, scope_value) = scoped(scope, workspace);
-    let mut statement = connection.prepare(&format!(
-        "with matches as materialized (
-            select e.rowid, e.session, e.role, e.text, bm25(evidence_fts) as score
+    // Unsaved or not yet indexed sessions have no handle and no matches.
+    let session: Option<String> = connection
+        .query_row(
+            "select key from files where id=?1 order by key limit 1",
+            [current],
+            |row| row.get(0),
+        )
+        .optional()?;
+    // Materialized so SQLite cannot flatten bm25() into the aggregate.
+    let distinct_matches = "with matches as materialized (
+            select e.rowid, e.role, e.text, bm25(evidence_fts) as score
             from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
-            join files f on f.key=e.session
-            where evidence_fts match ?1 and {predicate}
-         ), distinct_matches as (
-            select min(rowid) as rowid, session, min(score) as score
-            from matches group by session, role, text
-         ) select rowid, session, count(*) over() from distinct_matches
-           order by score, rowid limit ?4 offset ?5"
+            where evidence_fts match ?1 and e.session=?2
+        ), distinct_matches as (
+            select min(rowid) as rowid, min(score) as score from matches group by role, text
+        )";
+    let mut statement = connection.prepare(&format!(
+        "{distinct_matches} select rowid, count(*) over() from distinct_matches
+         order by score, rowid limit ?3 offset ?4"
     ))?;
     let mut rows = statement.query(params![
         query,
-        scope_value,
-        current,
+        session,
         i64::try_from(limit)?,
         i64::try_from(offset)?
     ])?;
     let mut row = rows.next()?;
-    let (session, total) = match row {
-        Some(row) => (row.get(1)?, row.get(2)?),
-        None if offset > 0 => connection
-            .query_row(
-                &format!(
-                    "select e.session, count(*) over() from evidence_fts
-                 join evidence e on e.rowid=evidence_fts.rowid join files f on f.key=e.session
-                 where evidence_fts match ?1 and {predicate}
-                 group by e.session, e.role, e.text limit 1"
-                ),
-                params![query, scope_value, current],
-                |row| Ok((Some(row.get(0)?), row.get(1)?)),
-            )
-            .optional()?
-            .unwrap_or((None, 0)),
-        None => (None, 0),
+    let total = match row {
+        Some(row) => row.get(1)?,
+        None if offset > 0 => connection.query_row(
+            &format!("{distinct_matches} select count(*) from distinct_matches"),
+            params![query, session],
+            |row| row.get(0),
+        )?,
+        None => 0,
     };
     let mut page = Page::new(
         Matches { session },

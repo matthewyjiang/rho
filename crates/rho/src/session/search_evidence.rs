@@ -4,6 +4,8 @@
 use std::collections::HashSet;
 
 use serde::Serialize;
+
+use super::search::TOOL_NAME;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -33,12 +35,9 @@ impl Evidence {
     }
 }
 
-/// The search tool's own name. Its calls and results only echo queries and
-/// other evidence, so indexing them would make every search find itself.
-const SESSIONS_TOOL: &str = "sessions";
-
-/// Extracts one transcript's evidence, record by record in file order. It
-/// remembers `sessions` call ids so their later results can be dropped.
+/// Extracts one transcript's evidence, record by record in file order. The
+/// sessions tool's calls and results only echo queries and other evidence, so
+/// they are dropped; call ids are remembered to drop their later results.
 #[derive(Default)]
 pub(super) struct Extractor {
     sessions_calls: HashSet<String>,
@@ -99,7 +98,7 @@ impl Extractor {
                     if let Some(text) = block["Text"].as_str() {
                         parts.push(text.to_owned());
                     } else if let Some(call) = block.get("ToolCall") {
-                        if call["name"] == SESSIONS_TOOL {
+                        if call["name"] == TOOL_NAME {
                             if let Some(id) = call["id"].as_str() {
                                 self.sessions_calls.insert(id.to_owned());
                             }
@@ -121,7 +120,7 @@ impl Extractor {
                         .as_array()
                         .into_iter()
                         .flatten()
-                        .filter(|call| call["name"] != SESSIONS_TOOL)
+                        .filter(|call| call["name"] != TOOL_NAME)
                     {
                         parts.push(format!(
                             "partial_tool_call {} {}",

@@ -32,78 +32,7 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> Optio
     let mut card = preview_card(arguments, ToolStatus::Ok);
     let mut lines = Vec::new();
     let (summary, index) = match arguments.get("action")?.as_str()? {
-        "search" => {
-            let result: SearchResult = serde_json::from_str(content).ok()?;
-            let (count, total, noun) = match &result.listing {
-                SearchListing::Sessions {
-                    total_sessions,
-                    sessions,
-                } => (
-                    sessions.len(),
-                    *total_sessions,
-                    plural(*total_sessions, "session"),
-                ),
-                SearchListing::Matches {
-                    total_matches,
-                    matches,
-                    ..
-                } => (
-                    matches.len(),
-                    *total_matches,
-                    plural(*total_matches, "message"),
-                ),
-            };
-            let mut summary = if total == 0 {
-                format!("no matching {noun} · {}", result.scope)
-            } else if count == total {
-                format!("{count} matching {noun} · {}", result.scope)
-            } else {
-                format!("{count} of {total} matching {noun} · {}", result.scope)
-            };
-            if let Some(offset) = result.next_offset {
-                summary.push_str(" · more results available");
-                lines.push(format!("next search offset: {offset}"));
-            }
-            if let Some(budget) = result.output_budget_bytes {
-                summary.push_str(&format!(" · output limited to {budget} bytes"));
-            }
-            match result.listing {
-                SearchListing::Sessions { sessions, .. } => {
-                    for group in sessions {
-                        if !lines.is_empty() {
-                            lines.push(String::new());
-                        }
-                        lines.push(format!("session {} · {}", group.id, group.workspace));
-                        lines.push(format!("handle: {}", group.session));
-                        lines.push(format!(
-                            "{} matching {}",
-                            group.matching_messages,
-                            plural(group.matching_messages, "message")
-                        ));
-                        for excerpt in group.excerpts {
-                            push_excerpt(&mut lines, excerpt);
-                        }
-                        if group.omitted_matches > 0 {
-                            lines.push(format!(
-                                "{} more matching messages not included",
-                                group.omitted_matches
-                            ));
-                        }
-                    }
-                }
-                SearchListing::Matches {
-                    session, matches, ..
-                } => {
-                    if let Some(session) = session {
-                        lines.push(format!("handle: {session}"));
-                    }
-                    for excerpt in matches {
-                        push_excerpt(&mut lines, excerpt);
-                    }
-                }
-            }
-            (summary, result.index)
-        }
+        "search" => search_receipt(serde_json::from_str(content).ok()?, &mut lines),
         "read" => {
             let result: ReadResult = serde_json::from_str(content).ok()?;
             let excerpt = result.excerpt;
@@ -145,6 +74,73 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> Optio
     }
     card.body = ToolBody::Lines(lines);
     Some(card)
+}
+
+/// Builds the receipt summary and fills the expanded body for one search page.
+fn search_receipt(page: SearchResult, lines: &mut Vec<String>) -> (String, IndexReport) {
+    let mut body = Vec::new();
+    let (count, total, noun) = match page.listing {
+        SearchListing::Sessions {
+            total_sessions,
+            sessions,
+        } => {
+            let count = sessions.len();
+            for group in sessions {
+                body.push(String::new());
+                body.push(format!("session {} · {}", group.id, group.workspace));
+                body.push(format!("handle: {}", group.session));
+                body.push(format!(
+                    "{} matching {}",
+                    group.matching_messages,
+                    plural(group.matching_messages, "message")
+                ));
+                for excerpt in group.excerpts {
+                    push_excerpt(&mut body, excerpt);
+                }
+                if group.omitted_matches > 0 {
+                    body.push(format!(
+                        "{} more matching messages not included",
+                        group.omitted_matches
+                    ));
+                }
+            }
+            (count, total_sessions, "session")
+        }
+        SearchListing::Matches {
+            session,
+            total_matches,
+            matches,
+        } => {
+            let count = matches.len();
+            if let Some(session) = session {
+                body.push(String::new());
+                body.push(format!("handle: {session}"));
+            }
+            for excerpt in matches {
+                push_excerpt(&mut body, excerpt);
+            }
+            (count, total_matches, "message")
+        }
+    };
+    let noun = plural(total, noun);
+    let mut summary = if total == 0 {
+        format!("no matching {noun} · {}", page.scope)
+    } else if count == total {
+        format!("{count} matching {noun} · {}", page.scope)
+    } else {
+        format!("{count} of {total} matching {noun} · {}", page.scope)
+    };
+    if let Some(offset) = page.next_offset {
+        summary.push_str(" · more results available");
+        lines.push(format!("next search offset: {offset}"));
+    }
+    if let Some(budget) = page.output_budget_bytes {
+        summary.push_str(&format!(" · output limited to {budget} bytes"));
+    }
+    // Blank lines separate sections, so none leads an otherwise empty body.
+    let skip = usize::from(lines.is_empty() && body.first().is_some_and(String::is_empty));
+    lines.extend(body.into_iter().skip(skip));
+    (summary, page.index)
 }
 
 fn plural(count: usize, noun: &str) -> String {
