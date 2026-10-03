@@ -1,10 +1,13 @@
 //! The permission screen's model: the picker that sets
-//! `[internal_agents.permission-classifier-screen]`, and the config row badge.
+//! `[internal_agents.permission-classifier-screen]`, its allow threshold, and
+//! the config row badges.
 //!
 //! The screen is answered by the classifier's own model (no entry), by a
 //! decision model discovered on a decision-model host, or by another chat
 //! model asked as text. A picked row records its kind, so a model on Ollama,
 //! which serves both, is asked the way it was listed.
+
+use std::collections::BTreeMap;
 
 use rho_providers::{
     model::decision_models::{cached_decision_models, lists_decision_models},
@@ -170,7 +173,56 @@ impl App {
             .to_string()
     }
 
-    fn store_screen_model(&mut self, selection: Option<InternalAgentModelConfig>) {
+    /// Saves `percent` as the allow threshold of the session's screen entry,
+    /// writing that whole entry so the saved config names the same screen the
+    /// session uses. On a save failure nothing changes.
+    pub(super) fn store_allow_threshold(&mut self, percent: u8) {
+        let Some(mut selection) = self
+            .info
+            .runtime
+            .internal_agents
+            .get(DECISION_SCREEN_ID)
+            .filter(|selection| selection.rho().is_some())
+            .cloned()
+        else {
+            self.insert_entry(&Entry::Error(
+                "could not save the screen allow threshold: the permission screen has no decision model".into(),
+            ));
+            return;
+        };
+        if let crate::config::InternalAgentTarget::Rho(rho) = &mut selection.target {
+            rho.allow_threshold_percent = Some(percent);
+        }
+        let saved = self.info.services.config_repository.update(|config| {
+            config.set_internal_agent_model_config(DECISION_SCREEN_ID, selection.clone());
+        });
+        match saved {
+            Ok(()) => {
+                self.info
+                    .runtime
+                    .internal_agents
+                    .insert(DECISION_SCREEN_ID.into(), selection);
+                // The number editor has no agent; the next idle pass or turn
+                // start hands the classifier the new value.
+                self.classifier_config_sync_pending = true;
+                self.set_status(format!("screen allow threshold set to {percent}%"));
+            }
+            Err(err) => self.insert_entry(&Entry::Error(format!(
+                "could not save the screen allow threshold: {err}"
+            ))),
+        }
+    }
+
+    fn store_screen_model(&mut self, mut selection: Option<InternalAgentModelConfig>) {
+        // A threshold the user set is their policy, not the old model's, so
+        // it carries over to the new one.
+        let kept = screen_entry(&self.info.runtime.internal_agents)
+            .and_then(|screen| screen.allow_threshold_percent);
+        if let Some(crate::config::InternalAgentTarget::Rho(rho)) =
+            selection.as_mut().map(|selection| &mut selection.target)
+        {
+            rho.allow_threshold_percent = kept;
+        }
         let label = selection
             .as_ref()
             .map(InternalAgentModelConfig::display_reference)
@@ -213,13 +265,37 @@ fn set_kind(selection: &mut InternalAgentModelConfig, kind: ModelKind) {
     }
 }
 
+/// The screen entry in `agents`, when it names a model on Rho's providers.
+fn screen_entry(
+    agents: &BTreeMap<String, InternalAgentModelConfig>,
+) -> Option<&crate::config::RhoInternalAgentModel> {
+    agents.get(DECISION_SCREEN_ID)?.rho()
+}
+
+/// The allow threshold row's badge, or `None` when the row is hidden: the
+/// screen is not a decision model, so no answer carries a probability.
+pub(super) fn allow_threshold_badge(info: &RuntimeModelView) -> Option<PickerBadge> {
+    let screen = screen_entry(&info.internal_agents)?;
+    if decision::entry_kind(screen) != ModelKind::Decision {
+        return None;
+    }
+    Some(
+        match crate::permission_classifier::screen_allow_percent(screen) {
+            Ok(percent) => PickerBadge {
+                text: format!("{percent}%"),
+                tone: PickerBadgeTone::Selected,
+            },
+            Err(err) => PickerBadge {
+                text: err.to_string(),
+                tone: PickerBadgeTone::Warning,
+            },
+        },
+    )
+}
+
 /// The picker row the configured screen entry names.
 fn screen_selection(info: &RuntimeModelView) -> ScreenSelection {
-    let Some(selection) = info
-        .internal_agents
-        .get(DECISION_SCREEN_ID)
-        .and_then(InternalAgentModelConfig::rho)
-    else {
+    let Some(selection) = screen_entry(&info.internal_agents) else {
         return ScreenSelection::Classifier;
     };
     let provider = selection.provider.clone();
@@ -279,3 +355,7 @@ pub(super) fn screen_model_badge(info: &RuntimeModelView) -> PickerBadge {
         },
     }
 }
+
+#[cfg(test)]
+#[path = "screen_model_tests.rs"]
+mod tests;

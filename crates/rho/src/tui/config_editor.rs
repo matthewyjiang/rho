@@ -28,6 +28,7 @@ pub(super) enum ConfigNumberKey {
     CompactTargetPercent,
     PromptHistoryLimit,
     AgentConcurrency,
+    ScreenAllowThresholdPercent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +102,7 @@ pub(super) enum ConfigNumberSave {
     CompactThresholdPercent(u8),
     CompactTargetPercent(u8),
     AgentConcurrency(usize),
+    ScreenAllowThresholdPercent(u8),
 }
 
 impl ConfigNumberInput {
@@ -138,6 +140,13 @@ impl ConfigNumberInput {
             ConfigNumberKey::AgentConcurrency => {
                 ConfigNumberSave::AgentConcurrency(self.parsed_value()?)
             }
+            ConfigNumberKey::ScreenAllowThresholdPercent => {
+                // Bounded by `max_value`, so the cast cannot truncate. The
+                // screen feature saves it with the session's screen entry.
+                return Ok(ConfigNumberSave::ScreenAllowThresholdPercent(
+                    self.parsed_value()? as u8,
+                ));
+            }
         };
         config_repository.update(|config| {
             match &mut saved {
@@ -157,6 +166,8 @@ impl ConfigNumberInput {
                     *value = config.compact_target_percent;
                 }
                 ConfigNumberSave::AgentConcurrency(value) => config.set_agent_concurrency(*value),
+                // Returned before this update.
+                ConfigNumberSave::ScreenAllowThresholdPercent(_) => {}
             }
             saved
         })
@@ -173,6 +184,7 @@ impl ConfigNumberKey {
             ConfigNumberKey::CompactTargetPercent => "compact target percent",
             ConfigNumberKey::PromptHistoryLimit => "prompt history limit",
             ConfigNumberKey::AgentConcurrency => "concurrent agents",
+            ConfigNumberKey::ScreenAllowThresholdPercent => "screen allow threshold percent",
         }
     }
 
@@ -187,6 +199,9 @@ impl ConfigNumberKey {
             ConfigNumberKey::CompactTargetPercent => config_picker::COMPACT_TARGET_PERCENT_VALUE,
             ConfigNumberKey::PromptHistoryLimit => config_picker::PROMPT_HISTORY_LIMIT_VALUE,
             ConfigNumberKey::AgentConcurrency => config_picker::AGENT_CONCURRENCY_VALUE,
+            ConfigNumberKey::ScreenAllowThresholdPercent => {
+                config_picker::SCREEN_ALLOW_THRESHOLD_VALUE
+            }
         }
     }
 
@@ -197,6 +212,9 @@ impl ConfigNumberKey {
     pub(super) fn min_value(self) -> usize {
         match self {
             ConfigNumberKey::PromptHistoryLimit => 0,
+            ConfigNumberKey::ScreenAllowThresholdPercent => {
+                *crate::permission_classifier::SCREEN_ALLOW_PERCENT_RANGE.start() as usize
+            }
             _ => 1,
         }
     }
@@ -205,6 +223,9 @@ impl ConfigNumberKey {
         match self {
             ConfigNumberKey::PromptHistoryLimit => Some(crate::config::MAX_PROMPT_HISTORY_LIMIT),
             ConfigNumberKey::AgentConcurrency => Some(crate::config::MAX_AGENT_CONCURRENCY),
+            ConfigNumberKey::ScreenAllowThresholdPercent => {
+                Some(*crate::permission_classifier::SCREEN_ALLOW_PERCENT_RANGE.end() as usize)
+            }
             _ => None,
         }
     }

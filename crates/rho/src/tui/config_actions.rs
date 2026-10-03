@@ -258,6 +258,15 @@ impl App {
             ConfigNumberKey::AgentConcurrency => {
                 return self.open_agent_concurrency_editor();
             }
+            ConfigNumberKey::ScreenAllowThresholdPercent => self
+                .info
+                .runtime
+                .internal_agents
+                .get(crate::permission_classifier::DECISION_SCREEN_ID)
+                .and_then(crate::config::InternalAgentModelConfig::rho)
+                .and_then(|screen| crate::permission_classifier::screen_allow_percent(screen).ok())
+                .unwrap_or(crate::permission_classifier::DEFAULT_SCREEN_ALLOW_PERCENT)
+                .into(),
         };
         self.input_ui
             .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(

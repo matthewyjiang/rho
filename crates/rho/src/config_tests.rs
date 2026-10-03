@@ -865,14 +865,19 @@ fn advisor_mode_and_model_round_trip_through_save() {
 }
 
 // Covers: a screen entry's `kind`, which picks the protocol a model on
-// Ollama is asked over, survives save and reload; an unset kind stays unset
-// so the entry keeps its provider's default.
+// Ollama is asked over, and its allow threshold survive save and reload; an
+// unset key stays unset so the entry keeps its default.
 // Owner: config persistence
 #[test]
-fn screen_model_kind_round_trips_through_save() {
+fn screen_model_settings_round_trip_through_save() {
     use crate::config::ModelKind;
     use crate::permission_classifier::DECISION_SCREEN_ID;
-    for kind in [Some(ModelKind::Text), Some(ModelKind::Decision), None] {
+    let cases = [
+        (Some(ModelKind::Text), None),
+        (Some(ModelKind::Decision), Some(90)),
+        (None, None),
+    ];
+    for (kind, allow_threshold_percent) in cases {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let store = rho_providers::credentials::MemoryCredentialStore::default();
@@ -883,6 +888,7 @@ fn screen_model_kind_round_trips_through_save() {
             "none".into(),
         );
         screen.expect_rho_mut().kind = kind;
+        screen.expect_rho_mut().allow_threshold_percent = allow_threshold_percent;
         config.set_internal_agent_model_config(DECISION_SCREEN_ID, screen.clone());
 
         config.save_with_store(path.clone(), &store).unwrap();
@@ -891,7 +897,7 @@ fn screen_model_kind_round_trips_through_save() {
         assert_eq!(
             reloaded.internal_agent_model(DECISION_SCREEN_ID).cloned(),
             Some(screen),
-            "{kind:?}"
+            "{kind:?} {allow_threshold_percent:?}"
         );
     }
 }

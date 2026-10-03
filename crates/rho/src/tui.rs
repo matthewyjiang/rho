@@ -564,6 +564,9 @@ struct App {
     diff_viewer: Option<diff_viewer::DiffViewer>,
     web_search_reload_pending: bool,
     compaction_reload_pending: bool,
+    /// Set when classifier settings were saved without the agent at hand;
+    /// see [`App::apply_pending_classifier_config`].
+    classifier_config_sync_pending: bool,
     /// Built on first `/limits` use; constructing a client loads TLS roots,
     /// which startup should not pay for a feature that may never run.
     usage_limits_client: std::sync::OnceLock<reqwest::Client>,

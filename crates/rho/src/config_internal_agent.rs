@@ -24,6 +24,9 @@ pub struct RhoInternalAgentModel {
     /// The `kind` key. Only decision-model entries read it; `None` takes the
     /// entry's default.
     pub kind: Option<ModelKind>,
+    /// The `allow_threshold_percent` key. Only a decision-model permission
+    /// screen reads it; `None` takes the screen's default.
+    pub allow_threshold_percent: Option<u8>,
     pub(super) model_alias: Option<String>,
 }
 
@@ -62,6 +65,7 @@ impl InternalAgentModelConfig {
                 model,
                 auth,
                 kind: None,
+                allow_threshold_percent: None,
                 model_alias: None,
             }),
             reasoning: None,

@@ -17,14 +17,16 @@ use rho_sdk::{
 
 use crate::{
     agent::{effective_internal_agent_reasoning, PERMISSION_CLASSIFIER_AGENT_ID},
-    config::{Config, InternalAgentTarget, ModelKind, RhoInternalAgentModel},
+    config::{
+        Config, InternalAgentModelConfig, InternalAgentTarget, ModelKind, RhoInternalAgentModel,
+    },
     credential_store::build_provider_on,
 };
 
 use super::{
     review_verdict, screen_allow_probability, screen_verdict, transcript::render_with_pending_call,
     ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_POLICY,
-    REVIEW_QUESTION, SCREEN_QUESTION,
+    DEFAULT_SCREEN_ALLOW_PERCENT, REVIEW_QUESTION, SCREEN_ALLOW_PERCENT_RANGE, SCREEN_QUESTION,
 };
 use crate::decision::{self, EntryModel, TextModel};
 use rho_sdk::decision::{
@@ -82,7 +84,11 @@ pub(super) enum Screen {
         provider: Arc<dyn ModelProvider>,
         budget: Option<TranscriptBudget>,
     },
-    Decision(Box<dyn DecisionModel>),
+    /// A decision model, allowing at P(allow) of `allow_percent` or more.
+    Decision {
+        model: Box<dyn DecisionModel>,
+        allow_percent: u8,
+    },
 }
 
 /// Fails when [`DECISION_SCREEN_ID`] is configured but unusable, so a
@@ -90,7 +96,42 @@ pub(super) enum Screen {
 pub(crate) fn check_screen_config(config: &Config) -> anyhow::Result<()> {
     // A text model is built at classification, so only its kind and provider
     // are checked here.
-    decision::resolve(config, DECISION_SCREEN_ID).map(drop)
+    match decision::resolve(config, DECISION_SCREEN_ID)? {
+        Some(EntryModel::Decision(_)) => {
+            decision_allow_percent(config)?;
+        }
+        Some(EntryModel::Text(_)) | None => {}
+    }
+    Ok(())
+}
+
+/// The allow percent of a screen entry that resolved to a decision model.
+fn decision_allow_percent(config: &Config) -> Result<u8, decision::ConfigError> {
+    config
+        .internal_agent_model(DECISION_SCREEN_ID)
+        .and_then(InternalAgentModelConfig::rho)
+        .map_or(Ok(DEFAULT_SCREEN_ALLOW_PERCENT), screen_allow_percent)
+}
+
+/// The P(allow) percent at which the screen entry `selection` allows: its
+/// `allow_threshold_percent`, else [`DEFAULT_SCREEN_ALLOW_PERCENT`]. Only a
+/// decision model reports probabilities; a text screen ignores it.
+pub(crate) fn screen_allow_percent(
+    selection: &RhoInternalAgentModel,
+) -> Result<u8, decision::ConfigError> {
+    let percent = selection
+        .allow_threshold_percent
+        .unwrap_or(DEFAULT_SCREEN_ALLOW_PERCENT);
+    if SCREEN_ALLOW_PERCENT_RANGE.contains(&percent) {
+        Ok(percent)
+    } else {
+        Err(decision::ConfigError::AllowThresholdOutOfRange {
+            entry: DECISION_SCREEN_ID,
+            percent,
+            min: *SCREEN_ALLOW_PERCENT_RANGE.start(),
+            max: *SCREEN_ALLOW_PERCENT_RANGE.end(),
+        })
+    }
 }
 
 impl ClassifierModel {
@@ -178,7 +219,12 @@ impl ClassifierModel {
 async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
     let selection = match decision::resolve(config, DECISION_SCREEN_ID)? {
         None => return Ok(Screen::Classifier),
-        Some(EntryModel::Decision(model)) => return Ok(Screen::Decision(model)),
+        Some(EntryModel::Decision(model)) => {
+            return Ok(Screen::Decision {
+                model,
+                allow_percent: decision_allow_percent(config)?,
+            });
+        }
         Some(EntryModel::Text(selection)) => selection,
     };
     let provider = build_provider_on(
@@ -400,10 +446,11 @@ async fn run_screen(
     transcript: &str,
 ) -> anyhow::Result<(ScreenVerdict, Option<f64>)> {
     let text_screen;
-    let (model, budget): (&dyn DecisionModel, _) = match screen {
+    // A text model reports no probabilities, so its allow percent is moot.
+    let (model, budget, allow_percent): (&dyn DecisionModel, _, _) = match screen {
         Screen::Classifier => {
             text_screen = text_model(provider, request, &SCREEN_STAGE, ReasoningLevel::Low);
-            (&text_screen, None)
+            (&text_screen, None, DEFAULT_SCREEN_ALLOW_PERCENT)
         }
         Screen::Text { provider, budget } => {
             let Some(budget) = budget else {
@@ -423,11 +470,15 @@ async fn run_screen(
                 TranscriptBudget::Unbounded => None,
                 TranscriptBudget::Tokens(_) => Some(*budget),
             };
-            (&text_screen, own)
+            (&text_screen, own, DEFAULT_SCREEN_ALLOW_PERCENT)
         }
-        Screen::Decision(model) => (
+        Screen::Decision {
+            model,
+            allow_percent,
+        } => (
             model.as_ref(),
             model.state_budget().map(TranscriptBudget::Tokens),
+            *allow_percent,
         ),
     };
     let fitted;
@@ -444,7 +495,10 @@ async fn run_screen(
         }
     };
     let answers = ask(model, request, state, &SCREEN_STAGE).await?;
-    Ok((screen_verdict(&answers), screen_allow_probability(&answers)))
+    Ok((
+        screen_verdict(&answers, allow_percent),
+        screen_allow_probability(&answers),
+    ))
 }
 
 /// One classifier stage: the questions it asks and how the model answers.

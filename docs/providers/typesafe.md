@@ -43,4 +43,4 @@ For CI or headless runs, set `TYPESAFE_API_KEY`. A nonblank value takes preceden
 
 ## Limits
 
-TypeSafe rejects a request past about 32,500 input tokens. Rho checks the state before sending, so a permission-screen transcript over about 20,500 estimated tokens is shortened, oldest tool calls first, or the screen is skipped and the review decides. Jev reports probabilities rounded to two decimals.
+TypeSafe rejects a request past about 32,500 input tokens. Rho checks the state before sending, so a permission-screen transcript over about 20,500 estimated tokens is shortened, oldest tool calls first, or the screen is skipped and the review decides. Jev reports probabilities rounded to two decimals, so the screen's [allow threshold](/configuration/permissions#allow-threshold) of 95% admits a true probability of about 0.945 or more.

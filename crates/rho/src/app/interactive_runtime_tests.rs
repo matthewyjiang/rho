@@ -376,6 +376,35 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
     interactive
 }
 
+// Covers: a config update, such as a changed screen allow threshold, reaches
+// the snapshot future delegated agents build their classifier from, not only
+// the parent's classifier.
+// Owner: interactive runtime config propagation
+#[tokio::test]
+async fn config_update_reaches_future_delegated_agents() {
+    let mut interactive = permission_mode_runtime().await;
+    let mut config = interactive.config_snapshot();
+    let mut screen = crate::config::InternalAgentModelConfig::new(
+        "typesafe".into(),
+        "jev-latest".into(),
+        "typesafe-api-key".into(),
+    );
+    screen.expect_rho_mut().allow_threshold_percent = Some(100);
+    config
+        .set_internal_agent_model_config(crate::permission_classifier::DECISION_SCREEN_ID, screen);
+
+    interactive.update_config(config.clone());
+
+    assert_eq!(
+        interactive
+            .tools
+            .subagents()
+            .unwrap()
+            .launch_internal_agents(),
+        config.internal_agents
+    );
+}
+
 #[tokio::test]
 async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_policy() {
     let mut interactive = permission_mode_runtime().await;

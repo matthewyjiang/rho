@@ -193,6 +193,7 @@ impl App {
         Box::pin(async move {
             let mut needs_redraw = self.apply_finished_tasks(terminal, agent).await?;
             needs_redraw |= self.apply_pending_compaction_config(agent)?;
+            self.apply_pending_classifier_config(agent);
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
             needs_redraw |= self.poll_computer_connection(agent).await;
             needs_redraw |= self.poll_compact(agent).await?;

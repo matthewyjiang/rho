@@ -327,6 +327,15 @@ impl App {
         agent.update_config(config);
     }
 
+    /// Hands the classifier settings saved by an editor that had no agent,
+    /// such as the screen allow threshold. Runs on each idle pass and before
+    /// each turn starts, so the next classification sees them.
+    pub(super) fn apply_pending_classifier_config(&mut self, agent: &mut InteractiveRuntime) {
+        if std::mem::take(&mut self.classifier_config_sync_pending) {
+            self.sync_permission_classifier_runtime_config(agent);
+        }
+    }
+
     pub(super) fn reject_permission_mode_change(&mut self) {
         self.set_status("permission mode cannot change until the current turn finishes");
     }

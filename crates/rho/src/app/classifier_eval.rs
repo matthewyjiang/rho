@@ -94,8 +94,9 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
 /// Points the classifier at `reference`, keeping any configured reasoning
 /// override, and the configured auth when the provider stays the same, so a
 /// model comparison changes one thing at a time.
-/// Points the `entry` config table at `reference`, keeping the entry's auth
-/// and reasoning when the provider stays the same.
+/// Points the `entry` config table at `reference`, keeping the entry's
+/// reasoning and screen allow threshold, and its auth when the provider stays
+/// the same.
 fn select_model(config: &mut Config, entry: &str, reference: &str) -> anyhow::Result<()> {
     let (provider, model) = split_reference(reference)?;
     let current = config.internal_agent_model(entry);
@@ -105,8 +106,14 @@ fn select_model(config: &mut Config, entry: &str, reference: &str) -> anyhow::Re
         .filter(|selection| selection.provider == provider)
         .map(|selection| selection.auth.clone())
         .unwrap_or_else(|| default_auth(config, provider));
+    let allow_threshold_percent = current
+        .and_then(InternalAgentModelConfig::rho)
+        .and_then(|selection| selection.allow_threshold_percent);
     let mut selection = InternalAgentModelConfig::new(provider.into(), model.into(), auth);
     selection.reasoning = reasoning;
+    if let crate::config::InternalAgentTarget::Rho(rho) = &mut selection.target {
+        rho.allow_threshold_percent = allow_threshold_percent;
+    }
     config.set_internal_agent_model_config(entry, selection);
     Ok(())
 }

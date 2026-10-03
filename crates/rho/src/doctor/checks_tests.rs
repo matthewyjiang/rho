@@ -445,3 +445,55 @@ fn path_check_reports_writability() {
         (DoctorStatus::Fail, "not writable")
     );
 }
+
+// Covers: the permission screen row names the allow threshold a decision
+// model allows at, its default included, and fails on one out of range,
+// since every screen call would then fail; a text model's row has no
+// threshold. Runs on an empty model cache so no discovered model warns.
+// Owner: permission screen doctor row
+#[test]
+fn permission_screen_row_reports_the_allow_threshold() {
+    let cases = [
+        (
+            "typesafe",
+            "jev-latest",
+            None,
+            DoctorStatus::Ok,
+            "typesafe/jev-latest, allows at P(allow) 95%",
+        ),
+        (
+            "typesafe",
+            "jev-latest",
+            Some(80),
+            DoctorStatus::Ok,
+            "typesafe/jev-latest, allows at P(allow) 80%",
+        ),
+        (
+            "typesafe",
+            "jev-latest",
+            Some(101),
+            DoctorStatus::Fail,
+            "[internal_agents.permission-classifier-screen] allow_threshold_percent must be 50 to 100, got 101",
+        ),
+        ("openai", "gpt-5", Some(101), DoctorStatus::Ok, "openai/gpt-5"),
+    ];
+    let cache = tempfile::tempdir().unwrap();
+    rho_providers::model::provider_models::with_provider_models_cache_dir_for_tests(
+        cache.path().into(),
+        || {
+            for (provider, model, allow_threshold_percent, status, summary) in cases {
+                let mut entry =
+                    InternalAgentModelConfig::new(provider.into(), model.into(), "keyless".into());
+                entry.expect_rho_mut().allow_threshold_percent = allow_threshold_percent;
+
+                let check = permission_screen_check(&entry);
+
+                assert_eq!(
+                    (check.status, check.summary.as_str()),
+                    (status, summary),
+                    "{provider}/{model} {allow_threshold_percent:?}"
+                );
+            }
+        },
+    );
+}

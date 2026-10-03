@@ -557,6 +557,10 @@ struct PartialInternalAgentModelConfig {
     auth: Option<String>,
     /// How a decision-model entry asks its model; see [`ModelKind`].
     kind: Option<ModelKind>,
+    /// The P(allow) percent at which a decision-model permission screen
+    /// allows. Range-checked where the screen is built, so a bad value names
+    /// its limit instead of failing the whole config load.
+    allow_threshold_percent: Option<u8>,
     reasoning: Option<ReasoningLevel>,
 }
 
@@ -583,6 +587,7 @@ fn internal_agent_selection(
             let mut selection = InternalAgentModelConfig::new(provider, model, auth);
             if let InternalAgentTarget::Rho(rho) = &mut selection.target {
                 rho.kind = group.kind;
+                rho.allow_threshold_percent = group.allow_threshold_percent;
             }
             selection
         }

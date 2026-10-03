@@ -654,3 +654,149 @@ const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
+
+pub(super) const SCREEN_ALLOW_THRESHOLD_SCENARIO: Scenario = Scenario::new(
+    "screen_allow_threshold",
+    "Edit the decision-model screen's allow threshold and see it saved",
+    PtySize {
+        rows: 40,
+        cols: 120,
+    },
+    SCREEN_ALLOW_THRESHOLD_STEPS,
+    /*smoke*/ false,
+)
+.with_setup(setup_decision_screen)
+.with_env(OPENAI_KEY_ENV);
+
+/// A config whose permission screen is a decision model on Ollama. No
+/// request reaches Ollama: the scenario only edits and reads settings.
+fn setup_decision_screen(home: &crate::env::IsolatedHome) -> anyhow::Result<()> {
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search.mode = "off"
+
+[behavior]
+credential_store = "file"
+
+[internal_agents.permission-classifier-screen]
+provider = "ollama"
+model = "clef"
+auth = "none"
+kind = "decision"
+"#,
+    )?;
+    Ok(())
+}
+
+// Covers: a decision-model screen shows its allow threshold under Agent
+// behavior with the 95% default; Enter edits it, the row shows the new value,
+// re-picking the screen model keeps it, and /doctor, which reads the saved
+// config, reports it.
+// Owner: interactive TUI
+const SCREEN_ALLOW_THRESHOLD_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("open_threshold_row"),
+    Step::SubmitText("/config"),
+    Step::WaitText {
+        text: "Config · saves automatically",
+        timeout: SETTLE,
+    },
+    Step::TypeText("agent"),
+    Step::WaitText {
+        text: "Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Config / Agent behavior",
+        timeout: SETTLE,
+    },
+    // One word: Space confirms in the config picker.
+    Step::TypeText("threshold"),
+    // Only the selected row shows its detail, so this proves Enter edits
+    // the threshold row and not another match.
+    Step::WaitText {
+        text: "How sure the decision model must be",
+        timeout: SETTLE,
+    },
+    Step::AssertText("95%"),
+    Step::Phase("edit_threshold"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit screen allow threshold percent",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::TypeText("90"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "90%",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Screen allow threshold",
+        timeout: SETTLE,
+    },
+    Step::Phase("repick_keeps_threshold"),
+    // Re-saving the screen model, here the same unlisted row, keeps the
+    // threshold rather than resetting it to the default.
+    Step::Key(Key::Up),
+    Step::WaitText {
+        text: "Model that answers Auto mode's quick screen",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Select permission screen model",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitTextGone {
+        text: "Select permission screen model",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Config / Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "90%",
+        timeout: SETTLE,
+    },
+    Step::Phase("doctor_reports_saved_threshold"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Config · saves automatically",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "Config · saves automatically",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/doctor"),
+    Step::WaitText {
+        text: "Authentication",
+        timeout: SETTLE,
+    },
+    // The screen row sits below the first page.
+    Step::Key(Key::End),
+    Step::WaitText {
+        text: "ollama/clef, allows at P(allow) 90%",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "Permission screen model",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];

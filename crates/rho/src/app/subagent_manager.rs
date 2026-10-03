@@ -158,6 +158,18 @@ impl SubagentManager {
         self.executor.update_permission_mode(mode);
     }
 
+    /// Updates the internal-agent selections future launches build from,
+    /// such as the permission classifier and its screen.
+    pub(crate) fn update_internal_agents(
+        &self,
+        internal_agents: &std::collections::BTreeMap<
+            String,
+            crate::config::InternalAgentModelConfig,
+        >,
+    ) {
+        self.executor.update_internal_agents(internal_agents);
+    }
+
     pub(crate) fn concurrency(&self) -> crate::app::agent_concurrency::AgentConcurrency {
         self.executor.concurrency()
     }
@@ -165,6 +177,13 @@ impl SubagentManager {
     #[cfg(test)]
     pub(crate) fn launch_permission_mode(&self) -> crate::permission::PermissionMode {
         self.executor.launch_permission_mode()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn launch_internal_agents(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig> {
+        self.executor.launch_internal_agents()
     }
 
     pub async fn spawn(

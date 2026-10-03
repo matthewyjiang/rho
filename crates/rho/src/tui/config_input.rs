@@ -198,6 +198,12 @@ impl App {
                             "compact target saved: {value}%; applies when idle"
                         ));
                     }
+                    ConfigNumberSave::ScreenAllowThresholdPercent(value) => {
+                        self.store_allow_threshold(value);
+                        self.open_main_config_picker_selected(
+                            config_picker::SCREEN_ALLOW_THRESHOLD_VALUE,
+                        )?;
+                    }
                     ConfigNumberSave::AgentConcurrency(value) => {
                         self.apply_live_agent_concurrency(value);
                         self.open_main_config_picker_selected(

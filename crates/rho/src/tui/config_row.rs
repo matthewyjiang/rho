@@ -104,6 +104,9 @@ impl ConfigRow {
                 Self::PermissionClassifierReasoning
             }
             config_picker::PERMISSION_SCREEN_MODEL_VALUE => Self::PermissionScreenModel,
+            config_picker::SCREEN_ALLOW_THRESHOLD_VALUE => {
+                Self::Number(ConfigNumberKey::ScreenAllowThresholdPercent)
+            }
             config_picker::AUTO_COMPACT_VALUE => Self::AutoCompact,
             config_picker::CACHE_MISS_NOTICES_VALUE => Self::CacheMissNotices,
             config_picker::SHOW_HEADER_HINTS_VALUE => Self::ShowHeaderHints,
