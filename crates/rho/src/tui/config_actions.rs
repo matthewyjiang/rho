@@ -146,7 +146,9 @@ impl App {
                 self.cycle_advisor_reasoning(agent).await
             }
             (
-                ConfigRow::PermissionClassifierModel | ConfigRow::PermissionClassifierReasoning,
+                ConfigRow::PermissionClassifierModel
+                | ConfigRow::PermissionClassifierReasoning
+                | ConfigRow::PermissionScreenModel,
                 ConfigCommitCtx::DuringTurn,
             ) => {
                 self.set_status(
@@ -157,6 +159,12 @@ impl App {
             (ConfigRow::PermissionClassifierModel, ConfigCommitCtx::Idle { .. }) => {
                 self.open_permission_classifier_model_prompt(
                     super::agent_picker::InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow,
+                );
+                Ok(())
+            }
+            (ConfigRow::PermissionScreenModel, ConfigCommitCtx::Idle { .. }) => {
+                self.open_screen_model_picker(
+                    super::agent_picker::InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow,
                 );
                 Ok(())
             }

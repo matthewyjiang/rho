@@ -31,6 +31,7 @@ pub(super) const ADVISOR_MODEL_VALUE: &str = "advisor_model";
 pub(super) const ADVISOR_REASONING_VALUE: &str = "advisor_reasoning";
 pub(super) const PERMISSION_CLASSIFIER_MODEL_VALUE: &str = "permission_classifier_model";
 pub(super) const PERMISSION_CLASSIFIER_REASONING_VALUE: &str = "permission_classifier_reasoning";
+pub(super) const PERMISSION_SCREEN_MODEL_VALUE: &str = "permission_screen_model";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
@@ -361,6 +362,15 @@ pub(super) fn category_picker(
                     PERMISSION_CLASSIFIER_REASONING_VALUE,
                 ));
             }
+            let mut screen = sectioned_item(
+                Some("Permissions"),
+                "Permission screen model",
+                "Model that answers Auto mode's quick screen before the classifier reviews: the classifier model, a decision model, or another text model. Enter opens a picker.",
+                None,
+                PERMISSION_SCREEN_MODEL_VALUE,
+            );
+            screen.badge = Some(super::screen_model::screen_model_badge(info));
+            items.push(screen);
             items.push(sectioned_item(
                 Some("Advisor"),
                 "Advisor mode",
@@ -554,6 +564,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE
         | PERMISSION_CLASSIFIER_REASONING_VALUE
+        | PERMISSION_SCREEN_MODEL_VALUE
         | ENABLE_SUBAGENTS_VALUE
         | AGENT_CONCURRENCY_VALUE
         | QUESTIONNAIRE_TIMEOUT_VALUE

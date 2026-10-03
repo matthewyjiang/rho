@@ -121,6 +121,8 @@ impl App {
             clipboard: &clipboard,
             mcp_report: &self.mcp_report,
             plugins_report: &self.plugins_report,
+            permission_screen: config
+                .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),
             probes: &probes,
         });
         for id in probes {

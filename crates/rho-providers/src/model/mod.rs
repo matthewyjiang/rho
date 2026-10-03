@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod context;
 mod contract;
+pub mod decision_models;
 pub mod display_name;
 pub mod favorites;
 pub mod handoff;

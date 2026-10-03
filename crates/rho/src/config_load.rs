@@ -13,7 +13,8 @@ use {
 
 use super::{
     inferred_provider_auth, provider_config::PartialProviderConfigs, web_search, Config,
-    ConfigWarning, EditTool, InternalAgentModelConfig, LegacyWebSearchCredentials,
+    ConfigWarning, EditTool, InternalAgentModelConfig, InternalAgentTarget,
+    LegacyWebSearchCredentials, ModelKind,
 };
 
 pub(super) fn emit_warnings(path_display: &str, warnings: &[ConfigWarning]) {
@@ -554,6 +555,8 @@ struct PartialInternalAgentModelConfig {
     provider: Option<String>,
     model: Option<String>,
     auth: Option<String>,
+    /// How a decision-model entry asks its model; see [`ModelKind`].
+    kind: Option<ModelKind>,
     reasoning: Option<ReasoningLevel>,
 }
 
@@ -577,7 +580,11 @@ fn internal_agent_selection(
                 .auth
                 .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
             let model = group.model.unwrap_or_else(|| cfg.model.clone());
-            InternalAgentModelConfig::new(provider, model, auth)
+            let mut selection = InternalAgentModelConfig::new(provider, model, auth);
+            if let InternalAgentTarget::Rho(rho) = &mut selection.target {
+                rho.kind = group.kind;
+            }
+            selection
         }
         // A rejected runtime takes the whole entry with it. Provider, model,
         // and auth were written to work together under the runtime we are not

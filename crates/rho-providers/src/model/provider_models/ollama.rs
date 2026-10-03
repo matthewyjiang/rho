@@ -49,7 +49,7 @@ struct OllamaShowResponse {
 /// Strips a trailing `/v1` segment so `http://host:11434/v1` becomes the
 /// native root `http://host:11434/`. Bases that are not `/v1`-suffixed skip
 /// native discovery.
-fn native_root(api_base: &Url) -> Option<Url> {
+pub(in crate::model) fn native_root(api_base: &Url) -> Option<Url> {
     let mut root = api_base.clone();
     root.set_query(None);
     root.set_fragment(None);
@@ -85,19 +85,14 @@ fn reasoning_capabilities_from(capabilities: Option<&[String]>) -> ReasoningCapa
     }
 }
 
-/// Embedding-only models are not a coding-agent surface. Capability-less rows
-/// stay; the server may be older than the capabilities field.
+/// Known capabilities must include completion to expose a chat model. Rows
+/// without capabilities stay; older servers may not report the field.
 fn is_chat_model(capabilities: Option<&[String]>) -> bool {
-    let Some(capabilities) = capabilities else {
-        return true;
-    };
-    let embedding = capabilities
-        .iter()
-        .any(|capability| capability == "embedding");
-    let completion = capabilities
-        .iter()
-        .any(|capability| capability == "completion");
-    !embedding || completion
+    capabilities.is_none_or(|capabilities| {
+        capabilities
+            .iter()
+            .any(|capability| capability == "completion")
+    })
 }
 
 fn context_length_from_show(response: &OllamaShowResponse) -> Option<u64> {

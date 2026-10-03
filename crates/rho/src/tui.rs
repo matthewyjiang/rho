@@ -167,6 +167,7 @@ mod render;
 mod rendered_entry;
 mod run_lifecycle;
 mod screen_layout;
+mod screen_model;
 mod scrollbar;
 mod send_confirm;
 mod session_actions;

@@ -38,22 +38,43 @@ Earlier tool calls appear in the transcript with each string argument cut to 500
 
 Set the model under **Agent behavior** in `/config`, or as `[internal_agents.permission-classifier]`.
 
-### Decision-model screen
+### Screen model
 
-A decision model such as Cloudflare's Clef or TypeSafe's Jev can answer the screen instead of the classifier model. A decision model answers a fixed question with a probability for each option rather than writing a review, so the screen is faster. Rho asks it over the System One API, on one of two hosts:
+By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it under **Agent behavior > Permission screen model** in `/config`, or as `[internal_agents.permission-classifier-screen]`. Turning on Auto from `/config` or `/permissions auto` offers the same picker after the classifier pick; Esc keeps the current screen model.
 
-- **Ollama**, at `/v1/systemone` on the configured `[providers.ollama]` server. Pull the model there first, for example `ollama pull clef`.
-- **[TypeSafe](/providers/typesafe)**, which hosts Jev. Sign in with `/login typesafe`, then use `provider = "typesafe"`, `model = "jev-latest"`, and `auth = "typesafe-api-key"`.
+The picker lists three groups:
 
-Cloudflare Workers AI also serves Clef, but it truncates every state to its first 2,048 tokens, which would cut off the pending request, so Rho does not use it.
+- **Same as classifier** clears the entry, so the screen follows the classifier model when it changes.
+- **Decision models** discovered on the hosts below.
+- **Text models** from the chat model catalog. A text screen asks the same question as the classifier's screen, at low reasoning, over a transcript fitted to that model's own context window.
+
+Ollama serves a model at the server's `num_ctx`, often far below the window the model advertises, and silently drops the front of a longer prompt. A screen could then allow a request it never read whole. So a text screen on Ollama needs `usable_context_window` set for its model in [local model metadata](/configuration#local-model-metadata), measured against the server. Without it, the screen escalates every request to the review, and the `/config` row and `/doctor` warn. Hosted providers reject an oversize prompt, which also escalates.
+
+The picker saves `kind = "decision"` or `kind = "text"` with the entry, because Ollama serves both. Without `kind`, an entry on Ollama or TypeSafe is a decision model and an entry on any other provider is a text model.
 
 ```toml
 [internal_agents.permission-classifier-screen]
 provider = "ollama"
 model = "clef"
+kind = "decision"
 ```
 
-The screen allows only when the model picks `allow` with probability at least 0.97. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Both hosts reject input over the model's context instead of truncating it: 16,384 tokens for Clef at Ollama's default `num_ctx`, and about 32,500 on TypeSafe. So the screen reads its own transcript, fitted to about 10,500 estimated tokens on Ollama or 20,500 on TypeSafe: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why. `[internal_agents.permission-classifier-screen]` takes the host provider's auth: `none` or `ollama-api-key` on Ollama, `typesafe-api-key` on TypeSafe. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
+#### Decision models
+
+A decision model such as Cloudflare's Clef or TypeSafe's Jev answers a fixed question with a probability for each option rather than writing a review. Rho asks it over the System One API, on one of two hosts:
+
+- **Ollama**, at `/v1/systemone` on the configured `[providers.ollama]` server. Pull the model there first, for example `ollama pull clef`. Ollama lists it with the `decision` capability.
+- **[TypeSafe](/providers/typesafe)**, which hosts Jev. Sign in with `/login typesafe`.
+
+Rho discovers decision models after login and from **Refresh model lists** in `/config`, and caches them with the chat model lists. Cloudflare Workers AI also serves Clef, but it truncates every state to its first 2,048 tokens, which would cut off the pending request, so Rho does not use it.
+
+The `/config` row and `/doctor` warn when an entry's kind does not fit: a decision entry on a provider other than Ollama or TypeSafe, a decision entry on a model its host did not list, or a text entry on a listed decision model that is not also listed as a chat model. Rho does not warn about a host that listed no decision models, since it has nothing to judge by. The picker lists decision models only on hosts with usable credentials, and a text entry without credentials for its auth stops headless `rho run` like any unusable entry.
+
+The screen allows only when the model picks `allow` with probability at least 0.97. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Both hosts reject input over the model's context instead of truncating it: 16,384 tokens for Clef at Ollama's default `num_ctx`, and about 32,500 on TypeSafe. So the screen reads its own transcript, fitted to about 10,500 estimated tokens on Ollama or 20,500 on TypeSafe: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why.
+
+#### Screen entry rules
+
+`[internal_agents.permission-classifier-screen]` takes the provider's auth: `none` or `ollama-api-key` on Ollama, `typesafe-api-key` on TypeSafe, and the chat provider's auth for a text model. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
 
 ## Change the mode
 

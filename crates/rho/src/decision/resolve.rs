@@ -1,19 +1,27 @@
-//! Builds the decision model a config entry names.
+//! Resolves the model a decision-model config entry names.
 //!
 //! A feature that can use a decision model names it in its own
-//! `[internal_agents.<entry>]` table: a provider, a model, and an auth mode.
-//! The provider must be one of [`HOSTS`], the providers whose servers speak
-//! the System One API.
+//! `[internal_agents.<entry>]` table: a provider, a model, an auth mode, and a
+//! `kind`. A `decision` model must be on one of [`HOSTS`], the providers whose
+//! servers speak the System One API. A `text` model is any chat model, asked
+//! through the text adapter. Without `kind`, a model on a host is a decision
+//! model and any other is text, which is how entries written before `kind`
+//! existed read.
 
 use anyhow::Context;
 use rho_providers::{
-    provider::{provider_descriptor, ProviderAuthKind},
+    credentials::auth_has_stored_credentials,
+    model::{decision_models::cached_decision_models, provider_models::cached_provider_models},
+    provider::{provider_descriptor, ProviderAuthKind, ProviderDescriptor},
     system_one::{SystemOneLimits, SystemOneModel},
     CredentialStore,
 };
 use rho_sdk::{decision::DecisionModel, SecretString};
 
-use crate::{config::Config, credential_store::AppCredentialStore};
+use crate::{
+    config::{Config, ModelKind, RhoInternalAgentModel},
+    credential_store::AppCredentialStore,
+};
 
 /// A provider whose server speaks the System One API, with what it accepts.
 struct Host {
@@ -43,9 +51,28 @@ const HOST_NAMES: &str = "ollama or typesafe";
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ConfigError {
     #[error(
-        "[internal_agents.{entry}] must name a decision model on provider {HOST_NAMES}, got {configured}"
+        "[internal_agents.{entry}] kind `decision` needs a model on provider {HOST_NAMES}, got {configured}"
     )]
-    UnsupportedProvider {
+    NotOnDecisionHost {
+        entry: &'static str,
+        configured: String,
+    },
+    #[error("[internal_agents.{entry}] kind `text` needs a chat model, got {configured}")]
+    NotAChatModel {
+        entry: &'static str,
+        configured: String,
+    },
+    #[error(
+        "[internal_agents.{entry}] must name a model on one of Rho's providers, got {configured}"
+    )]
+    NotRhoRuntime {
+        entry: &'static str,
+        configured: String,
+    },
+    #[error(
+        "[internal_agents.{entry}] could not start text model {configured}; check its credentials"
+    )]
+    TextModelUnavailable {
         entry: &'static str,
         configured: String,
     },
@@ -63,27 +90,118 @@ pub(crate) enum ConfigError {
     },
 }
 
-/// The decision model `[internal_agents.<entry>]` names, or `None` when the
-/// entry is absent. An unusable entry is a [`ConfigError`].
-pub(crate) fn resolve(
-    config: &Config,
+/// The model a decision-model entry names.
+pub(crate) enum EntryModel<'a> {
+    /// A decision model, ready to ask.
+    Decision(Box<dyn DecisionModel>),
+    /// A chat model the caller builds and asks through the text adapter. Its
+    /// provider is known to serve chat.
+    Text(&'a RhoInternalAgentModel),
+}
+
+/// Whether `selection` is asked as a decision model or as text: its `kind`,
+/// else decision on a host and text elsewhere.
+pub(crate) fn entry_kind(selection: &RhoInternalAgentModel) -> ModelKind {
+    selection.kind.unwrap_or_else(|| {
+        if is_decision_host(&selection.provider) {
+            ModelKind::Decision
+        } else {
+            ModelKind::Text
+        }
+    })
+}
+
+/// Whether `provider` serves decision models.
+fn is_decision_host(provider: &str) -> bool {
+    HOSTS.iter().any(|host| host.provider == provider)
+}
+
+/// The discovered decision model on `provider` that `model` names, if any.
+pub(crate) fn discovered_decision_model(provider: &str, model: &str) -> Option<String> {
+    cached_decision_models(provider)
+        .into_iter()
+        .find(|listed| names_listed_model(model, listed))
+}
+
+/// Whether config's `model` names `listed`. Ollama lists `clef:latest` for a
+/// config's `clef`, so an untagged name matches its `:latest` tag.
+fn names_listed_model(model: &str, listed: &str) -> bool {
+    listed == model || listed.strip_suffix(":latest") == Some(model)
+}
+
+/// Why `selection` likely names the wrong kind, judged by its provider and
+/// the models discovered there. `None` when it matches, or when nothing was
+/// discovered to judge by. A model listed both as a decision model and as a
+/// chat model suits either kind.
+pub(crate) fn kind_mismatch(selection: &RhoInternalAgentModel) -> Option<String> {
+    let RhoInternalAgentModel {
+        provider, model, ..
+    } = selection;
+    let discovered = discovered_decision_model(provider, model).is_some();
+    match entry_kind(selection) {
+        ModelKind::Decision if !is_decision_host(provider) => {
+            Some(format!("{provider} serves no decision models"))
+        }
+        ModelKind::Decision => (!discovered && !cached_decision_models(provider).is_empty())
+            .then(|| format!("{model} is not a decision model on {provider}")),
+        ModelKind::Text => {
+            let chat = cached_provider_models(provider)
+                .iter()
+                .any(|listed| names_listed_model(model, &listed.model));
+            (discovered && !chat)
+                .then(|| format!("{model} on {provider} is a decision model, not a text model"))
+        }
+    }
+}
+
+/// The model `[internal_agents.<entry>]` names, or `None` when the entry is
+/// absent. An unusable entry is a [`ConfigError`].
+pub(crate) fn resolve<'a>(
+    config: &'a Config,
     entry: &'static str,
-) -> anyhow::Result<Option<Box<dyn DecisionModel>>> {
+) -> anyhow::Result<Option<EntryModel<'a>>> {
     let Some(configured) = config.internal_agent_model(entry) else {
         return Ok(None);
     };
-    let (selection, host) = configured
-        .rho()
-        .and_then(|selection| {
-            let host = HOSTS
-                .iter()
-                .find(|host| host.provider == selection.provider)?;
-            Some((selection, host))
-        })
-        .ok_or_else(|| ConfigError::UnsupportedProvider {
+    let Some(selection) = configured.rho() else {
+        return Err(ConfigError::NotRhoRuntime {
             entry,
             configured: configured.display_reference(),
-        })?;
+        }
+        .into());
+    };
+    let host = match entry_kind(selection) {
+        ModelKind::Text => {
+            // Custom providers resolve only inside their config's scope.
+            let _scope = config.providers.thread_scope()?;
+            let descriptor = provider_descriptor(&selection.provider)
+                .filter(|descriptor| descriptor.serves_chat())
+                .ok_or_else(|| ConfigError::NotAChatModel {
+                    entry,
+                    configured: configured.display_reference(),
+                })?;
+            if !has_credentials(
+                descriptor,
+                &selection.auth,
+                &|name| std::env::var(name).ok(),
+                &AppCredentialStore,
+            ) {
+                return Err(ConfigError::TextModelUnavailable {
+                    entry,
+                    configured: configured.display_reference(),
+                }
+                .into());
+            }
+            return Ok(Some(EntryModel::Text(selection)));
+        }
+        ModelKind::Decision => HOSTS
+            .iter()
+            .find(|host| host.provider == selection.provider)
+            .ok_or_else(|| ConfigError::NotOnDecisionHost {
+                entry,
+                configured: configured.display_reference(),
+            })?,
+    };
     let api_key = api_key(
         entry,
         host.provider,
@@ -96,7 +214,25 @@ pub(crate) fn resolve(
         .with_context(|| format!("{} has no API base URL", host.provider))?;
     let model =
         SystemOneModel::new(&api_base, selection.model.clone(), api_key)?.with_limits(host.limits);
-    Ok(Some(Box::new(model)))
+    Ok(Some(EntryModel::Decision(Box::new(model))))
+}
+
+/// Whether `auth`, one of `descriptor`'s modes, has a credential: a
+/// nonblank environment variable, or one stored. A text screen checks this
+/// before it is used, so a headless run refuses to start without one.
+fn has_credentials(
+    descriptor: &ProviderDescriptor,
+    auth: &str,
+    env: &dyn Fn(&str) -> Option<String>,
+    store: &dyn CredentialStore,
+) -> bool {
+    descriptor.auth_mode(auth).is_some_and(|mode| {
+        mode.auth_kind
+            .env_var()
+            .and_then(env)
+            .is_some_and(|value| !value.trim().is_empty())
+            || auth_has_stored_credentials(store, mode.id).unwrap_or(false)
+    })
 }
 
 /// The API key for `provider`'s `auth` mode, read the way chat providers

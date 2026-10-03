@@ -13,7 +13,8 @@ pub(super) const PERMISSIONS_COMMAND_SCENARIO: Scenario = Scenario::new(
 .with_env(OPENAI_KEY_ENV);
 
 // Covers: slash mode changes preserve the Auto classifier gate and reject
-// invalid input without replacing the active policy.
+// invalid input without replacing the active policy. Auto setup then offers
+// the screen model, and Esc keeps the classifier model on the screen.
 // Owner: interactive TUI
 const PERMISSIONS_COMMAND_STEPS: &[Step] = &[
     Step::WaitText {
@@ -39,9 +40,16 @@ const PERMISSIONS_COMMAND_STEPS: &[Step] = &[
     Step::TypeText("gpt-5.5"),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "Auto ·",
+        text: "Select permission screen model",
         timeout: SETTLE,
     },
+    Step::AssertText("Same as classifier"),
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "Select permission screen model",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Auto ·"),
     Step::SubmitText("/permissions plan"),
     Step::WaitText {
         text: "Plan ·",
@@ -77,7 +85,9 @@ const PERMISSIONS_COMMAND_STEPS: &[Step] = &[
 ];
 
 // Covers: enabling Auto without a classifier model asks for one, Esc keeps the
-// prior mode, and selecting a classifier completes Auto.
+// prior mode, and selecting a classifier completes Auto. Auto setup then
+// offers the screen model; a text model picked there is saved and shown on
+// its config row.
 // Owner: interactive TUI
 pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -147,12 +157,31 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
+    Step::Phase("setup_offers_screen_model"),
+    Step::WaitText {
+        text: "Select permission screen model",
+        timeout: SETTLE,
+    },
+    Step::TypeText("grok-4.6"),
+    Step::WaitText {
+        text: "xai/grok-4.6",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "Config / Agent behavior",
         timeout: SETTLE,
     },
     Step::AssertText("Permission mode"),
     Step::AssertText("Auto"),
+    // The row's badge is the durable proof the pick was saved; the status
+    // toast expires.
+    Step::TypeText("screen"),
+    Step::WaitText {
+        text: "Permission screen model",
+        timeout: SETTLE,
+    },
+    Step::AssertText("xai/grok-4.6"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Appearance",

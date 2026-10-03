@@ -231,3 +231,76 @@ fn pinned_scope_lists_only_usable_pins() {
         "empty pins should keep the whole authenticated catalogue"
     );
 }
+
+// Covers: the screen picker opens on the configured row, and that row's value
+// routes back to the same choice, so Enter on an open picker keeps the screen
+// as it was: the classifier row clears the entry, a decision row stays a
+// decision model, and a text row is a catalog reference. A configured model
+// that is not listed still gets its own row rather than falling back to the
+// classifier row, which would clear the entry.
+// Owner: permission screen model picker
+#[test]
+fn screen_picker_opens_on_the_configured_row_and_routes_it_back() {
+    let available_auths = ["xai-api-key".to_string()];
+    let cases = [
+        (
+            ScreenSelection::Classifier,
+            InternalAgentModelRow::Conversation,
+        ),
+        // Not listed: the host listed nothing or is logged out.
+        (
+            ScreenSelection::Decision {
+                provider: "ollama".into(),
+                model: "clef-flash:latest".into(),
+            },
+            InternalAgentModelRow::Decision {
+                provider: "ollama".into(),
+                model: "clef-flash:latest".into(),
+            },
+        ),
+        // Not listed: gone from the catalog.
+        (
+            ScreenSelection::Text {
+                provider: "xai".into(),
+                model: "grok-retired".into(),
+            },
+            InternalAgentModelRow::RhoModel("xai/grok-retired".into()),
+        ),
+        (
+            ScreenSelection::Decision {
+                provider: "typesafe".into(),
+                model: "jev-preview".into(),
+            },
+            InternalAgentModelRow::Decision {
+                provider: "typesafe".into(),
+                model: "jev-preview".into(),
+            },
+        ),
+        (
+            ScreenSelection::Text {
+                provider: "xai".into(),
+                model: "grok-4.6".into(),
+            },
+            InternalAgentModelRow::RhoModel("xai/grok-4.6".into()),
+        ),
+    ];
+    for (current, expected) in cases {
+        let picker = screen_model_picker(ScreenPickerInputs {
+            current: current.clone(),
+            classifier: Some("openai/gpt-5.5".into()),
+            decision_models: vec![
+                ("ollama".into(), "clef:latest".into()),
+                ("typesafe".into(), "jev-latest".into()),
+                ("typesafe".into(), "jev-preview".into()),
+            ],
+            favorite_models: &[],
+            available_auths: &available_auths,
+            scope: ModelPickerScope::All,
+            keybindings: default_keybindings(),
+        });
+
+        let row = parse_internal_agent_model_row(&picker.items[picker.selected].value);
+
+        assert_eq!(row, expected, "{current:?}");
+    }
+}

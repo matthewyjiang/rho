@@ -533,7 +533,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         AUTO_PERMISSION_MODE_CONFIG_STEPS,
         /*smoke*/ false,
     )
-    .with_env(OPENAI_KEY_ENV),
+    .with_env(OPENAI_AND_XAI_KEY_ENV),
     Scenario::new(
         "auto_permission_mode_startup",
         "Start in Auto without a classifier and force a model pick before tools run",

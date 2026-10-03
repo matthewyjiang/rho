@@ -72,7 +72,11 @@ impl App {
             }
             ComposerMode::Picker(picker) if picker.is_internal_agent_model() => {
                 let target = self.internal_agent_model_target.clone()?;
-                self.internal_agent_model_picker(&target.id, target.origin)
+                if target.id == crate::permission_classifier::DECISION_SCREEN_ID {
+                    self.screen_model_picker(target.origin)
+                } else {
+                    self.internal_agent_model_picker(&target.id, target.origin)
+                }
             }
             _ => return None,
         };
