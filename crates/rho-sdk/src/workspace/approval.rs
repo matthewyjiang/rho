@@ -172,6 +172,30 @@ pub trait ApprovalHandler: Send + Sync {
     fn reads_live_history(&self) -> bool {
         false
     }
+
+    /// How the runtime hands this handler requests that session memory does
+    /// not already allow. Defaults to [`ApprovalConcurrency::Serial`], which
+    /// suits a handler that prompts a person.
+    fn concurrency(&self) -> ApprovalConcurrency {
+        ApprovalConcurrency::Serial
+    }
+}
+
+/// How the runtime hands an [`ApprovalHandler`] requests that session memory
+/// does not already allow. Requests that memory allows never reach the handler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ApprovalConcurrency {
+    /// One request at a time across the approval session. After each answer
+    /// the runtime re-checks session memory, so a concurrent identical request
+    /// observes an [`ApprovalDecision::AllowForSession`] instead of asking
+    /// again. Unrelated requests wait behind a slow answer.
+    Serial,
+    /// Requests as they arrive. For handlers that decide on their own, such
+    /// as an automated classifier, whose answers would otherwise queue behind
+    /// each other. The handler orders any prompts it shows a person, and
+    /// concurrent identical requests may each be asked.
+    Concurrent,
 }
 
 /// Shared approval state for one host-owned authorization session.
@@ -516,8 +540,8 @@ pub(crate) struct SessionApprovals {
     ///
     /// This is a session-wide prompt gate, not identical-only singleflight. A
     /// slow host approval orders unrelated `RequireApproval` misses behind it.
-    /// Remembered hits stay outside the gate. Key by request if a host needs
-    /// distinct misses to prompt concurrently.
+    /// Remembered hits stay outside the gate, and a handler that reports
+    /// [`ApprovalConcurrency::Concurrent`] skips it.
     ///
     /// Wrapped in `AssertUnwindSafe` so embedding `tokio::sync::Mutex` does not
     /// strip `UnwindSafe` / `RefUnwindSafe` from public types that hold session

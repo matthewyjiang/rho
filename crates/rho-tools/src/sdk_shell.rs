@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use rho_sdk::{
     tool::{
-        OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
-    ProcessInvocation, ProcessOutputLimits, ResolvedWorkspacePath,
+    ProcessInvocation, ProcessOutputLimits, ResolvedWorkspacePath, Workspace,
 };
 use serde_json::Value;
 
@@ -17,10 +18,7 @@ use crate::{
     DEFAULT_MAX_OUTPUT_BYTES,
 };
 
-use super::{
-    sdk_security::authorize_request,
-    sdk_support::{check_cancelled, map_app_error, map_invalid_app_error},
-};
+use super::sdk_support::{map_app_error, map_invalid_app_error};
 
 /// Options for the host-facing shell tool adapter.
 #[derive(Clone)]
@@ -110,13 +108,13 @@ impl ShellPlan {
     fn parse(
         kind: ShellKind,
         arguments: Value,
-        context: &ToolContext,
+        workspace: Option<&Workspace>,
         max_output_bytes: usize,
         environment: ProcessEnvironment,
     ) -> Result<Self, ToolError> {
         let arguments = ShellArgs::parse(arguments).map_err(map_invalid_app_error)?;
         let timeout = arguments.timeout().map_err(map_invalid_app_error)?;
-        let workspace = context.workspace().ok_or_else(|| {
+        let workspace = workspace.ok_or_else(|| {
             ToolError::new(
                 ToolErrorKind::Execution,
                 "workspace is required for shell tools",
@@ -137,15 +135,12 @@ impl ShellPlan {
         })
     }
 
-    async fn authorize(&self, kind: ShellKind, context: &ToolContext) -> Result<(), ToolError> {
-        authorize_request(
-            context,
-            CapabilityRequest::process(
-                self.execution.clone(),
-                CapabilitySource::built_in_tool(kind.name()),
-            ),
+    /// The process facts approved before this plan executes.
+    fn capability(&self, kind: ShellKind) -> CapabilityRequest {
+        CapabilityRequest::process(
+            self.execution.clone(),
+            CapabilitySource::built_in_tool(kind.name()),
         )
-        .await
     }
 
     async fn execute(
@@ -237,24 +232,41 @@ impl Tool for SdkShellTool {
         ToolMetadata::new().operation(OperationKind::Execute)
     }
 
-    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+    /// Declares the process facts up front, so the runtime authorizes them
+    /// before the call waits for its exclusive execution slot. Concurrent
+    /// shell calls are then approved together instead of each approval
+    /// waiting for the previous command to finish.
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
-            check_cancelled(&context)?;
+            if context.cancellation().is_cancelled() {
+                return Err(ToolError::cancelled());
+            }
             let plan = ShellPlan::parse(
                 self.kind,
                 invocation.into_arguments(),
-                &context,
+                context.workspace(),
                 self.max_output_bytes,
                 self.environment.clone(),
             )?;
-            plan.authorize(self.kind, &context).await?;
-            if let Some(observer) = self.mutation_observer.as_ref() {
-                observer.mark_untracked_effect(
-                    crate::UntrackedWorkspaceEffect::ShellCommand,
-                    self.kind.name(),
-                );
-            }
-            plan.execute(self.kind, &context).await
+            Ok(PreparedToolInvocation::exclusive_with_capabilities(
+                [plan.capability(self.kind)],
+                ToolMetadata::new().operation(OperationKind::Execute),
+                move |context| {
+                    Box::pin(async move {
+                        if let Some(observer) = self.mutation_observer.as_ref() {
+                            observer.mark_untracked_effect(
+                                crate::UntrackedWorkspaceEffect::ShellCommand,
+                                self.kind.name(),
+                            );
+                        }
+                        plan.execute(self.kind, &context).await
+                    })
+                },
+            ))
         })
     }
 }

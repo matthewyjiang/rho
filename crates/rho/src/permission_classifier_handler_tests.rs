@@ -1,6 +1,10 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
 
 use pretty_assertions::assert_eq;
@@ -57,7 +61,7 @@ impl ScriptedClassifier {
         let histories = Arc::clone(&self.histories);
         let cancelled = Arc::clone(&self.cancelled);
         Arc::new(move |input: ClassificationInput| {
-            calls.lock().unwrap().push(input.request.clone());
+            calls.lock().unwrap().push((*input.request).clone());
             histories
                 .lock()
                 .unwrap()
@@ -411,4 +415,132 @@ fn classifier_handler_reads_live_history() {
         None,
     );
     assert!(handler.reads_live_history());
+}
+
+/// Human approver that parks each prompt until the test releases it.
+#[derive(Default)]
+struct HoldingHuman {
+    prompts: AtomicUsize,
+    release: tokio::sync::Notify,
+}
+
+impl ApprovalHandler for HoldingHuman {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            self.prompts.fetch_add(1, Ordering::SeqCst);
+            self.release.notified().await;
+            ApprovalDecision::AllowOnce
+        })
+    }
+}
+
+// Covers: with requests arriving concurrently, escalations still reach the
+// human one at a time, and a request that waited while the human's answer
+// reset the deny budgets goes back to the classifier instead of prompting.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn concurrent_escalations_prompt_the_human_once() {
+    let mut outcomes: Vec<_> = (0..CONSECUTIVE_DENY_ESCALATION)
+        .map(|index| ClassifierVerdict::Deny {
+            reason: format!("deny {index}"),
+        })
+        .collect();
+    outcomes.push(ClassifierVerdict::Allow);
+    let classifier = ScriptedClassifier::new(outcomes);
+    let human = Arc::new(HoldingHuman::default());
+    let handler = handler_with(&classifier, Some(human.clone()));
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        assert!(matches!(
+            handler.request(request()).await,
+            ApprovalDecision::Deny { .. }
+        ));
+    }
+
+    let decisions = tokio::time::timeout(Duration::from_secs(5), async {
+        let (first, second, ()) = tokio::join!(
+            handler.request(request()),
+            handler.request(request()),
+            async {
+                while human.prompts.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+                // Both requests have been polled; only one may be prompting.
+                assert_eq!(human.prompts.load(Ordering::SeqCst), 1);
+                human.release.notify_one();
+            },
+        );
+        [first, second]
+    })
+    .await
+    .expect("the waiting request must not prompt the human again");
+
+    assert_eq!(
+        decisions,
+        [ApprovalDecision::AllowOnce, ApprovalDecision::AllowOnce]
+    );
+    assert_eq!(human.prompts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        classifier.call_count(),
+        CONSECUTIVE_DENY_ESCALATION as usize + 1
+    );
+}
+
+// Covers: verdicts settle in completion order. With four classifications in
+// flight, a late allow that lands after three concurrent denials spent the
+// budget must escalate (here: headless cancel) instead of being trusted.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn late_allow_after_concurrent_denials_spend_the_budget_escalates() {
+    let pending: Arc<Mutex<VecDeque<tokio::sync::oneshot::Receiver<ClassifierVerdict>>>> =
+        Arc::default();
+    let mut verdicts = Vec::new();
+    for _ in 0..=CONSECUTIVE_DENY_ESCALATION {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        verdicts.push(sender);
+        pending.lock().unwrap().push_back(receiver);
+    }
+    let classify: ClassifyFn = {
+        let pending = Arc::clone(&pending);
+        Arc::new(move |_: ClassificationInput| {
+            let verdict = pending
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("one gate per call");
+            Box::pin(async move { verdict.await.expect("test sends every verdict") })
+        })
+    };
+    let handler = Arc::new(ClassifierApprovalHandler::for_tests(classify, None));
+    let cancellation = CancellationToken::new();
+    // Tasks take receivers in whatever order they run, so they are joined by
+    // completion: once a verdict is sent, only the task holding it can finish.
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..=CONSECUTIVE_DENY_ESCALATION {
+        let handler = Arc::clone(&handler);
+        let request = request().with_context(context_with(Vec::new(), cancellation.clone()));
+        tasks.spawn(async move { handler.request(request).await });
+    }
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !pending.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("every request is classifying at once");
+    let late_allow = verdicts.pop().unwrap();
+    for (index, deny) in verdicts.into_iter().enumerate() {
+        deny.send(ClassifierVerdict::Deny {
+            reason: format!("deny {index}"),
+        })
+        .unwrap();
+        let decision = tasks.join_next().await.unwrap().unwrap();
+        assert!(matches!(decision, ApprovalDecision::Deny { .. }));
+    }
+    assert!(!cancellation.is_cancelled());
+    late_allow.send(ClassifierVerdict::Allow).unwrap();
+    let decision = tasks.join_next().await.unwrap().unwrap();
+
+    assert!(matches!(decision, ApprovalDecision::Deny { .. }));
+    assert!(cancellation.is_cancelled());
 }
