@@ -9,8 +9,8 @@ use serde_json::json;
 use crate::{
     approval_channel,
     hooks::{
-        HookDecision, HookEventKind, HookGateFuture, HookHostLabels, HookObserver, PreToolUseGate,
-        PreToolUseRequest,
+        testing::RecordingObserver, HookDecision, HookEventKind, HookGateFuture, HookHostLabels,
+        PreToolUseGate, PreToolUseRequest,
     },
     model::ToolSpec,
     tool::{
@@ -238,17 +238,6 @@ impl ApprovalHandler for OrderedApproval {
     }
 }
 
-#[derive(Default)]
-struct RecordingObserver {
-    events: Mutex<Vec<crate::hooks::HookEnvelope>>,
-}
-
-impl HookObserver for RecordingObserver {
-    fn observe(&self, envelope: crate::hooks::HookEnvelope) {
-        self.events.lock().unwrap().push(envelope);
-    }
-}
-
 struct AuthorizingTool {
     order: Arc<Mutex<Vec<&'static str>>>,
 }
@@ -338,7 +327,7 @@ async fn provider_free_call_preserves_authorization_order_and_hook_pairing() {
         vec!["policy", "hook", "approval", "execution"]
     );
     let gate_requests = gate_requests.lock().unwrap();
-    let events = observer.events.lock().unwrap();
+    let events = observer.envelopes();
     assert_eq!(
         (gate_requests[0].event(), events[0].event()),
         (HookEventKind::BeforeToolUse, HookEventKind::AfterToolUse)
@@ -680,9 +669,7 @@ async fn child_host_inherits_live_history_and_session_identity() {
         );
         assert_eq!(
             observer
-                .events
-                .lock()
-                .unwrap()
+                .envelopes()
                 .iter()
                 .map(|event| (
                     event.identity().session_id.clone(),

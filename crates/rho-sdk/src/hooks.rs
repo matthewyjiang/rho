@@ -41,8 +41,15 @@
 //! policy already saw, not scraped argument prose. Paths and shell command text
 //! are included because a deny hook exists to inspect them. `after_tool_use`
 //! reports the first request the call authorized via JSON `payload.capability`
-//! and [`HookEnvelope::after_tool_use_capability`]. Credentials,
-//! authorization headers, environment values, and URL query strings are not.
+//! and [`HookEnvelope::after_tool_use_capability`] (`null` when the call never
+//! authorized). Credentials, authorization headers, environment values, and
+//! URL query strings are not included.
+//!
+//! `after_tool_use` also reports how a process the call ran to completion
+//! exited via `payload.process` and [`HookEnvelope::after_tool_use_process`]
+//! (`null` when no process ran to completion). Its `stdout` and `stderr` are the
+//! command's own output, bounded but not redacted, so they carry whatever the
+//! command printed.
 //! Every envelope reports what was shortened in [`HookTruncation`].
 //! Hosts can add generic, non-secret [`HookHostLabels`] for their own execution
 //! IDs. Label keys and values use the same field and envelope bounds, and every
@@ -58,7 +65,7 @@ pub mod testing;
 
 pub(crate) use dispatch::{HookToolIdentity, HookWiring};
 pub(crate) use payload::{
-    bounded_failure, error_label, summarize_capability, tool_status, BoundedFailure, ToolOutcomeRef,
+    bounded_failure, error_label, summarize_capability, BoundedFailure, ToolOutcomeRef,
 };
 
 pub use bounds::{
@@ -73,7 +80,7 @@ pub use event::HookEventKind;
 pub use gate::{AllowAllGate, HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest};
 pub use payload::{
     AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookFailure, HookPathScope,
-    HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookStopReason, HookTool,
-    HookToolStatus, HookWorkspace, RunCompletedPayload, RunFailedPayload, SessionCompletedPayload,
-    SessionFailedPayload, SessionStartedPayload, PROMPT_CONSTRUCTION_TOOL,
+    HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookProcessResult, HookStopReason,
+    HookTool, HookToolStatus, HookWorkspace, RunCompletedPayload, RunFailedPayload,
+    SessionCompletedPayload, SessionFailedPayload, SessionStartedPayload, PROMPT_CONSTRUCTION_TOOL,
 };

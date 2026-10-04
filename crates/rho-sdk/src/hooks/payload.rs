@@ -12,7 +12,9 @@ use crate::{
 
 use crate::workspace::PolicyDecision;
 
-use super::bounds::{bounded_path, bounded_string, HookPayloadBounds, HookTruncation};
+use super::bounds::{
+    bounded_path, bounded_string, bounded_tail_string, HookPayloadBounds, HookTruncation,
+};
 
 /// Which configured tool the event is about.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -125,6 +127,51 @@ pub enum HookToolStatus {
     Unavailable,
 }
 
+/// Exit status and output of the process an `after_tool_use` call ran.
+///
+/// Present only for calls that ran a process to completion. A call that timed
+/// out, was cancelled, or never started has no process result.
+///
+/// Output is cut at two layers. The tool keeps what it can under its own budget
+/// and sets `truncated` when it lost some. Past the hook field bound, each
+/// stream then keeps its last bytes and is named in `bounds.fields`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct HookProcessResult {
+    /// Exit code, or `None` when the process ended without one (for example,
+    /// killed by a signal).
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    /// Whether the tool lost process output before hooks saw it.
+    pub truncated: bool,
+}
+
+impl HookProcessResult {
+    pub(crate) fn from_result(
+        result: &crate::tool::ProcessResult,
+        bounds: HookPayloadBounds,
+        truncation: &mut HookTruncation,
+    ) -> Self {
+        Self {
+            exit_code: result.exit_code(),
+            stdout: bounded_tail_string(
+                result.stdout(),
+                "payload.process.stdout",
+                bounds,
+                truncation,
+            ),
+            stderr: bounded_tail_string(
+                result.stderr(),
+                "payload.process.stderr",
+                bounds,
+                truncation,
+            ),
+            truncated: result.is_truncated(),
+        }
+    }
+}
+
 /// Sanitized failure detail for a post-action event.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct HookFailure {
@@ -132,23 +179,51 @@ pub struct HookFailure {
     pub message: String,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum ToolOutcomeRef<'a> {
     Completed(&'a crate::tool::ToolOutput),
     Failed(crate::tool::ToolErrorKind, &'a str),
     Unavailable,
 }
 
+impl<'a> ToolOutcomeRef<'a> {
+    /// Process result attached to a completed call, including one marked failed.
+    pub(crate) fn process_result(self) -> Option<&'a crate::tool::ProcessResult> {
+        match self {
+            Self::Completed(output) => output.process_result(),
+            Self::Failed(..) | Self::Unavailable => None,
+        }
+    }
+
+    /// Hook status of the call, with the failure to report when it failed.
+    ///
+    /// A completed output marked failed reports as an execution failure.
+    pub(crate) fn status(self) -> (HookToolStatus, Option<BoundedFailure<'a>>) {
+        let (kind, message) = match self {
+            Self::Completed(output) if output.is_failure() => {
+                (crate::tool::ToolErrorKind::Execution, output.content())
+            }
+            Self::Completed(_) => return (HookToolStatus::Succeeded, None),
+            Self::Failed(kind, message) => (kind, message),
+            Self::Unavailable => return (HookToolStatus::Unavailable, None),
+        };
+        (
+            HookToolStatus::Failed,
+            Some(BoundedFailure {
+                kind: tool_error_label(kind),
+                message,
+                field: "payload.failure",
+            }),
+        )
+    }
+}
+
 impl<'a> From<&'a crate::ToolCompletion> for ToolOutcomeRef<'a> {
     fn from(completion: &'a crate::ToolCompletion) -> Self {
         match completion {
+            // `status` reads the failure flag from the output itself.
             crate::ToolCompletion::Success(output)
-            | crate::ToolCompletion::CompletedFailure(output) => {
-                if completion.is_failure() {
-                    Self::Failed(crate::tool::ToolErrorKind::Execution, output.content())
-                } else {
-                    Self::Completed(output)
-                }
-            }
+            | crate::ToolCompletion::CompletedFailure(output) => Self::Completed(output),
             crate::ToolCompletion::Failure(failure) => {
                 Self::Failed(failure.kind(), failure.message())
             }
@@ -164,27 +239,6 @@ pub(crate) const fn tool_error_label(kind: crate::tool::ToolErrorKind) -> &'stat
         crate::tool::ToolErrorKind::PolicyDenied => "policy_denied",
         crate::tool::ToolErrorKind::Cancelled => "cancelled",
     }
-}
-
-pub(crate) fn tool_status(
-    outcome: ToolOutcomeRef<'_>,
-) -> (HookToolStatus, Option<BoundedFailure<'_>>) {
-    let (kind, message) = match outcome {
-        ToolOutcomeRef::Completed(output) if output.is_failure() => {
-            (crate::tool::ToolErrorKind::Execution, output.content())
-        }
-        ToolOutcomeRef::Completed(_) => return (HookToolStatus::Succeeded, None),
-        ToolOutcomeRef::Failed(kind, message) => (kind, message),
-        ToolOutcomeRef::Unavailable => return (HookToolStatus::Unavailable, None),
-    };
-    (
-        HookToolStatus::Failed,
-        Some(BoundedFailure {
-            kind: tool_error_label(kind),
-            message,
-            field: "payload.failure",
-        }),
-    )
 }
 
 pub(crate) struct BoundedFailure<'a> {
@@ -245,16 +299,24 @@ pub struct BeforeToolUsePayload {
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` as a public
-/// field on this struct and stop carrying it on [`super::HookEnvelope`].
+/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` and
+/// `process: Option<HookProcessResult>` as public fields on this struct and stop
+/// carrying them on [`super::HookEnvelope`].
 ///
 /// This minor keeps the existing constructor fields so downstream struct
-/// literals stay valid. Read the first authorized capability from
+/// literals stay valid.
+///
+/// Read the first authorized capability from
 /// [`super::HookEnvelope::after_tool_use_capability`] or the envelope JSON
 /// `payload.capability` key. `None` / JSON `null` means the call never
 /// authorized. Multi-capability calls still emit one `before_tool_use` per
 /// request; the after payload reports only the first. Policy denials still
 /// include the request.
+///
+/// Read the process result from
+/// [`super::HookEnvelope::after_tool_use_process`] or `payload.process`.
+/// `None` / JSON `null` means the call ran no process to completion: the tool
+/// runs none, or the call was denied, timed out, or was cancelled.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AfterToolUsePayload {
     pub tool: HookTool,

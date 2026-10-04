@@ -133,7 +133,6 @@ fn generation_rate_divides_tokens_by_generation_time() {
 fn completion_status_uses_output_flag_for_model_and_hooks() {
     use crate::{
         hooks::{
-            tool_status,
             HookToolStatus::{Failed, Succeeded, Unavailable as UnavailableStatus},
             ToolOutcomeRef,
         },
@@ -168,7 +167,7 @@ fn completion_status_uses_output_flag_for_model_and_hooks() {
             (
                 completion.is_failure(),
                 result.ok,
-                tool_status(ToolOutcomeRef::from(&completion)).0,
+                ToolOutcomeRef::from(&completion).status().0,
             ),
             expected
         );

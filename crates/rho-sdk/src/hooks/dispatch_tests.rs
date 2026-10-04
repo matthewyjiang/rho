@@ -6,34 +6,13 @@ use crate::{
     hooks::{
         gate::{HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest},
         payload::{HookPayload, SessionStartedPayload},
+        testing::RecordingObserver,
         HookEventKind,
     },
     RunId, SessionId,
 };
 
 use super::*;
-
-#[derive(Default)]
-struct RecordingObserver {
-    seen: Mutex<Vec<HookEnvelope>>,
-}
-
-impl RecordingObserver {
-    fn events(&self) -> Vec<HookEventKind> {
-        self.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(HookEnvelope::event)
-            .collect()
-    }
-}
-
-impl HookObserver for RecordingObserver {
-    fn observe(&self, envelope: HookEnvelope) {
-        self.seen.lock().unwrap().push(envelope);
-    }
-}
 
 struct DenyGate;
 
@@ -89,7 +68,7 @@ fn an_observed_event_reaches_the_sink_with_its_identity() {
         },
     );
 
-    let seen = observer.seen.lock().unwrap();
+    let seen = observer.envelopes();
     let envelope = seen.first().expect("one envelope was delivered");
     assert_eq!(envelope.event(), HookEventKind::SessionStarted);
     assert_eq!(envelope.identity().session_id.as_ref(), Some(&session));
@@ -118,7 +97,7 @@ fn a_delegated_runtime_reports_its_parent_identity() {
         })
     });
 
-    let seen = observer.seen.lock().unwrap();
+    let seen = observer.envelopes();
     assert_eq!(
         seen[0].identity(),
         &HookIdentity {
@@ -164,7 +143,7 @@ fn the_host_dispatcher_reports_both_session_boundaries() {
             HookEventKind::SessionFailed
         ]
     );
-    let seen = observer.seen.lock().unwrap();
+    let seen = observer.envelopes();
     assert_eq!(
         serde_json::to_value(seen[0].payload()).unwrap(),
         serde_json::json!({ "runs": 4 })

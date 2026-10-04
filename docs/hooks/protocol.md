@@ -41,7 +41,8 @@ One bounded JSON document on stdin:
 call passed to authorize. Multi-capability calls still emit one
 `before_tool_use` per request; the after payload reports only the first. The
 field is `null` when the call never authorized. Policy denials still include
-the request:
+the request, with `process` set to `null` because the command never ran. This
+call authorized, ran, and exited with status 1:
 
 ```json
 {
@@ -54,11 +55,26 @@ the request:
     "shell_command": "git push --force",
     "environment": "inherit_except"
   },
+  "process": { "exit_code": 1, "stdout": "", "stderr": "! [rejected] main -> main", "truncated": false },
   "status": "failed",
   "failure": { "kind": "execution", "message": "…" },
   "duration_ms": 42
 }
 ```
+
+`process` reports how a process the call ran to completion exited, so a hook
+reads the exit code and output instead of parsing the text the model saw. It is
+`null` for tools that run no process and for calls that timed out, were
+cancelled, or never started. `exit_code` is `null` when the process ended
+without one, for example when a signal killed it.
+
+Output is cut at two layers. The built-in shell tools give the model the start
+of the output up to their output limit, but keep the last 8 KiB of each stream
+past that limit for `process`, so the end of a long build still arrives. When
+even that is not enough, the middle is dropped and `truncated` is `true`. Past
+the hook field bound, each stream then keeps its **last** bytes and is named in
+`bounds.fields`. `status` is the tool outcome, not the process outcome: they
+usually agree, but read `exit_code` when you need the process's answer.
 
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces
@@ -95,7 +111,8 @@ configuration, and URL query strings. A network payload carries the scheme,
 host, and path with userinfo and query removed, plus a `query_present` flag.
 
 Paths and shell command text **are** included, because inspecting them is the
-whole point of a deny hook.
+whole point of a deny hook. So is `payload.process` output: it is bounded but not
+redacted, so it carries whatever the command printed, secrets included.
 
 ## Answering a blocking event
 

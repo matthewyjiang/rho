@@ -132,10 +132,10 @@ impl AuthorizationServices {
         elapsed: std::time::Duration,
         capability: Option<&CapabilityRequest>,
     ) {
-        let (status, failure) = crate::hooks::tool_status(match result {
+        let outcome = match result {
             Ok(output) => crate::hooks::ToolOutcomeRef::Completed(output),
             Err(error) => crate::hooks::ToolOutcomeRef::Failed(error.kind(), error.message()),
-        });
+        };
         self.hooks.observe_after_tool_use(
             crate::hooks::HookToolIdentity {
                 session_id: Some(self.session_id()),
@@ -144,8 +144,7 @@ impl AuthorizationServices {
                 tool_name,
                 call_id,
             },
-            status,
-            failure,
+            outcome,
             Some(elapsed.as_millis() as u64),
             capability,
         );

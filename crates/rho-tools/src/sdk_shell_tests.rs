@@ -9,6 +9,7 @@ mod unix {
     };
 
     use pretty_assertions::assert_eq;
+    use rho_sdk::hooks::{testing::RecordingObserver, HookEventKind, HookPayload, HookToolStatus};
     use rho_sdk::{
         model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
         provider::{ScriptedProvider, ScriptedTurn},
@@ -186,6 +187,104 @@ mod unix {
 
         first.expect("first command runs");
         second.expect("second command runs");
+    }
+
+    // Covers: hooks read the real exit code and streams of a command, keep the
+    // end of output past the tool budget, and learn when output was lost,
+    // instead of parsing the model-facing text.
+    // Owner: shell tool adapter feeding the SDK after_tool_use payload
+    #[tokio::test]
+    async fn commands_report_exit_code_streams_and_truncation_to_hooks() {
+        let tail = rho_sdk::hooks::DEFAULT_MAX_FIELD_BYTES;
+        let cases = [
+            (
+                "printf out; printf boom >&2; exit 7".to_owned(),
+                ShellToolOptions::new(),
+                (
+                    HookToolStatus::Failed,
+                    Some(7),
+                    "out".to_owned(),
+                    "boom".to_owned(),
+                    false,
+                ),
+            ),
+            // Past the budget, the dropped end still reaches hooks whole.
+            (
+                "printf 0123456789".to_owned(),
+                ShellToolOptions::new().max_output_bytes(4),
+                (
+                    HookToolStatus::Succeeded,
+                    Some(0),
+                    "0123456789".to_owned(),
+                    String::new(),
+                    false,
+                ),
+            ),
+            // Past the kept tail too, the middle is lost and hooks get the last bytes.
+            (
+                format!("head -c {} /dev/zero | tr '\\0' a; printf END", 2 * tail),
+                ShellToolOptions::new().max_output_bytes(4),
+                (
+                    HookToolStatus::Succeeded,
+                    Some(0),
+                    format!("{}END", "a".repeat(tail - 3)),
+                    String::new(),
+                    true,
+                ),
+            ),
+        ];
+        for (command, options, expected) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let provider = ScriptedProvider::new(
+                ModelIdentity::new("scripted", "test", "model"),
+                [
+                    ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                        ContentBlock::ToolCall(ToolCall {
+                            id: "shell-1".into(),
+                            name: "bash".into(),
+                            arguments: json!({ "command": &command }),
+                        }),
+                    ])),
+                    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                        "done".into(),
+                    )])),
+                ],
+            );
+            let observer = Arc::new(RecordingObserver::new());
+            let runtime = Rho::builder()
+                .provider(provider)
+                .workspace(Workspace::new(root.path()).unwrap())
+                .workspace_policy(ScopedWorkspacePolicy::new().allow_processes())
+                .hook_observer_shared(observer.clone())
+                .tool(SdkShellTool::bash(options))
+                .build()
+                .unwrap();
+            let session = runtime.session(SessionOptions::default()).await.unwrap();
+            session.complete("run it").await.unwrap();
+
+            let after = observer
+                .envelopes()
+                .into_iter()
+                .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
+                .expect("the shell call reports after_tool_use");
+            let HookPayload::AfterToolUse(payload) = after.payload() else {
+                panic!("an after_tool_use event carries its payload");
+            };
+            let process = after
+                .after_tool_use_process()
+                .expect("a finished command reports its process");
+            assert_eq!(
+                (
+                    payload.status,
+                    process.exit_code,
+                    process.stdout.clone(),
+                    process.stderr.clone(),
+                    process.truncated,
+                ),
+                expected,
+                "{command}"
+            );
+        }
     }
 }
 

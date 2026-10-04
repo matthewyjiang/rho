@@ -11,8 +11,8 @@ use serde_json::json;
 
 use crate::{
     hooks::{
-        HookDecision, HookEnvelope, HookEventKind, HookGateFuture, HookObserver, HookPolicyOutcome,
-        PreToolUseGate, PreToolUseRequest,
+        testing::RecordingObserver, HookDecision, HookEnvelope, HookEventKind, HookGateFuture,
+        HookPolicyOutcome, PreToolUseGate, PreToolUseRequest,
     },
     model::{ContentBlock, ModelIdentity, ModelResponse, ModelUsage, ToolCall, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
@@ -105,28 +105,6 @@ impl PreToolUseGate for ScriptedGate {
             .push(request.envelope().clone());
         let decision = self.decision.clone();
         Box::pin(async move { decision })
-    }
-}
-
-#[derive(Default)]
-struct RecordingObserver {
-    seen: Mutex<Vec<HookEnvelope>>,
-}
-
-impl RecordingObserver {
-    fn events(&self) -> Vec<HookEventKind> {
-        self.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(HookEnvelope::event)
-            .collect()
-    }
-}
-
-impl HookObserver for RecordingObserver {
-    fn observe(&self, envelope: HookEnvelope) {
-        self.seen.lock().unwrap().push(envelope);
     }
 }
 
@@ -393,7 +371,7 @@ async fn after_tool_use_reports_the_call_that_a_hook_denied() {
 
     tool_result_content(&harness).await;
 
-    let seen = harness.observer.seen.lock().unwrap();
+    let seen = harness.observer.envelopes();
     let after = seen
         .iter()
         .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
@@ -455,7 +433,7 @@ async fn completed_failure_reports_failed_hook_without_capability() {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     session.complete("go").await.unwrap();
 
-    let seen = observer.seen.lock().unwrap();
+    let seen = observer.envelopes();
     let after = seen
         .iter()
         .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
@@ -477,7 +455,7 @@ async fn every_tool_event_carries_the_session_and_run_it_belongs_to() {
 
     session.complete("go").await.unwrap();
 
-    let seen = harness.observer.seen.lock().unwrap();
+    let seen = harness.observer.envelopes();
     let run_ids: Vec<_> = seen
         .iter()
         .filter(|envelope| envelope.event() != HookEventKind::SessionStarted)
@@ -524,7 +502,7 @@ async fn a_failed_run_reports_run_failed_with_a_typed_kind() {
         observer.events(),
         vec![HookEventKind::SessionStarted, HookEventKind::RunFailed]
     );
-    let seen = observer.seen.lock().unwrap();
+    let seen = observer.envelopes();
     assert_eq!(
         serde_json::to_value(seen[1].payload()).unwrap()["failure"]["kind"],
         json!("provider")
@@ -658,9 +636,7 @@ async fn parallel_tool_calls_keep_per_call_hook_identity() {
     assert_eq!(
         call_ids(
             observer
-                .seen
-                .lock()
-                .unwrap()
+                .envelopes()
                 .iter()
                 .filter(|envelope| envelope.event() == HookEventKind::AfterToolUse)
         ),

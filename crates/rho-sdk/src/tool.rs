@@ -16,7 +16,7 @@ mod registry;
 pub(crate) mod scheduling;
 mod worker;
 
-pub use output::{ToolAsset, ToolError, ToolErrorKind, ToolMetadata, ToolOutput};
+pub use output::{ProcessResult, ToolAsset, ToolError, ToolErrorKind, ToolMetadata, ToolOutput};
 pub use progress::{tool_progress_channel, ToolProgress, ToolProgressReceiver, ToolProgressSender};
 pub use registry::{advertised_specs, DuplicateToolName, ToolRegistry, ToolVisibility};
 

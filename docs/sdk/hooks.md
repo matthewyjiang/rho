@@ -53,11 +53,13 @@ Hooks never loosen policy. They cannot turn a denial into an allow.
 
 Envelopes carry structured capability facts built from the request the host policy already saw, not scraped free-form argument prose alone. Paths and shell command text are included so a deny gate can inspect them. `after_tool_use` carries that summary for the first request the call passed to authorize, including policy denials, and `null` when the call never authorized. On the wire that is `payload.capability`; in-process hosts should read `HookEnvelope::after_tool_use_capability` until the next major can put the field on `AfterToolUsePayload`. Credentials, authorization headers, environment values, and URL query strings are not included.
 
+`after_tool_use` also reports how a process the call ran to completion exited: its exit code, the tails of stdout and stderr, and whether output was lost. A tool supplies this by attaching a `ProcessResult` with `ToolOutput::with_process_result`, marking lost output with `ProcessResult::with_truncated`; the built-in shell tools do, keeping the end of each stream past their model output limit. On the wire that is `payload.process` (`null` when the call ran no process to completion); in-process hosts should read `HookEnvelope::after_tool_use_process` until the next major can put the field on `AfterToolUsePayload`. The streams are bounded but not redacted: they carry whatever the command printed.
+
 Every envelope reports shortened fields in `HookTruncation`. Host labels use the same field and envelope bounds. Do not put prompts, credentials, environment values, or tool output in labels. The `host_labels` wire field is part of hook schema version 2 (`HOOK_SCHEMA_VERSION`).
 
 ## Testing helpers
 
-`rho_sdk::hooks::testing` builds sample envelopes and pre-tool requests for unit tests without standing up a full run.
+`rho_sdk::hooks::testing` builds sample envelopes and pre-tool requests for unit tests without standing up a full run. `after_tool_use_process_envelope` builds one that carries a `ProcessResult`. `RecordingObserver` keeps every envelope a runtime delivers, so an end-to-end test can install it with `hook_observer_shared` and assert on `envelopes()` or `events()`.
 
 ## Related
 
