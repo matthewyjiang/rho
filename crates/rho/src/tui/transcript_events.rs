@@ -13,7 +13,9 @@
 
 use std::time::{Duration, Instant};
 
-use ratatui::{backend::Backend, DefaultTerminal, Terminal};
+use ratatui::{backend::Backend, Terminal};
+
+use crate::tui::DefaultTerminal;
 
 use super::{
     activity::ActivityPhase,

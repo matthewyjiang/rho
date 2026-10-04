@@ -6,13 +6,13 @@
 
 use std::time::Instant;
 
+use crate::tui::DefaultTerminal;
 use crossterm::event::{
     Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::{
     layout::Rect,
     widgets::{Clear, Paragraph},
-    DefaultTerminal,
 };
 
 use super::{

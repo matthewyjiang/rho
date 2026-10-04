@@ -1,4 +1,4 @@
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{
     command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation,

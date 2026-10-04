@@ -1,5 +1,6 @@
 use std::{future::Future, io};
 
+use crate::tui::DefaultTerminal;
 use anyhow::{anyhow, Context};
 use crossterm::{
     cursor::{MoveTo, Show},
@@ -8,7 +9,6 @@ use crossterm::{
     style::Print,
     terminal::{disable_raw_mode, Clear, ClearType, LeaveAlternateScreen},
 };
-use ratatui::DefaultTerminal;
 
 use super::{keyboard_modes, mouse_capture, terminal_events::TerminalEvents};
 
@@ -120,7 +120,7 @@ impl TerminalSession {
     }
 
     fn resume(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
-        let resumed = ratatui::try_init().context("initialize terminal")?;
+        let resumed = crate::tui::synced_backend::try_init().context("initialize terminal")?;
         *terminal = resumed;
         self.mouse_capture_enabled = mouse_capture::enable().is_ok();
         self.keyboard = Some(keyboard_modes::Enabled::acquire());

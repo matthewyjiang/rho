@@ -1,7 +1,9 @@
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{layout::Rect, DefaultTerminal};
+use ratatui::layout::Rect;
+
+use crate::tui::DefaultTerminal;
 
 use super::{
     overlay_layout::{

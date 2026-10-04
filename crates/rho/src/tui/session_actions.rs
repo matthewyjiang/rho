@@ -1,4 +1,4 @@
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{
     session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceOption,

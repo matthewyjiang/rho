@@ -10,7 +10,9 @@
 use std::time::Instant;
 
 use crossterm::event::{KeyEvent, MouseEventKind};
-use ratatui::{layout::Rect, DefaultTerminal};
+use ratatui::layout::Rect;
+
+use crate::tui::DefaultTerminal;
 
 use super::{
     overlay_panel::{

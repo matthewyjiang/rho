@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::*;
 use crate::agent::{save_definition, AgentRuntime, PromptPolicy, SaveDefinitionError};

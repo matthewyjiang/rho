@@ -7,8 +7,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::tui::DefaultTerminal;
 use anyhow::Context;
-use ratatui::DefaultTerminal;
 
 use crate::cli_runtime::CliExecutable;
 

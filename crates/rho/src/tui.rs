@@ -10,7 +10,7 @@ use std::{
 };
 
 use questionnaire::QuestionnaireCancelReason;
-use ratatui::DefaultTerminal;
+use synced_backend::DefaultTerminal;
 use tokio::sync::oneshot;
 mod activity;
 mod advisor_command;
@@ -211,6 +211,7 @@ mod streaming_mode;
 mod subagent_attach;
 mod subagent_delivery;
 mod subagent_panel;
+mod synced_backend;
 mod terminal_events;
 mod terminal_session;
 mod text_selection;
@@ -471,7 +472,7 @@ pub(crate) async fn run(
     agent: &mut InteractiveRuntime,
     info: TuiBootstrap,
 ) -> anyhow::Result<Option<ExitReceipt>> {
-    let mut terminal = ratatui::init();
+    let mut terminal = synced_backend::init();
     Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();

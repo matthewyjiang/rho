@@ -6,7 +6,7 @@
 //! value and the model identity shown by the confirmation; there is no ambient
 //! bypass state for a later send to consume.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 use rho_sdk::model::{handoff::HandoffReport, ModelIdentity};
 
 use super::{

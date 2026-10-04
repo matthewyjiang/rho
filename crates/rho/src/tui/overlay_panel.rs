@@ -108,7 +108,7 @@ pub(super) fn overlay_panel_body_width(area: Rect) -> usize {
 }
 
 /// The full terminal as a panel layout area, when its size is readable.
-pub(super) fn terminal_area(terminal: &ratatui::DefaultTerminal) -> Option<Rect> {
+pub(super) fn terminal_area(terminal: &crate::tui::DefaultTerminal) -> Option<Rect> {
     let size = terminal.size().ok()?;
     Some(Rect::new(0, 0, size.width, size.height))
 }

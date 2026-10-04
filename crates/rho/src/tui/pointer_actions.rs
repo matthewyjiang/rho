@@ -5,7 +5,7 @@
 //! running loops take it right after the mouse event and run it here with the
 //! terminal and runtime, through the same paths the equivalent keys use.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{
     app_state::PointerAction, command_actions::CommandSubmission, commands, App, ComposerMode,

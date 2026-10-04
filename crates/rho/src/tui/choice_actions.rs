@@ -1,4 +1,4 @@
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::sessions_hub_tasks::SessionsDelete;
 use super::{app_state::PointerAction, composer_pointer::ChoiceClick};

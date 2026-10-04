@@ -1,4 +1,4 @@
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 use rho_providers::credentials::load_web_search_api_key;
 
 use super::{

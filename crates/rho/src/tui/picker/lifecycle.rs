@@ -1,6 +1,6 @@
 //! Open, close, and cursor restore for an active picker.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{overlay_layout::picker_overlay_layout, PickerAction, UiPicker};
 use crate::tui::{App, ComposerMode};

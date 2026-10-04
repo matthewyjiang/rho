@@ -1,7 +1,7 @@
 //! Delegated-agent questionnaire and completion coordination.
 
+use crate::tui::DefaultTerminal;
 use futures_util::FutureExt;
-use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
 
 use super::subagent_delivery::{TurnBoundaryBatch, TurnBoundaryDelivery};

@@ -3,7 +3,7 @@
 //! Picker widget state lives in [`super::picker`]. This module is the one App
 //! layer that matches [`PickerAction`] and calls owning features.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 use rho_providers::model::catalog;
 
 use super::{

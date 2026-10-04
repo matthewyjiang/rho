@@ -1,4 +1,4 @@
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use rho_providers::credentials::available_auth_modes;
 use rho_providers::model::decision_models::lists_decision_models;
