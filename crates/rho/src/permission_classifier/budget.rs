@@ -29,6 +29,17 @@ pub(crate) enum TranscriptBudget {
     Tokens(u64),
 }
 
+impl TranscriptBudget {
+    /// This budget with `tokens` fewer for the transcript, for a request whose
+    /// prompt outside the transcript is that much larger.
+    pub(super) fn less(self, tokens: u64) -> Self {
+        match self {
+            Self::Unbounded => Self::Unbounded,
+            Self::Tokens(limit) => Self::Tokens(limit.saturating_sub(tokens)),
+        }
+    }
+}
+
 /// The transcript cannot fit the budget even after dropping every droppable record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("classifier context over budget: needs ~{estimated_tokens} tokens, limit {limit_tokens}")]

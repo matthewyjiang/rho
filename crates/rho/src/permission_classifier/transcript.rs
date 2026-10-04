@@ -63,6 +63,50 @@ pub(super) fn render_with_pending_call(
     pending_call_id: Option<&str>,
     budget: TranscriptBudget,
 ) -> anyhow::Result<String> {
+    let mut tail = vec!["pending_capability:".to_owned()];
+    tail.extend(format_pending_capability(pending)?);
+    render(history, pending_call_id.as_slice(), tail, budget)
+}
+
+/// One request of a batch the agent made at once, under the ID its question
+/// asks about, which is not a tool-call ID.
+pub(super) struct LabeledPending<'a> {
+    pub label: &'a str,
+    pub pending: &'a ApprovalRequest,
+    pub call_id: Option<&'a str>,
+}
+
+/// [`render_with_pending_call`] for several pending requests. Each section is
+/// headed by its label and names the tool call that made it, when known, so
+/// requests with identical capabilities stay bound to their own calls.
+pub(super) fn render_with_pending_calls(
+    history: &[Message],
+    pendings: &[LabeledPending<'_>],
+    budget: TranscriptBudget,
+) -> anyhow::Result<String> {
+    let mut tail = Vec::new();
+    for pending in pendings {
+        tail.push(format!("pending_capability {}:", pending.label));
+        if let Some(call_id) = pending.call_id {
+            tail.push(field("call_id", json_str(call_id)));
+        }
+        tail.extend(format_pending_capability(pending.pending)?);
+    }
+    let call_ids: Vec<&str> = pendings
+        .iter()
+        .filter_map(|pending| pending.call_id)
+        .collect();
+    render(history, &call_ids, tail, budget)
+}
+
+/// The history lines followed by `tail`, fitted into `budget`. Answered calls
+/// whose ID is in `pending_call_ids` stay whole.
+fn render(
+    history: &[Message],
+    pending_call_ids: &[&str],
+    tail: Vec<String>,
+    budget: TranscriptBudget,
+) -> anyhow::Result<String> {
     let mut entries = Vec::new();
     let mut calls = Vec::new();
     let mut latest_executable: HashMap<&str, usize> = HashMap::new();
@@ -144,7 +188,9 @@ pub(super) fn render_with_pending_call(
                     // A detached job can ask after its call was answered, and
                     // reused IDs make the asking occurrence ambiguous, so
                     // every answered match of the pending ID stays whole.
-                    CallLifecycle::Answered => pending_call_id == Some(occurrence.call.id.as_str()),
+                    CallLifecycle::Answered => {
+                        pending_call_ids.contains(&occurrence.call.id.as_str())
+                    }
                     CallLifecycle::Aborted => false,
                 };
                 let retention = if in_flight {
@@ -156,9 +202,6 @@ pub(super) fn render_with_pending_call(
             }
         });
     }
-
-    let mut tail = vec!["pending_capability:".to_owned()];
-    tail.extend(format_pending_capability(pending)?);
 
     Ok(fit_transcript(lines, tail, budget)?)
 }

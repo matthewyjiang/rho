@@ -54,6 +54,26 @@ pub(crate) struct ClassifyRequest<'a> {
     pub usage_recording: ProviderRequestUsageRecording,
 }
 
+impl ClassifyRequest<'_> {
+    pub(super) fn scope(&self) -> CallScope<'_> {
+        CallScope {
+            cancellation: &self.cancellation,
+            session_id: self.session_id,
+            workspace_path: self.workspace_path,
+            usage_recording: &self.usage_recording,
+        }
+    }
+}
+
+/// How a classifier model call is cancelled and where it records usage. Every
+/// request of a batch shares one.
+pub(super) struct CallScope<'a> {
+    pub cancellation: &'a CancellationToken,
+    pub session_id: &'a SessionId,
+    pub workspace_path: &'a Path,
+    pub usage_recording: &'a ProviderRequestUsageRecording,
+}
+
 pub(crate) async fn classify_capability_request(
     config: &Config,
     request: ClassifyRequest<'_>,
@@ -67,10 +87,10 @@ pub(crate) async fn classify_capability_request(
 
 /// The configured classifier model, ready to classify requests.
 pub(crate) struct ClassifierModel {
-    provider: Arc<dyn ModelProvider>,
-    reasoning: ReasoningLevel,
-    budget: TranscriptBudget,
-    screen: Screen,
+    pub(super) provider: Arc<dyn ModelProvider>,
+    pub(super) reasoning: ReasoningLevel,
+    pub(super) budget: TranscriptBudget,
+    pub(super) screen: Screen,
 }
 
 /// What answers the screen, from [`DECISION_SCREEN_ID`].
@@ -380,15 +400,51 @@ async fn run_pipeline(
     pending_call_id: Option<&str>,
     request: &ClassifyRequest<'_>,
 ) -> ClassifierTrace {
+    match screen_step(provider, screen, budget, pending_call_id, request).await {
+        ScreenStep::Done(trace) => trace,
+        ScreenStep::Review {
+            screen,
+            screen_allow_probability,
+            transcript,
+        } => ClassifierTrace {
+            screen,
+            screen_allow_probability,
+            result: review(provider, reasoning, &request.scope(), &transcript).await,
+        },
+    }
+}
+
+/// Where one request stands after stage 1.
+pub(crate) enum ScreenStep {
+    /// No review is needed: the screen allowed the request, or its
+    /// transcript could not be rendered.
+    Done(ClassifierTrace),
+    /// The screen escalated or failed, so the review decides, reading
+    /// `transcript`.
+    Review {
+        screen: ScreenOutcome,
+        screen_allow_probability: Option<f64>,
+        transcript: String,
+    },
+}
+
+/// Stage 1 of [`run_pipeline`] for one request.
+pub(super) async fn screen_step(
+    provider: &dyn ModelProvider,
+    screen: &Screen,
+    budget: TranscriptBudget,
+    pending_call_id: Option<&str>,
+    request: &ClassifyRequest<'_>,
+) -> ScreenStep {
     let transcript =
         match render_with_pending_call(request.history, request.pending, pending_call_id, budget) {
             Ok(transcript) => transcript,
             Err(error) => {
-                return ClassifierTrace {
+                return ScreenStep::Done(ClassifierTrace {
                     screen: ScreenOutcome::Skipped,
                     screen_allow_probability: None,
                     result: Err(error),
-                }
+                })
             }
         };
 
@@ -402,11 +458,11 @@ async fn run_pipeline(
     .await
     {
         Ok((ScreenVerdict::Allow, allow_probability)) => {
-            return ClassifierTrace {
+            return ScreenStep::Done(ClassifierTrace {
                 screen: ScreenOutcome::Allowed,
                 screen_allow_probability: allow_probability,
                 result: Ok(ClassifierVerdict::Allow),
-            }
+            })
         }
         Ok((ScreenVerdict::Escalate, allow_probability)) => {
             (ScreenOutcome::Escalated, allow_probability)
@@ -418,16 +474,29 @@ async fn run_pipeline(
             (ScreenOutcome::Failed(format!("{error:#}")), None)
         }
     };
-
-    let review = text_model(provider, request, &REVIEW_STAGE, reasoning);
-    let result = ask(&review, request, &transcript, &REVIEW_STAGE)
-        .await
-        .and_then(|answers| review_verdict(&answers));
-    ClassifierTrace {
+    ScreenStep::Review {
         screen,
         screen_allow_probability,
-        result,
+        transcript,
     }
+}
+
+/// Stage 2 for one request: the reasoned review of `transcript`.
+pub(super) async fn review(
+    provider: &dyn ModelProvider,
+    reasoning: ReasoningLevel,
+    scope: &CallScope<'_>,
+    transcript: &str,
+) -> anyhow::Result<ClassifierVerdict> {
+    let model = text_model(
+        provider,
+        scope,
+        REVIEW_STAGE.usage_purpose,
+        REVIEW_STAGE.style,
+        reasoning,
+    );
+    let decision = DecisionRequest::new(CLASSIFIER_POLICY, transcript, REVIEW_STAGE.questions);
+    review_verdict(&ask(&model, scope.cancellation, decision).await?)
 }
 
 /// Stage 1: the screen's verdict, with the model's P(allow) when it reports
@@ -449,7 +518,13 @@ async fn run_screen(
     // A text model reports no probabilities, so its allow percent is moot.
     let (model, budget, allow_percent): (&dyn DecisionModel, _, _) = match screen {
         Screen::Classifier => {
-            text_screen = text_model(provider, request, &SCREEN_STAGE, ReasoningLevel::Low);
+            text_screen = text_model(
+                provider,
+                &request.scope(),
+                SCREEN_STAGE.usage_purpose,
+                SCREEN_STAGE.style,
+                ReasoningLevel::Low,
+            );
             (&text_screen, None, DEFAULT_SCREEN_ALLOW_PERCENT)
         }
         Screen::Text { provider, budget } => {
@@ -462,8 +537,9 @@ async fn run_screen(
             };
             text_screen = text_model(
                 provider.as_ref(),
-                request,
-                &SCREEN_STAGE,
+                &request.scope(),
+                SCREEN_STAGE.usage_purpose,
+                SCREEN_STAGE.style,
                 ReasoningLevel::Low,
             );
             let own = match budget {
@@ -494,7 +570,8 @@ async fn run_screen(
             &fitted
         }
     };
-    let answers = ask(model, request, state, &SCREEN_STAGE).await?;
+    let decision = DecisionRequest::new(CLASSIFIER_POLICY, state, SCREEN_STAGE.questions);
+    let answers = ask(model, &request.cancellation, decision).await?;
     Ok((
         screen_verdict(&answers, allow_percent),
         screen_allow_probability(&answers),
@@ -502,10 +579,10 @@ async fn run_screen(
 }
 
 /// One classifier stage: the questions it asks and how the model answers.
-struct Stage {
-    usage_purpose: &'static str,
-    questions: &'static [Question<'static>],
-    style: AnswerStyle,
+pub(super) struct Stage {
+    pub usage_purpose: &'static str,
+    pub questions: &'static [Question<'static>],
+    pub style: AnswerStyle,
 }
 
 const SCREEN_STAGE: Stage = Stage {
@@ -514,40 +591,39 @@ const SCREEN_STAGE: Stage = Stage {
     style: AnswerStyle::Direct,
 };
 
-const REVIEW_STAGE: Stage = Stage {
+pub(super) const REVIEW_STAGE: Stage = Stage {
     usage_purpose: "permission-classifier-review",
     questions: std::slice::from_ref(&REVIEW_QUESTION),
     style: AnswerStyle::Reasoned,
 };
 
-/// The classifier's text model answering `stage`'s questions.
-fn text_model<'a>(
+/// The classifier's text model, recording usage under `usage_purpose`.
+pub(super) fn text_model<'a>(
     provider: &'a dyn ModelProvider,
-    request: &'a ClassifyRequest<'_>,
-    stage: &Stage,
+    scope: &CallScope<'a>,
+    usage_purpose: &'static str,
+    style: AnswerStyle,
     reasoning: ReasoningLevel,
 ) -> TextModel<'a> {
     TextModel {
         provider,
         agent_id: PERMISSION_CLASSIFIER_AGENT_ID,
-        usage_purpose: stage.usage_purpose,
+        usage_purpose,
         reasoning,
-        style: stage.style,
-        session_id: request.session_id,
-        workspace_path: request.workspace_path,
-        usage_recording: request.usage_recording.clone(),
+        style,
+        session_id: scope.session_id,
+        workspace_path: scope.workspace_path,
+        usage_recording: scope.usage_recording.clone(),
     }
 }
 
-/// Asks `stage`'s questions about `state` under the classifier policy.
-async fn ask(
+/// Asks `decision` and checks the answers fit its questions.
+pub(super) async fn ask(
     model: &dyn DecisionModel,
-    request: &ClassifyRequest<'_>,
-    state: &str,
-    stage: &Stage,
+    cancellation: &CancellationToken,
+    decision: DecisionRequest<'_>,
 ) -> anyhow::Result<Vec<Answer>> {
-    let decision = DecisionRequest::new(CLASSIFIER_POLICY, state, stage.questions);
-    let answers = model.decide(decision, &request.cancellation).await?;
+    let answers = model.decide(decision, cancellation).await?;
     decision.check_answers(&answers)?;
     Ok(answers)
 }
