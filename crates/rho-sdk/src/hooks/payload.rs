@@ -12,7 +12,9 @@ use crate::{
 
 use crate::workspace::PolicyDecision;
 
-use super::bounds::{bounded_path, bounded_string, HookPayloadBounds, HookTruncation};
+use super::bounds::{
+    bounded_path, bounded_string, bounded_tail_string, HookPayloadBounds, HookTruncation,
+};
 
 /// Which configured tool the event is about.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -125,6 +127,46 @@ pub enum HookToolStatus {
     Unavailable,
 }
 
+/// Exit status and output of the process an `after_tool_use` call ran.
+///
+/// Present only for calls that ran a process to completion. A call that timed
+/// out, was cancelled, or never started has no process result. Each stream keeps
+/// its last bytes up to the field bound, because errors usually come last;
+/// a shortened stream is named in `bounds.fields`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct HookProcessResult {
+    /// Exit code, or `None` when the process ended without one (for example,
+    /// killed by a signal).
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl HookProcessResult {
+    pub(crate) fn from_result(
+        result: &crate::tool::ProcessResult,
+        bounds: HookPayloadBounds,
+        truncation: &mut HookTruncation,
+    ) -> Self {
+        Self {
+            exit_code: result.exit_code(),
+            stdout: bounded_tail_string(
+                result.stdout(),
+                "payload.process.stdout",
+                bounds,
+                truncation,
+            ),
+            stderr: bounded_tail_string(
+                result.stderr(),
+                "payload.process.stderr",
+                bounds,
+                truncation,
+            ),
+        }
+    }
+}
+
 /// Sanitized failure detail for a post-action event.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct HookFailure {
@@ -138,17 +180,22 @@ pub(crate) enum ToolOutcomeRef<'a> {
     Unavailable,
 }
 
+impl ToolOutcomeRef<'_> {
+    /// Process result attached to a completed call, including one marked failed.
+    pub(crate) fn process_result(&self) -> Option<&crate::tool::ProcessResult> {
+        match self {
+            Self::Completed(output) => output.process_result(),
+            Self::Failed(..) | Self::Unavailable => None,
+        }
+    }
+}
+
 impl<'a> From<&'a crate::ToolCompletion> for ToolOutcomeRef<'a> {
     fn from(completion: &'a crate::ToolCompletion) -> Self {
         match completion {
+            // `tool_status` reads the failure flag from the output itself.
             crate::ToolCompletion::Success(output)
-            | crate::ToolCompletion::CompletedFailure(output) => {
-                if completion.is_failure() {
-                    Self::Failed(crate::tool::ToolErrorKind::Execution, output.content())
-                } else {
-                    Self::Completed(output)
-                }
-            }
+            | crate::ToolCompletion::CompletedFailure(output) => Self::Completed(output),
             crate::ToolCompletion::Failure(failure) => {
                 Self::Failed(failure.kind(), failure.message())
             }
@@ -245,13 +292,15 @@ pub struct BeforeToolUsePayload {
 ///
 /// # Next major
 ///
-/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` as a public
-/// field on this struct and stop carrying it on [`super::HookEnvelope`].
+/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` and
+/// `process: Option<HookProcessResult>` as public fields on this struct and stop
+/// carrying them on [`super::HookEnvelope`].
 ///
 /// This minor keeps the existing constructor fields so downstream struct
 /// literals stay valid. Read the first authorized capability from
 /// [`super::HookEnvelope::after_tool_use_capability`] or the envelope JSON
-/// `payload.capability` key. `None` / JSON `null` means the call never
+/// `payload.capability` key, and the process result from
+/// [`super::HookEnvelope::after_tool_use_process`] or `payload.process`. `None` / JSON `null` means the call never
 /// authorized. Multi-capability calls still emit one `before_tool_use` per
 /// request; the after payload reports only the first. Policy denials still
 /// include the request.

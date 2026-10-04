@@ -9,6 +9,7 @@ mod unix {
     };
 
     use pretty_assertions::assert_eq;
+    use rho_sdk::hooks::{HookEnvelope, HookEventKind, HookObserver};
     use rho_sdk::{
         model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
         provider::{ScriptedProvider, ScriptedTurn},
@@ -186,6 +187,71 @@ mod unix {
 
         first.expect("first command runs");
         second.expect("second command runs");
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        seen: Mutex<Vec<HookEnvelope>>,
+    }
+
+    impl HookObserver for RecordingObserver {
+        fn observe(&self, envelope: HookEnvelope) {
+            self.seen
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(envelope);
+        }
+    }
+
+    // Covers: hooks read the real exit code and streams of a failed command
+    // instead of parsing the model-facing text.
+    // Owner: shell tool adapter feeding the SDK after_tool_use payload
+    #[tokio::test]
+    async fn a_failed_command_reports_its_exit_code_and_streams_to_hooks() {
+        let root = tempfile::tempdir().unwrap();
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "model"),
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "shell-1".into(),
+                        name: "bash".into(),
+                        arguments: json!({"command": "printf out; printf boom >&2; exit 7"}),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        );
+        let observer = Arc::new(RecordingObserver::default());
+        let runtime = Rho::builder()
+            .provider(provider)
+            .workspace(Workspace::new(root.path()).unwrap())
+            .workspace_policy(ScopedWorkspacePolicy::new().allow_processes())
+            .hook_observer_shared(observer.clone())
+            .tool(SdkShellTool::bash(ShellToolOptions::new()))
+            .build()
+            .unwrap();
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("run it").await.unwrap();
+
+        let seen = observer
+            .seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let after = seen
+            .iter()
+            .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
+            .expect("the shell call reports after_tool_use");
+        let payload = &serde_json::to_value(after).unwrap()["payload"];
+        assert_eq!(
+            (&payload["status"], &payload["process"]),
+            (
+                &json!("failed"),
+                &json!({"exit_code": 7, "stdout": "out", "stderr": "boom"})
+            )
+        );
     }
 }
 

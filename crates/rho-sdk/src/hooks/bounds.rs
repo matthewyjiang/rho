@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::floor_char_boundary;
+use crate::{ceil_char_boundary, floor_char_boundary};
 
 /// Longest string any single payload field may carry before truncation.
 pub const DEFAULT_MAX_FIELD_BYTES: usize = 8 * 1024;
@@ -99,6 +99,23 @@ pub(super) fn bounded_string(
         truncation.record(field);
     }
     value
+}
+
+/// Like [`bounded_string`], but keeps the end of the value.
+///
+/// For process output, where the error a reader needs is usually last.
+pub(super) fn bounded_tail_string(
+    value: &str,
+    field: &str,
+    bounds: HookPayloadBounds,
+    truncation: &mut HookTruncation,
+) -> String {
+    let limit = bounds.max_field_bytes();
+    if value.len() <= limit {
+        return value.to_owned();
+    }
+    truncation.record(field);
+    value[ceil_char_boundary(value, value.len() - limit)..].to_owned()
 }
 
 pub(super) fn bounded_path(

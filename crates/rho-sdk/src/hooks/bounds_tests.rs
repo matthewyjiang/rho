@@ -24,6 +24,29 @@ fn truncation_never_splits_a_character() {
     assert_eq!(value, "");
 }
 
+// Covers: process output keeps its last bytes, where errors are, and the cut
+// never splits a character or goes unreported.
+// Owner: hook payload bounds
+#[test]
+fn tail_bounds_keep_the_end_on_a_character_boundary() {
+    let bounds = HookPayloadBounds::new(5, 64);
+    let cases = [
+        ("short", "short", false),
+        ("0123456789", "56789", true),
+        // The cut lands inside the four-byte emoji, so the emoji is dropped.
+        ("ab\u{1F600}xyz", "xyz", true),
+    ];
+    for (value, expected, cut) in cases {
+        let mut truncation = HookTruncation::default();
+        let kept = bounded_tail_string(value, "payload.process.stderr", bounds, &mut truncation);
+        assert_eq!(
+            (kept.as_str(), truncation.is_truncated()),
+            (expected, cut),
+            "{value}"
+        );
+    }
+}
+
 #[test]
 fn bounds_never_go_below_one_byte() {
     let bounds = HookPayloadBounds::new(0, 0);

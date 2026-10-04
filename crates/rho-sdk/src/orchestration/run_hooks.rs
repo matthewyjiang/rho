@@ -58,7 +58,6 @@ impl RunHooks {
         duration: Option<Duration>,
         capability: Option<&CapabilityRequest>,
     ) {
-        let (status, failure) = crate::hooks::tool_status(completion.into());
         self.hooks.observe_after_tool_use(
             HookToolIdentity {
                 session_id: Some(&self.session_id),
@@ -67,8 +66,7 @@ impl RunHooks {
                 tool_name,
                 call_id,
             },
-            status,
-            failure,
+            completion.into(),
             duration.map(|elapsed| elapsed.as_millis() as u64),
             capability,
         );

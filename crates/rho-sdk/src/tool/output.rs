@@ -126,7 +126,14 @@ pub struct ToolOutput {
     images: Vec<crate::model::ImageContent>,
     failure: bool,
     /// Boxed: rare, and keeps `ToolCompletion` variants close in size.
-    structured: Option<Box<Value>>,
+    extras: Option<Box<OutputExtras>>,
+}
+
+/// Rarely present parts of a [`ToolOutput`], kept behind one allocation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct OutputExtras {
+    structured: Option<Value>,
+    process: Option<ProcessResult>,
 }
 
 impl ToolOutput {
@@ -136,8 +143,12 @@ impl ToolOutput {
             metadata: ToolMetadata::default(),
             images: Vec::new(),
             failure: false,
-            structured: None,
+            extras: None,
         }
+    }
+
+    fn extras_mut(&mut self) -> &mut OutputExtras {
+        self.extras.get_or_insert_with(Box::default)
     }
 
     /// Marks a completed result as a failure for the model and lifecycle hooks.
@@ -162,13 +173,13 @@ impl ToolOutput {
     /// limits may discard structured content, so callers must handle its absence.
     /// The model still receives [`Self::content`].
     pub fn with_structured_content(mut self, structured: Value) -> Self {
-        self.structured = Some(Box::new(structured));
+        self.extras_mut().structured = Some(structured);
         self
     }
 
     /// Machine-readable result, when the tool produced one.
     pub fn structured_content(&self) -> Option<&Value> {
-        self.structured.as_deref()
+        self.extras.as_ref()?.structured.as_ref()
     }
 
     pub fn metadata(mut self, metadata: ToolMetadata) -> Self {
@@ -204,6 +215,60 @@ impl ToolOutput {
 
     pub fn presentation(&self) -> &ToolMetadata {
         &self.metadata
+    }
+
+    /// Records how the one process this call ran exited.
+    ///
+    /// Process-running tools attach this so observers such as lifecycle hooks
+    /// read exit status and streams directly instead of parsing
+    /// [`Self::content`]. The model still receives only [`Self::content`].
+    pub fn with_process_result(mut self, process: ProcessResult) -> Self {
+        self.extras_mut().process = Some(process);
+        self
+    }
+
+    /// Exit status and streams of the process this call ran, when it ran one.
+    pub fn process_result(&self) -> Option<&ProcessResult> {
+        self.extras.as_ref()?.process.as_ref()
+    }
+}
+
+/// Exit status and retained output of a finished process.
+///
+/// `stdout` and `stderr` hold what the tool retained under its own output
+/// budget, which may be shorter than what the process wrote.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProcessResult {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl ProcessResult {
+    /// `exit_code` is `None` when the process ended without one, for example
+    /// when a signal terminated it.
+    pub fn new(
+        exit_code: Option<i32>,
+        stdout: impl Into<String>,
+        stderr: impl Into<String>,
+    ) -> Self {
+        Self {
+            exit_code,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        }
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        self.exit_code
+    }
+
+    pub fn stdout(&self) -> &str {
+        &self.stdout
+    }
+
+    pub fn stderr(&self) -> &str {
+        &self.stderr
     }
 }
 

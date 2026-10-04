@@ -54,11 +54,22 @@ the request:
     "shell_command": "git push --force",
     "environment": "inherit_except"
   },
+  "process": { "exit_code": 1, "stdout": "", "stderr": "! [rejected] main -> main" },
   "status": "failed",
   "failure": { "kind": "execution", "message": "…" },
   "duration_ms": 42
 }
 ```
+
+`process` reports how a process the call ran to completion exited, so a hook
+reads the exit code and output instead of parsing the text the model saw. It is
+`null` for tools that run no process and for calls that timed out, were
+cancelled, or never started. `exit_code` is `null` when the process ended
+without one, for example when a signal killed it. `stdout` and `stderr` hold
+what the tool retained under its output limit; past the field bound each keeps
+its **last** bytes, where errors usually are, and is named in `bounds.fields`.
+`status` is the tool outcome, not the process outcome: they usually agree, but
+read `exit_code` when you need the process's answer.
 
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces

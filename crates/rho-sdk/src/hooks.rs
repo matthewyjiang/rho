@@ -57,8 +57,10 @@ mod payload;
 pub mod testing;
 
 pub(crate) use dispatch::{HookToolIdentity, HookWiring};
+#[cfg(test)]
+pub(crate) use payload::tool_status;
 pub(crate) use payload::{
-    bounded_failure, error_label, summarize_capability, tool_status, BoundedFailure, ToolOutcomeRef,
+    bounded_failure, error_label, summarize_capability, BoundedFailure, ToolOutcomeRef,
 };
 
 pub use bounds::{
@@ -73,7 +75,7 @@ pub use event::HookEventKind;
 pub use gate::{AllowAllGate, HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest};
 pub use payload::{
     AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookFailure, HookPathScope,
-    HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookStopReason, HookTool,
-    HookToolStatus, HookWorkspace, RunCompletedPayload, RunFailedPayload, SessionCompletedPayload,
-    SessionFailedPayload, SessionStartedPayload, PROMPT_CONSTRUCTION_TOOL,
+    HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookProcessResult, HookStopReason,
+    HookTool, HookToolStatus, HookWorkspace, RunCompletedPayload, RunFailedPayload,
+    SessionCompletedPayload, SessionFailedPayload, SessionStartedPayload, PROMPT_CONSTRUCTION_TOOL,
 };

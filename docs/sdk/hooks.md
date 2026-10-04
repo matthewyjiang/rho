@@ -53,6 +53,8 @@ Hooks never loosen policy. They cannot turn a denial into an allow.
 
 Envelopes carry structured capability facts built from the request the host policy already saw, not scraped free-form argument prose alone. Paths and shell command text are included so a deny gate can inspect them. `after_tool_use` carries that summary for the first request the call passed to authorize, including policy denials, and `null` when the call never authorized. On the wire that is `payload.capability`; in-process hosts should read `HookEnvelope::after_tool_use_capability` until the next major can put the field on `AfterToolUsePayload`. Credentials, authorization headers, environment values, and URL query strings are not included.
 
+`after_tool_use` also reports how a process the call ran to completion exited: its exit code plus the tails of stdout and stderr. A tool supplies this by attaching a `ProcessResult` with `ToolOutput::with_process_result`; the built-in shell tools do. On the wire that is `payload.process` (`null` when the call ran no process to completion); in-process hosts should read `HookEnvelope::after_tool_use_process` until the next major can put the field on `AfterToolUsePayload`.
+
 Every envelope reports shortened fields in `HookTruncation`. Host labels use the same field and envelope bounds. Do not put prompts, credentials, environment values, or tool output in labels. The `host_labels` wire field is part of hook schema version 2 (`HOOK_SCHEMA_VERSION`).
 
 ## Testing helpers

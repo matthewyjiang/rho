@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::{
     hooks::payload::{
         AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookPathScope, HookPayload,
-        HookPolicyOutcome, HookProcessEnvironment, HookTool, HookToolStatus,
+        HookPolicyOutcome, HookProcessEnvironment, HookProcessResult, HookTool, HookToolStatus,
     },
     RunId, SessionId,
 };
@@ -37,8 +37,9 @@ fn envelope(payload: HookPayload) -> HookEnvelope {
 fn after_envelope(
     payload: AfterToolUsePayload,
     capability: Option<HookCapability>,
+    process: Option<HookProcessResult>,
 ) -> HookEnvelope {
-    envelope_builder().finish_after_tool_use(payload, capability)
+    envelope_builder().finish_after_tool_use(payload, capability, process)
 }
 
 fn tool(name: &str, call_id: Option<&str>) -> HookTool {
@@ -115,8 +116,11 @@ fn after_tool_use_wire_shape_is_stable() {
     let envelope = after_envelope(
         AfterToolUsePayload {
             tool: tool("bash", Some("call-2")),
-            status: HookToolStatus::Succeeded,
-            failure: None,
+            status: HookToolStatus::Failed,
+            failure: Some(HookFailure {
+                kind: "execution".into(),
+                message: "rejected".into(),
+            }),
             duration_ms: Some(42),
         },
         Some(HookCapability::ExecuteProcess {
@@ -125,6 +129,11 @@ fn after_tool_use_wire_shape_is_stable() {
             arguments: vec!["-lc".into()],
             shell_command: Some("git push --force".into()),
             environment: HookProcessEnvironment::InheritAll,
+        }),
+        Some(HookProcessResult {
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: "rejected".into(),
         }),
     );
 
@@ -140,8 +149,9 @@ fn after_tool_use_wire_shape_is_stable() {
                 "shell_command": "git push --force",
                 "environment": "inherit_all",
             },
-            "status": "succeeded",
-            "failure": null,
+            "process": { "exit_code": 1, "stdout": "", "stderr": "rejected" },
+            "status": "failed",
+            "failure": { "kind": "execution", "message": "rejected" },
             "duration_ms": 42,
         })
     );
@@ -157,6 +167,7 @@ fn after_tool_use_without_a_capability_serializes_null() {
             duration_ms: Some(42),
         },
         None,
+        None,
     );
 
     assert_eq!(
@@ -164,6 +175,7 @@ fn after_tool_use_without_a_capability_serializes_null() {
         json!({
             "tool": { "name": "edit", "call_id": "call-2" },
             "capability": null,
+            "process": null,
             "status": "succeeded",
             "failure": null,
             "duration_ms": 42,
@@ -365,6 +377,7 @@ fn accessors_report_what_was_built() {
             failure: None,
             duration_ms: None,
         },
+        None,
         None,
     );
 

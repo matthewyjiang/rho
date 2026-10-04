@@ -74,6 +74,7 @@ pub fn after_tool_use_envelope(tool: &str) -> HookEnvelope {
             duration_ms: Some(1),
         },
         None,
+        None,
     )
 }
 
