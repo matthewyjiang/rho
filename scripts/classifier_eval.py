@@ -197,9 +197,8 @@ def render(summaries: dict[str, dict[str, Any]]) -> str:
 
 def summarize_batched(report: dict[str, Any]) -> dict[str, Any]:
     """Compare only reviewed members; count shared batch latency just once."""
-    cases = report["cases"]
-    isolated = summarize({"cases": [{**case, **case["isolated"]} for case in cases]})
-    reviewed = [case for case in cases if case["reviewed"]]
+    reviewed = [case for case in report["cases"] if case["reviewed"]]
+    isolated = summarize({"cases": [{**case, **case["isolated"]} for case in reviewed]})
     flipped = [
         case for case in reviewed if case["isolated"]["verdict"] != case["verdict"]
     ]
