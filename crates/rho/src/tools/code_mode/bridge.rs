@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use futures_util::{stream, StreamExt};
+use futures_util::future::join_all;
 use rho_sdk::tool::{ToolContext, ToolOutput, ToolProgress};
 use rho_sdk::{Error as SdkError, ToolHost, ToolHostCall, ToolHostEvent, ToolHostRun};
 use serde_json::Value;
@@ -97,25 +97,25 @@ impl ToolHostBridge {
     /// Runs independent calls concurrently and returns their results in input
     /// order. The whole batch is checked against the call budget before any
     /// call starts, and a cancelled parent fails the batch.
+    ///
+    /// Every call starts at once, so all of them prepare and await approval
+    /// together, as a model-issued batch does. The child host bounds how many
+    /// execute at once.
     pub(super) async fn call_tools(
         &self,
         calls: Vec<(String, Value)>,
     ) -> Result<Vec<Result<ToolOutput, BridgeError>>, BridgeError> {
         self.reserve(calls.len())?;
-        let mut results: Vec<_> = stream::iter(calls.into_iter().enumerate())
-            .map(|(index, (name, arguments))| async move {
-                (index, self.run_call(name, arguments).await)
-            })
-            // Same width as a model-issued parallel tool batch. A blocked call
-            // must not prevent completed siblings from freeing their slots.
-            .buffer_unordered(crate::app::sdk_config::parallel_tool_limit().get())
-            .collect()
-            .await;
+        let results = join_all(
+            calls
+                .into_iter()
+                .map(|(name, arguments)| self.run_call(name, arguments)),
+        )
+        .await;
         if self.parent.cancellation().is_cancelled() {
             return Err(BridgeError::Cancelled);
         }
-        results.sort_unstable_by_key(|(index, _)| *index);
-        Ok(results.into_iter().map(|(_, result)| result).collect())
+        Ok(results)
     }
 
     fn reserve(&self, count: usize) -> Result<(), BridgeError> {

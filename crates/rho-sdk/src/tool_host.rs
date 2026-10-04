@@ -352,6 +352,7 @@ impl ToolHostBuilder {
             authorization,
             self.event_capacity,
             crate::tool::ToolInvocationSource::Host,
+            /*max_parallel_tools*/ None,
         )
     }
 }
@@ -362,6 +363,7 @@ pub struct ChildToolHostBuilder {
     workspace: Option<Workspace>,
     authorization: Arc<crate::workspace::AuthorizationServices>,
     invocation_source: crate::tool::ToolInvocationSource,
+    max_parallel_tools: Option<NonZeroUsize>,
 }
 
 impl ChildToolHostBuilder {
@@ -374,6 +376,15 @@ impl ChildToolHostBuilder {
         self
     }
 
+    /// Bounds the child's calls executing at once, like
+    /// [`crate::RhoBuilder::max_parallel_tools`]: calls still prepare and
+    /// await approval together, and only execution waits for a slot. Unset,
+    /// independent calls all execute at once.
+    pub fn max_parallel_tools(mut self, limit: NonZeroUsize) -> Self {
+        self.max_parallel_tools = Some(limit);
+        self
+    }
+
     pub fn build(self) -> Result<ToolHost, Error> {
         ToolHost::assemble(
             self.tools,
@@ -381,6 +392,7 @@ impl ChildToolHostBuilder {
             self.authorization,
             /*capacity*/ None,
             self.invocation_source,
+            self.max_parallel_tools,
         )
     }
 }
@@ -405,6 +417,7 @@ impl ToolHost {
         authorization: Arc<crate::workspace::AuthorizationServices>,
         capacity: Option<NonZeroUsize>,
         invocation_source: crate::tool::ToolInvocationSource,
+        max_parallel_tools: Option<NonZeroUsize>,
     ) -> Result<Self, Error> {
         let mut tools = ToolRegistry::new();
         for tool in registered {
@@ -420,7 +433,10 @@ impl ToolHost {
                 workspace,
                 authorization,
                 invocation_source,
-                execution: Arc::default(),
+                execution: Arc::new(match max_parallel_tools {
+                    Some(limit) => crate::tool::ExecutionArbiter::with_limit(limit),
+                    None => crate::tool::ExecutionArbiter::default(),
+                }),
                 event_capacity: capacity.unwrap_or_else(|| {
                     NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
                 }),
@@ -446,6 +462,7 @@ impl ToolHost {
             workspace: parent.workspace().cloned(),
             authorization: Arc::new(parent.authorization().for_call()),
             invocation_source: parent.invocation_source(),
+            max_parallel_tools: None,
         }
     }
 
