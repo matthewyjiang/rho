@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.14.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.13.1...rho-providers-v2.14.0) (2026-10-04)
+
+
+### Features
+
+* **agents:** pick fast mode per subagent instead of inheriting /fast ([#1355](https://github.com/matthewyjiang/rho/issues/1355)) ([89fe6ae](https://github.com/matthewyjiang/rho/commit/89fe6ae36ab3dcd6efcb2db1a1244409eba620b0))
+* **auth:** add Meta Muse subscription login ([#1354](https://github.com/matthewyjiang/rho/issues/1354)) ([611b568](https://github.com/matthewyjiang/rho/commit/611b568454fa9a9606652aa3e85c2c8a0647c494))
+* **permissions:** pick the permission screen model, including discovered decision models and text models ([#1389](https://github.com/matthewyjiang/rho/issues/1389)) ([0f687b4](https://github.com/matthewyjiang/rho/commit/0f687b46e526ae1853533dfce5c98aeb984d5d70))
+* **providers:** add TypeSafe as a decision-model host for the permission screen ([#1388](https://github.com/matthewyjiang/rho/issues/1388)) ([40fe589](https://github.com/matthewyjiang/rho/commit/40fe58917f4195d0a60a299cdfdc0990c0375e1c))
+* **sdk:** add a public decision protocol with noul, choice, and score questions ([#1387](https://github.com/matthewyjiang/rho/issues/1387)) ([7199e39](https://github.com/matthewyjiang/rho/commit/7199e3937b62407c2b128da737e65c302b7100ae))
+* **sessions:** let the agent recover turns lost to compaction ([#1386](https://github.com/matthewyjiang/rho/issues/1386)) ([d4ced42](https://github.com/matthewyjiang/rho/commit/d4ced427b726158a601f408b7587da9eb9cd1803))
+* **tools:** Starlark code_mode scaffold (ToolHost + MCP path) ([#1365](https://github.com/matthewyjiang/rho/issues/1365)) ([c2d6771](https://github.com/matthewyjiang/rho/commit/c2d6771920172b03f957de762d316927b1282f8c))
+* **tui:** let skill cards expand to show what the model loaded ([#1356](https://github.com/matthewyjiang/rho/issues/1356)) ([532bc12](https://github.com/matthewyjiang/rho/commit/532bc12b070296d5ffdbc16e62e4ac339fb5cfe0))
+* **tui:** show live progress in codemode cards ([#1369](https://github.com/matthewyjiang/rho/issues/1369)) ([683892c](https://github.com/matthewyjiang/rho/commit/683892cf4f1e7f3402039be75886a16ef95a7195))
+* **tui:** show what computer use is doing on its tool cards ([#1364](https://github.com/matthewyjiang/rho/issues/1364)) ([a5d75cc](https://github.com/matthewyjiang/rho/commit/a5d75cc6dafe89540dc16d7087a33dd64f79e268))
+
+
+### Bug Fixes
+
+* **agents:** notify the parent of advertised catalog changes after /agents edits ([#1367](https://github.com/matthewyjiang/rho/issues/1367)) ([070ff7a](https://github.com/matthewyjiang/rho/commit/070ff7a4075b8ef11cba888447c9ed156faae695))
+* **tui:** keep codemode script generation visible ([#1373](https://github.com/matthewyjiang/rho/issues/1373)) ([793b0b8](https://github.com/matthewyjiang/rho/commit/793b0b82e37e646ecb146d4d4a036befa0d19bfa))
+* **tui:** preserve highlighting for long codemode lines ([#1370](https://github.com/matthewyjiang/rho/issues/1370)) ([c821748](https://github.com/matthewyjiang/rho/commit/c8217481e5c2f3fc9316e65cffe12f9ac78005fd))
+
+
+### Reverts
+
+* **tui:** remove codemode execution progress ([#1371](https://github.com/matthewyjiang/rho/issues/1371)) ([425ece3](https://github.com/matthewyjiang/rho/commit/425ece3663873698539ac98744398b6dc1fa4879))
+
 ## [2.13.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.13.0...rho-providers-v2.13.1) (2026-09-30)
 
 

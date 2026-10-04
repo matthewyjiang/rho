@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.7.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.6.0...rho-sdk-v5.7.0) (2026-10-04)
+
+
+### Features
+
+* **sdk:** add a public decision protocol with noul, choice, and score questions ([#1387](https://github.com/matthewyjiang/rho/issues/1387)) ([7199e39](https://github.com/matthewyjiang/rho/commit/7199e3937b62407c2b128da737e65c302b7100ae))
+* **tools:** Starlark code_mode scaffold (ToolHost + MCP path) ([#1365](https://github.com/matthewyjiang/rho/issues/1365)) ([c2d6771](https://github.com/matthewyjiang/rho/commit/c2d6771920172b03f957de762d316927b1282f8c))
+* **workflow:** continue crashed agent nodes from step checkpoints ([#1376](https://github.com/matthewyjiang/rho/issues/1376)) ([c38f12b](https://github.com/matthewyjiang/rho/commit/c38f12b8d320306be3eeac53453d41aa98ab04d5))
+
+
+### Performance Improvements
+
+* **codemode:** await every call_tools approval at once ([#1393](https://github.com/matthewyjiang/rho/issues/1393)) ([856713e](https://github.com/matthewyjiang/rho/commit/856713e31ef6d781e2a5cd78f6488e5f7c6a150a))
+* **permissions:** stop auto-mode approvals from queueing behind each other ([#1391](https://github.com/matthewyjiang/rho/issues/1391)) ([6afc173](https://github.com/matthewyjiang/rho/commit/6afc173cf09a3ec535c8076b275c5fc88df98576))
+
 ## [5.6.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.5.0...rho-sdk-v5.6.0) (2026-09-29)
 
 
