@@ -271,7 +271,8 @@ impl App {
                     self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
-                    self.reset_input_history_navigation();
+                    // Placing the caret keeps a recalled prompt recalled, so
+                    // Down still restores the stashed draft; edits exit.
                     self.input_ui.clear_transient_edit_state();
                     if let Some(index) =
                         self.composer_text_char_index_at(&layout, column, row, /*clamp*/ false)

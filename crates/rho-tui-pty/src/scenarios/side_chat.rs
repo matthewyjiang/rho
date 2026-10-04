@@ -375,7 +375,20 @@ fn recall_side_prompt(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("  gamma Q2Z", SETTLE)?;
     // Down past the newest entry restores the empty draft.
     harness.inject_key(&Key::Down)?;
-    harness.wait_for_text_gone("> alphXa", SETTLE)
+    harness.wait_for_text_gone("> alphXa", SETTLE)?;
+
+    // Clicking into a recalled prompt only places the caret: Down still
+    // walks past it back to the unsent draft.
+    harness.type_text("DRAFT1")?;
+    harness.inject_key(&Key::Up)?;
+    harness.wait_for_text("> alphXa", SETTLE)?;
+    let (row, column) = screen_cell(harness, "> alphXa")?;
+    click(harness, column + 3, row)?;
+    harness.inject_key(&Key::Down)?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("> DRAFT1", SETTLE)?;
+    harness.inject_key(&Key::Ctrl('c'))?;
+    harness.wait_for_text_gone("DRAFT1", SETTLE)
 }
 
 fn keep_side_draft_visible(harness: &mut PtyHarness) -> Result<()> {

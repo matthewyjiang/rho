@@ -88,8 +88,9 @@ impl SideComposer {
     }
 
     /// Primary press on raw char index `index` at screen cell `column`/`row`.
+    /// Like the main composer, it keeps history navigation and the stashed
+    /// draft; only edits and Home/End leave a recalled prompt.
     pub(super) fn pointer_press(&mut self, index: usize, now: Instant, column: u16, row: u16) {
-        self.reset_history_navigation();
         let index = self.buffer.caret_index(index);
         let double_click = self.clicks.register(now, column, row, index);
         self.buffer.pointer_press(index, double_click);

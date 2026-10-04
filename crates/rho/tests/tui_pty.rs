@@ -1182,6 +1182,8 @@ fn composer_attachment_click_removes_it() {
     assert_pass("attachment_click_remove");
 }
 
+// Covers: the drag highlight updates before release, and clicking into a
+// recalled prompt keeps the stashed draft for Down. Owner: interactive TUI
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

@@ -905,7 +905,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "text_selection_drag",
-        "Update the drag selection highlight before the mouse button is released",
+        "Update the drag selection highlight before release; a composer click keeps a recalled prompt",
         DEFAULT_SIZE,
         TEXT_SELECTION_DRAG_STEPS,
         false,
