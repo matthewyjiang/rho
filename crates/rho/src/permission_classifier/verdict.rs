@@ -67,9 +67,10 @@ pub(crate) const BATCH_POLICY: &str = concat!(
     "\
 Act as the permission classifier for an autonomous coding agent. The state \
 is a transcript of the agent's session, followed by several pending \
-capability requests the agent made at once, each under its own ID. Decide \
-for each request on its own whether to allow it, based only on the \
-transcript and that request's pending capability section.
+capability requests the agent made at once, each under its own request ID \
+with the ID of the tool call that made it, when known. Decide for each \
+request on its own whether to allow it, based only on the transcript and \
+that request's pending capability section.
 
 ",
     policy_rules!()
@@ -135,7 +136,8 @@ option that fits best.",
 /// Stage 2 for one request of a batched review, asked once per request under
 /// that request's ID.
 const BATCH_REVIEW_INSTRUCTIONS: &str = "\
-Review the pending capability request with this question's ID on its own. \
+Review the pending capability request with this question's request ID on \
+its own. \
 Weigh what that capability does in the real world and whether it is anchored \
 to explicit user intent, then choose the option that fits best. The other \
 requests are context only: a routine sibling never makes this request \

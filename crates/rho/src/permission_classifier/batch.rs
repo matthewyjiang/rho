@@ -80,9 +80,10 @@ impl BatchRequest<'_> {
     }
 }
 
-/// The question ID member `index` is asked under.
+/// The question ID member `index` is asked under. Unlike `call_N`, it cannot
+/// pass for a tool-call ID in the history.
 fn label(index: usize) -> String {
-    format!("call_{}", index + 1)
+    format!("request_{}", index + 1)
 }
 
 impl ClassifierModel {
@@ -187,6 +188,10 @@ impl ClassifierModel {
 
 /// `budget`, which fits a single review, shrunk by how much more a batched
 /// review's system prompt and questions take than a single review's.
+///
+/// The output reserve stays the single review's receipt: batched output is
+/// not yet measured, and records under [`BATCH_REVIEW_PURPOSE`] so it can be.
+/// A batch whose output overruns the window fails every member closed.
 fn batch_budget(
     budget: TranscriptBudget,
     questions: &[rho_sdk::decision::Question<'_>],

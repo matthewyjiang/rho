@@ -95,7 +95,7 @@ async fn batch_review_answers_each_member_under_its_own_question() {
             vec![0, 2],
             TranscriptBudget::Unbounded,
             vec![text_turn(
-                r#"{"call_1":"allow","call_3":"deny_scope_expansion"}"#,
+                r#"{"request_1":"allow","request_3":"deny_scope_expansion"}"#,
             )],
             vec![
                 Reviewed::Verdict(ClassifierVerdict::Allow),
