@@ -8,7 +8,9 @@ mod snapshot;
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
-use ratatui::{layout::Rect, DefaultTerminal};
+use ratatui::layout::Rect;
+
+use crate::tui::DefaultTerminal;
 
 use super::{
     commands,

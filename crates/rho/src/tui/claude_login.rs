@@ -3,7 +3,7 @@
 //! This path never touches Rho's credential store. Claude Code owns the
 //! sign-in, stores the token, and remains the source of truth after handoff.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use crate::claude_runtime::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},

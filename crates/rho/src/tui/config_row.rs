@@ -3,7 +3,7 @@
 //! Parse from the existing picker string values so the generic picker can keep
 //! `PickerItem.value` as a [`String`].
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{
     config_editor::ConfigNumberKey, config_picker, web_search_config::WebSearchAction,

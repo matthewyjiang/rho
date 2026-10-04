@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
+use crate::tui::DefaultTerminal;
 use crossterm::event::{Event, KeyEventKind};
-use ratatui::DefaultTerminal;
 
 use crate::herdr::{HerdrDelivery, HerdrSession};
 

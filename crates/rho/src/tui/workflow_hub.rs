@@ -2,7 +2,7 @@
 
 use std::{cmp::Reverse, collections::BTreeMap, str::FromStr};
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{
     picker::OverlayChrome, workflow_discover, App, ComposerMode, Entry, InlineChoice,

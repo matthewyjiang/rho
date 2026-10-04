@@ -1,6 +1,6 @@
 //! Browser vs device-code picker for dual-grant OAuth.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 use rho_providers::{
     auth::{
         browser::BrowserAvailability,

@@ -3,7 +3,7 @@
 //! This path never touches Rho's credential store. `cursor-agent login` owns
 //! the browser OAuth and stores credentials in `~/.cursor`.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use crate::cursor_runtime::{
     auth::{self, CursorAuthError, CursorAuthStatus},

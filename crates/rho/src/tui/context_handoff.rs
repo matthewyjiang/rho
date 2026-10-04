@@ -7,7 +7,7 @@
 //! sendable to an incompatible model.
 
 use crate::session::Session;
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 use rho_providers::model::{catalog::ModelSelection, Message};
 use rho_sdk::model::handoff::HandoffReport;
 use rho_sdk::model::ModelIdentity;

@@ -3,8 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::tui::DefaultTerminal;
 use crossterm::event::Event;
-use ratatui::DefaultTerminal;
 
 use crate::clipboard::SystemClipboard;
 
@@ -41,7 +41,7 @@ pub(crate) async fn run(
         );
     }
 
-    let mut terminal = ratatui::init();
+    let mut terminal = crate::tui::synced_backend::init();
     let _terminal_restore = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
     };

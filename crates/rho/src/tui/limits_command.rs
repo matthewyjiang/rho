@@ -206,7 +206,7 @@ impl LimitsOverlay {
 impl App {
     pub(super) fn execute_limits_command(
         &mut self,
-        terminal: &mut ratatui::DefaultTerminal,
+        terminal: &mut crate::tui::DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.start_limits_command();
         terminal.draw(|frame| self.draw(frame))?;

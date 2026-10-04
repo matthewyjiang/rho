@@ -1,7 +1,7 @@
 //! Config, OAuth, secret, and reasoning-cycle key handlers for the interactive TUI.
 
+use crate::tui::DefaultTerminal;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::DefaultTerminal;
 
 use super::{
     config_editor::{ConfigNumberInput, ConfigNumberSave},

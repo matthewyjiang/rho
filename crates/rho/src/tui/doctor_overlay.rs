@@ -92,7 +92,7 @@ fn probe_gate() -> DoctorProbeGate {
 impl App {
     pub(super) fn execute_doctor_command(
         &mut self,
-        terminal: &mut ratatui::DefaultTerminal,
+        terminal: &mut crate::tui::DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.start_doctor_command()?;
         terminal.draw(|frame| self.draw(frame))?;

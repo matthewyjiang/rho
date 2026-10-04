@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{backend::Backend, DefaultTerminal, Terminal};
+use ratatui::{backend::Backend, Terminal};
+
+use crate::tui::DefaultTerminal;
 
 use super::{App, Entry, InteractiveRuntime};
 

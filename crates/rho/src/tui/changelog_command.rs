@@ -1,4 +1,6 @@
-use ratatui::{text::Line, DefaultTerminal};
+use ratatui::text::Line;
+
+use crate::tui::DefaultTerminal;
 
 use super::{
     background_tasks::{TaskId, UiOutput},

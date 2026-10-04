@@ -23,7 +23,7 @@ impl App {
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
         paste_segments: Vec<super::PasteSegment>,
-        terminal: &mut ratatui::DefaultTerminal,
+        terminal: &mut crate::tui::DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let missing_tools = ["skill", "questionnaire", "save_agent"]

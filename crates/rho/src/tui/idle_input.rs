@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::tui::DefaultTerminal;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::DefaultTerminal;
 
 use super::{
     command_actions::CommandSubmission,

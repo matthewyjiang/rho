@@ -1,7 +1,7 @@
 //! Standalone overlay used by `rho attach` when no run id is given.
 
+use crate::tui::DefaultTerminal;
 use crossterm::event::Event;
-use ratatui::DefaultTerminal;
 
 use super::super::{
     attach_picker::{self, AttachCandidate, WorkspaceRunFilter},

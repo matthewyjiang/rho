@@ -26,5 +26,14 @@ pub(super) fn assert_terminal_restored(harness: &mut PtyHarness) -> Result<()> {
     if !left {
         anyhow::bail!("did not observe alternate-screen leave sequence (ESC[?1049l)");
     }
+    // Frames paint inside synchronized updates so the caret does not jump
+    // across cells. An update left open freezes the user's terminal display.
+    let begun = harness.raw_sequence_occurrences(b"\x1b[?2026h");
+    let ended = harness.raw_sequence_occurrences(b"\x1b[?2026l");
+    if begun == 0 || begun != ended {
+        anyhow::bail!(
+            "synchronized updates unbalanced: {begun} begin (ESC[?2026h), {ended} end (ESC[?2026l)"
+        );
+    }
     Ok(())
 }

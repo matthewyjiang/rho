@@ -1,7 +1,7 @@
 use std::{env, fs, io::Write};
 
+use crate::tui::DefaultTerminal;
 use anyhow::{anyhow, Context};
-use ratatui::DefaultTerminal;
 use tokio::process::Command;
 
 use super::{App, ComposerMode};

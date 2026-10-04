@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::sessions_hub_groups::{find_directory, DirectoryGroup, HubGroup};
 use super::sessions_hub_tasks::{plural, DeleteOrigin, SessionsDelete};

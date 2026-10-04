@@ -1,4 +1,4 @@
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use crate::session::tree::{NodeId, SessionTreeItem};
 

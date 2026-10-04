@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use crate::{
     commands::CommandInvocation,

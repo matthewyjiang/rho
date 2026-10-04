@@ -7,13 +7,14 @@ use std::{
 };
 
 use crate::app::interactive_presenter::PresentedToolCard;
+use crate::tui::DefaultTerminal;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
     text::Line,
     widgets::Paragraph,
-    DefaultTerminal, Frame,
+    Frame,
 };
 use rho_sdk::model::ContextUsage;
 
@@ -154,7 +155,7 @@ pub(crate) async fn run(
         anyhow::bail!("rho attach requires an interactive terminal");
     }
     let _syntax_warmup = tokio::task::spawn_blocking(crate::tui::syntax::warm_syntax_set);
-    let mut terminal = ratatui::init();
+    let mut terminal = crate::tui::synced_backend::init();
     let _restore_terminal = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
     };

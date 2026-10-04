@@ -1,7 +1,7 @@
 //! `/config` action to force-refresh the models.dev catalog snapshot,
 //! plus the `/refresh-models` shortcut that also refreshes provider lists.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 use rho_providers::model::force_refresh_models_dev_catalog;
 
 use super::{provider_picker, App, Entry, InteractiveRuntime};

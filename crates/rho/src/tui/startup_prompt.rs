@@ -1,6 +1,6 @@
 //! Submit a CLI `--prompt` once the interactive composer is free.
 
-use ratatui::DefaultTerminal;
+use crate::tui::DefaultTerminal;
 
 use super::{exclusive_screen::ExclusiveOccupant, App, InteractiveRuntime};
 

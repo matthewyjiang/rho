@@ -49,6 +49,15 @@
         "crates/rho-providers/src/tls.rs"
       ],
       "reason": "reqwest rustls-no-provider panics unless ring is installed; use reqwest_client / reqwest_client_builder"
+    },
+    {
+      "roots": ["crates/rho/src"],
+      "sequences": [
+        ["ratatui", "::", "init"],
+        ["ratatui", "::", "try_init"],
+        ["ratatui", "::", "DefaultTerminal"]
+      ],
+      "reason": "ratatui's default terminal skips synchronized output, so the caret jumps across each redraw; use tui::synced_backend::{init, try_init, DefaultTerminal}"
     }
   ]
 }
