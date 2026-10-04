@@ -236,12 +236,14 @@ impl ToolOutput {
 /// Exit status and retained output of a finished process.
 ///
 /// `stdout` and `stderr` hold what the tool retained under its own output
-/// budget, which may be shorter than what the process wrote.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// budget. When the tool dropped output to stay within it, [`Self::is_truncated`]
+/// reports that the streams are partial.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessResult {
     exit_code: Option<i32>,
     stdout: String,
     stderr: String,
+    truncated: bool,
 }
 
 impl ProcessResult {
@@ -256,7 +258,14 @@ impl ProcessResult {
             exit_code,
             stdout: stdout.into(),
             stderr: stderr.into(),
+            truncated: false,
         }
+    }
+
+    /// Records whether the tool dropped process output to stay within its budget.
+    pub fn with_truncated(mut self, truncated: bool) -> Self {
+        self.truncated = truncated;
+        self
     }
 
     pub fn exit_code(&self) -> Option<i32> {
@@ -269,6 +278,11 @@ impl ProcessResult {
 
     pub fn stderr(&self) -> &str {
         &self.stderr
+    }
+
+    /// Whether the tool kept only part of what the process wrote.
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
     }
 }
 

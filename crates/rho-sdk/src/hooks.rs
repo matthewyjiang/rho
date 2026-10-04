@@ -57,8 +57,6 @@ mod payload;
 pub mod testing;
 
 pub(crate) use dispatch::{HookToolIdentity, HookWiring};
-#[cfg(test)]
-pub(crate) use payload::tool_status;
 pub(crate) use payload::{
     bounded_failure, error_label, summarize_capability, BoundedFailure, ToolOutcomeRef,
 };

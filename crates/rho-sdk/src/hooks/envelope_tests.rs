@@ -39,7 +39,13 @@ fn after_envelope(
     capability: Option<HookCapability>,
     process: Option<HookProcessResult>,
 ) -> HookEnvelope {
-    envelope_builder().finish_after_tool_use(payload, capability, process)
+    envelope_builder().assemble(
+        HookPayload::AfterToolUse(payload),
+        AfterToolUseExtras {
+            capability,
+            process,
+        },
+    )
 }
 
 fn tool(name: &str, call_id: Option<&str>) -> HookTool {
@@ -134,6 +140,7 @@ fn after_tool_use_wire_shape_is_stable() {
             exit_code: Some(1),
             stdout: String::new(),
             stderr: "rejected".into(),
+            truncated: false,
         }),
     );
 
@@ -149,7 +156,12 @@ fn after_tool_use_wire_shape_is_stable() {
                 "shell_command": "git push --force",
                 "environment": "inherit_all",
             },
-            "process": { "exit_code": 1, "stdout": "", "stderr": "rejected" },
+            "process": {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "rejected",
+                "truncated": false,
+            },
             "status": "failed",
             "failure": { "kind": "execution", "message": "rejected" },
             "duration_ms": 42,
@@ -370,6 +382,12 @@ fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
 
 #[test]
 fn accessors_report_what_was_built() {
+    let process = HookProcessResult {
+        exit_code: None,
+        stdout: "partial".into(),
+        stderr: String::new(),
+        truncated: true,
+    };
     let envelope = after_envelope(
         AfterToolUsePayload {
             tool: tool("grep", None),
@@ -378,7 +396,7 @@ fn accessors_report_what_was_built() {
             duration_ms: None,
         },
         None,
-        None,
+        Some(process.clone()),
     );
 
     assert_eq!(envelope.schema_version(), HOOK_SCHEMA_VERSION);
@@ -391,6 +409,7 @@ fn accessors_report_what_was_built() {
     assert!(!envelope.truncation().is_truncated());
     assert_eq!(envelope.payload().tool_name(), Some("grep"));
     assert_eq!(envelope.after_tool_use_capability(), None);
+    assert_eq!(envelope.after_tool_use_process(), Some(&process));
     assert!(!envelope.event_id().as_str().is_empty());
 }
 

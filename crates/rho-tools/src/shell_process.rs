@@ -128,6 +128,14 @@ pub(crate) struct ShellOutcome {
     pub(crate) wall_time_ms: u64,
 }
 
+/// The SDK view lifecycle hooks read instead of parsing the model-facing text.
+impl From<&ShellOutcome> for rho_sdk::tool::ProcessResult {
+    fn from(outcome: &ShellOutcome) -> Self {
+        Self::new(outcome.exit_code, &outcome.stdout, &outcome.stderr)
+            .with_truncated(outcome.truncated)
+    }
+}
+
 /// Spawns `execution`, supervises it with `S`, and streams output updates.
 pub(crate) async fn run<S: ProcessSupervisor>(
     execution: ProcessExecution,

@@ -7,14 +7,14 @@ use std::{
 
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
-use crate::{HookEventId, RunId, SessionId};
+use crate::{workspace::CapabilityRequest, HookEventId, RunId, SessionId};
 
 use super::{
     bounds::{bounded_string, HookPayloadBounds, HookTruncation},
     event::HookEventKind,
     payload::{
-        AfterToolUsePayload, HookCapability, HookFailure, HookPayload, HookProcessResult, HookTool,
-        HookToolStatus, HookWorkspace,
+        bounded_failure, summarize_capability, AfterToolUsePayload, HookCapability, HookFailure,
+        HookPayload, HookProcessResult, HookTool, HookToolStatus, HookWorkspace, ToolOutcomeRef,
     },
 };
 
@@ -90,6 +90,9 @@ pub struct HookIdentity {
 /// NEXT_MAJOR(rho-sdk): move `after_tool_use` capability and process result onto
 /// [`AfterToolUsePayload`] as public fields and remove
 /// [`Self::after_tool_use_capability`] and [`Self::after_tool_use_process`].
+///
+/// Until then both live in one private sidecar that is empty for every other
+/// event, so the accessors return `None` outside `after_tool_use`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookEnvelope {
     schema_version: u32,
@@ -101,14 +104,21 @@ pub struct HookEnvelope {
     workspace: HookWorkspace,
     truncation: HookTruncation,
     payload: HookPayload,
-    /// First capability an `after_tool_use` call passed to authorize.
-    ///
-    /// Stored beside the exhaustive payload so this minor does not add a field
-    /// to [`AfterToolUsePayload`]. Serialized as `payload.capability`.
-    after_tool_use_capability: Option<HookCapability>,
-    /// Process result of an `after_tool_use` call, stored beside the payload
-    /// for the same reason. Serialized as `payload.process`.
-    after_tool_use_process: Option<HookProcessResult>,
+    /// Empty unless this is an `after_tool_use` event.
+    after_tool_use: AfterToolUseExtras,
+}
+
+/// `after_tool_use` facts stored beside the exhaustive payload so this minor
+/// does not add fields to [`AfterToolUsePayload`]. Serialized inside `payload`.
+///
+/// NEXT_MAJOR(rho-sdk): move these fields onto `AfterToolUsePayload` and delete
+/// this struct.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct AfterToolUseExtras {
+    /// First capability the call passed to authorize. `payload.capability`.
+    capability: Option<HookCapability>,
+    /// How the process the call ran exited. `payload.process`.
+    process: Option<HookProcessResult>,
 }
 
 impl HookEnvelope {
@@ -154,10 +164,7 @@ impl HookEnvelope {
     /// authorized. Prefer this accessor until the next major folds the field
     /// into [`AfterToolUsePayload`].
     pub fn after_tool_use_capability(&self) -> Option<&HookCapability> {
-        match &self.payload {
-            HookPayload::AfterToolUse(_) => self.after_tool_use_capability.as_ref(),
-            _ => None,
-        }
+        self.after_tool_use.capability.as_ref()
     }
 
     /// Exit status and output of the process an `after_tool_use` call ran.
@@ -166,10 +173,7 @@ impl HookEnvelope {
     /// run a process to completion. Prefer this accessor until the next major
     /// folds the field into [`AfterToolUsePayload`].
     pub fn after_tool_use_process(&self) -> Option<&HookProcessResult> {
-        match &self.payload {
-            HookPayload::AfterToolUse(_) => self.after_tool_use_process.as_ref(),
-            _ => None,
-        }
+        self.after_tool_use.process.as_ref()
     }
 
     /// Serializes the envelope, refusing to emit one larger than `bounds`.
@@ -216,8 +220,8 @@ impl Serialize for HookEnvelope {
                 "payload",
                 &AfterToolUseWire {
                     tool: &payload.tool,
-                    capability: self.after_tool_use_capability.as_ref(),
-                    process: self.after_tool_use_process.as_ref(),
+                    capability: self.after_tool_use.capability.as_ref(),
+                    process: self.after_tool_use.process.as_ref(),
                     status: payload.status,
                     failure: &payload.failure,
                     duration_ms: payload.duration_ms,
@@ -340,24 +344,42 @@ impl HookEnvelopeBuilder {
     }
 
     pub(crate) fn finish(self, payload: HookPayload) -> HookEnvelope {
-        self.assemble(payload, None, None)
+        self.assemble(payload, AfterToolUseExtras::default())
     }
 
-    pub(crate) fn finish_after_tool_use(
-        self,
-        payload: AfterToolUsePayload,
-        capability: Option<HookCapability>,
-        process: Option<HookProcessResult>,
+    /// Builds the `after_tool_use` envelope for one finished call.
+    ///
+    /// `capability` is the first request the call passed to authorize.
+    pub(crate) fn finish_tool_call(
+        mut self,
+        tool: HookTool,
+        outcome: ToolOutcomeRef<'_>,
+        duration_ms: Option<u64>,
+        capability: Option<&CapabilityRequest>,
     ) -> HookEnvelope {
-        self.assemble(HookPayload::AfterToolUse(payload), capability, process)
+        let (bounds, truncation) = (self.bounds, &mut self.truncation);
+        let process = outcome
+            .process_result()
+            .map(|result| HookProcessResult::from_result(result, bounds, truncation));
+        let (status, failure) = outcome.status();
+        let failure = failure.map(|failure| bounded_failure(failure, bounds, truncation));
+        let capability =
+            capability.map(|request| summarize_capability(request, bounds, truncation));
+        self.assemble(
+            HookPayload::AfterToolUse(AfterToolUsePayload {
+                tool,
+                status,
+                failure,
+                duration_ms,
+            }),
+            AfterToolUseExtras {
+                capability,
+                process,
+            },
+        )
     }
 
-    fn assemble(
-        self,
-        payload: HookPayload,
-        after_tool_use_capability: Option<HookCapability>,
-        after_tool_use_process: Option<HookProcessResult>,
-    ) -> HookEnvelope {
+    fn assemble(self, payload: HookPayload, after_tool_use: AfterToolUseExtras) -> HookEnvelope {
         HookEnvelope {
             schema_version: HOOK_SCHEMA_VERSION,
             event: payload.event(),
@@ -368,8 +390,7 @@ impl HookEnvelopeBuilder {
             workspace: self.workspace,
             truncation: self.truncation,
             payload,
-            after_tool_use_capability,
-            after_tool_use_process,
+            after_tool_use,
         }
     }
 }

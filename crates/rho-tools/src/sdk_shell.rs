@@ -160,16 +160,14 @@ impl ShellPlan {
         let max_output_bytes = self.execution.output_limits().max_output_bytes();
         let run = execute_with_progress(kind, self.execution, context).await?;
         // Taken before `limit_data`, which may drop the structured view.
-        let process = run
-            .data()
-            .map(|outcome| ProcessResult::new(outcome.exit_code, &outcome.stdout, &outcome.stderr));
-        let output = run
+        let process = run.data().map(ProcessResult::from);
+        let mut output = run
             .limit_data(max_output_bytes)?
             .into_tool_output(ToolMetadata::new().operation(OperationKind::Execute))?;
-        Ok(match process {
-            Some(process) => output.with_process_result(process),
-            None => output,
-        })
+        if let Some(process) = process {
+            output = output.with_process_result(process);
+        }
+        Ok(output)
     }
 }
 

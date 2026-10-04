@@ -101,21 +101,30 @@ pub(super) fn bounded_string(
     value
 }
 
+/// Like [`truncate_field`], but keeps the end of the value.
+fn truncate_field_tail(value: &mut String, bounds: HookPayloadBounds) -> bool {
+    let limit = bounds.max_field_bytes();
+    if value.len() <= limit {
+        return false;
+    }
+    value.drain(..ceil_char_boundary(value, value.len() - limit));
+    true
+}
+
 /// Like [`bounded_string`], but keeps the end of the value.
 ///
 /// For process output, where the error a reader needs is usually last.
 pub(super) fn bounded_tail_string(
-    value: &str,
+    value: impl Into<String>,
     field: &str,
     bounds: HookPayloadBounds,
     truncation: &mut HookTruncation,
 ) -> String {
-    let limit = bounds.max_field_bytes();
-    if value.len() <= limit {
-        return value.to_owned();
+    let mut value = value.into();
+    if truncate_field_tail(&mut value, bounds) {
+        truncation.record(field);
     }
-    truncation.record(field);
-    value[ceil_char_boundary(value, value.len() - limit)..].to_owned()
+    value
 }
 
 pub(super) fn bounded_path(

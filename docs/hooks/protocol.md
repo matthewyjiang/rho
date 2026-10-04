@@ -41,7 +41,8 @@ One bounded JSON document on stdin:
 call passed to authorize. Multi-capability calls still emit one
 `before_tool_use` per request; the after payload reports only the first. The
 field is `null` when the call never authorized. Policy denials still include
-the request:
+the request, with `process` set to `null` because the command never ran. This
+call authorized, ran, and exited with status 1:
 
 ```json
 {
@@ -54,7 +55,7 @@ the request:
     "shell_command": "git push --force",
     "environment": "inherit_except"
   },
-  "process": { "exit_code": 1, "stdout": "", "stderr": "! [rejected] main -> main" },
+  "process": { "exit_code": 1, "stdout": "", "stderr": "! [rejected] main -> main", "truncated": false },
   "status": "failed",
   "failure": { "kind": "execution", "message": "…" },
   "duration_ms": 42
@@ -65,11 +66,14 @@ the request:
 reads the exit code and output instead of parsing the text the model saw. It is
 `null` for tools that run no process and for calls that timed out, were
 cancelled, or never started. `exit_code` is `null` when the process ended
-without one, for example when a signal killed it. `stdout` and `stderr` hold
-what the tool retained under its output limit; past the field bound each keeps
-its **last** bytes, where errors usually are, and is named in `bounds.fields`.
-`status` is the tool outcome, not the process outcome: they usually agree, but
-read `exit_code` when you need the process's answer.
+without one, for example when a signal killed it.
+
+Output is cut at two layers. `stdout` and `stderr` hold what the tool retained
+under its output limit; the built-in shell tools keep the first bytes the
+command wrote and set `truncated` to `true` when they dropped the rest. Past the
+hook field bound, each stream then keeps its **last** bytes and is named in
+`bounds.fields`. `status` is the tool outcome, not the process outcome: they
+usually agree, but read `exit_code` when you need the process's answer.
 
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces

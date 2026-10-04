@@ -10,9 +10,8 @@ use super::{
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookHostLabels, HookIdentity},
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
-        bounded_failure, summarize_capability, tool_status, AfterToolUsePayload, BoundedFailure,
-        HookFailure, HookPayload, HookProcessResult, HookTool, SessionCompletedPayload,
-        SessionFailedPayload, ToolOutcomeRef,
+        bounded_failure, BoundedFailure, HookFailure, HookPayload, HookTool,
+        SessionCompletedPayload, SessionFailedPayload, ToolOutcomeRef,
     },
 };
 
@@ -168,23 +167,7 @@ impl HookWiring {
             bounds,
             builder.truncation(),
         );
-        let process = outcome
-            .process_result()
-            .map(|result| HookProcessResult::from_result(result, bounds, builder.truncation()));
-        let (status, failure) = tool_status(outcome);
-        let failure = failure.map(|failure| bounded_failure(failure, bounds, builder.truncation()));
-        let capability =
-            capability.map(|request| summarize_capability(request, bounds, builder.truncation()));
-        observer.observe(builder.finish_after_tool_use(
-            AfterToolUsePayload {
-                tool,
-                status,
-                failure,
-                duration_ms,
-            },
-            capability,
-            process,
-        ));
+        observer.observe(builder.finish_tool_call(tool, outcome, duration_ms, capability));
     }
 }
 

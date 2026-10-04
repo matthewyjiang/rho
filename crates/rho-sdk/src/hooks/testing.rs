@@ -1,20 +1,26 @@
 //! Envelope constructors for host test suites.
 //!
 //! Hosts implementing [`PreToolUseGate`](super::PreToolUseGate) or
-//! [`HookObserver`](super::HookObserver) need real envelopes to test against.
+//! [`HookObserver`] need real envelopes to test against.
 //! Building one by hand would duplicate the wire contract, so the SDK supplies
-//! these instead of widening the production constructors.
+//! these instead of widening the production constructors. [`RecordingObserver`]
+//! captures what a runtime delivers.
+
+use std::sync::{Mutex, PoisonError};
 
 use super::{
     bounds::HookPayloadBounds,
+    dispatch::HookObserver,
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookIdentity},
+    event::HookEventKind,
     gate::PreToolUseRequest,
     payload::{
-        summarize_capability, AfterToolUsePayload, BeforeToolUsePayload, HookPayload,
-        HookPolicyOutcome, HookStopReason, HookTool, HookToolStatus, RunCompletedPayload,
+        summarize_capability, BeforeToolUsePayload, HookPayload, HookPolicyOutcome, HookStopReason,
+        HookTool, RunCompletedPayload, ToolOutcomeRef,
     },
 };
 use crate::{
+    tool::{ProcessResult, ToolOutput},
     workspace::{
         CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
         ProcessInvocation, ProcessOutputLimits,
@@ -63,18 +69,30 @@ pub fn before_tool_use_request(tool: &str, policy: HookPolicyOutcome) -> PreTool
 
 /// An `after_tool_use` envelope reporting a successful call of `tool`.
 pub fn after_tool_use_envelope(tool: &str) -> HookEnvelope {
+    after_tool_use_output_envelope(tool, &ToolOutput::text(""))
+}
+
+/// An `after_tool_use` envelope for a call of `tool` that ran `process` to
+/// completion.
+///
+/// The call succeeded when the exit code is `0`. Otherwise it failed and
+/// reports the process's stderr as the failure message.
+pub fn after_tool_use_process_envelope(tool: &str, process: ProcessResult) -> HookEnvelope {
+    let succeeded = process.exit_code() == Some(0);
+    let output = ToolOutput::text(process.stderr()).with_process_result(process);
+    let output = if succeeded { output } else { output.failed() };
+    after_tool_use_output_envelope(tool, &output)
+}
+
+fn after_tool_use_output_envelope(tool: &str, output: &ToolOutput) -> HookEnvelope {
     let bounds = HookPayloadBounds::default();
     let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
     let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
-    builder.finish_after_tool_use(
-        AfterToolUsePayload {
-            tool,
-            status: HookToolStatus::Succeeded,
-            failure: None,
-            duration_ms: Some(1),
-        },
-        None,
-        None,
+    builder.finish_tool_call(
+        tool,
+        ToolOutcomeRef::Completed(output),
+        /* duration_ms */ Some(1),
+        /* capability */ None,
     )
 }
 
@@ -86,4 +104,39 @@ pub fn run_completed_envelope() -> HookEnvelope {
             revision: 1,
         }),
     )
+}
+
+/// Observer that keeps every envelope it is handed, for assertions.
+///
+/// Install it with `Rho::builder().hook_observer_shared(..)`, run the session,
+/// then read [`Self::envelopes`] or [`Self::events`].
+#[derive(Debug, Default)]
+pub struct RecordingObserver {
+    seen: Mutex<Vec<HookEnvelope>>,
+}
+
+impl RecordingObserver {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Every envelope observed so far, in delivery order.
+    pub fn envelopes(&self) -> Vec<HookEnvelope> {
+        self.lock().clone()
+    }
+
+    /// The event kind of every envelope observed so far, in delivery order.
+    pub fn events(&self) -> Vec<HookEventKind> {
+        self.lock().iter().map(HookEnvelope::event).collect()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<HookEnvelope>> {
+        self.seen.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl HookObserver for RecordingObserver {
+    fn observe(&self, envelope: HookEnvelope) {
+        self.lock().push(envelope);
+    }
 }
