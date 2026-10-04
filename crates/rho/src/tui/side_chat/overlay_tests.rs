@@ -66,7 +66,10 @@ fn side_scroll_metrics_follow_wrapped_body() {
     let metrics = prepared.metrics;
     let body_len = prepared.body.lines.len();
 
-    pretty_assertions::assert_eq!(metrics.body_len, body_len);
+    pretty_assertions::assert_eq!(
+        metrics.max_scroll,
+        body_len.saturating_sub(metrics.body_rows)
+    );
     assert!(
         body_len > overlay.entries.len().saturating_add(4),
         "wrapped assistant text must beat an entry-count fudge, body_len={body_len} entries={}",

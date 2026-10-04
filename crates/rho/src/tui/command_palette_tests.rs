@@ -1,6 +1,5 @@
-use super::super::{
-    tests::test_app, CommandChoice, CommandChoiceKind, HistoryDirection, InputSubmissionMode,
-};
+use super::super::{tests::test_app, CommandChoice, CommandChoiceKind, InputSubmissionMode};
+use crate::tui::composer_buffer::ComposerEditKey;
 
 #[test]
 fn completing_goal_command_reveals_lifecycle_actions() {
@@ -113,22 +112,22 @@ fn recalling_a_command_keeps_the_palette_closed_until_edit() {
     app.input_changed();
     assert!(app.command_palette_visible());
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up, 80);
     assert_eq!(app.input_ui.text(), "/model");
     assert!(!app.command_palette_visible());
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up, 80);
     assert_eq!(app.input_ui.text(), "/info");
     assert!(!app.command_palette_visible());
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
-    app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down, 80);
     assert_eq!(app.input_ui.text(), "/c");
     assert!(app.command_palette_visible());
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up, 80);
     assert!(!app.command_palette_visible());
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace, 80);
     assert_eq!(app.input_ui.text(), "/mode");
     assert!(app.command_palette_visible());
 }

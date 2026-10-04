@@ -10,7 +10,6 @@ use ratatui::{
 use super::{
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
     frame_context::FrameContext,
-    paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
@@ -277,24 +276,13 @@ impl App {
                     if let Some(index) =
                         self.composer_text_char_index_at(&layout, column, row, /*clamp*/ false)
                     {
-                        let index = self.composer_caret_index(index);
+                        let index = self.input_ui.buffer().caret_index(index);
                         let double_click = self
                             .input_ui
                             .register_pointer_click(now, column, row, index);
-                        if double_click {
-                            let range = self
-                                .input_ui
-                                .paste_segments()
-                                .iter()
-                                .find(|segment| segment.start <= index && index < segment.end())
-                                .map(|segment| segment.start..segment.end())
-                                .unwrap_or_else(|| word_range_at(self.input_ui.text(), index));
-                            self.input_ui.select_range(range.start, range.end);
-                            self.input_ui.set_cursor(range.end);
-                        } else {
-                            self.input_ui.begin_selection(index);
-                            self.input_ui.set_cursor(index);
-                        }
+                        self.input_ui
+                            .buffer_mut()
+                            .pointer_press(index, double_click);
                     } else {
                         self.input_ui.clear_selection();
                         self.input_ui.cancel_pointer_click_sequence();
@@ -340,9 +328,7 @@ impl App {
                     if let Some(index) =
                         self.composer_text_char_index_at(&layout, column, row, /*clamp*/ true)
                     {
-                        let index = self.composer_selection_focus(index);
-                        self.input_ui.update_selection(index);
-                        self.input_ui.set_cursor(index);
+                        self.input_ui.buffer_mut().pointer_drag(index);
                     }
                 } else if self.screen_selection.is_some() {
                     if let (Some(selection), Some(position)) = (
@@ -434,18 +420,9 @@ impl App {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
                 } else if composer_selecting {
-                    if let Some(index) =
-                        self.composer_text_char_index_at(&layout, column, row, /*clamp*/ true)
-                    {
-                        let index = self.composer_selection_focus(index);
-                        self.input_ui.update_selection(index);
-                        self.input_ui.set_cursor(index);
-                    }
-                    let focus = self.input_ui.selection_focus();
-                    self.input_ui.finalize_selection();
-                    if let Some(focus) = focus {
-                        self.input_ui.set_cursor(focus);
-                    }
+                    let index =
+                        self.composer_text_char_index_at(&layout, column, row, /*clamp*/ true);
+                    self.input_ui.buffer_mut().pointer_release(index);
                 } else if let Some(mut selection) = self.history.text_selection_mut().take() {
                     let release_position =
                         selection_position_clamped(history, history_start, column, row);

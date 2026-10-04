@@ -1,10 +1,10 @@
 //! `/side` and `/btw` overlay scenarios.
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 
 use crate::{
     harness::PtyHarness,
-    keys::Key,
+    keys::{Key, MouseButton},
     pty::PtySize,
     scenario::{Scenario, Step},
 };
@@ -252,6 +252,162 @@ pub(super) const SIDE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
     SIDE_DURING_TURN_STEPS,
     /* smoke */ false,
 );
+
+// Covers: the side composer edits like the main composer: multi-line input,
+// row moves, word keys, Delete, click-to-place, double-click word select,
+// in-memory prompt recall, and collapsed pastes. Editing a draft scrolled out
+// of view brings it back, and a resize keeps wrapped wide glyphs at the caret.
+// Owner: interactive TUI
+const SIDE_COMPOSER_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/side"),
+    Step::WaitText {
+        text: "Side chat",
+        timeout: SETTLE,
+    },
+    Step::Phase("multi_line_edit"),
+    Step::Custom(edit_side_composer),
+    Step::Phase("recall_prompt"),
+    Step::Custom(recall_side_prompt),
+    Step::Phase("visible_draft"),
+    Step::Custom(keep_side_draft_visible),
+    Step::Phase("collapsed_paste"),
+    Step::Custom(collapse_side_paste),
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "Side chat",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
+pub(super) const SIDE_COMPOSER_SCENARIO: Scenario = Scenario::new(
+    "side_composer",
+    "Edit the side chat prompt with the main composer's keys and pointer",
+    SIZE,
+    SIDE_COMPOSER_STEPS,
+    /* smoke */ false,
+);
+
+/// Row and 0-based display column of `needle`, which must be on one row.
+fn screen_cell(harness: &PtyHarness, needle: &str) -> Result<(u16, u16)> {
+    harness
+        .screen()
+        .rows_text()
+        .iter()
+        .enumerate()
+        .find_map(|(row, line)| {
+            let offset = line.find(needle)?;
+            Some((row as u16, line[..offset].chars().count() as u16))
+        })
+        .ok_or_else(|| anyhow::anyhow!("'{needle}' not found:\n{}", harness.screen().debug_dump()))
+}
+
+/// Press and release the left button on 0-based cell `column`/`row`.
+fn click(harness: &mut PtyHarness, column: u16, row: u16) -> Result<()> {
+    // SGR mouse coordinates are 1-based.
+    harness.mouse(MouseButton::Left, column + 1, row + 1, true)?;
+    harness.mouse(MouseButton::Left, column + 1, row + 1, false)
+}
+
+fn edit_side_composer(harness: &mut PtyHarness) -> Result<()> {
+    harness.type_text("alpha")?;
+    harness.inject_key(&Key::ShiftEnter)?;
+    harness.type_text("beta")?;
+    harness.wait_for_text("beta", SETTLE)?;
+    let (row, column) = screen_cell(harness, "> alpha")?;
+    let second = harness.screen().rows_text()[usize::from(row) + 1].clone();
+    ensure!(
+        second
+            .chars()
+            .skip(usize::from(column))
+            .collect::<String>()
+            .starts_with("  beta"),
+        "Shift+Enter did not start a second prompt row\n{}",
+        harness.screen().debug_dump()
+    );
+
+    // Up keeps the display column: from the end of "beta" to before the
+    // last "a" of "alpha".
+    harness.inject_key(&Key::Up)?;
+    harness.type_text("X")?;
+    harness.wait_for_text("> alphXa", SETTLE)?;
+
+    // Click before "beta" and type there.
+    click(harness, column + 2, row + 1)?;
+    harness.type_text("Y")?;
+    harness.wait_for_text("  Ybeta", SETTLE)?;
+
+    // Double-click selects the word; typing replaces it.
+    for _ in 0..2 {
+        click(harness, column + 3, row + 1)?;
+    }
+    harness.type_text("gamma")?;
+    harness.wait_for_text("  gamma", SETTLE)?;
+    harness.wait_for_text_gone("Ybeta", SETTLE)?;
+
+    // Word keys and Delete.
+    harness.type_text(" QQ1 QQ2")?;
+    harness.wait_for_text("gamma QQ1 QQ2", SETTLE)?;
+    harness.inject_key(&Key::AltLeft)?;
+    harness.inject_key(&Key::AltBackspace)?;
+    harness.wait_for_text_gone("QQ1", SETTLE)?;
+    harness.wait_for_text("gamma QQ2", SETTLE)?;
+    harness.inject_key(&Key::Delete)?;
+    harness.wait_for_text_gone("QQ2", SETTLE)?;
+    harness.inject_key(&Key::AltRight)?;
+    harness.type_text("Z")?;
+    harness.wait_for_text("  gamma Q2Z", SETTLE)
+}
+
+fn recall_side_prompt(harness: &mut PtyHarness) -> Result<()> {
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("fixture response:", STREAM)?;
+    harness.wait_for_text("Enter send   Esc close", SETTLE)?;
+    harness.wait_for_text_gone("> alphXa", SETTLE)?;
+    // Up on the empty prompt recalls the aside's last prompt, both rows.
+    harness.inject_key(&Key::Up)?;
+    harness.wait_for_text("> alphXa", SETTLE)?;
+    harness.wait_for_text("  gamma Q2Z", SETTLE)?;
+    // Down past the newest entry restores the empty draft.
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text_gone("> alphXa", SETTLE)
+}
+
+fn keep_side_draft_visible(harness: &mut PtyHarness) -> Result<()> {
+    // A code-block reply plus a short terminal overflows the panel body.
+    harness.submit_text("fixture code block")?;
+    harness.wait_for_text("COPY", STARTUP)?;
+    harness.wait_for_text("Enter send   Esc close", SETTLE)?;
+    harness.resize(14, 60)?;
+    harness.inject_key(&Key::PageUp)?;
+    harness.type_text("VISIBLE1")?;
+    harness.inject_key(&Key::ShiftEnter)?;
+    harness.type_text("VISIBLE2")?;
+    harness.wait_for_text("> VISIBLE1", SETTLE)?;
+    harness.wait_for_text("  VISIBLE2", SETTLE)?;
+    harness.inject_key(&Key::Ctrl('c'))?;
+    harness.wait_for_text_gone("VISIBLE1", SETTLE)?;
+
+    harness.paste(&format!("{}界界e\u{301}END", "word ".repeat(12)))?;
+    harness.resize(24, 40)?;
+    super::line_editor::wait_for_tail_caret(harness, "界界e\u{301}END")?;
+    harness.inject_key(&Key::Ctrl('c'))?;
+    harness.wait_for_text_gone("e\u{301}END", SETTLE)?;
+    harness.resize(SIZE.rows, SIZE.cols)
+}
+
+fn collapse_side_paste(harness: &mut PtyHarness) -> Result<()> {
+    harness.paste("one\ntwo\nthree\nfour\nfive")?;
+    harness.wait_for_text("> [ pasted: 5 lines ]", SETTLE)?;
+    // The marker is atomic: one Backspace removes it whole.
+    harness.inject_key(&Key::Backspace)?;
+    harness.wait_for_text_gone("[ pasted: 5 lines ]", SETTLE)
+}
 
 fn release_parent_and_side(harness: &mut PtyHarness) -> Result<()> {
     // Marker owners: rho-providers/src/providers/tui_fixture/stream_scenarios.rs.

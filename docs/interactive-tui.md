@@ -175,7 +175,7 @@ Short confirmations and some credential prompts use an inline list instead of a 
 
 `/limits` uses the same overlay chrome as those pickers, but as a single scrolling pane of usage bars rather than a two-column list. It is not a picker: `up` and `down` scroll, and `enter` or `esc` close it.
 
-`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. `Enter` sends to the aside. `Esc` closes the overlay without cancelling its reply, so you can keep using the main chat while the aside runs in the background. Use `/side` or `/btw` again to return to its transcript and any unsent draft. `Ctrl+C` clears the aside's prompt first; with an empty prompt, it cancels only the running aside and does nothing when the aside is idle. Up and down scroll when the prompt is empty; letter keys always insert.
+`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. `Enter` sends to the aside. `Esc` closes the overlay without cancelling its reply, so you can keep using the main chat while the aside runs in the background. Use `/side` or `/btw` again to return to its transcript and any unsent draft. The aside's prompt edits like the main composer: `Shift+Enter` (or the newline binding) adds lines, word and arrow keys move the caret, Up and Down recall the aside's own earlier prompts, large pastes collapse into a marker, the external editor binding opens the draft, and clicking or dragging places the caret and selects text. `Ctrl+C` clears the aside's prompt first; with an empty prompt, it cancels only the running aside and does nothing when the aside is idle. Up and Down scroll the aside's transcript when the prompt is empty and there is no earlier prompt to recall.
 
 ## Login and models
 

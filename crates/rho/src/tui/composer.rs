@@ -4,12 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     commands,
+    composer_buffer::{ComposerEditKey, EditOutcome},
+    composer_history::{history_step, HistoryStep},
     composer_layout::{content_width, prompt_width},
-    paste_burst::{collapsed_paste_for, normalize_paste, previous_word_boundary},
-    render::{
-        editable_input_visual_lines, input_char_index_at_position,
-        input_cursor_index_on_visual_line, visual_caret_position,
-    },
+    paste_burst::{collapsed_paste_for, normalize_paste},
     App, CommandInvocation, ComposerMode, HistoryDirection, InputDraft, InputSubmissionMode,
     PasteBurstEnter, PasteBurstKey, PasteSegment,
 };
@@ -74,6 +72,7 @@ impl App {
     fn insert_paste_burst_newline(&mut self) {
         match self.input_ui.composer_mut() {
             ComposerMode::Input => self.insert_input_char('\n'),
+            ComposerMode::Side => self.insert_side_paste_newline(),
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_char('\n');
             }
@@ -83,7 +82,6 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)
-            | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => {}
         }
@@ -106,7 +104,7 @@ impl App {
 
     fn composer_accepts_paste_burst_char(&self, ch: char) -> bool {
         match self.input_ui.composer() {
-            ComposerMode::Input => true,
+            ComposerMode::Input | ComposerMode::Side => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.accepts_paste_burst_char(ch)
             }
@@ -116,7 +114,6 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)
-            | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
         }
@@ -124,7 +121,7 @@ impl App {
 
     fn composer_accepts_paste_burst_enter(&self) -> bool {
         match self.input_ui.composer() {
-            ComposerMode::Input => true,
+            ComposerMode::Input | ComposerMode::Side => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.active_text_entry_active()
                     || (self.input_ui.paste_burst().has_pending()
@@ -136,7 +133,6 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)
-            | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
         }
@@ -144,15 +140,6 @@ impl App {
 
     pub(super) fn input_char_len(&self) -> usize {
         self.input_ui.char_len()
-    }
-
-    fn input_byte_index(&self, char_index: usize) -> usize {
-        self.input_ui
-            .text()
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.input_ui.text().len())
     }
 
     pub(super) fn reset_input_history_navigation(&mut self) {
@@ -170,29 +157,26 @@ impl App {
     }
 
     fn recall_input_history(&mut self, direction: HistoryDirection) -> bool {
-        if self.input_ui.history().is_empty() {
+        let Some(step) = history_step(
+            direction,
+            self.input_ui.history().len(),
+            self.input_ui.history_cursor(),
+        ) else {
             return false;
-        }
-
-        let next_cursor = match (direction, self.input_ui.history_cursor()) {
-            (HistoryDirection::Previous, None) => {
-                self.input_ui.set_history_draft(Some(InputDraft {
-                    input: self.input_ui.text().to_string(),
-                    paste_segments: self.input_ui.paste_segments().to_vec(),
-                    submission_mode: self.input_ui.submission_mode(),
-                    shell_mode: self.input_ui.shell_mode(),
-                }));
-                self.input_ui.history().len() - 1
+        };
+        let index = match step {
+            HistoryStep::Recall { index, save_draft } => {
+                if save_draft {
+                    self.input_ui.set_history_draft(Some(InputDraft {
+                        input: self.input_ui.text().to_string(),
+                        paste_segments: self.input_ui.paste_segments().to_vec(),
+                        submission_mode: self.input_ui.submission_mode(),
+                        shell_mode: self.input_ui.shell_mode(),
+                    }));
+                }
+                index
             }
-            (HistoryDirection::Previous, Some(0)) => 0,
-            (HistoryDirection::Previous, Some(cursor)) => cursor - 1,
-            (HistoryDirection::Next, None) => return false,
-            (HistoryDirection::Next, Some(cursor))
-                if cursor + 1 < self.input_ui.history().len() =>
-            {
-                cursor + 1
-            }
-            (HistoryDirection::Next, Some(_)) => {
+            HistoryStep::RestoreDraft => {
                 let draft = self.input_ui.take_history_draft().unwrap_or(InputDraft {
                     input: String::new(),
                     paste_segments: Vec::new(),
@@ -209,11 +193,11 @@ impl App {
         };
 
         self.apply_composer_text(
-            self.input_ui.history()[next_cursor].clone(),
+            self.input_ui.history()[index].clone(),
             Vec::new(),
             InputSubmissionMode::ParseCommands,
         );
-        self.input_ui.set_history_cursor(Some(next_cursor));
+        self.input_ui.set_history_cursor(Some(index));
         // Recalled text is finished content, not a live search. Keep both
         // palettes closed until the next typed edit.
         self.input_ui.set_command_palette_dismissed(true);
@@ -221,177 +205,77 @@ impl App {
         true
     }
 
-    pub(super) fn recall_input_history_or_move_cursor(
-        &mut self,
-        direction: HistoryDirection,
-        terminal_width: usize,
-    ) {
-        self.input_ui.clear_selection();
-        let content_width = content_width(terminal_width);
-        let visual_lines = editable_input_visual_lines(self.input_ui.text(), content_width);
-        let cursor_position =
-            visual_caret_position(&visual_lines, self.input_ui.text(), self.input_ui.cursor());
-        let can_recall = match direction {
-            HistoryDirection::Previous => cursor_position.y == 0,
-            HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),
-        };
-
-        if can_recall && self.recall_input_history(direction) {
-            return;
+    /// Apply a shared edit key to the main composer, with its history,
+    /// attachment, shell-mode, and palette side effects.
+    pub(super) fn apply_input_edit_key(&mut self, edit: ComposerEditKey, terminal_width: usize) {
+        match edit {
+            ComposerEditKey::Backspace if self.input_ui.text().is_empty() => {
+                if let Some(last) = self.input_ui.attachment_slots().len().checked_sub(1) {
+                    self.remove_composer_attachment(last);
+                }
+                return;
+            }
+            ComposerEditKey::Char(ch) => {
+                self.insert_input_char(ch);
+                return;
+            }
+            ComposerEditKey::Newline => {
+                self.insert_input_char('\n');
+                self.input_ui.clear_paste_burst();
+                return;
+            }
+            ComposerEditKey::Home | ComposerEditKey::End => self.reset_input_history_navigation(),
+            ComposerEditKey::WordBackspace
+            | ComposerEditKey::Backspace
+            | ComposerEditKey::Delete
+            | ComposerEditKey::WordLeft
+            | ComposerEditKey::WordRight
+            | ComposerEditKey::Left
+            | ComposerEditKey::Right
+            | ComposerEditKey::Up
+            | ComposerEditKey::Down => {}
         }
-
-        let target_row = match direction {
-            HistoryDirection::Previous => cursor_position.y.saturating_sub(1) as usize,
-            HistoryDirection::Next => cursor_position.y as usize + 1,
-        };
-        self.input_ui.set_cursor(input_cursor_index_on_visual_line(
-            self.input_ui.text(),
-            &visual_lines,
-            target_row,
-            cursor_position.x as usize,
-        ));
-        self.focus_paste_segment_at_cursor();
-    }
-
-    pub(super) fn move_input_cursor_left(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.input_ui.set_cursor(range.start);
-            return;
+        let width = content_width(terminal_width);
+        match self.input_ui.buffer_mut().apply_edit(edit, width) {
+            EditOutcome::Edited => self.input_edited(),
+            EditOutcome::VerticalEdge(direction) => {
+                if !self.recall_input_history(direction) {
+                    self.input_ui.buffer_mut().move_vertically(direction, width);
+                }
+            }
+            EditOutcome::Moved | EditOutcome::Unchanged => {}
         }
-        if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
-            segment.start < self.input_ui.cursor() && self.input_ui.cursor() <= segment.end()
-        }) {
-            self.input_ui.set_cursor(segment.start);
-        } else {
-            self.input_ui
-                .set_cursor(self.input_ui.cursor().saturating_sub(1));
-        }
-    }
-
-    pub(super) fn move_input_cursor_right(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.input_ui.set_cursor(range.end);
-            return;
-        }
-        if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
-            segment.start <= self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
-        }) {
-            self.input_ui.set_cursor(segment.end());
-        } else {
-            self.input_ui
-                .set_cursor((self.input_ui.cursor() + 1).min(self.input_char_len()));
-        }
-    }
-
-    pub(super) fn focus_paste_segment_at_cursor(&mut self) {
-        if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
-            segment.start < self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
-        }) {
-            self.input_ui.set_cursor(segment.start);
-        }
-    }
-
-    pub(super) fn move_input_cursor_to_previous_word(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.input_ui.set_cursor(range.start);
-            return;
-        }
-        self.input_ui.set_cursor(previous_word_boundary(
-            self.input_ui.text(),
-            self.input_ui.cursor(),
-        ));
-    }
-
-    pub(super) fn move_input_cursor_to_next_word(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.input_ui.set_cursor(range.end);
-            return;
-        }
-        self.input_ui
-            .set_cursor(super::paste_burst::next_word_boundary(
-                self.input_ui.text(),
-                self.input_ui.cursor(),
-            ));
     }
 
     pub(super) fn focused_paste_segment(&self) -> Option<&PasteSegment> {
-        self.input_ui
-            .paste_segments()
-            .iter()
-            .find(|segment| segment.start == self.input_ui.cursor())
+        self.input_ui.buffer().focused_paste_segment()
     }
 
     pub(super) fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
-        self.replace_input_range_with_paste_content(start, end, text, None);
+        self.input_ui
+            .buffer_mut()
+            .replace_range(start, end, text, /*paste_content*/ None);
+        self.input_edited();
     }
 
-    fn replace_input_range_with_paste_content(
-        &mut self,
-        start: usize,
-        end: usize,
-        text: &str,
-        paste_content: Option<String>,
-    ) {
+    /// Bookkeeping after any main-composer text edit.
+    fn input_edited(&mut self) {
         self.reset_input_history_navigation();
-        self.input_ui.clear_selection();
-        let range = self.normalize_input_edit_range(start..end);
-        let inserted_len = text.chars().count();
-        self.adjust_paste_segments_for_edit(range.start, range.len(), inserted_len);
-        let start_byte = self.input_byte_index(range.start);
-        let end_byte = self.input_byte_index(range.end);
-        self.input_ui
-            .with_text_mut(|value| value.replace_range(start_byte..end_byte, text));
-        self.input_ui.set_cursor(range.start + inserted_len);
-        if let Some(content) = paste_content {
-            self.input_ui.paste_segments_mut().push(PasteSegment {
-                start: range.start,
-                marker_len: inserted_len,
-                content,
-            });
-            self.input_ui
-                .paste_segments_mut()
-                .sort_by_key(|segment| segment.start);
-        }
         self.input_changed();
     }
 
-    /// Expand an edit to consume any collapsed paste marker it intersects.
-    fn normalize_input_edit_range(
-        &self,
-        mut range: std::ops::Range<usize>,
-    ) -> std::ops::Range<usize> {
-        let char_len = self.input_char_len();
-        range.start = range.start.min(char_len);
-        range.end = range.end.max(range.start).min(char_len);
-        for segment in self.input_ui.paste_segments() {
-            let intersects = range.start < segment.end() && range.end > segment.start;
-            let caret_inside =
-                range.is_empty() && segment.start < range.start && range.start < segment.end();
-            if intersects || caret_inside {
-                range.start = range.start.min(segment.start);
-                range.end = range.end.max(segment.end());
-            }
-        }
-        range
-    }
-
-    fn replace_input_selection(&mut self, text: &str) -> bool {
-        let Some(range) = self.input_ui.take_selection_range() else {
-            return false;
-        };
-        self.replace_input_range(range.start, range.end, text);
-        true
-    }
-
     pub(super) fn insert_input_char(&mut self, ch: char) {
-        if self.replace_input_selection(&ch.to_string()) {
+        let mut encoded = [0; 4];
+        let text = ch.encode_utf8(&mut encoded);
+        if self.input_ui.buffer_mut().replace_selection(text) {
+            self.input_edited();
             return;
         }
         if ch == '!' && self.try_enter_shell_mode_from_bang() {
             return;
         }
         let cursor = self.input_ui.cursor();
-        self.replace_input_range(cursor, cursor, &ch.to_string());
+        self.replace_input_range(cursor, cursor, text);
     }
 
     /// Insert plain composer text through the char path so rules like shell-mode
@@ -401,7 +285,8 @@ impl App {
         if text.is_empty() {
             return;
         }
-        if self.replace_input_selection(text) {
+        if self.input_ui.buffer_mut().replace_selection(text) {
+            self.input_edited();
             return;
         }
         for ch in text.chars() {
@@ -417,123 +302,14 @@ impl App {
         // A collapsed paste hides its content behind a marker; confirm the
         // catch so a large paste never looks like it silently vanished.
         self.notify_status(paste.toast());
-        self.insert_input_text_with_paste_content(&paste.marker(), Some(text.to_string()));
-    }
-
-    fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {
-        let range = self
-            .input_ui
-            .take_selection_range()
-            .unwrap_or_else(|| self.input_ui.cursor()..self.input_ui.cursor());
-        self.replace_input_range_with_paste_content(range.start, range.end, text, paste_content);
+        self.input_ui
+            .buffer_mut()
+            .insert_collapsed_paste(&paste, text);
+        self.input_edited();
     }
 
     pub(super) fn expanded_input(&self) -> String {
         self.input_ui.expanded_text()
-    }
-
-    fn adjust_paste_segments_for_edit(
-        &mut self,
-        start: usize,
-        deleted_len: usize,
-        inserted_len: usize,
-    ) {
-        let end = start + deleted_len;
-        let shift = inserted_len as isize - deleted_len as isize;
-        self.input_ui.paste_segments_mut().retain_mut(|segment| {
-            if start < segment.end() && end > segment.start {
-                return false;
-            }
-            if start <= segment.start {
-                segment.start = segment.start.saturating_add_signed(shift);
-            }
-            true
-        });
-    }
-
-    pub(super) fn backspace_input(&mut self) {
-        if self.replace_input_selection("") {
-            return;
-        }
-        if let Some(segment) = self
-            .input_ui
-            .paste_segments()
-            .iter()
-            .find(|segment| {
-                segment.start < self.input_ui.cursor() && self.input_ui.cursor() <= segment.end()
-            })
-            .cloned()
-        {
-            self.replace_input_range(segment.start, segment.end(), "");
-            return;
-        }
-        if self.input_ui.cursor() == 0 {
-            if self.input_ui.text().is_empty() {
-                if let Some(last) = self.input_ui.attachment_slots().len().checked_sub(1) {
-                    self.remove_composer_attachment(last);
-                }
-            }
-            return;
-        }
-        let edit_start = self.input_ui.cursor() - 1;
-        self.replace_input_range(edit_start, self.input_ui.cursor(), "");
-    }
-
-    pub(super) fn delete_input(&mut self) {
-        if self.replace_input_selection("") {
-            return;
-        }
-        if let Some(segment) = self
-            .input_ui
-            .paste_segments()
-            .iter()
-            .find(|segment| {
-                segment.start <= self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
-            })
-            .cloned()
-        {
-            self.replace_input_range(segment.start, segment.end(), "");
-            return;
-        }
-        if self.input_ui.cursor() >= self.input_char_len() {
-            return;
-        }
-        self.replace_input_range(self.input_ui.cursor(), self.input_ui.cursor() + 1, "");
-    }
-
-    pub(super) fn delete_word_before_cursor(&mut self) {
-        if self.replace_input_selection("") {
-            return;
-        }
-        let start_cursor = previous_word_boundary(self.input_ui.text(), self.input_ui.cursor());
-        self.replace_input_range(start_cursor, self.input_ui.cursor(), "");
-    }
-
-    /// Snap a pointer caret into an atomic collapsed-paste marker.
-    pub(super) fn composer_caret_index(&self, index: usize) -> usize {
-        self.input_ui
-            .paste_segments()
-            .iter()
-            .find(|segment| segment.start < index && index < segment.end())
-            .map_or(index, |segment| segment.start)
-    }
-
-    /// Expand a drag endpoint to the nearest edge of an atomic paste marker.
-    pub(super) fn composer_selection_focus(&self, index: usize) -> usize {
-        let Some(origin) = self.input_ui.selection_pointer_origin() else {
-            return index;
-        };
-        self.input_ui
-            .paste_segments()
-            .iter()
-            .find(|segment| segment.start < index && index < segment.end())
-            .map_or(index, |segment| {
-                if index < origin {
-                    segment.start
-                } else {
-                    segment.end()
-                }
-            })
     }
 
     /// Hit-test the free-text composer for pointer placement and selection.
@@ -585,12 +361,11 @@ impl App {
         let width = composer.width as usize;
         let content_column =
             (column.saturating_sub(composer.x) as usize).saturating_sub(prompt_width());
-        Some(input_char_index_at_position(
-            self.input_ui.text(),
-            content_width(width),
-            text_row,
-            content_column,
-        ))
+        Some(
+            self.input_ui
+                .buffer()
+                .char_index_at(content_width(width), text_row, content_column),
+        )
     }
 
     /// True when the pointer is over the free-text composer rect (including labels).

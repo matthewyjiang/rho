@@ -631,7 +631,7 @@ impl HerdrUserWait {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HistoryDirection {
     Previous,
     Next,

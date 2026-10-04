@@ -14,8 +14,9 @@ use super::{
     activity::LoadingSpinner,
     command_palette::CommandPaletteKeyOutcome,
     commands::{self, CommandId, CommandInvocation},
-    App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
-    InteractiveModelSelection, InteractiveRuntime, PasteSegment, QueuedPrompt, StreamControl,
+    composer_buffer::ComposerEditKey,
+    App, ApprovalKeyOutcome, ComposerMode, Entry, InputSubmissionMode, InteractiveModelSelection,
+    InteractiveRuntime, PasteSegment, QueuedPrompt, StreamControl,
 };
 
 /// What Esc does in the live TUI.
@@ -124,6 +125,14 @@ impl App {
             return Ok(());
         }
 
+        if let Some(edit) = ComposerEditKey::from_key(key) {
+            let width = terminal.size()?.width as usize;
+            self.apply_input_edit_key(edit, width);
+            self.ctrl_c_streak = 0;
+            self.clamp_command_selection();
+            self.clamp_file_selection();
+            return Ok(());
+        }
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                 if self.ctrl_c_streak == 0 {
@@ -136,69 +145,8 @@ impl App {
                     self.should_quit = true;
                 }
             }
-            (KeyModifiers::ALT, KeyCode::Backspace) => {
-                self.delete_word_before_cursor();
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Backspace) => {
-                self.backspace_input();
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Delete) => {
-                self.delete_input();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::ALT, KeyCode::Left) => {
-                self.move_input_cursor_to_previous_word();
-                self.ctrl_c_streak = 0;
-            }
-            (KeyModifiers::ALT, KeyCode::Right) => {
-                self.move_input_cursor_to_next_word();
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Left) => {
-                self.move_input_cursor_left();
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Right) => {
-                self.move_input_cursor_right();
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Up) => {
-                let width = terminal.size()?.width as usize;
-                self.recall_input_history_or_move_cursor(HistoryDirection::Previous, width);
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Down) => {
-                let width = terminal.size()?.width as usize;
-                self.recall_input_history_or_move_cursor(HistoryDirection::Next, width);
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::Home) => {
-                self.reset_input_history_navigation();
-                self.input_ui.clear_selection();
-                self.input_ui.set_cursor(0);
-                self.ctrl_c_streak = 0;
-            }
-            (_, KeyCode::End) => {
-                self.reset_input_history_navigation();
-                self.input_ui.clear_selection();
-                self.input_ui.set_cursor(self.input_char_len());
-                self.ctrl_c_streak = 0;
-            }
-            (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
-                self.insert_input_char('\n');
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-            }
             (_, KeyCode::Enter) => {
                 self.submit_during_turn(terminal).await?;
-                self.ctrl_c_streak = 0;
-            }
-            (modifiers, KeyCode::Char(ch))
-                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                self.insert_input_char(ch);
                 self.ctrl_c_streak = 0;
             }
             _ => {
@@ -587,6 +535,7 @@ impl App {
                     Event::FocusLost => {
                         self.input_ui.cancel_pointer_click_sequence();
                         self.input_ui.finalize_selection();
+                        self.settle_side_composer_pointer();
                         self.clear_rail_pointer_state();
                     }
                     _ => {}

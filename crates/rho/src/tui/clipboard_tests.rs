@@ -1,3 +1,4 @@
+use crate::tui::composer_buffer::ComposerEditKey;
 use std::{
     io,
     sync::{
@@ -311,7 +312,7 @@ async fn backspace_removes_ready_image_after_pending_document() {
         mime_type: "image/png".into(),
     });
 
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace, 80);
 
     assert_eq!(
         app.input_ui.attachments(),
@@ -324,7 +325,7 @@ async fn backspace_removes_ready_image_after_pending_document() {
     assert_eq!(app.media_attach_tasks.len(), 1);
     assert_eq!(app.media_attach_tasks[0].id, id);
 
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace, 80);
 
     assert!(app.input_ui.attachments().is_empty());
     assert!(app.media_attach_tasks.is_empty());
