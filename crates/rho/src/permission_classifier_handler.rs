@@ -225,21 +225,17 @@ impl ClassifierApprovalHandler {
     }
 
     /// Escalates `request` if the budget is still spent once it is this
-    /// request's turn to escalate. Gives the request back when a human answer
-    /// reset the budget while it waited.
-    async fn escalate_while_spent(
-        &self,
-        request: ApprovalRequest,
-    ) -> Result<ApprovalDecision, ApprovalRequest> {
+    /// request's turn to escalate.
+    async fn escalate_while_spent(&self, request: ApprovalRequest) -> Escalation {
         let _escalation = self.escalation.lock().await;
         if !self.budget().is_spent() {
-            return Err(request);
+            return Escalation::BudgetReset(Box::new(request));
         }
         let decision = self.escalate_or_deny_headless(request).await;
         if self.inner.is_some() {
             *self.budget() = DenyBudget::default();
         }
-        Ok(decision)
+        Escalation::Decided(decision)
     }
 
     /// The decision for a verdict the budget recorded.
@@ -280,6 +276,15 @@ impl ClassifierApprovalHandler {
     }
 }
 
+/// What [`ClassifierApprovalHandler::escalate_while_spent`] did.
+enum Escalation {
+    Decided(ApprovalDecision),
+    /// A human answer reset the budget while the request waited its turn, so
+    /// it goes back to classification. Boxed because a request is far larger
+    /// than a decision, and this path is rare.
+    BudgetReset(Box<ApprovalRequest>),
+}
+
 impl ApprovalHandler for ClassifierApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {
@@ -288,8 +293,8 @@ impl ApprovalHandler for ClassifierApprovalHandler {
             // classifier.
             if self.budget().is_spent() {
                 match self.escalate_while_spent(request).await {
-                    Ok(decision) => return decision,
-                    Err(returned) => request = returned,
+                    Escalation::Decided(decision) => return decision,
+                    Escalation::BudgetReset(returned) => request = *returned,
                 }
             }
 
@@ -304,8 +309,8 @@ impl ApprovalHandler for ClassifierApprovalHandler {
                     return self.decide(verdict, &request);
                 }
                 match self.escalate_while_spent(request).await {
-                    Ok(decision) => return decision,
-                    Err(returned) => request = returned,
+                    Escalation::Decided(decision) => return decision,
+                    Escalation::BudgetReset(returned) => request = *returned,
                 }
             }
         })

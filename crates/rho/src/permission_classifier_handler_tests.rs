@@ -512,13 +512,14 @@ async fn late_allow_after_concurrent_denials_spend_the_budget_escalates() {
     };
     let handler = Arc::new(ClassifierApprovalHandler::for_tests(classify, None));
     let cancellation = CancellationToken::new();
-    let mut tasks: VecDeque<_> = (0..=CONSECUTIVE_DENY_ESCALATION)
-        .map(|_| {
-            let handler = Arc::clone(&handler);
-            let request = request().with_context(context_with(Vec::new(), cancellation.clone()));
-            tokio::spawn(async move { handler.request(request).await })
-        })
-        .collect();
+    // Tasks take receivers in whatever order they run, so they are joined by
+    // completion: once a verdict is sent, only the task holding it can finish.
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..=CONSECUTIVE_DENY_ESCALATION {
+        let handler = Arc::clone(&handler);
+        let request = request().with_context(context_with(Vec::new(), cancellation.clone()));
+        tasks.spawn(async move { handler.request(request).await });
+    }
 
     tokio::time::timeout(Duration::from_secs(5), async {
         while !pending.lock().unwrap().is_empty() {
@@ -533,12 +534,12 @@ async fn late_allow_after_concurrent_denials_spend_the_budget_escalates() {
             reason: format!("deny {index}"),
         })
         .unwrap();
-        let decision = tasks.pop_front().unwrap().await.unwrap();
+        let decision = tasks.join_next().await.unwrap().unwrap();
         assert!(matches!(decision, ApprovalDecision::Deny { .. }));
     }
     assert!(!cancellation.is_cancelled());
     late_allow.send(ClassifierVerdict::Allow).unwrap();
-    let decision = tasks.pop_front().unwrap().await.unwrap();
+    let decision = tasks.join_next().await.unwrap().unwrap();
 
     assert!(matches!(decision, ApprovalDecision::Deny { .. }));
     assert!(cancellation.is_cancelled());
