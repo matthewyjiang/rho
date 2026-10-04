@@ -207,7 +207,7 @@ impl App {
 
     /// Apply a shared edit key to the main composer, with its history,
     /// attachment, shell-mode, and palette side effects.
-    pub(super) fn apply_input_edit_key(&mut self, edit: ComposerEditKey, terminal_width: usize) {
+    pub(super) fn apply_input_edit_key(&mut self, edit: ComposerEditKey) {
         match edit {
             ComposerEditKey::Backspace if self.input_ui.text().is_empty() => {
                 if let Some(last) = self.input_ui.attachment_slots().len().checked_sub(1) {
@@ -215,35 +215,19 @@ impl App {
                 }
                 return;
             }
-            ComposerEditKey::Char(ch) => {
-                self.insert_input_char(ch);
-                return;
-            }
-            ComposerEditKey::Newline => {
-                self.insert_input_char('\n');
-                self.input_ui.clear_paste_burst();
-                return;
-            }
+            ComposerEditKey::Char('!') if self.try_enter_shell_mode_from_bang() => return,
             ComposerEditKey::Home | ComposerEditKey::End => self.reset_input_history_navigation(),
-            ComposerEditKey::WordBackspace
-            | ComposerEditKey::Backspace
-            | ComposerEditKey::Delete
-            | ComposerEditKey::WordLeft
-            | ComposerEditKey::WordRight
-            | ComposerEditKey::Left
-            | ComposerEditKey::Right
-            | ComposerEditKey::Up
-            | ComposerEditKey::Down => {}
+            ComposerEditKey::Newline => self.input_ui.clear_paste_burst(),
+            _ => {}
         }
-        let width = content_width(terminal_width);
-        match self.input_ui.buffer_mut().apply_edit(edit, width) {
+        match self.input_ui.buffer_mut().apply_edit(edit) {
             EditOutcome::Edited => self.input_edited(),
             EditOutcome::VerticalEdge(direction) => {
                 if !self.recall_input_history(direction) {
-                    self.input_ui.buffer_mut().move_vertically(direction, width);
+                    self.input_ui.buffer_mut().move_vertically(direction);
                 }
             }
-            EditOutcome::Moved | EditOutcome::Unchanged => {}
+            EditOutcome::TextUnchanged => {}
         }
     }
 
@@ -265,17 +249,7 @@ impl App {
     }
 
     pub(super) fn insert_input_char(&mut self, ch: char) {
-        let mut encoded = [0; 4];
-        let text = ch.encode_utf8(&mut encoded);
-        if self.input_ui.buffer_mut().replace_selection(text) {
-            self.input_edited();
-            return;
-        }
-        if ch == '!' && self.try_enter_shell_mode_from_bang() {
-            return;
-        }
-        let cursor = self.input_ui.cursor();
-        self.replace_input_range(cursor, cursor, text);
+        self.apply_input_edit_key(ComposerEditKey::Char(ch));
     }
 
     /// Insert plain composer text through the char path so rules like shell-mode

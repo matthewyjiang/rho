@@ -197,9 +197,10 @@ impl App {
     ) -> Option<super::overlay_panel::OverlayPanelFrame> {
         let side = self.side_chat.as_mut()?;
         let prepared = side_overlay_frame(&side.overlay, area)?;
-        let composer = &mut side.overlay.composer;
-        composer.buffer.set_view_start(prepared.composer.view_start);
-        composer.set_painted_width(prepared.composer.text_width);
+        side.overlay
+            .composer
+            .buffer
+            .retain_paint(prepared.composer.view_start, prepared.composer.text_width);
         Some(prepared.frame)
     }
 
@@ -223,20 +224,18 @@ impl App {
         let keybindings = &self.info.runtime.keybindings;
         // Idle, the main composer's queue chord inserts a newline; an aside
         // has nothing to queue behind, so it always does.
-        let newline_chord =
-            keybindings.insert_newline.matches(key) || keybindings.queue_prompt_matches(key);
-        if newline_chord {
-            side.overlay.composer.apply_edit(ComposerEditKey::Newline);
-            side.overlay.reveal_composer();
-            self.input_ui.clear_paste_burst();
-            return true;
-        }
-        if let Some(edit) = ComposerEditKey::from_key(key) {
+        let edit =
+            if keybindings.insert_newline.matches(key) || keybindings.queue_prompt_matches(key) {
+                Some(ComposerEditKey::Newline)
+            } else {
+                ComposerEditKey::from_key(key)
+            };
+        if let Some(edit) = edit {
             if edit == ComposerEditKey::Newline {
                 self.input_ui.clear_paste_burst();
             }
             match side.overlay.composer.apply_edit(edit) {
-                SideEditFollowUp::None => side.overlay.reveal_composer(),
+                SideEditFollowUp::None => {}
                 SideEditFollowUp::ScrollTranscript(HistoryDirection::Previous) => {
                     self.scroll_side_overlay(terminal, -1);
                 }
@@ -451,7 +450,6 @@ impl App {
     pub(super) fn replace_side_composer_text(&mut self, text: String) {
         if let Some(side) = self.side_chat.as_mut() {
             side.overlay.composer.replace_text(text);
-            side.overlay.reveal_composer();
         }
     }
 
@@ -459,7 +457,6 @@ impl App {
     pub(super) fn insert_side_paste_newline(&mut self) {
         if let Some(side) = self.side_chat.as_mut() {
             side.overlay.composer.apply_edit(ComposerEditKey::Newline);
-            side.overlay.reveal_composer();
         }
     }
 
@@ -474,10 +471,10 @@ impl App {
         if !self.side_overlay_open() {
             return false;
         }
-        let collapsed = self.side_chat.as_mut().and_then(|side| {
-            side.overlay.reveal_composer();
-            side.overlay.composer.insert_paste(text)
-        });
+        let collapsed = self
+            .side_chat
+            .as_mut()
+            .and_then(|side| side.overlay.composer.insert_paste(text));
         // A collapsed paste hides its content behind a marker; confirm it
         // like the main composer does.
         if let Some(paste) = collapsed {

@@ -163,10 +163,8 @@ impl ComposerEditKey {
 pub(super) enum EditOutcome {
     /// Text changed (possibly by an empty replacement).
     Edited,
-    /// Only the caret or selection moved.
-    Moved,
-    /// Nothing to do, such as Backspace at the start of the text.
-    Unchanged,
+    /// Text is unchanged; the caret or selection may have moved.
+    TextUnchanged,
     /// Up on the first row or Down on the last row. The caret has not moved:
     /// the owner may recall history, else call [`ComposerBuffer::move_vertically`].
     VerticalEdge(HistoryDirection),
@@ -181,6 +179,9 @@ pub(super) struct ComposerBuffer {
     selection: ComposerSelectionState,
     /// First painted visual row; retained by the paint path only.
     view_start: usize,
+    /// Wrapped text width at the last paint; vertical moves follow it.
+    /// `None` until the first paint, when rows break only at newlines.
+    wrap_width: Option<usize>,
     paste_segments: Vec<PasteSegment>,
 }
 
@@ -209,8 +210,19 @@ impl ComposerBuffer {
         self.view_start
     }
 
-    pub(super) fn set_view_start(&mut self, start: usize) {
-        self.view_start = start;
+    /// Retain the painted row window and wrap width. Only the paint path
+    /// calls this, so speculative layouts never move the window.
+    pub(super) fn retain_paint(&mut self, view_start: usize, wrap_width: usize) {
+        self.view_start = view_start;
+        self.wrap_width = Some(wrap_width.max(1));
+    }
+
+    pub(super) fn reset_view_start(&mut self) {
+        self.view_start = 0;
+    }
+
+    fn wrap_width(&self) -> usize {
+        self.wrap_width.unwrap_or(usize::MAX)
     }
 
     pub(super) fn paste_segments(&self) -> &[PasteSegment] {
@@ -416,58 +428,62 @@ impl ComposerBuffer {
 
     // Edits.
 
-    /// Apply a shared edit key. `width` is the wrapped text width, used only
-    /// by vertical moves.
-    pub(super) fn apply_edit(&mut self, edit: ComposerEditKey, width: usize) -> EditOutcome {
-        match edit {
+    /// Apply a shared edit key. Vertical moves follow the painted wrap width.
+    pub(super) fn apply_edit(&mut self, edit: ComposerEditKey) -> EditOutcome {
+        let edited = match edit {
             ComposerEditKey::WordBackspace => {
                 self.delete_word_before_cursor();
-                EditOutcome::Edited
+                true
             }
-            ComposerEditKey::Backspace => edited_if(self.backspace()),
-            ComposerEditKey::Delete => edited_if(self.delete()),
+            ComposerEditKey::Backspace => self.backspace(),
+            ComposerEditKey::Delete => self.delete(),
             ComposerEditKey::WordLeft => {
                 self.move_to_previous_word();
-                EditOutcome::Moved
+                false
             }
             ComposerEditKey::WordRight => {
                 self.move_to_next_word();
-                EditOutcome::Moved
+                false
             }
             ComposerEditKey::Left => {
                 self.move_left();
-                EditOutcome::Moved
+                false
             }
             ComposerEditKey::Right => {
                 self.move_right();
-                EditOutcome::Moved
+                false
             }
-            ComposerEditKey::Up => self.vertical_edit(HistoryDirection::Previous, width),
-            ComposerEditKey::Down => self.vertical_edit(HistoryDirection::Next, width),
+            ComposerEditKey::Up => return self.vertical_edit(HistoryDirection::Previous),
+            ComposerEditKey::Down => return self.vertical_edit(HistoryDirection::Next),
             ComposerEditKey::Home => {
                 self.clear_selection();
                 self.cursor = 0;
-                EditOutcome::Moved
+                false
             }
             ComposerEditKey::End => {
                 self.clear_selection();
                 self.cursor = self.char_len();
-                EditOutcome::Moved
+                false
             }
             ComposerEditKey::Newline => {
                 self.insert_text("\n");
-                EditOutcome::Edited
+                true
             }
             ComposerEditKey::Char(ch) => {
                 self.insert_text(ch.encode_utf8(&mut [0; 4]));
-                EditOutcome::Edited
+                true
             }
+        };
+        if edited {
+            EditOutcome::Edited
+        } else {
+            EditOutcome::TextUnchanged
         }
     }
 
-    fn vertical_edit(&mut self, direction: HistoryDirection, width: usize) -> EditOutcome {
+    fn vertical_edit(&mut self, direction: HistoryDirection) -> EditOutcome {
         self.clear_selection();
-        let visual_lines = editable_input_visual_lines(&self.text, width);
+        let visual_lines = editable_input_visual_lines(&self.text, self.wrap_width());
         let caret = visual_caret_position(&visual_lines, &self.text, self.cursor);
         let at_edge = match direction {
             HistoryDirection::Previous => caret.y == 0,
@@ -476,14 +492,14 @@ impl ComposerBuffer {
         if at_edge {
             return EditOutcome::VerticalEdge(direction);
         }
-        self.move_vertically(direction, width);
-        EditOutcome::Moved
+        self.move_vertically(direction);
+        EditOutcome::TextUnchanged
     }
 
     /// Move one wrapped row, keeping the display column. Past the last row
     /// the caret lands at the end of the text.
-    pub(super) fn move_vertically(&mut self, direction: HistoryDirection, width: usize) {
-        let visual_lines = editable_input_visual_lines(&self.text, width);
+    pub(super) fn move_vertically(&mut self, direction: HistoryDirection) {
+        let visual_lines = editable_input_visual_lines(&self.text, self.wrap_width());
         let caret = visual_caret_position(&visual_lines, &self.text, self.cursor);
         let target_row = match direction {
             HistoryDirection::Previous => caret.y.saturating_sub(1) as usize,
@@ -703,14 +719,6 @@ impl ComposerBuffer {
             }
             true
         });
-    }
-}
-
-fn edited_if(edited: bool) -> EditOutcome {
-    if edited {
-        EditOutcome::Edited
-    } else {
-        EditOutcome::Unchanged
     }
 }
 

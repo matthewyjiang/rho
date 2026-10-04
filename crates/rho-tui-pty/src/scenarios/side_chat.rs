@@ -255,8 +255,8 @@ pub(super) const SIDE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
 
 // Covers: the side composer edits like the main composer: multi-line input,
 // row moves, word keys, Delete, click-to-place, double-click word select,
-// in-memory prompt recall, and collapsed pastes. Editing a draft scrolled out
-// of view brings it back, and a resize keeps wrapped wide glyphs at the caret.
+// in-memory prompt recall, and collapsed pastes. The draft stays pinned below
+// a scrolled transcript, and a resize keeps wrapped wide glyphs at the caret.
 // Owner: interactive TUI
 const SIDE_COMPOSER_STEPS: &[Step] = &[
     Step::Phase("startup"),

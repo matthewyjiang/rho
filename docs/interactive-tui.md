@@ -72,7 +72,7 @@ Use a multiline prompt when you need to paste or write a longer request. Type `@
 
 ### Keyboard shortcuts
 
-Most editing keys work the way they do in a normal terminal input. Run `/help` for a searchable overlay of the same shortcuts. Single-line fields in login, configuration, agent-editing, and side-chat overlays scroll horizontally to keep the insertion point visible, including when you move with Home, End, or the arrow keys. Moving within the visible text keeps the window steady so you can inspect both sides of the insertion point. Secret fields stay masked while scrolling.
+Most editing keys work the way they do in a normal terminal input. Run `/help` for a searchable overlay of the same shortcuts. Single-line fields in login, configuration, and agent-editing overlays scroll horizontally to keep the insertion point visible, including when you move with Home, End, or the arrow keys. Moving within the visible text keeps the window steady so you can inspect both sides of the insertion point. Secret fields stay masked while scrolling.
 
 | Key | Action |
 | --- | --- |
@@ -175,7 +175,7 @@ Short confirmations and some credential prompts use an inline list instead of a 
 
 `/limits` uses the same overlay chrome as those pickers, but as a single scrolling pane of usage bars rather than a two-column list. It is not a picker: `up` and `down` scroll, and `enter` or `esc` close it.
 
-`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. `Enter` sends to the aside. `Esc` closes the overlay without cancelling its reply, so you can keep using the main chat while the aside runs in the background. Use `/side` or `/btw` again to return to its transcript and any unsent draft. The aside's prompt edits like the main composer: `Shift+Enter` (or the newline binding) adds lines, word and arrow keys move the caret, Up and Down recall the aside's own earlier prompts, large pastes collapse into a marker, the external editor binding opens the draft, and clicking or dragging places the caret and selects text. `Ctrl+C` clears the aside's prompt first; with an empty prompt, it cancels only the running aside and does nothing when the aside is idle. Up and Down scroll the aside's transcript when the prompt is empty and there is no earlier prompt to recall.
+`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. `Enter` sends to the aside. `Esc` closes the overlay without cancelling its reply, so you can keep using the main chat while the aside runs in the background. Use `/side` or `/btw` again to return to its transcript and any unsent draft. The aside's prompt edits like the main composer: `Shift+Enter` (or the newline binding) adds lines, word and arrow keys move the caret, Up and Down recall the aside's own earlier prompts, large pastes collapse into a marker, the external editor binding opens the draft, and clicking or dragging places the caret and selects text. The prompt stays pinned below the aside's transcript while the transcript scrolls. `Ctrl+C` clears the aside's prompt first; with an empty prompt, it cancels only the running aside and does nothing when the aside is idle. Up and Down scroll the aside's transcript when the prompt is empty and there is no earlier prompt to recall.
 
 ## Login and models
 

@@ -44,6 +44,8 @@ pub(super) struct OverlayPanelFrame {
     /// Targets in panel-body coordinates, before scrolling.
     pub(super) copy_hits: Vec<CopyHit>,
     body: Rect,
+    /// Rows pinned under the scrolled body, outside its scroll and scrollbar.
+    pinned: Rect,
     scroll: usize,
     /// Every body row, unscrolled, so a selection can copy the rows it spans.
     body_lines: Vec<Line<'static>>,
@@ -58,6 +60,10 @@ impl OverlayPanelFrame {
 
     pub(super) fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    pub(super) fn pinned(&self) -> Rect {
+        self.pinned
     }
 
     /// The painted body, for drag-to-select. Its lines are every body row in
@@ -119,18 +125,21 @@ pub(super) fn is_copy_key(key: crossterm::event::KeyEvent) -> bool {
     )
 }
 
-/// Draws the panel chrome around `body` scrolled to `scroll`. The frame keeps
+/// Draws the panel chrome around `body` scrolled to `scroll`, with `pinned`
+/// rows (such as a text field) fixed below it at full width. The frame keeps
 /// `body` so pointer selection can copy rows outside the viewport.
 pub(super) fn render_overlay_panel(
     title: &str,
     footer: &str,
     body: Vec<Line<'static>>,
+    pinned: Vec<Line<'static>>,
     scroll: usize,
     area: Rect,
 ) -> OverlayPanelFrame {
-    let layout = overlay_panel_layout(area, body.len());
+    let layout = overlay_panel_layout(area, body.len() + pinned.len());
     let inner_width = layout.inner_width;
-    let body_rows = layout.body_rows;
+    let pinned_rows = pinned.len().min(layout.body_rows);
+    let body_rows = layout.body_rows - pinned_rows;
     let scroll = clamp_overlay_scroll(scroll, body.len(), body_rows);
     let scrollbar = OverlayScrollbarState::detail(body.len(), body_rows, scroll);
     let content_width = inner_width.saturating_sub(usize::from(scrollbar.is_some()));
@@ -164,6 +173,9 @@ pub(super) fn render_overlay_panel(
     for row in body_view {
         lines.push(content_row(inner_width, row));
     }
+    for row in pinned.into_iter().take(pinned_rows) {
+        lines.push(content_row(inner_width, fit_line(row, inner_width)));
+    }
 
     lines.push(horizontal_rule(layout.outer.width as usize));
     let footer_text = format!(" {footer}");
@@ -188,6 +200,12 @@ pub(super) fn render_overlay_panel(
         lines,
         copy_hits: Vec::new(),
         body: Rect::new(track.x, track.y, content_width as u16, track.height),
+        pinned: Rect::new(
+            track.x,
+            track.y.saturating_add(track.height),
+            track.width,
+            as_u16(pinned_rows),
+        ),
         scroll,
         body_lines: body,
         scrollbar: scrollbar.map(|scrollbar| scrollbar.hitbox(track)),
@@ -264,6 +282,7 @@ pub(super) fn panel_frame(
         panel.title(),
         panel.footer(),
         lines,
+        Vec::new(),
         panel.state().scroll.offset(),
         area,
     )

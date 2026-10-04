@@ -213,7 +213,7 @@ fn open_list_narrows_navigates_accepts_and_dismisses() {
     app.insert_input_char('b');
     assert_eq!(open_paths(&mut app), Some(vec!["src/beta.rs".into()]));
 
-    app.apply_input_edit_key(ComposerEditKey::Backspace, 80);
+    app.apply_input_edit_key(ComposerEditKey::Backspace);
     assert!(app.handle_file_palette_key(key(KeyCode::Down)).unwrap());
     assert!(app.handle_file_palette_key(key(KeyCode::Enter)).unwrap());
     assert_eq!(app.input_ui.text(), "cat src/beta.rs ");

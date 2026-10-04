@@ -26,7 +26,7 @@ fn word_keys_edit_multibyte_words() {
         buffer.replace_all("héllo wörld".into(), Vec::new());
         for key in keys {
             let edit = ComposerEditKey::from_key(key).expect("edit key");
-            buffer.apply_edit(edit, /*width*/ 80);
+            buffer.apply_edit(edit);
         }
         assert_eq!((buffer.text(), buffer.cursor()), (value, cursor));
     }

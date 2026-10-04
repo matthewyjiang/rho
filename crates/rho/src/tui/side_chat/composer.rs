@@ -28,22 +28,15 @@ pub(super) struct SideComposer {
     history_cursor: Option<usize>,
     history_draft: Option<(String, Vec<PasteSegment>)>,
     clicks: ClickSequence,
-    /// Wrapped text width at the last paint; vertical moves follow it.
-    painted_width: usize,
 }
 
 impl SideComposer {
-    pub(super) fn set_painted_width(&mut self, width: usize) {
-        self.painted_width = width;
-    }
-
     /// Apply a shared edit key, recalling side history at the top/bottom row.
     pub(super) fn apply_edit(&mut self, edit: ComposerEditKey) -> SideEditFollowUp {
         if matches!(edit, ComposerEditKey::Home | ComposerEditKey::End) {
             self.reset_history_navigation();
         }
-        let width = self.painted_width.max(1);
-        match self.buffer.apply_edit(edit, width) {
+        match self.buffer.apply_edit(edit) {
             EditOutcome::Edited => self.reset_history_navigation(),
             EditOutcome::VerticalEdge(direction) => {
                 if self.recall_history(direction) {
@@ -52,9 +45,9 @@ impl SideComposer {
                 if self.buffer.is_empty() {
                     return SideEditFollowUp::ScrollTranscript(direction);
                 }
-                self.buffer.move_vertically(direction, width);
+                self.buffer.move_vertically(direction);
             }
-            EditOutcome::Moved | EditOutcome::Unchanged => {}
+            EditOutcome::TextUnchanged => {}
         }
         SideEditFollowUp::None
     }

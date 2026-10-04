@@ -9,7 +9,7 @@ use super::super::{
         overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel, OverlayPanelFrame,
     },
     panel_pointer::PanelPointer,
-    render::{display_width, render_entry_with_options, InputFrame, TrailingBlank},
+    render::{display_width, render_entry_with_options, TrailingBlank},
     screen_layout::visible_composer_start,
     theme::Theme,
     Entry,
@@ -22,7 +22,6 @@ const FOOTER_BUSY: &str = "Esc close   Ctrl+C cancel";
 const INPUT_PREFIX: &str = "> ";
 
 pub(super) struct SideScrollMetrics {
-    pub(super) body_rows: usize,
     pub(super) max_scroll: usize,
 }
 
@@ -33,19 +32,18 @@ struct SidePanelBody {
 }
 
 struct PreparedSidePanel {
+    /// Transcript rows only; the composer is pinned below them.
     body: SidePanelBody,
+    /// The divider, then the visible composer rows.
+    pinned: Vec<Line<'static>>,
     metrics: SideScrollMetrics,
     composer: SideComposerLayout,
 }
 
-/// Where the composer sits in the panel body, for caret paint, pointer hits,
-/// and the row window the paint path retains.
+/// The composer's painted row window, for caret paint, pointer hits, and the
+/// window the paint path retains.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SideComposerLayout {
-    /// Body line of the first painted composer row (after the divider).
-    first_line: usize,
-    /// Painted composer rows.
-    rows: usize,
     /// First painted wrapped row of the composer text.
     pub(super) view_start: usize,
     /// Wrapped text width, after the prompt prefix.
@@ -61,9 +59,20 @@ pub(super) struct SideOverlayFrame {
 }
 
 impl SideOverlayFrame {
+    /// Screen cells of the painted composer rows: the pinned rows below the
+    /// divider.
+    fn composer_rect(&self) -> Rect {
+        let pinned = self.frame.pinned();
+        Rect {
+            y: pinned.y.saturating_add(1),
+            height: pinned.height.saturating_sub(1),
+            ..pinned
+        }
+    }
+
     /// Raw composer char index under screen cell `column`/`row`. `clamp`
-    /// pins cells outside the painted composer rows to their nearest edge,
-    /// for drags that leave the composer; otherwise those cells miss.
+    /// pins cells outside the composer rows to their nearest edge, for drags
+    /// that leave the composer; otherwise those cells miss.
     pub(super) fn composer_index_at(
         &self,
         composer: &SideComposer,
@@ -71,26 +80,15 @@ impl SideOverlayFrame {
         row: u16,
         clamp: bool,
     ) -> Option<usize> {
-        let layout = self.composer;
-        let body = self.frame.body();
-        let scroll = self.frame.scroll();
-        // Screen rows of the painted composer, clipped to the visible body.
-        let first = layout.first_line.max(scroll);
-        let last = (layout.first_line + layout.rows).min(scroll + body.height as usize);
-        if first >= last || body.width == 0 {
+        let rect = self.composer_rect();
+        if rect.is_empty() || (!clamp && !rect.contains(Position::new(column, row))) {
             return None;
         }
-        let line = scroll + usize::from(row.saturating_sub(body.y));
-        let inside_rows = row >= body.y && (first..last).contains(&line);
-        let inside_columns = column >= body.x && column < body.x.saturating_add(body.width);
-        let line = match (inside_rows && inside_columns, clamp) {
-            (true, _) => line,
-            (false, false) => return None,
-            (false, true) => line.clamp(first, last - 1),
-        };
-        let column = column.clamp(body.x, body.x.saturating_add(body.width - 1));
-        let text_column = usize::from(column - body.x).saturating_sub(display_width(INPUT_PREFIX));
-        let text_row = layout.view_start + (line - layout.first_line);
+        let row = row.clamp(rect.top(), rect.bottom() - 1);
+        let column = column.clamp(rect.left(), rect.right() - 1);
+        let layout = self.composer;
+        let text_row = layout.view_start + usize::from(row - rect.y);
+        let text_column = usize::from(column - rect.x).saturating_sub(display_width(INPUT_PREFIX));
         Some(
             composer
                 .buffer
@@ -184,12 +182,6 @@ impl SideOverlay {
         self.scroll = usize::MAX;
     }
 
-    /// The composer is the end of the scrolled body; editing it scrolls back
-    /// to the end so the draft and caret stay visible.
-    pub(super) fn reveal_composer(&mut self) {
-        self.follow_end();
-    }
-
     fn body_lines(&self, width: usize) -> SidePanelBody {
         let width = width.max(1);
         let mut body = SidePanelBody::default();
@@ -236,13 +228,13 @@ impl SideOverlay {
 
     pub(super) fn scroll_by(&mut self, delta: isize, metrics: &SideScrollMetrics) {
         let current = resolve_side_scroll(self.scroll, metrics);
-        let target = if delta < 0 {
+        self.scroll = if delta < 0 {
             current.saturating_sub(delta.unsigned_abs())
         } else {
-            current.saturating_add(delta as usize)
+            current
+                .saturating_add(delta as usize)
+                .min(metrics.max_scroll)
         };
-        // Reaching the end follows it again, so a growing draft stays in view.
-        self.scroll_to(target, metrics);
     }
 }
 
@@ -250,41 +242,20 @@ pub(super) fn side_scroll_metrics(overlay: &SideOverlay, area: Rect) -> Option<S
     Some(prepare_side_panel(overlay, area)?.metrics)
 }
 
-/// Transcript rows plus the wrapped composer at `inner_width`.
-fn side_panel_parts(overlay: &SideOverlay, inner_width: usize) -> (SidePanelBody, InputFrame) {
-    let text_width = inner_width
-        .saturating_sub(display_width(INPUT_PREFIX))
-        .max(1);
-    (
-        overlay.body_lines(inner_width),
-        overlay.composer.buffer.frame(text_width),
-    )
-}
-
 fn prepare_side_panel(overlay: &SideOverlay, area: Rect) -> Option<PreparedSidePanel> {
     if area.width < 8 || area.height < 8 {
         return None;
     }
+    let inner_width = overlay_panel_inner_width(area);
+    let prefix_width = display_width(INPUT_PREFIX);
+    let text_width = inner_width.saturating_sub(prefix_width).max(1);
+    let input = overlay.composer.buffer.frame(text_width);
     // Like the main composer, a tall draft grows up to the panel but always
     // leaves the divider and one transcript row above it.
     let max_composer_rows = overlay_panel_layout(area, usize::MAX)
         .body_rows
         .saturating_sub(2)
         .max(1);
-    let mut inner_width = overlay_panel_inner_width(area);
-    let (mut body, mut input) = side_panel_parts(overlay, inner_width);
-    let body_len = body.lines.len() + 1 + input.lines.len().min(max_composer_rows);
-    if body_len > overlay_panel_layout(area, body_len).body_rows {
-        // Resolve the scrollbar width before laying out the composer, so its
-        // wrap matches the painted content width.
-        inner_width = inner_width.saturating_sub(1).max(1);
-        (body, input) = side_panel_parts(overlay, inner_width);
-    }
-    body.lines.push(Line::from(Span::styled(
-        "─".repeat(inner_width),
-        Theme::dim(),
-    )));
-    let prefix_width = display_width(INPUT_PREFIX);
     let rows = input.lines.len().min(max_composer_rows);
     let caret_row = (input.cursor.y as usize).min(input.lines.len().saturating_sub(1));
     let view_start = visible_composer_start(
@@ -293,7 +264,11 @@ fn prepare_side_panel(overlay: &SideOverlay, area: Rect) -> Option<PreparedSideP
         rows,
         overlay.composer.buffer.view_start(),
     );
-    let first_line = body.lines.len();
+    let mut pinned = Vec::with_capacity(rows + 1);
+    pinned.push(Line::from(Span::styled(
+        "─".repeat(inner_width),
+        Theme::dim(),
+    )));
     for (index, mut line) in input
         .lines
         .into_iter()
@@ -307,21 +282,29 @@ fn prepare_side_panel(overlay: &SideOverlay, area: Rect) -> Option<PreparedSideP
             " ".repeat(prefix_width)
         };
         line.spans.insert(0, Span::raw(prefix));
-        body.lines.push(line.style(Theme::input_prompt()));
+        pinned.push(line.style(Theme::input_prompt()));
     }
-    let body_len = body.lines.len();
-    let body_rows = overlay_panel_layout(area, body_len).body_rows;
+
+    // Only the transcript scrolls, so only it gives up a scrollbar column.
+    let transcript_rows = |len: usize| {
+        overlay_panel_layout(area, len + pinned.len())
+            .body_rows
+            .saturating_sub(pinned.len())
+    };
+    let mut body = overlay.body_lines(inner_width);
+    if body.lines.len() > transcript_rows(body.lines.len()) {
+        body = overlay.body_lines(inner_width.saturating_sub(1));
+    }
+    let body_rows = transcript_rows(body.lines.len());
     Some(PreparedSidePanel {
-        body,
         metrics: SideScrollMetrics {
-            body_rows,
-            max_scroll: body_len.saturating_sub(body_rows),
+            max_scroll: body.lines.len().saturating_sub(body_rows),
         },
+        body,
+        pinned,
         composer: SideComposerLayout {
-            first_line,
-            rows,
             view_start,
-            text_width: inner_width.saturating_sub(prefix_width).max(1),
+            text_width,
             caret: input.cursor,
         },
     })
@@ -336,6 +319,7 @@ fn resolve_side_scroll(scroll: usize, metrics: &SideScrollMetrics) -> usize {
 pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<SideOverlayFrame> {
     let PreparedSidePanel {
         body,
+        pinned,
         metrics,
         composer,
     } = prepare_side_panel(overlay, area)?;
@@ -346,25 +330,29 @@ pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<Si
     } else {
         FOOTER_IDLE
     };
-    let mut frame = render_overlay_panel(TITLE, footer, body.lines, scroll, area);
+    let mut frame = render_overlay_panel(TITLE, footer, body.lines, pinned, scroll, area);
     frame.copy_hits = body.copy_hits;
-    let caret_line =
-        composer.first_line + (composer.caret.y as usize).saturating_sub(composer.view_start);
-    let caret_screen_row = metrics
-        .body_rows
-        .saturating_sub(1)
-        .min(caret_line.saturating_sub(scroll));
-    let caret_column = (display_width(INPUT_PREFIX) + composer.caret.x as usize)
-        .min(frame.body().width.saturating_sub(1) as usize);
-    frame.cursor = Some(Position {
-        x: frame.body().x.saturating_add(caret_column as u16),
-        y: frame.body().y.saturating_add(caret_screen_row as u16),
-    });
-    Some(SideOverlayFrame {
+    let mut prepared = SideOverlayFrame {
         frame,
         metrics,
         composer,
-    })
+    };
+    let rect = prepared.composer_rect();
+    if !rect.is_empty() {
+        let caret_row = (composer.caret.y as usize).saturating_sub(composer.view_start);
+        let caret_column = display_width(INPUT_PREFIX) + composer.caret.x as usize;
+        prepared.frame.cursor = Some(Position {
+            x: rect.x
+                + u16::try_from(caret_column)
+                    .unwrap_or(u16::MAX)
+                    .min(rect.width - 1),
+            y: rect.y
+                + u16::try_from(caret_row)
+                    .unwrap_or(u16::MAX)
+                    .min(rect.height - 1),
+        });
+    }
+    Some(prepared)
 }
 
 #[cfg(test)]

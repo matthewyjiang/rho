@@ -112,22 +112,22 @@ fn recalling_a_command_keeps_the_palette_closed_until_edit() {
     app.input_changed();
     assert!(app.command_palette_visible());
 
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "/model");
     assert!(!app.command_palette_visible());
 
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "/info");
     assert!(!app.command_palette_visible());
 
-    app.apply_input_edit_key(ComposerEditKey::Down, 80);
-    app.apply_input_edit_key(ComposerEditKey::Down, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down);
+    app.apply_input_edit_key(ComposerEditKey::Down);
     assert_eq!(app.input_ui.text(), "/c");
     assert!(app.command_palette_visible());
 
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert!(!app.command_palette_visible());
-    app.apply_input_edit_key(ComposerEditKey::Backspace, 80);
+    app.apply_input_edit_key(ComposerEditKey::Backspace);
     assert_eq!(app.input_ui.text(), "/mode");
     assert!(app.command_palette_visible());
 }

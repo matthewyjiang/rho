@@ -3,7 +3,10 @@ use ratatui::{
     text::Line,
 };
 
-use super::{activity, render::display_width, scrollbar::HistoryScrollbar, App, HistoryScroll};
+use super::{
+    activity, composer_layout::content_width, render::display_width, scrollbar::HistoryScrollbar,
+    App, HistoryScroll,
+};
 
 /// Smallest width that still keeps prompt chrome and short status fields legible.
 ///
@@ -321,7 +324,8 @@ impl App {
             visible_composer_len,
             self.input_ui.composer_view_start(),
         );
-        self.input_ui.set_composer_view_start(composer_start);
+        self.input_ui
+            .retain_composer_paint(composer_start, content_width(width));
         let history_height = split.history;
 
         let mut y = area.y;

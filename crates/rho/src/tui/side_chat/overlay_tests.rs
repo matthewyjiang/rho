@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-use super::{prepare_side_panel, Entry, SideOverlay};
+use super::{prepare_side_panel, side_overlay_frame, Entry, SideOverlay};
 
 // Covers: a rejected concurrent submit must not idle the overlay or drop the
 // in-flight assistant stream; only a terminal fail ends the run.
@@ -52,7 +52,8 @@ fn tool_boundary_commits_assistant_before_retry_reset() {
     );
 }
 
-// Covers: scroll range must use the wrapped overlay body, not entry count.
+// Covers: scroll range must use the wrapped transcript and the rows the
+// painted frame leaves it under the pinned composer, not entry count.
 // Owner: side-chat overlay layout
 #[test]
 fn side_scroll_metrics_follow_wrapped_body() {
@@ -62,13 +63,16 @@ fn side_scroll_metrics_follow_wrapped_body() {
         .entries
         .push(Entry::Assistant(["word"; 80].join(" ").into()));
     let area = Rect::new(0, 0, 40, 20);
-    let prepared = prepare_side_panel(&overlay, area).expect("panel fits");
-    let metrics = prepared.metrics;
-    let body_len = prepared.body.lines.len();
+    let body_len = prepare_side_panel(&overlay, area)
+        .expect("panel fits")
+        .body
+        .lines
+        .len();
+    let painted = side_overlay_frame(&overlay, area).expect("panel fits");
 
     pretty_assertions::assert_eq!(
-        metrics.max_scroll,
-        body_len.saturating_sub(metrics.body_rows)
+        painted.metrics.max_scroll,
+        body_len.saturating_sub(usize::from(painted.frame.body().height))
     );
     assert!(
         body_len > overlay.entries.len().saturating_add(4),

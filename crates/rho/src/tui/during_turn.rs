@@ -126,8 +126,7 @@ impl App {
         }
 
         if let Some(edit) = ComposerEditKey::from_key(key) {
-            let width = terminal.size()?.width as usize;
-            self.apply_input_edit_key(edit, width);
+            self.apply_input_edit_key(edit);
             self.ctrl_c_streak = 0;
             self.clamp_command_selection();
             self.clamp_file_selection();

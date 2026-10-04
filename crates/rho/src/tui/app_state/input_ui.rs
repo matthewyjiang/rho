@@ -154,8 +154,10 @@ impl InputUi {
         self.buffer.view_start()
     }
 
-    pub(in crate::tui) fn set_composer_view_start(&mut self, start: usize) {
-        self.buffer.set_view_start(start);
+    /// Retain the painted composer window and wrap width (see
+    /// [`ComposerBuffer::retain_paint`]).
+    pub(in crate::tui) fn retain_composer_paint(&mut self, view_start: usize, wrap_width: usize) {
+        self.buffer.retain_paint(view_start, wrap_width);
     }
 
     pub(in crate::tui) fn selection_dragging(&self) -> bool {
@@ -202,12 +204,12 @@ impl InputUi {
 
     pub(in crate::tui) fn set_composer(&mut self, composer: ComposerMode) {
         self.composer = composer;
-        self.buffer.set_view_start(0);
+        self.buffer.reset_view_start();
         self.pointer = ComposerPointerState::default();
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
-        self.buffer.set_view_start(0);
+        self.buffer.reset_view_start();
         self.pointer = ComposerPointerState::default();
         std::mem::replace(&mut self.composer, ComposerMode::Input)
     }

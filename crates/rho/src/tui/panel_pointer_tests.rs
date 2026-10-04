@@ -17,7 +17,14 @@ fn frame(scroll: usize) -> OverlayPanelFrame {
     let body = (0..40)
         .map(|index| Line::raw(format!("row-{index:02} tail")))
         .collect();
-    render_overlay_panel("Title", "Esc close", body, scroll, Rect::new(0, 0, 40, 14))
+    render_overlay_panel(
+        "Title",
+        "Esc close",
+        body,
+        Vec::new(),
+        scroll,
+        Rect::new(0, 0, 40, 14),
+    )
 }
 
 // Covers: dragging the panel scrollbar thumb maps the pointer row to a top

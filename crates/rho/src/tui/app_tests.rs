@@ -772,17 +772,17 @@ fn input_history_recalls_previous_messages_and_restores_draft() {
     app.input_ui.set_text("draft".to_string());
     app.input_ui.set_cursor(app.input_char_len());
 
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "second message");
     assert_eq!(app.input_ui.cursor(), "second message".chars().count());
 
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "first message");
 
-    app.apply_input_edit_key(ComposerEditKey::Down, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down);
     assert_eq!(app.input_ui.text(), "second message");
 
-    app.apply_input_edit_key(ComposerEditKey::Down, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down);
     assert_eq!(app.input_ui.text(), "draft");
     assert_eq!(app.input_ui.history_cursor(), None);
 }
@@ -794,7 +794,7 @@ fn input_history_clears_paste_segments_and_restores_draft_segments() {
     app.push_input_history("previous message long enough for marker");
     app.insert_pasted_input_text(&pasted);
 
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(
         app.input_ui.text(),
         "previous message long enough for marker"
@@ -805,7 +805,7 @@ fn input_history_clears_paste_segments_and_restores_draft_segments() {
         "previous message long enough for marker"
     );
 
-    app.apply_input_edit_key(ComposerEditKey::Down, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down);
     assert_eq!(app.input_ui.text(), collapsed_paste_marker());
     assert_eq!(app.expanded_input(), pasted);
 }
@@ -814,7 +814,7 @@ fn input_history_clears_paste_segments_and_restores_draft_segments() {
 fn editing_input_exits_history_navigation() {
     let mut app = test_app();
     app.push_input_history("previous");
-    app.apply_input_edit_key(ComposerEditKey::Up, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
 
     app.insert_input_char('!');
 
