@@ -1,5 +1,60 @@
 # Changelog
 
+## [2.18.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.17.1...rho-coding-agent-v2.18.0) (2026-10-04)
+
+
+### Features
+
+* **agents:** pick fast mode per subagent instead of inheriting /fast ([#1355](https://github.com/matthewyjiang/rho/issues/1355)) ([89fe6ae](https://github.com/matthewyjiang/rho/commit/89fe6ae36ab3dcd6efcb2db1a1244409eba620b0))
+* **auth:** add Meta Muse subscription login ([#1354](https://github.com/matthewyjiang/rho/issues/1354)) ([611b568](https://github.com/matthewyjiang/rho/commit/611b568454fa9a9606652aa3e85c2c8a0647c494))
+* **computer:** detect cua driver updates and install them from /computer ([#1366](https://github.com/matthewyjiang/rho/issues/1366)) ([6d74792](https://github.com/matthewyjiang/rho/commit/6d74792fd86dd027dc665b3fde4eb604ab47b26b))
+* **permission:** review sibling tool calls in one classifier request, 2-3x faster ([#1392](https://github.com/matthewyjiang/rho/issues/1392)) ([3d88b21](https://github.com/matthewyjiang/rho/commit/3d88b215a28e66e81754b25043b8adbb720b6135))
+* **permissions:** add offline permission classifier eval ([#1381](https://github.com/matthewyjiang/rho/issues/1381)) ([e1fa76d](https://github.com/matthewyjiang/rho/commit/e1fa76ddcd661cc33e3f7c1ee4820f2871b812b7))
+* **permissions:** configure the screen allow threshold, defaulting to 95% ([#1390](https://github.com/matthewyjiang/rho/issues/1390)) ([4e03820](https://github.com/matthewyjiang/rho/commit/4e03820e682120c606b6d03db0706294c11ad3cb))
+* **permissions:** fit classifier transcripts into small context windows ([#1379](https://github.com/matthewyjiang/rho/issues/1379)) ([a4d7b3c](https://github.com/matthewyjiang/rho/commit/a4d7b3caae4cf08bd40aea55ef40a21a9c6af948))
+* **permissions:** pick the permission screen model, including discovered decision models and text models ([#1389](https://github.com/matthewyjiang/rho/issues/1389)) ([0f687b4](https://github.com/matthewyjiang/rho/commit/0f687b46e526ae1853533dfce5c98aeb984d5d70))
+* **permissions:** run the permission classifier on a typed decision protocol ([#1383](https://github.com/matthewyjiang/rho/issues/1383)) ([6330793](https://github.com/matthewyjiang/rho/commit/63307937c2ae48673552349ebc2f64a38a7ed9ed))
+* **permissions:** screen permission requests with a decision model ([#1384](https://github.com/matthewyjiang/rho/issues/1384)) ([381b29d](https://github.com/matthewyjiang/rho/commit/381b29d2ca60fed777f53fc1b8e8f5821767b172))
+* **providers:** add TypeSafe as a decision-model host for the permission screen ([#1388](https://github.com/matthewyjiang/rho/issues/1388)) ([40fe589](https://github.com/matthewyjiang/rho/commit/40fe58917f4195d0a60a299cdfdc0990c0375e1c))
+* **sdk:** add a public decision protocol with noul, choice, and score questions ([#1387](https://github.com/matthewyjiang/rho/issues/1387)) ([7199e39](https://github.com/matthewyjiang/rho/commit/7199e3937b62407c2b128da737e65c302b7100ae))
+* **sessions:** let the agent recover turns lost to compaction ([#1386](https://github.com/matthewyjiang/rho/issues/1386)) ([d4ced42](https://github.com/matthewyjiang/rho/commit/d4ced427b726158a601f408b7587da9eb9cd1803))
+* show the active codemode mode in /codemode status and rho diagnostics ([#1378](https://github.com/matthewyjiang/rho/issues/1378)) ([064fb1b](https://github.com/matthewyjiang/rho/commit/064fb1b21e2fa817e9fffb338be6ebb83e7ce33b))
+* **tools:** Starlark code_mode scaffold (ToolHost + MCP path) ([#1365](https://github.com/matthewyjiang/rho/issues/1365)) ([c2d6771](https://github.com/matthewyjiang/rho/commit/c2d6771920172b03f957de762d316927b1282f8c))
+* **tui:** add /advisor model with a supported-levels reasoning picker ([#1358](https://github.com/matthewyjiang/rho/issues/1358)) ([6c1c8b9](https://github.com/matthewyjiang/rho/commit/6c1c8b912efd1ef9cf85bd8a926638bd8a2376d7))
+* **tui:** delete your agents from /agents with confirmation ([#1357](https://github.com/matthewyjiang/rho/issues/1357)) ([832a431](https://github.com/matthewyjiang/rho/commit/832a43135ed355c79081d1c63a52dc66dda2240a))
+* **tui:** keep output sections apart in zen with one-line tool summaries ([#1382](https://github.com/matthewyjiang/rho/issues/1382)) ([93b3719](https://github.com/matthewyjiang/rho/commit/93b371942ffc953d8428bd4be3b7264aff1099c4))
+* **tui:** let skill cards expand to show what the model loaded ([#1356](https://github.com/matthewyjiang/rho/issues/1356)) ([532bc12](https://github.com/matthewyjiang/rho/commit/532bc12b070296d5ffdbc16e62e4ac339fb5cfe0))
+* **tui:** let users hide the session header hints ([#1377](https://github.com/matthewyjiang/rho/issues/1377)) ([51842ce](https://github.com/matthewyjiang/rho/commit/51842ceccdb52f29922c2bc965f4ced15e4ad329))
+* **tui:** show live progress in codemode cards ([#1369](https://github.com/matthewyjiang/rho/issues/1369)) ([683892c](https://github.com/matthewyjiang/rho/commit/683892cf4f1e7f3402039be75886a16ef95a7195))
+* **tui:** show what computer use is doing on its tool cards ([#1364](https://github.com/matthewyjiang/rho/issues/1364)) ([a5d75cc](https://github.com/matthewyjiang/rho/commit/a5d75cc6dafe89540dc16d7087a33dd64f79e268))
+* **workflow:** continue crashed agent nodes from step checkpoints ([#1376](https://github.com/matthewyjiang/rho/issues/1376)) ([c38f12b](https://github.com/matthewyjiang/rho/commit/c38f12b8d320306be3eeac53453d41aa98ab04d5))
+
+
+### Bug Fixes
+
+* **agents:** notify the parent of advertised catalog changes after /agents edits ([#1367](https://github.com/matthewyjiang/rho/issues/1367)) ([070ff7a](https://github.com/matthewyjiang/rho/commit/070ff7a4075b8ef11cba888447c9ed156faae695))
+* **artifacts:** preserve terminal attachments under writer backpressure ([#1362](https://github.com/matthewyjiang/rho/issues/1362)) ([b855b9f](https://github.com/matthewyjiang/rho/commit/b855b9fb72ff33d2a8c777a123813f207b754f0c))
+* **sessions:** reclaim search cache space after session deletes ([#1375](https://github.com/matthewyjiang/rho/issues/1375)) ([60a728b](https://github.com/matthewyjiang/rho/commit/60a728b3d628b94348de93e81c955773462c4c32))
+* **tools:** find mcp tools from multi-word tool_search queries ([#1372](https://github.com/matthewyjiang/rho/issues/1372)) ([ce791e9](https://github.com/matthewyjiang/rho/commit/ce791e94860a1ef4772d539a99967bb536cfc631))
+* **tools:** stop shell commands from suspending the tui ([#1385](https://github.com/matthewyjiang/rho/issues/1385)) ([22937d9](https://github.com/matthewyjiang/rho/commit/22937d93e96a553bbb0da8b857fbf074d80fc5e1))
+* **tui:** drop finished rail rows when their result lands ([#1380](https://github.com/matthewyjiang/rho/issues/1380)) ([ec5e00b](https://github.com/matthewyjiang/rho/commit/ec5e00bb79501bee9a7cbf149960e373f430d637))
+* **tui:** keep codemode script generation visible ([#1373](https://github.com/matthewyjiang/rho/issues/1373)) ([793b0b8](https://github.com/matthewyjiang/rho/commit/793b0b82e37e646ecb146d4d4a036befa0d19bfa))
+* **tui:** keep emoji composer text visible ([#1348](https://github.com/matthewyjiang/rho/issues/1348)) ([744fdf2](https://github.com/matthewyjiang/rho/commit/744fdf2a703ffffa87a97b7ef29b5f536026e2b6))
+* **tui:** keep long field edits visible ([#1349](https://github.com/matthewyjiang/rho/issues/1349)) ([7b96cab](https://github.com/matthewyjiang/rho/commit/7b96cab7e58fdf9af610053dcea6c13474a6bdae))
+* **tui:** preserve highlighting for long codemode lines ([#1370](https://github.com/matthewyjiang/rho/issues/1370)) ([c821748](https://github.com/matthewyjiang/rho/commit/c8217481e5c2f3fc9316e65cffe12f9ac78005fd))
+* **tui:** render escaped markdown delimiters literally ([#1353](https://github.com/matthewyjiang/rho/issues/1353)) ([c421810](https://github.com/matthewyjiang/rho/commit/c4218107ef35f43d0fa12ea25e1495483e35f3d0))
+
+
+### Performance Improvements
+
+* **codemode:** await every call_tools approval at once ([#1393](https://github.com/matthewyjiang/rho/issues/1393)) ([856713e](https://github.com/matthewyjiang/rho/commit/856713e31ef6d781e2a5cd78f6488e5f7c6a150a))
+* **permissions:** stop auto-mode approvals from queueing behind each other ([#1391](https://github.com/matthewyjiang/rho/issues/1391)) ([6afc173](https://github.com/matthewyjiang/rho/commit/6afc173cf09a3ec535c8076b275c5fc88df98576))
+
+
+### Reverts
+
+* **tui:** remove codemode execution progress ([#1371](https://github.com/matthewyjiang/rho/issues/1371)) ([425ece3](https://github.com/matthewyjiang/rho/commit/425ece3663873698539ac98744398b6dc1fa4879))
+
 ## [2.17.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.17.0...rho-coding-agent-v2.17.1) (2026-09-30)
 
 
