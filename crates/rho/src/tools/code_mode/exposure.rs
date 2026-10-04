@@ -104,6 +104,7 @@ impl CodeModeSurface {
             .fold(ToolHost::child_builder(context), |builder, sibling| {
                 builder.tool_shared(sibling.tool.clone())
             })
+            .max_parallel_tools(crate::app::sdk_config::parallel_tool_limit())
             .build()
             .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
         Ok((

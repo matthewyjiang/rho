@@ -780,6 +780,87 @@ async fn call_tools_runs_batch_concurrently_in_order() {
     );
 }
 
+/// A shell-like sibling: exclusive, with its capability declared in `prepare`
+/// so it is authorized before waiting for its execution slot.
+struct DeclaredTool;
+
+impl Tool for DeclaredTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "declared".into(),
+            description: "fixture sibling".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        unreachable!("the host runs the prepared plan")
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: rho_sdk::tool::ToolPreparationContext,
+    ) -> rho_sdk::tool::ToolPrepareFuture<'a> {
+        let path = format!("/work/{}", invocation.arguments()["id"]);
+        Box::pin(async move {
+            Ok(
+                rho_sdk::tool::PreparedToolInvocation::exclusive_with_capabilities(
+                    [CapabilityRequest::read_path(
+                        path,
+                        PathScope::PrimaryWorkspace,
+                        CapabilitySource::host_tool("declared"),
+                    )],
+                    rho_sdk::tool::ToolMetadata::new(),
+                    |_context| Box::pin(async { Ok(ToolOutput::text("ok")) }),
+                ),
+            )
+        })
+    }
+}
+
+/// Allows a request only once `barrier` sees every request it waits for
+/// pending at once.
+struct RendezvousApproval(tokio::sync::Barrier);
+
+impl ApprovalHandler for RendezvousApproval {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            self.0.wait().await;
+            ApprovalDecision::AllowOnce
+        })
+    }
+
+    fn concurrency(&self) -> rho_sdk::ApprovalConcurrency {
+        rho_sdk::ApprovalConcurrency::Concurrent
+    }
+}
+
+// Covers: every call of a batch awaits approval at once, more calls than may
+// execute at once, as in a model-issued batch, so a concurrent approver such
+// as the Auto classifier is not fed the batch a few calls at a time.
+// Owner: codemode batch bridge.
+#[tokio::test]
+async fn call_tools_awaits_every_approval_at_once() {
+    let batch = crate::app::sdk_config::parallel_tool_limit().get() + 2;
+    let host = ToolHost::builder()
+        .tool(CodeModeTool::new(surface(vec![Arc::new(DeclaredTool)])))
+        .workspace_policy(RequireApproval)
+        .approval_handler(RendezvousApproval(tokio::sync::Barrier::new(batch)))
+        .build()
+        .unwrap();
+    let source = format!(
+        "result = len(call_tools([(\"declared\", {{\"id\": i}}) for i in range({batch})]))"
+    );
+
+    // A failure bound only: approvals capped below the batch never meet.
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), script(&host, &source))
+        .await
+        .expect("every approval was pending at once");
+
+    assert_eq!(result, Ok(json!(batch)));
+}
+
 // Covers: the whole batch is checked against the nested-call budget before
 // any call starts.
 // Owner: codemode batch bridge.

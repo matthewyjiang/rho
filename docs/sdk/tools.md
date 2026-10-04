@@ -249,7 +249,7 @@ Keep `is_advertised` cheap and non-blocking. It runs once per registered tool pe
 - Builders accept the same workspace, policy, approval, and hook options as `RhoBuilder` where applicable.
 - Dropping an unfinished `ToolHostRun` cancels its work.
 
-Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks. `ToolHost::child_builder(&context)` returns a `ChildToolHostBuilder` with only tool registration, event capacity, and build methods. It inherits the parent's authorization, session identity, live history, and hook run id; nested calls cannot override security settings.
+Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks. `ToolHost::child_builder(&context)` returns a `ChildToolHostBuilder` with only tool registration, execution limit, and build methods. It inherits the parent's authorization, session identity, live history, and hook run id; nested calls cannot override security settings. `ChildToolHostBuilder::max_parallel_tools` bounds the child's executing calls like `RhoBuilder::max_parallel_tools`: calls started together still prepare and await approval together. Unset, independent calls all execute at once.
 
 ## Questionnaire fallback provenance
 

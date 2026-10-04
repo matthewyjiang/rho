@@ -64,3 +64,30 @@ async fn cancelled_execution_waiter_releases_its_barrier() {
     let mut final_exclusive = Box::pin(arbiter.acquire(&exclusive));
     assert!(final_exclusive.as_mut().poll(&mut cx).is_ready());
 }
+
+// Covers: a limit bounds calls executing at once, and a freed slot goes to
+// the earliest call waiting for one, not to whichever call polls first.
+// Owner: SDK execution-arbiter admission.
+#[tokio::test]
+async fn limit_bounds_executing_calls_in_admission_order() {
+    let read = ToolExecutionPolicy::resource_aware([ToolResourceAccess::shared(
+        ToolResource::session_state(),
+    )]);
+    let arbiter = Arc::new(ExecutionArbiter::with_limit(
+        std::num::NonZeroUsize::new(2).unwrap(),
+    ));
+    let mut cx = Context::from_waker(Waker::noop());
+    let first = arbiter.acquire(&read).await;
+    let second = arbiter.acquire(&read).await;
+    let mut third = Box::pin(arbiter.acquire(&read));
+    let mut fourth = Box::pin(arbiter.acquire(&read));
+    assert!(third.as_mut().poll(&mut cx).is_pending());
+    assert!(fourth.as_mut().poll(&mut cx).is_pending());
+
+    drop(first);
+
+    assert!(fourth.as_mut().poll(&mut cx).is_pending());
+    assert!(third.as_mut().poll(&mut cx).is_ready());
+    drop(second);
+    assert!(fourth.as_mut().poll(&mut cx).is_ready());
+}
