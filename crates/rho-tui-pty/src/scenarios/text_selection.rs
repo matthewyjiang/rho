@@ -161,6 +161,30 @@ fn assert_composer_click_and_replace_selection(harness: &mut PtyHarness) -> Resu
     Ok(())
 }
 
+/// Clicking into a recalled prompt only places the caret: Down still walks
+/// past it back to the unsent draft.
+fn assert_composer_click_keeps_recalled_prompt(harness: &mut PtyHarness) -> Result<()> {
+    harness.type_text("DRAFT1")?;
+    harness.wait_for_text("DRAFT1", WaitTimeout::secs(5, "draft typed"))?;
+    harness.inject_key(&crate::keys::Key::Up)?;
+    harness.wait_for_text_gone("DRAFT1", WaitTimeout::secs(5, "history recall"))?;
+    // The transcript also shows the prompt; the composer is the lowest copy.
+    let rows = harness.screen().rows_text();
+    let (row, line) = rows
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, line)| line.contains("drag select target"))
+        .ok_or_else(|| anyhow::anyhow!("recalled prompt not painted"))?;
+    let column = display_column_at_byte(line, line.find("drag").unwrap_or(0));
+    let press = (column + 3, row as u16 + 1);
+    harness.mouse(MouseButton::Left, press.0, press.1, true)?;
+    harness.mouse(MouseButton::Left, press.0, press.1, false)?;
+    harness.inject_key(&crate::keys::Key::Down)?;
+    harness.wait_for_text("DRAFT1", WaitTimeout::secs(5, "draft restored"))?;
+    harness.inject_key(&crate::keys::Key::Ctrl('c'))
+}
+
 pub(super) const SCREEN_TEXT_SELECTION_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -193,6 +217,8 @@ pub(super) const TEXT_SELECTION_DRAG_STEPS: &[Step] = &[
     },
     Step::Phase("drag_and_check_highlight"),
     Step::Custom(assert_drag_updates_highlight_before_release),
+    Step::Phase("click_keeps_recalled_prompt"),
+    Step::Custom(assert_composer_click_keeps_recalled_prompt),
     Step::ExitCommand,
 ];
 

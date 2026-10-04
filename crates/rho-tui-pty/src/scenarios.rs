@@ -161,7 +161,8 @@ use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
 use shell_completion::SHELL_TAB_COMPLETION_SCENARIO;
 use side_chat::{
-    SIDE_BTW_SCENARIO, SIDE_DURING_TURN_SCENARIO, SIDE_OVERLAY_SCENARIO, SIDE_TOGGLE_SCENARIO,
+    SIDE_BTW_SCENARIO, SIDE_COMPOSER_SCENARIO, SIDE_DURING_TURN_SCENARIO, SIDE_OVERLAY_SCENARIO,
+    SIDE_TOGGLE_SCENARIO,
 };
 use startup::{
     STARTUP_FIRST_FRAME_SCENARIO, STARTUP_PROMPT_STREAM_EXIT_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO,
@@ -603,6 +604,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SIDE_TOGGLE_SCENARIO,
     SIDE_BTW_SCENARIO,
     SIDE_DURING_TURN_SCENARIO,
+    SIDE_COMPOSER_SCENARIO,
     SLASH_COMMAND_PALETTE_SCENARIO,
     fast_discovery::FAST_DISCOVERY_SCENARIO,
     CREATE_AGENT_COMMAND_SCENARIO,
@@ -903,7 +905,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "text_selection_drag",
-        "Update the drag selection highlight before the mouse button is released",
+        "Update the drag selection highlight before release; a composer click keeps a recalled prompt",
         DEFAULT_SIZE,
         TEXT_SELECTION_DRAG_STEPS,
         false,

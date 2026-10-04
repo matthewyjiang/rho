@@ -1,7 +1,8 @@
+use crate::tui::composer_buffer::ComposerEditKey;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::super::{tests::test_app, ComposerMode, HistoryDirection, InlineChoicePending};
+use super::super::{tests::test_app, ComposerMode, InlineChoicePending};
 use super::MAX_PERSISTED_PROMPT_BYTES;
 use crate::prompt_history::PromptHistoryStore;
 
@@ -117,7 +118,7 @@ fn oversized_prompt_stays_in_ring_only() {
 fn seed_history_front_offsets_in_progress_recall() {
     let mut app = test_app();
     app.push_input_history("local");
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "local");
     assert_eq!(app.input_ui.history_cursor(), Some(0));
 
@@ -130,7 +131,7 @@ fn seed_history_front_offsets_in_progress_recall() {
     assert_eq!(app.input_ui.history_cursor(), Some(1));
     assert_eq!(app.input_ui.text(), "local");
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "older");
 }
 

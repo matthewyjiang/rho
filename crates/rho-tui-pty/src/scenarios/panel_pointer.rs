@@ -148,8 +148,9 @@ fn overlay_track(harness: &mut PtyHarness) -> Result<Track> {
 /// Locates the overlay scrollbar from the panel chrome: the footer rule
 /// (`├──┤`) sits under the body with the panel's `┌` corner above it, the
 /// track is the column left of `┤`, and the body starts under the `┌`. The
-/// copy notice can cover the top-right corner, so the right edge is read from
-/// the footer rule.
+/// track ends at its last track or thumb glyph, above any rows pinned under
+/// the body (the side chat prompt). The copy notice can cover the top-right
+/// corner, so the right edge is read from the footer rule.
 fn find_overlay_track(harness: &PtyHarness) -> Option<Track> {
     let screen = harness.screen();
     let symbol = |row: u16, col: u16| screen.cell(row, col).map(|cell| cell.contents);
@@ -160,10 +161,15 @@ fn find_overlay_track(harness: &PtyHarness) -> Option<Track> {
         let top_border = (0..rule_row)
             .rev()
             .find(|&row| symbol(row, left).as_deref() == Some("┌"))?;
-        (right > left + 2 && rule_row > top_border + 1).then_some(Track {
-            column: right - 1,
-            top: top_border + 1,
-            bottom: rule_row - 1,
+        let column = right.checked_sub(1)?;
+        let top = top_border + 1;
+        let bottom = (top..rule_row)
+            .take_while(|&row| matches!(symbol(row, column).as_deref(), Some("│" | "█")))
+            .last()?;
+        (right > left + 2).then_some(Track {
+            column,
+            top,
+            bottom,
         })
     })
 }

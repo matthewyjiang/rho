@@ -262,6 +262,7 @@ impl App {
                 Event::FocusLost => {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.input_ui.finalize_selection();
+                    self.settle_side_composer_pointer();
                     self.subagent_panel.clear_pointer_state();
                     self.process_panel.clear_pointer_state();
                 }

@@ -1152,6 +1152,15 @@ fn panel_scrollbar_drag_and_selection_copy() {
     assert_pass("panel_pointer");
 }
 
+// Covers: the side chat prompt edits like the main composer (multi-line,
+// word keys, pointer, recall, collapsed paste) and stays pinned below a
+// scrolled transcript.
+// Owner: interactive TUI
+#[test]
+fn side_chat_composer_matches_main_composer() {
+    assert_pass("side_composer");
+}
+
 // Covers: drag-select copies side chat text, and the side chat scrollbar drags.
 // Owner: interactive TUI
 #[test]
@@ -1173,6 +1182,8 @@ fn composer_attachment_click_removes_it() {
     assert_pass("attachment_click_remove");
 }
 
+// Covers: the drag highlight updates before release, and clicking into a
+// recalled prompt keeps the stashed draft for Down. Owner: interactive TUI
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

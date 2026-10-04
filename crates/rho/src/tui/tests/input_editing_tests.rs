@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::composer_buffer::ComposerEditKey;
 
 #[test]
 fn valid_slash_commands_are_added_to_input_history() {
@@ -12,7 +13,7 @@ fn valid_slash_commands_are_added_to_input_history() {
     assert_eq!(app.input_ui.history(), ["/info"]);
     app.input_ui.clear_text();
     app.input_ui.set_cursor(0);
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(app.input_ui.text(), "/info");
 }
 
@@ -23,14 +24,14 @@ fn left_and_right_arrows_treat_collapsed_paste_as_one_character() {
     app.insert_pasted_input_text(&collapsible_paste());
     let segment = app.input_ui.paste_segments()[0].clone();
 
-    app.move_input_cursor_left();
+    app.apply_input_edit_key(ComposerEditKey::Left);
     assert_eq!(app.input_ui.cursor(), segment.start);
 
-    app.move_input_cursor_right();
+    app.apply_input_edit_key(ComposerEditKey::Right);
     assert_eq!(app.input_ui.cursor(), segment.end());
 
-    app.move_input_cursor_left();
-    app.move_input_cursor_left();
+    app.apply_input_edit_key(ComposerEditKey::Left);
+    app.apply_input_edit_key(ComposerEditKey::Left);
     assert_eq!(app.input_ui.cursor(), segment.start - 1);
 }
 
@@ -42,7 +43,7 @@ fn vertical_cursor_movement_focuses_a_collapsed_paste_item() {
     let segment = app.input_ui.paste_segments()[0].clone();
     app.input_ui.set_cursor(5);
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+    app.apply_input_edit_key(ComposerEditKey::Down);
 
     assert_eq!(app.input_ui.cursor(), segment.start);
 }
@@ -52,7 +53,7 @@ fn backspace_removes_collapsed_paste_as_one_item() {
     let mut app = test_app();
     app.insert_pasted_input_text(&collapsible_paste());
 
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace);
 
     assert_eq!(app.input_ui.text(), "");
     assert_eq!(app.input_ui.cursor(), 0);
@@ -67,7 +68,7 @@ fn delete_removes_collapsed_paste_as_one_item() {
     app.insert_input_text(" after");
     app.input_ui.set_cursor("before ".chars().count());
 
-    app.delete_input();
+    app.apply_input_edit_key(ComposerEditKey::Delete);
 
     assert_eq!(app.input_ui.text(), "before  after");
     assert_eq!(app.input_ui.cursor(), "before ".chars().count());
@@ -80,7 +81,7 @@ fn editing_from_inside_collapsed_paste_removes_the_whole_item() {
     app.insert_pasted_input_text(&collapsible_paste());
     app.input_ui.set_cursor(5);
 
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace);
 
     assert_eq!(app.input_ui.text(), "");
     assert_eq!(app.input_ui.cursor(), 0);
@@ -93,8 +94,8 @@ fn editing_from_inside_collapsed_paste_removes_the_whole_item() {
 fn typing_replaces_composer_selection() {
     let mut app = test_app();
     app.insert_input_text("grab this text");
-    app.input_ui.begin_selection(5);
-    app.input_ui.update_selection(9); // "this"
+    app.input_ui.buffer_mut().begin_selection(5);
+    app.input_ui.buffer_mut().update_selection(9); // "this"
     app.input_ui.finalize_selection();
 
     app.insert_input_char('X');
@@ -110,19 +111,19 @@ fn typing_replaces_composer_selection() {
 fn delete_and_backspace_remove_composer_selection() {
     let mut app = test_app();
     app.insert_input_text("abcdef");
-    app.input_ui.begin_selection(2);
-    app.input_ui.update_selection(5); // "cde"
+    app.input_ui.buffer_mut().begin_selection(2);
+    app.input_ui.buffer_mut().update_selection(5); // "cde"
     app.input_ui.finalize_selection();
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace);
     assert_eq!(app.input_ui.text(), "abf");
 
     app.input_ui.clear_text();
     app.input_ui.set_cursor(0);
     app.insert_input_text("abcdef");
-    app.input_ui.begin_selection(2);
-    app.input_ui.update_selection(5); // "cde"
+    app.input_ui.buffer_mut().begin_selection(2);
+    app.input_ui.buffer_mut().update_selection(5); // "cde"
     app.input_ui.finalize_selection();
-    app.delete_input();
+    app.apply_input_edit_key(ComposerEditKey::Delete);
     assert_eq!(app.input_ui.text(), "abf");
 }
 
@@ -135,18 +136,24 @@ fn range_selection_preserves_and_extends_its_base_range() {
     app.insert_input_text("grab this text");
     let range = super::super::paste_burst::word_range_at(app.input_ui.text(), 7);
 
-    app.input_ui.select_range(range.start, range.end);
-    app.input_ui.update_selection(7);
+    app.input_ui
+        .buffer_mut()
+        .select_range(range.start, range.end);
+    app.input_ui.buffer_mut().update_selection(7);
     app.input_ui.finalize_selection();
     assert_eq!(app.input_ui.selection_range(), Some(5..9));
 
-    app.input_ui.select_range(range.start, range.end);
-    app.input_ui.update_selection(2);
+    app.input_ui
+        .buffer_mut()
+        .select_range(range.start, range.end);
+    app.input_ui.buffer_mut().update_selection(2);
     app.input_ui.finalize_selection();
     assert_eq!(app.input_ui.selection_range(), Some(2..9));
 
-    app.input_ui.select_range(range.start, range.end);
-    app.input_ui.update_selection(12);
+    app.input_ui
+        .buffer_mut()
+        .select_range(range.start, range.end);
+    app.input_ui.buffer_mut().update_selection(12);
     app.input_ui.finalize_selection();
     assert_eq!(app.input_ui.selection_range(), Some(5..12));
 
@@ -165,8 +172,10 @@ fn partial_selection_consumes_whole_collapsed_paste() {
     app.insert_input_text(" after");
     let segment = app.input_ui.paste_segments()[0].clone();
 
-    app.input_ui.begin_selection(segment.start - 2);
-    app.input_ui.update_selection(segment.start + 3);
+    app.input_ui.buffer_mut().begin_selection(segment.start - 2);
+    app.input_ui
+        .buffer_mut()
+        .update_selection(segment.start + 3);
     app.input_ui.finalize_selection();
     app.insert_input_char('X');
 
@@ -178,10 +187,12 @@ fn partial_selection_consumes_whole_collapsed_paste() {
     app.insert_pasted_input_text(&collapsible_paste());
     app.insert_input_text("XYZ");
     let segment = app.input_ui.paste_segments()[0].clone();
-    app.input_ui.begin_selection(segment.end() + 1);
-    app.input_ui.update_selection(segment.end() - 3);
+    app.input_ui.buffer_mut().begin_selection(segment.end() + 1);
+    app.input_ui
+        .buffer_mut()
+        .update_selection(segment.end() - 3);
     app.input_ui.finalize_selection();
-    app.delete_input();
+    app.apply_input_edit_key(ComposerEditKey::Delete);
 
     assert_eq!(app.input_ui.text(), "before YZ");
     assert!(app.input_ui.paste_segments().is_empty());

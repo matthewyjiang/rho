@@ -1,3 +1,4 @@
+use crate::tui::composer_buffer::ComposerEditKey;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -37,20 +38,20 @@ fn shell_mode_home_left_right_delete_backspace_word_and_paste_are_coherent() {
     app.input_ui.set_cursor(app.input_char_len());
     app.input_ui.set_cursor(0);
     assert_eq!(app.input_ui.cursor(), 0);
-    app.move_input_cursor_right();
+    app.apply_input_edit_key(ComposerEditKey::Right);
     assert_eq!(app.input_ui.cursor(), 1);
-    app.move_input_cursor_left();
+    app.apply_input_edit_key(ComposerEditKey::Left);
     assert_eq!(app.input_ui.cursor(), 0);
 
     // Delete/backspace edit only the command text and leave shell mode intact.
     app.input_ui.set_cursor(5); // after "echo "
-    app.delete_input();
+    app.apply_input_edit_key(ComposerEditKey::Delete);
     assert_eq!(app.input_ui.text(), "echo ello world");
     assert_eq!(
         app.input_ui.shell_mode(),
         Some(InlineShellMode::IncludeInContext)
     );
-    app.backspace_input();
+    app.apply_input_edit_key(ComposerEditKey::Backspace);
     assert_eq!(app.input_ui.text(), "echoello world");
     assert_eq!(
         app.input_ui.shell_mode(),
@@ -121,14 +122,14 @@ fn history_recall_restores_shell_mode_from_prefixed_entries() {
     app.push_input_history("!echo hi");
     app.push_input_history("!!ls -la");
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(
         app.input_ui.shell_mode(),
         Some(InlineShellMode::ExcludeFromContext)
     );
     assert_eq!(app.input_ui.text(), "ls -la");
 
-    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    app.apply_input_edit_key(ComposerEditKey::Up);
     assert_eq!(
         app.input_ui.shell_mode(),
         Some(InlineShellMode::IncludeInContext)

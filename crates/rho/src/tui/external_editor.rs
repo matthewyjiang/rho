@@ -11,8 +11,10 @@ use crate::external_editor::{editor_command, resolve_editor};
 
 impl App {
     pub(super) fn external_editor_shortcut_matches(&self, key: crossterm::event::KeyEvent) -> bool {
-        matches!(self.input_ui.composer(), ComposerMode::Input)
-            && self.info.runtime.keybindings.open_editor.matches(key)
+        matches!(
+            self.input_ui.composer(),
+            ComposerMode::Input | ComposerMode::Side
+        ) && self.info.runtime.keybindings.open_editor.matches(key)
     }
 
     pub(super) async fn open_composer_in_editor(
@@ -23,11 +25,16 @@ impl App {
         // submit Enter cannot be treated as a paste newline after resume.
         self.flush_pending_paste_burst();
         self.input_ui.clear_paste_burst();
-        let composer_text = self.expanded_input();
+        let side_text = self.side_composer_text();
+        let composer_text = side_text.clone().unwrap_or_else(|| self.expanded_input());
         if let Some(text) =
             edit_buffer_in_external_editor(self, terminal, &composer_text, "composer").await?
         {
-            self.replace_composer_from_editor(text);
+            if side_text.is_some() {
+                self.replace_side_composer_text(text);
+            } else {
+                self.replace_composer_from_editor(text);
+            }
             self.set_status("composer updated from editor");
         }
         self.input_ui.clear_paste_burst();

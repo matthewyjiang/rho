@@ -17,8 +17,6 @@ const STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("side_chat_viewport"),
-    Step::Custom(check_side_editor),
     Step::SubmitText("/login"),
     Step::WaitText {
         text: "Select provider to login",
@@ -168,37 +166,6 @@ fn check_setup_editor(harness: &mut PtyHarness) -> Result<()> {
         harness.screen().debug_dump()
     );
     Ok(())
-}
-
-fn check_side_editor(harness: &mut PtyHarness) -> Result<()> {
-    harness.submit_text("/side")?;
-    harness.wait_for_text("Side chat", SETTLE)?;
-    harness.submit_text("fixture code block")?;
-    harness.wait_for_text("COPY", STARTUP)?;
-    harness.wait_for_text("Enter send", SETTLE)?;
-    // Force a scrollbar so its final content width participates in scrolling.
-    harness.resize(12, 40)?;
-    harness.paste(&format!("SIDE-HEAD-{}-SIDE-TAIL", "a".repeat(50)))?;
-    harness.wait_for_text("SIDE-TAIL", SETTLE)?;
-    harness.inject_key(&Key::Backspace)?;
-    harness.wait_for_text_gone("SIDE-TAIL", SETTLE)?;
-    harness.wait_for_text("SIDE-TAI", SETTLE)?;
-    check_navigation_window(harness, "SIDE-TAI")?;
-    harness.inject_key(&Key::Home)?;
-    harness.wait_for_text("SIDE-HEAD", SETTLE)?;
-    harness.inject_key(&Key::End)?;
-    harness.wait_for_text("SIDE-TAI", SETTLE)?;
-    harness.paste("界界e\u{301}END")?;
-    harness.wait_for_text("e\u{301}END", SETTLE)?;
-    harness.resize(24, 20)?;
-    // The old tail was beyond column 20; its row and caret now prove the resize painted.
-    wait_for_tail_caret(harness, "e\u{301}END")?;
-    harness.inject_key(&Key::Backspace)?;
-    harness.wait_for_text_gone("e\u{301}END", SETTLE)?;
-    harness.wait_for_text("e\u{301}EN", SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text_gone("Side chat", SETTLE)?;
-    harness.resize(24, 40)
 }
 
 // Covers: secret glyph widths must not move the caret away from the mask, and

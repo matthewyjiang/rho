@@ -3,117 +3,20 @@
 use std::time::Instant;
 
 use crate::tui::{
-    click_sequence::ClickSequence,
-    composer_attachments::ComposerAttachmentSlot,
-    feed_image::FeedImage,
-    inline_shell::InlineShellMode,
-    paste_burst::{expand_paste_segments, PasteBurst},
-    ChatMedia, ComposerAttachment, ComposerMode, InputDraft, InputSubmissionMode, MediaAttachId,
-    PasteSegment, PendingAttachmentSource,
+    click_sequence::ClickSequence, composer_attachments::ComposerAttachmentSlot,
+    composer_buffer::ComposerBuffer, feed_image::FeedImage, inline_shell::InlineShellMode,
+    paste_burst::PasteBurst, ChatMedia, ComposerAttachment, ComposerMode, InputDraft,
+    InputSubmissionMode, MediaAttachId, PasteSegment, PendingAttachmentSource,
 };
 
 #[derive(Debug)]
 pub(in crate::tui) struct AttachmentsPending;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ComposerSelection {
-    Characters {
-        anchor: usize,
-        focus: usize,
-    },
-    Range {
-        start: usize,
-        end: usize,
-        focus: usize,
-    },
-}
-
-impl ComposerSelection {
-    fn characters(position: usize) -> Self {
-        Self::Characters {
-            anchor: position,
-            focus: position,
-        }
-    }
-
-    fn range(start: usize, end: usize) -> Self {
-        Self::Range {
-            start,
-            end,
-            focus: end,
-        }
-    }
-
-    fn update(&mut self, position: usize) {
-        match self {
-            Self::Characters { focus, .. } | Self::Range { focus, .. } => *focus = position,
-        }
-    }
-
-    fn pointer_origin(self) -> usize {
-        match self {
-            Self::Characters { anchor, .. } => anchor,
-            Self::Range { start, .. } => start,
-        }
-    }
-
-    fn focus(self) -> usize {
-        match self {
-            Self::Characters { focus, .. } => focus,
-            Self::Range {
-                start, end, focus, ..
-            } => {
-                if focus < start || focus > end {
-                    focus
-                } else {
-                    end
-                }
-            }
-        }
-    }
-
-    /// Ordered half-open char range when the selection spans text.
-    fn edit_range(self) -> Option<std::ops::Range<usize>> {
-        match self {
-            Self::Characters { anchor, focus } if anchor < focus => Some(anchor..focus),
-            Self::Characters { anchor, focus } if focus < anchor => Some(focus..anchor),
-            Self::Characters { .. } => None,
-            Self::Range {
-                start, end, focus, ..
-            } if focus < start => Some(focus..end),
-            Self::Range {
-                start, end, focus, ..
-            } if focus > end => Some(start..focus),
-            Self::Range { start, end, .. } if start < end => Some(start..end),
-            Self::Range { .. } => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ComposerSelectionState {
-    #[default]
-    None,
-    Dragging(ComposerSelection),
-    Selected(ComposerSelection),
-}
-
-impl ComposerSelectionState {
-    fn value(self) -> Option<ComposerSelection> {
-        match self {
-            Self::Dragging(selection) | Self::Selected(selection) => Some(selection),
-            Self::None => None,
-        }
-    }
-}
-
 /// Composer text, paste handling, command/file palettes, and input history.
 #[derive(Default)]
 pub(in crate::tui) struct InputUi {
-    text: String,
-    cursor: usize,
-    selection: ComposerSelectionState,
-    composer_view_start: usize,
+    /// Text, caret, selection, paste markers, and the painted row window.
+    buffer: ComposerBuffer,
     shell_mode: Option<InlineShellMode>,
     /// Char offset of the word Tab opened path completion on, in shell mode.
     /// `None` while completion is closed. The palette itself is derived from
@@ -126,7 +29,6 @@ pub(in crate::tui) struct InputUi {
     history_cursor: Option<usize>,
     history_draft: Option<InputDraft>,
     paste_burst: PasteBurst,
-    paste_segments: Vec<PasteSegment>,
     submission_mode: InputSubmissionMode,
     command_selection: usize,
     /// Whether arrow keys moved the palette highlight since the palette
@@ -178,24 +80,20 @@ pub(in crate::tui) enum PointerAction {
 impl InputUi {
     /// Clear composer text state after a successful submit.
     pub(in crate::tui) fn clear_submitted(&mut self) {
-        self.text.clear();
-        self.paste_segments.clear();
+        self.buffer.clear();
         self.shell_mode = None;
         self.shell_completion_anchor = None;
-        self.cursor = 0;
-        self.selection = ComposerSelectionState::None;
         self.pointer.clicks.cancel();
-        self.composer_view_start = 0;
         self.attachments.clear();
         self.attachment_epoch = self.attachment_epoch.wrapping_add(1);
     }
 
     pub(in crate::tui) fn expanded_text(&self) -> String {
-        expand_paste_segments(&self.text, &self.paste_segments)
+        self.buffer.expanded_text()
     }
 
     pub(in crate::tui) fn has_pending_draft(&self) -> bool {
-        !self.text.is_empty()
+        !self.buffer.is_empty()
             || self.shell_mode.is_some()
             || !self.attachments.is_empty()
             || self.paste_burst.has_pending()
@@ -206,127 +104,78 @@ impl InputUi {
         self.history_draft = None;
     }
 
+    /// The editable text model; palettes and shell mode stay on `InputUi`.
+    pub(in crate::tui) fn buffer(&self) -> &ComposerBuffer {
+        &self.buffer
+    }
+
+    pub(in crate::tui) fn buffer_mut(&mut self) -> &mut ComposerBuffer {
+        &mut self.buffer
+    }
+
     pub(in crate::tui) fn set_text_and_cursor(&mut self, text: String, cursor: usize) {
-        self.text = text;
-        self.cursor = cursor;
-        self.selection = ComposerSelectionState::None;
+        self.buffer.set_text_and_cursor(text, cursor);
         self.pointer.clicks.cancel();
-        self.composer_view_start = 0;
     }
 
     pub(in crate::tui) fn apply_input_draft(&mut self, draft: InputDraft) {
         self.set_shell_mode(draft.shell_mode);
-        self.text = draft.input;
-        self.paste_segments = draft.paste_segments;
+        self.buffer.replace_all(draft.input, draft.paste_segments);
         self.submission_mode = draft.submission_mode;
-        self.cursor = self.text.chars().count();
-        self.selection = ComposerSelectionState::None;
         self.pointer.clicks.cancel();
-        self.composer_view_start = 0;
     }
 
     pub(in crate::tui) fn text(&self) -> &str {
-        &self.text
-    }
-
-    /// Mutate composer text in place for insert/delete surgery.
-    pub(in crate::tui) fn with_text_mut<R>(&mut self, f: impl FnOnce(&mut String) -> R) -> R {
-        f(&mut self.text)
+        self.buffer.text()
     }
 
     pub(in crate::tui) fn set_text(&mut self, text: String) {
-        self.text = text;
-        self.selection = ComposerSelectionState::None;
+        self.buffer.set_text(text);
         self.pointer.clicks.cancel();
-        self.composer_view_start = 0;
     }
 
     pub(in crate::tui) fn clear_text(&mut self) {
-        self.text.clear();
-        self.selection = ComposerSelectionState::None;
-        self.pointer.clicks.cancel();
-        self.composer_view_start = 0;
+        self.set_text(String::new());
     }
 
     pub(in crate::tui) fn char_len(&self) -> usize {
-        self.text.chars().count()
+        self.buffer.char_len()
     }
 
     pub(in crate::tui) fn cursor(&self) -> usize {
-        self.cursor
+        self.buffer.cursor()
     }
 
     pub(in crate::tui) fn set_cursor(&mut self, cursor: usize) {
-        self.cursor = cursor;
+        self.buffer.set_cursor(cursor);
     }
 
     pub(in crate::tui) fn composer_view_start(&self) -> usize {
-        self.composer_view_start
+        self.buffer.view_start()
     }
 
-    pub(in crate::tui) fn set_composer_view_start(&mut self, start: usize) {
-        self.composer_view_start = start;
-    }
-
-    pub(in crate::tui) fn selection_focus(&self) -> Option<usize> {
-        self.selection.value().map(ComposerSelection::focus)
-    }
-
-    pub(in crate::tui) fn selection_pointer_origin(&self) -> Option<usize> {
-        self.selection
-            .value()
-            .map(ComposerSelection::pointer_origin)
+    /// Retain the painted composer window and wrap width (see
+    /// [`ComposerBuffer::retain_paint`]).
+    pub(in crate::tui) fn retain_composer_paint(&mut self, view_start: usize, wrap_width: usize) {
+        self.buffer.retain_paint(view_start, wrap_width);
     }
 
     pub(in crate::tui) fn selection_dragging(&self) -> bool {
-        matches!(self.selection, ComposerSelectionState::Dragging(_))
+        self.buffer.selection_dragging()
     }
 
     /// Highlight/edit range when the selection spans at least one character.
     pub(in crate::tui) fn selection_range(&self) -> Option<std::ops::Range<usize>> {
-        self.selection
-            .value()
-            .and_then(ComposerSelection::edit_range)
-    }
-
-    pub(in crate::tui) fn begin_selection(&mut self, position: usize) {
-        self.selection = ComposerSelectionState::Dragging(ComposerSelection::characters(position));
-    }
-
-    /// Select an existing character range (for example double-click word select).
-    ///
-    /// Keeps the primary-button drag active so the user can extend the range.
-    pub(in crate::tui) fn select_range(&mut self, start: usize, end: usize) {
-        if start == end {
-            self.clear_selection();
-            return;
-        }
-        self.selection = ComposerSelectionState::Dragging(ComposerSelection::range(start, end));
-    }
-
-    pub(in crate::tui) fn update_selection(&mut self, position: usize) {
-        if let ComposerSelectionState::Dragging(selection) = &mut self.selection {
-            selection.update(position);
-        }
+        self.buffer.selection_range()
     }
 
     /// Keep a non-empty selection after mouse release; drop a collapsed click.
     pub(in crate::tui) fn finalize_selection(&mut self) {
-        self.selection = match self.selection {
-            ComposerSelectionState::Dragging(selection) if selection.edit_range().is_some() => {
-                ComposerSelectionState::Selected(selection)
-            }
-            ComposerSelectionState::Selected(selection) => {
-                ComposerSelectionState::Selected(selection)
-            }
-            ComposerSelectionState::Dragging(_) | ComposerSelectionState::None => {
-                ComposerSelectionState::None
-            }
-        };
+        self.buffer.finalize_selection();
     }
 
     pub(in crate::tui) fn clear_selection(&mut self) {
-        self.selection = ComposerSelectionState::None;
+        self.buffer.clear_selection();
     }
 
     /// Record a pointer press on `index` and report whether it completes a
@@ -345,13 +194,6 @@ impl InputUi {
         self.pointer.clicks.cancel();
     }
 
-    /// Take a non-empty selection range and clear selection state.
-    pub(in crate::tui) fn take_selection_range(&mut self) -> Option<std::ops::Range<usize>> {
-        let range = self.selection_range();
-        self.clear_selection();
-        range
-    }
-
     pub(in crate::tui) fn composer(&self) -> &ComposerMode {
         &self.composer
     }
@@ -362,12 +204,12 @@ impl InputUi {
 
     pub(in crate::tui) fn set_composer(&mut self, composer: ComposerMode) {
         self.composer = composer;
-        self.composer_view_start = 0;
+        self.buffer.reset_view_start();
         self.pointer = ComposerPointerState::default();
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
-        self.composer_view_start = 0;
+        self.buffer.reset_view_start();
         self.pointer = ComposerPointerState::default();
         std::mem::replace(&mut self.composer, ComposerMode::Input)
     }
@@ -419,19 +261,15 @@ impl InputUi {
     }
 
     pub(in crate::tui) fn paste_segments(&self) -> &[PasteSegment] {
-        &self.paste_segments
-    }
-
-    pub(in crate::tui) fn paste_segments_mut(&mut self) -> &mut Vec<PasteSegment> {
-        &mut self.paste_segments
+        self.buffer.paste_segments()
     }
 
     pub(in crate::tui) fn set_paste_segments(&mut self, segments: Vec<PasteSegment>) {
-        self.paste_segments = segments;
+        self.buffer.set_paste_segments(segments);
     }
 
     pub(in crate::tui) fn clear_paste_segments(&mut self) {
-        self.paste_segments.clear();
+        self.buffer.set_paste_segments(Vec::new());
     }
 
     pub(in crate::tui) fn shell_mode(&self) -> Option<InlineShellMode> {

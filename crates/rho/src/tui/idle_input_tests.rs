@@ -32,7 +32,7 @@ fn goal_commands_take_queued_media() {
         let mut app = test_app();
         app.input_ui
             .push_ready_attachment(attached_document(), None);
-        app.input_ui.with_text_mut(|text| text.push_str(command));
+        app.input_ui.set_text(command.to_owned());
         let invocation = commands::parse_command(command).unwrap().unwrap();
 
         let submission = app.take_command_submission(
