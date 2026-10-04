@@ -132,9 +132,9 @@ pub enum HookToolStatus {
 /// Present only for calls that ran a process to completion. A call that timed
 /// out, was cancelled, or never started has no process result.
 ///
-/// Output is cut at two layers. The tool keeps what fits its own output budget
-/// and sets `truncated` when it dropped the rest. Past the hook field bound,
-/// each stream then keeps its last bytes and is named in `bounds.fields`.
+/// Output is cut at two layers. The tool keeps what it can under its own budget
+/// and sets `truncated` when it lost some. Past the hook field bound, each
+/// stream then keeps its last bytes and is named in `bounds.fields`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct HookProcessResult {
@@ -143,7 +143,7 @@ pub struct HookProcessResult {
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
-    /// Whether the tool dropped process output before hooks saw it.
+    /// Whether the tool lost process output before hooks saw it.
     pub truncated: bool,
 }
 
@@ -304,13 +304,19 @@ pub struct BeforeToolUsePayload {
 /// carrying them on [`super::HookEnvelope`].
 ///
 /// This minor keeps the existing constructor fields so downstream struct
-/// literals stay valid. Read the first authorized capability from
+/// literals stay valid.
+///
+/// Read the first authorized capability from
 /// [`super::HookEnvelope::after_tool_use_capability`] or the envelope JSON
-/// `payload.capability` key, and the process result from
-/// [`super::HookEnvelope::after_tool_use_process`] or `payload.process`. `None` / JSON `null` means the call never
+/// `payload.capability` key. `None` / JSON `null` means the call never
 /// authorized. Multi-capability calls still emit one `before_tool_use` per
 /// request; the after payload reports only the first. Policy denials still
 /// include the request.
+///
+/// Read the process result from
+/// [`super::HookEnvelope::after_tool_use_process`] or `payload.process`.
+/// `None` / JSON `null` means the call ran no process to completion: the tool
+/// runs none, or the call was denied, timed out, or was cancelled.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AfterToolUsePayload {
     pub tool: HookTool,

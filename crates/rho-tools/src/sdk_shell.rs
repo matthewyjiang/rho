@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use rho_sdk::{
     tool::{
-        OperationKind, PreparedToolInvocation, ProcessResult, Tool, ToolContext, ToolError,
-        ToolErrorKind, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
-        ToolPrepareFuture, ToolProgress, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
     ProcessInvocation, ProcessOutputLimits, ResolvedWorkspacePath, Workspace,
@@ -160,7 +160,7 @@ impl ShellPlan {
         let max_output_bytes = self.execution.output_limits().max_output_bytes();
         let run = execute_with_progress(kind, self.execution, context).await?;
         // Taken before `limit_data`, which may drop the structured view.
-        let process = run.data().map(ProcessResult::from);
+        let process = run.data().map(|outcome| outcome.process.clone());
         let mut output = run
             .limit_data(max_output_bytes)?
             .into_tool_output(ToolMetadata::new().operation(OperationKind::Execute))?;

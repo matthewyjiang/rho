@@ -6,9 +6,12 @@
 
 use crate::cancellation::RunCancellation;
 use crate::process_env::apply_process_environment;
-use crate::process_stream::{capture_failure_notice, StreamKind};
+use crate::process_stream::{capture_failure_notice, StreamKind, StreamTail};
 use crate::tool::{truncate, ToolError, ToolSpec};
-use rho_sdk::{ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation};
+use rho_sdk::{
+    tool::ProcessResult, ExecutableSelection, ProcessEnvironment, ProcessExecution,
+    ProcessInvocation,
+};
 use serde::Deserialize;
 use std::{ffi::OsString, process::Stdio, time::Duration, time::Instant};
 use tokio::{io::AsyncReadExt, process::Command};
@@ -118,6 +121,10 @@ pub(crate) trait ProcessSupervisor: Sized {
 
 /// A finished shell command. Retained stdout and stderr share the tool's
 /// `max_output_bytes`; `truncated` reports dropped bytes.
+///
+/// `process` is the view lifecycle hooks read instead of parsing the
+/// model-facing text. It adds the tail of each stream past the budget, so it is
+/// not part of the script-facing structured content.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ShellOutcome {
     pub(crate) stdout: String,
@@ -126,15 +133,13 @@ pub(crate) struct ShellOutcome {
     pub(crate) exit_code: Option<i32>,
     pub(crate) truncated: bool,
     pub(crate) wall_time_ms: u64,
+    #[serde(skip)]
+    pub(crate) process: ProcessResult,
 }
 
-/// The SDK view lifecycle hooks read instead of parsing the model-facing text.
-impl From<&ShellOutcome> for rho_sdk::tool::ProcessResult {
-    fn from(outcome: &ShellOutcome) -> Self {
-        Self::new(outcome.exit_code, &outcome.stdout, &outcome.stderr)
-            .with_truncated(outcome.truncated)
-    }
-}
+/// Dropped output kept per stream for [`ShellOutcome::process`]: enough to fill
+/// one hook payload field at its default bound.
+const PROCESS_TAIL_BYTES: usize = rho_sdk::hooks::DEFAULT_MAX_FIELD_BYTES;
 
 /// Spawns `execution`, supervises it with `S`, and streams output updates.
 pub(crate) async fn run<S: ProcessSupervisor>(
@@ -201,12 +206,19 @@ pub(crate) async fn run<S: ProcessSupervisor>(
     supervisor.kill();
     let output = streams.finish().await;
     let elapsed = start.elapsed();
+    let process = ProcessResult::new(
+        status.code(),
+        joined(&output.stdout, &output.stdout_tail),
+        joined(&output.stderr, &output.stderr_tail),
+    )
+    .with_truncated(output.stdout_tail.lost() || output.stderr_tail.lost());
     let outcome = ShellOutcome {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         exit_code: status.code(),
         truncated: output.truncated,
         wall_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        process,
     };
     let result = finished_result(
         status,
@@ -216,6 +228,12 @@ pub(crate) async fn run<S: ProcessSupervisor>(
         max_output_bytes,
     );
     Ok(crate::Rendered::new(result, outcome).failed_if(!status.success()))
+}
+
+/// A stream's retained start followed by its kept tail. They are contiguous
+/// unless the tail reports lost bytes, so one decode keeps characters whole.
+fn joined(head: &[u8], tail: &StreamTail) -> String {
+    String::from_utf8_lossy(&[head, tail.bytes()].concat()).into_owned()
 }
 
 fn build_command(execution: &ProcessExecution, tool_name: &str) -> Result<Command, ToolError> {
@@ -270,6 +288,9 @@ struct StreamSession {
     readers: Vec<tokio::task::JoinHandle<()>>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    /// Bytes past the retained budget, kept for the process result.
+    stdout_tail: StreamTail,
+    stderr_tail: StreamTail,
     retained_bytes: usize,
     max_output_bytes: usize,
     /// Set once any output byte was dropped for the retained budget.
@@ -281,6 +302,8 @@ struct StreamSession {
 struct CollectedOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    stdout_tail: StreamTail,
+    stderr_tail: StreamTail,
     truncated: bool,
 }
 
@@ -307,6 +330,8 @@ impl StreamSession {
             readers,
             stdout: Vec::new(),
             stderr: Vec::new(),
+            stdout_tail: StreamTail::new(PROCESS_TAIL_BYTES),
+            stderr_tail: StreamTail::new(PROCESS_TAIL_BYTES),
             retained_bytes: 0,
             max_output_bytes: max_output_bytes.max(1),
             truncated: false,
@@ -325,11 +350,13 @@ impl StreamSession {
                 let remaining = self.max_output_bytes.saturating_sub(self.retained_bytes);
                 let take = bytes.len().min(remaining);
                 self.truncated |= take < bytes.len();
+                let (retained, tail) = match kind {
+                    StreamKind::Stdout => (&mut self.stdout, &mut self.stdout_tail),
+                    StreamKind::Stderr => (&mut self.stderr, &mut self.stderr_tail),
+                };
+                tail.push(&bytes[take..]);
                 if take > 0 {
-                    match kind {
-                        StreamKind::Stdout => self.stdout.extend_from_slice(&bytes[..take]),
-                        StreamKind::Stderr => self.stderr.extend_from_slice(&bytes[..take]),
-                    }
+                    retained.extend_from_slice(&bytes[..take]);
                     self.retained_bytes += take;
                     self.dirty = true;
                 }
@@ -351,6 +378,8 @@ impl StreamSession {
         CollectedOutput {
             stdout: std::mem::take(&mut self.stdout),
             stderr: std::mem::take(&mut self.stderr),
+            stdout_tail: std::mem::take(&mut self.stdout_tail),
+            stderr_tail: std::mem::take(&mut self.stderr_tail),
             truncated: self.truncated,
         }
     }

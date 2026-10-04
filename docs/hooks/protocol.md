@@ -68,10 +68,11 @@ reads the exit code and output instead of parsing the text the model saw. It is
 cancelled, or never started. `exit_code` is `null` when the process ended
 without one, for example when a signal killed it.
 
-Output is cut at two layers. `stdout` and `stderr` hold what the tool retained
-under its output limit; the built-in shell tools keep the first bytes the
-command wrote and set `truncated` to `true` when they dropped the rest. Past the
-hook field bound, each stream then keeps its **last** bytes and is named in
+Output is cut at two layers. The built-in shell tools give the model the start
+of the output up to their output limit, but keep the last 8 KiB of each stream
+past that limit for `process`, so the end of a long build still arrives. When
+even that is not enough, the middle is dropped and `truncated` is `true`. Past
+the hook field bound, each stream then keeps its **last** bytes and is named in
 `bounds.fields`. `status` is the tool outcome, not the process outcome: they
 usually agree, but read `exit_code` when you need the process's answer.
 
@@ -110,7 +111,8 @@ configuration, and URL query strings. A network payload carries the scheme,
 host, and path with userinfo and query removed, plus a `query_present` flag.
 
 Paths and shell command text **are** included, because inspecting them is the
-whole point of a deny hook.
+whole point of a deny hook. So is `payload.process` output: it is bounded but not
+redacted, so it carries whatever the command printed, secrets included.
 
 ## Answering a blocking event
 

@@ -189,21 +189,48 @@ mod unix {
         second.expect("second command runs");
     }
 
-    // Covers: hooks read the real exit code and streams of a command, and learn
-    // when the tool dropped output, instead of parsing the model-facing text.
+    // Covers: hooks read the real exit code and streams of a command, keep the
+    // end of output past the tool budget, and learn when output was lost,
+    // instead of parsing the model-facing text.
     // Owner: shell tool adapter feeding the SDK after_tool_use payload
     #[tokio::test]
     async fn commands_report_exit_code_streams_and_truncation_to_hooks() {
+        let tail = rho_sdk::hooks::DEFAULT_MAX_FIELD_BYTES;
         let cases = [
             (
-                "printf out; printf boom >&2; exit 7",
+                "printf out; printf boom >&2; exit 7".to_owned(),
                 ShellToolOptions::new(),
-                (HookToolStatus::Failed, Some(7), "out", "boom", false),
+                (
+                    HookToolStatus::Failed,
+                    Some(7),
+                    "out".to_owned(),
+                    "boom".to_owned(),
+                    false,
+                ),
             ),
+            // Past the budget, the dropped end still reaches hooks whole.
             (
-                "printf 0123456789",
+                "printf 0123456789".to_owned(),
                 ShellToolOptions::new().max_output_bytes(4),
-                (HookToolStatus::Succeeded, Some(0), "0123", "", true),
+                (
+                    HookToolStatus::Succeeded,
+                    Some(0),
+                    "0123456789".to_owned(),
+                    String::new(),
+                    false,
+                ),
+            ),
+            // Past the kept tail too, the middle is lost and hooks get the last bytes.
+            (
+                format!("head -c {} /dev/zero | tr '\\0' a; printf END", 2 * tail),
+                ShellToolOptions::new().max_output_bytes(4),
+                (
+                    HookToolStatus::Succeeded,
+                    Some(0),
+                    format!("{}END", "a".repeat(tail - 3)),
+                    String::new(),
+                    true,
+                ),
             ),
         ];
         for (command, options, expected) in cases {
@@ -215,7 +242,7 @@ mod unix {
                         ContentBlock::ToolCall(ToolCall {
                             id: "shell-1".into(),
                             name: "bash".into(),
-                            arguments: json!({ "command": command }),
+                            arguments: json!({ "command": &command }),
                         }),
                     ])),
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
@@ -250,8 +277,8 @@ mod unix {
                 (
                     payload.status,
                     process.exit_code,
-                    process.stdout.as_str(),
-                    process.stderr.as_str(),
+                    process.stdout.clone(),
+                    process.stderr.clone(),
                     process.truncated,
                 ),
                 expected,

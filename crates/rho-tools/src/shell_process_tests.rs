@@ -102,7 +102,8 @@ fn finished_result_uses_signal_when_exit_code_is_absent() {
 }
 
 // Covers: retained stream bytes must stop at the configured budget, and any
-// dropped byte sets `truncated` (scripts read it as structured content).
+// dropped byte sets `truncated` (scripts read it as structured content). Each
+// stream's dropped end is kept, bounded, for the hook process result.
 // Owner: pure unit (shell process)
 #[test]
 fn stream_session_caps_retained_stdout_and_stderr() {
@@ -112,6 +113,8 @@ fn stream_session_caps_retained_stdout_and_stderr() {
         readers: Vec::new(),
         stdout: Vec::new(),
         stderr: Vec::new(),
+        stdout_tail: StreamTail::new(4),
+        stderr_tail: StreamTail::new(4),
         retained_bytes: 0,
         max_output_bytes: 10,
         truncated: false,
@@ -139,6 +142,14 @@ fn stream_session_caps_retained_stdout_and_stderr() {
     assert_eq!(
         streams.stdout.len() + streams.stderr.len(),
         streams.max_output_bytes
+    );
+    // stdout dropped "d" then "extra": only the last four bytes survive.
+    assert_eq!(
+        (
+            (streams.stdout_tail.bytes(), streams.stdout_tail.lost()),
+            (streams.stderr_tail.bytes(), streams.stderr_tail.lost()),
+        ),
+        ((&b"xtra"[..], true), (&b"more"[..], false))
     );
 }
 

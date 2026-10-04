@@ -236,8 +236,9 @@ impl ToolOutput {
 /// Exit status and retained output of a finished process.
 ///
 /// `stdout` and `stderr` hold what the tool retained under its own output
-/// budget. When the tool dropped output to stay within it, [`Self::is_truncated`]
-/// reports that the streams are partial.
+/// budget. Keep the end of each stream when output must be cut, because errors
+/// usually come last. When output was lost, [`Self::is_truncated`] reports that
+/// the streams are partial.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessResult {
     exit_code: Option<i32>,
@@ -262,7 +263,7 @@ impl ProcessResult {
         }
     }
 
-    /// Records whether the tool dropped process output to stay within its budget.
+    /// Records whether the tool lost process output to stay within its budget.
     pub fn with_truncated(mut self, truncated: bool) -> Self {
         self.truncated = truncated;
         self
