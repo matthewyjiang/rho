@@ -532,6 +532,7 @@ impl App {
                     }
                     Event::FocusGained => self.on_focus_gained(),
                     Event::FocusLost => {
+                        self.notifier.set_focused(false);
                         self.input_ui.cancel_pointer_click_sequence();
                         self.input_ui.finalize_selection();
                         self.settle_side_composer_pointer();

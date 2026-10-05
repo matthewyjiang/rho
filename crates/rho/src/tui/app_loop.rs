@@ -133,6 +133,10 @@ impl App {
             } else {
                 Duration::from_secs(3600)
             };
+            // About to wait for the user: a turn that finished since the
+            // last wait notifies now, once per batch of turns.
+            let notification = self.notifier.take_ready();
+            self.send_notification(notification);
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
             let media_attach_pending = !self.media_attach_tasks.is_empty();
@@ -260,6 +264,7 @@ impl App {
                 }
                 Event::FocusGained => self.on_focus_gained(),
                 Event::FocusLost => {
+                    self.notifier.set_focused(false);
                     self.input_ui.cancel_pointer_click_sequence();
                     self.input_ui.finalize_selection();
                     self.settle_side_composer_pointer();
@@ -273,6 +278,7 @@ impl App {
     }
 
     pub(super) fn on_focus_gained(&mut self) {
+        self.notifier.set_focused(true);
         self.input_ui.cancel_pointer_click_sequence();
         // Some Windows hosts drop application mouse tracking on focus
         // changes; re-assert so wheel scrolling keeps working.
@@ -336,7 +342,11 @@ impl App {
                 .is_some_and(|until| now < until)
     }
 
+    /// Reports agent state to Herdr and to the terminal notifier, which stays
+    /// off under Herdr.
     pub(super) async fn report_herdr_state(&mut self, state: HerdrState, message: Option<&str>) {
+        let notification = self.notifier.observe(state, message);
+        self.send_notification(notification);
         if !self.info.services.herdr.is_enabled() {
             return;
         }
@@ -349,6 +359,13 @@ impl App {
             .report_state(state, message, session.as_ref())
             .await;
         self.confirm_herdr_claim(key, session.as_ref(), delivery);
+    }
+
+    /// Writes a notification unless the user turned them off in config.
+    fn send_notification(&self, bytes: Option<Vec<u8>>) {
+        if let Some(bytes) = bytes.filter(|_| self.info.runtime.notifications) {
+            super::notifications::write_to_terminal(&bytes);
+        }
     }
 
     /// Claims the pane before the first frame without delaying it. The report

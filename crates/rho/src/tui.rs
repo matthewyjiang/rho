@@ -142,6 +142,7 @@ mod models_dev_actions;
 mod mouse;
 mod mouse_capture;
 mod notification_card_render;
+mod notifications;
 mod overlay_panel;
 mod palette;
 mod palette_pointer;
@@ -345,6 +346,9 @@ pub struct RuntimeModelView {
     pub cache_miss_notices: bool,
     /// Show the keyboard hint block in the session header.
     pub show_header_hints: bool,
+    /// Notify through the terminal when a turn finishes or needs the user
+    /// while the terminal is unfocused. Ignored under Herdr.
+    pub notifications: bool,
     pub auth: String,
     pub internal_agents:
         std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig>,
@@ -626,6 +630,7 @@ struct App {
     side_chat: Option<side_chat::SideChat>,
     /// What Herdr last heard about the session, so idle changes are re-sent.
     herdr_sync: herdr_resume::HerdrSync,
+    notifier: notifications::TerminalNotifier,
 }
 
 struct PendingSubagentQuestionnaire {

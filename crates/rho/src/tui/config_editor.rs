@@ -38,6 +38,7 @@ pub(super) enum ConfigToggle {
     AutoCompact,
     CacheMissNotices,
     ShowHeaderHints,
+    Notifications,
     ShowReasoningOutput,
     ZenMode,
     XaiImageGeneration,
@@ -78,6 +79,10 @@ pub(super) fn toggle(
         ConfigToggle::ShowHeaderHints => {
             config.show_header_hints = !config.show_header_hints;
             config.show_header_hints
+        }
+        ConfigToggle::Notifications => {
+            config.notifications = !config.notifications;
+            config.notifications
         }
         ConfigToggle::ShowReasoningOutput => {
             config.show_reasoning_output = !config.show_reasoning_output;

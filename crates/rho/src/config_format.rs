@@ -81,6 +81,7 @@ struct DisplayConfig {
     prompt_history_limit: usize,
     cache_miss_notices: bool,
     show_header_hints: bool,
+    notifications: bool,
 }
 
 #[derive(Serialize)]
@@ -265,6 +266,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 prompt_history_limit: config.prompt_history_limit,
                 cache_miss_notices: config.cache_miss_notices,
                 show_header_hints: config.show_header_hints,
+                notifications: config.notifications,
             },
             output: OutputConfig {
                 max_output_bytes: config.max_output_bytes,

@@ -38,6 +38,7 @@ pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_perc
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
 pub(super) const CACHE_MISS_NOTICES_VALUE: &str = "cache_miss_notices";
 pub(super) const SHOW_HEADER_HINTS_VALUE: &str = "show_header_hints";
+pub(super) const NOTIFICATIONS_VALUE: &str = "notifications";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const PROMPT_HISTORY_LIMIT_VALUE: &str = "prompt_history_limit";
@@ -199,7 +200,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Appearance",
-                "Theme, zen mode, output streaming, reasoning output, cache miss notices, header hints, and collapsed tool output lines.",
+                "Theme, zen mode, output streaming, reasoning output, cache miss notices, header hints, notifications, and collapsed tool output lines.",
                 Some(theme_badge(config)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
@@ -328,6 +329,12 @@ pub(super) fn category_picker(
                     "Show the keyboard hint block in the session header. Sign-in hints stay while signed out. Space toggles.",
                     Some(shown_hidden(info.show_header_hints)),
                     SHOW_HEADER_HINTS_VALUE,
+                ),
+                item(
+                    "Notifications",
+                    "Desktop notification, or a terminal bell, when a turn finishes or needs you while the terminal is unfocused. Herdr panes use Herdr's notifications instead. Space toggles.",
+                    Some(on_off(info.notifications)),
+                    NOTIFICATIONS_VALUE,
                 ),
                 item(
                     "Max tool output lines",
@@ -572,6 +579,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | THEME_VALUE
         | CACHE_MISS_NOTICES_VALUE
         | SHOW_HEADER_HINTS_VALUE
+        | NOTIFICATIONS_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE

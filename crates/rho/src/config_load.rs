@@ -135,6 +135,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.show_header_hints {
             cfg.show_header_hints = value;
         }
+        if let Some(value) = group.notifications {
+            cfg.notifications = value;
+        }
     }
     if let Some(group) = file.output {
         if let Some(value) = group.max_output_bytes {
@@ -352,6 +355,7 @@ impl PartialConfig {
                 prompt_history_limit: group.prompt_history_limit,
                 cache_miss_notices: group.cache_miss_notices,
                 show_header_hints: group.show_header_hints,
+                notifications: group.notifications,
             });
         }
 
@@ -530,6 +534,7 @@ struct PartialDisplayConfig {
     prompt_history_limit: Option<usize>,
     cache_miss_notices: Option<bool>,
     show_header_hints: Option<bool>,
+    notifications: Option<bool>,
 }
 
 #[derive(Deserialize)]

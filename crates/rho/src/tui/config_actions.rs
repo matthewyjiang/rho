@@ -180,6 +180,7 @@ impl App {
             (ConfigRow::AutoCompact, _) => self.toggle_auto_compact(),
             (ConfigRow::CacheMissNotices, _) => self.toggle_cache_miss_notices(),
             (ConfigRow::ShowHeaderHints, _) => self.toggle_header_hints(),
+            (ConfigRow::Notifications, _) => self.toggle_notifications(),
             (ConfigRow::Number(key), _) => self.open_config_number_editor(key),
             (ConfigRow::ClearPromptHistory, _) => self.prompt_clear_prompt_history(),
             (ConfigRow::InlineShell, ctx) => {
@@ -565,6 +566,19 @@ impl App {
                 error_noun: "header hints",
             },
             |app, enabled| app.info.runtime.show_header_hints = enabled,
+        )
+    }
+
+    pub(super) fn toggle_notifications(&mut self) -> anyhow::Result<()> {
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::Notifications,
+                picker_value: config_picker::NOTIFICATIONS_VALUE,
+                on_status: "notifications: on",
+                off_status: "notifications: off",
+                error_noun: "notifications",
+            },
+            |app, enabled| app.info.runtime.notifications = enabled,
         )
     }
 

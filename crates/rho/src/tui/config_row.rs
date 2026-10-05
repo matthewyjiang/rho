@@ -47,6 +47,7 @@ pub(super) enum ConfigRow {
     AutoCompact,
     CacheMissNotices,
     ShowHeaderHints,
+    Notifications,
     Number(ConfigNumberKey),
     ClearPromptHistory,
     InlineShell,
@@ -110,6 +111,7 @@ impl ConfigRow {
             config_picker::AUTO_COMPACT_VALUE => Self::AutoCompact,
             config_picker::CACHE_MISS_NOTICES_VALUE => Self::CacheMissNotices,
             config_picker::SHOW_HEADER_HINTS_VALUE => Self::ShowHeaderHints,
+            config_picker::NOTIFICATIONS_VALUE => Self::Notifications,
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 Self::Number(ConfigNumberKey::CompactThresholdPercent)
             }
