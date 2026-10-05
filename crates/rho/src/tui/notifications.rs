@@ -1,18 +1,18 @@
 //! Desktop notifications for when a turn finishes or needs the user while the
 //! terminal is unfocused.
 //!
-//! The TUI feeds every agent state it reports to Herdr through
-//! [`TerminalNotifier::observe`]. A wait for the user (approval, questionnaire,
-//! blocked goal) notifies at once. A finished turn is held until the event loop
-//! is about to wait for input ([`TerminalNotifier::take_ready`]), so a goal run
-//! or queued follow-ups notify once at the end instead of after every turn.
-//!
-//! Under Herdr the notifier stays off: Herdr receives the same states and owns
-//! notifications for its panes.
+//! Owners report attention events directly: approval and questionnaire
+//! prompts call [`TerminalNotifier::user_wait`], which notifies at once, and
+//! each finished turn calls [`TerminalNotifier::turn_finished`]. A finished
+//! turn is held until the event loop is about to wait for input
+//! ([`TerminalNotifier::take_ready`]), so a goal run or queued follow-ups
+//! notify once at the end instead of after every turn.
 
 use std::io::{self, Write};
 
-use crate::herdr::HerdrState;
+use crossterm::event::Event;
+
+use super::UserWait;
 
 /// How the host terminal is asked to get the user's attention.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,79 +47,58 @@ impl NotificationChannel {
         }
     }
 
-    /// Bytes that deliver `body` on this channel. Control characters in the
-    /// body are replaced so text such as a goal's blocked reason cannot end
-    /// the OSC sequence early or inject another one.
+    /// Bytes that deliver `body` on this channel.
     pub(super) fn encode(self, body: &str) -> Vec<u8> {
         match self {
-            Self::Osc9 => {
-                let body: String = body
-                    .chars()
-                    .map(|ch| if ch.is_control() { ' ' } else { ch })
-                    .collect();
-                format!("\x1b]9;rho: {body}\x07").into_bytes()
-            }
+            Self::Osc9 => format!("\x1b]9;rho: {body}\x07").into_bytes(),
             Self::Bell => b"\x07".to_vec(),
         }
     }
 }
 
 /// Decides when to notify. Owned by the TUI app; holds no terminal handle.
+/// Whether notifications are enabled at all is the caller's policy.
 #[derive(Debug)]
 pub(super) struct TerminalNotifier {
-    /// `None` when another host (Herdr) owns notifications.
-    channel: Option<NotificationChannel>,
+    channel: NotificationChannel,
     /// Terminals report focus changes, not the initial focus. The user just
     /// launched Rho, so start focused; terminals without focus reporting
     /// never notify.
     focused: bool,
-    last: Option<(HerdrState, Option<String>)>,
-    /// A finished turn waiting for the event loop to go idle.
+    /// A turn finished since the event loop last waited for input.
     finished_turn: bool,
 }
 
 impl TerminalNotifier {
-    pub(super) fn new(channel: Option<NotificationChannel>) -> Self {
+    pub(super) fn new(channel: NotificationChannel) -> Self {
         Self {
             channel,
             focused: true,
-            last: None,
             finished_turn: false,
         }
     }
 
-    pub(super) fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    /// Records a reported agent state. Returns bytes to write when the state
-    /// is a new wait for the user and the terminal is unfocused.
-    pub(super) fn observe(&mut self, state: HerdrState, message: Option<&str>) -> Option<Vec<u8>> {
-        let next = (state, message.map(str::to_string));
-        if self.last.as_ref() == Some(&next) {
-            return None;
-        }
-        let was_working = matches!(self.last, Some((HerdrState::Working, _)));
-        self.last = Some(next);
-        match state {
-            HerdrState::Working => {
-                self.finished_turn = false;
-                None
-            }
-            HerdrState::Idle => {
-                self.finished_turn |= was_working;
-                None
-            }
-            HerdrState::Blocked => {
-                // A blocked rest after a turn replaces the finished-turn note.
-                self.finished_turn = false;
-                self.encode(message.unwrap_or("waiting for you"))
-            }
+    /// Tracks terminal focus. Call for every terminal event before any
+    /// exclusive screen consumes it.
+    pub(super) fn observe_focus(&mut self, event: &Event) {
+        match event {
+            Event::FocusGained => self.focused = true,
+            Event::FocusLost => self.focused = false,
+            Event::Key(_) | Event::Mouse(_) | Event::Paste(_) | Event::Resize(..) => {}
         }
     }
 
-    /// Bytes for a finished turn once the event loop is about to wait for
-    /// input. Clears the pending turn either way.
+    pub(super) fn turn_finished(&mut self) {
+        self.finished_turn = true;
+    }
+
+    /// Bytes for a prompt that now waits on the user.
+    pub(super) fn user_wait(&self, wait: UserWait) -> Option<Vec<u8>> {
+        self.encode(wait.message())
+    }
+
+    /// Bytes for finished turns once the event loop is about to wait for
+    /// input. Clears them either way.
     pub(super) fn take_ready(&mut self) -> Option<Vec<u8>> {
         if !std::mem::take(&mut self.finished_turn) {
             return None;
@@ -128,10 +107,7 @@ impl TerminalNotifier {
     }
 
     fn encode(&self, body: &str) -> Option<Vec<u8>> {
-        if self.focused {
-            return None;
-        }
-        Some(self.channel?.encode(body))
+        (!self.focused).then(|| self.channel.encode(body))
     }
 }
 

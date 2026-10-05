@@ -425,6 +425,7 @@ impl App {
         tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
         self.observe_questionnaire_input(&first_event);
+        self.notifier.observe_focus(&first_event);
         // Only a resolution caused by this event counts; drop any left by a
         // turn-end cancel or an interrupting Esc that returned early.
         self.turn.take_approval_resolved();
@@ -532,7 +533,6 @@ impl App {
                     }
                     Event::FocusGained => self.on_focus_gained(),
                     Event::FocusLost => {
-                        self.notifier.set_focused(false);
                         self.input_ui.cancel_pointer_click_sequence();
                         self.input_ui.finalize_selection();
                         self.settle_side_composer_pointer();

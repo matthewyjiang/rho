@@ -1,7 +1,8 @@
+use crossterm::event::Event;
 use pretty_assertions::assert_eq;
 
 use super::{NotificationChannel, TerminalNotifier};
-use crate::herdr::HerdrState;
+use crate::tui::UserWait;
 
 /// Environment variables visible to `detect`.
 type Vars = &'static [(&'static str, &'static str)];
@@ -54,143 +55,72 @@ fn detect_prefers_bell_inside_multiplexers() {
     }
 }
 
-#[test]
-fn osc9_body_cannot_terminate_the_sequence() {
-    assert_eq!(
-        NotificationChannel::Osc9.encode("blocked\x07\x1b]9;spoof\nnext"),
-        b"\x1b]9;rho: blocked  ]9;spoof next\x07".to_vec()
-    );
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Step {
-    Focus(bool),
-    State(HerdrState, Option<&'static str>),
+    Terminal(Event),
+    TurnFinished,
+    Wait(UserWait),
     /// The event loop is about to wait for input.
     Idle,
 }
 
-struct NotifyCase {
-    name: &'static str,
-    channel: Option<NotificationChannel>,
-    steps: Vec<Step>,
-    expected: Vec<&'static str>,
-}
-
 #[test]
-fn notifies_once_per_wait_for_the_user() {
-    use HerdrState::{Blocked, Idle as Rest, Working};
-    use Step::{Focus, Idle, State};
-    let approval = State(Blocked, Some("waiting for approval"));
-    let osc9 = Some(NotificationChannel::Osc9);
-    let case = |name, channel, steps, expected| NotifyCase {
-        name,
-        channel,
-        steps,
-        expected,
-    };
-    let cases = [
-        case(
+fn notifies_unfocused_user_once_per_wait() {
+    use Step::{Idle, Terminal, TurnFinished, Wait};
+    let away = Terminal(Event::FocusLost);
+    let back = Terminal(Event::FocusGained);
+    let approval = Wait(UserWait::Approval);
+    let cases: [(&str, Vec<Step>, Vec<&str>); 5] = [
+        (
             "finished turn while away",
-            osc9,
-            vec![
-                Focus(false),
-                State(Working, None),
-                State(Rest, None),
-                Idle,
-                Idle,
-            ],
+            vec![away.clone(), TurnFinished, Idle, Idle],
             vec!["turn finished"],
         ),
-        case(
+        (
             "goal turns notify once at the end",
-            osc9,
-            vec![
-                Focus(false),
-                State(Working, None),
-                State(Rest, None),
-                State(Working, None),
-                State(Rest, None),
-                Idle,
-            ],
+            vec![away.clone(), TurnFinished, TurnFinished, Idle],
             vec!["turn finished"],
         ),
-        case(
+        (
+            "every approval needs an answer",
+            vec![
+                away.clone(),
+                approval.clone(),
+                approval.clone(),
+                TurnFinished,
+                Idle,
+            ],
+            vec![
+                "waiting for approval",
+                "waiting for approval",
+                "turn finished",
+            ],
+        ),
+        (
             "focused user is not interrupted",
-            osc9,
-            vec![
-                State(Working, None),
-                approval,
-                State(Working, None),
-                State(Rest, None),
-                Idle,
-            ],
+            vec![approval, TurnFinished, Idle],
             vec![],
         ),
-        case(
+        (
             "focus returns before the loop idles",
-            osc9,
-            vec![
-                Focus(false),
-                State(Working, None),
-                State(Rest, None),
-                Focus(true),
-                Idle,
-            ],
-            vec![],
-        ),
-        case(
-            "approval notifies at once and only once",
-            osc9,
-            vec![Focus(false), State(Working, None), approval, approval],
-            vec!["waiting for approval"],
-        ),
-        case(
-            "blocked rest replaces the finished turn",
-            osc9,
-            vec![
-                Focus(false),
-                State(Working, None),
-                State(Blocked, Some("goal blocked")),
-                Idle,
-            ],
-            vec!["goal blocked"],
-        ),
-        case(
-            "rest without a turn is silent",
-            osc9,
-            vec![Focus(false), State(Rest, None), Idle],
-            vec![],
-        ),
-        case(
-            "herdr owns notifications",
-            None,
-            vec![
-                Focus(false),
-                State(Working, None),
-                approval,
-                State(Rest, None),
-                Idle,
-            ],
+            vec![away, TurnFinished, back, Idle],
             vec![],
         ),
     ];
-    for NotifyCase {
-        name,
-        channel,
-        steps,
-        expected,
-    } in cases
-    {
-        let mut notifier = TerminalNotifier::new(channel);
+    for (case, steps, expected) in cases {
+        let mut notifier = TerminalNotifier::new(NotificationChannel::Osc9);
         let mut sent = Vec::new();
         for step in steps {
             let bytes = match step {
-                Focus(focused) => {
-                    notifier.set_focused(focused);
+                Terminal(event) => {
+                    notifier.observe_focus(&event);
                     None
                 }
-                State(state, message) => notifier.observe(state, message),
+                TurnFinished => {
+                    notifier.turn_finished();
+                    None
+                }
+                Wait(wait) => notifier.user_wait(wait),
                 Idle => notifier.take_ready(),
             };
             sent.extend(bytes);
@@ -199,6 +129,6 @@ fn notifies_once_per_wait_for_the_user() {
             .into_iter()
             .map(|body| NotificationChannel::Osc9.encode(body))
             .collect();
-        assert_eq!(sent, expected, "{name}");
+        assert_eq!(sent, expected, "{case}");
     }
 }

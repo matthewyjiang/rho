@@ -126,6 +126,13 @@ fn streaming_controls_persist_during_turn() {
     assert_pass("streaming_controls");
 }
 
+// Covers: an unfocused terminal gets OSC 9 for an approval and the finished
+// turn. Owner: interactive TUI event loop.
+#[test]
+fn unfocused_terminal_is_notified() {
+    assert_pass("turn_notifications");
+}
+
 // Covers: model-scoped prompt switches are visible and invalid files do not
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use rho_sdk::{ApprovalDecision, PendingApproval};
 
-use super::{composer_pointer::ChoiceClick, App, ComposerMode, HerdrUserWait};
+use super::{composer_pointer::ChoiceClick, App, ComposerMode, UserWait};
 
 mod render;
 
@@ -135,8 +135,7 @@ impl App {
                 restore_side,
             )));
         self.set_status("approval requested");
-        self.report_herdr_waiting_for_user(HerdrUserWait::Approval)
-            .await;
+        self.wait_for_user(UserWait::Approval).await;
     }
 
     pub(super) fn handle_approval_key(

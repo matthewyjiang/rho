@@ -77,11 +77,9 @@ impl App {
             prompt_history_limit,
             info.services.pending_prompt_history.take(),
         );
-        // Herdr owns notifications for its panes.
-        let notifier =
-            super::notifications::TerminalNotifier::new((!info.services.herdr.is_enabled()).then(
-                || super::notifications::NotificationChannel::detect(|key| std::env::var(key).ok()),
-            ));
+        let notifier = super::notifications::TerminalNotifier::new(
+            super::notifications::NotificationChannel::detect(|key| std::env::var(key).ok()),
+        );
         let mut statusline = StatusLine::new(&info.runtime);
         statusline.update_not_saved(info.session.no_save);
         let mut app = Self {
