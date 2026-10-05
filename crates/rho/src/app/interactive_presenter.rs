@@ -25,6 +25,8 @@ mod format;
 mod message_format;
 #[path = "interactive_presenter_sessions.rs"]
 mod sessions_format;
+#[path = "interactive_presenter_tool_search.rs"]
+mod tool_search_format;
 use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +69,7 @@ enum ToolKind {
     Questionnaire,
     Sessions,
     Codemode,
+    ToolSearch,
     Mcp,
     Other,
 }
@@ -107,6 +110,7 @@ impl ToolKind {
             "questionnaire" => Self::Questionnaire,
             "sessions" => Self::Sessions,
             crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
+            crate::tools::code_mode::TOOL_SEARCH_NAME => Self::ToolSearch,
             _ => Self::Other,
         }
     }
@@ -146,6 +150,7 @@ impl ToolKind {
             | Self::Questionnaire
             | Self::Sessions
             | Self::Codemode
+            | Self::ToolSearch
             | Self::Mcp
             | Self::Other => {
                 if arguments_len < PREVIEW_FULL_PARSE_LIMIT {

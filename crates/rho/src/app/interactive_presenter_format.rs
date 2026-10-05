@@ -21,8 +21,8 @@ mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
 use super::{
-    agent_format, codemode_format, sessions_format, PresentedToolCard, ToolBodySyntax, ToolKind,
-    ToolPresentation, ToolView,
+    agent_format, codemode_format, sessions_format, tool_search_format, PresentedToolCard,
+    ToolBodySyntax, ToolKind, ToolPresentation, ToolView,
 };
 
 pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
@@ -46,6 +46,7 @@ pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
         | ToolKind::GetSearchContent
         | ToolKind::Questionnaire
         | ToolKind::Sessions
+        | ToolKind::ToolSearch
         | ToolKind::Mcp
         | ToolKind::Other => ToolBodySyntax::Plain,
     }
@@ -261,6 +262,7 @@ pub(super) fn preview_card(
             kind_card(status, kind, ToolHeader::call(name, None))
         }
         ToolKind::Sessions => sessions_format::preview_card(arguments, status),
+        ToolKind::ToolSearch => tool_search_format::preview_card(arguments, status),
         ToolKind::Codemode => {
             codemode_format::preview_card(arguments, status, /*primary*/ None)
         }
@@ -492,6 +494,7 @@ pub(super) fn finished_card(
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
         ToolKind::Codemode => codemode_format::finished_card(&view.arguments, content, ok, data),
+        ToolKind::ToolSearch => tool_search_format::finished_card(&view.arguments, content, ok),
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
     }
@@ -637,7 +640,9 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
             ToolFamily::Web
         }
         ToolKind::Questionnaire => ToolFamily::Form,
-        ToolKind::Mcp | ToolKind::Sessions | ToolKind::Codemode => ToolFamily::Default,
+        ToolKind::Mcp | ToolKind::Sessions | ToolKind::Codemode | ToolKind::ToolSearch => {
+            ToolFamily::Default
+        }
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),

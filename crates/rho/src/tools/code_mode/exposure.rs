@@ -8,7 +8,7 @@ use rho_sdk::{
     ToolHost,
 };
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::CodemodeMode,
@@ -22,7 +22,8 @@ use super::{
     CODEMODE_TOOL_NAME,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Also the `tool_search` output contract the interactive card reads back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ToolCatalogEntry {
     pub name: String,
     pub description: String,
