@@ -154,6 +154,9 @@ pub struct Config {
     /// Show the keyboard hint block in the session header. Signed-out sessions
     /// keep their `/login` hints regardless.
     pub show_header_hints: bool,
+    /// Notify through the terminal (OSC 9 or BEL) when a turn finishes or
+    /// needs the user while the terminal is unfocused. Ignored under Herdr.
+    pub notifications: bool,
     /// Optional model selections for reserved internal agents, keyed by stable agent ID.
     pub internal_agents: BTreeMap<String, InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
@@ -228,6 +231,7 @@ impl Default for Config {
             compact_target_percent: compaction.target_percent,
             cache_miss_notices: false,
             show_header_hints: true,
+            notifications: true,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),
             web_search: WebSearchSettings::default(),

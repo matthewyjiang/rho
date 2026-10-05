@@ -741,8 +741,9 @@ impl App {
         }
         self.clear_accepted_steering();
         self.apply_pending_model_selection(agent).await?;
+        self.notifier.turn_finished();
         if self.pending_subagent_questionnaire.is_some() {
-            self.set_status(HerdrUserWait::Questionnaire.message());
+            self.set_status(UserWait::Questionnaire.message());
         }
         self.report_resting_herdr_state().await;
         terminal.draw(|frame| self.draw(frame))?;

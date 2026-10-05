@@ -62,6 +62,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             advisor_mode: false,
             cache_miss_notices: false,
             show_header_hints: true,
+            notifications: true,
             auth: "api-key".into(),
             internal_agents: Default::default(),
             favorite_models: Vec::new(),

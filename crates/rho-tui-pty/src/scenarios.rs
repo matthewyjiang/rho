@@ -79,6 +79,7 @@ mod supervised_approval;
 mod terminal_ownership;
 mod text_selection;
 mod tool_card_hover;
+mod turn_notifications;
 mod type_during_stream;
 mod web_search;
 mod workflow;
@@ -178,6 +179,7 @@ use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
+use turn_notifications::TURN_NOTIFICATIONS_SCENARIO;
 use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
 use workflow_hub_legacy::{
@@ -424,6 +426,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     ZEN_TOOL_RUN_SUMMARY_SCENARIO,
     HEADER_HINTS_SCENARIO,
+    TURN_NOTIFICATIONS_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(

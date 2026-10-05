@@ -77,6 +77,9 @@ impl App {
             prompt_history_limit,
             info.services.pending_prompt_history.take(),
         );
+        let notifier = super::notifications::TerminalNotifier::new(
+            super::notifications::NotificationChannel::detect(|key| std::env::var(key).ok()),
+        );
         let mut statusline = StatusLine::new(&info.runtime);
         statusline.update_not_saved(info.session.no_save);
         let mut app = Self {
@@ -152,6 +155,7 @@ impl App {
             plugins_report,
             side_chat: None,
             herdr_sync: Default::default(),
+            notifier,
         };
         if let Some(status) = initial_status {
             app.set_status(status);

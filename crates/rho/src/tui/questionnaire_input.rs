@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{
     composer_pointer::ChoiceClick,
     questionnaire::{QuestionnaireComposer, QuestionnaireEnterAction, QuestionnaireTarget},
-    questionnaire_notice_text, App, ComposerMode, Entry, HerdrUserWait, QuestionAnswerRequest,
+    questionnaire_notice_text, App, ComposerMode, Entry, QuestionAnswerRequest, UserWait,
 };
 
 impl App {
@@ -263,9 +263,8 @@ impl App {
         composer.start_timeout(timeout_seconds, std::time::Instant::now());
         self.input_ui
             .set_composer(ComposerMode::Questionnaire(composer));
-        self.set_status(HerdrUserWait::Questionnaire.message());
-        self.report_herdr_waiting_for_user(HerdrUserWait::Questionnaire)
-            .await;
+        self.set_status(UserWait::Questionnaire.message());
+        self.wait_for_user(UserWait::Questionnaire).await;
         Ok(())
     }
 }

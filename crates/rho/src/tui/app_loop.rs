@@ -8,7 +8,7 @@ use crate::herdr::{HerdrDelivery, HerdrSession};
 use super::herdr_resume::HerdrSyncStep;
 use super::{
     media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
-    ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime, PanelOverlay,
+    ComposerMode, ExitReceipt, HerdrState, InteractiveRuntime, PanelOverlay, UserWait,
     ViewModelEvent,
 };
 
@@ -133,6 +133,10 @@ impl App {
             } else {
                 Duration::from_secs(3600)
             };
+            // About to wait for the user: a turn that finished since the
+            // last wait notifies now, once per batch of turns.
+            let notification = self.notifier.take_ready();
+            self.send_notification(notification);
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
             let media_attach_pending = !self.media_attach_tasks.is_empty();
@@ -225,6 +229,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.observe_questionnaire_input(&event);
+        self.notifier.observe_focus(&event);
         match self.take_exclusive_event(event) {
             Ok(resize) => {
                 if resize {
@@ -351,6 +356,15 @@ impl App {
         self.confirm_herdr_claim(key, session.as_ref(), delivery);
     }
 
+    /// Writes a notification unless config turned them off or Herdr, which
+    /// already shows pane state, owns them.
+    fn send_notification(&self, bytes: Option<Vec<u8>>) {
+        let enabled = self.info.runtime.notifications && !self.info.services.herdr.is_enabled();
+        if let Some(bytes) = bytes.filter(|_| enabled) {
+            super::notifications::write_to_terminal(&bytes);
+        }
+    }
+
     /// Claims the pane before the first frame without delaying it. The report
     /// is built here so its `seq` precedes any report the first frame sends.
     /// Delivery is not awaited: until a claim is confirmed,
@@ -427,7 +441,11 @@ impl App {
         self.report_herdr_state(HerdrState::Working, None).await;
     }
 
-    pub(super) async fn report_herdr_waiting_for_user(&mut self, wait: HerdrUserWait) {
+    /// A prompt now blocks the agent on the user: notify an unfocused
+    /// terminal and show the wait in Herdr.
+    pub(super) async fn wait_for_user(&mut self, wait: UserWait) {
+        let notification = self.notifier.user_wait(wait);
+        self.send_notification(notification);
         self.report_herdr_state(HerdrState::Blocked, Some(wait.message()))
             .await;
     }
@@ -441,8 +459,8 @@ impl App {
     /// The state Herdr should show while no turn runs.
     fn resting_herdr_state(&self) -> (HerdrState, Option<&str>) {
         let user_wait = match self.input_ui.composer() {
-            ComposerMode::Approval(_) => Some(HerdrUserWait::Approval),
-            ComposerMode::Questionnaire(_) => Some(HerdrUserWait::Questionnaire),
+            ComposerMode::Approval(_) => Some(UserWait::Approval),
+            ComposerMode::Questionnaire(_) => Some(UserWait::Questionnaire),
             ComposerMode::Input
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)

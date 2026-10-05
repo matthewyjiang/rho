@@ -616,13 +616,14 @@ pub(super) enum StreamControl {
     ApprovalResolved,
 }
 
+/// A prompt that blocks the agent until the user answers it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum HerdrUserWait {
+pub(super) enum UserWait {
     Approval,
     Questionnaire,
 }
 
-impl HerdrUserWait {
+impl UserWait {
     pub(super) const fn message(self) -> &'static str {
         match self {
             Self::Approval => "waiting for approval",

@@ -425,6 +425,7 @@ impl App {
         tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
         self.observe_questionnaire_input(&first_event);
+        self.notifier.observe_focus(&first_event);
         // Only a resolution caused by this event counts; drop any left by a
         // turn-end cancel or an interrupting Esc that returned early.
         self.turn.take_approval_resolved();
