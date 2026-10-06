@@ -15,6 +15,7 @@ use super::{
     App,
 };
 use crate::agent::AgentRuntime;
+use crate::antigravity_runtime::setup::AntigravitySetup;
 use crate::claude_runtime::auth;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,8 +77,12 @@ pub(super) struct RuntimeInfo {
     tree_error: Option<String>,
     /// Session tree is read off the open path so a large file cannot delay the overlay.
     tree_loading: bool,
-    /// Auth summaries for runtimes outside provider credentials (Claude, Cursor).
+    /// Probed auth summaries for runtimes outside provider credentials
+    /// (Claude, Cursor).
     external_runtimes: Vec<String>,
+    /// Antigravity install and sign-in, read from disk when the overlay opens;
+    /// no probe, so it never shows as checking.
+    antigravity: String,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
     subagent_total_cost_usd_micros: u64,
     /// Cumulative cost from finished advisor calls in this conversation.
@@ -174,6 +179,8 @@ impl App {
             tree_error,
             tree_loading,
             external_runtimes: checking_external_runtimes(),
+            antigravity: AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default())
+                .description(),
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
             advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
         };
@@ -219,6 +226,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     for line in &info.external_runtimes {
         block.push_note(line);
     }
+    block.push_note(&info.antigravity);
 
     block.push_section("Session");
     if info.tree_loading {

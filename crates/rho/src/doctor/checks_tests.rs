@@ -7,6 +7,11 @@ use rho_providers::{
 
 use super::*;
 use crate::{
+    antigravity_runtime::{
+        executable::HarnessLocation,
+        home::AntigravityAuthStatus,
+        setup::{AntigravitySetup, ServerInstall},
+    },
     claude_runtime::auth::ClaudeProbeSnapshot,
     cursor_runtime::auth::{
         CursorAuthError, CursorAuthStatus, CursorProbeSnapshot, CursorUserInfo,
@@ -296,6 +301,89 @@ fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
     for (check, status, summary) in cases {
         assert_eq!(check.id, DoctorCheckId::Cursor);
         assert_eq!(check.label, CURSOR_LABEL);
+        assert_eq!((check.status, check.summary.as_str()), (status, summary));
+    }
+}
+
+// Covers: Antigravity is informational when absent or signed out, warns when
+// an installed server cannot run, and an install problem outranks sign-in.
+// Owner: pure unit
+#[test]
+fn antigravity_row_ranks_install_problems_above_sign_in() {
+    let signed_in = || AntigravityAuthStatus::Configured {
+        method: "oauth".into(),
+    };
+    let found = |harness| ServerInstall::Found {
+        path: "/opt/agy/agy_acp_server.par".into(),
+        harness,
+    };
+    let beside = || {
+        found(HarnessLocation::Beside(
+            "/opt/agy/localharness_external".into(),
+        ))
+    };
+    let cases = [
+        (
+            ServerInstall::Missing,
+            signed_in(),
+            DoctorStatus::Info,
+            "not installed",
+        ),
+        (
+            found(HarnessLocation::Missing {
+                expected: "/opt/agy/localharness_external".into(),
+            }),
+            signed_in(),
+            DoctorStatus::Warn,
+            "localharness_external missing",
+        ),
+        (beside(), signed_in(), DoctorStatus::Ok, "signed in (oauth)"),
+        (
+            found(HarnessLocation::Override(
+                "/srv/agy/localharness_external".into(),
+            )),
+            signed_in(),
+            DoctorStatus::Ok,
+            "signed in (oauth)",
+        ),
+        (
+            found(HarnessLocation::OverrideMissing(
+                "/srv/agy/localharness_externa".into(),
+            )),
+            signed_in(),
+            DoctorStatus::Warn,
+            "localharness_external missing",
+        ),
+        (
+            beside(),
+            AntigravityAuthStatus::SignedOut {
+                settings: "/home/rho/.gemini/antigravity-acp/settings.json".into(),
+            },
+            DoctorStatus::Info,
+            "not signed in (run /login antigravity)",
+        ),
+        (
+            beside(),
+            AntigravityAuthStatus::MissingToken {
+                method: "oauth".into(),
+                token: "/home/rho/.gemini/antigravity-acp/acp_token.json".into(),
+            },
+            DoctorStatus::Info,
+            "not signed in (run /login antigravity)",
+        ),
+        (
+            beside(),
+            AntigravityAuthStatus::Unreadable {
+                settings: "/home/rho/.gemini/antigravity-acp/settings.json".into(),
+                detail: "expected value at line 1 column 1".into(),
+            },
+            DoctorStatus::Warn,
+            "settings unreadable",
+        ),
+    ];
+    for (server, auth, status, summary) in cases {
+        let check = antigravity_check(&AntigravitySetup { server, auth });
+        assert_eq!(check.id, DoctorCheckId::Antigravity);
         assert_eq!((check.status, check.summary.as_str()), (status, summary));
     }
 }

@@ -22,6 +22,7 @@ use super::{
     theme::Theme,
     App, ComposerMode, PanelOverlay,
 };
+use crate::antigravity_runtime::setup::AntigravitySetup;
 use crate::doctor::{
     build_report, plan_probes, probe_checks, run_probe, DoctorCheck, DoctorInputs, DoctorProbeGate,
     DoctorProbeId, DoctorProbeOutcome, DoctorReport, DoctorSection, DoctorStatus, HerdrProbe,
@@ -109,6 +110,7 @@ impl App {
         let clipboard = crate::clipboard::doctor_report();
         self.abort_doctor_probes();
         let probes = plan_probes(&config, &self.info.runtime.provider, probe_gate());
+        let antigravity = AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default());
         let report = build_report(DoctorInputs {
             provider: &self.info.runtime.provider,
             model: &self.info.runtime.model,
@@ -118,6 +120,7 @@ impl App {
             config_path: &config_path,
             session_root: &session_root,
             herdr: HerdrProbe::from_reporter(&self.info.services.herdr),
+            antigravity: &antigravity,
             clipboard: &clipboard,
             mcp_report: &self.mcp_report,
             plugins_report: &self.plugins_report,

@@ -22,8 +22,8 @@ pub(crate) use report::{
 };
 
 use crate::{
-    clipboard::ClipboardDoctorReport, config::InternalAgentModelConfig, plugins::PluginLoadReport,
-    tools::mcp::McpSessionReport,
+    antigravity_runtime::setup::AntigravitySetup, clipboard::ClipboardDoctorReport,
+    config::InternalAgentModelConfig, plugins::PluginLoadReport, tools::mcp::McpSessionReport,
 };
 
 /// Everything the instant checks need, borrowed from the host.
@@ -36,6 +36,7 @@ pub(crate) struct DoctorInputs<'a> {
     pub(crate) config_path: &'a Path,
     pub(crate) session_root: &'a Path,
     pub(crate) herdr: HerdrProbe,
+    pub(crate) antigravity: &'a AntigravitySetup,
     pub(crate) clipboard: &'a ClipboardDoctorReport,
     pub(crate) mcp_report: &'a McpSessionReport,
     pub(crate) plugins_report: &'a PluginLoadReport,
@@ -54,6 +55,7 @@ pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
     for probe in inputs.probes {
         rows.extend(probes::placeholder_checks(probe));
     }
+    rows.push(checks::antigravity_check(inputs.antigravity));
     rows.extend(checks::cache_checks());
     rows.push(checks::selected_model_check(
         inputs.provider,

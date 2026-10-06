@@ -55,3 +55,41 @@ fn harness_pin_resolves_a_descriptor_backed_server() {
         vec![(OsString::from(HARNESS_PATH_ENV), harness.into_os_string())]
     );
 }
+
+// Covers: a set `ANTIGRAVITY_HARNESS_PATH` is checked, not trusted. The
+// server never searches beside itself once it is set, so a dangling override
+// fails runs; an empty value counts as unset.
+// Owner: Antigravity harness lookup, shared by doctor, /info, and spawn env.
+#[test]
+fn harness_location_checks_the_override_path() {
+    let install = tempfile::tempdir().unwrap();
+    let server = install.path().join(ANTIGRAVITY_PROGRAM);
+    std::fs::write(&server, "").unwrap();
+    std::fs::write(install.path().join(HARNESS_FILE), "").unwrap();
+    let beside = std::fs::canonicalize(install.path())
+        .unwrap()
+        .join(HARNESS_FILE);
+    let custom = tempfile::tempdir().unwrap();
+    let present = custom.path().join(HARNESS_FILE);
+    std::fs::write(&present, "").unwrap();
+    let dangling = custom.path().join("typo");
+
+    let cases = [
+        (
+            Some(present.clone().into_os_string()),
+            HarnessLocation::Override(present),
+        ),
+        (
+            Some(dangling.clone().into_os_string()),
+            HarnessLocation::OverrideMissing(dangling),
+        ),
+        (Some(OsString::new()), HarnessLocation::Beside(beside)),
+    ];
+    for (existing, expected) in cases {
+        assert_eq!(
+            harness_location(&server, existing.clone()),
+            expected,
+            "{existing:?}"
+        );
+    }
+}

@@ -16,6 +16,7 @@ pub(crate) mod login;
 
 pub(crate) mod policy;
 pub(crate) mod session;
+pub(crate) mod setup;
 
 use crate::cli_runtime::status_sink::RuntimeLabel;
 

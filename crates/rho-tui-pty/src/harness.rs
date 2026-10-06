@@ -205,6 +205,8 @@ impl PtyHarness {
     }
 
     /// Outlast the composer's 120 ms plain-key paste Enter suppression window.
+    /// The window is timed from when Rho reads the last key, so wait for the
+    /// typed text to render before calling this when the runner may stall.
     pub fn settle_plain_text_input(&mut self) {
         // The 30 ms margin keeps the test beyond the product deadline even when
         // the final key and harness clock reads straddle a scheduler tick.

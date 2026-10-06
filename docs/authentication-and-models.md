@@ -128,6 +128,7 @@ Google Antigravity is a **runtime**, not a Rho provider. Agent definitions with 
 
 - `/login antigravity` suspends the TUI and runs `rho login antigravity`, which starts the server's Google sign-in, prints the link, and accepts the pasted address of the browser's final page when the browser runs on another machine (SSH). The server waits up to 300 s.
 - The server stores the token in `$GEMINI_HOME/antigravity-acp/acp_token.json` (default `~/.gemini`), separate from the `agy` CLI sign-in. On macOS it uses the Keychain instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
+- `/doctor` and `/info` read the sign-in method from `settings.json` without starting the server.
 - `/logout antigravity` is not available from Rho. Delete `settings.json` in that directory and the token to sign out ([details](/subagents/antigravity#how-to-use-it)).
 - Bare `/login` lists **Antigravity** as a top-level row. Choosing it skips the Rho credential-store chooser.
 
