@@ -73,6 +73,7 @@ define_tool_capabilities! {
     Sessions => "sessions" : "Search and read prior session evidence.",
     Shell => "shell" : "Run shell commands.",
     Skill => "skill" : "Load skill files.",
+    Todo => "todo" : "Track a short task checklist shown to the user.",
     WebSearch => "web_search" : "Search the web.",
     Workflow => "workflow" : "Validate, plan, and run workflows.",
     WriteFile => "write" : "Create or overwrite files.",

@@ -1,5 +1,61 @@
 use super::*;
 
+// Covers: completion and resume must rebuild the checklist from call arguments,
+// not replace it with the short model-facing result summary.
+// Owner: interactive presenter argument-to-card mapping (not terminal layout).
+#[test]
+fn todo_cards_keep_argument_facts_through_completion_and_replay() {
+    use crate::presentation::Presentation;
+    use rho_tools::tool_card::{ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let call = ToolCall {
+        id: "todo-1".into(),
+        name: "todo".into(),
+        arguments: serde_json::json!({"todos": [
+            {"content": "inspect", "status": "completed"},
+            {"content": "implement", "status": "in_progress"},
+            {"content": "verify", "status": "pending"}
+        ]}),
+    };
+    let expected = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("todo", None),
+    )
+    .with_facts(vec![
+        ToolFact::Text {
+            text: "☑ inspect".into(),
+        },
+        ToolFact::Text {
+            text: "◐ implement".into(),
+        },
+        ToolFact::Text {
+            text: "☐ verify".into(),
+        },
+    ]);
+    let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."));
+    let preview = streaming_preview_card(
+        ToolKind::from_name("todo"),
+        "todo",
+        Some(&call.arguments),
+        std::path::Path::new("."),
+    );
+    let mut expected_preview = expected.clone();
+    expected_preview.status = ToolStatus::Running;
+    pretty_assertions::assert_eq!(preview, expected_preview);
+
+    let _ = presenter.proposed(call.clone());
+    let summary = "3 todos: 1 completed, 1 in progress, 1 pending";
+    let (_, live) = presenter.finished(
+        &ToolCallId::from_string("todo-1").unwrap(),
+        ToolCompletion::Success(rho_sdk::tool::ToolOutput::text(summary)),
+    );
+    let replay = presenter.historical(&call, true, summary);
+    for actual in [live.presentation, replay.presentation] {
+        pretty_assertions::assert_eq!(actual, Presentation::Card(expected.clone().into()));
+    }
+}
+
 // Covers: every selectable edit schema routes through file-diff presentation
 // Owner: interactive presenter
 #[test]

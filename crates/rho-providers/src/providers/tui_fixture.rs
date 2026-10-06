@@ -19,6 +19,7 @@ mod response_scenarios;
 mod sessions;
 mod stream_scenarios;
 mod streaming_controls;
+mod todo;
 mod write_stream;
 
 #[cfg(test)]
@@ -181,6 +182,9 @@ async fn fixture_stream(
         return response;
     }
     if let Some(response) = edit::intercept(&prompt, &request, &events).await {
+        return response;
+    }
+    if let Some(response) = todo::intercept(&prompt, &request, &events).await {
         return response;
     }
     if let Some(response) = write_stream::intercept(&prompt, &request, &events).await {

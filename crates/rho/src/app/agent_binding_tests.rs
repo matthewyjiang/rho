@@ -30,7 +30,14 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
 }
 
 fn capabilities() -> AgentCapabilities {
-    capability_set(&["read_file", "write", "agent", "agents", "questionnaire"])
+    capability_set(&[
+        "read_file",
+        "write",
+        "agent",
+        "agents",
+        "questionnaire",
+        "todo",
+    ])
 }
 
 fn credentials(available: &[&str]) -> MemoryCredentialStore {
@@ -75,7 +82,12 @@ fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     .unwrap();
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write", "questionnaire"]))
+        Some(&capability_set(&[
+            "read_file",
+            "write",
+            "questionnaire",
+            "todo"
+        ]))
     );
 }
 
@@ -182,6 +194,7 @@ fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
                 "agent",
                 "agents",
                 "questionnaire",
+                "todo",
                 "rho",
                 "workflow",
             ]),
@@ -191,7 +204,7 @@ fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
     .unwrap();
     assert_eq!(
         bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write"]))
+        Some(&capability_set(&["read_file", "write", "todo"]))
     );
 }
 

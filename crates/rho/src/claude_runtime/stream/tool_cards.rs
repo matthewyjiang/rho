@@ -570,28 +570,30 @@ fn push_todo_facts(card: &mut ToolCard, input: Option<&Value>) {
     else {
         return;
     };
-    /// Visible todo rows on the card. Extra items collapse to a count.
-    const MAX_TODO_FACTS: usize = 10;
-    for todo in todos.iter().take(MAX_TODO_FACTS) {
-        let text = string_field(Some(todo), &["content", "activeForm"]).unwrap_or_default();
-        if text.is_empty() {
-            continue;
-        }
-        let status = string_field(Some(todo), &["status"]).unwrap_or_default();
-        let marker = match status.as_str() {
-            "completed" | "complete" => "☑",
-            "in_progress" | "in-progress" => "◐",
-            _ => "☐",
-        };
-        card.push_fact(ToolFact::Text {
-            text: format!("{marker} {text}"),
-        });
-    }
-    if todos.len() > MAX_TODO_FACTS {
-        card.push_fact(ToolFact::Meta {
-            text: format!("{} more", todos.len() - MAX_TODO_FACTS),
-        });
-    }
+    use crate::presentation::checklist::{push_checklist_facts, ChecklistStatus};
+
+    // Claude accepts legacy spellings and activeForm; normalize those here,
+    // leaving the shared renderer independent of either tool's wire format.
+    push_checklist_facts(
+        card,
+        todos.iter().map(|todo| {
+            let text = ["content", "activeForm"]
+                .iter()
+                .find_map(|key| {
+                    todo.get(*key)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                })
+                .unwrap_or_default();
+            let status = match todo.get("status").and_then(Value::as_str).map(str::trim) {
+                Some("completed" | "complete") => ChecklistStatus::Completed,
+                Some("in_progress" | "in-progress") => ChecklistStatus::InProgress,
+                _ => ChecklistStatus::Pending,
+            };
+            (text, status)
+        }),
+    );
 }
 
 fn read_range_fact(input: Option<&Value>) -> Option<ToolFact> {

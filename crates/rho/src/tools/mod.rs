@@ -17,6 +17,7 @@ pub mod rho;
 mod save_agent;
 mod sdk_features;
 mod sessions;
+pub(crate) mod todo;
 pub(crate) use sdk_features::message_parent_bundle;
 pub mod sdk_registry;
 #[cfg(debug_assertions)]
@@ -55,6 +56,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "save_agent",
             "sessions",
             "tool_search",
+            "todo",
             "skill",
             "web_search",
             "workflow",
@@ -93,6 +95,7 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
         | "rho"
         | "sessions"
         | "skill"
+        | "todo"
         | "web_search" => Some(false),
         _ => None,
     }

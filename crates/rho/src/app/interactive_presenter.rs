@@ -25,6 +25,8 @@ mod format;
 mod message_format;
 #[path = "interactive_presenter_sessions.rs"]
 mod sessions_format;
+#[path = "interactive_presenter_todo.rs"]
+mod todo_format;
 #[path = "interactive_presenter_tool_search.rs"]
 mod tool_search_format;
 use format::*;
@@ -67,6 +69,7 @@ enum ToolKind {
     FetchContent,
     GetSearchContent,
     Questionnaire,
+    Todo,
     Sessions,
     Codemode,
     ToolSearch,
@@ -108,6 +111,7 @@ impl ToolKind {
             "fetch_content" => Self::FetchContent,
             "get_search_content" => Self::GetSearchContent,
             "questionnaire" => Self::Questionnaire,
+            "todo" => Self::Todo,
             "sessions" => Self::Sessions,
             crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
             crate::tools::code_mode::TOOL_SEARCH_NAME => Self::ToolSearch,
@@ -148,6 +152,7 @@ impl ToolKind {
             | Self::FetchContent
             | Self::GetSearchContent
             | Self::Questionnaire
+            | Self::Todo
             | Self::Sessions
             | Self::Codemode
             | Self::ToolSearch
