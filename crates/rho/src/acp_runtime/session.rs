@@ -142,7 +142,7 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
         .ok_or_else(|| format!("{program}: missing child stdout"))?;
     // Move policy into the connection after setup; callers keep no mutable
     // policy while the agent is running.
-    let outcome = driver::run(
+    let driver = driver::run(
         child_transport(stdin, stdout, program),
         policy,
         driver::DriverContext {
@@ -153,13 +153,29 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
             renderer,
             sink,
         },
-    )
-    .await;
-    // Cursor never exits on stdin EOF after a turn (10/10 spike runs). Always
-    // terminate, even on success; OwnedChild gives 200 ms then kills the tree.
-    child.terminate().await;
+    );
+    tokio::pin!(driver);
+    // Observe leader exit alongside the protocol: a descendant can inherit
+    // stdout, so EOF alone may never come. OwnedChild::wait kills the rest of
+    // the group, which closes the pipe; the driver then drains what was already
+    // sent (a buffered stop reason still wins) and reports the closed transport.
+    let (outcome, exit) = tokio::select! {
+        outcome = &mut driver => (outcome, None),
+        status = child.wait() => (driver.await, Some(status)),
+    };
+    if exit.is_none() {
+        // Cursor never exits on stdin EOF after a turn (10/10 spike runs).
+        // Always terminate, even on success; OwnedChild gives 200 ms then
+        // kills the tree.
+        child.terminate().await;
+    }
     let tail = read_log_tail(&log_path).await;
     outcome.map_err(|source| {
+        let source = match exit {
+            Some(Ok(status)) => format!("{source} ({program} exited: {status})"),
+            Some(Err(wait)) => format!("{source} ({program} wait failed: {wait})"),
+            None => source,
+        };
         if tail.is_empty() {
             source
         } else {

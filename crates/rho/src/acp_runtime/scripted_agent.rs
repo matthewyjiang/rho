@@ -63,6 +63,9 @@ pub(crate) enum Step {
     Hang,
     /// Close the transport while the prompt is still pending.
     Disconnect,
+    /// Signal readiness, await session/cancel, then close the transport
+    /// instead of answering the prompt.
+    DisconnectOnCancel,
 }
 
 /// Whole wire requests/replies, without assertions embedded in the fake.
@@ -324,6 +327,12 @@ async fn play_turn(
                 return responder.respond(PromptResponse::new(StopReason::Cancelled));
             }
             Step::Disconnect => {
+                closed.cancel();
+                return std::future::pending().await;
+            }
+            Step::DisconnectOnCancel => {
+                let _ = signals.send(Signal::Waiting);
+                cancelled.cancelled().await;
                 closed.cancel();
                 return std::future::pending().await;
             }

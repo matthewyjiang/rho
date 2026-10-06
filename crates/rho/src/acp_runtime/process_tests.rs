@@ -38,6 +38,44 @@ async fn pre_handshake_exit_keeps_stderr_tail() {
     );
 }
 
+// Covers: an agent that exits mid-prompt while a descendant still holds its
+// stdout must fail promptly with the exit status, not hang Running forever
+// waiting for an EOF the descendant never sends.
+// Owner: ACP process supervision (leader exit observed alongside the protocol).
+#[tokio::test]
+async fn leader_exit_with_inherited_stdout_fails_promptly() {
+    let dir = tempfile::tempdir().unwrap();
+    let (request, policy) = shell_request(
+        dir.path(),
+        r#"
+request_id() { printf '%s\n' "$1" | sed -n 's/.*"id":\([^,}]*\).*/\1/p'; }
+IFS= read -r initialize
+id=$(request_id "$initialize")
+printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}\n' "$id"
+IFS= read -r new_session
+id=$(request_id "$new_session")
+printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"orphan-session"}}\n' "$id"
+IFS= read -r prompt
+tail -f /dev/null &
+exit 3
+"#,
+    );
+    tokio::time::timeout(TEST_BUDGET, run_session(request, policy))
+        .await
+        .expect("leader exit settled the run")
+        .unwrap();
+    let (status, events) = read_artifacts(dir.path());
+    let error = status.error.clone().unwrap();
+    assert!(
+        error.contains("exited: exit status: 3"),
+        "exit status missing: {error}"
+    );
+    assert_eq!(
+        (status.state, terminal_events(&events)),
+        (RunState::Error, vec![AttachmentEvent::Failed(error)])
+    );
+}
+
 // Covers: a noncooperative agent cannot keep a process alive after cancellation.
 // Owner: OwnedChild-backed ACP process supervision; readiness is a FIFO signal,
 // not a sleep or a timing assumption about the handshake.

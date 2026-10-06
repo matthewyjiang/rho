@@ -294,62 +294,71 @@ async fn queued_parent_message_becomes_next_prompt_and_port_seals() {
     );
 }
 
-// Covers: cancel mid-turn sends session/cancel and waits for the cancelled
-// prompt response, without turning it into success or writing two terminals.
+// Covers: cancel mid-turn sends session/cancel and settles Stopped with the
+// partial result whether the agent answers the cancelled prompt or hangs up,
+// without turning it into success/error or writing two terminals.
 // Owner: ACP lifecycle. The fake signals readiness rather than sleeping.
 #[tokio::test]
 async fn cancellation_is_a_protocol_notification_and_stopped_terminal() {
-    let dir = tempfile::tempdir().unwrap();
-    let request = request(dir.path(), None);
-    let cancellation = request.cancellation.clone();
-    let (client, agent) = Channel::duplex();
-    let (fake, record, mut signals) =
-        ScriptedAgent::new(script(vec![vec![text("partial"), Step::Hang]]));
-    tokio::time::timeout(TEST_BUDGET, async {
-        let cancel = async {
-            loop {
-                match signals
-                    .recv()
-                    .await
-                    .expect("fake remains connected until waiting")
-                {
-                    Signal::Waiting => break,
-                    Signal::Prompt | Signal::Cancel => {}
+    for ending in [Step::Hang, Step::DisconnectOnCancel] {
+        let dir = tempfile::tempdir().unwrap();
+        let request = request(dir.path(), None);
+        let cancellation = request.cancellation.clone();
+        let (client, agent) = Channel::duplex();
+        let (fake, record, mut signals) =
+            ScriptedAgent::new(script(vec![vec![text("partial"), ending]]));
+        tokio::time::timeout(TEST_BUDGET, async {
+            let cancel = async {
+                loop {
+                    match signals
+                        .recv()
+                        .await
+                        .expect("fake remains connected until waiting")
+                    {
+                        Signal::Waiting => break,
+                        Signal::Prompt | Signal::Cancel => {}
+                    }
                 }
-            }
-            cancellation.cancel();
-        };
-        let (client, agent, ()) = tokio::join!(
-            run_on_channel(request, TestPolicy::new(dir.path()), client),
-            fake.run(agent),
-            cancel
+                cancellation.cancel();
+            };
+            let (client, agent, ()) = tokio::join!(
+                run_on_channel(request, TestPolicy::new(dir.path()), client),
+                fake.run(agent),
+                cancel
+            );
+            client.unwrap();
+            agent.unwrap();
+        })
+        .await
+        .expect("cancelled run finished");
+        let cancellations = record
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .filter(|request| request["method"] == "session/cancel")
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cancellations,
+            vec![json!({"method":"session/cancel", "params":{"sessionId":"scripted-session"}})]
         );
-        client.unwrap();
-        agent.unwrap();
-    })
-    .await
-    .expect("cancelled run finished");
-    let cancellations = record
-        .lock()
-        .unwrap()
-        .requests
-        .iter()
-        .filter(|request| request["method"] == "session/cancel")
-        .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(
-        cancellations,
-        vec![json!({"method":"session/cancel", "params":{"sessionId":"scripted-session"}})]
-    );
-    let (status, events) = read_artifacts(dir.path());
-    assert_eq!(
-        (status.state, status.result, terminal_events(&events)),
-        (
-            RunState::Stopped,
-            Some("partial".into()),
-            vec![AttachmentEvent::Cancelled]
-        )
-    );
+        let (status, events) = read_artifacts(dir.path());
+        assert_eq!(
+            (
+                status.state,
+                status.result,
+                status.claude_session_id,
+                terminal_events(&events)
+            ),
+            (
+                RunState::Stopped,
+                Some("partial".into()),
+                Some("scripted-session".into()),
+                vec![AttachmentEvent::Cancelled]
+            )
+        );
+    }
 }
 
 // Covers: setup failures name the wire step, unavailable modes never prompt,

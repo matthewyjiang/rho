@@ -36,6 +36,9 @@ pub(crate) struct EventRenderer {
     step_started: bool,
     plan_started: bool,
     result_text: String,
+    /// Turns that reached a stop reason, including ones a later cancel or
+    /// disconnect interrupts the result of.
+    turns: u64,
     /// A tool call or turn end closed the current assistant segment; the next
     /// text chunk starts a fresh result instead of appending to narration.
     result_segment_closed: bool,
@@ -49,6 +52,7 @@ impl EventRenderer {
             step_started: false,
             plan_started: false,
             result_text: String::new(),
+            turns: 0,
             result_segment_closed: false,
         }
     }
@@ -60,10 +64,16 @@ impl EventRenderer {
         &self.result_text
     }
 
+    /// Completed turns rendered so far.
+    pub(crate) fn turns(&self) -> u64 {
+        self.turns
+    }
+
     pub(crate) fn render(&mut self, event: AgentEvent) -> Vec<StreamEffect> {
         match event {
             AgentEvent::Update(update) => self.render_update(*update),
             AgentEvent::TurnEnded(reason) => {
+                self.turns += 1;
                 self.step_started = false;
                 self.result_segment_closed = true;
                 let label = match reason {

@@ -49,12 +49,12 @@ pub(super) struct DriverOutcome {
 }
 
 impl DriverOutcome {
-    fn stopped(renderer: &EventRenderer, session_id: Option<String>, turns: u64) -> Self {
+    fn stopped(renderer: &EventRenderer, session_id: Option<String>) -> Self {
         Self {
             classification: TurnClassification::Stopped,
             session_id,
             result_text: renderer.result_text().to_owned(),
-            turns,
+            turns: renderer.turns(),
         }
     }
 }
@@ -112,11 +112,13 @@ pub(super) async fn run<P: AcpAgentPolicy>(
         renderer,
         sink,
     } = context;
+    // Reborrow so a post-connection cancel outcome can still render.
+    let (session_renderer, session_sink) = (&mut *renderer, &mut *sink);
     let policy = Arc::new(Mutex::new(policy));
     let extension_policy = Arc::clone(&policy);
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
     let extension_tx = events_tx.clone();
-    Client.builder()
+    let outcome = Client.builder()
         .name("rho")
         .on_receive_request(async move |request: UntypedMessage, responder, _cx| {
             // Static handlers run BEFORE ActiveSession's dynamic handler.
@@ -129,9 +131,10 @@ pub(super) async fn run<P: AcpAgentPolicy>(
             Ok(Handled::Yes)
         }, agent_client_protocol::on_receive_request!())
         .connect_with(transport, async move |cx| {
+            let (renderer, sink) = (session_renderer, session_sink);
             tokio::select! {
                 biased;
-                _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, None, 0)),
+                _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, None)),
                 result = handshake::initialize(&cx, &policy) => result?,
             }
             let (started_tx, started_rx) = oneshot::channel();
@@ -149,7 +152,7 @@ pub(super) async fn run<P: AcpAgentPolicy>(
                     }));
                     tokio::select! {
                         biased;
-                        _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, Some(session.session_id().to_string()), 0)),
+                        _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, Some(session.session_id().to_string()))),
                         result = handshake::require_mode(&session, &policy) => result?,
                     }
                     turns(session, &policy, DriverContext { prompt, cwd, cancellation, inbox, renderer, sink }, &events_tx, &mut events_rx).await
@@ -167,7 +170,22 @@ pub(super) async fn run<P: AcpAgentPolicy>(
                 _ = cancellation.cancelled() => Ok(DriverOutcome { classification: TurnClassification::Stopped, session_id: None, result_text: String::new(), turns: 0 }),
                 result = &mut session_run => result.map_err(|source| if started.load(std::sync::atomic::Ordering::Relaxed) { source } else { error(format!("acp: session/new: {source}")) }),
             }
-        }).await.map_err(|source| format!("acp: {source}"))
+        }).await;
+    match outcome {
+        Ok(outcome) => Ok(outcome),
+        // Local cancellation is authoritative on every path, not only when a
+        // stop reason arrives: an agent that closes stdio, or a failed
+        // session/cancel send, still settles as Stopped. Keep the diagnostic.
+        Err(source) if cancellation.is_cancelled() => {
+            render(
+                renderer,
+                sink,
+                AgentEvent::Notice(format!("acp: after cancellation: {source}")),
+            );
+            Ok(DriverOutcome::stopped(renderer, None))
+        }
+        Err(source) => Err(format!("acp: {source}")),
+    }
 }
 
 async fn turns<P: AcpAgentPolicy>(
@@ -191,7 +209,6 @@ async fn turns<P: AcpAgentPolicy>(
     let connection = session.connection().clone();
     let mut cancelled_by_us = false;
     let mut cancel_deadline = None;
-    let mut turns = 0;
     // Keep only ids, for the session lifetime: duplicate completed snapshots
     // must not turn a previously rejected tool back into a successful card.
     let mut rejected = HashSet::new();
@@ -206,12 +223,11 @@ async fn turns<P: AcpAgentPolicy>(
             }
             _ = async { match cancel_deadline { Some(deadline) => tokio::time::sleep_until(deadline).await, None => std::future::pending().await } } => {
                 render(renderer, sink, AgentEvent::Notice("acp: session/cancel response exceeded shutdown grace budget 200 ms; terminating agent".into()));
-                return Ok(DriverOutcome::stopped(renderer, Some(session_id), turns));
+                return Ok(DriverOutcome::stopped(renderer, Some(session_id)));
             }
             message = session.read_update() => match message? {
                 SessionMessage::SessionMessage(dispatch) => dispatch_update(dispatch, policy, renderer, sink, &mut rejected, cancelled_by_us, events_tx).await?,
                 SessionMessage::StopReason(stop) => {
-                    turns += 1;
                     while let Ok(event) = events_rx.try_recv() { render(renderer, sink, event); }
                     render(renderer, sink, AgentEvent::TurnEnded(stop));
                     let classification = classify_stop(&stop, cancelled_by_us);
@@ -226,7 +242,7 @@ async fn turns<P: AcpAgentPolicy>(
                         }
                     }
                     if let Some(inbox) = inbox.as_ref() { inbox.seal(); }
-                    return Ok(DriverOutcome { classification, session_id: Some(session_id), result_text: renderer.result_text().to_owned(), turns });
+                    return Ok(DriverOutcome { classification, session_id: Some(session_id), result_text: renderer.result_text().to_owned(), turns: renderer.turns() });
                 }
                 _ => return Err(error("acp: unhandled session message")),
             },
