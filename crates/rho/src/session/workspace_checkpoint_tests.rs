@@ -179,6 +179,10 @@ fn checkpoint_headers_skip_file_bodies_but_preserve_quota_accounting() -> anyhow
     let mut encoded = serde_json::to_vec(&damaged)?;
     encoded.push(b'\n');
     fs::write(&store.journal_path, &encoded)?;
+    assert_eq!(store.list()?, vec![summary(&first)]);
+    // A complete record with a valid header is corrupt, not a torn tail,
+    // whether it is the last record or has another checkpoint after it.
+    assert!(store.get(&first.node_id).is_err());
 
     let second_node = NodeId::new();
     let mut open = store.open(second_node.clone())?;
@@ -209,6 +213,59 @@ fn checkpoint_headers_skip_file_bodies_but_preserve_quota_accounting() -> anyhow
     };
     assert_eq!((asked, limit), (stored_bytes + turn_bytes, stored_bytes));
     assert_eq!(fs::read(&store.journal_path)?, before_append);
+    Ok(())
+}
+
+// Covers: torn bytes near the quota must not pause capture and prevent tail repair.
+// Owner: session checkpoint persistence; exercises capture through durable append.
+#[test]
+fn torn_tail_does_not_consume_capture_budget() -> anyhow::Result<()> {
+    for keep_valid_prefix in [false, true] {
+        let (_temp, session, workspace) = test_session()?;
+        let path = workspace.join("tracked.txt");
+        let original = b"original";
+        fs::write(&path, original)?;
+        let mut store = checkpoint_store(&session)?;
+        let mut open = store.open(NodeId::new())?;
+        open.capture_path(&path);
+        let first = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
+        let valid_prefix = if keep_valid_prefix {
+            fs::read(&store.journal_path)?
+        } else {
+            Vec::new()
+        };
+        // Size the budget from an actual record and capture reservations. Use the
+        // widest timestamps so the next append doesn't depend on the wall clock.
+        let mut sized = first.clone();
+        sized.started_at = u64::MAX;
+        sized.finalized_at = u64::MAX;
+        let turn_bytes = (budget::encode_record(&sized, 0, u64::MAX)?.len() as u64).max(
+            2 * budget::entry_bytes(&path) + budget::encoded_content_bytes(original.len() as u64),
+        );
+        store.limits.max_session_bytes = valid_prefix.len() as u64 + turn_bytes;
+        let mut damaged = valid_prefix.clone();
+        damaged.extend_from_slice(br#"{"version":1,"checkpoint":"#);
+        damaged.resize(usize::try_from(store.limits.max_session_bytes)?, b'x');
+        fs::write(&store.journal_path, &damaged)?;
+
+        let mut next_open = store.open(NodeId::new())?;
+        assert_eq!(next_open.capture_path(&path), CaptureDisposition::Captured);
+        let next = store.finalize(
+            next_open,
+            Revision::from_u64(2),
+            CheckpointOutcome::Completed,
+        )?;
+        let mut repaired = valid_prefix;
+        repaired.extend(budget::encode_record(&next, 0, u64::MAX)?);
+        assert_eq!(fs::read(&store.journal_path)?, repaired);
+        let mut expected = Vec::new();
+        if keep_valid_prefix {
+            expected.push(summary(&first));
+        }
+        expected.push(summary(&next));
+        assert_eq!(store.list()?, expected);
+        assert_eq!(store.get(&next.node_id)?, Some(next));
+    }
     Ok(())
 }
 

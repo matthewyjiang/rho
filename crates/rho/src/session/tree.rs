@@ -177,6 +177,8 @@ pub(crate) struct SessionTreeFacts {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionTreeItemKind {
+    /// An empty durable root before any conversation turn.
+    SessionStart,
     Turn,
     Compaction,
 }
@@ -394,6 +396,15 @@ impl SessionTree {
                 .node(&id)
                 .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{id}'"))?;
             let kind = match node.kind() {
+                // Classify from durable state, not missing user text: assistant-only
+                // commits are still turns, while an empty root is the session start.
+                SessionNodeKind::Commit
+                    if node.parent_id().is_none()
+                        && node.facts().model_len == 0
+                        && node.display_messages().is_empty() =>
+                {
+                    SessionTreeItemKind::SessionStart
+                }
                 SessionNodeKind::Commit => SessionTreeItemKind::Turn,
                 SessionNodeKind::Compaction => SessionTreeItemKind::Compaction,
             };

@@ -292,13 +292,16 @@ impl WorkspaceCheckpointStore {
         // Probe writable storage before capturing any file bodies. In particular,
         // reject symlink directories as well as unusable journal paths up front.
         ensure_checkpoint_directory(&self.checkpoint_dir)?;
-        let journal = open_journal(&self.journal_path)?;
+        let mut journal = open_journal(&self.journal_path)?;
+        fs2::FileExt::lock_shared(&journal)?;
         let metadata = journal.metadata()?;
         anyhow::ensure!(
             metadata.is_file(),
             "checkpoint journal is not a regular file"
         );
-        let journal_bytes = metadata.len();
+        // A crashed append is discarded by the next successful append. Do not
+        // let those discarded bytes pause capture before it can repair the tail.
+        let journal_bytes = complete_journal_prefix_len(&mut journal, metadata.len())?;
         Ok(OpenWorkspaceCheckpoint {
             session_id: self.session_id.clone(),
             node_id,
@@ -570,6 +573,23 @@ fn validate_journal_path_if_present(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Find the complete-line prefix under the journal lock without decoding file bodies.
+fn complete_journal_prefix_len(file: &mut File, mut end: u64) -> anyhow::Result<u64> {
+    // Match Rust's standard 8 KiB buffered I/O size. This bounds memory, not tail length.
+    let mut buffer = [0; 8 * 1024];
+    while end > 0 {
+        let start = end.saturating_sub(buffer.len() as u64);
+        let chunk = &mut buffer[..usize::try_from(end - start)?];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(chunk)?;
+        if let Some(index) = chunk.iter().rposition(|byte| *byte == b'\n') {
+            return Ok(start + u64::try_from(index)? + 1);
+        }
+        end = start;
+    }
+    Ok(0)
+}
+
 fn read_locked_journal(
     file: &mut File,
     target_node_id: Option<&NodeId>,
@@ -604,12 +624,11 @@ fn read_locked_journal(
             record.checkpoint.node_id
         );
         if target_node_id == Some(&record.checkpoint.node_id) {
-            selected = match serde_json::from_slice::<ReadCheckpointRecord>(&line[..line.len() - 1])
-            {
-                Ok(record) => Some(record.checkpoint),
-                Err(_) if lines.peek().is_none() => break,
-                Err(error) => return Err(error).context("invalid checkpoint journal record"),
-            };
+            selected = Some(
+                serde_json::from_slice::<ReadCheckpointRecord>(&line[..line.len() - 1])
+                    .context("invalid checkpoint journal record")?
+                    .checkpoint,
+            );
         }
         // Quota accounting uses the serialized line length, including its newline.
         valid_len += u64::try_from(line.len())?;
