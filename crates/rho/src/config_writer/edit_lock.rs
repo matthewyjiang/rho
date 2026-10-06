@@ -50,6 +50,15 @@ pub(crate) struct EditFileLock {
     file: File,
 }
 
+impl EditFileLock {
+    /// A duplicate of the locked handle, standing in for one a child process
+    /// inherits between fork and exec.
+    #[cfg(test)]
+    pub(crate) fn inherited_handle_for_tests(&self) -> File {
+        self.file.try_clone().unwrap()
+    }
+}
+
 impl Drop for EditFileLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);

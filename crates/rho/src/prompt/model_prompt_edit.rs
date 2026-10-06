@@ -1,7 +1,7 @@
 //! Transactional filesystem work for model prompt editing. Editors run without a catalog lock.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
 };
@@ -11,6 +11,7 @@ use serde::Serialize;
 use tempfile::{NamedTempFile, TempDir};
 
 use super::model_prompts;
+use crate::config_writer::edit_lock::{acquire_lock_file, EditFileLock};
 use crate::model_identity::PromptModel;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -209,7 +210,10 @@ fn editable_metadata(path: &Path) -> Result<fs::Metadata> {
     Ok(metadata)
 }
 
-fn lock_catalog(directory: &Path) -> Result<File> {
+/// Exclusive catalog lock. The guard unlocks explicitly on drop: a child
+/// process spawned elsewhere in Rho shares this lock until it execs, so
+/// closing the handle alone can leave the catalog locked for the next save.
+fn lock_catalog(directory: &Path) -> Result<EditFileLock> {
     let path = directory.join(".edit.lock");
     if fs::symlink_metadata(&path)
         .is_ok_and(|metadata| metadata.is_symlink() || !metadata.is_file())
@@ -219,20 +223,12 @@ fn lock_catalog(directory: &Path) -> Result<File> {
             path.display()
         );
     }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .with_context(|| format!("could not open model prompt lock {}", path.display()))?;
-    fs2::FileExt::try_lock_exclusive(&file).with_context(|| {
+    acquire_lock_file(&path).with_context(|| {
         format!(
             "could not acquire model prompt catalog lock {}; another edit may be saving",
             path.display()
         )
-    })?;
-    Ok(file)
+    })
 }
 
 fn safe_part(value: &str) -> String {

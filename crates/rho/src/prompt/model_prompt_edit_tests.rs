@@ -190,3 +190,19 @@ fn saves_preserve_permissions_and_refuse_readonly_or_symlink_targets() {
         }
     }
 }
+
+// Covers: a child spawned while the catalog lock is held keeps a copy of the
+// lock handle until exec, so dropping the guard must release the lock itself.
+// Owner: model prompt catalog locking.
+#[cfg(unix)]
+#[test]
+fn dropped_catalog_lock_is_free_while_an_inherited_handle_is_open() {
+    let home = tempfile::tempdir().unwrap();
+    let directory = home.path().join(".rho/model-prompts");
+    fs::create_dir_all(&directory).unwrap();
+    let lock = lock_catalog(&directory).unwrap();
+    let inherited = lock.inherited_handle_for_tests();
+    drop(lock);
+    assert!(lock_catalog(&directory).is_ok());
+    drop(inherited);
+}
