@@ -220,6 +220,7 @@ fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerI
         value: definition.id.to_string(),
         selection_verb: Some(access.selection_verb()),
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

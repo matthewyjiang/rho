@@ -53,6 +53,7 @@ fn item(
         value: value.into(),
         selection_verb,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

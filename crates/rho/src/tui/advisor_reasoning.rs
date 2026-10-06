@@ -41,6 +41,7 @@ fn advisor_reasoning_picker(levels: &[ReasoningLevel], current: ReasoningLevel) 
             value: level.to_string(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect();
     let mut picker =

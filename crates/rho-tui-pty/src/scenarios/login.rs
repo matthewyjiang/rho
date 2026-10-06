@@ -25,7 +25,7 @@ fn assert_claude_code_absent_from_login_groups(harness: &mut PtyHarness) -> Resu
             "claude code belongs under Anthropic methods, not top-level login groups:\n{screen}"
         );
     }
-    // Clear the filter before the xAI step.
+    // Clear the filter before the SpaceXAI step.
     for _ in 0.."claude".len() {
         harness.inject_key(&Key::Backspace)?;
     }
@@ -49,9 +49,18 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::AssertText("Anthropic"),
     Step::AssertText("Moonshot AI"),
     Step::Custom(assert_claude_code_absent_from_login_groups),
-    Step::TypeText("xAI"),
+    // Cursor is a delegated runtime nested under SpaceXAI, not a top-level row;
+    // searching for it still lands on the owning group.
+    Step::TypeText("cursor"),
+    Step::Key(Key::Enter),
     Step::WaitText {
-        text: "xAI",
+        text: "Select SpaceXAI login method",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Cursor (delegation only)"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
@@ -106,9 +115,8 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
         text: "not Anthropic API billing",
         timeout: SETTLE,
     },
-    Step::AssertText("External Claude binary"),
-    // Footer truncates long detail; assert the visible ownership prefix.
-    Step::AssertText("Credentials are managed by Claude"),
+    Step::AssertText("Uses the claude CLI"),
+    Step::AssertText("Claude Code manages credentials"),
     // Choose API Key deliberately after browsing methods, not by default selection.
     Step::TypeText("API Key"),
     Step::WaitText {

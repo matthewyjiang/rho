@@ -386,6 +386,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
         value: USE_CONVERSATION_MODEL.into(),
         selection_verb: None,
         allow_filter_completion: false,
+        search_terms: Vec::new(),
     }];
     leading.extend(decision_models.iter().map(|(provider, model)| {
         let selected = matches!(
@@ -404,6 +405,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
             value: decision_row_value(provider, model),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         }
     }));
     catalog.items.splice(0..0, leading);
@@ -443,6 +445,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
                     value: wanted,
                     selection_verb: None,
                     allow_filter_completion: true,
+                    search_terms: Vec::new(),
                 },
             );
             index
@@ -465,6 +468,7 @@ fn conversation_model_row(selected: bool) -> PickerItem {
         value: USE_CONVERSATION_MODEL.into(),
         selection_verb: None,
         allow_filter_completion: false,
+        search_terms: Vec::new(),
     }
 }
 
@@ -493,6 +497,7 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
         value: claude_code_row_value(model),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     };
     let mut rows = vec![row(
         None,
@@ -613,6 +618,7 @@ fn model_catalog(
                 value,
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             }
         })
         .collect::<Vec<_>>();

@@ -26,6 +26,7 @@ fn prompt_history_items(history: &[String]) -> Vec<PickerItem> {
             value: prompt.clone(),
             selection_verb: None,
             allow_filter_completion: false,
+            search_terms: Vec::new(),
         })
         .collect()
 }

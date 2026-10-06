@@ -12,6 +12,7 @@ fn item(label: &str) -> PickerItem {
         value: label.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -124,6 +125,7 @@ fn complete_filter_skips_rows_that_opt_out() {
                 value: "use-conversation".into(),
                 selection_verb: None,
                 allow_filter_completion: false,
+                search_terms: Vec::new(),
             },
             item("openai/gpt-5.5"),
         ],

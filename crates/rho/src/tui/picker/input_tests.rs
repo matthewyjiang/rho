@@ -34,6 +34,7 @@ fn item(label: &str) -> PickerItem {
         value: label.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

@@ -64,7 +64,7 @@ impl App {
         if requested && !supported {
             let message =
                 if provider == "xai" && model == rho_providers::providers::fast_mode::GROK_4_7 {
-                    "fast mode for xai/grok-4.7 requires xAI OAuth".to_string()
+                    "fast mode for xai/grok-4.7 requires SpaceXAI OAuth".to_string()
                 } else {
                     format!("fast mode is not available for {provider}/{model}")
                 };

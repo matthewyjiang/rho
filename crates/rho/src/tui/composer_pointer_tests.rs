@@ -270,6 +270,7 @@ fn sectioned_item(section: &str, label: String) -> crate::tui::PickerItem {
         badge: None,
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

@@ -210,7 +210,7 @@ impl ProviderAuthentication {
                 provider_label: "Meta",
             },
             ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::Interactive {
-                provider_label: "xAI",
+                provider_label: "SpaceXAI",
             },
             ProviderAuthKind::OllamaDeviceKey { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Ollama Cloud",
@@ -556,8 +556,8 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<StartedLogin, Authentic
             .await
             .map_err(flow_error)?;
         return Ok(StartedLogin {
-            provider_label: "xAI",
-            prompt: authorize_prompt(login.authorize_url.clone(), "xAI"),
+            provider_label: "SpaceXAI",
+            prompt: authorize_prompt(login.authorize_url.clone(), "SpaceXAI"),
             completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
                 xai_oauth::complete_xai_browser_login(login)
                     .await
@@ -573,7 +573,7 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<StartedLogin, Authentic
         .await
         .map_err(flow_error)?;
     Ok(StartedLogin {
-        provider_label: "xAI",
+        provider_label: "SpaceXAI",
         prompt: device_prompt(
             login.verification_uri.clone(),
             login.user_code.clone(),

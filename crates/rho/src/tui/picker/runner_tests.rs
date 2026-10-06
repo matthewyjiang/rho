@@ -26,6 +26,7 @@ fn overlay_picker(count: usize) -> UiPicker {
             value: format!("value {index:02}"),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect();
     UiPicker::new("models", items, PickerAction::Config).with_layout(PickerLayout::Overlay)

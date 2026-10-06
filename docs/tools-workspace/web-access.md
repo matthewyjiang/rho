@@ -105,19 +105,19 @@ space for ordinary use.
 
 ## Provider-hosted X Search
 
-When the active model provider is xAI, Rho attaches xAI's hosted `x_search`
+When the active model provider is SpaceXAI, Rho attaches SpaceXAI's hosted `x_search`
 tool on every model turn. That tool searches X (x.com) posts, users, and threads
 server-side. It is separate from client `web_search`:
 
 - Not part of the agent tool allowlist
 - Still present when client tools are restricted or empty, while the session
-  uses xAI
-- Added on the next turn after a switch to xAI, removed when the session leaves
-  xAI
+  uses SpaceXAI
+- Added on the next turn after a switch to SpaceXAI, removed when the session leaves
+  SpaceXAI
 - Activity streams as typed `HostedToolActivity` events with `name: "x_search"`
 
-xAI sessions can also attach hosted `image_generation` (default on; see
-`[xai] image_generation`). Details: [xAI provider](/providers/xai).
+SpaceXAI sessions can also attach hosted `image_generation` (default on; see
+`[xai] image_generation`). Details: [SpaceXAI provider](/providers/xai).
 
 ## Related tools
 

@@ -396,7 +396,7 @@ async fn xai_source_sends_oauth_cli_headers() {
     assert_eq!(
         limits,
         ProviderUsageLimits {
-            provider: "xAI".into(),
+            provider: "SpaceXAI".into(),
             windows: vec![UsageLimitWindow {
                 label: "Weekly".into(),
                 remaining_percent: Some(87.5),

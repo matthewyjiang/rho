@@ -92,28 +92,28 @@ impl std::fmt::Debug for CallbackOutcome {
 
 #[derive(Debug, thiserror::Error)]
 pub enum XaiOAuthError {
-    #[error("could not bind local xAI OAuth callback listener: {0}")]
+    #[error("could not bind local SpaceXAI OAuth callback listener: {0}")]
     Bind(std::io::Error),
     /// # Next major
     ///
     /// NEXT_MAJOR(rho-providers): remove XaiOAuthError::Browser; browser launch lives in the login dispatch layer
-    #[error("could not open browser for xAI OAuth: {0}")]
+    #[error("could not open browser for SpaceXAI OAuth: {0}")]
     Browser(String),
-    #[error("timed out waiting for xAI OAuth browser callback")]
+    #[error("timed out waiting for SpaceXAI OAuth browser callback")]
     Timeout,
-    #[error("could not read xAI OAuth callback: {0}")]
+    #[error("could not read SpaceXAI OAuth callback: {0}")]
     CallbackIo(std::io::Error),
-    #[error("xAI OAuth callback was invalid: {0}")]
+    #[error("SpaceXAI OAuth callback was invalid: {0}")]
     InvalidCallback(String),
-    #[error("xAI OAuth was denied or failed: {0}")]
+    #[error("SpaceXAI OAuth was denied or failed: {0}")]
     OAuthDenied(String),
-    #[error("xAI device login setup failed: {0}")]
+    #[error("SpaceXAI device login setup failed: {0}")]
     DeviceSetup(String),
-    #[error("timed out waiting for xAI device login")]
+    #[error("timed out waiting for SpaceXAI device login")]
     DeviceTimeout,
-    #[error("xAI OAuth request failed: {0}")]
+    #[error("SpaceXAI OAuth request failed: {0}")]
     Request(#[source] TransportError),
-    #[error("xAI OAuth token response was missing {0}")]
+    #[error("SpaceXAI OAuth token response was missing {0}")]
     MissingToken(&'static str),
 }
 
@@ -267,8 +267,8 @@ async fn wait_for_callback(
     expected_state: &str,
 ) -> Result<CallbackOutcome, XaiOAuthError> {
     const BODIES: ResponseBodies<'static> = ResponseBodies {
-        success: "xAI login complete. You can return to Rho.",
-        failure: "xAI login failed. You can return to Rho for details.",
+        success: "SpaceXAI login complete. You can return to Rho.",
+        failure: "SpaceXAI login failed. You can return to Rho for details.",
         ignored: "Not found",
     };
     wait_for_oauth_callback(

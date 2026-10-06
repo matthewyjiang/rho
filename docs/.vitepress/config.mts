@@ -66,7 +66,7 @@ const providerItems: DefaultTheme.SidebarItem[] = [
   { text: 'MiniMax', link: '/providers/minimax' },
   { text: 'TypeSafe', link: '/providers/typesafe' },
   { text: 'OpenCode Go', link: '/providers/opencode-go' },
-  { text: 'xAI', link: '/providers/xai' },
+  { text: 'SpaceXAI', link: '/providers/xai' },
 ]
 
 const appSidebar: DefaultTheme.SidebarItem[] = [

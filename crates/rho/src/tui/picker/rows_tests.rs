@@ -12,6 +12,7 @@ fn item(label: &str, section: Option<&str>) -> PickerItem {
         value: label.to_ascii_lowercase(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

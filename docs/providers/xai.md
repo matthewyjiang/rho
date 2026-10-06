@@ -1,6 +1,6 @@
-# xAI
+# SpaceXAI
 
-xAI is one provider with API-key and OAuth auth modes. OAuth works with models available to a SuperGrok or X Premium+ subscription. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+SpaceXAI is one provider with API-key and OAuth auth modes. OAuth works with models available to a SuperGrok or X Premium+ subscription. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
 
 ## At a glance
 
@@ -13,7 +13,7 @@ Both modes use `https://api.x.ai/v1` and the static model allowlist maintained b
 
 ## Sign in
 
-Run `/login`, select **xAI**, then choose **API Key** or **OAuth**. `/login xai` opens the same method picker. You can also target either method directly:
+Run `/login`, select **SpaceXAI**, then choose **API Key** or **OAuth**. The same picker also offers **Cursor (delegation only)** for the [Cursor runtime](/subagents/cursor). `/login xai` opens the same method picker. You can also target either method directly:
 
 ```text
 /login xai-api-key
@@ -50,13 +50,13 @@ XAI_ACCESS_TOKEN=...
 
 ## Models
 
-xAI uses a static allowlist rather than a refreshable API list. `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3` are available to both auth modes. Picking xAI without a model selects `grok-4.7`:
+SpaceXAI uses a static allowlist rather than a refreshable API list. `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3` are available to both auth modes. Picking SpaceXAI without a model selects `grok-4.7`:
 
 ```text
 /model xai/grok-4.7
 ```
 
-On xAI OAuth, `/fast` turns on faster serving for `grok-4.7`. Rho still shows `grok-4.7` and sends `grok-4.7-build-fast` on the request. That id is grok-4.7 on faster serving, billed at twice the grok-4.7 token price. models.dev has no row for it, so Rho reads the grok-4.7 catalog entry and doubles its input, cached-input, and output rates, including the long-context tier. `GET /v1/models` omits the id. API-key login cannot use that serving path. `/fast` with no argument toggles. The choice is saved as `model.fast_mode` and shows as `(fast)` after the model name.
+On SpaceXAI OAuth, `/fast` turns on faster serving for `grok-4.7`. Rho still shows `grok-4.7` and sends `grok-4.7-build-fast` on the request. That id is grok-4.7 on faster serving, billed at twice the grok-4.7 token price. models.dev has no row for it, so Rho reads the grok-4.7 catalog entry and doubles its input, cached-input, and output rates, including the long-context tier. `GET /v1/models` omits the id. API-key login cannot use that serving path. `/fast` with no argument toggles. The choice is saved as `model.fast_mode` and shows as `(fast)` after the model name.
 
 Codex uses the same `/fast` command, but Codex sends `service_tier: "priority"` instead of changing the model id.
 
@@ -74,7 +74,7 @@ Provide the matching environment override or log in once so Rho can read the sto
 ## Notes
 
 - With OAuth, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription.
-- [`/limits`](/interactive-tui#commands) reports the usage windows for xAI OAuth when you are logged in.
-- Both auth modes attach xAI's hosted `x_search` tool on every Responses create turn. Hosted X Search is a provider amenity outside the agent tool allowlist: it remains available even when client tools are restricted or empty, and disappears as soon as the session switches away from xAI. It is independent of the client `web_search` tool. Activity streams as typed `HostedToolActivity { name: "x_search", detail }` run events.
-- Both auth modes also attach xAI's hosted `image_generation` tool on create turns unless `[xai] image_generation = false`. The omitted key means on, and Rho does not write the `[xai]` table unless the value is off. In the TUI, `/config` → **Tools** exposes the same toggle when the conversation provider is xAI. The change applies to the next session. Generated-image previews are resized to fit a 1,024 × 768 pixel box without changing the original image. Preview decoding uses the same safety budgets as pasted images: at most 4,096 pixels per dimension and 80 MiB of decoder allocation. Images beyond those budgets can still be returned, but their previews are unavailable. Like `x_search`, it is a provider amenity outside the agent tool allowlist and disappears when the session leaves xAI. The model writes the image prompt and may generate or edit images in the same turn. Completed images arrive as `image_generation_call` items, stream as `HostedToolActivity { name: "image_generation", detail }` (the prompt), and are stored as assistant `ContentBlock::Image`. The TUI keeps that activity card for the prompt and paints a separate image card from the stored content on the completed turn and when the session is resumed. A slim replay item (without the image bytes) is kept so later xAI turns can restore the native `image_generation_call` for edits. Generated images can be large; they are persisted once in the session and resent on follow-up xAI turns.
-- Both auth modes use xAI [server-side context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction) (`POST /v1/responses/compact`) when automatic or manual compaction runs. The compact request body is only `model` plus full `input` (system messages included). The response is a single encrypted compaction item that replaces the prior window; host-owned system prompts are still retained client-side for portable handoff. The encrypted item only replays on a compatible xAI Responses turn for the same provider identity and model.
+- [`/limits`](/interactive-tui#commands) reports the usage windows for SpaceXAI OAuth when you are logged in.
+- Both auth modes attach SpaceXAI's hosted `x_search` tool on every Responses create turn. Hosted X Search is a provider amenity outside the agent tool allowlist: it remains available even when client tools are restricted or empty, and disappears as soon as the session switches away from SpaceXAI. It is independent of the client `web_search` tool. Activity streams as typed `HostedToolActivity { name: "x_search", detail }` run events.
+- Both auth modes also attach SpaceXAI's hosted `image_generation` tool on create turns unless `[xai] image_generation = false`. The omitted key means on, and Rho does not write the `[xai]` table unless the value is off. In the TUI, `/config` → **Tools** exposes the same toggle when the conversation provider is SpaceXAI. The change applies to the next session. Generated-image previews are resized to fit a 1,024 × 768 pixel box without changing the original image. Preview decoding uses the same safety budgets as pasted images: at most 4,096 pixels per dimension and 80 MiB of decoder allocation. Images beyond those budgets can still be returned, but their previews are unavailable. Like `x_search`, it is a provider amenity outside the agent tool allowlist and disappears when the session leaves SpaceXAI. The model writes the image prompt and may generate or edit images in the same turn. Completed images arrive as `image_generation_call` items, stream as `HostedToolActivity { name: "image_generation", detail }` (the prompt), and are stored as assistant `ContentBlock::Image`. The TUI keeps that activity card for the prompt and paints a separate image card from the stored content on the completed turn and when the session is resumed. A slim replay item (without the image bytes) is kept so later SpaceXAI turns can restore the native `image_generation_call` for edits. Generated images can be large; they are persisted once in the session and resent on follow-up SpaceXAI turns.
+- Both auth modes use SpaceXAI [server-side context compaction](https://docs.x.ai/developers/advanced-api-usage/context-compaction) (`POST /v1/responses/compact`) when automatic or manual compaction runs. The compact request body is only `model` plus full `input` (system messages included). The response is a single encrypted compaction item that replaces the prior window; host-owned system prompts are still retained client-side for portable handoff. The encrypted item only replays on a compatible SpaceXAI Responses turn for the same provider identity and model.

@@ -19,24 +19,29 @@ pub(super) enum LoginGroupNext {
 pub(super) fn login_group_picker() -> UiPicker {
     let mut items = catalog::login_groups()
         .into_iter()
-        .map(|group| PickerItem {
-            section: None,
-            label: group.prompt,
-            detail: None,
-            preview: None,
-            badge: None,
-            value: group.id,
-            selection_verb: None,
-            allow_filter_completion: true,
+        .map(|group| {
+            let label = group.prompt.clone();
+            let value = group.id.clone();
+            // Nested method labels and values stay searchable from the top
+            // level, so `cursor` or `kimi` still finds the group that owns it.
+            let search_terms = login_method_items(group)
+                .into_iter()
+                .flat_map(|method| [method.label, method.value])
+                .collect();
+            PickerItem {
+                section: None,
+                label,
+                detail: None,
+                preview: None,
+                badge: None,
+                value,
+                selection_verb: None,
+                allow_filter_completion: true,
+                search_terms,
+            }
         })
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
-    items.extend(
-        super::login_target::external_login_methods()
-            .into_iter()
-            .filter(|method| method.group_id.is_none())
-            .map(external_login_picker_item),
-    );
     sort_items_by_ascii_label(&mut items);
     UiPicker::login_group("Select provider to login", items).with_key_hints(super::PickerKeyHints {
         tab: super::TabKey::CompleteFilter,
@@ -59,6 +64,7 @@ pub(super) fn logout_method_picker(group: catalog::LoginGroup) -> UiPicker {
             value: method.target.auth,
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect();
     UiPicker::logout_provider(title, items).with_key_hints(super::PickerKeyHints {
@@ -79,10 +85,19 @@ pub(super) fn login_group_next(group: catalog::LoginGroup) -> LoginGroupNext {
     }
 }
 
-/// Methods for one login group: catalog providers plus any external runtime
-/// offered under the same group.
 pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
     let title = format!("Select {} login method", group.prompt);
+    UiPicker::login_provider(title, login_method_items(group)).with_key_hints(
+        super::PickerKeyHints {
+            tab: super::TabKey::CompleteFilter,
+            ..Default::default()
+        },
+    )
+}
+
+/// Methods for one login group: catalog providers plus any delegated runtime
+/// offered under the same group.
+fn login_method_items(group: catalog::LoginGroup) -> Vec<PickerItem> {
     let group_id = group.id.clone();
     let mut items = group
         .methods
@@ -96,18 +111,16 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
             value: method.target.auth,
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect::<Vec<_>>();
     items.extend(
         super::login_target::external_login_methods()
             .into_iter()
-            .filter(|method| method.group_id == Some(group_id.as_str()))
+            .filter(|method| method.group_id == group_id)
             .map(external_login_picker_item),
     );
-    UiPicker::login_provider(title, items).with_key_hints(super::PickerKeyHints {
-        tab: super::TabKey::CompleteFilter,
-        ..Default::default()
-    })
+    items
 }
 
 pub(super) fn auth_mode_picker(
@@ -143,6 +156,7 @@ pub(super) fn auth_mode_picker(
             value: mode.id.into(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         });
     }
     sort_items_by_ascii_label(&mut items);
@@ -164,6 +178,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         value: ALL_REFRESHABLE_PROVIDERS.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }];
     let mut providers = provider::providers()
         .iter()
@@ -185,6 +200,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
             value: descriptor.name.into(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut providers);
@@ -216,6 +232,7 @@ pub(super) fn logout_provider_picker(
             value: super::claude_login::CLAUDE_CODE_TARGET.into(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         });
         sort_items_by_ascii_label(&mut picker.items);
     }
@@ -225,13 +242,14 @@ pub(super) fn logout_provider_picker(
 fn external_login_picker_item(method: super::login_target::ExternalLoginMethod) -> PickerItem {
     PickerItem {
         section: None,
-        label: method.label.into(),
+        label: method.label(),
         detail: Some(method.detail.into()),
         preview: None,
         badge: None,
         value: method.value.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -263,6 +281,7 @@ fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -
                 value: target.auth,
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             }
         })
         .collect::<Vec<_>>();
@@ -291,5 +310,29 @@ mod tests {
             .map(|item| item.value.as_str())
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(values, ["meta-api-key", "meta-muse"]);
+    }
+
+    // Covers: typing a nested method label or value at the top level finds the
+    // group that owns it, since delegated runtimes are no longer top-level rows
+    // Owner: login group picker
+    #[test]
+    fn login_group_filter_finds_groups_by_nested_methods() {
+        let mut picker = login_group_picker();
+        let mut groups_for = |filter: &str| {
+            picker.filter = filter.into();
+            picker
+                .matching_indices()
+                .iter()
+                .map(|&index| picker.items[index].value.clone())
+                .collect::<Vec<_>>()
+        };
+        for (filter, expected) in [
+            ("cursor", ["xai"]),
+            ("antigravity", ["google"]),
+            ("claude-code", ["anthropic"]),
+            ("kimi-oauth", ["moonshot"]),
+        ] {
+            pretty_assertions::assert_eq!(groups_for(filter), expected, "{filter:?}");
+        }
     }
 }

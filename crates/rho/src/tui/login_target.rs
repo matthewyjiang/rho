@@ -8,45 +8,52 @@ use super::claude_login::CLAUDE_CODE_TARGET;
 
 const CURSOR_AGENT_ALIAS: &str = "cursor-agent";
 
-/// Login methods that are not Rho provider credentials.
+/// Delegated runtime sign-ins, which are not Rho provider credentials.
 ///
-/// The picker renders whatever it is handed; `group_id: None` is a top-level
-/// row, while `Some(id)` nests the method under that login group.
+/// Each one nests under its vendor's login group rather than standing as a
+/// top-level provider, since none of them can serve a Rho conversation.
 pub(super) fn external_login_methods() -> [ExternalLoginMethod; 3] {
     [
         ExternalLoginMethod {
-            // Claude Code is an Anthropic-family runtime for delegation, not a
-            // separate top-level provider group.
-            group_id: Some("anthropic"),
+            group_id: "anthropic",
             value: CLAUDE_CODE_TARGET,
-            label: "Claude Code (delegation only)",
-            detail: "External Claude binary subscription, not Anthropic API billing. \
-Credentials are managed by Claude Code, not Rho.",
+            name: "Claude Code",
+            detail: "Uses the claude CLI, not Anthropic API billing. \
+Claude Code manages credentials, not Rho.",
         },
         ExternalLoginMethod {
-            group_id: None,
-            value: AgentRuntime::Cursor.as_str(),
-            label: "Cursor",
-            detail: "Cursor Agent CLI (cursor-agent login)",
-        },
-        ExternalLoginMethod {
-            group_id: None,
+            group_id: "google",
             value: AgentRuntime::Antigravity.as_str(),
-            label: "Antigravity",
-            detail: "Google Antigravity ACP server sign-in (delegation only). \
-Credentials are managed by the server, not Rho.",
+            name: "Antigravity",
+            detail: "Uses agy_acp_server, not Gemini API billing. \
+Antigravity manages credentials, not Rho.",
+        },
+        ExternalLoginMethod {
+            group_id: "xai",
+            value: AgentRuntime::Cursor.as_str(),
+            name: "Cursor",
+            detail: "Uses the cursor-agent CLI, not SpaceXAI API billing. \
+Cursor manages credentials, not Rho.",
         },
     ]
 }
 
-/// One login method backed by an external runtime rather than a Rho credential.
+/// One login method backed by a delegated runtime rather than a Rho credential.
 pub(super) struct ExternalLoginMethod {
-    /// Login group this method is offered under. `None` lists it at the top level.
-    pub(super) group_id: Option<&'static str>,
+    /// Login group this method is offered under.
+    pub(super) group_id: &'static str,
     /// Picker value, which is also the `/login` argument.
     pub(super) value: &'static str,
-    pub(super) label: &'static str,
+    /// Runtime name; the picker label adds the shared delegation marker.
+    pub(super) name: &'static str,
     pub(super) detail: &'static str,
+}
+
+impl ExternalLoginMethod {
+    /// Picker label, marked the same way for every delegated runtime.
+    pub(super) fn label(&self) -> String {
+        format!("{} (delegation only)", self.name)
+    }
 }
 
 /// What a `/login` or `/logout` argument names.

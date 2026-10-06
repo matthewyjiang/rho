@@ -14,9 +14,9 @@ use rho_sdk::provider::ModelRequestOptions;
 /// xAI returns a single compaction item that stands in for the whole prior
 /// conversation — there are no retained recent user messages below this notice.
 pub(crate) const COMPACT_PORTABLE_HANDOFF_NOTICE: &str = "\
-Context was compacted with xAI server-side compaction. Prior turns, including \
+Context was compacted with SpaceXAI server-side compaction. Prior turns, including \
 system prompts folded into the artifact, live in an encrypted blob that only \
-compatible xAI Responses turns can read.";
+compatible SpaceXAI Responses turns can read.";
 
 impl XaiProvider {
     /// Every xAI host this transport targets serves `/responses/compact`.

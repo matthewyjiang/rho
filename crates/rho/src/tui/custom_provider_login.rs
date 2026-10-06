@@ -72,6 +72,7 @@ pub(super) fn login_group_items() -> [PickerItem; 2] {
             value: NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE.into(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         },
         PickerItem {
             section: None,
@@ -82,6 +83,7 @@ pub(super) fn login_group_items() -> [PickerItem; 2] {
             value: NEW_CUSTOM_RESPONSES_HOST_VALUE.into(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         },
     ]
 }

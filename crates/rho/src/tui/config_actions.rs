@@ -654,9 +654,9 @@ impl App {
             BooleanConfigRow {
                 toggle: ConfigToggle::XaiImageGeneration,
                 picker_value: config_picker::XAI_IMAGE_GENERATION_VALUE,
-                on_status: "xAI image generation: on next session",
-                off_status: "xAI image generation: off next session",
-                error_noun: "xAI image generation",
+                on_status: "SpaceXAI image generation: on next session",
+                off_status: "SpaceXAI image generation: off next session",
+                error_noun: "SpaceXAI image generation",
             },
             |_, _| {},
         )

@@ -65,7 +65,6 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     Step::AssertText("Select provider to login"),
     Step::AssertText("Anthropic"),
     Step::AssertText("GitHub Copilot"),
-    Step::AssertText("Google Gemini"),
     Step::Phase("sign_in"),
     Step::TypeText("openai"),
     Step::WaitText {

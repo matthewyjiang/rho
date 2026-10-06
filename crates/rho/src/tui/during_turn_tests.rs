@@ -44,6 +44,7 @@ fn model_picker() -> UiPicker {
             value: "model-a".into(),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         }],
     )
 }

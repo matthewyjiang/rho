@@ -112,6 +112,7 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
         value: "session".into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -169,5 +170,6 @@ fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
         value: server.identity.clone(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }

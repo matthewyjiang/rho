@@ -188,7 +188,7 @@ fn merge_refreshed_tokens(
     now_unix: Option<i64>,
 ) -> Result<XaiTokens, ModelError> {
     let access_token = response.access_token.ok_or_else(|| {
-        ModelError::InvalidResponse("xAI refresh response missing access_token".into())
+        ModelError::InvalidResponse("SpaceXAI refresh response missing access_token".into())
     })?;
     Ok(XaiTokens {
         access_token,

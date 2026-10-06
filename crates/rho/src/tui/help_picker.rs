@@ -198,6 +198,7 @@ fn entry(keys: impl Into<String>, summary: &str, detail: impl Into<String>) -> P
         value: keys,
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
