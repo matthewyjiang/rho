@@ -23,7 +23,8 @@ fn extracts_multiline_selection_in_reading_order() {
             "first\nsecon",
         ),
     ] {
-        let selection = TextSelection { anchor, focus };
+        let mut selection = TextSelection::new(anchor);
+        selection.update(focus);
         assert_eq!(
             selection.selected_text(&lines, first_line),
             Some(expected.into()),
@@ -34,10 +35,8 @@ fn extracts_multiline_selection_in_reading_order() {
 
 #[test]
 fn selecting_any_cell_of_a_wide_grapheme_copies_the_whole_grapheme() {
-    let selection = TextSelection {
-        anchor: SelectionPosition { line: 0, column: 1 },
-        focus: SelectionPosition { line: 0, column: 2 },
-    };
+    let mut selection = TextSelection::new(SelectionPosition { line: 0, column: 1 });
+    selection.update(SelectionPosition { line: 0, column: 2 });
     let lines = vec![Line::raw("a🙂b")];
 
     assert_eq!(selection.selected_text(&lines, 0), Some("🙂".into()));
@@ -58,13 +57,11 @@ fn excludes_code_block_copy_button_from_drag_selection() {
     let mut fence_state = crate::tui::markdown::CodeFenceState::default();
     let lines =
         crate::tui::markdown::markdown_lines("```rust\nlet x = 1;\n```", 20, &mut fence_state);
-    let selection = TextSelection {
-        anchor: SelectionPosition { line: 0, column: 0 },
-        focus: SelectionPosition {
-            line: 1,
-            column: 19,
-        },
-    };
+    let mut selection = TextSelection::new(SelectionPosition { line: 0, column: 0 });
+    selection.update(SelectionPosition {
+        line: 1,
+        column: 19,
+    });
 
     assert_eq!(
         selection.selected_text(&lines, 0),

@@ -648,6 +648,12 @@ pub(super) fn padded_content_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 
+/// Display columns of a `width`-wide [`pad_display_line`] row that hold
+/// content rather than gutter, so selections can leave the gutter out.
+pub(super) fn padded_content_columns(width: usize) -> std::ops::Range<usize> {
+    1..width.saturating_sub(1)
+}
+
 /// Indent a rendered line by one column on each side.
 ///
 /// Edge spaces keep the leading span's colors (so user-message backgrounds

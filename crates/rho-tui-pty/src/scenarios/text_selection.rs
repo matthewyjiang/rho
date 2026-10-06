@@ -81,6 +81,32 @@ fn assert_drag_updates_highlight_before_release(harness: &mut PtyHarness) -> Res
     Ok(())
 }
 
+/// Complete OSC 52 write of the prompt row, the blank spacer, and the reply
+/// row, with no gutter cells on either side of any row.
+const PROMPT_AND_REPLY_COPY: &[u8] =
+    b"\x1b]52;c;ZHJhZyBzZWxlY3QgdGFyZ2V0CgpmaXh0dXJlIHJlc3BvbnNlOiBkcmFnIHNlbGVjdCB0YXJnZXQ=\x1b\\";
+
+// Covers: a multi-row transcript drag that starts in the left gutter and ends
+// in the right one must copy only row text, not the gutter spaces.
+// Owner: interactive UX (PTY).
+fn assert_drag_copy_skips_gutters(harness: &mut PtyHarness) -> Result<()> {
+    // Top-down, the prompt row is the first row showing the needle.
+    let (prompt_row, _) = screen_cell(harness, "drag select target")?;
+    let (reply_row, _) = screen_cell(harness, "fixture response: drag select target")?;
+    let before = harness.raw_sequence_occurrences(PROMPT_AND_REPLY_COPY);
+    // SGR mouse coordinates are 1-based: column 1 is the left gutter cell and
+    // `cols` the right one.
+    let right_gutter = harness.screen().cols();
+    harness.mouse(MouseButton::Left, 1, prompt_row + 1, true)?;
+    harness.mouse_drag(right_gutter, reply_row + 1)?;
+    harness.mouse(MouseButton::Left, right_gutter, reply_row + 1, false)?;
+    harness.wait_for_raw_sequence_occurrences(
+        PROMPT_AND_REPLY_COPY,
+        before + 1,
+        WaitTimeout::secs(5, "gutter-free drag copy"),
+    )
+}
+
 // Covers: click and drag edit the free-text composer, double-click selection
 // survives release, and a clipped composer keeps text stable under the pointer.
 // Owner: interactive UX (PTY).
@@ -217,6 +243,8 @@ pub(super) const TEXT_SELECTION_DRAG_STEPS: &[Step] = &[
     },
     Step::Phase("drag_and_check_highlight"),
     Step::Custom(assert_drag_updates_highlight_before_release),
+    Step::Phase("drag_copy_skips_gutters"),
+    Step::Custom(assert_drag_copy_skips_gutters),
     Step::Phase("click_keeps_recalled_prompt"),
     Step::Custom(assert_composer_click_keeps_recalled_prompt),
     Step::ExitCommand,

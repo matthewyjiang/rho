@@ -25,22 +25,65 @@ pub(super) struct SelectionPosition {
     pub(super) column: usize,
 }
 
+/// Display columns a selection may cover on every row.
+///
+/// Columns outside this range hold layout chrome, such as the transcript's
+/// one-column gutter, so the highlight and the copied text both skip them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SelectableColumns {
+    start: usize,
+    end: usize,
+}
+
+impl SelectableColumns {
+    /// Every column of the row is text.
+    pub(super) const ALL: Self = Self {
+        start: 0,
+        end: usize::MAX,
+    };
+
+    pub(super) fn new(columns: Range<usize>) -> Self {
+        Self {
+            start: columns.start,
+            end: columns.end.max(columns.start.saturating_add(1)),
+        }
+    }
+
+    fn clamp(self, position: SelectionPosition) -> SelectionPosition {
+        SelectionPosition {
+            column: position
+                .column
+                .clamp(self.start, self.end.saturating_sub(1)),
+            ..position
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TextSelection {
     anchor: SelectionPosition,
     focus: SelectionPosition,
+    columns: SelectableColumns,
 }
 
 impl TextSelection {
     pub(super) fn new(position: SelectionPosition) -> Self {
+        Self::within(position, SelectableColumns::ALL)
+    }
+
+    /// Anchors a selection that never leaves `columns`; positions outside are
+    /// clamped to the nearest selectable column.
+    pub(super) fn within(position: SelectionPosition, columns: SelectableColumns) -> Self {
+        let position = columns.clamp(position);
         Self {
             anchor: position,
             focus: position,
+            columns,
         }
     }
 
     pub(super) fn update(&mut self, position: SelectionPosition) {
-        self.focus = position;
+        self.focus = self.columns.clamp(position);
     }
 
     pub(super) fn has_moved(self) -> bool {
@@ -57,22 +100,13 @@ impl TextSelection {
             return None;
         }
 
-        let (start, end) = self.ordered_positions();
-        let mut selected = Vec::with_capacity(end.line.saturating_sub(start.line) + 1);
-        for line_index in start.line..=end.line {
+        let lines_range = self.selected_line_range();
+        let mut selected = Vec::with_capacity(lines_range.len());
+        for line_index in lines_range {
             let line = lines.get(line_index.checked_sub(first_line)?)?;
-            let start_column = if line_index == start.line {
-                start.column
-            } else {
-                0
-            };
-            let end_column = if line_index == end.line {
-                end.column.saturating_add(1)
-            } else {
-                usize::MAX
-            };
+            let columns = self.selected_columns(line_index)?;
             selected.push(
-                selectable_text_for_display_columns(line, start_column..end_column)
+                selectable_text_for_display_columns(line, columns)
                     .trim_end_matches(' ')
                     .to_string(),
             );
@@ -91,11 +125,15 @@ impl TextSelection {
             return None;
         }
 
-        let start_column = if line == start.line { start.column } else { 0 };
+        let start_column = if line == start.line {
+            start.column
+        } else {
+            self.columns.start
+        };
         let end_column = if line == end.line {
             end.column.saturating_add(1)
         } else {
-            usize::MAX
+            self.columns.end
         };
         Some(start_column..end_column)
     }
