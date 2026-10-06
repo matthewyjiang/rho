@@ -7,180 +7,124 @@ disable-model-invocation: true
 
 # Rho agent creator
 
-Guide the user through creating one valid agent definition. Do not jump directly to a file. Collect decisions step by step with the `questionnaire` tool, draft the definition, confirm it, then persist it with `save_agent`. Do not use `write`, `edit`, or a shell to create the definition or its parent directories.
+Guide the user to one valid agent definition: collect decisions with the `questionnaire` tool, draft, confirm, `write` the file, then check it with `rho` action `agents`. Do not ask for anything the user already supplied.
 
-The authoritative field and value contract is the agent definition schema in the Rho docs (`docs/subagents/definition-schema.md`) and the `save_agent` parser. Prefer those over inventing fields or values. `save_agent` re-parses and canonicalizes before writing.
-
-Rho ships no built-in `runtime: claude-cli` agent. If the user wants Claude Code or a Claude subscription-backed specialist under Rho, create a user-defined agent with this skill.
-
-Agent definitions are Markdown files with YAML frontmatter and a prompt body. Valid discovery locations are:
-
-- `~/.agents/agents/<id>.md` for the shared agents home
-- `~/.rho/agents/<id>.md` for Rho-specific global agents
-- `<project-root>/.agents/agents/<id>.md` for a project agent
-
-Project agents are loaded only when the project is trusted, currently by starting Rho with `RHO_TRUST_PROJECT_AGENTS=1`.
+The field contract is `docs/subagents/definition-schema.md` and the agent parser. Do not invent fields or values. Rho ships no built-in `claude-cli`, `cursor`, or `antigravity` agents; users who want one create it here.
 
 ## 1. Scope and identity
 
-Use one questionnaire with these choices:
+First call `rho` with `action: "agents"`. It returns absolute save directories (`dirs`) and the currently loaded agents. Write only to those paths; `write` does not expand `~`.
 
-1. Save location: shared global (`~/.agents/agents`), Rho global (`~/.rho/agents`), or current project (`<project-root>/.agents/agents`).
-2. Agent ID: offer an Other response so the user can enter it.
-3. Description: offer an Other response. Explain that this is the short delegation metadata other agents use to decide when this agent is appropriate.
+Then one questionnaire:
 
-Validate the ID before continuing. It must contain 1-64 lowercase ASCII letters, digits, or single hyphens, with no leading hyphen, trailing hyphen, or double hyphen. The destination filename must be `<id>.md`. The description must contain 1-1024 characters.
+1. Location: `agents_home` (`~/.agents/agents`, shared), `rho_home` (`~/.rho/agents`), or `project` (`<project-root>/.agents/agents`, loaded only with `RHO_TRUST_PROJECT_AGENTS=1`; `dirs.project` is null when untrusted).
+2. Agent ID (Other): 1-64 chars of lowercase ASCII letters, digits, and single hyphens; no leading, trailing, or double hyphen. File is `<id>.md`.
+3. Description (Other): 1-1024 chars. It is the delegation metadata other agents use to decide when to call this one.
 
-## 2. Role and behavior
+## 2. Role
 
-Ask what the agent should accomplish and how it should behave. Use an Other response for the role/instructions. Ask follow-up choices when useful, such as whether it may modify files, what it should avoid, what its final response should contain, and when it should ask the user rather than proceed. Keep this conversational and do not ask for information the user already supplied.
+Ask what the agent should do (Other). Follow up only where useful: may it modify files, what to avoid, what the final response contains, when to ask instead of proceeding.
 
-## 3. Runtime and capabilities
+## 3. Runtime
 
-First choose the harness. Runtime and model are separate axes.
+Runtime (harness) and model are separate axes. Do not pick an external runtime just because the user named a model ("Opus", "Gemini"); a normal Rho agent can pin that model through a configured provider.
 
-### When to pick each runtime
+| Runtime | Use when | Setup |
+| --- | --- | --- |
+| `rho` (default) | Rho's own loop and tools, any configured provider | none |
+| `claude-cli` | child should run on Claude Code and spend a Claude.ai subscription | `claude` on `PATH`, `/login claude-code` |
+| `cursor` | child should run on Cursor Agent with the Cursor sign-in | `cursor-agent` on `PATH`, `/login cursor` |
+| `antigravity` | child should run on Google Antigravity (Gemini) with its Google sign-in | `agy_acp_server.par` + `localharness_external` on `PATH`, `/login antigravity` |
 
-- `rho` (default): Rho's own loop and Rho tool capabilities. Use this for normal subagents, including ones that call Anthropic or other providers with API keys / OAuth already configured in Rho.
-- `claude-cli`: the external `claude` binary. Use this only when the user wants a **delegated** child that runs on Claude Code and can spend a Claude.ai Free/Pro/Max subscription.
+Explain before confirming any external runtime:
 
-Anthropic does not allow third-party clients to put Claude.ai subscription credentials on their own API stacks. Rho's Anthropic provider path is API-key billing only. `runtime: claude-cli` is the supported **indirect** workaround: Rho stays the parent orchestrator, and the official `claude` binary owns sign-in, the child loop, and plan usage. Rho never sees or stores the subscription token.
+- Delegated only: interactive and `rho run` roots cannot bind it; a Rho parent launches it with the `agent` tool. Nested fan-out stays in Rho.
+- Rho never sees or stores the external credential. For Claude this is the supported way to use a subscription, since Rho's Anthropic provider is API-key billing only.
+- Permission modes: launch in Plan or Bypass. Supervised always refuses. Cursor and Antigravity also refuse Auto and Allow edits. Claude allows Auto and Allow edits only when every `tools:` entry is a proven no-prompt Claude built-in for that approval class (for example `Read`, `Glob`, `Grep`) and `inherit_claude_config` is false; specifiers like `Bash(git *)`, write/process tools, and plugin/MCP names refuse spawn.
+- `provider`, `auth`, `fast`, and `@alias` models are Rho only.
+- Cursor and Antigravity reject `prompt: replace` and `reasoning`; effort lives in the model id.
 
-Do **not** choose `claude-cli` merely because the user said "Opus" or "Claude". If they only want a model through Rho's normal provider path, keep `runtime: rho` and set model/provider later.
+Emit `runtime` for external runtimes; omit it for `rho` unless the user wants it explicit.
 
-### Claude-cli constraints to explain before confirming that runtime
+For `claude-cli`, ask about `inherit_claude_config` (default `false`). `true` loads the user's full Claude settings (`user,project,local`) and blocks Auto and Allow edits; `false` keeps project-only settings.
 
-- Delegated only. Interactive and `rho run` roots cannot bind `runtime: claude-cli`. A Rho parent must launch the agent through the `agent` tool.
-- Requires the `claude` binary on `PATH` and a Claude Code login (`/login claude-code`). Offer to remind the user after write if they have not signed in yet.
-- Launch in Plan or Bypass. Auto and Allow edits spawn only when every `tools:` entry is a proven no-prompt Claude built-in for that Rho approval class and `inherit_claude_config` is false. Those runs use Claude `dontAsk`, which also auto-approves read-only Bash and PreToolUse hooks, and `--allowedTools` runs listed tools without prompting, so specifiers such as `Bash(git *)`, write/process tools, unknown Claude/plugin/MCP names, or inherited Claude config refuse spawn. Supervised always refuses because `claude -p` cannot prompt through Rho.
-- No nested Claude `Task` / `Agent` tools. Fan-out stays under Rho.
-- No Rho `provider`, no Rho `@alias` models, no `tools: all`
-- `reasoning:` is optional and maps to Claude `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Do not emit `off` or `minimal`.
+## 4. Tools
 
-If the user still wants `claude-cli`, ask whether to set `inherit_claude_config: true`. Default is `false` (closed). Explain that the opt-in loads the user's full Claude settings (`user,project,local`); closed keeps project-only settings on Plan and Bypass. Inherited config also blocks Auto and Allow edits, because those modes cannot keep hooks off the child. Rho still does not store Claude credentials.
+Vocabularies never mix.
 
-Emit `runtime: rho` only when making the Rho choice explicit; omit it to keep the default. Always emit `runtime: claude-cli` when that runtime is chosen.
+- `rho`: `tools: all` (default) or a focused multi-select from `agent`, `agents`, `bash`, `edit`, `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `todo`, `web_search`, `write`. Prefer focused lists for narrow roles.
+- `claude-cli`: Claude Code entries like `Read`, `Edit`, `Glob`, `Grep`, `Bash(git *)`. No commas inside specifiers. Omitted means no tools; `all` is invalid. Presets: read-only `[Read, Glob, Grep]`; git-aware adds `Bash(git *)`; add `Edit`/`Write` only if the user wants workspace changes.
+- `cursor`: required, nonempty, closed set: `read_tool_call`, `grep_tool_call`, `glob_tool_call`, `ls_tool_call`, `sem_search_tool_call`, `read_lints_tool_call`, `edit_tool_call`, `delete_tool_call`, `shell_tool_call`, `write_shell_stdin_tool_call`, `web_search_tool_call`, `web_fetch_tool_call`, `fetch_tool_call`, `mcp_tool_call`, `list_mcp_resources_tool_call`, `read_mcp_resource_tool_call`, `update_todos_tool_call`, `read_todos_tool_call`, `create_plan_tool_call`, `apply_agent_diff_tool_call`. This is the accepted vocabulary, not an exact fence. Before confirming, tell the user that Cursor fences by category: search tools (`grep`, `glob`, `ls`, `sem_search`, `read_lints`) always run, todo and plan tools are never fenced, and declaring one write, shell, fetch, or MCP name enables that whole category in Bypass (for example `edit_tool_call` also allows delete and apply-diff).
+- `antigravity`: required, nonempty, closed set: `view_file` (read), `create_file`, `edit_file` (write), `run_command` (shell), `search_web`, `read_url_content` (network). Plan mode needs `view_file`. In Bypass, `run_command` runs anything the model asks.
 
-### Tools
+## 5. Model and reasoning
 
-Then ask whether the agent should receive all tools (Rho only) or a focused allowlist. Tool names depend on runtime and never mix:
+**`rho`**: ask for `model-policy`: `inherit` (keep the parent's provider, model, and auth) or `prefer` / `require` / `select` (pin a model; do not invent finer differences). For a pin, ask for `model` and optional `provider` (non-empty, no whitespace; `@alias` allowed). If the provider has several logins, offer optional `auth` (for example `xai-oauth`, `xai-api-key`); unset keeps a compatible host login. When the pin supports fast mode (Codex GPT-5.5+ / GPT-6, or `xai/grok-4.7` with `auth: xai-oauth`), ask about `fast: true`; it bills higher and ignores the parent's `/fast`. Never emit `model`, `provider`, `auth`, or `fast` with `inherit`.
 
-- `runtime: rho`: multi-select from `agent`, `agents`, `bash`, `edit`, `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `web_search`, `write`. `tools: all` is allowed. Prefer a focused list when the role is narrow.
-- `runtime: claude-cli`: collect Claude Code tool names such as `Read`, `Edit`, `Glob`, `Grep`, and patterns like `Bash(git *)`. Specifier interiors may contain nested parentheses and quotes, but not commas (Claude's list grammar cannot round-trip commas). Do not use Rho capability names. Omitting `tools` means no Claude tools. `tools: all` is not valid.
+Reasoning: offer inherit (omit) plus the levels models.dev lists for the target model; if unknown, offer `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 
-For Claude-cli starters, offer concrete presets when the user is unsure:
+**External runtimes**: `model` is an opaque pass-through string. Never guess ids from memory. Offer the presets below, an exact model the user already named, inherit (omit `model`; the harness picks), and Other (any non-empty string without whitespace, written verbatim). Name the default id in its label. Omit `model-policy` when `model` is set; only `inherit` (without `model`) or `select` (with `model`) are valid.
 
-- read-only planning/review: `Read`, `Glob`, `Grep`
-- git-aware review: `Read`, `Glob`, `Grep`, `Bash(git *)`
-- implementation: add `Edit` / `Write` only if the user explicitly wants workspace changes
+| Runtime | Presets (do not extend) | Reasoning |
+| --- | --- | --- |
+| `claude-cli` | `claude-opus-5` (default), `claude-sonnet-5`, `claude-fable-5-1` | optional `low`, `medium`, `high`, `xhigh`, `max` (`--effort`) |
+| `cursor` | ids from `cursor-agent models`; bracket overrides allowed, e.g. `gpt-5.3-codex[effort=high,fast=false]` | none |
+| `antigravity` | `gemini-3.8-flash-high` (recommended), `gemini-pro-agent` | none |
 
-### Reasoning
+An Antigravity model the server does not offer fails the run before the prompt and lists the offered ids.
 
-Ask for a reasoning level:
+## 6. Prompt
 
-- `runtime: rho`: always offer inherit/default (omit `reasoning`). Omitting `reasoning` inherits the selected model's / conversation default. When models.dev lists levels for the target model (pinned provider+model, or inherit of a known conversation model), offer only those levels. When unknown (no catalog row, empty model, unresolved provider), fall back to inherit/default, off, minimal, low, medium, high, xhigh, max.
-- `runtime: claude-cli`: inherit/default, low, medium, high, xhigh, max. Omitting `reasoning` inherits Claude's default effort. Map the chosen value to Claude `--effort`. Never emit `off` or `minimal` for Claude.
+Ask `extend` (append to the standard Rho prompt) or `replace` (body is the whole system prompt, must be self-contained) with `default: "extend"` and `default_selection: "focused"`. Skip the question for Cursor and Antigravity: only `extend` is valid, and the body is prepended to the first prompt.
 
-## 4. Model policy
+Draft a concise body: role first, then operating rules, boundaries, and completion expectations. For external runtimes, the final child message returns verbatim to the parent, so demand a self-contained result.
 
-For `runtime: rho`, ask for one model policy: `inherit`, `prefer`, `require`, or `select`. Explain that `inherit` keeps the parent agent's provider and model, while every other policy names a model selection. Do not invent finer behavioral differences between the non-inherit policies.
+## 7. Draft and confirm
 
-If the answer is not `inherit`, ask for the model ID and optional provider. Both values must be non-empty and contain no whitespace when present. A model is required for `prefer`, `require`, and `select`. When the provider has more than one login method (for example xAI API key vs OAuth), also ask for optional `auth` using a known auth profile id such as `xai-oauth` or `xai-api-key`. Only offer auth profiles the user already has configured when that is known; otherwise explain that unset `auth` keeps a compatible host login for the provider. Do not emit `model`, `provider`, or `auth` for `inherit`. Rho may resolve `@alias` model values against `[model.aliases]`.
-
-When the pinned provider and model support fast mode (Codex GPT-5.5 or later and GPT-6 models, or `xai/grok-4.7` with `xai-oauth`), ask whether to set `fast: true`. For xAI, also emit `auth: xai-oauth`; with `auth` unset bind may pick the API-key login, which cannot serve fast mode. It bills at a higher rate and is independent of the parent's `/fast`. Never emit `fast` for `inherit` or for `claude-cli`.
-
-For `runtime: claude-cli`, do **not** invent or guess Claude model IDs from memory, marketing names, or Rho provider catalogs beyond the recommended list below. Claude `--model` is an opaque pass-through string. Ask with a choice questionnaire that names the default explicitly:
-
-1. **Use default (`claude-opus-5`)** - emit `model: claude-opus-5`. Always say the default id in the label/help so the user knows exactly what will be written.
-2. **`claude-sonnet-5`** - emit `model: claude-sonnet-5`
-3. **`claude-fable-5-1`** - emit `model: claude-fable-5-1`
-4. **Inherit Claude default** - omit `model` (and omit `model-policy`, or use `inherit` without a model). Explain this leaves model selection to the installed `claude` binary, not Rho.
-5. **Other** - let the user type any non-empty model string with no whitespace (Claude model id or Claude alias). Emit that exact string as `model`. Do not rewrite, normalize, or "correct" it.
-
-Recommended preset ids only (do not expand this list from memory):
-
-- `claude-opus-5` (default when the user accepts the default)
-- `claude-sonnet-5`
-- `claude-fable-5-1`
-
-Never emit `provider` or `auth`. Prefer omitting `model-policy` when a model is set (parser treats that as select). If you emit `model-policy`, only `inherit` or `select` are valid. Reject empty model values. Do not combine `model-policy: inherit` with an explicit `model`, and do not use `model-policy: select` without `model`. Claude models are not Rho `@alias` values (`@name` is rejected).
-
-If the user already named a specific Claude model earlier in the conversation, offer that exact string as a focused choice alongside the recommended presets and Other, still without inventing additional options.
-
-## 5. Prompt policy
-
-Ask whether the body should:
-
-- `extend` the standard Rho system prompt
-- `replace` the system prompt completely
-
-Use a choice questionnaire with `default: "extend"` and `default_selection: "focused"` so extend is recommended without being pre-selected. Explain that `replace` needs a non-empty, self-contained body. Draft a concise body from the user's answers. It should state the role first, then give concrete operating rules, boundaries, and completion expectations. Do not repeat metadata merely to make the body longer.
-
-For Claude-cli agents, still write the body for the child role. Remind the user that the final child message returns verbatim to the Rho parent, so the body should demand a self-contained result.
-
-## 6. Draft and confirm
-
-Construct valid content in this shape, omitting optional fields that were not selected. Rho example:
+Omit unselected optional fields. Examples:
 
 ```markdown
 ---
 id: example-agent
 description: Use for ... Not for ...
-prompt: extend
-runtime: rho
 model-policy: inherit
 reasoning: medium
-tools: [read_file, list_dir]
+tools: [read_file, grep, glob]
 ---
 
 You are ...
-
-- ...
 ```
-
-Claude Code example (subscription-backed delegated specialist):
 
 ```markdown
 ---
-id: claude-planner
-description: Plans with Claude Code on the user subscription. Requires /login claude-code. Not for Rho-native tools or root sessions.
-runtime: claude-cli
-model: claude-opus-5
-reasoning: high
-tools: [Read, Glob, Grep]
-inherit_claude_config: false
+id: agy-reviewer
+description: Reviews changes with Antigravity on Gemini. Requires /login antigravity. Not for root sessions.
+runtime: antigravity
+model: gemini-3.8-flash-high
+tools: [view_file, run_command]
 ---
 
-You are a planning specialist running under Claude Code for a Rho parent.
+You are a code reviewer running under Antigravity for a Rho parent.
 
-- Prefer reading before proposing edits.
-- Return a self-contained plan the parent can act on.
-- Do not claim you can open nested Task or Agent tools; fan-out stays in Rho.
+- Read before proposing edits.
+- Return a self-contained review the parent can act on.
 ```
 
-`prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider`, `tools` must be a YAML list of Claude tool names or patterns, and `reasoning` when set must be one of `low`, `medium`, `high`, `xhigh`, `max`. Present the exact destination tree and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
+Show the destination path and the complete file, then confirm with a confirm questionnaire. Revise and reconfirm as needed.
 
-## 7. Save and verify
+## 8. Write and verify
 
-Call `save_agent` with:
+Target `<dir>/<id>.md` with the chosen directory from `dirs`. Before writing, `read_file` that exact path, even if `agents` does not list it (a higher-precedence directory can shadow it). If it exists, show it and confirm overwrite first.
 
-- `location`: `agents-home` (`~/.agents/agents`), `rho-home` (`~/.rho/agents`), or `project` (`<project-root>/.agents/agents`)
-- `contents`: the confirmed Markdown draft
-- omit `expected_revision` unless replacing a file the user just reviewed
+`write` the confirmed contents, then call `rho` with `action: "agents"` again:
 
-Never invent an `expected_revision`. `save_agent` validates, canonicalizes, creates parent directories, rejects symlinks, and refuses an existing file until the user confirms replacing that exact revision.
+- New path under `agents`: done.
+- New path under `invalid`: fix the named `field`, rewrite, and recheck. Rho skips an invalid file, so the agent does not exist until the check is clean.
+- Other files under `invalid`: they predate this change. Mention them, but do not edit them unless asked.
 
-If the tool reports `exists`, show the current file to the user, ask overwrite confirmation, and call `save_agent` again with the returned `revision` as `expected_revision`. If the tool reports a conflict, the file changed after that review: show the new file and confirm again. If validation fails, fix the draft and retry. Do not fall back to `write` or a shell.
+After a clean check:
 
-After a successful save:
-
-1. Tell the user the final path from the tool result. The returned body is the canonical file.
-2. Ask the user to run `/agents`. Opening `/agents` reloads definitions from disk and shows the new agent, including `runtime` and tool vocabulary.
-3. For `runtime: claude-cli`, also tell the user to:
-   - install `claude` if needed
-   - run `/login claude-code` if not already signed in
-   - launch it from Plan or Bypass (Auto and Allow edits only with proven no-prompt `tools:` for that Rho class and `inherit_claude_config: false`)
-   - launch it from a Rho parent via the `agent` tool (not as the interactive root)
-   - optionally confirm binary/auth with `/doctor` and inspect later runs with `rho attach <run-id>`
-
-Mention that project-scoped agents need project trust (`RHO_TRUST_PROJECT_AGENTS=1`). Do not claim that an already initialized delegation tool schema has changed merely because the file was written. The new agent is guaranteed to be available after starting a new Rho session that loads it.
+1. Report the final path.
+2. Ask the user to run `/agents`, which reloads definitions from disk. Do not claim an already initialized delegation tool schema changed; a new session is guaranteed to load the agent.
+3. For external runtimes, remind them to install the binary, sign in (`/login claude-code`, `/login cursor`, or `/login antigravity`), check with `/doctor`, launch from a Rho parent in Plan or Bypass, and inspect runs with `rho attach <run-id>`.
+4. For project agents, mention `RHO_TRUST_PROJECT_AGENTS=1`.

@@ -119,7 +119,7 @@ Rho includes three built-in skills:
 | Skill | Use |
 | --- | --- |
 | `rho-config` | Configure Rho, including models, providers, credentials, aliases, permission mode, and direct config-file edits |
-| `rho-agent-creator` | Power `/agents create` and `/create-agent`, including guided `runtime: claude-cli` Claude Code specialist setup |
+| `rho-agent-creator` | Power `/agents create` and `/create-agent`, including guided setup for `claude-cli`, `cursor`, and `antigravity` delegated runtimes |
 | `rho-workflow-authoring` | Write and operate deterministic, resumable Starlark workflows |
 
 The agent creator requires direct user invocation and does not appear in the model's automatic skill catalog. The `rho` tool documents its diagnostics actions directly in its input schema.

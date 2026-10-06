@@ -1,8 +1,8 @@
 //! Authorizes agent definition files against discovery roots.
 //!
-//! Shared by the TUI editor (existing files) and host-owned persist (create or
-//! replace). Roots match catalog discovery: `~/.agents/agents`, `~/.rho/agents`,
-//! and trusted `<project>/.agents/agents`.
+//! Used by the TUI editor and delete flow for existing files. Roots match
+//! catalog discovery: `~/.agents/agents`, `~/.rho/agents`, and trusted
+//! `<project>/.agents/agents`.
 
 use std::{
     fs, io,
@@ -29,12 +29,6 @@ pub(crate) enum AuthorizeAgentPathError {
     Inspect { path: String, message: String },
 }
 
-#[derive(Clone, Copy)]
-enum DestinationPresence {
-    MustExist,
-    MayCreate,
-}
-
 /// Authorizes an existing agent file for in-place editing.
 pub(crate) fn authorize_existing_agent_file(
     origin: AgentOrigin,
@@ -42,41 +36,17 @@ pub(crate) fn authorize_existing_agent_file(
     cwd: &Path,
     home: Option<&Path>,
 ) -> Result<PathBuf, AuthorizeAgentPathError> {
-    authorize_agent_path(origin, path, cwd, home, DestinationPresence::MustExist)
-}
-
-/// Authorizes a destination that persist may create or replace.
-pub(crate) fn authorize_agent_destination(
-    origin: AgentOrigin,
-    path: &Path,
-    cwd: &Path,
-    home: Option<&Path>,
-) -> Result<PathBuf, AuthorizeAgentPathError> {
-    authorize_agent_path(origin, path, cwd, home, DestinationPresence::MayCreate)
-}
-
-fn authorize_agent_path(
-    origin: AgentOrigin,
-    path: &Path,
-    cwd: &Path,
-    home: Option<&Path>,
-    presence: DestinationPresence,
-) -> Result<PathBuf, AuthorizeAgentPathError> {
     let roots = origin_roots(origin, cwd, home);
     let (base, root) = roots
         .into_iter()
         .find(|(_, root)| path.parent() == Some(root.as_path()))
         .ok_or(AuthorizeAgentPathError::OutsideRoot)?;
-    inspect_root_chain(&base, &root, presence)?;
-    inspect_destination_file(path, presence)?;
+    inspect_root_chain(&base, &root)?;
+    inspect_existing_file(path)?;
     Ok(root)
 }
 
-pub(crate) fn origin_roots(
-    origin: AgentOrigin,
-    cwd: &Path,
-    home: Option<&Path>,
-) -> Vec<(PathBuf, PathBuf)> {
+fn origin_roots(origin: AgentOrigin, cwd: &Path, home: Option<&Path>) -> Vec<(PathBuf, PathBuf)> {
     match origin {
         AgentOrigin::AgentsHome => home
             .map(|home| {
@@ -101,11 +71,7 @@ pub(crate) fn origin_roots(
     }
 }
 
-fn inspect_root_chain(
-    base: &Path,
-    root: &Path,
-    presence: DestinationPresence,
-) -> Result<(), AuthorizeAgentPathError> {
+fn inspect_root_chain(base: &Path, root: &Path) -> Result<(), AuthorizeAgentPathError> {
     let relative = root
         .strip_prefix(base)
         .map_err(|_| AuthorizeAgentPathError::RootOutsideBase)?;
@@ -125,22 +91,13 @@ fn inspect_root_chain(
                     return Err(AuthorizeAgentPathError::RootIsSymlink);
                 }
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                if matches!(presence, DestinationPresence::MustExist) {
-                    return Err(inspect_error(&component_path, error));
-                }
-                return Ok(());
-            }
             Err(error) => return Err(inspect_error(&component_path, error)),
         }
     }
     Ok(())
 }
 
-fn inspect_destination_file(
-    path: &Path,
-    presence: DestinationPresence,
-) -> Result<(), AuthorizeAgentPathError> {
+fn inspect_existing_file(path: &Path) -> Result<(), AuthorizeAgentPathError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -149,10 +106,6 @@ fn inspect_destination_file(
                 Ok(())
             }
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => match presence {
-            DestinationPresence::MayCreate => Ok(()),
-            DestinationPresence::MustExist => Err(inspect_error(path, error)),
-        },
         Err(error) => Err(inspect_error(path, error)),
     }
 }

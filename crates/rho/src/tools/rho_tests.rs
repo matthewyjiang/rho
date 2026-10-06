@@ -13,7 +13,8 @@ async fn advertises_valid_actions_and_rejects_unsupported_ones() {
             "prompt_sources",
             "tools",
             "hooks",
-            "config"
+            "config",
+            "agents"
         ])
     );
     assert_eq!(super::super::canonical_tool_is_mutating("rho"), Some(false));

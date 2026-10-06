@@ -17,6 +17,8 @@ use {
     rho_providers::reasoning::ReasoningLevel,
 };
 
+/// Actions the `rho` tool advertises. All but [`AGENTS_ACTION`] read the
+/// [`RuntimeDiagnostics`] snapshot.
 pub(crate) const ACTIONS: &[&str] = &[
     "info",
     "context",
@@ -25,7 +27,12 @@ pub(crate) const ACTIONS: &[&str] = &[
     "tools",
     "hooks",
     "config",
+    AGENTS_ACTION,
 ];
+
+/// Rediscovers agent definitions from disk for the session workspace, so the
+/// `rho` tool answers it with the workspace instead of the snapshot.
+pub(crate) const AGENTS_ACTION: &str = "agents";
 
 pub(crate) fn supports_action(action: &str) -> bool {
     ACTIONS.contains(&action)

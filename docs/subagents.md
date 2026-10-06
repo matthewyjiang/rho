@@ -18,7 +18,7 @@ rho run --agent worker "address the issue"
 
 Agent switching within an active session is intentionally unsupported.
 
-Unknown frontmatter keys and invalid values fail before execution. The field contract is on [definition schema](/subagents/definition-schema). Runtimes and attachment are on [Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor), [Antigravity](/subagents/antigravity), and [attachment and artifacts](/subagents/attachment-and-artifacts).
+Unknown frontmatter keys and invalid values make a definition invalid. Rho skips that file and lists it in `/agents`; the rest of the catalog still loads. The field contract is on [definition schema](/subagents/definition-schema). Runtimes and attachment are on [Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor), [Antigravity](/subagents/antigravity), and [attachment and artifacts](/subagents/attachment-and-artifacts).
 
 Use `/agents create` or `/create-agent` to define an agent through a guided questionnaire. Use bare `/agents` to inspect the loaded catalog. Press Enter on an internal agent to set its model override. Press Enter on an agent loaded from `~/.rho/agents` or a trusted project `.agents/agents` directory to edit its definition, or press Delete to remove it after confirmation. Frontmatter fields use structured TUI controls, while the prompt body opens in `$VISUAL` or `$EDITOR`. Review the draft and choose **Save** to validate and write the source file. Agents loaded from `~/.agents/agents`, workflows, and built-ins remain read-only; press Enter on one to read its full prompt.
 

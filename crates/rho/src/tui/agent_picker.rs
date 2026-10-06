@@ -523,11 +523,19 @@ impl super::App {
         true
     }
 
-    /// Discovers agents for the session cwd, reporting a failure in the
-    /// transcript and status. The composer is left for the caller to settle.
+    /// Discovers agents for the session cwd, reporting skipped definition files
+    /// and failures in the transcript. The composer is left for the caller to
+    /// settle.
     pub(super) fn load_agents_or_report(&mut self) -> Option<AgentCatalog> {
         match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => Some(catalog),
+            Ok(catalog) => {
+                for error in catalog.skipped() {
+                    self.insert_entry(&super::Entry::Error(format!(
+                        "could not load agent: {error}"
+                    )));
+                }
+                Some(catalog)
+            }
             Err(error) => {
                 self.insert_entry(&super::Entry::Error(format!(
                     "could not load agents: {error}"

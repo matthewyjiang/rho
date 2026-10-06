@@ -61,7 +61,7 @@ fn operation_errors_use_nested_model_safe_workflow_diagnostics() {
 #[test]
 fn malformed_agent_catalog_error_redacts_private_absolute_path() {
     let private_path = Path::new("/home/alice/private/agents/worker.md");
-    let error =
+    let catalog =
         crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
             rho_home: vec![(
                 private_path.to_owned(),
@@ -69,7 +69,9 @@ fn malformed_agent_catalog_error_redacts_private_absolute_path() {
             )],
             ..Default::default()
         })
-        .unwrap_err();
+        .unwrap();
+    // Discovery skips the file; a plan naming its agent gets the file's error.
+    let error = catalog.find("worker").unwrap_err();
     let local_error = anyhow::Error::from(error.clone());
 
     assert!(super::super::diagnostic_for_error(&local_error)

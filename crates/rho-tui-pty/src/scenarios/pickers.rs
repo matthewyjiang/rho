@@ -508,6 +508,38 @@ fn assert_narrow_detail_scrolled_to_end(harness: &mut PtyHarness) -> Result<()> 
 /// Last word of the goal-judge prompt, unique within it.
 const GOAL_JUDGE_PROMPT_TAIL: &str = "Unmet.";
 
+pub(super) fn setup_invalid_user_agent(home: &IsolatedHome) -> Result<()> {
+    setup_edit_user_agent(home)?;
+    std::fs::write(
+        home.home.join(".rho/agents/broken-fixture.md"),
+        "---\ndescription: broken fixture\ntools: [teleport]\n---\n",
+    )?;
+    Ok(())
+}
+
+// Covers: an invalid user agent file must not stop startup, and /agents must
+// name it while the valid agents still load.
+// Owner: interactive TUI; catalog tests cannot prove the startup path survives.
+pub(super) const INVALID_USER_AGENT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "could not load agent",
+        timeout: SETTLE,
+    },
+    Step::AssertText("broken-fixture.md"),
+    Step::ExitCommand,
+];
+
 pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {

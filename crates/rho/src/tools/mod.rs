@@ -15,7 +15,6 @@ mod output_contract_tests;
 pub(crate) mod plan_exit;
 pub(crate) mod process;
 pub mod rho;
-mod save_agent;
 mod sdk_features;
 mod sessions;
 pub(crate) mod todo;
@@ -55,7 +54,6 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "read_file",
             "request_parent_action",
             "rho",
-            "save_agent",
             "sessions",
             "tool_search",
             "todo",
@@ -82,7 +80,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
 pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     match name {
         "agent" | "agents" | "bash" | "codemode" | "computer" | "powershell" | "process"
-        | "save_agent" | "workflow" | "workflow_command" | "write" => Some(true),
+        | "workflow" | "workflow_command" | "write" => Some(true),
         name if rho_tools::EditFormat::is_edit_tool_name(name) => Some(true),
         "advisor"
         | "exit_plan_mode"

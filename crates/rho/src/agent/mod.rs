@@ -7,28 +7,26 @@ mod advertisement;
 mod antigravity_tools;
 mod authorize;
 mod catalog;
+mod check;
 mod cursor_tools;
 mod definition;
 mod edit;
 mod internal;
 mod one_shot;
 mod parser;
-mod persist;
 mod serializer;
 
 pub(crate) use advertisement::{AdvertisedAgents, AdvertisedChange};
 pub(crate) use antigravity_tools::*;
 pub(crate) use authorize::authorize_existing_agent_file;
 pub(crate) use catalog::*;
+pub(crate) use check::check_agents;
 pub(crate) use cursor_tools::*;
 pub(crate) use definition::*;
 pub(crate) use edit::{save_definition, SaveDefinitionError, ToolsAllToggle};
 pub(crate) use internal::*;
 pub(crate) use one_shot::*;
-pub(crate) use parser::{parse_definition, parse_draft_definition, parse_tools_list_text};
-pub(crate) use persist::{
-    persist_definition, persist_destination_path, AgentSaveLocation, PersistDefinitionError,
-};
+pub(crate) use parser::{parse_definition, parse_tools_list_text};
 pub(crate) use rho_providers::reasoning::ReasoningLevel;
 pub(crate) use serializer::serialize_definition;
 

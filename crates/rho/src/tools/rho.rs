@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use serde::Deserialize;
 
@@ -40,9 +40,8 @@ impl SdkRho {
         }
     }
 
-    fn execute(&self, args: Args) -> Result<ToolOutput, SdkToolError> {
-        self.diagnostics
-            .response(&args.action)
+    fn execute(&self, args: Args, cwd: Option<&Path>) -> Result<ToolOutput, SdkToolError> {
+        respond(&self.diagnostics, &args.action, cwd)
             .map(|content| {
                 ToolOutput::text(rho_tools::tool::truncate(content, self.max_output_bytes))
             })
@@ -62,19 +61,39 @@ impl SdkTool for SdkRho {
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
-        _context: ToolPreparationContext,
+        context: ToolPreparationContext,
     ) -> ToolPrepareFuture<'a> {
         let args = parse_args(invocation.into_arguments());
+        let cwd = context.workspace_root().map(Path::to_path_buf);
         Box::pin(async move {
             let args = args?;
             Ok(PreparedToolInvocation::resource_aware(
                 [],
                 [],
                 ToolMetadata::new().operation(OperationKind::Read),
-                move |_context| Box::pin(async move { self.execute(args) }),
+                move |_context| Box::pin(async move { self.execute(args, cwd.as_deref()) }),
             ))
         })
     }
+}
+
+/// Answers one action: `agents` from disk for `cwd`, the rest from the
+/// diagnostics snapshot.
+fn respond(
+    diagnostics: &RuntimeDiagnostics,
+    action: &str,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
+    if action != crate::diagnostics::AGENTS_ACTION {
+        return diagnostics.response(action);
+    }
+    let cwd = cwd.ok_or("rho agents action requires a workspace")?;
+    let report = crate::agent::check_agents(
+        cwd,
+        crate::paths::home_dir().as_deref(),
+        crate::workspace::ProjectTrust::from_agents_env(),
+    );
+    serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
 }
 
 fn parse_args(arguments: serde_json::Value) -> Result<Args, SdkToolError> {
@@ -109,7 +128,7 @@ impl Tool for Rho {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "rho".into(),
-            description: "Inspect the running Rho harness. Request only what you need: info returns runtime identity; context returns token usage; compaction returns context accounting, thresholds, and the last automatic-compaction decisions; prompt_sources returns source paths and byte contributions without contents; tools returns available tool names; hooks returns sanitized hook configuration and activity; config returns sanitized live configuration."
+            description: "Inspect the running Rho harness. Request only what you need: info returns runtime identity; context returns token usage; compaction returns context accounting, thresholds, and the last automatic-compaction decisions; prompt_sources returns source paths and byte contributions without contents; tools returns available tool names; hooks returns sanitized hook configuration and activity; config returns sanitized live configuration; agents rereads agent definition files and returns their save directories, each loaded agent's path, and any invalid file with its field and error."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
@@ -129,14 +148,12 @@ impl Tool for Rho {
     fn call<'a>(
         &'a self,
         args: serde_json::Value,
-        _ctx: ToolContext,
+        ctx: ToolContext,
         id: String,
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
             let args: Args = serde_json::from_value(args)?;
-            let content = self
-                .diagnostics
-                .response(&args.action)
+            let content = respond(&self.diagnostics, &args.action, Some(&ctx.cwd))
                 .map_err(ToolError::Message)?;
             Ok(ToolResult {
                 id,

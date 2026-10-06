@@ -204,14 +204,7 @@ fn resolve_agent(
     bound: crate::app::agent_binding::BoundAgent,
     host: &dyn PlanHost,
 ) -> anyhow::Result<ResolvedAgent> {
-    let source_origin = match entry.metadata.origin {
-        AgentOrigin::Internal => "internal",
-        AgentOrigin::BuiltIn => "built_in",
-        AgentOrigin::AgentsHome => "agents_home",
-        AgentOrigin::RhoHome => "rho_home",
-        AgentOrigin::Project => "project",
-        AgentOrigin::Workflow => "workflow",
-    };
+    let source_origin = entry.metadata.origin.as_str();
     let source_origin = match &entry.metadata.path {
         Some(path) => format!("{source_origin}:{}", crate::paths::display(path)),
         None => source_origin.to_owned(),
