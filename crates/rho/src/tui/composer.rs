@@ -2,6 +2,8 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::keybindings::ReservedComposerKey;
+
 use super::{
     commands,
     composer_buffer::{ComposerEditKey, EditOutcome},
@@ -89,8 +91,9 @@ impl App {
 
     fn paste_burst_key(&self, key: KeyEvent) -> Option<PasteBurstKey> {
         match (key.modifiers, key.code) {
-            (modifiers, KeyCode::Char(ch))
-                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            (_, KeyCode::Char(ch))
+                if ReservedComposerKey::from_key(key)
+                    == Some(ReservedComposerKey::TextInput(ch))
                     && self.composer_accepts_paste_burst_char(ch) =>
             {
                 Some(PasteBurstKey::Char(ch))

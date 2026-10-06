@@ -55,6 +55,7 @@ mod no_save;
 mod palette_click;
 mod panel_pointer;
 mod paste;
+mod permission_cycle;
 mod pickers;
 mod process_rail;
 mod prompt_history_search;
@@ -672,6 +673,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     model_prompts::MODEL_PROMPTS_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
+    permission_cycle::IDLE,
+    permission_cycle::REMAPPED,
+    permission_cycle::QUEUED,
     web_search::WEB_SEARCH_CONFIG_SCENARIO,
     Scenario::new(
         "open_workflow_hub_empty",

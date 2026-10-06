@@ -589,6 +589,7 @@ struct App {
     /// distinct owned submission rather than being cloned into the edit queue.
     start_follow_ups: Option<compact_work::ReadyFollowUp>,
     pending_model_selection: Option<InteractiveModelSelection>,
+    pending_permission_mode: Option<crate::permission::PermissionMode>,
     /// Explicit all/pinned choice from the scope-toggle key. `None` means
     /// prefer pinned, falling back to all when no pin has auth.
     model_picker_scope_override: Option<model_picker::ModelPickerScope>,

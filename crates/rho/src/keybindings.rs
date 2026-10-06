@@ -17,6 +17,11 @@ pub struct Keybindings {
     pub toggle_tool_output: KeyBinding,
     /// Cycles cosmetic text streaming while idle or during a turn.
     pub cycle_streaming_mode: KeyBinding,
+    /// Cycles permission modes until Rho exits, queueing during a turn.
+    /// Unbound when omitted and the Alt+M default is already taken by
+    /// another binding, so existing configs keep loading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycle_permission_mode: Option<KeyBinding>,
     pub insert_newline: KeyBinding,
     /// Queues the composer contents as a follow-up while a turn is running.
     /// Ctrl+Enter is always accepted as a fallback because Windows Terminal,
@@ -40,6 +45,7 @@ impl Default for Keybindings {
             jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
             cycle_streaming_mode: KeyBinding::alt(KeyCode::Char('s')),
+            cycle_permission_mode: Some(KeyBinding::alt(KeyCode::Char('m'))),
             insert_newline: KeyBinding::control('j'),
             queue_prompt: KeyBinding::alt(KeyCode::Enter),
             paste_image: KeyBinding::control('v'),
@@ -65,6 +71,12 @@ impl Keybindings {
             .is_some_and(|binding| binding.matches(event))
     }
 
+    pub fn cycle_permission_mode_matches(&self, event: KeyEvent) -> bool {
+        self.cycle_permission_mode
+            .as_ref()
+            .is_some_and(|binding| binding.matches(event))
+    }
+
     pub fn queue_prompt_matches(&self, event: KeyEvent) -> bool {
         self.queue_prompt.matches(event) || Self::queue_prompt_fallback().matches(event)
     }
@@ -79,6 +91,7 @@ struct PartialKeybindings {
     jump_to_bottom: Option<KeyBinding>,
     toggle_tool_output: Option<KeyBinding>,
     cycle_streaming_mode: Option<KeyBinding>,
+    cycle_permission_mode: Option<KeyBinding>,
     insert_newline: Option<KeyBinding>,
     queue_prompt: Option<KeyBinding>,
     paste_image: Option<KeyBinding>,
@@ -104,7 +117,8 @@ impl<'de> Deserialize<'de> for Keybindings {
         let migrate_legacy_reset = partial.search_prompt_history.is_none()
             && partial.reset_conversation.as_ref() == Some(&legacy_reset_shortcut);
         let defaults = Self::default();
-        let keybindings = Self {
+        let explicit_permission_cycle = partial.cycle_permission_mode.is_some();
+        let mut keybindings = Self {
             reset_conversation: partial.reset_conversation.filter(|_| !migrate_legacy_reset),
             search_prompt_history: partial
                 .search_prompt_history
@@ -121,6 +135,9 @@ impl<'de> Deserialize<'de> for Keybindings {
             cycle_streaming_mode: partial
                 .cycle_streaming_mode
                 .unwrap_or(defaults.cycle_streaming_mode),
+            cycle_permission_mode: partial
+                .cycle_permission_mode
+                .or(defaults.cycle_permission_mode),
             insert_newline: partial.insert_newline.unwrap_or(defaults.insert_newline),
             queue_prompt: partial.queue_prompt.unwrap_or(defaults.queue_prompt),
             paste_image: partial.paste_image.unwrap_or(defaults.paste_image),
@@ -147,7 +164,122 @@ impl<'de> Deserialize<'de> for Keybindings {
                 "reset_conversation and search_prompt_history must use different keys",
             ));
         }
+        for (name, binding) in [
+            (
+                "reset_conversation",
+                keybindings.reset_conversation.as_ref(),
+            ),
+            (
+                "search_prompt_history",
+                Some(&keybindings.search_prompt_history),
+            ),
+            ("open_editor", Some(&keybindings.open_editor)),
+            ("jump_to_bottom", Some(&keybindings.jump_to_bottom)),
+            ("toggle_tool_output", Some(&keybindings.toggle_tool_output)),
+            (
+                "cycle_streaming_mode",
+                Some(&keybindings.cycle_streaming_mode),
+            ),
+            ("insert_newline", Some(&keybindings.insert_newline)),
+            ("queue_prompt", Some(&keybindings.queue_prompt)),
+            ("paste_image", Some(&keybindings.paste_image)),
+            ("edit_pending_input", Some(&keybindings.edit_pending_input)),
+            (
+                "manage_pending_input",
+                Some(&keybindings.manage_pending_input),
+            ),
+            ("cycle_pinned_model", Some(&keybindings.cycle_pinned_model)),
+            (
+                "cycle_pinned_model_back",
+                Some(&keybindings.cycle_pinned_model_back),
+            ),
+        ] {
+            if binding.is_none() || binding != keybindings.cycle_permission_mode.as_ref() {
+                continue;
+            }
+            // Configs written before this binding existed may already use
+            // Alt+M; the implicit default yields instead of failing startup.
+            if !explicit_permission_cycle {
+                keybindings.cycle_permission_mode = None;
+                break;
+            }
+            return Err(serde::de::Error::custom(format!(
+                "cycle_permission_mode and {name} must use different keys"
+            )));
+        }
+        if let Some(binding) = &keybindings.cycle_permission_mode {
+            if let Some(reserved) =
+                ReservedComposerKey::from_key(KeyEvent::new(binding.code, binding.modifiers))
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "cycle_permission_mode = \"{binding}\" conflicts with a reserved composer key: {}",
+                    reserved.reason()
+                )));
+            }
+        }
         Ok(keybindings)
+    }
+}
+
+/// Fixed composer key classes that a configurable shortcut must not shadow.
+/// Shared with dispatch so modifier-insensitive handlers stay in sync with validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReservedComposerKey {
+    ReasoningCycle,
+    TabCompletion,
+    HistoryPageUp,
+    HistoryPageDown,
+    TextInput(char),
+    /// Enter and editing or navigation keys that the composer handles
+    /// without Ctrl or Alt.
+    ComposerEditing,
+    CancelOrClose,
+    QueuePromptFallback,
+    PasteImageFallback,
+}
+
+impl ReservedComposerKey {
+    pub(crate) fn from_key(key: KeyEvent) -> Option<Self> {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::BackTab) => Some(Self::ReasoningCycle),
+            (modifiers, KeyCode::Tab) if modifiers.contains(KeyModifiers::SHIFT) => {
+                Some(Self::ReasoningCycle)
+            }
+            (_, KeyCode::Tab) => Some(Self::TabCompletion),
+            (_, KeyCode::PageUp) => Some(Self::HistoryPageUp),
+            (_, KeyCode::PageDown) => Some(Self::HistoryPageDown),
+            (modifiers, KeyCode::Char(ch))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some(Self::TextInput(ch))
+            }
+            (_, KeyCode::Esc) => Some(Self::CancelOrClose),
+            (modifiers, _) if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                Some(Self::ComposerEditing)
+            }
+            _ if Keybindings::queue_prompt_fallback().matches(key) => {
+                Some(Self::QueuePromptFallback)
+            }
+            (KeyModifiers::ALT, KeyCode::Char('v' | 'V')) => Some(Self::PasteImageFallback),
+            _ => None,
+        }
+    }
+
+    fn reason(self) -> &'static str {
+        match self {
+            Self::ReasoningCycle => "Shift+Tab and BackTab cycle reasoning",
+            Self::TabCompletion => "Tab is reserved for composer completion",
+            Self::HistoryPageUp | Self::HistoryPageDown => {
+                "PageUp and PageDown scroll history regardless of modifiers"
+            }
+            Self::TextInput(_) => "characters without Ctrl or Alt are composer text input",
+            Self::ComposerEditing => {
+                "Enter and editing keys without Ctrl or Alt belong to the composer"
+            }
+            Self::CancelOrClose => "Esc cancels or closes",
+            Self::QueuePromptFallback => "Ctrl+Enter is the queue_prompt fallback",
+            Self::PasteImageFallback => "Alt+V is the paste_image fallback",
+        }
     }
 }
 
@@ -315,6 +447,10 @@ impl<'de> Deserialize<'de> for KeyBinding {
             .map_err(serde::de::Error::custom)
     }
 }
+
+#[cfg(test)]
+#[path = "permission_keybinding_tests.rs"]
+mod permission_tests;
 
 #[cfg(test)]
 mod tests {

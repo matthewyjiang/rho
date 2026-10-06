@@ -167,6 +167,13 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Paste clipboard text into the composer.",
         ),
     ];
+    if let Some(cycle_permission) = &keybindings.cycle_permission_mode {
+        items.push(entry(
+            cycle_permission.chrome_label(),
+            "Cycle permission mode",
+            "Cycle Plan → Supervised → Allow edits → Auto → Bypass → Plan until Rho exits. Skip Auto without a configured classifier. During a turn, queue the change for the next turn; repeated presses advance the queued mode. Does not save config.",
+        ));
+    }
     if let Some(reset) = &keybindings.reset_conversation {
         items.push(entry(
             reset.chrome_label(),

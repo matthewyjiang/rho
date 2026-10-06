@@ -13,6 +13,13 @@ impl App {
     ) -> anyhow::Result<bool> {
         if self.info.runtime.keybindings.queue_prompt_matches(key) {
             self.queue_prompt_after_turn()?;
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .cycle_permission_mode_matches(key)
+        {
+            self.queue_permission_mode_cycle();
         } else if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),
@@ -73,6 +80,13 @@ impl App {
             } else {
                 self.insert_input_char('\n');
             }
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .cycle_permission_mode_matches(key)
+        {
+            self.cycle_permission_mode(agent).await?;
         } else if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),

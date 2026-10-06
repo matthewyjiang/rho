@@ -1,6 +1,6 @@
 //! Config, OAuth, secret, and reasoning-cycle key handlers for the interactive TUI.
 
-use crate::tui::DefaultTerminal;
+use crate::{keybindings::ReservedComposerKey, tui::DefaultTerminal};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
@@ -368,9 +368,7 @@ impl App {
         key: KeyEvent,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let is_shift_tab = matches!(key.code, KeyCode::BackTab)
-            || (matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT));
-        if !is_shift_tab {
+        if ReservedComposerKey::from_key(key) != Some(ReservedComposerKey::ReasoningCycle) {
             return Ok(false);
         }
 

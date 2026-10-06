@@ -3,6 +3,45 @@ use pretty_assertions::assert_eq;
 use super::super::{agent_picker::InternalAgentModelPickerOrigin, tests::test_app, ComposerMode};
 use crate::permission::PermissionMode;
 
+// Covers: cycling wraps in restrictiveness order and cannot enable Auto without
+// a classifier, including when the current mode itself is unavailable Auto.
+// Owner: permission cycle policy (pure unit)
+#[test]
+fn cycle_order_skips_unconfigured_auto() {
+    use PermissionMode::{AllowEdits, Auto, Bypass, Plan, Supervised};
+
+    for (classifier_configured, cases) in [
+        (
+            true,
+            [
+                (Plan, Supervised),
+                (Supervised, AllowEdits),
+                (AllowEdits, Auto),
+                (Auto, Bypass),
+                (Bypass, Plan),
+            ],
+        ),
+        (
+            false,
+            [
+                (Plan, Supervised),
+                (Supervised, AllowEdits),
+                (AllowEdits, Bypass),
+                (Auto, Bypass),
+                (Bypass, Plan),
+            ],
+        ),
+    ] {
+        for (current, expected) in cases {
+            assert_eq!(
+                super::next_cycle_mode(current, classifier_configured),
+                expected,
+                "current={current:?}, classifier_configured={classifier_configured}"
+            );
+        }
+    }
+}
+
 // Covers: a failed model resolve (selected=false) must not schedule demote;
 // only Esc cancel does. Otherwise Auto would flip to Supervised on a bad pick.
 // Owner: permission mode startup gate
