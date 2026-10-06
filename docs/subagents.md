@@ -18,7 +18,7 @@ rho run --agent worker "address the issue"
 
 Agent switching within an active session is intentionally unsupported.
 
-Unknown frontmatter keys and invalid values fail before execution. The field contract is on [definition schema](/subagents/definition-schema). Runtimes and attachment are on [Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor), and [attachment and artifacts](/subagents/attachment-and-artifacts).
+Unknown frontmatter keys and invalid values fail before execution. The field contract is on [definition schema](/subagents/definition-schema). Runtimes and attachment are on [Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor), [Antigravity](/subagents/antigravity), and [attachment and artifacts](/subagents/attachment-and-artifacts).
 
 Use `/agents create` or `/create-agent` to define an agent through a guided questionnaire. Use bare `/agents` to inspect the loaded catalog. Press Enter on an internal agent to set its model override. Press Enter on an agent loaded from `~/.rho/agents` or a trusted project `.agents/agents` directory to edit its definition, or press Delete to remove it after confirmation. Frontmatter fields use structured TUI controls, while the prompt body opens in `$VISUAL` or `$EDITOR`. Review the draft and choose **Save** to validate and write the source file. Agents loaded from `~/.agents/agents`, workflows, and built-ins remain read-only; press Enter on one to read its full prompt.
 
@@ -190,6 +190,14 @@ Rho can hand a **delegated** agent to the installed `cursor-agent` binary so a c
 Quick path: install `cursor-agent`, run `/login cursor`, define an agent with `runtime: cursor` and a nonempty classified `tools:` list, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind. Rho drives Cursor over ACP; parent messages arrive as the child's next turn.
 
 Full guide: [Cursor Agent as a delegated runtime](/subagents/cursor).
+
+## Google Antigravity as a delegated runtime
+
+Rho can hand a **delegated** agent to Google Antigravity's ACP server (`agy_acp_server`) so a child run can use Gemini models and an Antigravity sign-in while the parent stays in Rho. This is not available as the root session runtime.
+
+Quick path: put `agy_acp_server.par` on `PATH`, run `/login antigravity`, define an agent with `runtime: antigravity` and a nonempty `tools:` list of Antigravity built-ins, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind.
+
+Full guide: [Google Antigravity as a delegated runtime](/subagents/antigravity).
 
 ## Attachment and artifacts
 

@@ -12,6 +12,7 @@ flowchart TD
     runtime -->|rho| rhoRules[Rho model and tool rules]
     runtime -->|claude-cli| claudeRules[Claude model and tool rules]
     runtime -->|cursor| cursorRules[Cursor model and tool rules]
+    runtime -->|antigravity| agyRules[Antigravity model and tool rules]
     body --> prompt{prompt}
     prompt -->|extend| base[Base coding prompt plus body]
     prompt -->|replace| full[Body is full system prompt]
@@ -38,15 +39,15 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | `id` | string | no | file stem (`name` in `name.md`) | 1-64 chars; lowercase ASCII letters, digits, single hyphens only; no leading/trailing/double hyphen |
 | `description` | string | yes | - | 1-1024 Unicode characters after trim; empty rejected |
-| `runtime` | enum | no | `rho` | `rho` \| `claude-cli` \| `cursor` |
-| `prompt` | enum | no | `extend` | `extend` \| `replace`. `replace` requires a non-empty Markdown body. `replace` is rejected on `cursor` (`--system-prompt` is rejected server-side; use `extend`) |
+| `runtime` | enum | no | `rho` | `rho` \| `claude-cli` \| `cursor` \| `antigravity` |
+| `prompt` | enum | no | `extend` | `extend` \| `replace`. `replace` requires a non-empty Markdown body. `replace` is rejected on `cursor` and `antigravity` (ACP has no system-prompt override; use `extend`) |
 | `model-policy` | enum | no | see model rules | Depends on `runtime` (below) |
 | `model` | string | policy-dependent | unset | Non-empty; no whitespace. Rho may use `@alias`. Claude and Cursor reject `@alias` and pass the value to `--model`. Cursor allows brackets and commas, for example `gpt-5.3-codex[effort=high,fast=false]` |
-| `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli` and `cursor` |
-| `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli`, `cursor`, and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
-| `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` (no reasoning flag; put effort in `model`) |
+| `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli`, `cursor`, and `antigravity` |
+| `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli`, `cursor`, `antigravity`, and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
+| `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` and `antigravity` (no reasoning flag; put effort in `model`) |
 | `fast` | bool | no | `false` | `true` \| `false`. **Rho only**, and requires a pinned model (not `model-policy: inherit`). Turns on fast serving for this agent, independent of the parent's `/fast`. Bind fails when the resolved provider, model, and auth do not support fast mode (Codex GPT-5.5+/GPT-6, xAI OAuth `grok-4.7`). For xAI, pin `auth: xai-oauth`; with `auth` unset bind may select the API-key login |
-| `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho, Claude, and Cursor names is a parse error. Required and nonempty on `cursor` |
+| `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho, Claude, Cursor, and Antigravity names is a parse error. Required and nonempty on `cursor` and `antigravity` |
 | `inherit_claude_config` | bool | no | `false` | `true` \| `false`. `true` only with `runtime: claude-cli` |
 
 Scalars are plain or single/double quoted. Booleans are only `true` / `false`. Lists use `[a, b]` form (comma-separated). Nested YAML maps/objects are not accepted.
@@ -90,9 +91,21 @@ Cursor has no `--effort` / reasoning flag. Put effort in the model id (`gpt-5.3-
 
 `model:` values are 1:1 with `cursor-agent models` ids. Rho caches that account-scoped list for 24 hours (refresh on `/login cursor`, `/doctor`, and lazily in the agent editor). The editor groups by display-name family and offers **Other…** to type an id or bracket override. A pin that is missing from a non-empty cache warns at bind and still runs.
 
+**`runtime: antigravity`**
+
+| `model-policy` | `model` | `provider` / `auth` | Result |
+| --- | --- | --- | --- |
+| omitted / `inherit`, no `model` | omitted | must omit | server default model |
+| omitted / `select`, with `model` | required | must omit | session `model` option set before the prompt |
+| `prefer` \| `require` | - | - | rejected |
+| any | `@...` | - | rejected (no Rho alias resolution) |
+| any | any | set | rejected |
+
+Antigravity has no reasoning setting; effort is part of the model id (`gemini-3.8-flash-high`). A model the server does not offer fails the run before the prompt and lists the offered ids.
+
 ## Tool vocabulary by runtime
 
-Tool lists are not shared across runtimes. Mixing Rho capability names, Claude tool entries, and Cursor tool names is a parse error.
+Tool lists are not shared across runtimes. Mixing Rho capability names, Claude tool entries, Cursor tool names, and Antigravity built-in names is a parse error.
 
 **`runtime: rho`**
 
@@ -193,12 +206,34 @@ apply_agent_diff_tool_call
 
 Deliberately absent: `task_tool_call` (nested fan-out), `ask_question_tool_call` (no headless answer path), `switch_mode_tool_call` (could leave plan mode), and computer-use / screen / cloud / PR tools.
 
+**`runtime: antigravity`**
+
+| Form | Meaning |
+| --- | --- |
+| omitted | rejected (`tools` is required) |
+| `tools: all` | rejected. Antigravity enables every built-in by default and Rho fences only classified names |
+| `tools: []` | rejected (need at least one built-in) |
+| `tools: [name, ...]` | closed allow list, sent as the session's built-in allowlist ([Permission modes](/subagents/antigravity#permission-modes)) |
+
+Accepted names (this is the whole set):
+
+```text
+view_file
+create_file
+edit_file
+run_command
+search_web
+read_url_content
+```
+
+Deliberately absent: `ask_question` (no headless answer path), `start_subagent` (nested fan-out), `schedule` (timers that outlive the run), `generate_image`, `finish`, and the directory search built-ins.
+
 ## Body / prompt semantics
 
 | `prompt` | Body empty | Body non-empty |
 | --- | --- | --- |
 | `extend` (default) | keep base coding prompt only | append body to base coding prompt |
-| `replace` | parse error | body becomes the full system prompt. Rejected on `runtime: cursor` |
+| `replace` | parse error | body becomes the full system prompt. Rejected on `runtime: cursor` and `runtime: antigravity` |
 
 ## JSON Schema (frontmatter)
 
@@ -226,7 +261,7 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
     },
     "runtime": {
       "type": "string",
-      "enum": ["rho", "claude-cli", "cursor"],
+      "enum": ["rho", "claude-cli", "cursor", "antigravity"],
       "default": "rho"
     },
     "prompt": {
@@ -361,6 +396,47 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
     },
     {
       "if": {
+        "properties": { "runtime": { "const": "antigravity" } },
+        "required": ["runtime"]
+      },
+      "then": {
+        "required": ["tools"],
+        "properties": {
+          "provider": false,
+          "auth": false,
+          "prompt": { "const": "extend" },
+          "model-policy": { "enum": ["inherit", "select"] },
+          "reasoning": false,
+          "fast": false,
+          "inherit_claude_config": false,
+          "tools": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "view_file",
+                "create_file",
+                "edit_file",
+                "run_command",
+                "search_web",
+                "read_url_content"
+              ]
+            }
+          }
+        },
+        "not": {
+          "required": ["model-policy", "model"],
+          "properties": {
+            "model-policy": { "const": "inherit" },
+            "model": true
+          }
+        }
+      }
+    },
+    {
+      "if": {
         "properties": { "model-policy": { "const": "inherit" } },
         "required": ["model-policy"]
       },
@@ -446,6 +522,19 @@ description: Reviews with Cursor Agent on a closed read/edit allow list
 runtime: cursor
 model: "gpt-5.3-codex[effort=high,fast=false]"
 tools: [read_tool_call, grep_tool_call, glob_tool_call, edit_tool_call]
+---
+Review the requested changes. Prefer reading before editing.
+```
+
+Antigravity delegated agent:
+
+```markdown
+---
+id: agy-reviewer
+description: Reviews with Antigravity on a read and shell allow list
+runtime: antigravity
+model: gemini-3.8-flash-high
+tools: [view_file, run_command]
 ---
 Review the requested changes. Prefer reading before editing.
 ```
