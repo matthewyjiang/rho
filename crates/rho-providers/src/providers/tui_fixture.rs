@@ -12,6 +12,7 @@ mod compact;
 mod docs_demo;
 mod edit;
 mod goal;
+mod init;
 mod quiet_subagent;
 mod release;
 mod response_scenarios;
@@ -218,6 +219,9 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return response;
     }
     if let Some(response) = goal::intercept_response(request) {
+        return response;
+    }
+    if let Some(response) = init::intercept(request) {
         return response;
     }
     if let Some(response) = response_scenarios::intercept(request) {

@@ -110,6 +110,7 @@ mod hook_actions;
 mod hooks_overlay;
 mod info_command;
 mod info_overlay;
+mod init_command;
 mod inline_choice;
 mod inline_shell;
 mod inline_shell_config;

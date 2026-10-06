@@ -578,7 +578,8 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }
-        let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
+        let prepared_prompt =
+            self.prepare_session_prompt(crate::prompt::PromptSession::Different)?;
         self.revoke_computer_use();
         self.runtime
             .hooks()
@@ -586,7 +587,7 @@ impl InteractiveRuntime {
         self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
         self.diagnostics.clear_compaction();
-        if let Some(prompt) = prepared_prompt {
+        if let Some(prompt) = prepared_prompt.prompt {
             super::conversation_switch::replace_system_prompt(
                 self.sessions.session(),
                 &prompt.text,
@@ -597,6 +598,7 @@ impl InteractiveRuntime {
             // instructions can still rewrite the freshly loaded overlay.
             self.may_rewrite_startup_prompt = true;
         }
+        self.prompt_template = prepared_prompt.template;
         bind_subagent_parent(&self.tools, &session_id, None);
         self.session_writes.clear();
         self.invalidate_live_context();
@@ -617,7 +619,7 @@ impl InteractiveRuntime {
             }
             anyhow::bail!("cannot switch sessions while compaction is active");
         }
-        let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
+        let prepared_prompt = self.prepare_session_prompt(self.prompt_session(storage.id()))?;
         let snapshot = storage.snapshot_for_resume(
             self.provider.provider().identity(),
             prompt_cache_key(storage.id()),
@@ -626,9 +628,12 @@ impl InteractiveRuntime {
             snapshot,
             ReplacementLifecycle::Started,
             SessionWriteRetention::Forget,
-            prepared_prompt.map_or(PromptTransition::Keep, PromptTransition::Replace),
+            prepared_prompt
+                .prompt
+                .map_or(PromptTransition::Keep, PromptTransition::Replace),
         )
         .await?;
+        self.prompt_template = prepared_prompt.template;
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
         self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)

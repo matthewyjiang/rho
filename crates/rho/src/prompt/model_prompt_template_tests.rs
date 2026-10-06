@@ -107,17 +107,117 @@ fn retained_suffix_and_mcp_rerender_match_the_built_prompt() {
     );
 }
 
+// Covers: reloading created, changed, and removed instruction files must replace
+// their provenance without dropping host-owned suffixes or duplicating sources.
+// Owner: prompt assembly; PTY covers committing the snapshot at session boundaries.
+#[test]
+fn project_instruction_reload_replaces_context_and_source_accounting() {
+    let home = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    std::fs::create_dir(home.path().join(".rho")).unwrap();
+    let running = PromptModel::Rho {
+        provider: "test".into(),
+        model: "model".into(),
+    };
+    let make_template = || {
+        let mut template = super::super::system_prompt_template_with_home_and_models(
+            &[],
+            project.path(),
+            Some(home.path()),
+            super::super::PromptModels {
+                running: &running,
+                advisor: None,
+            },
+        );
+        let skills = "\ncached skill context";
+        template.append_section(
+            skills.into(),
+            vec![PromptSource {
+                kind: PromptSourceKind::Skills,
+                path: None,
+                bytes: skills.len(),
+            }],
+        );
+        template.append_retained("\nretained agent instructions");
+        template
+    };
+    let mut template = make_template();
+    let mut expected = template.build(&running).unwrap();
+    for (rules, session, has_instructions) in [
+        (Some("first"), PromptSession::Different, true),
+        (Some("updated"), PromptSession::Current, true),
+        (Some("updated"), PromptSession::Different, true),
+        (None, PromptSession::Current, true),
+        (None, PromptSession::Different, false),
+    ] {
+        for path in [
+            home.path().join(".rho/AGENTS.md"),
+            project.path().join("AGENTS.md"),
+        ] {
+            if let Some(rules) = rules {
+                std::fs::write(path, rules).unwrap();
+            } else if path.exists() {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        // Model switches must keep the session's cached instruction snapshot.
+        let switched = template.build(&running).unwrap();
+        assert_eq!(
+            (&switched.text, &switched.sources),
+            (&expected.text, &expected.sources),
+        );
+        let refreshed = template.build_for_session(&running, session).unwrap();
+        match session {
+            PromptSession::Current => {}
+            PromptSession::Different => expected = make_template().build(&running).unwrap(),
+        }
+        assert_eq!(
+            (&refreshed.text, &refreshed.sources),
+            (&expected.text, &expected.sources),
+            "instruction state: {rules:?}",
+        );
+        assert_eq!(
+            refreshed
+                .sources
+                .iter()
+                .map(|source| source.kind)
+                .collect::<Vec<_>>(),
+            if has_instructions {
+                vec![
+                    PromptSourceKind::Base,
+                    PromptSourceKind::Agents,
+                    PromptSourceKind::Agents,
+                    PromptSourceKind::Skills,
+                ]
+            } else {
+                vec![PromptSourceKind::Base, PromptSourceKind::Skills]
+            },
+        );
+        assert_eq!(
+            refreshed
+                .sources
+                .iter()
+                .map(|source| source.bytes)
+                .sum::<usize>(),
+            refreshed.text.len()
+        );
+    }
+}
+
 // Covers: incidental startup hydration keeps the loaded file, but an explicit
 // lifecycle build reads current contents and rejects new validation failures.
 // Owner: prompt assembly.
 #[test]
 fn cached_render_and_explicit_reload_have_distinct_file_lifetimes() {
     let home = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    let instructions = project.path().join("AGENTS.md");
+    std::fs::write(&instructions, "original instructions").unwrap();
     let directory = home.path().join(".rho/model-prompts");
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("custom.md");
     std::fs::write(&path, "---\nprovider: test\nmodel: model\n---\nfirst").unwrap();
-    let template = ModelPromptTemplate::new(
+    let mut template = ModelPromptTemplate::new(
         Some(home.path()),
         String::new(),
         String::new(),
@@ -126,7 +226,8 @@ fn cached_render_and_explicit_reload_have_distinct_file_lifetimes() {
             path: None,
             bytes: 0,
         }],
-    );
+    )
+    .with_project_instructions(project.path());
     let running = PromptModel::Rho {
         provider: "test".into(),
         model: "model".into(),
@@ -138,9 +239,19 @@ fn cached_render_and_explicit_reload_have_distinct_file_lifetimes() {
     let reloaded = template.build(&running).unwrap();
     assert_eq!(reloaded.model_prompt.as_ref().unwrap().body, "second");
     assert_ne!(
-        reloaded.model_prompt.unwrap().sha256,
-        original.model_prompt.unwrap().sha256
+        &reloaded.model_prompt.as_ref().unwrap().sha256,
+        &original.model_prompt.as_ref().unwrap().sha256
     );
     std::fs::write(&path, "invalid frontmatter").unwrap();
     assert!(template.build(&running).is_err());
+    std::fs::write(&instructions, "changed instructions").unwrap();
+    assert!(template
+        .build_for_session(&running, PromptSession::Different)
+        .is_err());
+    // Failed validation must not leak refreshed instructions into hydration.
+    let after_failure = template.render(&running, original.model_prompt.as_ref());
+    assert_eq!(
+        (after_failure.text, after_failure.sources),
+        (original.text, original.sources),
+    );
 }

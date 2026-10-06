@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 
 use super::STREAM;
 use crate::harness::PtyHarness;
@@ -39,6 +39,45 @@ pub(super) fn assert_terminal_restored(harness: &mut PtyHarness) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Find one saved session by a committed transcript marker, never timestamps
+/// that can tie. Matrix HOME is a sibling of the harness working directory.
+pub(super) fn saved_session_with_text(harness: &PtyHarness, marker: &str) -> Result<String> {
+    let root = harness
+        .working_directory()
+        .and_then(std::path::Path::parent)
+        .context("matrix workspace has no isolated home parent")?
+        .join("home/.rho/sessions");
+    let mut directories = vec![root];
+    let mut matching_ids = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                directories.push(entry.path());
+            } else if entry.path().extension().is_some_and(|ext| ext == "jsonl") {
+                let contents = std::fs::read_to_string(entry.path())?;
+                if contents.contains(marker) {
+                    let header: serde_json::Value = serde_json::from_str(
+                        contents.lines().next().context("empty session file")?,
+                    )?;
+                    matching_ids.push(
+                        header["id"]
+                            .as_str()
+                            .context("missing session id")?
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+    }
+    ensure!(
+        matching_ids.len() == 1,
+        "expected one committed session matching {marker:?}, found {}",
+        matching_ids.len()
+    );
+    Ok(matching_ids.remove(0))
 }
 
 /// Waits for the turn that printed `marker` to finish. Idle-only commands and

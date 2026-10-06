@@ -16,6 +16,13 @@ use super::{
     active_run_disposition, startup, ActiveRunCommand, ActiveRunDisposition, InteractiveRuntime,
 };
 
+/// Stage prompt and its instruction snapshot together. Failed session entry
+/// must not refresh the active session's cache through a later model switch.
+pub(super) struct PreparedSessionPrompt {
+    pub(super) prompt: Option<crate::prompt::SystemPrompt>,
+    pub(super) template: Option<crate::prompt::ModelPromptTemplate>,
+}
+
 impl InteractiveRuntime {
     pub(crate) fn model_prompt_notice(&self) -> Option<String> {
         self.prompt_template.as_ref().map(|_| {
@@ -116,6 +123,33 @@ impl InteractiveRuntime {
             .map_err(|error| Error::InvalidConfiguration {
                 message: format!("could not load model prompt: {error:#}"),
             })
+    }
+
+    /// Entering a different session reloads AGENTS.md but retains tools and skills.
+    pub(super) fn prepare_session_prompt(
+        &self,
+        session: crate::prompt::PromptSession,
+    ) -> Result<PreparedSessionPrompt, Error> {
+        let running = crate::model_identity::PromptModel::from_sdk_identity(
+            &self.provider.provider().identity(),
+        );
+        let mut template = self.prompt_template.clone();
+        let prompt = template
+            .as_mut()
+            .map(|template| template.build_for_session(&running, session))
+            .transpose()
+            .map_err(|error| Error::InvalidConfiguration {
+                message: format!("could not load model prompt: {error:#}"),
+            })?;
+        Ok(PreparedSessionPrompt { prompt, template })
+    }
+
+    pub(super) fn prompt_session(&self, target_id: &str) -> crate::prompt::PromptSession {
+        if self.sessions.id().as_str() == target_id {
+            crate::prompt::PromptSession::Current
+        } else {
+            crate::prompt::PromptSession::Different
+        }
     }
 
     pub(super) fn adopt_model_prompt(&mut self, prompt: crate::prompt::SystemPrompt) {
