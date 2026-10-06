@@ -247,63 +247,13 @@ pub(crate) struct OpenWorkspaceCheckpoint {
     limitations: Vec<UntrackedEffect>,
 }
 
-impl OpenWorkspaceCheckpoint {
-    /// Captures a caller-authorized path once. This method does no workspace authorization.
-    pub(crate) fn capture_path(&mut self, path: &Path) -> CaptureDisposition {
-        if self.quota_exceeded.is_some() {
-            return CaptureDisposition::Paused;
-        }
-        if self.originals.contains_key(path) {
-            return CaptureDisposition::AlreadyCaptured;
-        }
-        let remaining = self
-            .max_session_bytes
-            .saturating_sub(self.journal_bytes.saturating_add(self.captured_bytes));
-        // Bound the read itself, not only the retained pre-image. A file that
-        // exceeds the per-file limit stays unsupported; a collection of smaller
-        // files that exhausts this session drops the entire turn's capture.
-        let mut state = capture_original(path, self.max_file_bytes.min(remaining));
-        let size = match &state {
-            OriginalFileState::Regular(file) => file.bytes.len() as u64,
-            OriginalFileState::Unsupported {
-                reason: UnsupportedPath::TooLarge { size, .. },
-            } if remaining < self.max_file_bytes && *size <= self.max_file_bytes => {
-                let turn_bytes = self.captured_bytes.saturating_add(*size);
-                self.quota_exceeded = Some(CheckpointAppendError::QuotaExceeded {
-                    asked: self.journal_bytes.saturating_add(turn_bytes),
-                    limit: self.max_session_bytes,
-                    turn_bytes,
-                });
-                self.originals.clear();
-                self.expected_after.clear();
-                self.limitations.clear();
-                self.captured_bytes = 0;
-                return CaptureDisposition::Paused;
-            }
-            OriginalFileState::Absent | OriginalFileState::Unsupported { .. } => 0,
-        };
-        if let OriginalFileState::Unsupported {
-            reason: UnsupportedPath::TooLarge { limit, .. },
-        } = &mut state
-        {
-            *limit = self.max_file_bytes;
-        }
-        self.captured_bytes += size;
-        self.originals.insert(path.to_path_buf(), state);
-        CaptureDisposition::Captured
-    }
-
-    pub(crate) fn record_untracked_effect(&mut self, effect: UntrackedEffect) {
-        if self.quota_exceeded.is_none() && !self.limitations.contains(&effect) {
-            self.limitations.push(effect);
-        }
-    }
-}
+#[path = "workspace_checkpoint_budget.rs"]
+mod budget;
 
 /// An append either exceeds the named session budget or fails to persist safely.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CheckpointAppendError {
-    #[error("workspace checkpoint session budget exceeded: asked {asked} bytes (turn needed {turn_bytes} bytes), limit {limit} bytes")]
+    #[error("workspace checkpoint session budget exceeded: asked at least {asked} bytes (turn requested at least {turn_bytes} bytes), limit {limit} bytes")]
     QuotaExceeded {
         asked: u64,
         limit: u64,
@@ -339,17 +289,16 @@ impl WorkspaceCheckpointStore {
     }
 
     pub(crate) fn open(&self, node_id: NodeId) -> anyhow::Result<OpenWorkspaceCheckpoint> {
-        let journal_bytes = match fs::symlink_metadata(&self.journal_path) {
-            Ok(metadata) => {
-                anyhow::ensure!(
-                    metadata.is_file(),
-                    "checkpoint journal is not a regular file"
-                );
-                metadata.len()
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(error) => return Err(error.into()),
-        };
+        // Probe writable storage before capturing any file bodies. In particular,
+        // reject symlink directories as well as unusable journal paths up front.
+        ensure_checkpoint_directory(&self.checkpoint_dir)?;
+        let journal = open_journal(&self.journal_path)?;
+        let metadata = journal.metadata()?;
+        anyhow::ensure!(
+            metadata.is_file(),
+            "checkpoint journal is not a regular file"
+        );
+        let journal_bytes = metadata.len();
         Ok(OpenWorkspaceCheckpoint {
             session_id: self.session_id.clone(),
             node_id,
@@ -382,7 +331,7 @@ impl WorkspaceCheckpointStore {
     /// The caller must authorize every path before capture and again before any later restore.
     pub(crate) fn finalize(
         &self,
-        open: OpenWorkspaceCheckpoint,
+        mut open: OpenWorkspaceCheckpoint,
         revision: Revision,
         outcome: CheckpointOutcome,
     ) -> anyhow::Result<WorkspaceCheckpoint> {
@@ -391,6 +340,7 @@ impl WorkspaceCheckpointStore {
             "checkpoint belongs to a different session"
         );
 
+        open.reserve_missing_expected_after();
         if let Some(error) = open.quota_exceeded {
             return Err(error.into());
         }
@@ -469,24 +419,8 @@ impl WorkspaceCheckpointStore {
             .into());
         }
 
-        let mut encoded = serde_json::to_vec(&StoredCheckpointRecord {
-            version: CHECKPOINT_FORMAT_VERSION,
-            checkpoint,
-        })
-        .map_err(anyhow::Error::from)?;
-        encoded.push(b'\n');
-        let turn_bytes = u64::try_from(encoded.len()).map_err(anyhow::Error::from)?;
-        let new_size = journal
-            .valid_len
-            .checked_add(turn_bytes)
-            .context("checkpoint journal size overflow")?;
-        if new_size > self.limits.max_session_bytes {
-            return Err(CheckpointAppendError::QuotaExceeded {
-                asked: new_size,
-                limit: self.limits.max_session_bytes,
-                turn_bytes,
-            });
-        }
+        let encoded =
+            budget::encode_record(checkpoint, journal.valid_len, self.limits.max_session_bytes)?;
 
         file.set_len(journal.valid_len)
             .map_err(anyhow::Error::from)?;
@@ -567,7 +501,7 @@ fn ensure_checkpoint_directory(path: &Path) -> anyhow::Result<()> {
 }
 
 fn open_journal(path: &Path) -> anyhow::Result<File> {
-    reject_symlink_if_present(path)?;
+    validate_journal_path_if_present(path)?;
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]
@@ -623,11 +557,11 @@ fn read_journal(path: &Path, target_node_id: Option<&NodeId>) -> anyhow::Result<
     read_locked_journal(&mut file, target_node_id)
 }
 
-fn reject_symlink_if_present(path: &Path) -> anyhow::Result<()> {
+fn validate_journal_path_if_present(path: &Path) -> anyhow::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => anyhow::ensure!(
-            !metadata.file_type().is_symlink(),
-            "checkpoint journal cannot be a symlink: {}",
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "checkpoint journal is not a regular file: {}",
             path.display()
         ),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

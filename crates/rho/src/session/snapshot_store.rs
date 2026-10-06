@@ -17,7 +17,18 @@ use super::{index, Session};
 #[path = "snapshot_store_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_LEAF_COMMIT: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl Session {
+    #[cfg(test)]
+    pub(crate) fn fail_next_leaf_commit_for_tests(&self) {
+        FAIL_NEXT_LEAF_COMMIT.with(|path| *path.borrow_mut() = Some(self.path.clone()));
+    }
+
     /// Persists one SDK snapshot state and its newly visible transcript tail.
     ///
     /// The state and display update share one explicit tree node. Readers ignore
@@ -309,6 +320,21 @@ impl Session {
         tree: &mut SessionTree,
         entry: SessionEntry,
     ) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if matches!(&entry, SessionEntry::SetLeaf { .. })
+            && FAIL_NEXT_LEAF_COMMIT.with(|path| {
+                let mut path = path.borrow_mut();
+                if path.as_ref() == Some(&self.path) {
+                    *path = None;
+                    true
+                } else {
+                    false
+                }
+            })
+        {
+            cursor.invalidate_tree();
+            anyhow::bail!("injected durable leaf commit failure");
+        }
         match self.append_tree_entry(cursor, tree, entry) {
             Ok(()) => Ok(()),
             Err(error) => {

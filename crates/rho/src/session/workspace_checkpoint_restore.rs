@@ -243,6 +243,16 @@ fn classify_restore(file: &FileCheckpoint, current: &ObservedFileState) -> Resto
     {
         return RestoreClassification::Unsupported;
     }
+    // A previous attempt may have restored files before its durable conversation
+    // commit failed. Matching the pre-image is safe to skip on that retry.
+    let already_restored = match &file.original {
+        OriginalFileState::Absent => matches!(current, ObservedFileState::Absent),
+        OriginalFileState::Regular(original) => observed_matches_original(current, original),
+        OriginalFileState::Unsupported { .. } => false,
+    };
+    if already_restored {
+        return RestoreClassification::Skipped;
+    }
     if current != &file.expected_after {
         return RestoreClassification::Conflict;
     }
@@ -252,12 +262,8 @@ fn classify_restore(file: &FileCheckpoint, current: &ObservedFileState) -> Resto
             RestoreClassification::Delete
         }
         (OriginalFileState::Regular(_), ObservedFileState::Absent) => RestoreClassification::Create,
-        (OriginalFileState::Regular(original), ObservedFileState::Regular { .. }) => {
-            if observed_matches_original(&file.expected_after, original) {
-                RestoreClassification::Skipped
-            } else {
-                RestoreClassification::Modify
-            }
+        (OriginalFileState::Regular(_), ObservedFileState::Regular { .. }) => {
+            RestoreClassification::Modify
         }
         (OriginalFileState::Absent, ObservedFileState::Absent) => RestoreClassification::Skipped,
         (OriginalFileState::Unsupported { .. }, _) | (_, ObservedFileState::Unsupported { .. }) => {

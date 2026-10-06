@@ -35,11 +35,18 @@ impl WorkspaceCheckpointTracker {
         let Some(session) = session else {
             return Ok(());
         };
-        let Some(store) = session.workspace_checkpoint_store()? else {
+        let Some(store) = session
+            .workspace_checkpoint_store()
+            .map_err(CheckpointAppendError::Storage)?
+        else {
             return Ok(());
         };
-        let mut open = store.open(NodeId::new())?;
-        open.before_node_id = session.active_checkpoint_target()?.map(|(id, _)| id);
+        // Conversation storage failures stay fatal; checkpoint storage is optional.
+        let before_node_id = session.active_checkpoint_target()?.map(|(id, _)| id);
+        let mut open = store
+            .open(NodeId::new())
+            .map_err(CheckpointAppendError::Storage)?;
+        open.before_node_id = before_node_id;
         let mut active = self
             .active
             .lock()
@@ -115,6 +122,9 @@ impl rho_tools::WorkspaceMutationObserver for WorkspaceCheckpointTracker {
                 .filter(|active| active.open.quota_exceeded.is_none())
             {
                 for path in paths {
+                    if !active.open.reserve_expected_after(path) {
+                        continue;
+                    }
                     let state = active.store.observe_path(path);
                     active
                         .open

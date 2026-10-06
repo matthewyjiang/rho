@@ -35,7 +35,7 @@ fn rewind_boundary(
 
 impl InteractiveRuntime {
     /// Establish a durable empty root so even the first turn has a rewind target.
-    pub(super) fn begin_workspace_checkpoint(&self) -> anyhow::Result<()> {
+    pub(super) fn begin_workspace_checkpoint(&mut self) -> anyhow::Result<()> {
         if !self.workspace_rewind
             || self
                 .checkpoint_paused_sessions
@@ -43,15 +43,47 @@ impl InteractiveRuntime {
         {
             return Ok(());
         }
-        let Some(storage) = self.sessions.storage() else {
+        let Some(storage) = self.sessions.storage().cloned() else {
             return Ok(());
         };
-        if storage.workspace_checkpoint_store()?.is_some()
-            && storage.active_checkpoint_target()?.is_none()
-        {
+        match storage.workspace_checkpoint_store() {
+            Ok(None) => return Ok(()),
+            Ok(Some(_)) => {}
+            Err(error) => {
+                self.pause_workspace_checkpoint(&storage, &error);
+                return Ok(());
+            }
+        }
+        // This baseline is conversation persistence, not checkpoint persistence.
+        // Do not start a turn when its durable conversation boundary cannot be saved.
+        if storage.active_checkpoint_target()?.is_none() {
             self.sessions.save_snapshot(&[])?;
         }
-        self.tools.checkpoint_tracker().begin_turn(Some(storage))
+        match self.tools.checkpoint_tracker().begin_turn(Some(&storage)) {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<CheckpointAppendError>(),
+                    Some(CheckpointAppendError::Storage(_))
+                ) =>
+            {
+                self.pause_workspace_checkpoint(&storage, &error);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn pause_workspace_checkpoint(&mut self, storage: &StoredSession, error: &anyhow::Error) {
+        self.tools.checkpoint_tracker().discard_turn();
+        if self
+            .checkpoint_paused_sessions
+            .insert(storage.id().to_string())
+        {
+            self.sessions.queue_notice(format!(
+                "could not start workspace checkpoint: {error}; rewind paused for this session"
+            ));
+        }
     }
 
     /// A full checkpoint budget pauses capture, not the conversation or earlier rewinds.
@@ -104,7 +136,7 @@ impl InteractiveRuntime {
                         .insert(storage.id().to_string())
                     {
                         self.sessions.queue_notice(format!(
-                            "workspace checkpoints paused: this session reached its {limit} bytes checkpoint budget (asked {asked} bytes; turn needed {turn_bytes} bytes); earlier turns stay rewindable"
+                            "workspace checkpoints paused: this session reached its {limit} bytes checkpoint budget (asked at least {asked} bytes; turn requested at least {turn_bytes} bytes); earlier turns stay rewindable"
                         ));
                     }
                 }
