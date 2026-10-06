@@ -48,7 +48,7 @@ flowchart TD
 
    Rho starts the server, which prints a Google sign-in link and waits up to 300 s for the browser to come back to `http://127.0.0.1:<port>/`. Over SSH the browser cannot reach that address and its last page fails to load: copy that page's address, paste it into the login prompt, and press Enter. Rho only accepts that exact loopback address and replays it locally.
 
-   The server records the method in `$GEMINI_HOME/antigravity-acp/settings.json` (default `~/.gemini`) and keeps the token in `acp_token.json` beside it; on macOS it uses the Keychain (service `gemini`) instead unless `AGY_ACP_FORCE_FILE_STORAGE=1`. This sign-in is separate from the `agy` CLI's. Rho never stores or reads the token. To sign out, delete that `settings.json` (runs then report signed out) and the token file or Keychain item.
+   The server records the method in `$GEMINI_HOME/antigravity-acp/settings.json` (default `~/.gemini`) and keeps the token in `acp_token.json` beside it; on macOS it uses the Keychain (service `gemini`) instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. This sign-in is separate from the `agy` CLI's. Rho never stores or reads the token. To sign out, delete that `settings.json` (runs then report signed out) and the token file or Keychain item.
 
 3. **Write a delegated agent definition**, for example `~/.rho/agents/agy-reviewer.md`:
 

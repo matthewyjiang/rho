@@ -126,8 +126,9 @@ async fn successful_turn_has_one_terminal_write() {
 }
 
 // Covers: vendor session parameters (tool filters in `_meta`, select options
-// such as the model) reach the agent before the first prompt, and an
-// already-current option is not re-sent.
+// such as the model) reach the agent before the first prompt; an
+// already-current option is not re-sent, judged by the latest option set (a
+// change that moves another option makes it due again).
 // Owner: ACP handshake. Unadvertised options fail in the setup table below.
 #[tokio::test]
 async fn session_parameters_reach_the_agent_before_the_prompt() {
@@ -136,7 +137,11 @@ async fn session_parameters_reach_the_agent_before_the_prompt() {
     policy.meta = json!({"agy": {"enabledTools": ["view_file"]}})
         .as_object()
         .cloned();
-    policy.config = vec![choice("model", "fast"), choice("effort", "high")];
+    policy.config = vec![
+        choice("model", "fast"),
+        choice("effort", "high"),
+        choice("theme", "dark"),
+    ];
     let record = exercise(
         request(dir.path(), None),
         policy,
@@ -144,6 +149,13 @@ async fn session_parameters_reach_the_agent_before_the_prompt() {
             config_options: vec![
                 select("model", "slow", &["slow", "fast"]),
                 select("effort", "high", &["low", "high"]),
+                select("theme", "dark", &["dark", "light"]),
+            ],
+            // Switching the model resets effort.
+            config_options_after_set: vec![
+                select("model", "fast", &["slow", "fast"]),
+                select("effort", "low", &["low", "high"]),
+                select("theme", "dark", &["dark", "light"]),
             ],
             ..script(vec![vec![text("answer"), stop()]])
         },
@@ -172,6 +184,12 @@ async fn session_parameters_reach_the_agent_before_the_prompt() {
                 json!(null),
                 json!("model"),
                 json!("fast")
+            ),
+            (
+                json!("session/set_config_option"),
+                json!(null),
+                json!("effort"),
+                json!("high")
             ),
             (
                 json!("session/prompt"),

@@ -195,7 +195,7 @@ Full guide: [Cursor Agent as a delegated runtime](/subagents/cursor).
 
 Rho can hand a **delegated** agent to Google Antigravity's ACP server (`agy_acp_server`) so a child run can use Gemini models and an Antigravity sign-in while the parent stays in Rho. This is not available as the root session runtime.
 
-Quick path: put `agy_acp_server.par` on `PATH`, run `/login antigravity`, define an agent with `runtime: antigravity` and a nonempty `tools:` list of Antigravity built-ins, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind.
+Quick path: put `agy_acp_server.par` (`agy_acp_server.exe` on Windows) on `PATH`, run `/login antigravity`, define an agent with `runtime: antigravity` and a nonempty `tools:` list of Antigravity built-ins, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind.
 
 Full guide: [Google Antigravity as a delegated runtime](/subagents/antigravity).
 

@@ -100,16 +100,17 @@ pub(super) async fn require_mode<P: AcpAgentPolicy>(
 
 /// Set each policy-required select option, after checking the agent
 /// advertised it with that value. Already-current values are not re-sent.
+/// Each response carries the full option set (one change can move others),
+/// so later choices are checked against the latest one.
 pub(super) async fn require_config<P: AcpAgentPolicy>(
     session: &ActiveSession<'_, Agent>,
     policy: &Mutex<P>,
 ) -> Result<(), Error> {
     let choices = policy.lock().expect("ACP policy").session_config();
+    let mut options = session.config_options().unwrap_or_default().to_vec();
     for choice in choices {
         let step = format!("session/set_config_option `{}`", choice.id);
-        let Some((current, values)) = session
-            .config_options()
-            .unwrap_or_default()
+        let Some((current, values)) = options
             .iter()
             .find(|option| option.id == choice.id)
             .and_then(select_state)
@@ -133,7 +134,7 @@ pub(super) async fn require_config<P: AcpAgentPolicy>(
         if *current == choice.value {
             continue;
         }
-        bounded(
+        options = bounded(
             &step,
             session
                 .connection()
@@ -144,7 +145,8 @@ pub(super) async fn require_config<P: AcpAgentPolicy>(
                 ))
                 .block_task(),
         )
-        .await?;
+        .await?
+        .config_options;
     }
     Ok(())
 }

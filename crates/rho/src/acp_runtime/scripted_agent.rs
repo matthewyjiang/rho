@@ -40,9 +40,14 @@ pub(crate) struct Script {
     pub(crate) set_mode_error: Option<String>,
     #[serde(default)]
     pub(crate) modes: Vec<String>,
-    /// Advertised by `session/new` and echoed by `session/set_config_option`.
+    /// Advertised by `session/new`, and echoed by `session/set_config_option`
+    /// unless `config_options_after_set` is nonempty.
     #[serde(default)]
     pub(crate) config_options: Vec<SessionConfigOption>,
+    /// The full option set `session/set_config_option` answers with, for
+    /// agents where one change moves other options.
+    #[serde(default)]
+    pub(crate) config_options_after_set: Vec<SessionConfigOption>,
     pub(crate) turns: Vec<Vec<Step>>,
 }
 
@@ -155,8 +160,12 @@ impl ScriptedAgent {
         let modes = script.modes;
         let mode_record = Arc::clone(&record);
         let mode_error = script.set_mode_error;
-        let config_options = script.config_options;
-        let new_config_options = config_options.clone();
+        let new_config_options = script.config_options.clone();
+        let config_options = if script.config_options_after_set.is_empty() {
+            script.config_options
+        } else {
+            script.config_options_after_set
+        };
         let config_record = Arc::clone(&record);
         let prompt_record = Arc::clone(&record);
         let turns = Arc::new(Mutex::new(VecDeque::from(script.turns)));
