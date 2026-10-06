@@ -4,14 +4,15 @@ use pretty_assertions::assert_eq;
 use super::{Keybindings, ReservedComposerKey};
 
 // Covers: remapping the cycle key must not silently shadow another shortcut,
-// including modifier-insensitive Tab/scroll handlers and composer text input.
+// including modifier-insensitive Tab/scroll handlers, composer text and editing
+// keys, while an omitted cycle key yields Alt+M to an existing binding.
 // Owner: keybinding configuration parsing
 #[test]
 fn permission_cycle_remaps_reject_collisions() {
     let cases = [
-        ("cycle_permission_mode = \"alt+m\"", Ok("alt+m")),
-        ("cycle_permission_mode = \"alt+n\"", Ok("alt+n")),
-        ("cycle_permission_mode = \"ctrl+n\"", Ok("ctrl+n")),
+        ("cycle_permission_mode = \"alt+m\"", Ok(Some("alt+m"))),
+        ("cycle_permission_mode = \"alt+n\"", Ok(Some("alt+n"))),
+        ("cycle_permission_mode = \"ctrl+n\"", Ok(Some("ctrl+n"))),
         ("cycle_permission_mode = \"tab\"", Err(())),
         ("cycle_permission_mode = \"ctrl+tab\"", Err(())),
         ("cycle_permission_mode = \"alt+tab\"", Err(())),
@@ -32,18 +33,33 @@ fn permission_cycle_remaps_reject_collisions() {
         ("cycle_permission_mode = \"ctrl+enter\"", Err(())),
         ("cycle_permission_mode = \"shift+tab\"", Err(())),
         ("cycle_permission_mode = \"alt+v\"", Err(())),
-        ("reset_conversation = \"alt+m\"", Err(())),
-        ("toggle_tool_output = \"alt+m\"", Err(())),
+        ("cycle_permission_mode = \"enter\"", Err(())),
+        ("cycle_permission_mode = \"shift+enter\"", Err(())),
+        ("cycle_permission_mode = \"esc\"", Err(())),
+        ("cycle_permission_mode = \"alt+esc\"", Err(())),
+        ("cycle_permission_mode = \"backspace\"", Err(())),
+        ("cycle_permission_mode = \"up\"", Err(())),
+        (
+            "cycle_permission_mode = \"ctrl+down\"",
+            Ok(Some("ctrl+down")),
+        ),
+        ("", Ok(Some("alt+m"))),
+        ("reset_conversation = \"alt+m\"", Ok(None)),
+        ("toggle_tool_output = \"alt+m\"", Ok(None)),
+        (
+            "reset_conversation = \"alt+m\"\ncycle_permission_mode = \"alt+m\"",
+            Err(()),
+        ),
         (
             "toggle_tool_output = \"alt+m\"\ncycle_permission_mode = \"alt+n\"",
-            Ok("alt+n"),
+            Ok(Some("alt+n")),
         ),
     ];
     for (text, expected) in cases {
         let parsed = toml::from_str::<Keybindings>(text)
-            .map(|keys| keys.cycle_permission_mode.to_string())
+            .map(|keys| keys.cycle_permission_mode.map(|key| key.to_string()))
             .map_err(|_| ());
-        assert_eq!(parsed, expected.map(str::to_owned), "{text}");
+        assert_eq!(parsed, expected.map(|key| key.map(str::to_owned)), "{text}");
     }
 }
 
