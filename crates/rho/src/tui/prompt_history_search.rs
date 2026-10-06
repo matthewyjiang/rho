@@ -8,7 +8,9 @@ use super::{picker::OverlayChrome, App, ComposerMode, PickerItem, PickerLayout, 
 
 /// Picker rows for `history` (oldest first), newest first with repeats
 /// collapsed into their latest use. Filtering keeps this order, so the most
-/// recent match is highlighted first, like a shell's reverse search.
+/// recent match is highlighted first, like a shell's reverse search. Rows
+/// carry no detail, so the overlay is a single full-width list; the filter
+/// still matches the full prompt through `value`.
 fn prompt_history_items(history: &[String]) -> Vec<PickerItem> {
     let mut seen = HashSet::new();
     history
@@ -18,7 +20,7 @@ fn prompt_history_items(history: &[String]) -> Vec<PickerItem> {
         .map(|prompt| PickerItem {
             section: None,
             label: prompt.split_whitespace().collect::<Vec<_>>().join(" "),
-            detail: Some(prompt.clone().into()),
+            detail: None,
             preview: None,
             badge: None,
             value: prompt.clone(),
@@ -39,7 +41,7 @@ impl App {
             .with_layout(PickerLayout::Overlay)
             .with_overlay_chrome(OverlayChrome {
                 nav_label: " PROMPTS".into(),
-                detail_label: Some(" PROMPT".into()),
+                detail_label: None,
                 nav_keys_hint: "↑↓ prompts".into(),
             })
             .with_confirm_verb("recall");
