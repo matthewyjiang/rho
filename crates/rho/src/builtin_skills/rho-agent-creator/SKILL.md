@@ -114,7 +114,7 @@ Show the destination path and the complete file, then confirm with a confirm que
 
 ## 8. Write and verify
 
-Target `<dir>/<id>.md` with the chosen directory from `dirs`. If that path is already listed under `agents`, read it, show it, and confirm overwrite first.
+Target `<dir>/<id>.md` with the chosen directory from `dirs`. Before writing, `read_file` that exact path, even if `agents` does not list it (a higher-precedence directory can shadow it). If it exists, show it and confirm overwrite first.
 
 `write` the confirmed contents, then call `rho` with `action: "agents"` again:
 

@@ -26,7 +26,7 @@ impl App {
         terminal: &mut crate::tui::DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let missing_tools = ["skill", "questionnaire", "write", "rho"]
+        let missing_tools = ["skill", "questionnaire", "read_file", "write", "rho"]
             .into_iter()
             .filter(|name| !agent.has_tool(name))
             .collect::<Vec<_>>();
