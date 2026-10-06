@@ -175,8 +175,8 @@ pub struct Config {
     /// Offer the `advisor` tool, which reviews the session with the model
     /// configured for the `advisor` internal agent.
     pub advisor_mode: bool,
-    /// Enables native-tool workspace checkpoints and the experimental `/rewind` command.
-    pub experimental_workspace_rewind: bool,
+    /// Enables native-tool workspace checkpoints and `/rewind` (on by default).
+    pub workspace_rewind: bool,
     pub permission_mode: PermissionMode,
     /// Explicit credential backend. `None` means unset; runtime defaults to OS.
     pub credential_store: Option<CredentialStoreBackend>,
@@ -241,7 +241,7 @@ impl Default for Config {
             enable_subagents: true,
             agent_concurrency: DEFAULT_AGENT_CONCURRENCY,
             advisor_mode: false,
-            experimental_workspace_rewind: false,
+            workspace_rewind: true,
             permission_mode: PermissionMode::Bypass,
             credential_store: None,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),

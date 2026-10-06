@@ -35,6 +35,7 @@ pub(super) enum ConfigNumberKey {
 pub(super) enum ConfigToggle {
     CheckForUpdates,
     EnableSubagents,
+    WorkspaceRewind,
     AutoCompact,
     CacheMissNotices,
     ShowHeaderHints,
@@ -67,6 +68,10 @@ pub(super) fn toggle(
         ConfigToggle::EnableSubagents => {
             config.enable_subagents = !config.enable_subagents;
             config.enable_subagents
+        }
+        ConfigToggle::WorkspaceRewind => {
+            config.workspace_rewind = !config.workspace_rewind;
+            config.workspace_rewind
         }
         ConfigToggle::AutoCompact => {
             config.auto_compact = !config.auto_compact;

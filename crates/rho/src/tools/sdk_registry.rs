@@ -232,7 +232,7 @@ impl AppToolSet {
         tool_set.workflow_tracker = workflow_tracker;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
-                config.experimental_workspace_rewind,
+                config.workspace_rewind,
             ),
         );
         // Compose one child-process environment policy for every process tool.

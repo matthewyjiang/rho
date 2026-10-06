@@ -249,7 +249,18 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `inline_shell` selects the shell for `!` and `!!` in the TUI. It defaults to `bash` on macOS and Linux and `powershell` on Windows. See [inline shell](/inline-shell).
 
-`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart after changing it. Checkpoints cover `write` and the selected edit tool. Rho warns when a turn ran a shell command, because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only. `/rewind` branches conversation state and restores captured files. Git commands stay separate.
+`workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `true`. Toggle **Workspace rewind** under Agent behavior in `/config`, or opt out explicitly:
+
+```toml
+[behavior]
+workspace_rewind = false
+```
+
+Restart Rho after changing it. The legacy `experimental_workspace_rewind` key is accepted but ignored (including saved `false` defaults), and the next config save removes it. Only `workspace_rewind = false` opts out.
+
+Checkpoints capture original file contents for `write` and the selected native edit tool. Shell (`bash`), process, Git, network, database, service, and other untracked tool effects are **not captured**; recorded untracked effects show a **limited** badge in `/rewind`. `/tree` changes conversation state only. `/rewind` restores captured files and returns the conversation to **before** the selected turn, preserving the old branch. Conflicting or unsupported paths stay unchanged; a partial restore does not select a different conversation state.
+
+Checkpoint journals live at `<session>/workspace-checkpoints/checkpoints.jsonl`. The per-file capture budget is **2 MiB**: larger files are marked unsupported, and a transcript notice names the budget, limit, and file size. The serialized per-session journal budget is **64 MiB**: a turn that would exceed it is not appended, and a visible notice names the budget, limit, requested total, and turn size. Further capture pauses for that running session; earlier turns remain rewindable. See [workspace checkpoints](/sessions#workspace-checkpoints) for storage and privacy details.
 
 `advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
 

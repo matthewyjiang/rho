@@ -7,7 +7,8 @@ use crate::{
     session::{
         tree::NodeId,
         workspace_checkpoint::{
-            RestoreAudit, RestoreClassification, RestorePlan, WorkspaceCheckpoint,
+            CheckpointFileBudgetExceeded, RestoreAudit, RestoreClassification, RestorePlan,
+            WorkspaceCheckpoint,
         },
     },
 };
@@ -29,7 +30,7 @@ impl App {
         }
         if !agent.workspace_rewind_enabled() {
             self.set_status(
-                "workspace rewind is experimental; set behavior.experimental_workspace_rewind = true and restart Rho",
+                "workspace rewind is off; set behavior.workspace_rewind = true and restart Rho",
             );
             return Ok(());
         }
@@ -78,9 +79,7 @@ impl App {
                     detail: Some(
                         format!(
                             "checkpoint time: {}\ntracked files: {}\noutcome: {:?}",
-                            checkpoint.finalized_at,
-                            checkpoint.files.len(),
-                            checkpoint.outcome
+                            checkpoint.finalized_at, checkpoint.file_count, checkpoint.outcome
                         )
                         .into(),
                     ),
@@ -167,6 +166,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let node_id = NodeId::from_string(value)?;
+        let before_node_id = agent.workspace_rewind_conversation_target(&node_id)?;
         let audit = agent.restore_workspace_rewind(&node_id).await?;
         let incomplete = audit.entries.iter().any(|entry| {
             entry.error.is_some()
@@ -179,7 +179,7 @@ impl App {
             self.input_ui.set_composer(ComposerMode::Input);
             None
         } else {
-            self.submit_tree_selection(value, terminal, agent)
+            self.submit_tree_selection(before_node_id.as_str(), terminal, agent)
                 .await
                 .err()
         };
@@ -205,7 +205,7 @@ fn rewind_preview_text(
     let mut lines = vec![
         format!("target turn: {short_id}"),
         format!("timestamp: {}", checkpoint.finalized_at),
-        "conversation: select this state and preserve the existing branch".into(),
+        "conversation: return to before this turn and preserve the existing branch".into(),
     ];
     for entry in &plan.entries {
         lines.push(format!(
@@ -213,6 +213,15 @@ fn rewind_preview_text(
             classification_label(entry.classification),
             rho_tools::compact_display_path(workspace, &entry.path.to_string_lossy())
         ));
+    }
+    for file in &checkpoint.files {
+        if let Some(CheckpointFileBudgetExceeded { asked, limit }) = file.capture_budget_exceeded()
+        {
+            lines.push(format!(
+                "warning  per-file capture budget: limit {limit} bytes, asked {asked} bytes ({})",
+                rho_tools::compact_display_path(workspace, &file.path.to_string_lossy())
+            ));
+        }
     }
     if plan.entries.is_empty() {
         lines.push("skip  no native file changes were captured".into());
@@ -233,7 +242,7 @@ fn rewind_audit_text(
     conversation_selected: bool,
 ) -> String {
     let mut lines = vec![if conversation_selected {
-        "workspace rewind audit; conversation state selected".into()
+        "workspace rewind audit; conversation restored to before the turn".into()
     } else {
         "workspace rewind audit; conversation state was not selected".into()
     }];

@@ -28,8 +28,11 @@ const CHECKPOINT_FORMAT_VERSION: u32 = 1;
 const CHECKPOINT_DIR_NAME: &str = "workspace-checkpoints";
 const CHECKPOINT_JOURNAL_NAME: &str = "checkpoints.jsonl";
 
+// Sizing receipt: tracked repo files p99 37 KB, max 192 KB; none above 2 MiB.
 /// Default maximum content captured for one regular file: 2 MiB.
 pub(crate) const DEFAULT_MAX_CHECKPOINT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+// Sizing receipt: 294 sessions had p90 12 turns, max 104; per-turn pre-image
+// commit proxy p90 693 KB, p99 1.8 MB, max 2.7 MB. Keep this a visible tripwire.
 /// Default maximum serialized checkpoint data for one session: 64 MiB.
 pub(crate) const DEFAULT_MAX_CHECKPOINT_SESSION_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -124,6 +127,36 @@ pub(crate) struct FileCheckpoint {
     pub(crate) expected_after: ObservedFileState,
 }
 
+/// An oversized pre-image or expected-after image that makes this file unsupported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CheckpointFileBudgetExceeded {
+    pub(crate) asked: u64,
+    pub(crate) limit: u64,
+}
+
+impl FileCheckpoint {
+    pub(crate) fn capture_budget_exceeded(&self) -> Option<CheckpointFileBudgetExceeded> {
+        match (&self.original, &self.expected_after) {
+            (
+                OriginalFileState::Unsupported {
+                    reason: UnsupportedPath::TooLarge { size, limit },
+                },
+                _,
+            )
+            | (
+                _,
+                ObservedFileState::Unsupported {
+                    reason: UnsupportedPath::TooLarge { size, limit },
+                },
+            ) => Some(CheckpointFileBudgetExceeded {
+                asked: *size,
+                limit: *limit,
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// A side effect which this checkpoint does not claim to reverse.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct UntrackedEffect {
@@ -153,6 +186,9 @@ pub(crate) enum CheckpointOutcome {
 pub(crate) struct WorkspaceCheckpoint {
     pub(crate) session_id: SessionId,
     pub(crate) node_id: NodeId,
+    /// Durable state before the turn, even when it compacted mid-run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) before_node_id: Option<NodeId>,
     pub(crate) revision: Revision,
     pub(crate) started_at: u64,
     pub(crate) finalized_at: u64,
@@ -160,6 +196,31 @@ pub(crate) struct WorkspaceCheckpoint {
     pub(crate) files: Vec<FileCheckpoint>,
     #[serde(default)]
     pub(crate) limitations: Vec<UntrackedEffect>,
+}
+
+/// Content-free checkpoint metadata for listing and append validation.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub(crate) struct WorkspaceCheckpointSummary {
+    pub(crate) session_id: SessionId,
+    pub(crate) node_id: NodeId,
+    #[serde(default)]
+    pub(crate) before_node_id: Option<NodeId>,
+    pub(crate) revision: Revision,
+    pub(crate) started_at: u64,
+    pub(crate) finalized_at: u64,
+    pub(crate) outcome: CheckpointOutcome,
+    #[serde(rename = "files", deserialize_with = "count_checkpoint_files")]
+    pub(crate) file_count: usize,
+    #[serde(default)]
+    pub(crate) limitations: Vec<UntrackedEffect>,
+}
+
+fn count_checkpoint_files<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Validate the JSON array without allocating or decoding captured file contents.
+    Vec::<serde::de::IgnoredAny>::deserialize(deserializer).map(|files| files.len())
 }
 
 /// Result of capturing a path before mutation.
@@ -174,6 +235,7 @@ pub(crate) enum CaptureDisposition {
 pub(crate) struct OpenWorkspaceCheckpoint {
     session_id: SessionId,
     node_id: NodeId,
+    before_node_id: Option<NodeId>,
     started_at: u64,
     max_file_bytes: u64,
     originals: BTreeMap<PathBuf, OriginalFileState>,
@@ -197,6 +259,19 @@ impl OpenWorkspaceCheckpoint {
             self.limitations.push(effect);
         }
     }
+}
+
+/// An append either exceeds the named session budget or fails to persist safely.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CheckpointAppendError {
+    #[error("workspace checkpoint session budget exceeded: asked {asked} bytes (turn needed {turn_bytes} bytes), limit {limit} bytes")]
+    QuotaExceeded {
+        asked: u64,
+        limit: u64,
+        turn_bytes: u64,
+    },
+    #[error(transparent)]
+    Storage(#[from] anyhow::Error),
 }
 
 /// Session-owned append-only checkpoint persistence.
@@ -228,6 +303,7 @@ impl WorkspaceCheckpointStore {
         OpenWorkspaceCheckpoint {
             session_id: self.session_id.clone(),
             node_id,
+            before_node_id: None,
             started_at: super::persistence::unix_timestamp_secs(),
             max_file_bytes: self.limits.max_file_bytes,
             originals: BTreeMap::new(),
@@ -276,6 +352,7 @@ impl WorkspaceCheckpointStore {
         let checkpoint = WorkspaceCheckpoint {
             session_id: self.session_id.clone(),
             node_id: open.node_id,
+            before_node_id: open.before_node_id,
             revision,
             started_at: open.started_at,
             finalized_at: super::persistence::unix_timestamp_secs(),
@@ -287,15 +364,12 @@ impl WorkspaceCheckpointStore {
         Ok(checkpoint)
     }
 
-    pub(crate) fn list(&self) -> anyhow::Result<Vec<WorkspaceCheckpoint>> {
-        read_journal(&self.journal_path).map(|journal| journal.checkpoints)
+    pub(crate) fn list(&self) -> anyhow::Result<Vec<WorkspaceCheckpointSummary>> {
+        read_journal(&self.journal_path, /*target_node_id*/ None).map(|journal| journal.checkpoints)
     }
 
     pub(crate) fn get(&self, node_id: &NodeId) -> anyhow::Result<Option<WorkspaceCheckpoint>> {
-        Ok(self
-            .list()?
-            .into_iter()
-            .find(|checkpoint| checkpoint.node_id == *node_id))
+        read_journal(&self.journal_path, Some(node_id)).map(|journal| journal.selected)
     }
 
     /// Reads current states without authorizing paths. Callers must authorize them first.
@@ -320,40 +394,49 @@ impl WorkspaceCheckpointStore {
         observe_path(path, self.limits.max_file_bytes)
     }
 
-    fn append(&self, checkpoint: &WorkspaceCheckpoint) -> anyhow::Result<()> {
+    fn append(&self, checkpoint: &WorkspaceCheckpoint) -> Result<(), CheckpointAppendError> {
         ensure_checkpoint_directory(&self.checkpoint_dir)?;
 
         let mut file = open_journal(&self.journal_path)?;
-        fs2::FileExt::lock_exclusive(&file)?;
-        let journal = read_locked_journal(&mut file)?;
-        anyhow::ensure!(
-            !journal
-                .checkpoints
-                .iter()
-                .any(|stored| stored.node_id == checkpoint.node_id),
-            "workspace checkpoint for node '{}' already exists",
-            checkpoint.node_id
-        );
+        fs2::FileExt::lock_exclusive(&file).map_err(anyhow::Error::from)?;
+        let journal = read_locked_journal(&mut file, /*target_node_id*/ None)?;
+        if journal
+            .checkpoints
+            .iter()
+            .any(|stored| stored.node_id == checkpoint.node_id)
+        {
+            return Err(anyhow::anyhow!(
+                "workspace checkpoint for node '{}' already exists",
+                checkpoint.node_id
+            )
+            .into());
+        }
 
         let mut encoded = serde_json::to_vec(&StoredCheckpointRecord {
             version: CHECKPOINT_FORMAT_VERSION,
             checkpoint: checkpoint.clone(),
-        })?;
+        })
+        .map_err(anyhow::Error::from)?;
         encoded.push(b'\n');
+        let turn_bytes = u64::try_from(encoded.len()).map_err(anyhow::Error::from)?;
         let new_size = journal
             .valid_len
-            .checked_add(u64::try_from(encoded.len())?)
+            .checked_add(turn_bytes)
             .context("checkpoint journal size overflow")?;
-        anyhow::ensure!(
-            new_size <= self.limits.max_session_bytes,
-            "checkpoint session quota exceeded: {new_size} bytes would exceed {} bytes",
-            self.limits.max_session_bytes
-        );
+        if new_size > self.limits.max_session_bytes {
+            return Err(CheckpointAppendError::QuotaExceeded {
+                asked: new_size,
+                limit: self.limits.max_session_bytes,
+                turn_bytes,
+            });
+        }
 
-        file.set_len(journal.valid_len)?;
-        file.seek(SeekFrom::Start(journal.valid_len))?;
-        file.write_all(&encoded)?;
-        file.sync_all()?;
+        file.set_len(journal.valid_len)
+            .map_err(anyhow::Error::from)?;
+        file.seek(SeekFrom::Start(journal.valid_len))
+            .map_err(anyhow::Error::from)?;
+        file.write_all(&encoded).map_err(anyhow::Error::from)?;
+        file.sync_all().map_err(anyhow::Error::from)?;
         Ok(())
     }
 }
@@ -389,7 +472,8 @@ impl WorkspaceCheckpointTracker {
         let Some(store) = session.workspace_checkpoint_store()? else {
             return Ok(());
         };
-        let open = store.open(NodeId::new());
+        let mut open = store.open(NodeId::new());
+        open.before_node_id = session.active_checkpoint_target()?.map(|(id, _)| id);
         let mut active = self
             .active
             .lock()
@@ -526,9 +610,16 @@ struct StoredCheckpointRecord {
     checkpoint: WorkspaceCheckpoint,
 }
 
+#[derive(Deserialize)]
+struct StoredCheckpointHeader {
+    version: u32,
+    checkpoint: WorkspaceCheckpointSummary,
+}
+
 #[derive(Debug)]
 struct ReadJournal {
-    checkpoints: Vec<WorkspaceCheckpoint>,
+    checkpoints: Vec<WorkspaceCheckpointSummary>,
+    selected: Option<WorkspaceCheckpoint>,
     valid_len: u64,
 }
 
@@ -573,11 +664,12 @@ fn open_journal(path: &Path) -> anyhow::Result<File> {
     Ok(file)
 }
 
-fn read_journal(path: &Path) -> anyhow::Result<ReadJournal> {
+fn read_journal(path: &Path, target_node_id: Option<&NodeId>) -> anyhow::Result<ReadJournal> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ReadJournal {
                 checkpoints: Vec::new(),
+                selected: None,
                 valid_len: 0,
             });
         }
@@ -602,7 +694,7 @@ fn read_journal(path: &Path) -> anyhow::Result<ReadJournal> {
         options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     let mut file = options.open(path)?;
-    read_locked_journal(&mut file)
+    read_locked_journal(&mut file, target_node_id)
 }
 
 fn reject_symlink_if_present(path: &Path) -> anyhow::Result<()> {
@@ -618,12 +710,16 @@ fn reject_symlink_if_present(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_locked_journal(file: &mut File) -> anyhow::Result<ReadJournal> {
+fn read_locked_journal(
+    file: &mut File,
+    target_node_id: Option<&NodeId>,
+) -> anyhow::Result<ReadJournal> {
     file.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
 
     let mut checkpoints = Vec::new();
+    let mut selected = None;
     let mut identities = HashSet::new();
     let mut valid_len = 0u64;
     let mut lines = bytes.split_inclusive(|byte| *byte == b'\n').peekable();
@@ -631,7 +727,7 @@ fn read_locked_journal(file: &mut File) -> anyhow::Result<ReadJournal> {
         if !line.ends_with(b"\n") {
             break;
         }
-        let record = match serde_json::from_slice::<StoredCheckpointRecord>(&line[..line.len() - 1])
+        let record = match serde_json::from_slice::<StoredCheckpointHeader>(&line[..line.len() - 1])
         {
             Ok(record) => record,
             Err(_) if lines.peek().is_none() => break,
@@ -647,11 +743,21 @@ fn read_locked_journal(file: &mut File) -> anyhow::Result<ReadJournal> {
             "duplicate workspace checkpoint node '{}'",
             record.checkpoint.node_id
         );
+        if target_node_id == Some(&record.checkpoint.node_id) {
+            selected =
+                match serde_json::from_slice::<StoredCheckpointRecord>(&line[..line.len() - 1]) {
+                    Ok(record) => Some(record.checkpoint),
+                    Err(_) if lines.peek().is_none() => break,
+                    Err(error) => return Err(error).context("invalid checkpoint journal record"),
+                };
+        }
+        // Quota accounting uses the serialized line length, including its newline.
         valid_len += u64::try_from(line.len())?;
         checkpoints.push(record.checkpoint);
     }
     Ok(ReadJournal {
         checkpoints,
+        selected,
         valid_len,
     })
 }

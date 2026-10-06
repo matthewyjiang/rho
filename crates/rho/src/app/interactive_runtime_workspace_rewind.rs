@@ -2,13 +2,129 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use super::*;
 use crate::session::workspace_checkpoint::{
-    ObservedFileState, RestoreClassification, UnsupportedPath,
+    CheckpointAppendError, CheckpointFileBudgetExceeded, CheckpointOutcome, ObservedFileState,
+    RestoreClassification, UnsupportedPath,
 };
 
 impl InteractiveRuntime {
+    /// Establish a durable empty root so even the first turn has a rewind target.
+    pub(super) fn begin_workspace_checkpoint(&self) -> anyhow::Result<()> {
+        if !self.workspace_rewind
+            || self
+                .checkpoint_paused_sessions
+                .contains(self.sessions.id().as_str())
+        {
+            return Ok(());
+        }
+        let Some(storage) = self.sessions.storage() else {
+            return Ok(());
+        };
+        if storage.workspace_checkpoint_store()?.is_some()
+            && storage.active_checkpoint_target()?.is_none()
+        {
+            self.sessions.save_snapshot(&[])?;
+        }
+        self.tools.checkpoint_tracker().begin_turn(Some(storage))
+    }
+
+    /// A full checkpoint budget pauses capture, not the conversation or earlier rewinds.
+    pub(super) fn finalize_workspace_checkpoint(&mut self, outcome: &Result<RunOutcome, Error>) {
+        let Some(storage) = self.sessions.storage().cloned() else {
+            self.tools.checkpoint_tracker().discard_turn();
+            return;
+        };
+        self.runs.mark_display_committed();
+        let outcome = match outcome {
+            Ok(_) => CheckpointOutcome::Completed,
+            Err(Error::Cancelled | Error::Interrupted { .. }) => CheckpointOutcome::Cancelled,
+            Err(_) => CheckpointOutcome::Failed,
+        };
+        let result = storage
+            .active_checkpoint_target()
+            .and_then(|target| match target {
+                Some((node_id, revision)) => self
+                    .tools
+                    .checkpoint_tracker()
+                    .finalize_turn(node_id, revision, outcome),
+                None => {
+                    self.tools.checkpoint_tracker().discard_turn();
+                    Ok(None)
+                }
+            });
+        if let Ok(Some(checkpoint)) = &result {
+            for file in &checkpoint.files {
+                if let Some(CheckpointFileBudgetExceeded { asked, limit }) =
+                    file.capture_budget_exceeded()
+                {
+                    self.sessions.queue_notice(format!(
+                        "workspace checkpoint skipped '{}': per-file capture budget is {limit} bytes, asked {asked} bytes; this file cannot be rewound",
+                        file.path.display()
+                    ));
+                }
+            }
+        }
+        if let Err(error) = result {
+            tracing::warn!(%error, "failed to persist workspace checkpoint");
+            self.tools.checkpoint_tracker().discard_turn();
+            match error.downcast::<CheckpointAppendError>() {
+                Ok(CheckpointAppendError::QuotaExceeded {
+                    asked,
+                    limit,
+                    turn_bytes,
+                }) => {
+                    if self
+                        .checkpoint_paused_sessions
+                        .insert(storage.id().to_string())
+                    {
+                        self.sessions.queue_notice(format!(
+                            "workspace checkpoints paused: this session reached its {limit} bytes checkpoint budget (asked {asked} bytes; turn needed {turn_bytes} bytes); earlier turns stay rewindable"
+                        ));
+                    }
+                }
+                Ok(CheckpointAppendError::Storage(error)) | Err(error) => {
+                    self.sessions
+                        .queue_notice(format!("could not save workspace checkpoint: {error}"));
+                }
+            }
+        }
+    }
+
+    /// Returns the state before the checkpoint's turn, not its completed state.
+    pub(crate) fn workspace_rewind_conversation_target(
+        &self,
+        target_id: &crate::session::tree::NodeId,
+    ) -> anyhow::Result<crate::session::tree::NodeId> {
+        let storage = self
+            .sessions
+            .storage()
+            .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
+        let store = storage
+            .workspace_checkpoint_store()?
+            .ok_or_else(|| anyhow::anyhow!("workspace rewind is unavailable for this session"))?;
+        let checkpoint = store
+            .get(target_id)?
+            .ok_or_else(|| anyhow::anyhow!("workspace checkpoint '{target_id}' was not found"))?;
+        storage.with_session_tree(|tree| {
+            let before = checkpoint
+                .before_node_id
+                .or_else(|| {
+                    tree.node(target_id)
+                        .and_then(|node| node.parent_id().cloned())
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!("this legacy turn has no saved pre-turn conversation state")
+                })?;
+            anyhow::ensure!(
+                tree.node(&before).is_some(),
+                "pre-turn conversation state '{before}' was not found"
+            );
+            Ok(before)
+        })
+    }
+
     pub(crate) fn workspace_checkpoints(
         &self,
-    ) -> anyhow::Result<Vec<crate::session::workspace_checkpoint::WorkspaceCheckpoint>> {
+    ) -> anyhow::Result<Vec<crate::session::workspace_checkpoint::WorkspaceCheckpointSummary>> {
         let storage = self
             .sessions
             .storage()

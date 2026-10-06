@@ -192,7 +192,7 @@ use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
 use workflow_hub_legacy::{
     setup_workflow_hub_legacy_run, WORKFLOW_HUB_LEGACY_RUN_ID, WORKFLOW_HUB_LEGACY_RUN_STEPS,
 };
-use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
+use workspace_rewind::{WORKSPACE_REWIND_OFF_SCENARIO, WORKSPACE_REWIND_SCENARIO};
 use zen_tool_run::ZEN_TOOL_RUN_SUMMARY_SCENARIO;
 
 use crate::{
@@ -603,6 +603,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     WORKSPACE_REWIND_SCENARIO,
+    WORKSPACE_REWIND_OFF_SCENARIO,
     diff_viewer::DIFF_VIEWER_SCENARIO,
     copy_output::COPY_OUTPUT_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
