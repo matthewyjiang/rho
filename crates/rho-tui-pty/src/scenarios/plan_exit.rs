@@ -129,6 +129,12 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::Key(Key::Enter),
+        // The questionnaire owns keys until the tool completes; queue Alt+M
+        // only once the proposal turn is waiting on the held reply.
+        Step::WaitText {
+            text: "✓ exit_plan_mode",
+            timeout: STREAM,
+        },
         Step::Key(Key::Alt('m')),
         Step::WaitText {
             text: "permission mode supervised queued for next turn",
