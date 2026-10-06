@@ -356,6 +356,7 @@ impl App {
             | CommandId::Permissions
             | CommandId::Hooks
             | CommandId::New
+            | CommandId::Init
             | CommandId::Fast
             | CommandId::Compact
             | CommandId::Login

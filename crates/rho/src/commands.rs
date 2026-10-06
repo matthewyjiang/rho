@@ -18,6 +18,7 @@ pub enum CommandId {
     Config,
     Permissions,
     Info,
+    Init,
     Help,
     Compact,
     Computer,
@@ -378,6 +379,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "info",
         usage: "/info",
         description: "show runtime, usage, and workspace details in an overlay",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Init,
+        name: "init",
+        usage: "/init",
+        description: "survey the repository and write AGENTS.md",
         argument_choices: &[],
     },
     CommandSpec {

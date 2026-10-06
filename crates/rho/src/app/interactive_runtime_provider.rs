@@ -118,6 +118,27 @@ impl InteractiveRuntime {
             })
     }
 
+    /// Validate model prompt files before refreshing the instruction snapshot, so
+    /// an invalid model prompt cannot refresh instructions through later hydration.
+    pub(super) fn prepare_new_session_prompt(
+        &mut self,
+    ) -> Result<Option<crate::prompt::SystemPrompt>, Error> {
+        let prepared = self.prepare_model_prompt(self.provider.provider())?;
+        Ok(prepared.map(|prompt| {
+            if let Some(template) = &mut self.prompt_template {
+                template.reload_project_instructions();
+                template.render(
+                    &crate::model_identity::PromptModel::from_sdk_identity(
+                        &self.provider.provider().identity(),
+                    ),
+                    prompt.model_prompt.as_ref(),
+                )
+            } else {
+                prompt
+            }
+        }))
+    }
+
     pub(super) fn adopt_model_prompt(&mut self, prompt: crate::prompt::SystemPrompt) {
         self.adopt_prompt(crate::app::active_prompt::ActivePrompt::from_prepared(
             prompt,

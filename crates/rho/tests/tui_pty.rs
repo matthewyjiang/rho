@@ -155,6 +155,21 @@ fn model_prompt_switch_and_invalid_file_recovery() {
     assert_pass("model_prompt_switch");
 }
 
+// Covers: /init must write AGENTS.md and /new must reload it without changing
+// the current session's cached instructions early.
+// Owner: interactive TUI onboarding and session lifecycle.
+#[test]
+fn init_writes_project_instructions_and_new_reloads_them() {
+    assert_pass("init_command");
+}
+
+// Covers: Plan must reject /init before writing project instructions.
+// Owner: interactive TUI permission gating.
+#[test]
+fn init_refuses_plan_permission_mode() {
+    assert_pass("init_plan");
+}
+
 // Covers: /new must not strand new child results behind the previous session ID.
 // Owner: interactive TUI session lifecycle and automatic completion delivery.
 #[test]

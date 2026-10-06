@@ -6,16 +6,18 @@ use crate::model_identity::PromptModel;
 
 use super::{
     model_prompts::{self, ModelPrompt, ModelPromptMode},
+    project_instructions::ProjectInstructions,
     PromptSource, PromptSourceKind, SystemPrompt, BASE_SYSTEM_PROMPT,
 };
 
 /// Snapshot of session instructions. Only model identity and model-specific
-/// behavioral text change on a switch; tool contracts and project context stay.
+/// behavioral text change on a switch; /new also reloads AGENTS.md context.
 #[derive(Clone)]
 pub(crate) struct ModelPromptTemplate {
     home: Option<PathBuf>,
     before_model: String,
     retained: String,
+    project_instructions: Option<ProjectInstructions>,
     mcp: String,
     sources: Vec<PromptSource>,
 }
@@ -35,8 +37,25 @@ impl ModelPromptTemplate {
             home: home.map(Path::to_path_buf),
             before_model,
             retained,
+            project_instructions: None,
             mcp: String::new(),
             sources,
+        }
+    }
+
+    pub(super) fn with_project_instructions(mut self, cwd: &Path, retained_offset: usize) -> Self {
+        self.project_instructions = Some(ProjectInstructions::new(
+            cwd,
+            self.home.as_deref(),
+            retained_offset,
+        ));
+        self
+    }
+
+    /// /new refreshes instruction files without rebuilding tool or skill context.
+    pub(crate) fn reload_project_instructions(&mut self) {
+        if let Some(instructions) = &mut self.project_instructions {
+            instructions.reload(self.home.as_deref());
         }
     }
 
@@ -99,7 +118,14 @@ impl ModelPromptTemplate {
         ));
         sources[0].bytes += text.len() - start;
         text.push_str(&self.mcp);
-        text.push_str(&self.retained);
+        if let Some(instructions) = &self.project_instructions {
+            let (prefix, suffix) = self.retained.split_at(instructions.retained_offset);
+            text.push_str(prefix);
+            instructions.append_to(&mut text, &mut sources);
+            text.push_str(suffix);
+        } else {
+            text.push_str(&self.retained);
+        }
         sources[0].bytes += self.mcp.len();
         SystemPrompt {
             text,

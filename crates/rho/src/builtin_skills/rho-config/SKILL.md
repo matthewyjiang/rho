@@ -33,6 +33,8 @@ Help the user configure rho. Determine what they want to change, then guide them
 
 To add or change global instructions, edit `~/.rho/AGENTS.md` directly with the file tools, or open it for the user and make the edit. Offer a concrete draft when the user describes a rule in prose. Project `AGENTS.md` files live at `<project>/AGENTS.md`; the global file sits in the home directory, not in any project.
 
+For project onboarding, `/init` surveys the repository and creates or updates `AGENTS.md` at the git root (or current directory outside a repository). It preserves existing files with targeted edits and requires write permission; it is unavailable in Plan mode. Rho loads project `AGENTS.md` files from the git root through the current directory, with more specific files taking precedence. `AGENTS.md` is the only instruction filename; `CLAUDE.md` is not supported. After `/init` or any manual global/project instruction edit, run `/new` or restart Rho to reload the files. Model switches keep the cached instructions.
+
 ## Where settings live
 
 Rho stores persistent config at `~/.rho/config.toml` by default. `RHO_HOME` overrides the config directory; `rho --config <path>` loads and saves a specific file. Restart-only settings are the values the running process used at startup, so a config edit does not take effect until rho starts again. Some settings apply live; say which one you are recommending.

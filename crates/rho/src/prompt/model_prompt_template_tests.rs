@@ -107,6 +107,54 @@ fn retained_suffix_and_mcp_rerender_match_the_built_prompt() {
     );
 }
 
+// Covers: reloading created, changed, and removed instruction files must replace
+// their provenance without dropping host-owned suffixes or duplicating sources.
+// Owner: prompt assembly; PTY covers the /new lifecycle boundary.
+#[test]
+fn project_instruction_reload_replaces_context_and_source_accounting() {
+    let home = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    std::fs::create_dir(home.path().join(".rho")).unwrap();
+    let running = PromptModel::Rho {
+        provider: "test".into(),
+        model: "model".into(),
+    };
+    let make_template = || {
+        let mut template = super::super::system_prompt_template_with_home_and_models(
+            &[],
+            project.path(),
+            Some(home.path()),
+            super::super::PromptModels {
+                running: &running,
+                advisor: None,
+            },
+        );
+        template.append_retained("\nretained agent instructions");
+        template
+    };
+    let mut template = make_template();
+    for rules in [Some("first"), Some("updated"), None] {
+        for path in [
+            home.path().join(".rho/AGENTS.md"),
+            project.path().join("AGENTS.md"),
+        ] {
+            if let Some(rules) = rules {
+                std::fs::write(path, rules).unwrap();
+            } else {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        template.reload_project_instructions();
+        let refreshed = template.build(&running).unwrap();
+        let fresh = make_template().build(&running).unwrap();
+        assert_eq!(
+            (refreshed.text, refreshed.sources),
+            (fresh.text, fresh.sources),
+            "instruction state: {rules:?}",
+        );
+    }
+}
+
 // Covers: incidental startup hydration keeps the loaded file, but an explicit
 // lifecycle build reads current contents and rejects new validation failures.
 // Owner: prompt assembly.

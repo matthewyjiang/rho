@@ -74,6 +74,7 @@ pub struct Skill {
 const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-config/SKILL.md"),
     include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
+    include_str!("builtin_skills/rho-init/SKILL.md"),
     include_str!("builtin_skills/rho-workflow-authoring/SKILL.md"),
 ];
 
@@ -345,6 +346,7 @@ mod tests {
         for (name, disable_model_invocation) in [
             ("rho-config", false),
             ("rho-agent-creator", true),
+            ("rho-init", true),
             ("rho-workflow-authoring", false),
         ] {
             let skill = skills
@@ -411,6 +413,7 @@ mod tests {
                 "project-skill",
                 "rho-agent-creator",
                 "rho-config",
+                "rho-init",
                 "rho-skill",
                 "rho-workflow-authoring",
             ]

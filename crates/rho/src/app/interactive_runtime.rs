@@ -578,7 +578,7 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }
-        let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
+        let prepared_prompt = self.prepare_new_session_prompt()?;
         self.revoke_computer_use();
         self.runtime
             .hooks()

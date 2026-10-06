@@ -18,6 +18,7 @@ Unknown keys in `config.toml` are a load error, so typos fail loudly. Values tha
 | Concurrent agents, subagents, rewind | [Behavior](#behavior) |
 | Questionnaire timeout | [Questionnaire timeout](#questionnaire-timeout) |
 | Prompt templates | [Prompt templates](#prompt-templates) |
+| Project and global instructions | [AGENTS.md](#project-and-global-instructions) and `/init` |
 | Model-scoped system instructions | [Model prompts](/configuration/model-prompts) |
 | Web search | [Web search](/configuration/web-search) |
 | xAI image generation | [xAI](/providers/xai#notes) |
@@ -58,6 +59,21 @@ When `cache_miss_notices` is on, a completed turn that re-billed a large uncache
 `notifications` defaults to on. While the terminal is unfocused, Rho notifies when an approval or questionnaire opens or a turn finishes; a goal run or queued follow-ups notify once, when Rho waits for you again. iTerm2, WezTerm, Ghostty, and kitty get an OSC 9 desktop notification. Other terminals, and anything inside tmux or screen, get a terminal bell. Rho only knows the terminal is unfocused if it reports focus changes; in tmux, set `focus-events on`. Under [Herdr](/integrations/herdr) Rho sends none, because Herdr shows pane state itself.
 
 `/login`, `/logout`, and `/model` remain shortcuts for credentials and the conversation model. The matching `/config` rows open the same pickers. Use `/agents` to inspect reserved internal agents and set their model overrides.
+
+## Project and global instructions
+
+Rho loads instructions from `AGENTS.md` only. With the default system prompt, discovery runs in this order:
+
+1. Global instructions at `~/.rho/AGENTS.md`.
+2. Project `AGENTS.md` files from the git root through the current working directory, including each directory on that path. Outside a git repository, only the current directory's `AGENTS.md` is discovered.
+
+More specific files appear later and take precedence when instructions conflict. Rho does not load `CLAUDE.md`, `.cursor/rules`, or `.github/copilot-instructions.md` as instructions.
+
+Run `/init` in the [interactive TUI](/interactive-tui#commands) to survey the repository and create a concise `AGENTS.md` at its git root (or in the current directory outside a repository). The survey focuses on build/test/lint commands, layout, non-obvious conventions, and contribution rules. Existing instructions keep their structure and voice; `/init` makes targeted edits rather than replacing them. Other tools' instruction files may inform the survey, but the output is always `AGENTS.md`.
+
+`/init` starts a model turn using a built-in skill and the active agent's file tools. It is unavailable during a running turn, in Plan permission mode, or when the active agent lacks the required skill, write, or file-edit tools. Normal write permissions still apply.
+
+Instructions are cached for the current session. After `/init` or a manual instruction edit, run `/new` to re-read the global and project files, or restart Rho. Model switches do not reload `AGENTS.md`. `--no-system-prompt` omits instruction files entirely.
 
 ## CLI overrides
 

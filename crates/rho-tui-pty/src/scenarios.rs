@@ -39,6 +39,7 @@ mod goal;
 mod header_hints;
 mod hooks;
 mod hover_clicks;
+mod init_command;
 mod inline_choice_click;
 mod limits;
 mod line_editor;
@@ -135,6 +136,7 @@ use goal::{
 };
 use header_hints::HEADER_HINTS_SCENARIO;
 use hooks::HOOKS_CONTRACT_SCENARIO;
+use init_command::{INIT_COMMAND_SCENARIO, INIT_PLAN_SCENARIO};
 use limits::LIMITS_OVERLAY_SCENARIO;
 use login::{
     LOGIN_CUSTOM_PROVIDER_STEPS, LOGIN_OAUTH_FLOW_CHOICE_SCENARIO, LOGIN_OLLAMA_STEPS,
@@ -422,6 +424,8 @@ const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
 
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
+    INIT_COMMAND_SCENARIO,
+    INIT_PLAN_SCENARIO,
     STARTUP_FIRST_FRAME_SCENARIO,
     STARTUP_STREAM_EXIT_SCENARIO,
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,

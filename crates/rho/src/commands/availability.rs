@@ -24,6 +24,7 @@ impl CommandContext {
             | CommandId::Config
             | CommandId::Permissions
             | CommandId::Info
+            | CommandId::Init
             | CommandId::Help
             | CommandId::Compact
             | CommandId::Computer

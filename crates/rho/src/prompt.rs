@@ -7,6 +7,7 @@ use {crate::model_identity::PromptModel, crate::skills, rho_tools::tool::ToolSpe
 pub(crate) mod model_prompt_edit;
 mod model_prompt_template;
 pub(crate) mod model_prompts;
+mod project_instructions;
 pub(crate) use model_prompt_template::ModelPromptTemplate;
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
@@ -217,23 +218,7 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
         bytes: text.len(),
     }];
 
-    let agent_instructions = agent_instruction_files(cwd, home);
-    if !agent_instructions.is_empty() {
-        let start = text.len();
-        text.push_str(
-            "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n",
-        );
-        sources[0].bytes += text.len() - start;
-        for (path, contents) in agent_instructions {
-            let start = text.len();
-            push_context_file(&mut text, "agents_instructions", &path, &contents);
-            sources.push(PromptSource {
-                kind: PromptSourceKind::Agents,
-                path: Some(path.display().to_string()),
-                bytes: text.len() - start,
-            });
-        }
-    }
+    let instruction_offset = text.len();
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
         match plugin_skills {
@@ -275,6 +260,7 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
     }
 
     ModelPromptTemplate::new(home, before_model, text, sources)
+        .with_project_instructions(cwd, instruction_offset)
 }
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {
