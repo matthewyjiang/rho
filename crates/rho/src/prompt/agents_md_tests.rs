@@ -24,6 +24,10 @@ fn append_rejects_a_contender_and_rereads_after_unlock() {
             config_writer::write_atomically(&path, initial).unwrap();
         }
         let locks = dir.path().join("locks");
+        // Key the lock the way `append_instruction` does: after the parent
+        // exists, so canonicalization (macOS /private/var, Windows \\?\)
+        // yields the same key.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let held = acquire_lock_file(&instruction_lock_path(&path, &locks)).unwrap();
         append_instruction(&path, &locks, "contending instruction").unwrap_err();
         assert_eq!(std::fs::read_to_string(&path).ok().as_deref(), initial);
