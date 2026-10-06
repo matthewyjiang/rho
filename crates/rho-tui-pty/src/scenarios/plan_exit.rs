@@ -99,12 +99,23 @@ fn assert_plan_collapsed(harness: &mut PtyHarness) -> Result<()> {
 }
 
 /// Typed feedback fills the questionnaire's free-text field, which runs
-/// through the paste-burst detector: under runner load the keys can arrive as
-/// one burst, and an Enter inside its suppression window becomes a newline
-/// instead of submitting.
-fn submit_typed_feedback(harness: &mut PtyHarness) -> Result<()> {
+/// through the paste-burst detector. Its Enter suppression window starts when
+/// Rho *reads* the last key, not when the harness wrote it: a stalled runner
+/// can read all six keys late, so a settle timed from the harness side still
+/// lands Enter inside the window and it becomes a newline. Wait for Rho to
+/// render the text first, which proves it read every key, then settle.
+fn submit_typed_feedback(harness: &mut PtyHarness, feedback: &str) -> Result<()> {
+    harness.wait_for_text(&format!("other: {feedback}"), SETTLE)?;
     harness.settle_plain_text_input();
     harness.inject_key(&Key::Enter)
+}
+
+fn submit_migration_feedback(harness: &mut PtyHarness) -> Result<()> {
+    submit_typed_feedback(harness, "include migration steps")
+}
+
+fn submit_bypass_feedback(harness: &mut PtyHarness) -> Result<()> {
+    submit_typed_feedback(harness, "bypass")
 }
 
 fn release_plan_child(harness: &mut PtyHarness) -> Result<()> {
@@ -285,7 +296,7 @@ pub(super) const APPROVE_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::TypeText("include migration steps"),
-        Step::Custom(submit_typed_feedback),
+        Step::Custom(submit_migration_feedback),
         Step::WaitText {
             text: "fixture plan implementation reached",
             timeout: STREAM,
@@ -325,7 +336,7 @@ pub(super) const KEEP_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::TypeText("bypass"),
-        Step::Custom(submit_typed_feedback),
+        Step::Custom(submit_bypass_feedback),
         Step::WaitText {
             text: "fixture plan review complete",
             timeout: STREAM,
