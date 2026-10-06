@@ -97,7 +97,9 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
                 )),
             ))
             .workflow(Arc::new(RegistryWorkflowService));
-        let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
+        let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options)
+            .with_plan_exit_host(&config);
+        tools.set_plan_exit_registered(crate::permission::PermissionMode::Plan);
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();

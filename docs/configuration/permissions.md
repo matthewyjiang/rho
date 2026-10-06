@@ -22,6 +22,14 @@ These reads are allowed in every checked mode, including Plan: workspace-scoped 
 
 The status line shows **Bypass** in warning style. The other modes appear dim.
 
+## Plan → execute handoff
+
+In the interactive TUI, Plan mode offers `exit_plan_mode` when questionnaire input is available. Rho submits its complete markdown plan and asks how to continue. Choose **Approve → allow edits**, **Approve → supervised**, or **Approve → bypass**. **Approve → auto** is offered only when a permission classifier model is configured. Choose **Keep planning** to revise the plan without changing mode. A separate optional **Feedback** question accepts free text under **Other**; feedback never grants permission.
+
+Approval switches the permission mode **until Rho exits**, including across `/new` and `/resume`. It does not write `permission_mode` to your config, and the next launch starts in your saved mode; `/permissions` and the config picker still save their selections. The current model turn remains under Plan policy until it completes successfully. Then Rho applies the chosen mode, shows a notice, and automatically sends a follow-up asking the model to implement the approved plan. A failed, cancelled, or interrupted turn discards the pending approval instead of executing it.
+
+The submitted plan remains available in a collapsible tool card. Headless and ACP hosts do not advertise this handoff tool; use their existing permission controls instead.
+
 ## Auto
 
 Auto uses the Allow edits gate. A classifier model reviews what that gate does not allow, instead of opening the approval UI.

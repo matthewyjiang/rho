@@ -476,10 +476,14 @@ fn rewrite_history_tree(
     let mut count = 0;
     match value {
         serde_json::Value::Object(map) => {
-            if let Some(history) = map.get_mut("history").and_then(|h| h.as_array_mut()) {
-                for item in history.iter_mut() {
-                    if rewrite_message_value(item) {
-                        count += 1;
+            // Full snapshots carry `history`; later commits after a baseline
+            // (such as the workspace-rewind root) carry `appended_history`.
+            for key in ["history", "appended_history"] {
+                if let Some(history) = map.get_mut(key).and_then(|h| h.as_array_mut()) {
+                    for item in history.iter_mut() {
+                        if rewrite_message_value(item) {
+                            count += 1;
+                        }
                     }
                 }
             }

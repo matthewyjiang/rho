@@ -102,6 +102,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_questionnaire_transcript_key(key, terminal)? {
+            return Ok(());
+        }
+
         // Overlay / modal composers own keys first. Dispatch by mode so the
         // shared free-text path below only runs for ComposerMode::Input.
         if self.handle_composer_mode_key(key, terminal, agent).await? {
@@ -574,8 +578,11 @@ impl App {
                 }
             }
 
-            let should_drain_queue =
-                goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
+            // Successful completion already drained follow-ups in the shared
+            // turn continuation. Only failed goal turns need driver-owned retry
+            // bookkeeping before delivering their remaining queued prompts.
+            let should_drain_queue = matches!(outcome_kind, super::TurnOutcomeKind::Failed)
+                && goal_command::should_drain_queued_prompts(outcome_kind, resume_goal);
             if self.should_quit
                 || !should_drain_queue
                 || self.input_ui.composer().blocks_auto_continue()

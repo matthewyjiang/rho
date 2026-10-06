@@ -70,6 +70,7 @@ enum ToolKind {
     GetSearchContent,
     Questionnaire,
     Todo,
+    ExitPlanMode,
     Sessions,
     Codemode,
     ToolSearch,
@@ -112,6 +113,7 @@ impl ToolKind {
             "get_search_content" => Self::GetSearchContent,
             "questionnaire" => Self::Questionnaire,
             "todo" => Self::Todo,
+            "exit_plan_mode" => Self::ExitPlanMode,
             "sessions" => Self::Sessions,
             crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
             crate::tools::code_mode::TOOL_SEARCH_NAME => Self::ToolSearch,
@@ -153,6 +155,7 @@ impl ToolKind {
             | Self::GetSearchContent
             | Self::Questionnaire
             | Self::Todo
+            | Self::ExitPlanMode
             | Self::Sessions
             | Self::Codemode
             | Self::ToolSearch
@@ -445,10 +448,10 @@ impl InteractiveToolPresenter {
         }
         let presented = presentation(view, finished_card(view, content, ok, &self.cwd, data));
         FinishedToolPresentation {
-            // A loaded skill collapses to a receipt; expanding shows the text
-            // the model received. A failed load stays an ordinary card so its
-            // reason stays visible.
-            presentation: if view.kind == ToolKind::Skill && ok {
+            // Loaded skills and plan approvals collapse to receipts; expanding
+            // shows the skill text or proposed plan. Failures keep their reason
+            // visible in an ordinary card.
+            presentation: if matches!(view.kind, ToolKind::Skill | ToolKind::ExitPlanMode) && ok {
                 crate::presentation::Presentation::SummaryCard(presented.card)
             } else {
                 presented.card.into()

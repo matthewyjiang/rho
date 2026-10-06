@@ -102,7 +102,9 @@ pub(super) async fn initialize(
             config.max_output_bytes,
             cwd.clone(),
         );
-        tools.with_computer_use(computer)
+        tools
+            .with_computer_use(computer)
+            .with_plan_exit_host(config)
     } else {
         tools
     };

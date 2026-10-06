@@ -100,6 +100,15 @@ pub(super) async fn intercept(
 pub(super) fn intercept_response(
     request: &ModelRequest<'_>,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if evaluation_condition_is(request, "fixture plan exit") {
+        let implemented = last_user_text(request)
+            .is_some_and(|prompt| prompt.contains("fixture plan implementation reached"));
+        return Some(completed(if implemented {
+            r#"{"state":"Met","reason":"the approved plan was implemented before evaluation","human_steps":[]}"#
+        } else {
+            r#"{"state":"Blocked","reason":"plan evaluated before implementation","human_steps":[{"action":"implement the approved plan","reason":"handoff was not delivered"}]}"#
+        }));
+    }
     if is_blocked_goal_evaluation(request) {
         let evaluation = if GOAL_BLOCKED_EVALUATIONS.fetch_add(1, Ordering::SeqCst) == 0 {
             r#"{"state":"Blocked","reason":"all fixture work is complete; publishing requires user authority","human_steps":[{"action":"publish the fixture release","reason":"requires the user's credentials"}]}"#

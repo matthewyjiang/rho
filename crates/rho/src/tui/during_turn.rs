@@ -86,6 +86,9 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_questionnaire_transcript_key(key, terminal)? {
+            return Ok(());
+        }
         if self.handle_questionnaire_key(key)? {
             return Ok(());
         }

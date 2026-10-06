@@ -13,10 +13,12 @@ mod docs_demo;
 mod edit;
 mod goal;
 mod init;
+mod plan_exit;
 mod quiet_subagent;
 mod release;
 mod remember;
 mod response_scenarios;
+mod send_confirm;
 mod sessions;
 mod stream_scenarios;
 mod streaming_controls;
@@ -170,6 +172,12 @@ async fn fixture_stream(
     if let Some(response) = attach::intercept(&prompt, &request, &events).await {
         return response;
     }
+    if let Some(response) = plan_exit::intercept_child(&prompt, &request).await {
+        return response;
+    }
+    if let Some(response) = plan_exit::intercept_held(&prompt, &request).await {
+        return response;
+    }
     if let Some(response) = goal::intercept(&prompt, &request, &events).await {
         return response;
     }
@@ -232,10 +240,13 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
     if let Some(response) = init::intercept(request) {
         return response;
     }
+    let prompt = last_user_text(request).unwrap_or_default();
+    if let Some(response) = plan_exit::intercept(&prompt, request) {
+        return response;
+    }
     if let Some(response) = response_scenarios::intercept(request) {
         return response;
     }
-    let prompt = last_user_text(request).unwrap_or_default();
     completed(format!("fixture response: {prompt}"))
 }
 

@@ -156,6 +156,7 @@ mod performance_benchmarks;
 mod permission_mode;
 mod picker;
 mod picker_actions;
+mod plan_exit;
 mod pointer_actions;
 mod process_panel;
 mod process_peek;

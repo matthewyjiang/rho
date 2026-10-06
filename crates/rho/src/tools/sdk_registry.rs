@@ -141,6 +141,12 @@ struct AdvisorTools {
     registration: HostToolRegistration,
 }
 
+struct PlanExitTools {
+    slot: super::plan_exit::PlanExitSlot,
+    classifier_configured: Arc<std::sync::atomic::AtomicBool>,
+    registration: HostToolRegistration,
+}
+
 struct ComputerTools {
     session: super::computer_use::ComputerUseSession,
     registration: HostToolRegistration,
@@ -179,6 +185,7 @@ pub struct AppToolSet {
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
     computer_use: Option<ComputerTools>,
+    plan_exit: Option<PlanExitTools>,
     subagents: Option<SubagentManager>,
     /// The agent catalog the `agent` tool spec advertises, when registered.
     advertised_agents: Option<crate::agent::AdvertisedAgents>,
@@ -205,6 +212,7 @@ impl AppToolSet {
             subagents: None,
             advertised_agents: None,
             computer_use: None,
+            plan_exit: None,
             processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
@@ -477,6 +485,57 @@ impl AppToolSet {
         };
         self.inventory
             .mutate(|tools| advisor.registration.set_registered(tools, registered))
+    }
+
+    /// Installs plan handoff only for an interactive host that can answer questions.
+    pub(crate) fn with_plan_exit_host(mut self, config: &Config) -> Self {
+        if self.contains("questionnaire") {
+            let slot = super::plan_exit::PlanExitSlot::default();
+            let classifier_configured = Arc::new(std::sync::atomic::AtomicBool::new(
+                config
+                    .internal_agents
+                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
+            ));
+            self.plan_exit = Some(PlanExitTools {
+                registration: HostToolRegistration::new(Arc::new(super::plan_exit::PlanExitTool {
+                    slot: Some(slot.clone()),
+                    classifier_configured: classifier_configured.clone(),
+                })),
+                slot,
+                classifier_configured,
+            });
+            self.set_plan_exit_registered(config.permission_mode);
+        }
+        self
+    }
+
+    pub(crate) fn set_plan_exit_registered(
+        &mut self,
+        mode: crate::permission::PermissionMode,
+    ) -> bool {
+        let Some(plan_exit) = self.plan_exit.as_mut() else {
+            return false;
+        };
+        self.inventory.mutate(|tools| {
+            plan_exit
+                .registration
+                .set_registered(tools, mode == crate::permission::PermissionMode::Plan)
+        })
+    }
+
+    pub(crate) fn update_plan_exit_classifier(&self, config: &Config) {
+        if let Some(plan_exit) = &self.plan_exit {
+            plan_exit.classifier_configured.store(
+                config
+                    .internal_agents
+                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    pub(crate) fn take_plan_exit_decision(&self) -> Option<super::plan_exit::PlanExitDecision> {
+        self.plan_exit.as_ref()?.slot.take()
     }
 
     /// Replaces the advertised built-in file edit tool.

@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{backend::Backend, Terminal};
 
 use super::{
     composer_pointer::ChoiceClick,
@@ -28,6 +29,30 @@ impl App {
         self.insert_entry(&Entry::Notice(display));
         self.set_status("fallback answers submitted");
         true
+    }
+
+    /// Questionnaires own editing, but allow read-only transcript inspection
+    /// in both idle and running turns. Never route through the full composer
+    /// handler here: it can queue input, paste, or change model state.
+    pub(super) fn handle_questionnaire_transcript_key<B: Backend>(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<bool> {
+        if !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_))
+            || !self
+                .info
+                .runtime
+                .keybindings
+                .toggle_tool_output
+                .matches(key)
+        {
+            return Ok(false);
+        }
+        self.toggle_latest_tool_output(terminal)?;
+        self.input_ui.clear_paste_burst();
+        self.ctrl_c_streak = 0;
+        Ok(true)
     }
 
     pub(super) fn handle_questionnaire_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {

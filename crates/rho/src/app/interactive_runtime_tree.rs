@@ -1,6 +1,7 @@
 //! Selecting durable conversation branches without changing the live session
 //! until the target history and its refreshed prompt are ready.
 
+use super::permission::RebuiltPermission;
 use super::*;
 
 /// Prepared replacement owned by the runtime, not by a UI transaction.
