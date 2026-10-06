@@ -223,12 +223,19 @@ fn lock_catalog(directory: &Path) -> Result<EditFileLock> {
             path.display()
         );
     }
-    acquire_lock_file(&path).with_context(|| {
-        format!(
+    match acquire_lock_file(&path) {
+        Ok(lock) => Ok(lock),
+        Err(error) if error.kind() == ErrorKind::WouldBlock => bail!(
             "could not acquire model prompt catalog lock {}; another edit may be saving",
             path.display()
-        )
-    })
+        ),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "could not acquire model prompt catalog lock {}",
+                path.display()
+            )
+        }),
+    }
 }
 
 fn safe_part(value: &str) -> String {
