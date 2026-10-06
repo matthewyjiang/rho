@@ -9,14 +9,16 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::AgentCatalog;
+use super::{AgentCatalog, AgentCatalogError};
 use crate::workspace::ProjectTrust;
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct AgentCheckReport {
     pub dirs: AgentDirs,
-    #[serde(flatten)]
-    pub status: AgentCheckStatus,
+    /// File-backed agents that loaded.
+    pub agents: Vec<CheckedAgent>,
+    /// Files discovery skipped. Their agents are unavailable until fixed.
+    pub invalid: Vec<InvalidAgentFile>,
 }
 
 /// Directories a user definition can be saved to. `None` when unavailable:
@@ -29,23 +31,27 @@ pub(crate) struct AgentDirs {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub(crate) enum AgentCheckStatus {
-    /// Every definition parsed. Lists file-backed agents only.
-    Ok { agents: Vec<CheckedAgent> },
-    /// Discovery stops at the first invalid file, as it does at startup.
-    Error {
-        path: String,
-        field: Option<String>,
-        message: String,
-    },
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct CheckedAgent {
     pub id: String,
     pub origin: &'static str,
     pub path: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct InvalidAgentFile {
+    pub path: String,
+    pub field: Option<String>,
+    pub message: String,
+}
+
+impl From<AgentCatalogError> for InvalidAgentFile {
+    fn from(error: AgentCatalogError) -> Self {
+        Self {
+            path: crate::paths::display(&error.path),
+            field: error.field,
+            message: error.message,
+        }
+    }
 }
 
 /// Checks every definition visible from `cwd`.
@@ -69,33 +75,33 @@ pub(crate) fn check_agents(
         })
         .flatten()
         .map(|root| crate::paths::display(&root.join(".agents/agents")));
-    let status = match AgentCatalog::discover_with_home_and_trust(cwd, home, project_trust) {
-        Ok(catalog) => AgentCheckStatus::Ok {
-            agents: catalog
-                .iter()
-                .filter_map(|entry| {
-                    let path = entry.metadata.path.as_deref()?;
-                    Some(CheckedAgent {
-                        id: entry.definition.id.as_str().to_string(),
-                        origin: entry.metadata.origin.as_str(),
-                        path: crate::paths::display(path),
+    let (agents, invalid) =
+        match AgentCatalog::discover_with_home_and_trust(cwd, home, project_trust) {
+            Ok(catalog) => (
+                catalog
+                    .iter()
+                    .filter_map(|entry| {
+                        let path = entry.metadata.path.as_deref()?;
+                        Some(CheckedAgent {
+                            id: entry.definition.id.as_str().to_string(),
+                            origin: entry.metadata.origin.as_str(),
+                            path: crate::paths::display(path),
+                        })
                     })
-                })
-                .collect(),
-        },
-        Err(error) => AgentCheckStatus::Error {
-            path: crate::paths::display(&error.path),
-            field: error.field,
-            message: error.message,
-        },
-    };
+                    .collect(),
+                catalog.skipped().iter().cloned().map(Into::into).collect(),
+            ),
+            // Only a broken built-in fails discovery outright.
+            Err(error) => (Vec::new(), vec![error.into()]),
+        };
     AgentCheckReport {
         dirs: AgentDirs {
             agents_home,
             rho_home,
             project,
         },
-        status,
+        agents,
+        invalid,
     }
 }
 

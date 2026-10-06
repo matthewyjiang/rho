@@ -118,9 +118,9 @@ Target `<dir>/<id>.md` with the chosen directory from `dirs`. Before writing, `r
 
 `write` the confirmed contents, then call `rho` with `action: "agents"` again:
 
-- `status: ok` listing the new path: done.
-- `status: error` on the new file: fix the named `field`, rewrite, and recheck. Never stop on an error: one invalid definition stops every agent from loading, including Rho startup.
-- `status: error` on another file: the new file was not checked. Tell the user which file is broken.
+- New path under `agents`: done.
+- New path under `invalid`: fix the named `field`, rewrite, and recheck. Rho skips an invalid file, so the agent does not exist until the check is clean.
+- Other files under `invalid`: they predate this change. Mention them, but do not edit them unless asked.
 
 After a clean check:
 

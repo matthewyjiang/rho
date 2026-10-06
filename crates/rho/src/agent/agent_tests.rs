@@ -3,20 +3,94 @@ use std::path::{Path, PathBuf};
 use super::*;
 use crate::workspace::ProjectTrust;
 
+// Covers: one bad user definition must not stop discovery (and so startup),
+// must report its file and field, and must not fall back to a lower-precedence
+// agent with the id the user meant to override.
+// Owner: agent catalog
 #[test]
-fn rejects_unknown_tools_with_context() {
-    let root = tempfile::tempdir().unwrap();
-    let agents = root.path().join(".rho/agents");
-    std::fs::create_dir_all(&agents).unwrap();
-    let path = agents.join("bad.md");
-    std::fs::write(&path, "---\ndescription: bad\ntools: [teleport]\n---\n").unwrap();
+fn skips_invalid_user_files_and_blocks_their_ids() {
+    struct Case {
+        name: &'static str,
+        files: &'static [(&'static str, &'static str)],
+        skipped: &'static str,
+        field: &'static str,
+        message: &'static str,
+        blocked_id: Option<&'static str>,
+    }
+    let cases = [
+        Case {
+            name: "unknown tool shadows a built-in",
+            files: &[(
+                "reviewer.md",
+                "---\ndescription: bad\ntools: [teleport]\n---\n",
+            )],
+            skipped: "reviewer.md",
+            field: "tools",
+            message: "unknown tool 'teleport'",
+            blocked_id: Some("reviewer"),
+        },
+        Case {
+            name: "same-tier duplicates",
+            files: &[
+                ("one.md", "---\nid: duplicate\ndescription: one\n---\n"),
+                ("two.md", "---\nid: duplicate\ndescription: two\n---\n"),
+            ],
+            skipped: "two.md",
+            field: "id",
+            message: "duplicate agent ID",
+            blocked_id: Some("duplicate"),
+        },
+        Case {
+            name: "reserved internal id",
+            files: &[("session-title.md", "---\ndescription: shadow\n---\n")],
+            skipped: "session-title.md",
+            field: "id",
+            message: "reserved for an internal agent",
+            blocked_id: None,
+        },
+    ];
 
-    let error = AgentCatalog::discover_with_home(root.path(), Some(root.path())).unwrap_err();
+    for case in cases {
+        let root = tempfile::tempdir().unwrap();
+        let agents = root.path().join(".rho/agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        for (file, contents) in case.files {
+            std::fs::write(agents.join(file), contents).unwrap();
+        }
+        std::fs::write(agents.join("ok.md"), "---\ndescription: ok\n---\n").unwrap();
 
-    assert_eq!(error.path, path);
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.to_string().contains("unknown tool 'teleport'"));
-    assert!(error.to_string().contains("runtime: rho"));
+        let catalog = AgentCatalog::discover_with_home(root.path(), Some(root.path()))
+            .unwrap_or_else(|error| panic!("{}: discovery failed: {error}", case.name));
+
+        let [skipped] = catalog.skipped() else {
+            panic!(
+                "{}: expected one skipped file, got {:?}",
+                case.name,
+                catalog.skipped()
+            );
+        };
+        assert_eq!(skipped.path, agents.join(case.skipped), "{}", case.name);
+        assert_eq!(skipped.field.as_deref(), Some(case.field), "{}", case.name);
+        assert!(
+            skipped.message.contains(case.message),
+            "{}: {}",
+            case.name,
+            skipped.message
+        );
+        assert!(
+            catalog.find("ok").is_ok(),
+            "{}: valid file still loads",
+            case.name
+        );
+        if let Some(id) = case.blocked_id {
+            assert_eq!(
+                catalog.find(id).unwrap_err().path,
+                skipped.path,
+                "{}",
+                case.name
+            );
+        }
+    }
 }
 
 #[test]
@@ -165,23 +239,6 @@ fn claude_definitions_have_no_legacy_v1_fingerprint() {
 }
 
 #[test]
-fn same_tier_duplicates_are_rejected() {
-    let root = tempfile::tempdir().unwrap();
-    let agents = root.path().join(".rho/agents");
-    std::fs::create_dir_all(&agents).unwrap();
-    for file in ["one.md", "two.md"] {
-        std::fs::write(
-            agents.join(file),
-            "---\nid: duplicate\ndescription: duplicate\n---\n",
-        )
-        .unwrap();
-    }
-    let error = AgentCatalog::discover_with_home(root.path(), Some(root.path())).unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("id"));
-    assert!(error.to_string().contains("duplicate agent ID"));
-}
-
-#[test]
 fn internal_agents_are_visible_but_not_selectable() {
     let root = tempfile::tempdir().unwrap();
     let catalog = AgentCatalog::discover_with_home(root.path(), None).unwrap();
@@ -233,22 +290,6 @@ fn model_required_internal_agents_require_their_own_model() {
             (COMPACTION_AGENT_ID, false),
         ]
     );
-}
-
-#[test]
-fn rejects_files_with_reserved_internal_agent_ids() {
-    let root = tempfile::tempdir().unwrap();
-    let agents = root.path().join(".rho/agents");
-    std::fs::create_dir_all(&agents).unwrap();
-    let path = agents.join("session-title.md");
-    std::fs::write(&path, "---\ndescription: shadow\n---\nshadow prompt\n").unwrap();
-
-    let error = AgentCatalog::discover_with_home(root.path(), Some(root.path())).unwrap_err();
-
-    assert_eq!(error.path, path);
-    assert_eq!(error.field.as_deref(), Some("id"));
-    assert!(error.to_string().contains("session-title"));
-    assert!(error.to_string().contains("reserved"));
 }
 
 #[test]

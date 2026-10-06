@@ -128,7 +128,7 @@ impl Tool for Rho {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "rho".into(),
-            description: "Inspect the running Rho harness. Request only what you need: info returns runtime identity; context returns token usage; compaction returns context accounting, thresholds, and the last automatic-compaction decisions; prompt_sources returns source paths and byte contributions without contents; tools returns available tool names; hooks returns sanitized hook configuration and activity; config returns sanitized live configuration; agents rereads agent definition files and returns their save directories plus each loaded agent's path, or the first invalid file and field."
+            description: "Inspect the running Rho harness. Request only what you need: info returns runtime identity; context returns token usage; compaction returns context accounting, thresholds, and the last automatic-compaction decisions; prompt_sources returns source paths and byte contributions without contents; tools returns available tool names; hooks returns sanitized hook configuration and activity; config returns sanitized live configuration; agents rereads agent definition files and returns their save directories, each loaded agent's path, and any invalid file with its field and error."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",

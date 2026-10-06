@@ -3,7 +3,7 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{check_agents, AgentCheckReport, AgentCheckStatus, AgentDirs, CheckedAgent};
+use super::{check_agents, AgentCheckReport, AgentDirs, CheckedAgent};
 use crate::workspace::ProjectTrust;
 
 fn write_agent(dir: &Path, name: &str, contents: &str) -> String {
@@ -23,10 +23,10 @@ fn dirs(home: &Path) -> AgentDirs {
 }
 
 // Covers: the creator's post-write check must report the file the next
-// session would load, or the exact file and field that would break discovery.
+// session would load, or the exact file and field discovery skipped.
 // Owner: agent check
 #[test]
-fn reports_loaded_agents_or_the_first_invalid_file() {
+fn reports_loaded_agents_and_skipped_files() {
     let cwd = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let rho_agents = home.path().join(".rho/agents");
@@ -40,13 +40,12 @@ fn reports_loaded_agents_or_the_first_invalid_file() {
         check_agents(cwd.path(), Some(home.path()), ProjectTrust::Untrusted),
         AgentCheckReport {
             dirs: dirs(home.path()),
-            status: AgentCheckStatus::Ok {
-                agents: vec![CheckedAgent {
-                    id: "reviewer".into(),
-                    origin: "rho_home",
-                    path: valid,
-                }],
-            },
+            agents: vec![CheckedAgent {
+                id: "reviewer".into(),
+                origin: "rho_home",
+                path: valid,
+            }],
+            invalid: Vec::new(),
         }
     );
 
@@ -56,8 +55,11 @@ fn reports_loaded_agents_or_the_first_invalid_file() {
         "---\ndescription: broken\nruntime: antigravity\ntools: all\n---\nBody.\n",
     );
     let report = check_agents(cwd.path(), Some(home.path()), ProjectTrust::Untrusted);
-    let AgentCheckStatus::Error { path, field, .. } = report.status else {
-        panic!("expected an error, got {:?}", report.status);
-    };
-    assert_eq!((path, field), (invalid, Some("tools".to_string())));
+    let skipped = report
+        .invalid
+        .iter()
+        .map(|file| (file.path.as_str(), file.field.as_deref()))
+        .collect::<Vec<_>>();
+    assert_eq!(skipped, [(invalid.as_str(), Some("tools"))]);
+    assert_eq!(report.agents.len(), 1, "the valid agent still loads");
 }

@@ -65,10 +65,19 @@ pub struct AgentCatalogEntry {
     pub metadata: AgentCatalogMetadata,
 }
 
+/// Loaded agents plus the user definition files discovery skipped.
+///
+/// One bad file must not stop startup, so user tiers skip files that fail to
+/// read or parse and record why. The id a skipped file's name claims stays
+/// unavailable from that tier down: `find` reports the file's error instead of
+/// quietly falling back to a lower-precedence agent the user meant to override.
+/// Built-in definitions still fail discovery, since they ship with the binary.
 #[derive(Clone, Debug, Default)]
 pub struct AgentCatalog {
     entries: BTreeMap<AgentId, AgentCatalogEntry>,
     internal_entries: BTreeMap<AgentId, AgentCatalogEntry>,
+    skipped: Vec<AgentCatalogError>,
+    blocked: BTreeMap<AgentId, AgentCatalogError>,
 }
 
 /// A catalog discovered at startup, tagged with the cwd it was walked from.
@@ -124,15 +133,15 @@ impl AgentCatalog {
         catalog.load_builtins()?;
         if let Some(home) = home {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
-            catalog.load_tier(AgentOrigin::AgentsHome, &[agents_home])?;
-            catalog.load_tier(AgentOrigin::RhoHome, &[rho_home])?;
+            catalog.load_tier(AgentOrigin::AgentsHome, &[agents_home]);
+            catalog.load_tier(AgentOrigin::RhoHome, &[rho_home]);
         }
         if project_trust.is_trusted() {
             let project_roots: Vec<_> = crate::workspace::project_ancestor_dirs(cwd)
                 .into_iter()
                 .map(|path| path.join(".agents/agents"))
                 .collect();
-            catalog.load_tier(AgentOrigin::Project, &project_roots)?;
+            catalog.load_tier(AgentOrigin::Project, &project_roots);
         }
         catalog.load_internals();
         Ok(catalog)
@@ -149,7 +158,7 @@ impl AgentCatalog {
         catalog.load_tier(
             AgentOrigin::Workflow,
             &[workflow_local_agents_root(workflow_entry)],
-        )?;
+        );
         Ok(catalog)
     }
 
@@ -159,12 +168,12 @@ impl AgentCatalog {
     ) -> Result<Self, AgentCatalogError> {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
-        catalog.load_sources(AgentOrigin::AgentsHome, sources.agents_home)?;
-        catalog.load_sources(AgentOrigin::RhoHome, sources.rho_home)?;
+        catalog.load_sources(AgentOrigin::AgentsHome, sources.agents_home);
+        catalog.load_sources(AgentOrigin::RhoHome, sources.rho_home);
         for tier in sources.project {
-            catalog.load_sources(AgentOrigin::Project, tier)?;
+            catalog.load_sources(AgentOrigin::Project, tier);
         }
-        catalog.load_sources(AgentOrigin::Workflow, sources.workflow)?;
+        catalog.load_sources(AgentOrigin::Workflow, sources.workflow);
         catalog.load_internals();
         Ok(catalog)
     }
@@ -173,13 +182,17 @@ impl AgentCatalog {
         let id = AgentId::new(id).map_err(|error| {
             AgentCatalogError::at_field(PathBuf::from("<selection>"), "id", error.to_string())
         })?;
-        self.entries.get(&id).ok_or_else(|| {
-            AgentCatalogError::at_field(
-                PathBuf::from("<selection>"),
-                "id",
-                format!("unknown agent '{id}'"),
-            )
-        })
+        if let Some(entry) = self.entries.get(&id) {
+            return Ok(entry);
+        }
+        if let Some(error) = self.blocked.get(&id) {
+            return Err(error.clone());
+        }
+        Err(AgentCatalogError::at_field(
+            PathBuf::from("<selection>"),
+            "id",
+            format!("unknown agent '{id}'"),
+        ))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &AgentCatalogEntry> {
@@ -190,84 +203,54 @@ impl AgentCatalog {
         self.internal_entries.values().chain(self.entries.values())
     }
 
+    /// User definition files discovery skipped, in load order.
+    pub fn skipped(&self) -> &[AgentCatalogError] {
+        &self.skipped
+    }
+
     fn load_builtins(&mut self) -> Result<(), AgentCatalogError> {
-        let mut tier = BTreeMap::new();
+        let mut tier = TierLoad::default();
         for (id, contents) in BUILTINS {
             let path = PathBuf::from(format!("<builtin:{id}>"));
             let definition = parse_definition(&path, id, contents)?;
-            insert_in_tier(&mut tier, definition, &path)?;
+            tier.insert(definition, path)?;
         }
         self.merge_tier(tier, AgentOrigin::BuiltIn);
         Ok(())
     }
 
-    fn load_tier(
-        &mut self,
-        origin: AgentOrigin,
-        roots: &[PathBuf],
-    ) -> Result<(), AgentCatalogError> {
-        let mut tier = BTreeMap::new();
+    fn load_tier(&mut self, origin: AgentOrigin, roots: &[PathBuf]) {
+        let mut tier = TierLoad::default();
         for root in roots {
-            for path in markdown_paths(root)? {
-                let contents = std::fs::read_to_string(&path).map_err(|error| {
-                    AgentCatalogError::at_path(path.clone(), format!("cannot read file: {error}"))
-                })?;
-                let fallback_id =
-                    path.file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| {
-                            AgentCatalogError::at_field(
-                                path.clone(),
-                                "id",
-                                "filename is not valid UTF-8",
-                            )
-                        })?;
-                let definition = parse_definition(&path, fallback_id, &contents)?;
-                if is_internal_agent_id(&definition.id) {
-                    return Err(AgentCatalogError::at_field(
-                        path.clone(),
-                        "id",
-                        format!(
-                            "agent ID '{}' is reserved for an internal agent and cannot be overridden",
-                            definition.id
-                        ),
-                    ));
+            let paths = match markdown_paths(root) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    tier.skip(None, error);
+                    continue;
                 }
-                insert_in_tier(&mut tier, definition, &path)?;
+            };
+            for path in paths {
+                match std::fs::read_to_string(&path) {
+                    Ok(contents) => tier.load_file(path, &contents),
+                    Err(error) => {
+                        let error = AgentCatalogError::at_path(
+                            path.clone(),
+                            format!("cannot read file: {error}"),
+                        );
+                        tier.skip(stem_id(&path), error);
+                    }
+                }
             }
         }
         self.merge_tier(tier, origin);
-        Ok(())
     }
 
-    fn load_sources(
-        &mut self,
-        origin: AgentOrigin,
-        sources: Vec<(PathBuf, String)>,
-    ) -> Result<(), AgentCatalogError> {
-        let mut tier = BTreeMap::new();
+    fn load_sources(&mut self, origin: AgentOrigin, sources: Vec<(PathBuf, String)>) {
+        let mut tier = TierLoad::default();
         for (path, contents) in sources {
-            let fallback_id = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .ok_or_else(|| {
-                    AgentCatalogError::at_field(path.clone(), "id", "filename is not valid UTF-8")
-                })?;
-            let definition = parse_definition(&path, fallback_id, &contents)?;
-            if is_internal_agent_id(&definition.id) {
-                return Err(AgentCatalogError::at_field(
-                    path.clone(),
-                    "id",
-                    format!(
-                        "agent ID '{}' is reserved for an internal agent and cannot be overridden",
-                        definition.id
-                    ),
-                ));
-            }
-            insert_in_tier(&mut tier, definition, &path)?;
+            tier.load_file(path, &contents);
         }
         self.merge_tier(tier, origin);
-        Ok(())
     }
 
     fn load_internals(&mut self) {
@@ -286,12 +269,15 @@ impl AgentCatalog {
         }
     }
 
-    fn merge_tier(
-        &mut self,
-        tier: BTreeMap<AgentId, (AgentDefinition, PathBuf)>,
-        origin: AgentOrigin,
-    ) {
-        for (id, (definition, path)) in tier {
+    fn merge_tier(&mut self, tier: TierLoad, origin: AgentOrigin) {
+        // A skipped file blocks its id from this tier down, unless a valid
+        // file in this tier defines it.
+        for (id, error) in tier.blocked {
+            self.entries.remove(&id);
+            self.blocked.insert(id, error);
+        }
+        for (id, (definition, path)) in tier.loaded {
+            self.blocked.remove(&id);
             let fingerprint = definition.fingerprint();
             self.entries.insert(
                 id,
@@ -305,27 +291,99 @@ impl AgentCatalog {
                 },
             );
         }
+        self.skipped.extend(tier.skipped);
     }
 }
 
-fn insert_in_tier(
-    tier: &mut BTreeMap<AgentId, (AgentDefinition, PathBuf)>,
-    definition: AgentDefinition,
-    path: &Path,
-) -> Result<(), AgentCatalogError> {
-    if let Some((_, first_path)) = tier.get(&definition.id) {
-        return Err(AgentCatalogError::at_field(
-            path.to_path_buf(),
-            "id",
-            format!(
-                "duplicate agent ID '{}' at the same precedence; first defined in {}",
-                definition.id,
-                first_path.display()
-            ),
-        ));
+/// One precedence tier while it loads.
+#[derive(Default)]
+struct TierLoad {
+    loaded: BTreeMap<AgentId, (AgentDefinition, PathBuf)>,
+    blocked: BTreeMap<AgentId, AgentCatalogError>,
+    skipped: Vec<AgentCatalogError>,
+}
+
+impl TierLoad {
+    /// Parses one user file, skipping it when it cannot load.
+    fn load_file(&mut self, path: PathBuf, contents: &str) {
+        let Some(fallback_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            let error = AgentCatalogError::at_field(path, "id", "filename is not valid UTF-8");
+            self.skip(None, error);
+            return;
+        };
+        let definition = match parse_definition(&path, fallback_id, contents) {
+            Ok(definition) => definition,
+            Err(error) => {
+                self.skip(stem_id(&path), error);
+                return;
+            }
+        };
+        if is_internal_agent_id(&definition.id) {
+            let error = AgentCatalogError::at_field(
+                path,
+                "id",
+                format!(
+                    "agent ID '{}' is reserved for an internal agent and cannot be overridden",
+                    definition.id
+                ),
+            );
+            self.skip(None, error);
+            return;
+        }
+        if let Err(error) = self.insert(definition.clone(), path) {
+            // Neither same-tier duplicate wins; the id stays unavailable.
+            self.loaded.remove(&definition.id);
+            self.skip(Some(definition.id), error);
+        }
     }
-    tier.insert(definition.id.clone(), (definition, path.to_path_buf()));
-    Ok(())
+
+    fn insert(
+        &mut self,
+        definition: AgentDefinition,
+        path: PathBuf,
+    ) -> Result<(), AgentCatalogError> {
+        if self.blocked.contains_key(&definition.id) {
+            return Err(AgentCatalogError::at_field(
+                path,
+                "id",
+                format!(
+                    "agent ID '{}' is also claimed by a file that failed to load at the same precedence",
+                    definition.id
+                ),
+            ));
+        }
+        if let Some((_, first_path)) = self.loaded.get(&definition.id) {
+            return Err(AgentCatalogError::at_field(
+                path,
+                "id",
+                format!(
+                    "duplicate agent ID '{}' at the same precedence; first defined in {}",
+                    definition.id,
+                    first_path.display()
+                ),
+            ));
+        }
+        self.loaded
+            .insert(definition.id.clone(), (definition, path));
+        Ok(())
+    }
+
+    /// Records a skipped file. `id` is the agent the file claims, when known;
+    /// it becomes unavailable from this tier down.
+    fn skip(&mut self, id: Option<AgentId>, error: AgentCatalogError) {
+        tracing::warn!(error = %error, "skipping invalid agent definition");
+        if let Some(id) = id {
+            self.loaded.remove(&id);
+            self.blocked.entry(id).or_insert_with(|| error.clone());
+        }
+        self.skipped.push(error);
+    }
+}
+
+/// The agent id a definition file's name claims, when it is a valid id.
+fn stem_id(path: &Path) -> Option<AgentId> {
+    let stem = path.file_stem()?.to_str()?;
+    AgentId::new(stem).ok()
 }
 
 fn markdown_paths(root: &Path) -> Result<Vec<PathBuf>, AgentCatalogError> {

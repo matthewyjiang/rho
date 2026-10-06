@@ -2,7 +2,7 @@
 
 Parent: [Agents and delegation](/subagents).
 
-This is the parse contract for agent Markdown files. Unknown frontmatter keys fail. Invalid values fail before execution. Field order does not matter; `runtime` is resolved before `tools`.
+This is the parse contract for agent Markdown files. Unknown frontmatter keys and invalid values make the file invalid. Discovery skips an invalid user file and reports it (`/agents`, `rho` action `agents`), so other agents and startup are unaffected. Its agent stays unavailable until fixed: launching that id reports the file's error instead of falling back to a lower-precedence agent with the same id. Field order does not matter; `runtime` is resolved before `tools`.
 
 ```mermaid
 flowchart TD
@@ -539,4 +539,4 @@ tools: [view_file, run_command]
 Review the requested changes. Prefer reading before editing.
 ```
 
-Unknown fields, values, and tool references fail before execution. Definitions contain no credentials or mutable runtime state. New sessions store a v2 semantic fingerprint over behaviorally relevant fields, including `runtime`, tools, `inherit_claude_config`, and `fast` when enabled, not file paths or formatting. Resume also accepts the exact pre-runtime-axis v1 fingerprint for unchanged default Rho definitions (`runtime: rho`, `inherit_claude_config: false`, Rho tools encoding). Real definition changes still fail resume.
+Unknown fields, values, and tool references make the file invalid, so its agent never executes. Definitions contain no credentials or mutable runtime state. New sessions store a v2 semantic fingerprint over behaviorally relevant fields, including `runtime`, tools, `inherit_claude_config`, and `fast` when enabled, not file paths or formatting. Resume also accepts the exact pre-runtime-axis v1 fingerprint for unchanged default Rho definitions (`runtime: rho`, `inherit_claude_config: false`, Rho tools encoding). Real definition changes still fail resume.
