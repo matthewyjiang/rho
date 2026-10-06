@@ -142,7 +142,8 @@ pub(super) async fn run<P: AcpAgentPolicy>(
             // run_until preserves session/new's actual JSON-RPC error (unlike
             // start_session, which starts a background request task). Bound
             // only startup: after the closure starts, turns have no deadline.
-            let session_run = cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()))
+            let session_meta = policy.lock().expect("ACP policy").session_meta();
+            let session_run = cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()).meta(session_meta))
                 .block_task().run_until(async |session| {
                     started.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = started_tx.send(());
@@ -154,6 +155,11 @@ pub(super) async fn run<P: AcpAgentPolicy>(
                         biased;
                         _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, Some(session.session_id().to_string()))),
                         result = handshake::require_mode(&session, &policy) => result?,
+                    }
+                    tokio::select! {
+                        biased;
+                        _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, Some(session.session_id().to_string()))),
+                        result = handshake::require_config(&session, &policy) => result?,
                     }
                     turns(session, &policy, DriverContext { prompt, cwd, cancellation, inbox, renderer, sink }, &events_tx, &mut events_rx).await
                 });

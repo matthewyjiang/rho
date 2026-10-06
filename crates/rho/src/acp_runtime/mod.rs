@@ -11,7 +11,7 @@ mod session;
 mod transport;
 mod turn;
 
-pub(crate) use policy::{AcpAgentPolicy, AcpSpawnPlan, ExtensionAnswer};
+pub(crate) use policy::{AcpAgentPolicy, AcpSpawnPlan, ExtensionAnswer, SessionConfigChoice};
 pub(crate) use session::AcpSessionRequest;
 
 /// Run one delegated ACP process through the shared artifact boundary.
