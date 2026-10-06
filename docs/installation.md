@@ -97,6 +97,6 @@ Agent definitions with `runtime: cursor` need the `cursor-agent` binary on `PATH
 
 ## Antigravity ACP server (optional)
 
-Agent definitions with `runtime: antigravity` need Google Antigravity's ACP server, `agy_acp_server.par` (`agy_acp_server.exe` on Windows), on `PATH`. It is a separate download from the `agy` CLI: get the `antigravity-acp` archive from the [ACP registry](https://agentclientprotocol.com) and keep `localharness_external` in the same directory. Sign in with `rho login antigravity` or `/login antigravity`. Details: [Google Antigravity as a delegated runtime](/subagents/antigravity).
+Agent definitions with `runtime: antigravity` need Google Antigravity's ACP server, `agy_acp_server.par` (`agy_acp_server.exe` on Windows). It is a separate download from the `agy` CLI. Run `/login antigravity` or `rho login antigravity`: when the server is missing, Rho asks before downloading Google's pinned release into `~/.rho/runtimes/antigravity-acp/`, verifies its checksum, and then starts sign-in. A server you install on `PATH` yourself takes precedence. Details: [Google Antigravity as a delegated runtime](/subagents/antigravity).
 
 Next, configure [authentication and models](/authentication-and-models). To embed Rho as a headless Rust library instead of installing the CLI, start with [SDK installation and support](/sdk/installation).

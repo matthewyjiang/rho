@@ -110,6 +110,12 @@ pub(crate) fn user_workflows_dir(rho_home: &Path) -> PathBuf {
     rho_home.join("workflows")
 }
 
+/// Rho-managed external runtimes (e.g. the Antigravity ACP server):
+/// `$RHO_HOME/runtimes` or `~/.rho/runtimes`.
+pub(crate) fn user_runtimes_dir(rho_home: &Path) -> PathBuf {
+    rho_home.join("runtimes")
+}
+
 /// Host config the workflow tool reads: `$RHO_HOME/config.toml` or `~/.rho/config.toml`.
 pub(crate) fn user_config_toml(rho_home: &Path) -> PathBuf {
     rho_home.join("config.toml")
@@ -222,7 +228,8 @@ fn path_is_resolved_dir_child(path: &Path, root: &AnchoredPath) -> bool {
 
 /// Host-owned surfaces the built-in `workflow` tool may read without the
 /// agent-facing outside-workspace gate: the Rho workflow tree, the default
-/// host config, and directories on `PATH` at construction.
+/// host config, Rho-managed runtimes, and directories on `PATH` at
+/// construction.
 ///
 /// Graph-supplied absolute paths outside this set still follow the normal
 /// gate. The model's `read_file` of the same paths is not exempt. A PATH
@@ -245,6 +252,8 @@ impl HostOwnedSurfaces {
         if let Some(rho_home) = rho_home {
             files.push(snapshot_path(user_config_toml(rho_home), rho_home));
             directories.push(snapshot_path(user_workflows_dir(rho_home), rho_home));
+            // Workflows freeze a managed runtime server as an absolute path.
+            directories.push(snapshot_path(user_runtimes_dir(rho_home), rho_home));
         }
         if let Some(path_var) = path_var {
             for directory in std::env::split_paths(&path_var) {
@@ -462,7 +471,8 @@ mod tests {
     }
 
     // Covers: workflow host reads are the Rho workflow tree, default config,
-    // and PATH dirs — not the rest of $HOME or an arbitrary absolute path.
+    // managed runtimes, and PATH dirs — not the rest of $HOME or an
+    // arbitrary absolute path.
     // Owner: paths catalog
     #[test]
     fn host_owned_surfaces_cover_workflow_state_and_path_dirs() {
@@ -473,6 +483,9 @@ mod tests {
         let surfaces = HostOwnedSurfaces::from_env(Some(rho_home), Some(path_var));
         assert!(surfaces.contains(&user_workflows_dir(rho_home).join("runs/1")));
         assert!(surfaces.contains(&user_config_toml(rho_home)));
+        assert!(surfaces.contains(
+            &user_runtimes_dir(rho_home).join("antigravity-acp/1.3.0/agy_acp_server.par")
+        ));
         assert!(surfaces.contains(&usr_bin.join("git")));
         assert!(surfaces.contains(&opt_bin.join("claude")));
         assert!(!surfaces.contains(Path::new("/home/rho/.ssh/id_rsa")));

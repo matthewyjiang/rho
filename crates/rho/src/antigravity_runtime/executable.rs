@@ -6,6 +6,9 @@
 //! symlinks, which fails for a PATH symlink and for frozen workflow launches
 //! (exec through `/proc/self/fd/N`). Its `ANTIGRAVITY_HARNESS_PATH` override
 //! wins over that search, so Rho sets it from the canonical server path.
+//!
+//! A server on `PATH` wins; otherwise Rho uses its managed copy (see
+//! [`super::install`]), which `rho login antigravity` offers to install.
 
 use std::{
     ffi::OsString,
@@ -22,20 +25,36 @@ pub(crate) const ANTIGRAVITY_PROGRAM: &str = "agy_acp_server.par";
 /// `_configure_localharness_path` in agy_acp_server 1.3.0.
 pub(crate) const HARNESS_PATH_ENV: &str = "ANTIGRAVITY_HARNESS_PATH";
 #[cfg(windows)]
-const HARNESS_FILE: &str = "localharness_external.exe";
+pub(super) const HARNESS_FILE: &str = "localharness_external.exe";
 #[cfg(not(windows))]
-const HARNESS_FILE: &str = "localharness_external";
+pub(super) const HARNESS_FILE: &str = "localharness_external";
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum AntigravityExecutableError {
     #[error(
-        "antigravity: {ANTIGRAVITY_PROGRAM} not found on PATH; install the Antigravity ACP server (see docs/subagents/antigravity.md)"
+        "antigravity: {ANTIGRAVITY_PROGRAM} is not installed; run `/login antigravity` or `rho login antigravity` to install it"
     )]
     BinaryMissing,
 }
 
+/// The server on `PATH`, else Rho's managed install.
 pub(crate) fn resolve() -> Result<CliExecutable, AntigravityExecutableError> {
-    CliExecutable::resolve(ANTIGRAVITY_PROGRAM).ok_or(AntigravityExecutableError::BinaryMissing)
+    CliExecutable::resolve(ANTIGRAVITY_PROGRAM)
+        .or_else(|| {
+            super::install::ManagedRoot::from_env()
+                .ok()?
+                .installed_server()
+                .map(CliExecutable::from_path)
+        })
+        .ok_or(AntigravityExecutableError::BinaryMissing)
+}
+
+/// The absolute path of the server [`resolve`] would launch, which workflow
+/// plans authorize and freeze. Plan resolution and capability authorization
+/// must agree on this string, so both call here.
+pub(crate) fn workflow_program() -> anyhow::Result<String> {
+    let server = std::path::absolute(resolve()?.path())?;
+    Ok(server.to_string_lossy().into_owned())
 }
 
 /// Server argv. On Linux the registry launches it with an empty `--uid=`;

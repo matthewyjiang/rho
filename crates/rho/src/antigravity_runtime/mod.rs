@@ -12,6 +12,7 @@
 pub(crate) mod executable;
 pub(crate) mod fence;
 pub(crate) mod home;
+pub(crate) mod install;
 pub(crate) mod login;
 
 pub(crate) mod policy;
