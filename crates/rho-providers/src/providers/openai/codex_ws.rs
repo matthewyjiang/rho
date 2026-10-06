@@ -811,14 +811,20 @@ async fn collect_codex_ws_response_silent(
 }
 
 fn classify_model_error(error: ModelError, events_emitted: bool) -> CodexWsFailure {
-    // Empty completed responses fail as InvalidResponse before any caller-visible
-    // output. Treat that as a retryable transport failure so the existing
-    // FullSseFallback path can resubmit the full Responses body over SSE.
+    // Empty or truncated responses fail as (retryable) invalid responses. Before
+    // any caller-visible output, treat that as a transport failure so the
+    // existing FullSseFallback path can resubmit the full Responses body over
+    // SSE. After output, the SDK decides whether to retry the turn.
     match error {
-        ModelError::InvalidResponse(message) if !events_emitted => CodexWsFailure::Transport {
-            message,
-            events_emitted: false,
-        },
+        ModelError::InvalidResponse(message)
+        | ModelError::RetryableInvalidResponse { message, .. }
+            if !events_emitted =>
+        {
+            CodexWsFailure::Transport {
+                message,
+                events_emitted: false,
+            }
+        }
         // Terminal protocol failures surfaced by the shared check inside
         // `handle_codex_sse_value` fall back to the SSE transport when output
         // was already emitted, or when the error is specific to the websocket

@@ -824,7 +824,8 @@ fn completed_envelope_keeps_message_text_beside_function_call_without_deltas() {
     );
 }
 
-// Covers: empty SSE completions must surface a stream summary, not a bare label.
+// Covers: empty SSE completions must retry as an empty turn and surface a
+// stream summary, not a bare label.
 // Owner: openai_shared stream diagnostics
 #[test]
 fn empty_codex_sse_content_error_includes_stream_summary() {
@@ -850,8 +851,11 @@ fn empty_codex_sse_content_error_includes_stream_summary() {
 
     let err = state.into_response().unwrap_err();
     let message = match err {
-        ModelError::InvalidResponse(message) => message,
-        other => panic!("expected InvalidResponse, got {other:?}"),
+        ModelError::RetryableInvalidResponse {
+            error_type,
+            message,
+        } if error_type == "empty_assistant" => message,
+        other => panic!("expected empty_assistant, got {other:?}"),
     };
 
     assert!(

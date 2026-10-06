@@ -83,9 +83,15 @@ impl ModelError {
     /// text or tool calls. Permanent classification kills the run on the
     /// first thinking-only or blank completion.
     pub(crate) fn empty_assistant() -> Self {
+        Self::empty_assistant_because("assistant message had no content or tool calls".into())
+    }
+
+    /// [`Self::empty_assistant`] with a protocol-specific explanation, such
+    /// as a structural stream summary, for the user-facing diagnostic.
+    pub(crate) fn empty_assistant_because(message: String) -> Self {
         Self::RetryableInvalidResponse {
             error_type: "empty_assistant".into(),
-            message: "assistant message had no content or tool calls".into(),
+            message,
         }
     }
 }

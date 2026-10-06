@@ -390,6 +390,9 @@ fn emit_and_exit_terminal(
         }
         RunTerminal::Failed(error) => {
             let (reason, code) = classify_error(&error);
+            if reason == TerminalReason::ProviderError {
+                print_provider_diagnostic(&error);
+            }
             if reason == TerminalReason::Interrupted {
                 emit_stopped(jsonl, reason)?;
             } else if reason != TerminalReason::OutputError {
@@ -401,6 +404,22 @@ fn emit_and_exit_terminal(
             }
             Err(AutomationExit::new(code, reason, message).into())
         }
+    }
+}
+
+/// Shows the provider's own failure details to the user running `rho run`.
+///
+/// The SDK reserves diagnostics for direct display, so they go to stderr only,
+/// never into JSONL or the exit message that automation consumes.
+/// Authentication failures never reach this, because their diagnostics may
+/// echo credentials.
+fn print_provider_diagnostic(error: &anyhow::Error) {
+    let diagnostic = error.chain().find_map(|cause| match cause.downcast_ref() {
+        Some(rho_sdk::Error::Provider(provider)) => provider.diagnostic(),
+        _ => None,
+    });
+    if let Some(diagnostic) = diagnostic {
+        eprintln!("provider diagnostic: {diagnostic}");
     }
 }
 

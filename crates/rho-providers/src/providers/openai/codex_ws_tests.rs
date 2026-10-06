@@ -483,6 +483,53 @@ fn top_level_previous_response_not_found_falls_back_to_sse() {
     ));
 }
 
+// Covers: an empty completed response falls back to SSE before output and
+// stays a retryable empty turn after output, instead of a permanent failure.
+// Owner: providers stream parse
+#[test]
+fn empty_completed_response_is_retryable_on_websocket() {
+    for (events_emitted, expect_fallback) in [(false, true), (true, false)] {
+        let mut state = CodexSseState::default();
+        let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> =
+            None;
+        let completed = json!({
+            "type": "response.completed",
+            "response": {"id": "resp_empty", "status": "completed", "output": []},
+        });
+        handle_codex_sse_value(
+            &completed,
+            &mut state,
+            &mut on_event,
+            CodexTransport::WebSocket,
+        )
+        .unwrap();
+        let error = state.into_response().unwrap_err();
+
+        let failure = classify_model_error(error, events_emitted);
+        if expect_fallback {
+            assert!(
+                matches!(
+                    failure,
+                    CodexWsFailure::Transport {
+                        events_emitted: false,
+                        ..
+                    }
+                ),
+                "{failure:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    failure,
+                    CodexWsFailure::Model(ModelError::RetryableInvalidResponse { ref error_type, .. })
+                        if error_type == "empty_assistant"
+                ),
+                "{failure:?}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn continuation_error_before_output_returns_immediate_full_sse_fallback() {
     let (url, frames) = ws_server_stalls_after_event(vec![json!({
