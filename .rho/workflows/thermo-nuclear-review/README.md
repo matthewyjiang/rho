@@ -1,7 +1,8 @@
 # Thermo-nuclear review workflow
 
 Runs three parallel read-only thermo-nuclear reviews on the current branch
-change set, then applies the suggested fixes.
+change set, applies the suggested fixes, then ships them and babysits the PR
+until it is merge ready.
 
 ## Graph
 
@@ -12,14 +13,31 @@ change set, then applies the suggested fixes.
    - `boundaries_contracts` - standards 5 and 6 plus correctness, security, performance, and tests
 3. `apply_fixes` - worker applies blocker/major findings from all three lanes
 4. `no_changes` - cheap no-op path when the change set is empty
+5. Babysit the PR with the `pr-shepherd` agent, on whichever path ran:
+   - `ship_and_babysit` (after `apply_fixes`, including `partial` and
+     `blocked`) - validates, commits, and pushes the fixes first
+   - `babysit_unchanged` (after `no_changes`) - the branch may still have an
+     open PR or commits outside the reviewed scope
+
+   The shepherd opens the PR if the branch has none, then follows the
+   `pr-watch` skill until the PR is approved with every required check green
+   and no open review thread. It never merges. With nothing to ship and no
+   PR, it reports `no_pr`. The two nodes share one definition; they are
+   separate only because a template cannot read a skipped node's output.
+
+The shepherd pushes code and talks to GitHub, so it needs `gh auth login` and
+the Pullfrog GitHub App on the repository (see the `pr-watch` skill). Its node
+timeout is 6 hours.
 
 ## Result
 
 The run exports the reviewed change set: `branch`, `head`, `base_commit`,
 `changed_files`, and `has_changes`. `rho workflow status` prints them as the
 root scope result. The fix summary stays in the `apply_fixes` or `no_changes`
-node output, because only one of those nodes runs and every export must
-resolve for a successful run.
+node output, and the PR outcome (`merge_ready`, `merged`, `closed`, `no_pr`,
+or `blocked`, with the PR URL) stays in the `ship_and_babysit` or
+`babysit_unchanged` node output, because those nodes do not run on every path
+and every export must resolve for a successful run.
 
 Planning `exports` needs a Rho release with scoped workflow programs; 2.13 and
 earlier reject the field.
