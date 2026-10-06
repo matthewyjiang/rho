@@ -118,3 +118,21 @@ fn appends_one_trimmed_bullet() {
         );
     }
 }
+
+// Covers: a first `/remember` must not create an owner-only AGENTS.md; it is
+// shared project text, so it gets the same mode as any file the user creates.
+// Owner: Unix instruction-file creation.
+#[cfg(unix)]
+#[test]
+fn new_instruction_file_uses_process_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("AGENTS.md");
+    let reference = dir.path().join("reference.md");
+    std::fs::write(&reference, "").unwrap();
+    append_instruction(&path, &dir.path().join("locks"), "shared rule").unwrap();
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), mode(&reference));
+}

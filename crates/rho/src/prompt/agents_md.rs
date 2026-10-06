@@ -42,11 +42,15 @@ pub(crate) fn append_instruction(path: &Path, lock_dir: &Path, text: &str) -> Re
         Err(error) => return Err(error.into()),
     };
     let contents = appended_contents(existing.as_deref(), text);
-    if existing.is_some() {
-        config_writer::replace_regular_file_atomically(path, contents.as_bytes())?;
-    } else {
-        config_writer::write_atomically(path, &contents)?;
+    if existing.is_none() {
+        // AGENTS.md is shared project text, not a secret: create it with the
+        // process umask like any editor would, then fill it atomically.
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        OpenOptions::new().write(true).create_new(true).open(path)?;
     }
+    config_writer::replace_regular_file_atomically(path, contents.as_bytes())?;
     Ok(())
 }
 
