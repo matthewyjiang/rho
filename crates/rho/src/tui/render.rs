@@ -79,6 +79,7 @@ pub(super) fn session_header_lines(
     update_notice: Option<&str>,
     setup: SetupState,
     header_hints: HeaderHints,
+    additional_hint: Option<Span<'static>>,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -108,6 +109,12 @@ pub(super) fn session_header_lines(
     let hints = setup.hints(header_hints);
     if !hints.is_empty() {
         push_session_header_hints(&mut lines, hints, width);
+        if let Some(hint) = additional_hint {
+            lines.push(Line::from(Span::styled(
+                truncate_one_line(&hint.content, width),
+                hint.style,
+            )));
+        }
         lines.push(Line::raw(""));
     }
     lines

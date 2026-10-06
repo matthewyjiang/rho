@@ -98,6 +98,24 @@ fn todo_card_shows_checklist_in_plan_mode() {
     assert_pass("todo_card");
 }
 
+// Covers: default and remapped permission shortcuts change the session policy
+// without saving it, including wrapping and configured Auto.
+// Owner: interactive permission shortcut through PTY
+#[test]
+fn permission_cycle_is_session_only() {
+    for scenario in ["permission_cycle_idle", "permission_cycle_remapped"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: repeated presses queue from the pending mode, not the active mode,
+// and cancellation applies the last queued policy before the next idle press.
+// Owner: interactive queued permission shortcut through PTY
+#[test]
+fn permission_cycle_queues_until_turn_end() {
+    assert_pass("permission_cycle_queued");
+}
+
 // Covers: menu and shortcut share a saved streaming preference during a turn.
 // Owner: interactive TUI
 #[test]

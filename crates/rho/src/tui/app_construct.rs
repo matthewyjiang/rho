@@ -130,6 +130,7 @@ impl App {
             compact_follow_up: super::compact_work::CompactFollowUp::None,
             start_follow_ups: None,
             pending_model_selection: None,
+            pending_permission_mode: None,
             model_picker_scope_override: None,
             internal_agent_model_target: None,
             pending_auto_classifier_demote: false,

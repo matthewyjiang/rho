@@ -68,6 +68,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Move through the configured reasoning levels for the active model and save the selection.",
         ),
         entry(
+            keybindings.cycle_permission_mode.chrome_label(),
+            "Cycle permission mode",
+            "Cycle Plan → Supervised → Allow edits → Auto → Bypass → Plan for this session only. Skip Auto without a configured classifier. During a turn, queue the change for the next turn; repeated presses advance the queued mode. Does not save config.",
+        ),
+        entry(
             cycle_pinned.clone(),
             "Cycle pinned models",
             format!(

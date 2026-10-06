@@ -121,6 +121,7 @@ open_editor = "ctrl+g"
 jump_to_bottom = "ctrl+end"
 toggle_tool_output = "ctrl+o"
 cycle_streaming_mode = "alt+s"
+cycle_permission_mode = "alt+m"
 insert_newline = "ctrl+j"
 queue_prompt = "alt+enter" # ctrl+enter always works as a fallback
 paste_image = "ctrl+v"

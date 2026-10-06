@@ -132,6 +132,20 @@ impl SetupState {
         (!self.signed_in).then(|| Span::styled(SIGNED_OUT_HEADLINE, Theme::warning()))
     }
 
+    /// The session-only mode shortcut follows the configured binding.
+    pub(super) fn permission_cycle_hint(
+        self,
+        header_hints: HeaderHints,
+        binding: &crate::keybindings::KeyBinding,
+    ) -> Option<Span<'static>> {
+        (self.signed_in && header_hints == HeaderHints::Shown).then(|| {
+            Span::styled(
+                format!(" {:<12} Cycle permission mode", binding.chrome_label()),
+                Theme::dim(),
+            )
+        })
+    }
+
     /// Header hint lines. Hiding hints only drops the ready-session reference
     /// block; a signed-out session keeps `/login`, the step that unblocks it.
     pub(super) fn hints(self, header_hints: HeaderHints) -> &'static [Hint] {

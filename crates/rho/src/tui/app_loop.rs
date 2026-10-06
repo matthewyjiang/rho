@@ -201,6 +201,7 @@ impl App {
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
             needs_redraw |= self.poll_computer_connection(agent).await;
             needs_redraw |= self.poll_compact(agent).await?;
+            needs_redraw |= self.apply_pending_permission_mode(agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
             if !first_frame {

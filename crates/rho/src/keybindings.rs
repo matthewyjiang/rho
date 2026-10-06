@@ -17,6 +17,8 @@ pub struct Keybindings {
     pub toggle_tool_output: KeyBinding,
     /// Cycles cosmetic text streaming while idle or during a turn.
     pub cycle_streaming_mode: KeyBinding,
+    /// Cycles permission modes for this session, queueing during a turn.
+    pub cycle_permission_mode: KeyBinding,
     pub insert_newline: KeyBinding,
     /// Queues the composer contents as a follow-up while a turn is running.
     /// Ctrl+Enter is always accepted as a fallback because Windows Terminal,
@@ -40,6 +42,7 @@ impl Default for Keybindings {
             jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
             cycle_streaming_mode: KeyBinding::alt(KeyCode::Char('s')),
+            cycle_permission_mode: KeyBinding::alt(KeyCode::Char('m')),
             insert_newline: KeyBinding::control('j'),
             queue_prompt: KeyBinding::alt(KeyCode::Enter),
             paste_image: KeyBinding::control('v'),
@@ -79,6 +82,7 @@ struct PartialKeybindings {
     jump_to_bottom: Option<KeyBinding>,
     toggle_tool_output: Option<KeyBinding>,
     cycle_streaming_mode: Option<KeyBinding>,
+    cycle_permission_mode: Option<KeyBinding>,
     insert_newline: Option<KeyBinding>,
     queue_prompt: Option<KeyBinding>,
     paste_image: Option<KeyBinding>,
@@ -121,6 +125,9 @@ impl<'de> Deserialize<'de> for Keybindings {
             cycle_streaming_mode: partial
                 .cycle_streaming_mode
                 .unwrap_or(defaults.cycle_streaming_mode),
+            cycle_permission_mode: partial
+                .cycle_permission_mode
+                .unwrap_or(defaults.cycle_permission_mode),
             insert_newline: partial.insert_newline.unwrap_or(defaults.insert_newline),
             queue_prompt: partial.queue_prompt.unwrap_or(defaults.queue_prompt),
             paste_image: partial.paste_image.unwrap_or(defaults.paste_image),
@@ -145,6 +152,54 @@ impl<'de> Deserialize<'de> for Keybindings {
         if keybindings.reset_conversation.as_ref() == Some(&keybindings.search_prompt_history) {
             return Err(serde::de::Error::custom(
                 "reset_conversation and search_prompt_history must use different keys",
+            ));
+        }
+        for (name, binding) in [
+            (
+                "reset_conversation",
+                keybindings.reset_conversation.as_ref(),
+            ),
+            (
+                "search_prompt_history",
+                Some(&keybindings.search_prompt_history),
+            ),
+            ("open_editor", Some(&keybindings.open_editor)),
+            ("jump_to_bottom", Some(&keybindings.jump_to_bottom)),
+            ("toggle_tool_output", Some(&keybindings.toggle_tool_output)),
+            (
+                "cycle_streaming_mode",
+                Some(&keybindings.cycle_streaming_mode),
+            ),
+            ("insert_newline", Some(&keybindings.insert_newline)),
+            ("queue_prompt", Some(&keybindings.queue_prompt)),
+            ("paste_image", Some(&keybindings.paste_image)),
+            ("edit_pending_input", Some(&keybindings.edit_pending_input)),
+            (
+                "manage_pending_input",
+                Some(&keybindings.manage_pending_input),
+            ),
+            ("cycle_pinned_model", Some(&keybindings.cycle_pinned_model)),
+            (
+                "cycle_pinned_model_back",
+                Some(&keybindings.cycle_pinned_model_back),
+            ),
+        ] {
+            if binding == Some(&keybindings.cycle_permission_mode) {
+                return Err(serde::de::Error::custom(format!(
+                    "cycle_permission_mode and {name} must use different keys"
+                )));
+            }
+        }
+        if keybindings.cycle_permission_mode == Self::queue_prompt_fallback()
+            || keybindings.cycle_permission_mode == KeyBinding::alt(KeyCode::Char('v'))
+            || keybindings.cycle_permission_mode
+                == (KeyBinding {
+                    modifiers: KeyModifiers::SHIFT,
+                    code: KeyCode::Tab,
+                })
+        {
+            return Err(serde::de::Error::custom(
+                "cycle_permission_mode conflicts with a reserved composer key",
             ));
         }
         Ok(keybindings)
@@ -315,6 +370,10 @@ impl<'de> Deserialize<'de> for KeyBinding {
             .map_err(serde::de::Error::custom)
     }
 }
+
+#[cfg(test)]
+#[path = "permission_keybinding_tests.rs"]
+mod permission_tests;
 
 #[cfg(test)]
 mod tests {

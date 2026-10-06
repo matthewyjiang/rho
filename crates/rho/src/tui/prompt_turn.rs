@@ -741,6 +741,7 @@ impl App {
         }
         self.clear_accepted_steering();
         self.apply_pending_model_selection(agent).await?;
+        self.apply_pending_permission_mode(agent).await?;
         self.notifier.turn_finished();
         if self.pending_subagent_questionnaire.is_some() {
             self.set_status(UserWait::Questionnaire.message());

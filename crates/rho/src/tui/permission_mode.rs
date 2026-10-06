@@ -10,7 +10,72 @@ const SELECT_CLASSIFIER_MODEL_EDIT_STATUS: &str = "select a permission classifie
 const SELECT_CLASSIFIER_MODEL_STARTUP_STATUS: &str =
     "select a permission classifier model for Auto mode";
 
+/// Whether a TUI mode change becomes the saved default for future launches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PermissionPersistence {
+    Save,
+    SessionOnly,
+}
+
+/// Cycle from most restrictive to least restrictive, then wrap back to Plan.
+/// Auto is only reachable when the session has a classifier model configured.
+fn next_cycle_mode(current: PermissionMode, classifier_configured: bool) -> PermissionMode {
+    let mut modes = PermissionMode::ALL;
+    modes.sort_by_key(|mode| mode.restrictiveness_rank());
+    modes
+        .iter()
+        .copied()
+        .filter(|mode| classifier_configured || *mode != PermissionMode::Auto)
+        .find(|mode| mode.restrictiveness_rank() > current.restrictiveness_rank())
+        .unwrap_or(modes[0])
+}
+
 impl App {
+    pub(super) fn queue_permission_mode_cycle(&mut self) {
+        let current = self
+            .pending_permission_mode
+            .unwrap_or(self.info.runtime.permission_mode);
+        let next = next_cycle_mode(current, self.permission_classifier_model_configured());
+        self.pending_permission_mode = Some(next);
+        self.set_status(format!(
+            "permission mode {} queued for next turn",
+            next.as_str()
+        ));
+    }
+
+    pub(super) async fn cycle_permission_mode(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if agent.is_session_busy() {
+            self.queue_permission_mode_cycle();
+            return Ok(());
+        }
+        let next = next_cycle_mode(
+            self.info.runtime.permission_mode,
+            self.permission_classifier_model_configured(),
+        );
+        self.apply_permission_mode(next, PermissionPersistence::SessionOnly, agent)
+            .await
+    }
+
+    /// Apply queued changes only after the runtime releases the active run or
+    /// compaction. Used at turn end and before idle follow-ups can start.
+    pub(super) async fn apply_pending_permission_mode(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        if agent.is_session_busy() {
+            return Ok(false);
+        }
+        let Some(mode) = self.pending_permission_mode.take() else {
+            return Ok(false);
+        };
+        self.apply_permission_mode(mode, PermissionPersistence::SessionOnly, agent)
+            .await?;
+        Ok(true)
+    }
+
     pub(super) async fn execute_permissions_command(
         &mut self,
         invocation: super::CommandInvocation,
@@ -51,7 +116,10 @@ impl App {
             }
             return Ok(());
         }
-        if let Err(error) = self.apply_permission_mode(mode, agent).await {
+        if let Err(error) = self
+            .apply_permission_mode(mode, PermissionPersistence::Save, agent)
+            .await
+        {
             self.insert_entry(&super::Entry::Error(format!(
                 "could not change permission mode: {error}"
             )));
@@ -70,13 +138,15 @@ impl App {
             );
             return Ok(());
         }
-        self.apply_permission_mode(mode, agent).await?;
+        self.apply_permission_mode(mode, PermissionPersistence::Save, agent)
+            .await?;
         self.open_main_config_picker_selected(super::config_picker::PERMISSION_MODE_VALUE)
     }
 
     pub(super) async fn apply_permission_mode(
         &mut self,
         mode: PermissionMode,
+        persistence: PermissionPersistence,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let previous = agent.permission_mode();
@@ -87,10 +157,17 @@ impl App {
             .clone_from(&self.info.runtime.internal_agents);
         current_config.permission_mode = self.info.runtime.permission_mode;
         agent.update_config(current_config);
-        agent.set_permission_mode(mode).await?;
-        if let Err(error) = self.info.services.config_repository.update(|config| {
-            config.permission_mode = mode;
-        }) {
+        if let Err(error) = agent.set_permission_mode(mode).await {
+            agent.update_config(previous_config);
+            return Err(error);
+        }
+        let save_result = match persistence {
+            PermissionPersistence::Save => self.info.services.config_repository.update(|config| {
+                config.permission_mode = mode;
+            }),
+            PermissionPersistence::SessionOnly => Ok(()),
+        };
+        if let Err(error) = save_result {
             if let Err(rollback_error) = agent.set_permission_mode(previous).await {
                 return Err(anyhow::anyhow!(
                     "could not save permission mode: {error}; runtime rollback failed: {rollback_error}"
@@ -152,8 +229,12 @@ impl App {
         }
         // Empty model catalog: Auto would fail closed on every gated tool.
         // Drop to Supervised so the session can still ask a human.
-        self.apply_permission_mode(PermissionMode::Supervised, agent)
-            .await?;
+        self.apply_permission_mode(
+            PermissionMode::Supervised,
+            PermissionPersistence::Save,
+            agent,
+        )
+        .await?;
         self.set_status(
             "permission mode set to supervised: no classifier model available; use Config > Refresh model lists",
         );
@@ -205,8 +286,12 @@ impl App {
         match origin {
             InternalAgentModelPickerOrigin::PermissionModeConfigRow
             | InternalAgentModelPickerOrigin::PermissionModeCommand => {
-                self.apply_permission_mode(PermissionMode::Auto, agent)
-                    .await?;
+                self.apply_permission_mode(
+                    PermissionMode::Auto,
+                    PermissionPersistence::Save,
+                    agent,
+                )
+                .await?;
             }
             InternalAgentModelPickerOrigin::PermissionModeStartup => {
                 // Auto is already active; the picker only stored the model.
@@ -225,8 +310,12 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        self.apply_permission_mode(PermissionMode::Supervised, agent)
-            .await?;
+        self.apply_permission_mode(
+            PermissionMode::Supervised,
+            PermissionPersistence::Save,
+            agent,
+        )
+        .await?;
         self.set_status("permission mode set to supervised: no classifier model selected");
         Ok(())
     }
