@@ -1,6 +1,7 @@
 // Nested startup futures have exceeded rustc's default 128-query layout limit.
 #![recursion_limit = "256"]
 
+mod acp_runtime;
 mod agent;
 mod app;
 mod changelog;

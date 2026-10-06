@@ -360,8 +360,8 @@ pub struct ClaudeAgentConfig {
 
 /// Settings that only the Cursor Agent runtime understands.
 ///
-/// Built at parse time with a nonempty closed tool allow list. Bind and spawn
-/// map `tools` onto `--allowed-tools`. Cursor has no reasoning flag; effort
+/// Built at parse time with a nonempty closed tool allow list. Each run derives
+/// Cursor's managed-config fence and permission answers from `tools`. Cursor has no reasoning flag; effort
 /// lives in the model id or a bracket override.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorAgentConfig {

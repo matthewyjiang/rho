@@ -12,9 +12,9 @@ use super::{
     completed, completed_tool_call, fixture_sleep, tool_result, AGENTS_LIST_CALL_ID,
     BACKGROUND_AGENT_CALL_ID, BACKGROUND_CLAUDE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID,
-    LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
-    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
+    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, CURSOR_AGENT_CALL_ID,
+    HOVER_TOOL_CALL_ID, LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID,
+    QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) async fn intercept(
@@ -131,6 +131,18 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "claude-planner",
                     "prompt": "Say hello in one short sentence.",
+                }),
+            ))
+        }
+        "fixture cursor agent" if tool_result(request, CURSOR_AGENT_CALL_ID).is_none() => {
+            // Delegation into a runtime: cursor agent. The PTY E2E installs the
+            // definition and a `cursor-agent` shim running the scripted ACP agent.
+            Some(completed_tool_call(
+                CURSOR_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "cursor-worker",
+                    "prompt": "Run the tests and report.",
                 }),
             ))
         }

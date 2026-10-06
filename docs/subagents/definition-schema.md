@@ -162,9 +162,9 @@ Base names feed Claude `--tools`. A specifier such as `Bash(git *)` still lists 
 | Form | Meaning |
 | --- | --- |
 | omitted | rejected (`tools` is required) |
-| `tools: all` | rejected. `cursor-agent -p` is full-power by default and `--exclude-tools` does not fence |
+| `tools: all` | rejected. Cursor enables every tool by default and Rho fences only classified names |
 | `tools: []` | rejected (need at least one classified tool) |
-| `tools: [name, ...]` | closed allow list passed to `--allowed-tools` |
+| `tools: [name, ...]` | closed allow list; each run derives Cursor's fence from it ([Permission modes](/subagents/cursor#permission-modes)) |
 
 Accepted snake_case names (this is the whole set):
 

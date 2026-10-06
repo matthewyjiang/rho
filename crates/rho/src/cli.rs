@@ -286,6 +286,23 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
     /// command: `scripts/classifier_eval.py` drives it.
     #[command(name = "__classifier_eval", hide = true)]
     ClassifierEval(ClassifierEvalArgs),
+    /// Debug-only scripted ACP agent on stdio for offline external-runtime
+    /// E2E tests. Refuses to run outside `RHO_TUI_TEST_MODE=matrix`.
+    #[cfg(debug_assertions)]
+    #[command(name = "__acp-fixture-agent", hide = true)]
+    AcpFixtureAgent(AcpFixtureAgentArgs),
+}
+
+/// Inputs for the debug-only scripted ACP agent.
+#[cfg(debug_assertions)]
+#[derive(clap::Args, Debug)]
+pub struct AcpFixtureAgentArgs {
+    /// Script JSON: handshake outcomes, session modes, and per-turn steps.
+    #[arg(long, value_name = "PATH")]
+    pub script: PathBuf,
+    /// Append every request Rho sends and every reply it gives here (JSONL).
+    #[arg(long, value_name = "PATH")]
+    pub journal: PathBuf,
 }
 
 /// Settings for one permission classifier eval run. Cases come from labeled

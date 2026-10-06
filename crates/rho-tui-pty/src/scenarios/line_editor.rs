@@ -1,5 +1,7 @@
 //! Single-line overlays must show edits at the insertion point, not a fixed prefix.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{ensure, Context, Result};
 use unicode_width::UnicodeWidthStr;
 
@@ -7,7 +9,7 @@ use crate::{
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, Step},
-    PtyHarness,
+    PtyHarness, WaitTimeout,
 };
 
 use super::{first_run::FIRST_RUN_SIGNIN_ENV, SETTLE, STARTUP};
@@ -96,7 +98,28 @@ const STEPS: &[Step] = &[
 // Observe the value row before waiting for the cursor flush at its displayed end.
 pub(super) fn wait_for_tail_caret(harness: &mut PtyHarness, tail: &str) -> Result<(u16, u16)> {
     harness.wait_for_text(tail, SETTLE)?;
-    let position = harness
+    // Re-derive the tail position on every frame: right after a resize the
+    // first frame showing the tail can still be laid out for the old size, so
+    // a position pinned from it never matches the settled caret.
+    let deadline = Instant::now() + SETTLE.duration;
+    loop {
+        let position = tail_end(harness, tail)?;
+        let screen = harness.screen();
+        if !screen.hide_cursor() && screen.cursor() == position {
+            return Ok(position);
+        }
+        if Instant::now() >= deadline {
+            // Report through the harness so failure artifacts are written.
+            harness.wait_for_cursor(position, WaitTimeout::millis(0, "settled tail caret"))?;
+            return Ok(position);
+        }
+        harness.poll(Duration::from_millis(25));
+    }
+}
+
+/// Row and display column just past `tail` on the current frame.
+fn tail_end(harness: &PtyHarness, tail: &str) -> Result<(u16, u16)> {
+    harness
         .screen()
         .rows_text()
         .iter()
@@ -105,9 +128,7 @@ pub(super) fn wait_for_tail_caret(harness: &mut PtyHarness, tail: &str) -> Resul
             line.find(tail)
                 .map(|start| (row as u16, line[..start + tail.len()].width() as u16))
         })
-        .context("editor tail was not rendered on one row")?;
-    harness.wait_for_cursor(position, SETTLE)?;
-    Ok(position)
+        .context("editor tail was not rendered on one row")
 }
 
 // Moving inside the visible window must move the caret, not shift the text.

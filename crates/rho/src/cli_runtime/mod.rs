@@ -10,12 +10,14 @@
 //! stream-json user turns, how to persist rate limits) stays with the
 //! runtime that owns the tool (Claude Code, Cursor, …).
 
+pub(crate) mod agent_event;
 mod child;
 pub(crate) mod drain;
 mod executable;
 mod frozen_args;
 pub(crate) mod line_decoder;
 mod log_tail;
+pub(crate) mod parent_messages;
 mod probe;
 pub(crate) mod session;
 pub(crate) mod status_sink;

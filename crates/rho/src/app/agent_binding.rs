@@ -272,7 +272,12 @@ impl BoundAgent {
             cancellation,
             status_tx,
             started_status,
-            auth_status: None,
+            parent_messages: None,
+            // No home dir leaves only `CURSOR_CONFIG_DIR` / XDG to find the
+            // user's config; a missing file derives the managed config from `{}`.
+            config_paths: crate::cursor_runtime::acp_config::CursorConfigPaths::from_env(
+                crate::paths::home_dir().unwrap_or_default(),
+            ),
             overrides: Default::default(),
         })
     }

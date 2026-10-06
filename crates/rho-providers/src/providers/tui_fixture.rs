@@ -59,6 +59,7 @@ const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-que
 const CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-claude-agent";
 const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
 const BACKGROUND_CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-background-claude-agent";
+const CURSOR_AGENT_CALL_ID: &str = "tui-fixture-cursor-agent";
 const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const BACKGROUND_QUESTIONNAIRE_COMPLETION: &str =

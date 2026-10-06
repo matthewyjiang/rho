@@ -9,10 +9,11 @@ use crate::{
     tools::agent::SubagentSnapshot,
 };
 
-// Covers: Cursor session ids render a cursor-agent resume line, not Claude's.
+// Covers: a Cursor ACP session id is reported without a resume command; it is
+// not a `cursor-agent --resume` id, so a hint would send the model astray.
 // Owner: agent output
 #[test]
-fn cursor_session_line_uses_cursor_agent_resume() {
+fn cursor_session_line_has_no_resume_command() {
     let snapshot = SubagentSnapshot {
         prior_notices: Vec::new(),
         id: "abc123".into(),
@@ -32,7 +33,7 @@ fn cursor_session_line_uses_cursor_agent_resume() {
         text.lines()
             .find(|line| line.starts_with("cursor session:") || line.starts_with("claude session:"))
             .unwrap(),
-        "cursor session: sess-cursor (resume with `cursor-agent --resume sess-cursor`)"
+        "cursor session: sess-cursor"
     );
 }
 

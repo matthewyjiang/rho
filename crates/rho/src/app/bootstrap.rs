@@ -206,6 +206,12 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             classifier_eval::run(args, cli).await,
         ));
     }
+    #[cfg(debug_assertions)]
+    if let Some(Command::AcpFixtureAgent(args)) = &cli.command {
+        return Ok(EarlyDispatch::Handled(
+            super::acp_fixture_agent::run(args).await,
+        ));
+    }
     if let Some(Command::Attach { id }) = &cli.command {
         // Attach is early-dispatched, so load display settings here the way the
         // interactive TUI gets them through RuntimeModelView. Propagate load

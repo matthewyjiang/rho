@@ -273,10 +273,13 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
         Some(AgentRuntime::ClaudeCli) | Some(AgentRuntime::Rho) | None => CLAUDE_LABEL,
     };
     if let Some(session_id) = &snapshot.status.claude_session_id {
-        lines.push(format!(
-            "{}: {session_id} (resume with `{} --resume {session_id}`)",
-            label.session_label, label.resume_command
-        ));
+        let session_label = label.session_label;
+        lines.push(match label.resume_command {
+            Some(command) => format!(
+                "{session_label}: {session_id} (resume with `{command} --resume {session_id}`)"
+            ),
+            None => format!("{session_label}: {session_id}"),
+        });
     }
     if let Some(cost) = snapshot.status.total_cost_usd {
         lines.push(format!("{}: ${cost:.4}", label.cost_label));

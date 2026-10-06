@@ -92,10 +92,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"r
 cat >/dev/null
 "#,
         );
-        let (messages, inbox) = crate::claude_runtime::messaging::message_channel();
+        let (messages, inbox) = crate::cli_runtime::parent_messages::message_channel();
         messages
             .send("Inspect **routing** next.\nKeep the tests.".into())
-            .await
             .unwrap();
         let mut auth = logged_in();
         auth.logged_in = authenticated;
@@ -136,7 +135,7 @@ cat >/dev/null
             .unwrap();
             assert_eq!(
                 received["message"]["content"],
-                crate::claude_runtime::messaging::frame_parent_message(
+                crate::cli_runtime::parent_messages::frame_parent_message(
                     "Inspect **routing** next.\nKeep the tests."
                 )
             );
@@ -164,7 +163,7 @@ cat >/dev/null
             events.last(),
             Some(AttachmentEvent::Completed | AttachmentEvent::Failed(_))
         ));
-        assert!(messages.send("late message".into()).await.is_err());
+        assert!(messages.send("late message".into()).is_err());
     }
 }
 

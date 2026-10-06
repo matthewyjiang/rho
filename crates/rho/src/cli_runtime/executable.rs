@@ -37,6 +37,9 @@ pub(crate) enum CliInvocationKind {
 pub(crate) struct CliExecutable {
     program: PathBuf,
     kind: CliInvocationKind,
+    /// Arguments placed before the CLI's own argv. Only [`Self::interpreted`]
+    /// sets these (interpreter flags plus the script path).
+    leading_args: Vec<OsString>,
 }
 
 /// Pre-spawn failures when args cannot be represented safely for a shim.
@@ -76,7 +79,23 @@ impl CliExecutable {
     pub(crate) fn from_path(path: impl Into<PathBuf>) -> Self {
         let program = path.into();
         let kind = classify_program(&program);
-        Self { program, kind }
+        Self {
+            program,
+            kind,
+            leading_args: Vec::new(),
+        }
+    }
+
+    /// A script launched through an explicit interpreter, as frozen workflow
+    /// launches do: `interpreter <leading_args...> <cli args...>`, where
+    /// `leading_args` ends with the script path. Runtimes still generate and
+    /// overlay only the CLI's own argv.
+    /// The interpreter keeps its own shim classification (`.cmd` / `.ps1`).
+    pub(crate) fn interpreted(interpreter: PathBuf, leading_args: Vec<OsString>) -> Self {
+        Self {
+            leading_args,
+            ..Self::from_path(interpreter)
+        }
     }
 
     pub(crate) fn display(&self) -> String {
@@ -104,9 +123,11 @@ impl CliExecutable {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let args: Vec<OsString> = args
-            .into_iter()
-            .map(|arg| arg.as_ref().to_os_string())
+        let args: Vec<OsString> = self
+            .leading_args
+            .iter()
+            .cloned()
+            .chain(args.into_iter().map(|arg| arg.as_ref().to_os_string()))
             .collect();
         match self.kind {
             CliInvocationKind::Direct => Ok(CliArgv {

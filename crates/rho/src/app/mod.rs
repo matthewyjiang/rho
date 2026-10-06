@@ -1,4 +1,6 @@
 mod acp;
+#[cfg(debug_assertions)]
+mod acp_fixture_agent;
 mod active_prompt;
 mod agent_binding;
 pub(crate) mod agent_concurrency;

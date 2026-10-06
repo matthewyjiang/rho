@@ -1,0 +1,52 @@
+{
+  "turns": [
+    [
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "tool_call",
+          "toolCallId": "tool-shell-1",
+          "title": "`cargo test`",
+          "kind": "execute",
+          "status": "pending",
+          "rawInput": {"command": "cargo test"}
+        }
+      },
+      {
+        "step": "permission",
+        "call": {"toolCallId": "tool-shell-1", "title": "`cargo test`", "kind": "execute", "status": "pending"},
+        "options": [
+          {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+          {"optionId": "allow-always", "name": "Allow always", "kind": "allow_always"},
+          {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}
+        ]
+      },
+      {
+        "step": "permission",
+        "call": {"toolCallId": "web_search_q1", "title": "Web search: rust acp", "kind": "search", "status": "pending"},
+        "options": [
+          {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+          {"optionId": "allow-always", "name": "Allow always", "kind": "allow_always"},
+          {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}
+        ]
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "tool-shell-1",
+          "status": "completed",
+          "content": [{"type": "content", "content": {"type": "text", "text": "test result: ok. 3 passed"}}]
+        }
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "agent_message_chunk",
+          "content": {"type": "text", "text": "rho-cursor-acp-e2e-ok"}
+        }
+      },
+      {"step": "stop", "reason": "end_turn"}
+    ]
+  ]
+}

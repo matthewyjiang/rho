@@ -36,7 +36,7 @@ use super::{
 pub(crate) const CLAUDE_LABEL: RuntimeLabel = RuntimeLabel {
     starting_activity: "starting claude",
     program: "claude code",
-    resume_command: "claude",
+    resume_command: Some("claude"),
     session_label: "claude session",
     cost_label: "claude cost",
 };
@@ -66,7 +66,7 @@ pub(crate) struct ClaudeSessionRequest {
     /// Starting status. The sink continues from it instead of rewriting.
     pub(crate) started_status: Option<RunStatus>,
     /// Parent→child plain-text messages. Present for interactive parent sessions.
-    pub(crate) parent_messages: Option<super::messaging::ClaudeMessageInbox>,
+    pub(crate) parent_messages: Option<crate::cli_runtime::parent_messages::ParentMessageInbox>,
     /// Auth preflight result. When set, production `auth::query` is not called.
     pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
     /// Rate-limit cache path. Tests inject a temp path so settle never touches
@@ -134,7 +134,7 @@ struct ClaudePolicy {
     cwd: PathBuf,
     max_turns: u64,
     reasoning: Option<crate::agent::ReasoningLevel>,
-    parent_messages: Option<super::messaging::ClaudeMessageInbox>,
+    parent_messages: Option<crate::cli_runtime::parent_messages::ParentMessageInbox>,
     prompt: String,
     auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
     rate_limit_state_path: Option<PathBuf>,

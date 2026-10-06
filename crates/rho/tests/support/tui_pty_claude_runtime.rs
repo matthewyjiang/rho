@@ -3,7 +3,7 @@
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 use std::{fs, path::PathBuf, time::Duration};
 
-use super::claude_e2e;
+use super::claude_e2e::{self, which_on_path};
 
 /// Full fake-Claude runtime path: matrix parent -> agent tool -> binder/executor
 /// -> `claude -p` spawn -> stream-json -> result/events persistence -> parent
@@ -296,17 +296,6 @@ fn fake_claude_runtime_end_to_end_error() {
     );
 
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
-}
-
-/// Resolve `program` on a PATH string the same way a shell would (first hit).
-fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
-    for dir in path_var.split(':').filter(|dir| !dir.is_empty()) {
-        let candidate = PathBuf::from(dir).join(program);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
 }
 
 /// Full Claude Code advisor path: picker selection -> config -> advisor tool
