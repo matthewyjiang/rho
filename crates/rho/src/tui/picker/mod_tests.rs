@@ -185,6 +185,34 @@ fn fuzzy_filter_matches_a_row_by_its_full_text() {
 // clamps to the overflow range, and keyboard navigation afterwards brings the
 // window back to the selection with minimal movement.
 // Owner: tui picker nav scroll policy
+// Covers: prompt search treats typed text literally (no regex errors on code),
+// ignores case, keeps recency order, and never matches across row fields.
+// Owner: tui picker filter policy
+#[test]
+fn literal_filter_matches_typed_text_in_row_order() {
+    let rows = ["ship it", "fix vec.push(x)", "Ship the docs"];
+    let cases = [
+        ("code", "vec.push(", vec!["fix vec.push(x)"]),
+        ("case and order", "SHIP", vec!["ship it", "Ship the docs"]),
+        ("no match across fields", "it ship", vec![]),
+    ];
+    for (case, filter, expected) in cases {
+        let mut picker = UiPicker::new(
+            "Prompt history",
+            rows.into_iter().map(item).collect(),
+            PickerAction::RecallPrompt,
+        );
+        picker.filter = filter.into();
+        let matched = picker
+            .matching_indices()
+            .iter()
+            .map(|&index| picker.items[index].label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(matched, expected, "{case}");
+        assert!(!picker.filter_is_invalid_regex(), "{case}");
+    }
+}
+
 #[test]
 fn nav_wheel_scroll_is_independent_of_selection() {
     let items = (0..20).map(|i| item(&format!("item-{i:02}"))).collect();

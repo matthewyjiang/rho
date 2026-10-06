@@ -40,6 +40,17 @@ pub(in crate::tui) enum PickerAction {
     Dismiss,
 }
 
+/// How typed filter text selects and orders picker rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum PickerFilterMode {
+    /// Case-insensitive regex over every visible row field; keeps row order.
+    Regex,
+    /// Subsequence match ranked by score.
+    Fuzzy,
+    /// Case-insensitive substring of the label or value; keeps row order.
+    Literal,
+}
+
 /// Whether a picker commit runs idle or during a model turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) enum PickerTurn {
@@ -70,14 +81,38 @@ impl PickerAction {
         matches!(self, PickerAction::Config)
     }
 
-    /// Whether the filter uses regex matching instead of fuzzy ranking.
-    pub(in crate::tui) fn uses_regex_filter(&self) -> bool {
-        !matches!(
-            self,
+    /// How typed filter text matches rows unless the picker overrides it.
+    pub(in crate::tui) fn filter_mode(&self) -> PickerFilterMode {
+        match self {
             PickerAction::SelectModel
-                | PickerAction::SelectInternalAgentModel
-                | PickerAction::SelectTheme
-        )
+            | PickerAction::SelectInternalAgentModel
+            | PickerAction::SelectTheme => PickerFilterMode::Fuzzy,
+            // Prompts are prose and code: `vec.push(` must search, not fail
+            // as a regex, and recency order must survive filtering.
+            PickerAction::RecallPrompt => PickerFilterMode::Literal,
+            PickerAction::SelectAdvisorReasoning
+            | PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::LoginFlow(_)
+            | PickerAction::LogoutProvider
+            | PickerAction::SwitchAuthMode
+            | PickerAction::RefreshModelList
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ViewAgent
+            | PickerAction::ViewMcpServers
+            | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
+            | PickerAction::SelectTreeNode
+            | PickerAction::CopyOutput
+            | PickerAction::SelectRewindCheckpoint
+            | PickerAction::ConfirmRewindCheckpoint
+            | PickerAction::Config
+            | PickerAction::EditAgent
+            | PickerAction::Workflow
+            | PickerAction::AttachSubagent
+            | PickerAction::ViewDiff
+            | PickerAction::Dismiss => PickerFilterMode::Regex,
+        }
     }
 
     pub(in crate::tui) fn default_confirm_verb(&self) -> &'static str {
