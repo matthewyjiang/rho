@@ -82,7 +82,7 @@ Use `/remember <text>` in the [interactive TUI](/interactive-tui#commands) to ap
 /remember global keep explanations concise
 ```
 
-The text must be a non-empty single line. Rho creates the file if needed, preserves existing instructions, and adds the new instruction to the current conversation without starting a model turn. The file is loaded again on the next Rho launch. `/remember` is available only between model turns. To revise or remove instructions, edit `AGENTS.md` directly. Global instructions always live at `~/.rho/AGENTS.md`, even when `RHO_HOME` redirects Rho's data directory.
+The text must be a non-empty single line. Rho creates the file if needed, preserves existing instructions, and adds the new instruction to the current conversation without starting a model turn. The file is re-read whenever you start or switch to a different session, as described above. `/remember` is available only between model turns. To revise or remove instructions, edit `AGENTS.md` directly. Global instructions always live at `~/.rho/AGENTS.md`, even when `RHO_HOME` redirects Rho's data directory.
 
 ## CLI overrides
 
