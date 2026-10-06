@@ -3,7 +3,6 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
 };
 
 use anyhow::Context as _;
@@ -228,6 +227,7 @@ where
 pub(crate) enum CaptureDisposition {
     Captured,
     AlreadyCaptured,
+    Paused,
 }
 
 /// In-memory checkpoint under construction for one turn.
@@ -238,6 +238,10 @@ pub(crate) struct OpenWorkspaceCheckpoint {
     before_node_id: Option<NodeId>,
     started_at: u64,
     max_file_bytes: u64,
+    max_session_bytes: u64,
+    journal_bytes: u64,
+    captured_bytes: u64,
+    quota_exceeded: Option<CheckpointAppendError>,
     originals: BTreeMap<PathBuf, OriginalFileState>,
     expected_after: BTreeMap<PathBuf, ObservedFileState>,
     limitations: Vec<UntrackedEffect>,
@@ -246,16 +250,51 @@ pub(crate) struct OpenWorkspaceCheckpoint {
 impl OpenWorkspaceCheckpoint {
     /// Captures a caller-authorized path once. This method does no workspace authorization.
     pub(crate) fn capture_path(&mut self, path: &Path) -> CaptureDisposition {
+        if self.quota_exceeded.is_some() {
+            return CaptureDisposition::Paused;
+        }
         if self.originals.contains_key(path) {
             return CaptureDisposition::AlreadyCaptured;
         }
-        let state = capture_original(path, self.max_file_bytes);
+        let remaining = self
+            .max_session_bytes
+            .saturating_sub(self.journal_bytes.saturating_add(self.captured_bytes));
+        // Bound the read itself, not only the retained pre-image. A file that
+        // exceeds the per-file limit stays unsupported; a collection of smaller
+        // files that exhausts this session drops the entire turn's capture.
+        let mut state = capture_original(path, self.max_file_bytes.min(remaining));
+        let size = match &state {
+            OriginalFileState::Regular(file) => file.bytes.len() as u64,
+            OriginalFileState::Unsupported {
+                reason: UnsupportedPath::TooLarge { size, .. },
+            } if remaining < self.max_file_bytes && *size <= self.max_file_bytes => {
+                let turn_bytes = self.captured_bytes.saturating_add(*size);
+                self.quota_exceeded = Some(CheckpointAppendError::QuotaExceeded {
+                    asked: self.journal_bytes.saturating_add(turn_bytes),
+                    limit: self.max_session_bytes,
+                    turn_bytes,
+                });
+                self.originals.clear();
+                self.expected_after.clear();
+                self.limitations.clear();
+                self.captured_bytes = 0;
+                return CaptureDisposition::Paused;
+            }
+            OriginalFileState::Absent | OriginalFileState::Unsupported { .. } => 0,
+        };
+        if let OriginalFileState::Unsupported {
+            reason: UnsupportedPath::TooLarge { limit, .. },
+        } = &mut state
+        {
+            *limit = self.max_file_bytes;
+        }
+        self.captured_bytes += size;
         self.originals.insert(path.to_path_buf(), state);
         CaptureDisposition::Captured
     }
 
     pub(crate) fn record_untracked_effect(&mut self, effect: UntrackedEffect) {
-        if !self.limitations.contains(&effect) {
+        if self.quota_exceeded.is_none() && !self.limitations.contains(&effect) {
             self.limitations.push(effect);
         }
     }
@@ -299,17 +338,32 @@ impl WorkspaceCheckpointStore {
         }))
     }
 
-    pub(crate) fn open(&self, node_id: NodeId) -> OpenWorkspaceCheckpoint {
-        OpenWorkspaceCheckpoint {
+    pub(crate) fn open(&self, node_id: NodeId) -> anyhow::Result<OpenWorkspaceCheckpoint> {
+        let journal_bytes = match fs::symlink_metadata(&self.journal_path) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    metadata.is_file(),
+                    "checkpoint journal is not a regular file"
+                );
+                metadata.len()
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(OpenWorkspaceCheckpoint {
             session_id: self.session_id.clone(),
             node_id,
             before_node_id: None,
             started_at: super::persistence::unix_timestamp_secs(),
             max_file_bytes: self.limits.max_file_bytes,
+            max_session_bytes: self.limits.max_session_bytes,
+            journal_bytes,
+            captured_bytes: 0,
+            quota_exceeded: None,
             originals: BTreeMap::new(),
             expected_after: BTreeMap::new(),
             limitations: Vec::new(),
-        }
+        })
     }
 
     pub(crate) fn finalize_for_node(
@@ -337,6 +391,9 @@ impl WorkspaceCheckpointStore {
             "checkpoint belongs to a different session"
         );
 
+        if let Some(error) = open.quota_exceeded {
+            return Err(error.into());
+        }
         let mut expected_after = open.expected_after;
         let files = open
             .originals
@@ -414,7 +471,7 @@ impl WorkspaceCheckpointStore {
 
         let mut encoded = serde_json::to_vec(&StoredCheckpointRecord {
             version: CHECKPOINT_FORMAT_VERSION,
-            checkpoint: checkpoint.clone(),
+            checkpoint,
         })
         .map_err(anyhow::Error::from)?;
         encoded.push(b'\n');
@@ -441,145 +498,9 @@ impl WorkspaceCheckpointStore {
     }
 }
 
-/// Turn-scoped mutation observer shared by native workspace tools.
-#[derive(Clone, Debug)]
-pub(crate) struct WorkspaceCheckpointTracker {
-    enabled: bool,
-    active: Arc<Mutex<Option<ActiveCheckpoint>>>,
-}
-
-#[derive(Debug)]
-struct ActiveCheckpoint {
-    store: WorkspaceCheckpointStore,
-    open: OpenWorkspaceCheckpoint,
-}
-
-impl WorkspaceCheckpointTracker {
-    pub(crate) fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            active: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    pub(crate) fn begin_turn(&self, session: Option<&Session>) -> anyhow::Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
-        let Some(session) = session else {
-            return Ok(());
-        };
-        let Some(store) = session.workspace_checkpoint_store()? else {
-            return Ok(());
-        };
-        let mut open = store.open(NodeId::new());
-        open.before_node_id = session.active_checkpoint_target()?.map(|(id, _)| id);
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        anyhow::ensure!(
-            active.is_none(),
-            "a workspace checkpoint turn is already active"
-        );
-        *active = Some(ActiveCheckpoint { store, open });
-        Ok(())
-    }
-
-    pub(crate) fn discard_turn(&self) {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *active = None;
-    }
-
-    pub(crate) fn finalize_turn(
-        &self,
-        node_id: NodeId,
-        revision: Revision,
-        outcome: CheckpointOutcome,
-    ) -> anyhow::Result<Option<WorkspaceCheckpoint>> {
-        let active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        let Some(active) = active else {
-            return Ok(None);
-        };
-        active
-            .store
-            .finalize_for_node(active.open, node_id, revision, outcome)
-            .map(Some)
-    }
-}
-
-impl rho_tools::WorkspaceMutationObserver for WorkspaceCheckpointTracker {
-    fn before_mutation<'a>(
-        &'a self,
-        paths: &'a [&'a Path],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
-        let result = {
-            let mut active = self
-                .active
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(active) = active.as_mut() {
-                for path in paths {
-                    active.open.capture_path(path);
-                }
-            }
-            Ok(())
-        };
-        Box::pin(std::future::ready(result))
-    }
-
-    fn after_mutation<'a>(
-        &'a self,
-        paths: &'a [&'a Path],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
-        let result = {
-            let mut active = self
-                .active
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(active) = active.as_mut() {
-                for path in paths {
-                    let state = active.store.observe_path(path);
-                    active
-                        .open
-                        .expected_after
-                        .insert((*path).to_path_buf(), state);
-                }
-            }
-            Ok(())
-        };
-        Box::pin(std::future::ready(result))
-    }
-
-    fn mark_untracked_effect(&self, kind: rho_tools::UntrackedWorkspaceEffect, source: &str) {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(active) = active.as_mut() else {
-            return;
-        };
-        let effect = UntrackedEffect {
-            kind: match kind {
-                rho_tools::UntrackedWorkspaceEffect::ShellCommand => {
-                    UntrackedEffectKind::ShellCommand
-                }
-                rho_tools::UntrackedWorkspaceEffect::MutatingTool => {
-                    UntrackedEffectKind::UntrackedMutatingTool
-                }
-            },
-            source: source.to_string(),
-        };
-        active.open.record_untracked_effect(effect);
-    }
-}
+#[path = "workspace_checkpoint_tracker.rs"]
+mod tracker;
+pub(crate) use tracker::WorkspaceCheckpointTracker;
 
 impl Session {
     pub(crate) fn active_checkpoint_target(&self) -> anyhow::Result<Option<(NodeId, Revision)>> {
@@ -604,9 +525,14 @@ impl Session {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct StoredCheckpointRecord {
+#[derive(Serialize)]
+struct StoredCheckpointRecord<'a> {
     version: u32,
+    checkpoint: &'a WorkspaceCheckpoint,
+}
+
+#[derive(Deserialize)]
+struct ReadCheckpointRecord {
     checkpoint: WorkspaceCheckpoint,
 }
 
@@ -744,12 +670,12 @@ fn read_locked_journal(
             record.checkpoint.node_id
         );
         if target_node_id == Some(&record.checkpoint.node_id) {
-            selected =
-                match serde_json::from_slice::<StoredCheckpointRecord>(&line[..line.len() - 1]) {
-                    Ok(record) => Some(record.checkpoint),
-                    Err(_) if lines.peek().is_none() => break,
-                    Err(error) => return Err(error).context("invalid checkpoint journal record"),
-                };
+            selected = match serde_json::from_slice::<ReadCheckpointRecord>(&line[..line.len() - 1])
+            {
+                Ok(record) => Some(record.checkpoint),
+                Err(_) if lines.peek().is_none() => break,
+                Err(error) => return Err(error).context("invalid checkpoint journal record"),
+            };
         }
         // Quota accounting uses the serialized line length, including its newline.
         valid_len += u64::try_from(line.len())?;

@@ -87,7 +87,9 @@ creates a new branch, and the original conversation branch stays available in
 `/tree`. Conversation selection clears the composer, as `/tree` does; it does
 not automatically put the old prompt back for editing. Conflicting paths,
 unsupported files, and failed writes stay unchanged. A partial restore leaves
-the current conversation state selected and reports its audit.
+the current conversation state selected and reports its audit. Checkpoints from
+the old experimental version lack pre-turn conversation boundaries and cannot
+be rewound; they are rejected before any files change.
 
 Only native file-tool mutations are captured. Shell (`bash`), process, Git,
 network, database, service, and third-party tool effects cannot be reversed.
@@ -96,9 +98,11 @@ preview and audit. Rewinding is not a replacement for Git or a workspace backup.
 
 The **per-file capture budget is 2 MiB**. Files above it are unsupported, with a
 transcript notice showing the limit and requested file size. The **per-session
-serialized journal budget is 64 MiB**. An append that would exceed it is rejected
-without losing earlier checkpoints. Rho reports the budget, limit, requested
-journal size, and turn size once, and pauses further capture for that running
+serialized journal budget is 64 MiB**. Capture also bounds aggregate pre-image
+bytes by the remaining session budget and drops the current turn's capture if it
+cannot fit, without blocking native tools or the turn. An append that would
+exceed it is rejected without losing earlier checkpoints. Rho reports the budget,
+limit, requested total, and turn size once, and pauses further capture for that running
 session. Earlier turns remain rewindable; restarting can attempt capture again
 but does not clear the journal or its budget.
 

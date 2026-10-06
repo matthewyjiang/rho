@@ -3,8 +3,8 @@ use crate::tui::DefaultTerminal;
 use crate::session::tree::{NodeId, SessionTreeItem};
 
 use super::{
-    picker::OverlayChrome, App, ComposerMode, InteractiveRuntime, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker, ViewModelEvent,
+    picker::OverlayChrome, App, ComposerMode, Entry, InteractiveRuntime, PickerBadge,
+    PickerBadgeTone, PickerItem, PickerLayout, UiPicker, ViewModelEvent,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -107,6 +107,16 @@ impl App {
         let entries = self.transcript_entries(&histories.display);
         agent.select_tree_node(storage, &target_id).await?;
 
+        self.present_tree_selection(entries, &target_id, agent);
+        Ok(())
+    }
+
+    pub(super) fn present_tree_selection(
+        &mut self,
+        entries: Vec<Entry>,
+        target_id: &NodeId,
+        agent: &mut InteractiveRuntime,
+    ) {
         self.input_ui.set_composer(ComposerMode::Input);
         self.input_ui.clear_text();
         self.input_ui.clear_paste_segments();
@@ -127,6 +137,5 @@ impl App {
             "restored conversation state {}",
             &target_id.as_str()[..target_id.as_str().len().min(8)]
         ));
-        Ok(())
     }
 }

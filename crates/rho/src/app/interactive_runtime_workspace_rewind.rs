@@ -6,6 +6,33 @@ use crate::session::workspace_checkpoint::{
     RestoreClassification, UnsupportedPath,
 };
 
+#[cfg(test)]
+#[path = "interactive_runtime_workspace_rewind_tests.rs"]
+mod tests;
+
+struct PreparedWorkspaceRewind {
+    checkpoint: crate::session::workspace_checkpoint::WorkspaceCheckpoint,
+    current: BTreeMap<PathBuf, ObservedFileState>,
+    plan: crate::session::workspace_checkpoint::RestorePlan,
+    conversation: tree::PreparedTreeSelection,
+    display: Vec<Message>,
+}
+
+#[derive(Debug)]
+pub(crate) struct WorkspaceRewindResult {
+    pub(crate) audit: crate::session::workspace_checkpoint::RestoreAudit,
+    pub(crate) display: Option<(crate::session::tree::NodeId, Vec<Message>)>,
+    pub(crate) selection_error: Option<anyhow::Error>,
+}
+
+fn rewind_boundary(
+    checkpoint: &crate::session::workspace_checkpoint::WorkspaceCheckpoint,
+) -> anyhow::Result<&crate::session::tree::NodeId> {
+    checkpoint.before_node_id.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("could not rewind workspace: checkpoint predates rewind boundaries")
+    })
+}
+
 impl InteractiveRuntime {
     /// Establish a durable empty root so even the first turn has a rewind target.
     pub(super) fn begin_workspace_checkpoint(&self) -> anyhow::Result<()> {
@@ -89,39 +116,6 @@ impl InteractiveRuntime {
         }
     }
 
-    /// Returns the state before the checkpoint's turn, not its completed state.
-    pub(crate) fn workspace_rewind_conversation_target(
-        &self,
-        target_id: &crate::session::tree::NodeId,
-    ) -> anyhow::Result<crate::session::tree::NodeId> {
-        let storage = self
-            .sessions
-            .storage()
-            .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
-        let store = storage
-            .workspace_checkpoint_store()?
-            .ok_or_else(|| anyhow::anyhow!("workspace rewind is unavailable for this session"))?;
-        let checkpoint = store
-            .get(target_id)?
-            .ok_or_else(|| anyhow::anyhow!("workspace checkpoint '{target_id}' was not found"))?;
-        storage.with_session_tree(|tree| {
-            let before = checkpoint
-                .before_node_id
-                .or_else(|| {
-                    tree.node(target_id)
-                        .and_then(|node| node.parent_id().cloned())
-                })
-                .ok_or_else(|| {
-                    anyhow::anyhow!("this legacy turn has no saved pre-turn conversation state")
-                })?;
-            anyhow::ensure!(
-                tree.node(&before).is_some(),
-                "pre-turn conversation state '{before}' was not found"
-            );
-            Ok(before)
-        })
-    }
-
     pub(crate) fn workspace_checkpoints(
         &self,
     ) -> anyhow::Result<Vec<crate::session::workspace_checkpoint::WorkspaceCheckpointSummary>> {
@@ -152,6 +146,7 @@ impl InteractiveRuntime {
         let checkpoint = store
             .get(target_id)?
             .ok_or_else(|| anyhow::anyhow!("workspace checkpoint '{target_id}' was not found"))?;
+        rewind_boundary(&checkpoint)?;
         let current = self.observe_checkpoint_paths(&store, &checkpoint);
         let plan = crate::session::workspace_checkpoint::plan_restore(&checkpoint, &current)?;
         Ok((checkpoint, plan))
@@ -160,7 +155,7 @@ impl InteractiveRuntime {
     pub(crate) async fn restore_workspace_rewind(
         &mut self,
         target_id: &crate::session::tree::NodeId,
-    ) -> anyhow::Result<crate::session::workspace_checkpoint::RestoreAudit> {
+    ) -> anyhow::Result<WorkspaceRewindResult> {
         if self.is_session_busy() {
             anyhow::bail!(if self.runs.is_active() {
                 "workspace rewind is unavailable while a provider run is active"
@@ -181,15 +176,54 @@ impl InteractiveRuntime {
         let checkpoint = store
             .get(target_id)?
             .ok_or_else(|| anyhow::anyhow!("workspace checkpoint '{target_id}' was not found"))?;
+        let before = rewind_boundary(&checkpoint)?.clone();
         let current = self.observe_checkpoint_paths(&store, &checkpoint);
         let plan = crate::session::workspace_checkpoint::plan_restore(&checkpoint, &current)?;
-        self.authorize_restore_actions(&plan)?;
-        Ok(store.restore(
-            &checkpoint,
-            &current,
+        let display = storage.histories_for_node(&before)?.display;
+        let conversation = self
+            .prepare_tree_selection(storage.clone(), &before)
+            .await?;
+        let prepared = PreparedWorkspaceRewind {
+            checkpoint,
+            current,
+            plan,
+            conversation,
+            display,
+        };
+        // Preparation above is entirely fallible and makes no file changes.
+        // The restore rechecks paths against this plan before each write.
+        self.authorize_restore_actions(&prepared.plan)?;
+        let audit = store.restore(
+            &prepared.checkpoint,
+            &prepared.current,
             |path| self.observe_checkpoint_path(&store, path),
             |file, classification| self.apply_checkpoint_restore(&store, file, classification),
-        ))
+        );
+        let incomplete = audit.entries.iter().any(|entry| {
+            entry.error.is_some()
+                || matches!(
+                    entry.classification,
+                    RestoreClassification::Conflict | RestoreClassification::Unsupported
+                )
+        });
+        if incomplete {
+            return Ok(WorkspaceRewindResult {
+                audit,
+                display: None,
+                selection_error: None,
+            });
+        }
+        let selection_error = self
+            .commit_tree_selection(prepared.conversation)
+            .await
+            .err();
+        Ok(WorkspaceRewindResult {
+            audit,
+            display: selection_error
+                .is_none()
+                .then_some((before, prepared.display)),
+            selection_error,
+        })
     }
 
     fn observe_checkpoint_paths(

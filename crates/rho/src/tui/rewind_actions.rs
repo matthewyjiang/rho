@@ -162,34 +162,24 @@ impl App {
     pub(super) async fn submit_rewind_confirmation(
         &mut self,
         value: &str,
-        terminal: &mut DefaultTerminal,
+        _terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let node_id = NodeId::from_string(value)?;
-        let before_node_id = agent.workspace_rewind_conversation_target(&node_id)?;
-        let audit = agent.restore_workspace_rewind(&node_id).await?;
-        let incomplete = audit.entries.iter().any(|entry| {
-            entry.error.is_some()
-                || matches!(
-                    entry.classification,
-                    RestoreClassification::Conflict | RestoreClassification::Unsupported
-                )
-        });
-        let selection_error = if incomplete {
-            self.input_ui.set_composer(ComposerMode::Input);
-            None
+        let result = agent.restore_workspace_rewind(&node_id).await?;
+        let conversation_selected = result.display.is_some();
+        if let Some((before, display)) = result.display {
+            let entries = self.transcript_entries(&display);
+            self.present_tree_selection(entries, &before, agent);
         } else {
-            self.submit_tree_selection(before_node_id.as_str(), terminal, agent)
-                .await
-                .err()
-        };
-        let conversation_selected = !incomplete && selection_error.is_none();
+            self.input_ui.set_composer(ComposerMode::Input);
+        }
         self.insert_entry(&Entry::Notice(rewind_audit_text(
-            &audit,
+            &result.audit,
             agent.workspace_path(),
             conversation_selected,
         )));
-        if let Some(error) = selection_error {
+        if let Some(error) = result.selection_error {
             return Err(error);
         }
         Ok(())

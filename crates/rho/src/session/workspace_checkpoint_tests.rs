@@ -44,7 +44,7 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
     let store = checkpoint_store(&session)?;
 
     let first_node = NodeId::new();
-    let mut open = store.open(first_node.clone());
+    let mut open = store.open(first_node.clone())?;
     assert_eq!(open.capture_path(&path), CaptureDisposition::Captured);
     assert_eq!(
         open.capture_path(&path),
@@ -61,7 +61,7 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
     let before_duplicate = fs::read(&store.journal_path)?;
     assert!(reopened
         .finalize(
-            reopened.open(first_node.clone()),
+            reopened.open(first_node.clone())?,
             Revision::from_u64(5),
             CheckpointOutcome::Completed,
         )
@@ -95,7 +95,7 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
 
     let second_path = workspace.join("created.txt");
     let second_node = NodeId::new();
-    let mut second_open = reopened.open(second_node.clone());
+    let mut second_open = reopened.open(second_node.clone())?;
     second_open.capture_path(&second_path);
     fs::write(&second_path, b"created")?;
     let second = reopened.finalize(
@@ -131,13 +131,13 @@ fn checkpoint_journal_preserves_unknown_versions_and_duplicate_nodes() -> anyhow
         let path = workspace.join("tracked.txt");
         fs::write(&path, b"original")?;
         let store = checkpoint_store(&session)?;
-        let mut open = store.open(NodeId::new());
+        let mut open = store.open(NodeId::new())?;
         open.capture_path(&path);
         fs::write(&path, b"agent")?;
         let first = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
         let mut invalid = serde_json::to_vec(&StoredCheckpointRecord {
             version,
-            checkpoint: first.clone(),
+            checkpoint: &first,
         })?;
         invalid.push(b'\n');
         OpenOptions::new()
@@ -148,7 +148,7 @@ fn checkpoint_journal_preserves_unknown_versions_and_duplicate_nodes() -> anyhow
 
         assert!(store.list().is_err());
         assert!(store.get(&first.node_id).is_err());
-        let mut next = store.open(NodeId::new());
+        let mut next = store.open(NodeId::new())?;
         next.capture_path(&workspace.join("next.txt"));
         assert!(store
             .finalize(next, Revision::from_u64(2), CheckpointOutcome::Completed,)
@@ -167,13 +167,13 @@ fn checkpoint_headers_skip_file_bodies_but_preserve_quota_accounting() -> anyhow
     let path = workspace.join("tracked.txt");
     fs::write(&path, b"original")?;
     let mut store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     let first = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
 
     let mut damaged = serde_json::to_value(StoredCheckpointRecord {
         version: CHECKPOINT_FORMAT_VERSION,
-        checkpoint: first.clone(),
+        checkpoint: &first,
     })?;
     damaged["checkpoint"]["files"][0]["original"]["bytes"] = "not base64!".into();
     let mut encoded = serde_json::to_vec(&damaged)?;
@@ -181,7 +181,7 @@ fn checkpoint_headers_skip_file_bodies_but_preserve_quota_accounting() -> anyhow
     fs::write(&store.journal_path, &encoded)?;
 
     let second_node = NodeId::new();
-    let mut open = store.open(second_node.clone());
+    let mut open = store.open(second_node.clone())?;
     open.capture_path(&path);
     let second = store.finalize(open, Revision::from_u64(2), CheckpointOutcome::Completed)?;
     assert_eq!(store.list()?, vec![summary(&first), summary(&second)]);
@@ -193,7 +193,7 @@ fn checkpoint_headers_skip_file_bodies_but_preserve_quota_accounting() -> anyhow
     store.limits.max_session_bytes = stored_bytes;
     let error = store
         .finalize(
-            store.open(NodeId::new()),
+            store.open(NodeId::new())?,
             Revision::from_u64(3),
             CheckpointOutcome::Completed,
         )
@@ -355,7 +355,7 @@ fn restore_applies_safe_actions_and_audits_conflicts() -> anyhow::Result<()> {
     fs::write(&conflicted, b"original")?;
 
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     for path in [
         &created_before_turn,
         &modified,
@@ -408,7 +408,7 @@ fn restore_recreates_missing_parent_directory() -> anyhow::Result<()> {
     fs::create_dir(path.parent().expect("test path must have a parent"))?;
     fs::write(&path, b"original")?;
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     fs::remove_dir_all(path.parent().expect("test path must have a parent"))?;
     let checkpoint = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
@@ -442,7 +442,7 @@ fn restore_rechecks_state_after_preview() -> anyhow::Result<()> {
     let path = workspace.join("raced.txt");
     fs::write(&path, b"original")?;
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     fs::write(&path, b"agent-change")?;
     let checkpoint = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
@@ -482,7 +482,7 @@ fn restore_does_not_follow_a_replacement_symlink() -> anyhow::Result<()> {
     fs::write(&target, b"original")?;
     fs::write(&outside, b"outside")?;
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&target);
     fs::write(&target, b"agent-change")?;
     let checkpoint = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
@@ -653,7 +653,7 @@ fn capture_limit_marks_files_unsupported_and_quota_rejects_append() -> anyhow::R
     let store = session
         .workspace_checkpoint_store_with_limits(limits)?
         .ok_or_else(|| anyhow::anyhow!("checkpoint store is unavailable"))?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     fs::write(&path, b"12")?;
 

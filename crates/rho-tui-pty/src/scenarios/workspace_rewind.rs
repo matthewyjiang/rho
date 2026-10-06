@@ -1,9 +1,10 @@
 use std::fs;
 
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 
 use crate::{
     env::IsolatedHome,
+    harness::PtyHarness,
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, Step},
@@ -44,16 +45,65 @@ pub(super) const WORKSPACE_REWIND_OFF_SCENARIO: Scenario = Scenario::new(
             text: "gpt-5.5",
             timeout: STARTUP,
         },
+        Step::SubmitText("fixture tool"),
+        Step::WaitText {
+            text: "tool lifecycle complete with one result",
+            timeout: STREAM,
+        },
         Step::SubmitText("/rewind"),
         Step::WaitText {
             text: "workspace rewind is off",
             timeout: SETTLE,
         },
         Step::ExitCommand,
+        // Process exit joins deferred persistence before the disk assertion.
+        Step::Custom(assert_no_checkpoint_journal),
     ],
     false,
 )
 .with_setup(setup_workspace_rewind_off);
+
+fn assert_no_checkpoint_journal(harness: &mut PtyHarness) -> Result<()> {
+    let workspace = harness
+        .working_directory()
+        .context("matrix workspace is unavailable")?;
+    ensure!(
+        fs::read(workspace.join(".rho-tui-fixture-output.txt"))? == b"deterministic tool output\n",
+        "native write did not complete with workspace rewind disabled"
+    );
+    let sessions = harness
+        .working_directory()
+        .and_then(std::path::Path::parent)
+        .context("matrix workspace has no isolated home parent")?
+        .join("home/.rho/sessions");
+    ensure!(
+        sessions.is_dir(),
+        "native fixture turn did not create isolated session storage"
+    );
+    let mut pending = vec![sessions];
+    let mut saved_session = false;
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                let journal = entry.path().join("workspace-checkpoints/checkpoints.jsonl");
+                ensure!(
+                    !journal.try_exists()?,
+                    "workspace rewind opt-out created a checkpoint journal: {}",
+                    journal.display()
+                );
+                pending.push(entry.path());
+            } else if entry.file_name() == "session.jsonl" {
+                saved_session = true;
+            }
+        }
+    }
+    ensure!(
+        saved_session,
+        "native fixture turn did not save a session transcript"
+    );
+    Ok(())
+}
 
 const WORKSPACE_REWIND_STEPS: &[Step] = &[
     Step::Phase("startup"),

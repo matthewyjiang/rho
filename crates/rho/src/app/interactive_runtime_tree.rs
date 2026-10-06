@@ -3,12 +3,44 @@
 
 use super::*;
 
+/// Prepared replacement owned by the runtime, not by a UI transaction.
+/// Dropping an uncommitted selection shuts down the unused SDK runtime.
+pub(super) struct PreparedTreeSelection {
+    storage: StoredSession,
+    target_id: crate::session::tree::NodeId,
+    runtime: Option<Rho>,
+    session: rho_sdk::Session,
+    resume_omission: Option<rho_sdk::model::handoff::HandoffReport>,
+    permission: RebuiltPermission,
+    prompt: Option<crate::prompt::SystemPrompt>,
+    /// Staged template; adopted only when the selection commits.
+    template: Option<crate::prompt::ModelPromptTemplate>,
+    prompt_notice: Option<String>,
+}
+
+impl Drop for PreparedTreeSelection {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown();
+        }
+    }
+}
+
 impl InteractiveRuntime {
     pub(crate) async fn select_tree_node(
         &mut self,
         storage: StoredSession,
         target_id: &crate::session::tree::NodeId,
     ) -> anyhow::Result<()> {
+        let prepared = self.prepare_tree_selection(storage, target_id).await?;
+        self.commit_tree_selection(prepared).await
+    }
+
+    pub(super) async fn prepare_tree_selection(
+        &self,
+        storage: StoredSession,
+        target_id: &crate::session::tree::NodeId,
+    ) -> anyhow::Result<PreparedTreeSelection> {
         if self.is_session_busy() {
             anyhow::bail!(if self.runs.is_active() {
                 "cannot navigate the session tree while a run is active"
@@ -36,8 +68,8 @@ impl InteractiveRuntime {
             provider: Arc::clone(self.provider.provider()),
             tools: &self.tools,
             workspace: self.workspace.clone(),
-            workspace_policy: permission.workspace_policy,
-            approval_session: permission.approval_session,
+            workspace_policy: permission.workspace_policy.clone(),
+            approval_session: permission.approval_session.clone(),
             system_prompt: self.active_system_prompt(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -51,9 +83,16 @@ impl InteractiveRuntime {
             diagnostics: self.diagnostics.clone(),
             recall: self.tools.recall_store(),
         })?;
-        let replacement_session = replacement_runtime
+        let replacement_session = match replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
-            .await?;
+            .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                replacement_runtime.shutdown();
+                return Err(error.into());
+            }
+        };
         let prompt_notice = prepared_prompt.as_ref().and_then(|prompt| {
             crate::app::model_prompt_metadata::change_notice(
                 &replacement_session.snapshot(),
@@ -69,23 +108,42 @@ impl InteractiveRuntime {
                 return Err(error.into());
             }
         }
-        // Do not change the live runtime until the selected leaf is durable.
-        if let Err(error) = storage.set_leaf(target_id) {
-            replacement_runtime.shutdown();
-            return Err(error);
-        }
+        Ok(PreparedTreeSelection {
+            storage,
+            target_id: target_id.clone(),
+            runtime: Some(replacement_runtime),
+            session: replacement_session,
+            resume_omission,
+            permission,
+            prompt: prepared_prompt,
+            template: prepared.template,
+            prompt_notice,
+        })
+    }
+
+    pub(super) async fn commit_tree_selection(
+        &mut self,
+        mut prepared: PreparedTreeSelection,
+    ) -> anyhow::Result<()> {
+        // Only the durable leaf commit can fail here; prompt/snapshot/runtime
+        // preparation has already succeeded without touching the live session.
+        prepared.storage.set_leaf(&prepared.target_id)?;
         self.revoke_computer_use();
+        let replacement_runtime = prepared
+            .runtime
+            .take()
+            .expect("prepared runtime is present");
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
-            .replace_session(replacement_session, resume_omission);
+            .replace_session(prepared.session.clone(), prepared.resume_omission.take());
         self.computer_runtime_dirty = false;
-        self.sessions.set_resumed_storage(storage);
-        self.install_rebuilt_permission(permission.pending);
-        if let Some(prompt) = prepared_prompt {
+        self.sessions.set_resumed_storage(prepared.storage.clone());
+        self.install_rebuilt_permission(prepared.permission.pending.take());
+        if let Some(prompt) = prepared.prompt.take() {
             self.adopt_model_prompt(prompt);
         }
-        self.prompt_template = prepared.template;
-        if let Some(notice) = prompt_notice {
+        self.prompt_template = prepared.template.take();
+        if let Some(notice) = prepared.prompt_notice.take() {
             self.sessions.queue_notice(notice);
         }
         previous_runtime.shutdown();

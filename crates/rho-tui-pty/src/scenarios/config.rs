@@ -397,7 +397,11 @@ pub(super) fn find_latest_session(
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                // Rewind journals are JSONL too and are often written last.
+                if path.file_name().and_then(|name| name.to_str()) != Some("workspace-checkpoints")
+                {
+                    stack.push(path);
+                }
                 continue;
             }
             if path.file_name().and_then(|name| name.to_str()) != Some("session.jsonl")

@@ -256,7 +256,7 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 workspace_rewind = false
 ```
 
-Restart Rho after changing it. The legacy `experimental_workspace_rewind` key is accepted but ignored (including saved `false` defaults), and the next config save removes it. Only `workspace_rewind = false` opts out.
+Restart Rho after changing it. The legacy `experimental_workspace_rewind` key is accepted but ignored (including saved `false` defaults), and the next config save removes it. Only `workspace_rewind = false` opts out. Checkpoints from the old experimental version lack pre-turn conversation boundaries and cannot be rewound; they are rejected before any files change.
 
 Checkpoints capture original file contents for `write` and the selected native edit tool. Shell (`bash`), process, Git, network, database, service, and other untracked tool effects are **not captured**; recorded untracked effects show a **limited** badge in `/rewind`. `/tree` changes conversation state only. `/rewind` restores captured files and returns the conversation to **before** the selected turn, preserving the old branch. Conflicting or unsupported paths stay unchanged; a partial restore does not select a different conversation state.
 
