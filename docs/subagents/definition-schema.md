@@ -42,7 +42,7 @@ flowchart TD
 | `runtime` | enum | no | `rho` | `rho` \| `claude-cli` \| `cursor` \| `antigravity` |
 | `prompt` | enum | no | `extend` | `extend` \| `replace`. `replace` requires a non-empty Markdown body. `replace` is rejected on `cursor` and `antigravity` (ACP has no system-prompt override; use `extend`) |
 | `model-policy` | enum | no | see model rules | Depends on `runtime` (below) |
-| `model` | string | policy-dependent | unset | Non-empty; no whitespace. Rho may use `@alias`. Claude and Cursor reject `@alias` and pass the value to `--model`. Cursor allows brackets and commas, for example `gpt-5.3-codex[effort=high,fast=false]` |
+| `model` | string | policy-dependent | unset | Non-empty; no whitespace. Rho may use `@alias`. Claude, Cursor, and Antigravity reject `@alias`; Claude and Cursor pass the value to `--model`, Antigravity sets it as the session `model` option. Cursor allows brackets and commas, for example `gpt-5.3-codex[effort=high,fast=false]` |
 | `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli`, `cursor`, and `antigravity` |
 | `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli`, `cursor`, `antigravity`, and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
 | `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` and `antigravity` (no reasoning flag; put effort in `model`) |

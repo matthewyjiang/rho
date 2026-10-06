@@ -59,7 +59,7 @@ fn write_runtime(out: &mut String, runtime: &AgentRuntimeSpec) {
 
 fn write_model(out: &mut String, runtime: &AgentRuntimeSpec) {
     if let Some(model) = runtime.pass_through_model() {
-        // External CLIs resolve model to a pass-through --model string.
+        // External runtimes resolve model to a pass-through string.
         // None maps to inherit; Some maps to select. The parser accepts
         // `model: <name>` (implicit select) or `model-policy: select` +
         // `model: <name>`. Emit just the model for brevity.

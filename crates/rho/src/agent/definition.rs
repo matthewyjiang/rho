@@ -427,9 +427,10 @@ impl AgentRuntimeSpec {
         }
     }
 
-    /// Pass-through `--model` for external CLI runtimes.
+    /// Pass-through model for external runtimes: `--model` for Claude Code
+    /// and Cursor, the session `model` option for Antigravity.
     ///
-    /// `Some` for Claude Code and Cursor (inner `None` omits `--model`).
+    /// `Some` for every external runtime (inner `None` keeps its default).
     /// `None` for Rho, which uses [`ModelPolicy`] instead.
     pub fn pass_through_model(&self) -> Option<&Option<String>> {
         match self {
@@ -440,7 +441,7 @@ impl AgentRuntimeSpec {
         }
     }
 
-    /// Mutable pass-through `--model` for external CLI runtimes.
+    /// Mutable pass-through model for external runtimes.
     pub fn pass_through_model_mut(&mut self) -> Option<&mut Option<String>> {
         match self {
             Self::ClaudeCli(config) => Some(&mut config.model),

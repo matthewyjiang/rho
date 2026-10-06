@@ -325,7 +325,7 @@ fn parse_external_runtime_model_policy(
             path.to_path_buf(),
             "provider",
             format!(
-                "is not valid with runtime: {runtime_name}; set model only (passed through as --model)"
+                "is not valid with runtime: {runtime_name}; set model only (passed to the runtime as-is)"
             ),
         ));
     }
@@ -334,7 +334,7 @@ fn parse_external_runtime_model_policy(
             path.to_path_buf(),
             "auth",
             format!(
-                "is not valid with runtime: {runtime_name}; set model only (passed through as --model)"
+                "is not valid with runtime: {runtime_name}; set model only (passed to the runtime as-is)"
             ),
         ));
     }
