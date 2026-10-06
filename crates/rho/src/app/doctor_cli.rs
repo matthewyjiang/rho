@@ -12,6 +12,7 @@ use serde::Serialize;
 
 use super::config_repository::ConfigRepository;
 use crate::{
+    antigravity_runtime::setup::AntigravitySetup,
     cli::Cli,
     credential_store::AppCredentialStore,
     doctor::{
@@ -67,6 +68,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
     let available_auths = available_auth_modes(store.as_ref());
     let clipboard = crate::clipboard::doctor_report();
     let probes = plan_probes(&config, &config.provider, DoctorProbeGate::Live);
+    let antigravity = AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default());
     let mut report = build_report(DoctorInputs {
         provider: &config.provider,
         model: &config.model,
@@ -76,6 +78,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         config_path: &config_path,
         session_root: &rho_home.join("sessions"),
         herdr: HerdrProbe::from_reporter(&HerdrReporter::from_env()),
+        antigravity: &antigravity,
         clipboard: &clipboard,
         mcp_report: &mcp_report,
         plugins_report: &discovery.report,

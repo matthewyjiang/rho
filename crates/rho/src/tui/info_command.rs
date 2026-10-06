@@ -15,6 +15,7 @@ use super::{
     App,
 };
 use crate::agent::AgentRuntime;
+use crate::antigravity_runtime::{setup::AntigravitySetup, ANTIGRAVITY_LABEL_NAME};
 use crate::claude_runtime::auth;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,7 +77,8 @@ pub(super) struct RuntimeInfo {
     tree_error: Option<String>,
     /// Session tree is read off the open path so a large file cannot delay the overlay.
     tree_loading: bool,
-    /// Auth summaries for runtimes outside provider credentials (Claude, Cursor).
+    /// Auth summaries for runtimes outside provider credentials (Claude,
+    /// Cursor, Antigravity).
     external_runtimes: Vec<String>,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
     subagent_total_cost_usd_micros: u64,
@@ -183,11 +185,12 @@ impl App {
     }
 }
 
-/// Placeholder rows painted before Claude and Cursor probes return.
+/// Placeholder rows painted before the runtime probes return.
 pub(super) fn checking_external_runtimes() -> Vec<String> {
     vec![
         "claude code: checking…".into(),
         format!("{}: checking…", AgentRuntime::Cursor.as_str()),
+        format!("{ANTIGRAVITY_LABEL_NAME}: checking…"),
     ]
 }
 
@@ -200,6 +203,7 @@ pub(super) async fn load_external_runtimes() -> Vec<String> {
             Ok(status) => status.auth_description(),
             Err(error) => error.to_string(),
         },
+        AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default()).description(),
     ]
 }
 

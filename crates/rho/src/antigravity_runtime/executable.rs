@@ -48,36 +48,65 @@ pub(crate) fn server_args() -> Vec<OsString> {
     }
 }
 
+/// Where the server will find `localharness_external`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HarnessLocation {
+    /// The user set `ANTIGRAVITY_HARNESS_PATH`; the server uses it as-is.
+    Override,
+    /// Next to the canonical server; runs pin it.
+    Beside(PathBuf),
+    /// Absent where runs look for it; the server then logs "Localharness not
+    /// found." to the run log.
+    Missing { expected: PathBuf },
+}
+
+/// Locate the harness for `server` (canonicalized, so a PATH symlink still
+/// finds the real install directory) unless the user's `existing` override
+/// is set.
+pub(crate) fn harness_location(server: &Path, existing: Option<OsString>) -> HarnessLocation {
+    if existing.is_some_and(|value| !value.is_empty()) {
+        return HarnessLocation::Override;
+    }
+    let server = std::fs::canonicalize(server).unwrap_or_else(|_| server.to_path_buf());
+    let expected = server
+        .parent()
+        .map_or_else(|| PathBuf::from(HARNESS_FILE), |dir| dir.join(HARNESS_FILE));
+    if expected.is_file() {
+        HarnessLocation::Beside(expected)
+    } else {
+        HarnessLocation::Missing { expected }
+    }
+}
+
 /// Spawn env pinning the harness next to the canonical server, or nothing
-/// when the user already set the override or the harness is absent (the
-/// server then logs "Localharness not found." to the run log).
+/// when the user already set the override or the harness is absent.
 pub(crate) fn harness_env(
     server: Option<&Path>,
     existing: Option<OsString>,
 ) -> Vec<(OsString, OsString)> {
-    if existing.is_some_and(|value| !value.is_empty()) {
-        return Vec::new();
+    match server.map(|server| harness_location(server, existing)) {
+        Some(HarnessLocation::Beside(harness)) => {
+            vec![(HARNESS_PATH_ENV.into(), harness.into_os_string())]
+        }
+        Some(HarnessLocation::Override | HarnessLocation::Missing { .. }) | None => Vec::new(),
     }
-    let harness = server
-        .and_then(|server| std::fs::canonicalize(server).ok())
-        .and_then(|server| server.parent().map(|dir| dir.join(HARNESS_FILE)))
-        .filter(|harness| harness.is_file());
-    match harness {
-        Some(harness) => vec![(HARNESS_PATH_ENV.into(), harness.into_os_string())],
-        None => Vec::new(),
-    }
+}
+
+/// The live `ANTIGRAVITY_HARNESS_PATH` override, for [`harness_location`].
+pub(crate) fn harness_override_from_env() -> Option<OsString> {
+    std::env::var_os(HARNESS_PATH_ENV)
 }
 
 /// [`harness_env`] for the server this launch spawns: the frozen workflow
 /// executable when given (a `/proc/self/fd/N` handle canonicalizes to the
 /// verified file), else the PATH-resolved one. Reads the live
-/// `ANTIGRAVITY_HARNESS_PATH`; the only environment-reading seam here.
+/// `ANTIGRAVITY_HARNESS_PATH` through [`harness_override_from_env`].
 pub(crate) fn harness_env_for_launch(frozen: Option<&CliExecutable>) -> Vec<(OsString, OsString)> {
     let server: Option<PathBuf> = match frozen {
         Some(frozen) => Some(frozen.path().to_path_buf()),
         None => resolve().ok().map(|found| found.path().to_path_buf()),
     };
-    harness_env(server.as_deref(), std::env::var_os(HARNESS_PATH_ENV))
+    harness_env(server.as_deref(), harness_override_from_env())
 }
 
 #[cfg(test)]

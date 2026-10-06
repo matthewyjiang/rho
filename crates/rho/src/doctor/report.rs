@@ -77,6 +77,7 @@ pub(crate) enum DoctorCheckId {
     ClaudeAuth,
     ClaudeBinary,
     Cursor,
+    Antigravity,
     Rtk,
     Herdr,
     ConfigPath,
@@ -97,9 +98,12 @@ impl DoctorCheckId {
             | Self::ProviderEndpoint { .. }
             | Self::SelectedModel
             | Self::PermissionScreen => DoctorSectionId::Providers,
-            Self::ClaudeAuth | Self::ClaudeBinary | Self::Cursor | Self::Rtk | Self::Herdr => {
-                DoctorSectionId::Runtimes
-            }
+            Self::ClaudeAuth
+            | Self::ClaudeBinary
+            | Self::Cursor
+            | Self::Antigravity
+            | Self::Rtk
+            | Self::Herdr => DoctorSectionId::Runtimes,
             Self::ConfigPath | Self::SessionRoot | Self::ClipboardText | Self::ClipboardImage => {
                 DoctorSectionId::Workspace
             }

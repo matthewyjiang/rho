@@ -21,6 +21,11 @@ use super::{
     report::{DoctorCheck, DoctorCheckId, DoctorStatus},
 };
 use crate::{
+    antigravity_runtime::{
+        executable::HarnessLocation,
+        home::AntigravityAuthStatus,
+        setup::{AntigravitySetup, ServerInstall},
+    },
     claude_runtime::auth::ClaudeProbeSnapshot,
     clipboard::ClipboardDoctorReport,
     config::{InternalAgentModelConfig, ModelKind},
@@ -33,6 +38,7 @@ use crate::{
 pub(super) const CLAUDE_AUTH_LABEL: &str = "Claude Code authentication";
 pub(super) const CLAUDE_BINARY_LABEL: &str = "Claude Code binary";
 pub(super) const CURSOR_LABEL: &str = "cursor-agent";
+const ANTIGRAVITY_LABEL: &str = "agy_acp_server";
 pub(super) const RTK_LABEL: &str = "rtk";
 
 /// One row per auth mode. Only the active mode warns when its key is
@@ -195,6 +201,60 @@ pub(super) fn cursor_check(snapshot: &CursorProbeSnapshot) -> DoctorCheck {
             "unavailable",
         )
         .with_hint(error.to_string()),
+    }
+}
+
+/// Informational like Cursor when not installed or signed out; warns when
+/// an installed server cannot run (harness missing, settings unreadable).
+pub(super) fn antigravity_check(setup: &AntigravitySetup) -> DoctorCheck {
+    let id = DoctorCheckId::Antigravity;
+    let (path, harness) = match &setup.server {
+        ServerInstall::Missing => {
+            return DoctorCheck::new(id, ANTIGRAVITY_LABEL, DoctorStatus::Info, "not installed")
+        }
+        ServerInstall::Found { path, harness } => (path, harness),
+    };
+    match harness {
+        HarnessLocation::Missing { expected } => {
+            return DoctorCheck::new(
+                id,
+                ANTIGRAVITY_LABEL,
+                DoctorStatus::Warn,
+                "localharness_external missing",
+            )
+            .with_hint(format!(
+                "runs fail without {}; keep it next to the server or set ANTIGRAVITY_HARNESS_PATH",
+                crate::paths::display(expected)
+            ))
+        }
+        HarnessLocation::Override | HarnessLocation::Beside(_) => {}
+    }
+    // Every state but `Configured` refuses runs; its error is the hint.
+    let refusal = || setup.auth.require_signed_in().err().unwrap_or_default();
+    match &setup.auth {
+        AntigravityAuthStatus::Configured { method } => DoctorCheck::new(
+            id,
+            ANTIGRAVITY_LABEL,
+            DoctorStatus::Ok,
+            format!("signed in ({method})"),
+        )
+        .with_hint(format!("server: {}", crate::paths::display(path))),
+        AntigravityAuthStatus::SignedOut { .. } | AntigravityAuthStatus::MissingToken { .. } => {
+            DoctorCheck::new(
+                id,
+                ANTIGRAVITY_LABEL,
+                DoctorStatus::Info,
+                "not signed in (run /login antigravity)",
+            )
+            .with_hint(refusal())
+        }
+        AntigravityAuthStatus::Unreadable { .. } => DoctorCheck::new(
+            id,
+            ANTIGRAVITY_LABEL,
+            DoctorStatus::Warn,
+            "settings unreadable",
+        )
+        .with_hint(refusal()),
     }
 }
 
