@@ -13,8 +13,11 @@ const SELECT_CLASSIFIER_MODEL_STARTUP_STATUS: &str =
 /// Whether a TUI mode change becomes the saved default for future launches.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum PermissionPersistence {
+    /// Write the mode to config, like `/permissions`.
     Save,
-    SessionOnly,
+    /// Keep the mode for this process only, across `/new` and `/resume`.
+    /// The next launch starts in the saved mode.
+    UntilExit,
 }
 
 /// Cycle from most restrictive to least restrictive, then wrap back to Plan.
@@ -55,7 +58,7 @@ impl App {
             self.info.runtime.permission_mode,
             self.permission_classifier_model_configured(),
         );
-        self.apply_permission_mode(next, PermissionPersistence::SessionOnly, agent)
+        self.apply_permission_mode(next, PermissionPersistence::UntilExit, agent)
             .await
     }
 
@@ -71,7 +74,7 @@ impl App {
         let Some(mode) = self.pending_permission_mode.take() else {
             return Ok(false);
         };
-        self.apply_permission_mode(mode, PermissionPersistence::SessionOnly, agent)
+        self.apply_permission_mode(mode, PermissionPersistence::UntilExit, agent)
             .await?;
         Ok(true)
     }
@@ -165,7 +168,7 @@ impl App {
             PermissionPersistence::Save => self.info.services.config_repository.update(|config| {
                 config.permission_mode = mode;
             }),
-            PermissionPersistence::SessionOnly => Ok(()),
+            PermissionPersistence::UntilExit => Ok(()),
         };
         if let Err(error) = save_result {
             if let Err(rollback_error) = agent.set_permission_mode(previous).await {

@@ -614,7 +614,6 @@ impl App {
                 || cache.update_notice != update_notice
                 || cache.setup != setup
                 || cache.header_hints != header_hints
-                || cache.permission_cycle_key != self.info.runtime.keybindings.cycle_permission_mode
                 || cache.theme_generation != theme_generation
         });
         if stale {
@@ -624,21 +623,11 @@ impl App {
                     update_notice,
                     setup,
                     header_hints,
-                    permission_cycle_key: self
-                        .info
-                        .runtime
-                        .keybindings
-                        .cycle_permission_mode
-                        .clone(),
                     theme_generation,
                     lines: session_header_lines(
                         self.info.services.update_notice.as_deref(),
                         setup,
                         header_hints,
-                        setup.permission_cycle_hint(
-                            header_hints,
-                            &self.info.runtime.keybindings.cycle_permission_mode,
-                        ),
                         width,
                     ),
                 }));

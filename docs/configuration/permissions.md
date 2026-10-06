@@ -94,7 +94,7 @@ The 95% default comes from an eval of 49 labeled cases and 40 calls replayed fro
 
 `/permissions` shows the current mode. `/permissions bypass|auto|allow_edits|plan|supervised` changes it and saves the choice. `/permissions auto` asks for a classifier model if none is set. Cancelling keeps the previous mode. The command is unavailable during a model turn.
 
-`Alt+M` cycles **Plan → Supervised → Allow edits → Auto → Bypass → Plan** for the current session only, without writing config. Auto is skipped when no classifier model is configured. While a turn is running, the change is queued until the turn ends, including cancellation; repeated presses advance from the queued mode. The status line continues to show the active mode until the queued change applies. Remap the shortcut with `[keybindings].cycle_permission_mode` (default `"alt+m"`). `Shift+Tab` still cycles reasoning.
+`Alt+M` cycles **Plan → Supervised → Allow edits → Auto → Bypass → Plan** without writing config: the mode lasts until Rho exits, and the next launch starts in your saved mode. Auto is skipped when no classifier model is configured. While a turn is running, the change is queued until the turn ends, including cancellation; repeated presses advance from the queued mode. The status line continues to show the active mode until the queued change applies. Remap the shortcut with `[keybindings].cycle_permission_mode` (default `"alt+m"`). `Shift+Tab` still cycles reasoning.
 
 `--permission-mode` overrides one invocation and is not saved.
 
