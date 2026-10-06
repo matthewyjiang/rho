@@ -2,7 +2,6 @@
 #![recursion_limit = "256"]
 
 mod agent;
-mod agents_md;
 mod app;
 mod changelog;
 mod child_env;

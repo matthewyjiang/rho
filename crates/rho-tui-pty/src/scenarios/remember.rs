@@ -1,5 +1,7 @@
 //! Standing instructions are appended locally, without starting an assistant turn.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{ensure, Context, Result};
 
 use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
@@ -26,13 +28,8 @@ pub(super) const REMEMBER_SCENARIO: Scenario = Scenario::new(
         Step::Custom(assert_first_instruction),
         Step::Phase("append_instruction"),
         Step::SubmitText("/remember   keep changes focused  "),
-        // Both writes have the same notice. A subsequent usage response is a
-        // durable barrier proving the second command finished, not the first.
-        Step::SubmitText("/remember"),
-        Step::WaitText {
-            text: "usage: /remember [global] <text>",
-            timeout: SETTLE,
-        },
+        // Both writes have the same notice. Wait for the durable file content,
+        // not the earlier notice or a transient usage toast.
         Step::Custom(assert_appended_instructions),
         Step::Phase("global_instruction"),
         Step::SubmitText("/remember global be concise"),
@@ -41,10 +38,10 @@ pub(super) const REMEMBER_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::Custom(assert_global_instruction),
-        Step::Phase("normal_prompt"),
-        Step::SubmitText("remember follow-up"),
+        Step::Phase("live_session_context"),
+        Step::SubmitText("fixture remembered context"),
         Step::WaitText {
-            text: "fixture response: remember follow-up",
+            text: "remembered context present",
             timeout: STREAM,
         },
         Step::ExitCommand,
@@ -67,13 +64,24 @@ fn assert_first_instruction(harness: &mut PtyHarness) -> Result<()> {
 }
 
 fn assert_appended_instructions(harness: &mut PtyHarness) -> Result<()> {
-    let workspace = harness.working_directory().context("missing workspace")?;
-    let contents = std::fs::read_to_string(workspace.join("AGENTS.md"))?;
-    ensure!(
-        contents == "- use max jobs 8\n- keep changes focused\n",
-        "unexpected appended AGENTS.md: {contents:?}"
-    );
-    Ok(())
+    let path = harness
+        .working_directory()
+        .context("missing workspace")?
+        .join("AGENTS.md");
+    let deadline = Instant::now() + SETTLE.duration;
+    loop {
+        // Use the harness's established poll cadence while draining PTY output.
+        harness.poll(Duration::from_millis(25));
+        let contents = std::fs::read_to_string(&path)?;
+        if contents == "- use max jobs 8\n- keep changes focused\n" {
+            return Ok(());
+        }
+        ensure!(
+            harness.is_running() && Instant::now() < deadline,
+            "AGENTS.md append did not finish within {:?}: {contents:?}",
+            SETTLE.duration
+        );
+    }
 }
 
 fn assert_global_instruction(harness: &mut PtyHarness) -> Result<()> {

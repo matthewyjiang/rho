@@ -15,6 +15,7 @@ mod goal;
 mod init;
 mod quiet_subagent;
 mod release;
+mod remember;
 mod response_scenarios;
 mod sessions;
 mod stream_scenarios;
@@ -130,6 +131,9 @@ async fn fixture_stream(
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
     if let Some(response) = agent_config::intercept(&prompt, &request) {
+        return response;
+    }
+    if let Some(response) = remember::intercept(&prompt, &request) {
         return response;
     }
     if let Some(response) = sessions::intercept(&prompt, &request) {

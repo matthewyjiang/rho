@@ -185,7 +185,7 @@ fn save_definition_round_trips_and_detects_conflicts() {
 fn save_lock_survives_drop_and_rejects_a_contender() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("draft.md");
-    let lock_path = agent_lock_path(&path);
+    let lock_path = crate::config_writer::edit_lock::edit_lock_path(&path);
     let held = acquire_agent_file_lock(&path).unwrap();
     assert!(lock_path.exists());
     #[cfg(unix)]

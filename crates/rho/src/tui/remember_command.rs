@@ -1,7 +1,5 @@
 //! `/remember [global] <text>` writes a standing instruction without a model turn.
 
-use std::{fs, io::ErrorKind};
-
 use super::{statusline::path::compact_cwd, App, CommandInvocation, Entry, InteractiveRuntime};
 
 const USAGE: &str = "usage: /remember [global] <text>";
@@ -42,26 +40,7 @@ impl App {
             crate::workspace::project_ancestor_dirs(&self.info.runtime.cwd)[0].join("AGENTS.md")
         };
         let display_path = compact_cwd(&path);
-        let saved = (|| -> anyhow::Result<()> {
-            let existing = match fs::symlink_metadata(&path) {
-                Ok(metadata) => {
-                    anyhow::ensure!(metadata.is_file(), "destination is not a regular file");
-                    Some(fs::read_to_string(&path)?)
-                }
-                Err(error) if error.kind() == ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            let contents = crate::agents_md::appended_contents(existing.as_deref(), text);
-            if existing.is_some() {
-                // Preserve existing permissions and refuse to replace a symlink.
-                crate::config_writer::replace_regular_file_atomically(&path, contents.as_bytes())?;
-            } else {
-                // The atomic writer also creates missing parent directories.
-                crate::config_writer::write_atomically(&path, &contents)?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = saved {
+        if let Err(error) = crate::prompt::agents_md::append_instruction(&path, text) {
             self.insert_entry(&Entry::Error(format!(
                 "could not remember instruction in {display_path}: {error}"
             )));
