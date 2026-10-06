@@ -1,7 +1,5 @@
-use std::io::Write as _;
-
 use pretty_assertions::assert_eq;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::AsyncReadExt as _;
 
 use super::*;
 use crate::antigravity_runtime::executable::{harness_location, HarnessLocation};
