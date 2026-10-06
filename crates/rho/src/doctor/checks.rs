@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     antigravity_runtime::{
-        executable::HarnessLocation,
+        executable::{HarnessLocation, HARNESS_PATH_ENV},
         home::AntigravityAuthStatus,
         setup::{AntigravitySetup, ServerInstall},
     },
@@ -214,20 +214,25 @@ pub(super) fn antigravity_check(setup: &AntigravitySetup) -> DoctorCheck {
         }
         ServerInstall::Found { path, harness } => (path, harness),
     };
-    match harness {
-        HarnessLocation::Missing { expected } => {
-            return DoctorCheck::new(
-                id,
-                ANTIGRAVITY_LABEL,
-                DoctorStatus::Warn,
-                "localharness_external missing",
-            )
-            .with_hint(format!(
-                "runs fail without {}; keep it next to the server or set ANTIGRAVITY_HARNESS_PATH",
-                crate::paths::display(expected)
-            ))
-        }
-        HarnessLocation::Override | HarnessLocation::Beside(_) => {}
+    let harness_problem = match harness {
+        HarnessLocation::Missing { expected } => Some(format!(
+            "runs fail without {}; keep it next to the server or set {HARNESS_PATH_ENV}",
+            crate::paths::display(expected)
+        )),
+        HarnessLocation::OverrideMissing(path) => Some(format!(
+            "runs fail: {HARNESS_PATH_ENV} names {}, which is not a file",
+            crate::paths::display(path)
+        )),
+        HarnessLocation::Override(_) | HarnessLocation::Beside(_) => None,
+    };
+    if let Some(hint) = harness_problem {
+        return DoctorCheck::new(
+            id,
+            ANTIGRAVITY_LABEL,
+            DoctorStatus::Warn,
+            "localharness_external missing",
+        )
+        .with_hint(hint);
     }
     // Every state but `Configured` refuses runs; its error is the hint.
     let refusal = || setup.auth.require_signed_in().err().unwrap_or_default();

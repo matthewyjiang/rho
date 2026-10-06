@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    executable::{self, HarnessLocation, ANTIGRAVITY_PROGRAM},
+    executable::{self, HarnessLocation, ANTIGRAVITY_PROGRAM, HARNESS_PATH_ENV},
     home::{AntigravityAuthStatus, AntigravityHome},
     ANTIGRAVITY_LABEL_NAME,
 };
@@ -58,7 +58,14 @@ impl AntigravitySetup {
                 ..
             } => format!("{} is missing", crate::paths::display(expected)),
             ServerInstall::Found {
-                harness: HarnessLocation::Override | HarnessLocation::Beside(_),
+                harness: HarnessLocation::OverrideMissing(path),
+                ..
+            } => format!(
+                "{HARNESS_PATH_ENV} names {}, which is not a file",
+                crate::paths::display(path)
+            ),
+            ServerInstall::Found {
+                harness: HarnessLocation::Override(_) | HarnessLocation::Beside(_),
                 ..
             } => match &self.auth {
                 AntigravityAuthStatus::Configured { method } => format!("signed in ({method})"),

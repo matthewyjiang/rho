@@ -20,7 +20,7 @@ pub(crate) const ANTIGRAVITY_PROGRAM: &str = "agy_acp_server.exe";
 pub(crate) const ANTIGRAVITY_PROGRAM: &str = "agy_acp_server.par";
 
 /// `_configure_localharness_path` in agy_acp_server 1.3.0.
-const HARNESS_PATH_ENV: &str = "ANTIGRAVITY_HARNESS_PATH";
+pub(crate) const HARNESS_PATH_ENV: &str = "ANTIGRAVITY_HARNESS_PATH";
 #[cfg(windows)]
 const HARNESS_FILE: &str = "localharness_external.exe";
 #[cfg(not(windows))]
@@ -48,24 +48,36 @@ pub(crate) fn server_args() -> Vec<OsString> {
     }
 }
 
-/// Where the server will find `localharness_external`.
+/// Where the server will find `localharness_external`. Both missing
+/// variants fail runs; the server logs "Localharness not found." to the run
+/// log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HarnessLocation {
-    /// The user set `ANTIGRAVITY_HARNESS_PATH`; the server uses it as-is.
-    Override,
+    /// The user's `ANTIGRAVITY_HARNESS_PATH` names a file; the server uses it
+    /// as-is.
+    Override(PathBuf),
+    /// The user's `ANTIGRAVITY_HARNESS_PATH` names no file. The server does
+    /// not fall back to searching beside itself.
+    OverrideMissing(PathBuf),
     /// Next to the canonical server; runs pin it.
     Beside(PathBuf),
-    /// Absent where runs look for it; the server then logs "Localharness not
-    /// found." to the run log.
+    /// No override and nothing next to the server.
     Missing { expected: PathBuf },
 }
 
-/// Locate the harness for `server` (canonicalized, so a PATH symlink still
-/// finds the real install directory) unless the user's `existing` override
-/// is set.
+/// Locate the harness: the user's `existing` override when set, else next to
+/// `server` (canonicalized, so a PATH symlink still finds the real install
+/// directory).
 pub(crate) fn harness_location(server: &Path, existing: Option<OsString>) -> HarnessLocation {
-    if existing.is_some_and(|value| !value.is_empty()) {
-        return HarnessLocation::Override;
+    if let Some(path) = existing
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return if path.is_file() {
+            HarnessLocation::Override(path)
+        } else {
+            HarnessLocation::OverrideMissing(path)
+        };
     }
     let server = std::fs::canonicalize(server).unwrap_or_else(|_| server.to_path_buf());
     let expected = server
@@ -88,7 +100,13 @@ pub(crate) fn harness_env(
         Some(HarnessLocation::Beside(harness)) => {
             vec![(HARNESS_PATH_ENV.into(), harness.into_os_string())]
         }
-        Some(HarnessLocation::Override | HarnessLocation::Missing { .. }) | None => Vec::new(),
+        // Never replace the user's override, even a broken one.
+        Some(
+            HarnessLocation::Override(_)
+            | HarnessLocation::OverrideMissing(_)
+            | HarnessLocation::Missing { .. },
+        )
+        | None => Vec::new(),
     }
 }
 

@@ -339,10 +339,20 @@ fn antigravity_row_ranks_install_problems_above_sign_in() {
         ),
         (beside(), signed_in(), DoctorStatus::Ok, "signed in (oauth)"),
         (
-            found(HarnessLocation::Override),
+            found(HarnessLocation::Override(
+                "/srv/agy/localharness_external".into(),
+            )),
             signed_in(),
             DoctorStatus::Ok,
             "signed in (oauth)",
+        ),
+        (
+            found(HarnessLocation::OverrideMissing(
+                "/srv/agy/localharness_externa".into(),
+            )),
+            signed_in(),
+            DoctorStatus::Warn,
+            "localharness_external missing",
         ),
         (
             beside(),

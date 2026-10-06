@@ -48,7 +48,7 @@ flowchart TD
 
    Rho starts the server, which prints a Google sign-in link and waits up to 300 s for the browser to come back to `http://127.0.0.1:<port>/`. Over SSH the browser cannot reach that address and its last page fails to load: copy that page's address, paste it into the login prompt, and press Enter. Rho only accepts that exact loopback address and replays it locally.
 
-   Confirm with `/doctor` (or `rho doctor`): the `agy_acp_server` row under Runtimes shows the sign-in method, and warns when `localharness_external` is missing next to the server. `/info` shows the same state under External runtimes. Neither starts the server, so neither reports its version or checks that the token is still valid.
+   Confirm with `/doctor` (or `rho doctor`): the `agy_acp_server` row under Runtimes shows the sign-in method, and warns when `localharness_external` is missing next to the server, or when `ANTIGRAVITY_HARNESS_PATH` names a file that does not exist (the server does not fall back to searching beside itself). `/info` shows the same state under External runtimes. Neither starts the server, so neither reports its version or checks that the token is still valid.
 
    The server records the method in `$GEMINI_HOME/antigravity-acp/settings.json` (default `~/.gemini`) and keeps the token in `acp_token.json` beside it; on macOS it uses the Keychain (service `gemini`) instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. This sign-in is separate from the `agy` CLI's. Rho never stores or reads the token. To sign out, delete that `settings.json` (runs then report signed out) and the token file or Keychain item.
 
