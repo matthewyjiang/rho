@@ -9,15 +9,13 @@ pub(crate) enum ChecklistStatus {
     Completed,
 }
 
-/// Retain Claude TodoWrite's existing ten-row preview budget. Overflow remains
-/// visible as a count; the original list is still kept in the call arguments.
+/// Keep every item available for expansion; the generic card renderer owns
+/// the collapsed terminal-row budget.
 pub(crate) fn push_checklist_facts<'a>(
     card: &mut ToolCard,
-    items: impl ExactSizeIterator<Item = (&'a str, ChecklistStatus)>,
+    items: impl Iterator<Item = (&'a str, ChecklistStatus)>,
 ) {
-    const MAX_CHECKLIST_FACTS: usize = 10;
-    let count = items.len();
-    for (text, status) in items.take(MAX_CHECKLIST_FACTS) {
+    for (text, status) in items {
         if text.is_empty() {
             continue;
         }
@@ -28,11 +26,6 @@ pub(crate) fn push_checklist_facts<'a>(
         };
         card.push_fact(ToolFact::Text {
             text: format!("{marker} {text}"),
-        });
-    }
-    if count > MAX_CHECKLIST_FACTS {
-        card.push_fact(ToolFact::Meta {
-            text: format!("{} more", count - MAX_CHECKLIST_FACTS),
         });
     }
 }

@@ -25,7 +25,7 @@ pub(super) async fn intercept(
             "todo checklist failed"
         }));
     }
-    // Twelve items cross the shared ten-row preview by two. Keep completed and
+    // Twelve items exceed the generic collapsed card row budget. Keep completed and
     // active rows at the start so the collapsed card is useful as well.
     let todos = (1..=12)
         .map(|index| {

@@ -1,10 +1,10 @@
 use super::*;
 
-// Covers: completion and resume must rebuild the checklist from call arguments,
-// not replace it with the short model-facing result summary.
+// Covers: split items/statuses must not erase preceding checklist items;
+// completion and resume preserve accepted lists but show rejected calls as errors.
 // Owner: interactive presenter argument-to-card mapping (not terminal layout).
 #[test]
-fn todo_cards_keep_argument_facts_through_completion_and_replay() {
+fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     use crate::presentation::Presentation;
     use rho_tools::tool_card::{ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
@@ -33,26 +33,75 @@ fn todo_cards_keep_argument_facts_through_completion_and_replay() {
             text: "☐ verify".into(),
         },
     ]);
-    let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."));
-    let preview = streaming_preview_card(
-        ToolKind::from_name("todo"),
-        "todo",
-        Some(&call.arguments),
-        std::path::Path::new("."),
-    );
     let mut expected_preview = expected.clone();
     expected_preview.status = ToolStatus::Running;
-    pretty_assertions::assert_eq!(preview, expected_preview);
+    for fragments in [
+        // Content arrives before status; repaired JSON must not hide "inspect".
+        vec![
+            (
+                r#"{"todos":[{"content":"inspect","status":"completed"}"#,
+                Some(1),
+            ),
+            (r#",{"content":"imple"#, None),
+            (r#"ment""#, None),
+            (r#","status":"in_progress"}"#, Some(2)),
+            (r#",{"content":"verify","status":"pending"}]}"#, Some(3)),
+        ],
+        // Status enum values can be split across deltas too.
+        vec![
+            (
+                r#"{"todos":[{"content":"inspect","status":"completed"}"#,
+                Some(1),
+            ),
+            (r#",{"content":"implement","status":"in_"#, None),
+            (r#"progress"}"#, Some(2)),
+            (r#",{"content":"verify","status":"pend"#, None),
+            (r#"ing"}]}"#, Some(3)),
+        ],
+    ] {
+        let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."));
+        for (fragment, changed_count) in fragments {
+            let preview = presenter.preview(0, Some("todo".into()), fragment);
+            let expected_update = changed_count.map(|count| {
+                expected_preview
+                    .clone()
+                    .with_facts(expected.facts[..count].to_vec())
+            });
+            pretty_assertions::assert_eq!(preview.map(|value| value.card.card), expected_update);
+        }
+    }
 
-    let _ = presenter.proposed(call.clone());
     let summary = "3 todos: 1 completed, 1 in progress, 1 pending";
-    let (_, live) = presenter.finished(
-        &ToolCallId::from_string("todo-1").unwrap(),
-        ToolCompletion::Success(rho_sdk::tool::ToolOutput::text(summary)),
-    );
-    let replay = presenter.historical(&call, true, summary);
-    for actual in [live.presentation, replay.presentation] {
-        pretty_assertions::assert_eq!(actual, Presentation::Card(expected.clone().into()));
+    let rejection = "todo rejected by hook";
+    let rejected = ToolCard::new(
+        ToolStatus::Error,
+        ToolFamily::Default,
+        ToolHeader::call("todo", None),
+    )
+    .with_facts(vec![ToolFact::Error {
+        text: rejection.into(),
+    }]);
+    for (completion, ok, content, expected) in [
+        (
+            ToolCompletion::Success(rho_sdk::tool::ToolOutput::text(summary)),
+            true,
+            summary,
+            expected,
+        ),
+        (
+            ToolCompletion::from_output(rho_sdk::tool::ToolOutput::text(rejection).failed()),
+            false,
+            rejection,
+            rejected,
+        ),
+    ] {
+        let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."));
+        let _ = presenter.proposed(call.clone());
+        let (_, live) = presenter.finished(&ToolCallId::from_string("todo-1").unwrap(), completion);
+        let replay = presenter.historical(&call, ok, content);
+        for actual in [live.presentation, replay.presentation] {
+            pretty_assertions::assert_eq!(actual, Presentation::Card(expected.clone().into()));
+        }
     }
 }
 

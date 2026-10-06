@@ -8,7 +8,7 @@ use rho_sdk::tool::{
 };
 use serde::Deserialize;
 
-// Product tripwire: five times the existing ten-row checklist preview, not a
+// Product tripwire: five times the default ten-row collapsed card budget, not a
 // storage allocation. Larger projects should keep this list at milestone level.
 const MAX_TODOS: usize = 50;
 
