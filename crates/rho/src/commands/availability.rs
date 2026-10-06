@@ -17,6 +17,7 @@ impl CommandContext {
             | CommandId::Logout
             | CommandId::Model
             | CommandId::RefreshModels
+            | CommandId::Remember
             | CommandId::Resume
             | CommandId::Rewind
             | CommandId::Sessions

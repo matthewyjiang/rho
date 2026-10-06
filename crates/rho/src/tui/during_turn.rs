@@ -362,6 +362,7 @@ impl App {
             | CommandId::Login
             | CommandId::Logout
             | CommandId::RefreshModels
+            | CommandId::Remember
             | CommandId::Resume
             | CommandId::Rewind
             | CommandId::Sessions

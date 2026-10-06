@@ -112,6 +112,14 @@ fn ctrl_r_recalls_prompt_from_history_search() {
     assert_pass("prompt_history_search");
 }
 
+// Covers: project and global memories append locally, preserve prior instructions,
+// and do not start a model turn; an ordinary prompt still works afterwards.
+// Owner: interactive TUI command lifecycle and filesystem effects.
+#[test]
+fn remember_appends_instructions_without_model_turn() {
+    assert_pass("remember_instruction");
+}
+
 // Covers: model-scoped prompt switches are visible and invalid files do not
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]
