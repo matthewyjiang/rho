@@ -345,7 +345,7 @@ fn resolve_agent(
             permission_mode,
         } => {
             let (executable, executable_identity) = host
-                .resolve_executable(crate::antigravity_runtime::executable::ANTIGRAVITY_PROGRAM)?;
+                .resolve_executable(&crate::antigravity_runtime::executable::workflow_program()?)?;
             let allowed =
                 crate::antigravity_runtime::fence::map_permission_mode(*permission_mode, tools)?;
             ResolvedAgent {

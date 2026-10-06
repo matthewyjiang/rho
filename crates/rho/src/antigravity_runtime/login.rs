@@ -8,6 +8,9 @@
 //! redirect to the listener from this machine. The token never passes
 //! through Rho's credential store, and the link (it carries the OAuth
 //! `state`) is shown on the terminal but never written to the log.
+//!
+//! When the server is not installed, this first offers Rho's managed
+//! install ([`super::install`]), so `/login antigravity` is the whole setup.
 
 use std::{io::BufRead as _, process::Stdio, time::Duration};
 
@@ -20,13 +23,13 @@ use url::Url;
 
 use crate::{
     acp_runtime::{self, child_transport},
-    cli_runtime::OwnedChild,
+    cli_runtime::{CliExecutable, OwnedChild},
 };
 
 use super::{
     executable,
     home::{AntigravityAuthStatus, AntigravityHome, PERSONAL_OAUTH_METHOD},
-    ANTIGRAVITY_LABEL_NAME,
+    install, ANTIGRAVITY_LABEL_NAME,
 };
 
 /// `_AUTH_PROMPT_MESSAGE` in agy_acp_server 1.3.0.
@@ -40,10 +43,16 @@ const LOGIN_MARGIN: Duration = Duration::from_secs(10);
 /// exchanges the code, so this bounds only a local HTTP round trip.
 const REPLAY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Sign in and report where the server keeps the result.
+/// Install the server if needed, sign in, and report where the server keeps
+/// the result.
 pub(crate) async fn run_cli() -> anyhow::Result<()> {
     let home = AntigravityHome::from_env(&crate::paths::home_dir().unwrap_or_default());
-    let server = executable::resolve()?;
+    let server = match executable::resolve() {
+        Ok(server) => server,
+        Err(executable::AntigravityExecutableError::BinaryMissing) => {
+            CliExecutable::from_path(install::offer_install().await?)
+        }
+    };
     // Private (0600) and uniquely named; kept only when sign-in fails.
     let log = tempfile::Builder::new()
         .prefix("rho-antigravity-login-")

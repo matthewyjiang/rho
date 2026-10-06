@@ -68,6 +68,7 @@ similar = "3"
 same-file = "1"
 shell-words = "1"
 tempfile = "3"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 portable-pty = "0.9"
 fs2 = "0.4.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

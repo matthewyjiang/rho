@@ -1,16 +1,21 @@
 //! `/login antigravity` for the external Antigravity runtime.
 //!
 //! Hands the terminal to `rho login antigravity` (this same binary), which
-//! drives the server's Google sign-in and accepts a pasted redirect over SSH.
+//! offers to install a missing server, then drives the server's Google
+//! sign-in and accepts a pasted redirect over SSH.
 //! Rho's credential store is never touched; the server keeps its token under
 //! the Gemini home.
+//!
+//! Login counts as complete only when runs can start (server installed and
+//! signed in), so a declined or failed install never reads as signed in on
+//! the strength of an earlier sign-in.
 
 use crate::tui::DefaultTerminal;
 
 use crate::{
     antigravity_runtime::{
-        executable::{self, AntigravityExecutableError},
         home::{AntigravityAuthStatus, AntigravityHome},
+        setup::AntigravitySetup,
     },
     cli_runtime::CliExecutable,
 };
@@ -41,45 +46,47 @@ impl App {
 
 #[derive(Debug, thiserror::Error)]
 enum AntigravityLoginError {
-    #[error(transparent)]
-    ServerMissing(#[from] AntigravityExecutableError),
     #[error("could not locate the running rho binary: {0}")]
     RhoExecutable(std::io::Error),
 }
 
-/// Check the server exists before the handoff, then run this binary.
+/// Run this binary; it checks for (and offers to install) the server.
 fn resolve_login_command() -> Result<CliExecutable, AntigravityLoginError> {
-    executable::resolve()?;
     std::env::current_exe()
         .map(CliExecutable::from_path)
         .map_err(AntigravityLoginError::RhoExecutable)
 }
 
-fn antigravity_login_spec() -> ExternalLoginSpec<AntigravityAuthStatus, AntigravityLoginError> {
+fn antigravity_login_spec() -> ExternalLoginSpec<AntigravitySetup, AntigravityLoginError> {
     ExternalLoginSpec {
         command_label: "rho login antigravity",
         resolve: resolve_login_command,
         login_args: &["login", "antigravity"],
-        query: || {
-            Box::pin(async {
-                Ok(
-                    AntigravityHome::from_env(&crate::paths::home_dir().unwrap_or_default())
-                        .status(),
-                )
-            })
-        },
-        is_signed_in: AntigravityAuthStatus::is_signed_in,
+        query: || Box::pin(async { Ok(setup_from_env()) }),
+        is_signed_in: AntigravitySetup::is_ready,
         copy: LoginAuthCopy {
             status_line_prefix: "antigravity login",
             signed_in_notice,
-            incomplete_signed_out: |status| {
-                let detail = status.require_signed_in().err().unwrap_or_default();
-                format!("could not complete antigravity login: {detail}")
+            incomplete_signed_out: |setup| {
+                format!(
+                    "could not complete antigravity login: {}",
+                    setup.description()
+                )
             },
             incomplete_query_error: |error| {
                 format!("could not complete antigravity login: {error}")
             },
-            failed: |error| format!("could not complete antigravity login: {error:#}"),
+            // The child's own output is gone once the TUI redraws; keep the
+            // likeliest cause (install declined or failed) in the transcript.
+            failed: |error| match setup_from_env() {
+                setup if setup.is_ready() => {
+                    format!("could not complete antigravity login: {error:#}")
+                }
+                setup => format!(
+                    "could not complete antigravity login: {} ({error:#})",
+                    setup.description()
+                ),
+            },
             child_failed_but_signed_in: |_, status| signed_in_notice(status),
         },
         confirm: LoginConfirm::Direct,
@@ -90,8 +97,12 @@ fn antigravity_login_spec() -> ExternalLoginSpec<AntigravityAuthStatus, Antigrav
     }
 }
 
-fn signed_in_notice(status: &AntigravityAuthStatus) -> String {
-    match status {
+fn setup_from_env() -> AntigravitySetup {
+    AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default())
+}
+
+fn signed_in_notice(setup: &AntigravitySetup) -> String {
+    match &setup.auth {
         AntigravityAuthStatus::Configured { method } => {
             format!("signed in to antigravity ({method})")
         }

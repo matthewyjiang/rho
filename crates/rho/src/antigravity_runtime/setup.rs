@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    executable::{self, HarnessLocation, ANTIGRAVITY_PROGRAM, HARNESS_PATH_ENV},
+    executable::{self, HarnessLocation, HARNESS_PATH_ENV},
     home::{AntigravityAuthStatus, AntigravityHome},
     ANTIGRAVITY_LABEL_NAME,
 };
@@ -15,7 +15,7 @@ use super::{
 /// The server binary as the next run would find it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ServerInstall {
-    /// Not on `PATH`; runs fail before spawning.
+    /// Neither on `PATH` nor installed by Rho; runs fail before spawning.
     Missing,
     Found {
         path: PathBuf,
@@ -30,7 +30,8 @@ pub(crate) struct AntigravitySetup {
 }
 
 impl AntigravitySetup {
-    /// Snapshot from `PATH`, `ANTIGRAVITY_HARNESS_PATH`, and the Gemini home.
+    /// Snapshot from `PATH` and the managed install, `ANTIGRAVITY_HARNESS_PATH`,
+    /// and the Gemini home.
     pub(crate) fn from_env(home: &Path) -> Self {
         let server = match executable::resolve() {
             Ok(found) => ServerInstall::Found {
@@ -48,11 +49,27 @@ impl AntigravitySetup {
         }
     }
 
+    /// Whether runs can start: a server with its harness, and a sign-in.
+    pub(crate) fn is_ready(&self) -> bool {
+        let installed = match &self.server {
+            ServerInstall::Found {
+                harness: HarnessLocation::Override(_) | HarnessLocation::Beside(_),
+                ..
+            } => true,
+            ServerInstall::Missing
+            | ServerInstall::Found {
+                harness: HarnessLocation::Missing { .. } | HarnessLocation::OverrideMissing(_),
+                ..
+            } => false,
+        };
+        installed && self.auth.is_signed_in()
+    }
+
     /// One `/info` line. An install problem outranks sign-in state because
     /// runs fail on it first.
     pub(crate) fn description(&self) -> String {
         let state = match &self.server {
-            ServerInstall::Missing => format!("{ANTIGRAVITY_PROGRAM} not found on PATH"),
+            ServerInstall::Missing => "not installed - run /login antigravity".into(),
             ServerInstall::Found {
                 harness: HarnessLocation::Missing { expected },
                 ..

@@ -269,7 +269,7 @@ fn checked_modes_gate_unrestricted_filesystem_reads() {
 }
 
 // Covers: workflow host reads stay free only for the Rho workflow tree,
-// default config, and PATH dirs; a graph-supplied absolute path and the
+// default config, managed runtimes, and PATH dirs; a graph-supplied absolute path and the
 // model's read_file of a host path still hit the outside-workspace gate.
 // Owner: application permission policy
 #[test]
@@ -283,6 +283,10 @@ fn workflow_tool_reads_skip_the_outside_workspace_gate() {
     let host = workflow_read("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
     let config = workflow_read("/rho/config.toml", PathScope::UnrestrictedFilesystem);
     let path_bin = workflow_read("/usr/bin/git", PathScope::UnrestrictedFilesystem);
+    let managed = workflow_read(
+        "/rho/runtimes/antigravity-acp/1.3.0/agy_acp_server.par",
+        PathScope::UnrestrictedFilesystem,
+    );
     let graph = workflow_read("/home/rho/.ssh/id_rsa", PathScope::UnrestrictedFilesystem);
     let model = read_request("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
     let host_owned = crate::paths::HostOwnedSurfaces::from_env(
@@ -317,6 +321,11 @@ fn workflow_tool_reads_skip_the_outside_workspace_gate() {
             policy.evaluate(&path_bin),
             PolicyDecision::Allow,
             "{mode:?} blocked workflow PATH resolution"
+        );
+        assert_eq!(
+            policy.evaluate(&managed),
+            PolicyDecision::Allow,
+            "{mode:?} blocked a managed runtime server"
         );
         let expected = if mode == PermissionMode::Plan {
             plan_deny.clone()

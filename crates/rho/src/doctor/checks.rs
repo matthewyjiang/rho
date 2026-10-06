@@ -211,6 +211,7 @@ pub(super) fn antigravity_check(setup: &AntigravitySetup) -> DoctorCheck {
     let (path, harness) = match &setup.server {
         ServerInstall::Missing => {
             return DoctorCheck::new(id, ANTIGRAVITY_LABEL, DoctorStatus::Info, "not installed")
+                .with_hint("run /login antigravity to install it")
         }
         ServerInstall::Found { path, harness } => (path, harness),
     };

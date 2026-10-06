@@ -28,15 +28,12 @@ Antigravity agents are **delegated only**. The interactive root and `rho run` ro
 
 ```mermaid
 flowchart TD
-    install[Install agy_acp_server] --> login["/login antigravity"]
-    login --> def[Write runtime antigravity agent]
+    login["/login antigravity (installs the server if missing)"] --> def[Write runtime antigravity agent]
     def --> launch[Parent agent tool launch]
     launch --> watch[attach cancel]
 ```
 
-1. **Install the server.** It is a separate download from the `agy` CLI (the `agy` CLI has no ACP mode). Get the `antigravity-acp` archive for your platform from the [ACP registry](https://agentclientprotocol.com), unpack it, and put the directory on `PATH`. Keep `agy_acp_server.par` (`agy_acp_server.exe` on Windows) next to its `localharness_external`; a symlink on `PATH` is fine, Rho resolves it.
-
-2. **Sign in** from the TUI or the shell:
+1. **Install and sign in** from the TUI or the shell:
 
    ```text
    /login antigravity
@@ -46,13 +43,17 @@ flowchart TD
    rho login antigravity
    ```
 
-   Rho starts the server, which prints a Google sign-in link and waits up to 300 s for the browser to come back to `http://127.0.0.1:<port>/`. Over SSH the browser cannot reach that address and its last page fails to load: copy that page's address, paste it into the login prompt, and press Enter. Rho only accepts that exact loopback address and replays it locally.
+   If the server is not installed, Rho offers to install it first: it shows the download size and destination and waits for `y`. The server is a separate download from the `agy` CLI (the `agy` CLI has no ACP mode). Rho downloads the `antigravity-acp` 1.3.0 archive for your platform from `dl.google.com` (111–334 MB; 0.2–1.1 GB unpacked), checks it against the size and SHA-256 pinned in Rho (Google publishes no checksums), and unpacks it into `$RHO_HOME/runtimes/antigravity-acp/1.3.0/` (default `~/.rho`). It never touches `PATH` or shell profiles. When a Rho release pins a newer server, the next `/login antigravity` installs it and removes the old one. Non-interactive `rho login antigravity` refuses to install; run it in a terminal.
+
+   To use your own copy instead, get the archive from the [ACP registry](https://agentclientprotocol.com), unpack it, and put `agy_acp_server.par` (`agy_acp_server.exe` on Windows) on `PATH` next to its `localharness_external` (a symlink on `PATH` is fine, Rho resolves it). A server on `PATH` always wins over Rho's copy. Platforms without a pinned archive need this manual install.
+
+   Rho then starts the server, which prints a Google sign-in link and waits up to 300 s for the browser to come back to `http://127.0.0.1:<port>/`. Over SSH the browser cannot reach that address and its last page fails to load: copy that page's address, paste it into the login prompt, and press Enter. Rho only accepts that exact loopback address and replays it locally.
 
    Confirm with `/doctor` (or `rho doctor`): the `agy_acp_server` row under Runtimes shows the sign-in method, and warns when `localharness_external` is missing next to the server, or when `ANTIGRAVITY_HARNESS_PATH` names a file that does not exist (the server does not fall back to searching beside itself). `/info` shows the same state under External runtimes. Neither starts the server, so neither reports its version or checks that the token is still valid.
 
    The server records the method in `$GEMINI_HOME/antigravity-acp/settings.json` (default `~/.gemini`) and keeps the token in `acp_token.json` beside it; on macOS it uses the Keychain (service `gemini`) instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. This sign-in is separate from the `agy` CLI's. Rho never stores or reads the token. To sign out, delete that `settings.json` (runs then report signed out) and the token file or Keychain item.
 
-3. **Write a delegated agent definition**, for example `~/.rho/agents/agy-reviewer.md`:
+2. **Write a delegated agent definition**, for example `~/.rho/agents/agy-reviewer.md`:
 
    ```markdown
    ---
@@ -72,9 +73,9 @@ flowchart TD
    - There is no `reasoning:` field. Effort is part of the model id.
    - `prompt: replace` is rejected (ACP has no system-prompt override). Use `extend`: the body is prepended to the first prompt.
 
-4. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
+3. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
-5. **Watch and cancel** with `rho attach <run-id>`. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
+4. **Watch and cancel** with `rho attach <run-id>`. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
 
 ## Permission modes
 
@@ -109,8 +110,7 @@ Rho does not offer Antigravity's `ask_question`, `start_subagent`, `schedule`, `
 
 | Step | Command or field |
 | --- | --- |
-| Install | `agy_acp_server.par` + `localharness_external` on `PATH` |
-| Sign in | `/login antigravity` or `rho login antigravity` |
+| Install and sign in | `/login antigravity` or `rho login antigravity` (or your own server on `PATH`) |
 | Check | `/doctor` or `rho doctor` (`agy_acp_server` row), `/info` |
 | Define | `runtime: antigravity` + nonempty Antigravity `tools:` / optional `model:` |
 | Permission mode | Plan or Bypass only |
@@ -120,7 +120,7 @@ Rho does not offer Antigravity's `ask_question`, `start_subagent`, `schedule`, `
 
 ## Execution details
 
-Rho runs `agy_acp_server.par --uid=` on Linux (without `--uid=` the 1.3.0 server aborts looking up group `nobody`) and `agy_acp_server.par` elsewhere, in the workspace, with `ANTIGRAVITY_HARNESS_PATH` pointing at the `localharness_external` next to the resolved server unless you already set it. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured warm `initialize` took 1.4–2.1 s and `session/new` 2.7 s.
+Rho runs `agy_acp_server.par --uid=` on Linux (without `--uid=` the 1.3.0 server aborts looking up group `nobody`) and `agy_acp_server.par` elsewhere, in the workspace, with `ANTIGRAVITY_HARNESS_PATH` pointing at the `localharness_external` next to the resolved server (the one on `PATH`, else Rho's copy) unless you already set it. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured warm `initialize` took 1.4–2.1 s and `session/new` 2.7 s.
 
 Before spawning, Rho checks that `$GEMINI_HOME/antigravity-acp/settings.json` (read as plain JSON) names a sign-in method and, for Google sign-in with file storage, that its token file exists. With a method but no token the server starts an interactive browser sign-in at `session/new`, so the run fails at once with a pointer to `/login antigravity` instead. Rho does not query the macOS Keychain; a missing Keychain item, or an expired or revoked token, surfaces at `session/new` as the server's error or the 10 s step budget. Rho never calls ACP `authenticate` during a run.
 
