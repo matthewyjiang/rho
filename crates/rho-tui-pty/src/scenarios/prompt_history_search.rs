@@ -1,11 +1,16 @@
 //! Ctrl+R searches prompt history and recalls the chosen prompt into the
 //! composer, where Up/Down history navigation continues from it.
 
-use std::time::{Duration, Instant};
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 
 use crate::{
+    env::IsolatedHome,
     harness::{PtyHarness, WaitTimeout},
     keys::Key,
     scenario::{Scenario, Step},
@@ -14,8 +19,9 @@ use crate::{
 use super::{assert_helpers::wait_for_turn_completion_after, DEFAULT_SIZE, SETTLE, STARTUP};
 
 // Covers: Ctrl+R opens history search instead of resetting the session, the
-// filter finds an older prompt, Enter recalls it into the composer, and Down
-// steps forward through history back to the saved draft.
+// filter finds an older prompt, Enter recalls it into the composer, Down steps
+// forward through history back to the saved draft, and a bound reset key
+// starts history navigation fresh.
 // Owner: interactive TUI composer and picker wiring.
 pub(super) const PROMPT_HISTORY_SEARCH_SCENARIO: Scenario = Scenario::new(
     "prompt_history_search",
@@ -47,13 +53,41 @@ pub(super) const PROMPT_HISTORY_SEARCH_SCENARIO: Scenario = Scenario::new(
         Step::Custom(composer_shows_beta),
         Step::Key(Key::Down),
         Step::Custom(composer_shows_draft),
-        // Clear the restored draft so /exit is not appended to it.
+        // Clear the restored draft before recalling again.
+        Step::Key(Key::Ctrl('c')),
+        Step::Custom(composer_is_empty),
+        Step::Phase("bound_reset_starts_fresh_navigation"),
+        Step::Key(Key::Ctrl('r')),
+        Step::WaitText {
+            text: "Prompt history",
+            timeout: SETTLE,
+        },
+        Step::TypeText("alpha"),
+        Step::Key(Key::Enter),
+        Step::Custom(composer_shows_alpha),
+        Step::Key(Key::Alt('n')),
+        Step::WaitTextGone {
+            text: "fixture response: history beta",
+            timeout: SETTLE,
+        },
+        // A stale history position would step from the recalled alpha.
+        Step::Key(Key::Up),
+        Step::Custom(composer_shows_beta),
         Step::Key(Key::Ctrl('c')),
         Step::Custom(composer_is_empty),
         Step::ExitCommand,
     ],
     /*smoke*/ false,
-);
+)
+.with_setup(bind_reset);
+
+fn bind_reset(home: &IsolatedHome) -> Result<()> {
+    writeln!(
+        OpenOptions::new().append(true).open(&home.config_path)?,
+        "\n[keybindings]\nreset_conversation = \"alt+n\""
+    )?;
+    Ok(())
+}
 
 fn submit_history_prompts(harness: &mut PtyHarness) -> Result<()> {
     for prompt in ["history alpha", "history beta"] {

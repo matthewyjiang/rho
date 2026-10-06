@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 
 use super::{
+    assert_helpers::wait_for_turn_completion_after,
     pickers::{setup_pinned_models, OPENAI_AND_XAI_KEY_ENV},
     DEFAULT_SIZE, SETTLE, STARTUP, STREAM,
 };
@@ -55,6 +56,20 @@ pub(super) const MODEL_PROMPTS_SCENARIO: Scenario = Scenario::new(
             text: "fixture response: model prompt still usable",
             timeout: STREAM,
         },
+        // /new rebuilds the model prompt from disk; the failure must leave
+        // the old session running instead of exiting Rho.
+        Step::Phase("failed_new_keeps_session"),
+        Step::Custom(wait_for_usable_turn_completion),
+        Step::SubmitText("/new"),
+        Step::WaitText {
+            text: "could not start new session",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("model prompt after failed new"),
+        Step::WaitText {
+            text: "fixture response: model prompt after failed new",
+            timeout: STREAM,
+        },
         Step::ExitCommand,
     ],
     /*smoke*/ true,
@@ -75,6 +90,10 @@ fn setup(home: &IsolatedHome) -> Result<()> {
         ))?;
     }
     Ok(())
+}
+
+fn wait_for_usable_turn_completion(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "fixture response: model prompt still usable")
 }
 
 fn invalidate_replacement(harness: &mut PtyHarness) -> Result<()> {
