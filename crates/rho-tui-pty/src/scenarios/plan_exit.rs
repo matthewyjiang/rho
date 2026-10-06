@@ -98,6 +98,15 @@ fn assert_plan_collapsed(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+/// Typed feedback fills the questionnaire's free-text field, which runs
+/// through the paste-burst detector: under runner load the keys can arrive as
+/// one burst, and an Enter inside its suppression window becomes a newline
+/// instead of submitting.
+fn submit_typed_feedback(harness: &mut PtyHarness) -> Result<()> {
+    harness.settle_plain_text_input();
+    harness.inject_key(&Key::Enter)
+}
+
 fn release_plan_child(harness: &mut PtyHarness) -> Result<()> {
     super::release_fixture(harness, ".rho-fixture-release-plan-child")
 }
@@ -269,7 +278,7 @@ pub(super) const APPROVE_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::TypeText("include migration steps"),
-        Step::Key(Key::Enter),
+        Step::Custom(submit_typed_feedback),
         Step::WaitText {
             text: "fixture plan implementation reached",
             timeout: STREAM,
@@ -309,7 +318,7 @@ pub(super) const KEEP_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::TypeText("bypass"),
-        Step::Key(Key::Enter),
+        Step::Custom(submit_typed_feedback),
         Step::WaitText {
             text: "fixture plan review complete",
             timeout: STREAM,
