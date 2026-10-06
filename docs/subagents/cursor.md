@@ -145,6 +145,8 @@ A `runtime: cursor` agent runs as `cursor-agent acp` over stdio JSON-RPC. Rho ow
 
 If the binary is missing, the run fails immediately with `cursor: binary not found on PATH`. If the user is signed out, `session/new` fails with Cursor's `Authentication required` error. Rho does not preflight `cursor-agent status`: it can disagree with what the agent accepts (for example, it reports signed out when only `CURSOR_API_KEY` is set).
 
+If you sign in with `CURSOR_API_KEY`, keep it exported for every run. Cursor saves the key in its `auth.json`, and `cursor-agent acp` (Cursor 2026.10.01) started without `CURSOR_API_KEY` deletes that `auth.json` on startup when it holds a saved key; the run then fails with `Authentication required`, while `cursor-agent -p` and `status` keep working. To use a browser login instead, run `cursor-agent logout` and then `cursor-agent login`.
+
 Cancel sends `session/cancel` and waits up to 200 ms for the turn to end before terminating the child. Rho always terminates the child after the last turn, because `cursor-agent acp` does not exit on stdin EOF.
 
 Known gaps compared with Claude runs:
