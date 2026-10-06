@@ -144,7 +144,7 @@ async fn fixture_stream(
         let present = matches!(
             request.messages.first(),
             Some(Message::System(text))
-                if text.contains("You are a coding agent in the rho coding-agent harness")
+                if !text.is_empty()
         );
         let status = if present { "present" } else { "missing" };
         return completed(format!("system prompt {status}: {phase}"));

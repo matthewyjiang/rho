@@ -11,12 +11,6 @@ use crate::{
 
 use super::interactive_run_controller::PendingTurn;
 
-pub(crate) enum ReplacementSessionSource {
-    ResetSnapshot { snapshot: rho_sdk::SessionSnapshot },
-    DurableSnapshot { snapshot: rho_sdk::SessionSnapshot },
-    Snapshot { storage: StoredSession, id: String },
-}
-
 pub(crate) struct InteractiveSessionController {
     session: Session,
     storage: Option<StoredSession>,
@@ -158,14 +152,12 @@ impl InteractiveSessionController {
         self.notices.push(notice);
     }
 
-    pub(crate) fn pending_replacement(&self) -> Option<ReplacementSessionSource> {
+    pub(crate) fn pending_replacement(&self) -> Option<rho_sdk::SessionSnapshot> {
         self.pending_session_id.as_ref()?;
         // /new is still an in-memory draft. Attached storage may contain only
         // metadata or an earlier context save. Live state owns the assembled
         // prompt and pre-turn context until the replacement is realized.
-        Some(ReplacementSessionSource::ResetSnapshot {
-            snapshot: self.snapshot(),
-        })
+        Some(self.snapshot())
     }
 
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {

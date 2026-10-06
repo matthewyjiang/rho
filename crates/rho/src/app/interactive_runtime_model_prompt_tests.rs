@@ -157,10 +157,10 @@ async fn durable_recovery_preserves_launch_owned_prompt_policy() {
         let mut expected = expected;
         expected.push(Message::user_text("pre-turn context"));
         let id = runtime.session_id().clone();
-        let source = runtime.sessions.pending_replacement().unwrap();
+        let snapshot = runtime.sessions.pending_replacement().unwrap();
         runtime
             .rebuild_session(
-                source,
+                snapshot,
                 crate::app::interactive_runtime::ReplacementLifecycle::AfterReset,
                 crate::app::interactive_runtime::SessionWriteRetention::Keep,
                 crate::app::active_prompt::PromptTransition::Keep,
