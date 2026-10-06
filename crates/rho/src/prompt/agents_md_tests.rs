@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
-use super::{append_instruction, appended_contents};
-use crate::config_writer::{self, edit_lock::acquire_edit_lock};
+use super::{append_instruction, appended_contents, instruction_lock_path};
+use crate::config_writer::{self, edit_lock::acquire_lock_file};
 
 // Covers: competing sessions cannot replace instructions, including first-file creation.
 // Owner: instruction-file transaction; independent handles exercise the OS advisory lock.
@@ -23,8 +23,9 @@ fn append_rejects_a_contender_and_rereads_after_unlock() {
         if let Some(initial) = initial {
             config_writer::write_atomically(&path, initial).unwrap();
         }
-        let held = acquire_edit_lock(&path).unwrap();
-        append_instruction(&path, "contending instruction").unwrap_err();
+        let locks = dir.path().join("locks");
+        let held = acquire_lock_file(&instruction_lock_path(&path, &locks)).unwrap();
+        append_instruction(&path, &locks, "contending instruction").unwrap_err();
         assert_eq!(std::fs::read_to_string(&path).ok().as_deref(), initial);
 
         // The holder saves before the contender retries. A first-file creator
@@ -32,8 +33,14 @@ fn append_rejects_a_contender_and_rereads_after_unlock() {
         let saved = appended_contents(initial, "instruction from other session");
         config_writer::write_atomically(&path, &saved).unwrap();
         drop(held);
-        append_instruction(&path, "contending instruction").unwrap();
+        append_instruction(&path, &locks, "contending instruction").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        // No lock debris lands next to the instructions (it would show in git status).
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1,
+            "only AGENTS.md beside the destination"
+        );
     }
 }
 
@@ -57,7 +64,7 @@ fn append_preserves_protected_destinations() {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
         }
         let before = std::fs::symlink_metadata(&path).unwrap();
-        assert!(append_instruction(&path, "must not be saved").is_err());
+        assert!(append_instruction(&path, &dir.path().join("locks"), "must not be saved").is_err());
         let after = std::fs::symlink_metadata(&path).unwrap();
         assert_eq!(
             (after.file_type(), after.permissions()),

@@ -40,7 +40,10 @@ impl App {
             crate::workspace::project_ancestor_dirs(&self.info.runtime.cwd)[0].join("AGENTS.md")
         };
         let display_path = compact_cwd(&path);
-        if let Err(error) = crate::prompt::agents_md::append_instruction(&path, text) {
+        let saved = crate::paths::rho_dir().and_then(|rho_dir| {
+            crate::prompt::agents_md::append_instruction(&path, &rho_dir.join("locks"), text)
+        });
+        if let Err(error) = saved {
             self.insert_entry(&Entry::Error(format!(
                 "could not remember instruction in {display_path}: {error}"
             )));

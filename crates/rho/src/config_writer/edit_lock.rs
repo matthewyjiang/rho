@@ -15,13 +15,18 @@ pub(crate) fn edit_lock_path(path: &Path) -> PathBuf {
     ))
 }
 
-/// Take an exclusive lock without waiting. A busy writer is reported to the caller.
-/// Drop unlocks but never unlinks the sidecar, so openers keep one lock identity.
+/// Lock `path` through a sidecar next to it. See [`acquire_lock_file`].
 pub(crate) fn acquire_edit_lock(path: &Path) -> io::Result<EditFileLock> {
-    if let Some(parent) = path.parent() {
+    acquire_lock_file(&edit_lock_path(path))
+}
+
+/// Take an exclusive lock on `lock_path` without waiting. A busy writer is
+/// reported to the caller. Drop unlocks but never unlinks the lock file, so
+/// openers keep one lock identity.
+pub(crate) fn acquire_lock_file(lock_path: &Path) -> io::Result<EditFileLock> {
+    if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let lock_path = edit_lock_path(path);
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -29,7 +34,7 @@ pub(crate) fn acquire_edit_lock(path: &Path) -> io::Result<EditFileLock> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW);
     }
-    let file = options.open(&lock_path).map_err(|error| {
+    let file = options.open(lock_path).map_err(|error| {
         io::Error::new(error.kind(), format!("could not open edit lock: {error}"))
     })?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {

@@ -3,18 +3,29 @@
 use std::{
     fs::{self, OpenOptions},
     io::ErrorKind,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{ensure, Result};
 
-use crate::config_writer::{self, edit_lock::acquire_edit_lock};
+use sha2::{Digest, Sha256};
+
+use crate::config_writer::{self, edit_lock::acquire_lock_file};
 
 /// Append one instruction under a stable cross-process lock covering the entire
 /// read-modify-replace transaction, including creation of a missing file.
 /// Contention fails without modifying the file; the caller can retry.
-pub(crate) fn append_instruction(path: &Path, text: &str) -> Result<()> {
-    let _lock = acquire_edit_lock(path)?;
+///
+/// The lock lives under `lock_dir` (Rho's data directory), not beside the
+/// file: a sidecar in a repository root would show up in `git status`.
+pub(crate) fn append_instruction(path: &Path, lock_dir: &Path, text: &str) -> Result<()> {
+    let _lock = acquire_lock_file(&instruction_lock_path(path, lock_dir)).map_err(|error| {
+        if error.kind() == ErrorKind::WouldBlock {
+            anyhow::anyhow!("another session is saving instructions; retry")
+        } else {
+            error.into()
+        }
+    })?;
     let existing = match fs::symlink_metadata(path) {
         Ok(metadata) => {
             ensure!(metadata.is_file(), "destination is not a regular file");
@@ -37,6 +48,18 @@ pub(crate) fn append_instruction(path: &Path, text: &str) -> Result<()> {
         config_writer::write_atomically(path, &contents)?;
     }
     Ok(())
+}
+
+/// One lock per destination. The parent is canonicalized so symlinked
+/// spellings of the same directory share a lock.
+fn instruction_lock_path(path: &Path, lock_dir: &Path) -> PathBuf {
+    let canonical = path
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .zip(path.file_name())
+        .map_or_else(|| path.to_path_buf(), |(parent, name)| parent.join(name));
+    let key = hex::encode(Sha256::digest(canonical.to_string_lossy().as_bytes()));
+    lock_dir.join(format!("agents-md-{key}.lock"))
 }
 
 /// Preserve existing instructions and their newline style, with one bullet separator.
