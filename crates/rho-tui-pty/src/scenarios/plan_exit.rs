@@ -135,6 +135,13 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
             text: "✓ exit_plan_mode",
             timeout: STREAM,
         },
+        // The next step's start writes a routine status that clears any toast.
+        // Wait for its durable activity label (the held reply keeps it up) so
+        // a late step start cannot wipe the queued-mode toast before it paints.
+        Step::WaitText {
+            text: "waiting for provider",
+            timeout: STREAM,
+        },
         Step::Key(Key::Alt('m')),
         Step::WaitText {
             text: "permission mode supervised queued for next turn",
