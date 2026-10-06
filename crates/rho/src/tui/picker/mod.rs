@@ -325,6 +325,7 @@ impl UiPicker {
         switch_auth_mode => SwitchAuthMode,
         refresh_model_list => RefreshModelList,
         insert_skill => InsertSkillCommand,
+        prompt_history => RecallPrompt,
         view_agent => ViewAgent,
         view_mcp => ViewMcpServers,
         resume_session => ResumeSession,

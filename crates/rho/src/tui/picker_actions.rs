@@ -184,6 +184,10 @@ impl App {
                 self.set_status("skill command inserted");
                 Ok(())
             }
+            PickerAction::RecallPrompt => {
+                self.recall_searched_prompt(value);
+                Ok(())
+            }
             PickerAction::ResumeSession => {
                 let PickerCommit::Idle { terminal, agent } = commit else {
                     unreachable!("resume commit is idle-only");
@@ -415,6 +419,7 @@ impl App {
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
+            | PickerAction::RecallPrompt
             | PickerAction::ViewMcpServers
             | PickerAction::SelectTreeNode
             | PickerAction::CopyOutput

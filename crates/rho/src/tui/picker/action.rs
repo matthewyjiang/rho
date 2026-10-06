@@ -17,6 +17,8 @@ pub(in crate::tui) enum PickerAction {
     SwitchAuthMode,
     RefreshModelList,
     InsertSkillCommand,
+    /// Prompt history search; confirming recalls the prompt into the composer.
+    RecallPrompt,
     ViewAgent,
     /// Read-only MCP server inventory. Distinct from `Dismiss` so background
     /// refreshes can tell this picker apart without reading its title.
@@ -97,6 +99,7 @@ impl PickerAction {
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
+            | PickerAction::RecallPrompt
             | PickerAction::ResumeSession
             | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
@@ -136,6 +139,7 @@ impl PickerAction {
     pub(in crate::tui) fn during_turn_select(&self) -> DuringTurnSelect {
         match self {
             PickerAction::InsertSkillCommand
+            | PickerAction::RecallPrompt
             | PickerAction::CopyOutput
             | PickerAction::AttachSubagent
             | PickerAction::Config
@@ -185,6 +189,7 @@ impl PickerAction {
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)
             | PickerAction::InsertSkillCommand
+            | PickerAction::RecallPrompt
             | PickerAction::ViewAgent
             | PickerAction::ViewMcpServers
             | PickerAction::ResumeSession

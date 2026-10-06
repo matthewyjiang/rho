@@ -6,7 +6,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Configurable keyboard shortcuts used by the main TUI composer.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Keybindings {
-    pub reset_conversation: KeyBinding,
+    /// Starts a new session like `/new`. Unbound by default: a single chord
+    /// that drops the conversation is too easy to hit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_conversation: Option<KeyBinding>,
+    /// Opens a searchable picker over prompt history, like a shell's Ctrl+R.
+    pub search_prompt_history: KeyBinding,
     pub open_editor: KeyBinding,
     pub jump_to_bottom: KeyBinding,
     pub toggle_tool_output: KeyBinding,
@@ -29,7 +34,8 @@ pub struct Keybindings {
 impl Default for Keybindings {
     fn default() -> Self {
         Self {
-            reset_conversation: KeyBinding::control('r'),
+            reset_conversation: None,
+            search_prompt_history: KeyBinding::control('r'),
             open_editor: KeyBinding::control('g'),
             jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
@@ -53,6 +59,12 @@ impl Keybindings {
         KeyBinding::control_code(KeyCode::Enter)
     }
 
+    pub fn reset_conversation_matches(&self, event: KeyEvent) -> bool {
+        self.reset_conversation
+            .as_ref()
+            .is_some_and(|binding| binding.matches(event))
+    }
+
     pub fn queue_prompt_matches(&self, event: KeyEvent) -> bool {
         self.queue_prompt.matches(event) || Self::queue_prompt_fallback().matches(event)
     }
@@ -62,6 +74,7 @@ impl Keybindings {
 #[serde(deny_unknown_fields)]
 struct PartialKeybindings {
     reset_conversation: Option<KeyBinding>,
+    search_prompt_history: Option<KeyBinding>,
     open_editor: Option<KeyBinding>,
     jump_to_bottom: Option<KeyBinding>,
     toggle_tool_output: Option<KeyBinding>,
@@ -84,11 +97,18 @@ impl<'de> Deserialize<'de> for Keybindings {
         let legacy_jump_shortcut = KeyBinding::control('g');
         let migrate_legacy_jump = partial.open_editor.is_none()
             && partial.jump_to_bottom.as_ref() == Some(&legacy_jump_shortcut);
+        // Rho saves every binding, so a config written before history search
+        // carries the old `reset_conversation = "ctrl+r"` default. Drop it so
+        // Ctrl+R reaches history search.
+        let legacy_reset_shortcut = KeyBinding::control('r');
+        let migrate_legacy_reset = partial.search_prompt_history.is_none()
+            && partial.reset_conversation.as_ref() == Some(&legacy_reset_shortcut);
         let defaults = Self::default();
         let keybindings = Self {
-            reset_conversation: partial
-                .reset_conversation
-                .unwrap_or(defaults.reset_conversation),
+            reset_conversation: partial.reset_conversation.filter(|_| !migrate_legacy_reset),
+            search_prompt_history: partial
+                .search_prompt_history
+                .unwrap_or(defaults.search_prompt_history),
             open_editor: partial.open_editor.unwrap_or(defaults.open_editor),
             jump_to_bottom: if migrate_legacy_jump {
                 defaults.jump_to_bottom
@@ -120,6 +140,11 @@ impl<'de> Deserialize<'de> for Keybindings {
         if keybindings.open_editor == keybindings.jump_to_bottom {
             return Err(serde::de::Error::custom(
                 "open_editor and jump_to_bottom must use different keys",
+            ));
+        }
+        if keybindings.reset_conversation.as_ref() == Some(&keybindings.search_prompt_history) {
+            return Err(serde::de::Error::custom(
+                "reset_conversation and search_prompt_history must use different keys",
             ));
         }
         Ok(keybindings)
@@ -321,6 +346,54 @@ mod tests {
     fn key_binding_rejects_missing_or_multiple_keys() {
         assert!("ctrl".parse::<KeyBinding>().is_err());
         assert!("ctrl+r+g".parse::<KeyBinding>().is_err());
+    }
+
+    // Covers: configs saved before history search keep their persisted
+    // `reset_conversation = "ctrl+r"`, which must not shadow history search,
+    // while deliberate reset bindings survive and collisions fail loudly.
+    // Owner: keybinding config parsing.
+    #[test]
+    fn reset_binding_migrates_off_ctrl_r() {
+        let ctrl_r: KeyBinding = "ctrl+r".parse().unwrap();
+        let alt_r: KeyBinding = "alt+r".parse().unwrap();
+        let alt_h: KeyBinding = "alt+h".parse().unwrap();
+        let cases = [
+            (
+                "legacy saved default",
+                r#"reset_conversation = "ctrl+r""#,
+                Ok((None, ctrl_r.clone())),
+            ),
+            (
+                "deliberate reset key",
+                r#"reset_conversation = "alt+r""#,
+                Ok((Some(alt_r), ctrl_r.clone())),
+            ),
+            (
+                "ctrl+r reset after moving search",
+                "reset_conversation = \"ctrl+r\"\nsearch_prompt_history = \"alt+h\"",
+                Ok((Some(ctrl_r.clone()), alt_h)),
+            ),
+            (
+                "collision",
+                "reset_conversation = \"ctrl+r\"\nsearch_prompt_history = \"ctrl+r\"",
+                Err(()),
+            ),
+        ];
+        for (case, text, expected) in cases {
+            let parsed = toml::from_str::<Keybindings>(text)
+                .map(|keys| (keys.reset_conversation, keys.search_prompt_history))
+                .map_err(|_| ());
+            assert_eq!(parsed, expected, "{case}");
+        }
+    }
+
+    #[test]
+    fn saved_defaults_reload_unchanged() {
+        let saved = toml::to_string(&Keybindings::default()).unwrap();
+        assert_eq!(
+            toml::from_str::<Keybindings>(&saved).unwrap(),
+            Keybindings::default()
+        );
     }
 
     #[test]

@@ -133,6 +133,13 @@ fn unfocused_terminal_is_notified() {
     assert_pass("turn_notifications");
 }
 
+// Covers: Ctrl+R searches prompt history and recalls into the composer.
+// Owner: interactive TUI composer.
+#[test]
+fn ctrl_r_recalls_prompt_from_history_search() {
+    assert_pass("prompt_history_search");
+}
+
 // Covers: model-scoped prompt switches are visible and invalid files do not
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]

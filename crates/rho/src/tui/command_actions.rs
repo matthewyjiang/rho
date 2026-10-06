@@ -157,7 +157,7 @@ impl App {
         Ok(())
     }
 
-    async fn execute_new_command(
+    pub(super) async fn execute_new_command(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,

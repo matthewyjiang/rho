@@ -1,5 +1,8 @@
-use anyhow::Result;
+use std::time::{Duration, Instant};
 
+use anyhow::{ensure, Result};
+
+use super::STREAM;
 use crate::harness::PtyHarness;
 
 pub(super) fn assert_inline_shell_cancelled(harness: &mut PtyHarness) -> Result<()> {
@@ -36,4 +39,26 @@ pub(super) fn assert_terminal_restored(harness: &mut PtyHarness) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Waits for the turn that printed `marker` to finish. Idle-only commands and
+/// fresh prompts need it: seeing the response is not enough, because the
+/// provider can still own the turn. Waits for the durable receipt after this
+/// marker, not an earlier turn's receipt.
+pub(super) fn wait_for_turn_completion_after(harness: &mut PtyHarness, marker: &str) -> Result<()> {
+    let deadline = Instant::now() + STREAM.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        let screen = harness.screen().contents();
+        if screen
+            .rfind(marker)
+            .is_some_and(|start| screen[start..].contains("Worked for"))
+        {
+            return Ok(());
+        }
+        ensure!(
+            harness.is_running() && Instant::now() < deadline,
+            "turn did not finish before the next idle command:\n{screen}"
+        );
+    }
 }

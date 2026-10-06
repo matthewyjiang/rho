@@ -114,15 +114,15 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::Phase("start_fresh_session"),
-    // Ctrl+R is refused while a model turn is running. The reply is visible
+    // /new is refused while a model turn is running. The reply is visible
     // before the turn receipt, so wait for that receipt before resetting.
     Step::WaitText {
         text: "Worked for",
         timeout: STREAM,
     },
-    Step::Key(Key::Ctrl('r')),
-    Step::WaitText {
-        text: "conversation reset",
+    Step::SubmitText("/new"),
+    Step::WaitTextGone {
+        text: "fixture response: sessions hub target",
         timeout: SETTLE,
     },
     Step::Phase("reject_misplaced_foreign_transcript"),

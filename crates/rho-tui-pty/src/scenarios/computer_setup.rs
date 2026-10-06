@@ -1,8 +1,7 @@
 //! Installation consent stays separate from desktop authority. All executables are fixtures.
 
 use super::{
-    computer::{setup_driver, wait_for_turn_completion_after},
-    SETTLE, STARTUP, STREAM,
+    assert_helpers::wait_for_turn_completion_after, computer::setup_driver, SETTLE, STARTUP, STREAM,
 };
 use crate::{
     env::IsolatedHome,

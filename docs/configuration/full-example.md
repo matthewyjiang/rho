@@ -115,7 +115,8 @@ review = "Review this code for correctness, security, and maintainability."
 "explain-tests" = "Explain how these tests cover the expected behavior."
 
 [keybindings]
-reset_conversation = "ctrl+r"
+search_prompt_history = "ctrl+r"
+# reset_conversation = "ctrl+shift+n" # same as /new; unbound by default
 open_editor = "ctrl+g"
 jump_to_bottom = "ctrl+end"
 toggle_tool_output = "ctrl+o"

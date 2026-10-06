@@ -18,7 +18,7 @@ pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
 }
 
 fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
-    let reset = keybindings.reset_conversation.chrome_label();
+    let search_history = keybindings.search_prompt_history.chrome_label();
     let editor = keybindings.open_editor.chrome_label();
     let jump = keybindings.jump_to_bottom.chrome_label();
     let toggle_tools = keybindings.toggle_tool_output.chrome_label();
@@ -31,7 +31,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let cycle_pinned = keybindings.cycle_pinned_model.chrome_label();
     let cycle_pinned_back = keybindings.cycle_pinned_model_back.chrome_label();
 
-    vec![
+    let mut items = vec![
         entry(
             "/",
             "Show commands",
@@ -105,9 +105,9 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Paste a clipboard image as an attachment when a supported host helper is available. alt+v is also accepted as a fallback.",
         ),
         entry(
-            reset,
-            "Reset chat",
-            "Clear conversation history so the next message starts a new session. Unavailable while a model turn is running.",
+            search_history,
+            "Search history",
+            "Search previous prompts, newest first. Type to filter, then Enter recalls the prompt into the composer; Down returns to your draft.",
         ),
         entry(
             editor,
@@ -166,7 +166,15 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Paste text",
             "Paste clipboard text into the composer.",
         ),
-    ]
+    ];
+    if let Some(reset) = &keybindings.reset_conversation {
+        items.push(entry(
+            reset.chrome_label(),
+            "New session",
+            "Start a new session, like /new. Unavailable while a model turn is running.",
+        ));
+    }
+    items
 }
 
 fn entry(keys: impl Into<String>, summary: &str, detail: impl Into<String>) -> PickerItem {

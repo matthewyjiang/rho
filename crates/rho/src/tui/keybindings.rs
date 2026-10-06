@@ -3,7 +3,7 @@ use ratatui::{backend::Backend, Terminal};
 
 use crate::tui::DefaultTerminal;
 
-use super::{App, Entry, InteractiveRuntime};
+use super::{App, InteractiveRuntime};
 
 impl App {
     pub(super) fn handle_configurable_running_key<B: Backend>(
@@ -40,10 +40,17 @@ impl App {
             .info
             .runtime
             .keybindings
-            .reset_conversation
+            .reset_conversation_matches(key)
+        {
+            self.notify_status("/new is unavailable while a model turn is running");
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .search_prompt_history
             .matches(key)
         {
-            self.notify_status("reset is unavailable while a model turn is running");
+            self.open_prompt_history_search();
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {
@@ -93,25 +100,17 @@ impl App {
             .info
             .runtime
             .keybindings
-            .reset_conversation
+            .reset_conversation_matches(key)
+        {
+            self.execute_new_command(terminal, agent).await?;
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .search_prompt_history
             .matches(key)
         {
-            if let Err(error) = agent.reset().await {
-                // The conversation is still live, so report the failure instead
-                // of clearing the UI as though a new session had started.
-                self.insert_entry(&Entry::Error(format!(
-                    "could not reset conversation: {error}"
-                )));
-            } else {
-                self.info.session.session_id = None;
-                self.pending_session_title = None;
-                self.session_title_locked = false;
-                self.reset_usage();
-                self.usage.current_context = None;
-                self.insert_entry(&Entry::Notice(
-                    "conversation reset; next message starts a new session".into(),
-                ));
-            }
+            self.open_prompt_history_search();
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {
