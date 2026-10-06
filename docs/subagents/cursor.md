@@ -117,7 +117,7 @@ Cursor can only fence whole categories, so Rho fences at that granularity and pr
 | Write | `edit_tool_call`, `delete_tool_call`, `apply_agent_diff_tool_call` | config deny `Write(**)` when not declared or in Plan |
 | Shell | `shell_tool_call`, `write_shell_stdin_tool_call` | config deny `Shell(*)` when not declared or in Plan; permission requests rejected likewise |
 | Fetch | `web_fetch_tool_call`, `fetch_tool_call`, `web_search_tool_call` | permission answers only (Cursor ignores a `WebFetch(*)` deny); Rho forces `autoAcceptWebSearch: false` so web search always asks |
-| MCP | `mcp_tool_call`, `list_mcp_resources_tool_call`, `read_mcp_resource_tool_call` | permission answers, best effort (unverified) |
+| MCP | `mcp_tool_call`, `list_mcp_resources_tool_call`, `read_mcp_resource_tool_call` | permission answers only for Cursor's MCP request shape (kind `other`, title `<server>: <tool>`); other kinds, including think, switch_mode, and undescribed operations, are rejected |
 | Search | `grep_tool_call`, `glob_tool_call`, `ls_tool_call`, `sem_search_tool_call`, `read_lints_tool_call` | **not fenceable**: Cursor runs these without asking |
 | Session artifacts | `update_todos_tool_call`, `read_todos_tool_call`, `create_plan_tool_call` | not fenced |
 

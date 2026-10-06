@@ -9,7 +9,8 @@ use crate::{agent::CursorTool, cursor_runtime::acp_config::fence};
 
 // Covers: every ACP kind uses its category gate, never Bypass alone; Cursor's
 // web search (kind `search`) is gated as network, not as grep. Plan and
-// unsupported modes cannot approve even a full tool set. MCP is best effort.
+// unsupported modes cannot approve even a full tool set. Only Cursor's MCP
+// shape (kind `other`, described) maps to MCP; other kinds fail closed.
 // Owner: pure Cursor request classification; option selection is generic ACP.
 #[test]
 fn permission_decision_table() {
@@ -26,19 +27,14 @@ fn permission_decision_table() {
         // Cursor's web search shares kind `search` with grep; it is network.
         ("web_search_q1", Some(K::Search), T::WebSearch),
         ("tool", Some(K::Other), T::Mcp),
-        ("tool", Some(K::Think), T::ListMcpResources),
-        ("tool", Some(K::SwitchMode), T::ReadMcpResource),
-        ("tool", None, T::Mcp),
-        (
-            "tool",
-            Some(serde_json::from_value(json!("future_kind")).unwrap()),
-            T::Mcp,
-        ),
     ];
     for (id, kind, member) in cases {
         let request = RequestPermissionRequest::new(
             "session",
-            ToolCallUpdate::new(id, ToolCallUpdateFields::new().kind(kind)),
+            ToolCallUpdate::new(
+                id,
+                ToolCallUpdateFields::new().kind(kind).title("server: tool"),
+            ),
             vec![PermissionOption::new(
                 "allow-once",
                 "Allow once",
@@ -84,6 +80,68 @@ fn permission_decision_table() {
                 &request
             ),
             PermissionDecision::Reject
+        );
+    }
+}
+
+// Covers: requests that are not positively MCP (Cursor's undescribed
+// fallback, an unnamed server, think, switch_mode, a missing kind) reject even
+// when every MCP tool is declared, so the MCP grant cannot approve excluded
+// tools.
+// Owner: pure Cursor request classification.
+#[test]
+fn only_described_other_requests_count_as_mcp() {
+    let full_mcp = fence(
+        PermissionMode::Bypass,
+        &[
+            CursorTool::Mcp,
+            CursorTool::ListMcpResources,
+            CursorTool::ReadMcpResource,
+        ],
+    );
+    let future_kind: ToolKind = serde_json::from_value(json!("future_kind")).unwrap();
+    for (kind, title, expected) in [
+        (
+            Some(ToolKind::Other),
+            "server: tool",
+            PermissionDecision::AllowOnce,
+        ),
+        (
+            Some(future_kind),
+            "server: tool",
+            PermissionDecision::AllowOnce,
+        ),
+        (
+            Some(ToolKind::Other),
+            "Unknown operation",
+            PermissionDecision::Reject,
+        ),
+        (Some(ToolKind::Other), ": tool", PermissionDecision::Reject),
+        (
+            Some(ToolKind::Think),
+            "server: tool",
+            PermissionDecision::Reject,
+        ),
+        (
+            Some(ToolKind::SwitchMode),
+            "server: tool",
+            PermissionDecision::Reject,
+        ),
+        (None, "server: tool", PermissionDecision::Reject),
+    ] {
+        let request = RequestPermissionRequest::new(
+            "session",
+            ToolCallUpdate::new("tool", ToolCallUpdateFields::new().kind(kind).title(title)),
+            vec![PermissionOption::new(
+                "allow-once",
+                "Allow once",
+                PermissionOptionKind::AllowOnce,
+            )],
+        );
+        assert_eq!(
+            decide(&full_mcp, PermissionMode::Bypass, &request),
+            expected,
+            "kind {kind:?}, title {title}"
         );
     }
 }

@@ -45,18 +45,35 @@ pub(crate) fn decide(
         Some(ToolKind::Edit | ToolKind::Delete | ToolKind::Move) => CursorCategory::Write,
         Some(ToolKind::Read) => CursorCategory::Read,
         Some(ToolKind::Search) => CursorCategory::Search,
-        // Cursor does not identify MCP tools more precisely. Unknown wire
-        // strings deserialize as Other; missing kinds share this best effort.
-        Some(ToolKind::Other | ToolKind::Think | ToolKind::SwitchMode) | None => {
+        // cursor-agent 2026.10.01 (`formatOperation`) asks for MCP tools with
+        // kind `other` and a `<server>: <tool>` title; anything it cannot
+        // describe is kind `other` titled "Unknown operation". Unknown wire
+        // kinds also deserialize as Other. Only that MCP shape counts as MCP;
+        // Think, SwitchMode, and a missing kind never do, and fail closed.
+        Some(ToolKind::Other)
+            if request
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(is_mcp_title) =>
+        {
             CursorCategory::Mcp
         }
-        Some(_) => return PermissionDecision::Reject,
+        _ => return PermissionDecision::Reject,
     };
     if fence.allowed_categories.contains(&category) {
         PermissionDecision::AllowOnce
     } else {
         PermissionDecision::Reject
     }
+}
+
+/// `<server>: <tool>`, both non-empty.
+fn is_mcp_title(title: &str) -> bool {
+    title
+        .split_once(": ")
+        .is_some_and(|(server, tool)| !server.trim().is_empty() && !tool.trim().is_empty())
 }
 
 #[cfg(test)]
