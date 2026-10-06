@@ -1,10 +1,10 @@
 use crate::tui::DefaultTerminal;
 
-use crate::session::tree::{NodeId, SessionTreeItem};
+use crate::session::tree::{NodeId, SessionTreeItem, SessionTreeItemKind};
 
 use super::{
-    picker::OverlayChrome, App, ComposerMode, InteractiveRuntime, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker, ViewModelEvent,
+    picker::OverlayChrome, App, ComposerMode, Entry, InteractiveRuntime, PickerBadge,
+    PickerBadgeTone, PickerItem, PickerLayout, UiPicker, ViewModelEvent,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -40,16 +40,22 @@ fn tree_item(item: SessionTreeItem) -> PickerItem {
 }
 
 fn tree_preview(item: &SessionTreeItem) -> String {
-    if let Some(text) = item.first_user_text.as_deref() {
-        return text.to_string();
+    match item.kind {
+        SessionTreeItemKind::SessionStart => "Session start".into(),
+        SessionTreeItemKind::Turn => item
+            .first_user_text
+            .clone()
+            .unwrap_or_else(|| "turn".into()),
+        SessionTreeItemKind::Compaction => item.compaction_facts.as_ref().map_or_else(
+            || "Compacted context".into(),
+            |facts| {
+                format!(
+                    "Compacted context ({} → {} messages)",
+                    facts.previous_messages, facts.current_messages
+                )
+            },
+        ),
     }
-    if let Some(facts) = item.compaction_facts.as_ref() {
-        return format!(
-            "Compacted context ({} → {} messages)",
-            facts.previous_messages, facts.current_messages
-        );
-    }
-    "Compacted context".into()
 }
 
 fn tree_label(item: &SessionTreeItem, preview: &str) -> String {
@@ -107,6 +113,16 @@ impl App {
         let entries = self.transcript_entries(&histories.display);
         agent.select_tree_node(storage, &target_id).await?;
 
+        self.present_tree_selection(entries, &target_id, agent);
+        Ok(())
+    }
+
+    pub(super) fn present_tree_selection(
+        &mut self,
+        entries: Vec<Entry>,
+        target_id: &NodeId,
+        agent: &mut InteractiveRuntime,
+    ) {
         self.input_ui.set_composer(ComposerMode::Input);
         self.input_ui.clear_text();
         self.input_ui.clear_paste_segments();
@@ -127,6 +143,5 @@ impl App {
             "restored conversation state {}",
             &target_id.as_str()[..target_id.as_str().len().min(8)]
         ));
-        Ok(())
     }
 }

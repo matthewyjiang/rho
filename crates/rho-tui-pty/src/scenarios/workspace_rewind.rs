@@ -1,9 +1,10 @@
 use std::fs;
 
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 
 use crate::{
     env::IsolatedHome,
+    harness::PtyHarness,
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, Step},
@@ -11,12 +12,12 @@ use crate::{
 
 use super::{SETTLE, STARTUP, STREAM};
 
-fn setup_workspace_rewind(home: &IsolatedHome) -> Result<()> {
+fn setup_workspace_rewind_off(home: &IsolatedHome) -> Result<()> {
     let mut config = fs::read_to_string(&home.config_path)?;
     if !config.ends_with('\n') {
         config.push('\n');
     }
-    config.push_str("experimental_workspace_rewind = true\n");
+    config.push_str("workspace_rewind = false\n");
     fs::write(&home.config_path, config)?;
     Ok(())
 }
@@ -30,8 +31,79 @@ pub(super) const WORKSPACE_REWIND_SCENARIO: Scenario = Scenario::new(
     },
     WORKSPACE_REWIND_STEPS,
     false,
+);
+
+pub(super) const WORKSPACE_REWIND_OFF_SCENARIO: Scenario = Scenario::new(
+    "workspace_rewind_off",
+    "Explicit opt-out disables workspace rewind",
+    PtySize {
+        rows: 30,
+        cols: 120,
+    },
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("fixture tool"),
+        Step::WaitText {
+            text: "tool lifecycle complete with one result",
+            timeout: STREAM,
+        },
+        Step::SubmitText("/rewind"),
+        Step::WaitText {
+            text: "workspace rewind is off",
+            timeout: SETTLE,
+        },
+        Step::ExitCommand,
+        // Process exit joins deferred persistence before the disk assertion.
+        Step::Custom(assert_no_checkpoint_journal),
+    ],
+    false,
 )
-.with_setup(setup_workspace_rewind);
+.with_setup(setup_workspace_rewind_off);
+
+fn assert_no_checkpoint_journal(harness: &mut PtyHarness) -> Result<()> {
+    let workspace = harness
+        .working_directory()
+        .context("matrix workspace is unavailable")?;
+    ensure!(
+        fs::read(workspace.join(".rho-tui-fixture-output.txt"))? == b"deterministic tool output\n",
+        "native write did not complete with workspace rewind disabled"
+    );
+    let sessions = harness
+        .working_directory()
+        .and_then(std::path::Path::parent)
+        .context("matrix workspace has no isolated home parent")?
+        .join("home/.rho/sessions");
+    ensure!(
+        sessions.is_dir(),
+        "native fixture turn did not create isolated session storage"
+    );
+    let mut pending = vec![sessions];
+    let mut saved_session = false;
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                let journal = entry.path().join("workspace-checkpoints/checkpoints.jsonl");
+                ensure!(
+                    !journal.try_exists()?,
+                    "workspace rewind opt-out created a checkpoint journal: {}",
+                    journal.display()
+                );
+                pending.push(entry.path());
+            } else if entry.file_name() == "session.jsonl" {
+                saved_session = true;
+            }
+        }
+    }
+    ensure!(
+        saved_session,
+        "native fixture turn did not save a session transcript"
+    );
+    Ok(())
+}
 
 const WORKSPACE_REWIND_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -121,11 +193,15 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
     },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "workspace rewind audit; conversation state selected",
+        text: "workspace rewind audit; conversation restored to before the turn",
         timeout: STREAM,
     },
     Step::WaitText {
         text: "delete  .rho-tui-fixture-output.txt  restored",
+        timeout: SETTLE,
+    },
+    Step::WaitTextGone {
+        text: "fixture tool",
         timeout: SETTLE,
     },
     Step::SubmitText(
@@ -135,5 +211,12 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
         text: "rewind-delete-confirmed",
         timeout: SETTLE,
     },
+    Step::Phase("preserve_old_branch"),
+    Step::SubmitText("/tree"),
+    Step::WaitText {
+        text: "fixture tool",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
     Step::ExitCommand,
 ];

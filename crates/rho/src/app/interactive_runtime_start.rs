@@ -85,9 +85,7 @@ impl InteractiveRuntime {
         let estimate = self.sessions.session().estimate_context(&request_history);
         let context_usage = self.context_usage(estimate);
         self.record_context_estimate(estimate);
-        self.tools
-            .checkpoint_tracker()
-            .begin_turn(self.sessions.storage())
+        self.begin_workspace_checkpoint()
             .map_err(|error| Error::Persistence {
                 message: error.to_string(),
             })?;

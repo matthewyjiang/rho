@@ -736,6 +736,7 @@ impl App {
             agent.mark_live_context_warm();
         }
         self.insert_cache_miss_notices(completed);
+        self.insert_runtime_notices(agent);
         if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
             self.preserve_unapplied_steering_as_follow_ups();
         }

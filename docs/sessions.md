@@ -62,7 +62,7 @@ Exiting or crashing loses the conversation; it won't appear in session history
 and cannot be resumed.
 
 `--no-save` is interactive-only and cannot be combined with `--resume` or `-R`.
-Inside the TUI, `/resume`, `/tree`, `/title`, `/export`, and experimental `/rewind`
+Inside the TUI, `/resume`, `/tree`, `/title`, `/export`, and `/rewind`
 are unavailable.
 Use `/copy` to copy an answer, or start Rho without the flag to resume saved work.
 
@@ -71,6 +71,58 @@ tools can modify files. Cached web content and usage records may still be saved;
 hooks, logs, delegated agents, and workflows can retain their own data.
 `--save` controls configuration overrides separately; it does not turn session
 saving back on.
+
+## Workspace checkpoints
+
+Workspace rewind is on by default for saved interactive sessions. Native file
+mutations from `write` and the selected edit tool capture the original file once
+per turn, including its contents and basic permissions. Checkpoints are stored
+alongside the transcript at
+`<session>/workspace-checkpoints/checkpoints.jsonl`. Sessions without saving and
+legacy flat sessions do not create checkpoint journals.
+
+`/rewind` previews restore actions before confirmation. A successful restore
+returns files and conversation state to **before the selected turn**; continuing
+creates a new branch, and the original conversation branch stays available in
+`/tree`. Conversation selection clears the composer, as `/tree` does; it does
+not automatically put the old prompt back for editing. Conflicting paths,
+unsupported files, and failed writes stay unchanged. A partial restore leaves
+the current conversation state selected and reports its audit. Checkpoints from
+the old experimental version lack pre-turn conversation boundaries and cannot
+be rewound; they are rejected before any files change. If files restore but saving
+the conversation selection fails, retrying skips files already at their original
+state and retries the conversation commit.
+
+Only native file-tool mutations are captured. Shell (`bash`), process, Git,
+network, database, service, and third-party tool effects cannot be reversed.
+Recorded untracked effects display a **limited** badge and warnings in the
+preview and audit. Rewinding is not a replacement for Git or a workspace backup.
+
+The **per-file capture budget is 2 MiB**. Files above it are unsupported, with a
+transcript notice showing the limit and requested file size. The **per-session
+serialized journal budget is 64 MiB**. Capture reserves path and entry metadata
+(including absent and empty files and expected-after states), plus base64-expanded
+pre-image bytes, against the remaining session budget. It drops the current
+turn's capture if it cannot fit, without blocking native tools or the turn.
+Serialization also stops at the remaining budget rather than allocating an
+oversized record. An append that would exceed it is rejected without losing
+earlier checkpoints. Rho reports the budget,
+limit, requested total, and minimum requested turn bytes once, and pauses further capture for that running
+session. Earlier turns remain rewindable; restarting can attempt capture again
+but does not clear the journal or its budget.
+
+If checkpoint storage cannot be initialized, Rho reports the failure and pauses
+capture for that running session; ordinary turns and native file writes continue.
+Failures to read or save the conversation itself remain fatal, including saving
+the pre-turn conversation baseline.
+
+**Privacy:** checkpoint journals contain original file contents, including any
+secrets in files touched by native tools. They are not redacted. Disabling rewind
+does not delete existing journals. Treat session folders as sensitive data and
+include them in your retention policy. To prevent new capture, set
+`[behavior] workspace_rewind = false` or toggle **Workspace rewind** under Agent
+behavior in `/config`, then restart Rho. Old
+`experimental_workspace_rewind` settings are ignored; the new key is the opt-out.
 
 ## Searching prior conversations
 

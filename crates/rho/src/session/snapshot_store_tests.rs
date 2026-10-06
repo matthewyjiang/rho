@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
-use super::super::tree::SessionTree;
+use super::super::tree::{SessionTree, SessionTreeItemKind};
 use super::super::Session;
 
 fn snapshot(session: &Session, revision: u64, history: Vec<Message>) -> SessionSnapshot {
@@ -24,6 +24,48 @@ fn create_session() -> (tempfile::TempDir, tempfile::TempDir, Session) {
     let cwd = tempfile::tempdir().unwrap();
     let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
     (root, cwd, session)
+}
+
+// Covers: the durable pre-turn baseline is a session start, not a phantom turn.
+// Owner: session tree projection; assert classification, not picker label copy.
+#[test]
+fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
+    let (_root, _cwd, session) = create_session();
+    let baseline = snapshot(&session, 1, Vec::new());
+    session.save_snapshot(&baseline, &[])?;
+    let baseline_id = session.active_checkpoint_target()?.unwrap().0;
+    let first_turn = snapshot(&session, 2, vec![Message::user_text("first prompt")]);
+    session.save_snapshot(&first_turn, first_turn.history())?;
+    // Missing user text alone must not classify later commits as session start.
+    let assistant_turn = snapshot(
+        &session,
+        3,
+        vec![
+            Message::user_text("first prompt"),
+            Message::assistant_text("reply"),
+        ],
+    );
+    session.save_snapshot(&assistant_turn, &assistant_turn.history()[1..])?;
+
+    let tree = SessionTree::load(session.path())?;
+    let items = tree.items()?;
+    assert_eq!(
+        items.iter().map(|item| item.kind).collect::<Vec<_>>(),
+        vec![
+            SessionTreeItemKind::SessionStart,
+            SessionTreeItemKind::Turn,
+            SessionTreeItemKind::Turn,
+        ]
+    );
+    assert_eq!(items[0].id, baseline_id);
+    assert_eq!(items[0].first_user_text, None);
+    session.set_leaf(&baseline_id)?;
+    assert_eq!(
+        session.snapshot_for_resume(baseline.provider().clone(), "unused".into())?,
+        baseline
+    );
+    assert!(session.histories_for_node(&baseline_id)?.display.is_empty());
+    Ok(())
 }
 
 // Covers: a second save must parent on the in-memory tree, matching a fresh

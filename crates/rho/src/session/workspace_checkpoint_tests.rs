@@ -20,6 +20,20 @@ fn test_session() -> anyhow::Result<(TempDir, Session, PathBuf)> {
     Ok((temp, session, workspace))
 }
 
+fn summary(checkpoint: &WorkspaceCheckpoint) -> WorkspaceCheckpointSummary {
+    WorkspaceCheckpointSummary {
+        session_id: checkpoint.session_id.clone(),
+        node_id: checkpoint.node_id.clone(),
+        before_node_id: checkpoint.before_node_id.clone(),
+        revision: checkpoint.revision,
+        started_at: checkpoint.started_at,
+        finalized_at: checkpoint.finalized_at,
+        outcome: checkpoint.outcome,
+        file_count: checkpoint.files.len(),
+        limitations: checkpoint.limitations.clone(),
+    }
+}
+
 // Covers: a torn final append must not hide earlier checkpoints or block the next append.
 // Owner: session checkpoint persistence
 #[test]
@@ -30,7 +44,7 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
     let store = checkpoint_store(&session)?;
 
     let first_node = NodeId::new();
-    let mut open = store.open(first_node.clone());
+    let mut open = store.open(first_node.clone())?;
     assert_eq!(open.capture_path(&path), CaptureDisposition::Captured);
     assert_eq!(
         open.capture_path(&path),
@@ -44,6 +58,15 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
     let first = store.finalize(open, Revision::from_u64(4), CheckpointOutcome::Completed)?;
 
     let reopened = checkpoint_store(&session)?;
+    let before_duplicate = fs::read(&store.journal_path)?;
+    assert!(reopened
+        .finalize(
+            reopened.open(first_node.clone())?,
+            Revision::from_u64(5),
+            CheckpointOutcome::Completed,
+        )
+        .is_err());
+    assert_eq!(fs::read(&store.journal_path)?, before_duplicate);
     assert_eq!(reopened.get(&first_node)?, Some(first.clone()));
     assert_eq!(
         reopened.observe_current(&first),
@@ -63,16 +86,16 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
         .append(true)
         .open(&store.journal_path)?
         .write_all(br#"{"version":1,"checkpoint":{"torn""#)?;
-    assert_eq!(reopened.list()?, vec![first.clone()]);
+    assert_eq!(reopened.list()?, vec![summary(&first)]);
     OpenOptions::new()
         .append(true)
         .open(&store.journal_path)?
         .write_all(b"}\n")?;
-    assert_eq!(reopened.list()?, vec![first.clone()]);
+    assert_eq!(reopened.list()?, vec![summary(&first)]);
 
     let second_path = workspace.join("created.txt");
     let second_node = NodeId::new();
-    let mut second_open = reopened.open(second_node.clone());
+    let mut second_open = reopened.open(second_node.clone())?;
     second_open.capture_path(&second_path);
     fs::write(&second_path, b"created")?;
     let second = reopened.finalize(
@@ -80,7 +103,9 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
         Revision::from_u64(5),
         CheckpointOutcome::Cancelled,
     )?;
-    assert_eq!(reopened.list()?, vec![first, second]);
+    assert_eq!(reopened.list()?, vec![summary(&first), summary(&second)]);
+    assert_eq!(reopened.get(&first_node)?, Some(first));
+    assert_eq!(reopened.get(&second_node)?, Some(second));
 
     #[cfg(unix)]
     {
@@ -97,36 +122,150 @@ fn checkpoint_journal_persists_binary_state_and_recovers_a_torn_tail() -> anyhow
     Ok(())
 }
 
-// Covers: a readable future journal version must never be treated as a truncatable torn tail.
+// Covers: future versions and duplicate nodes must never become truncatable torn tails.
 // Owner: session checkpoint persistence
 #[test]
-fn checkpoint_journal_preserves_unknown_versions() -> anyhow::Result<()> {
+fn checkpoint_journal_preserves_unknown_versions_and_duplicate_nodes() -> anyhow::Result<()> {
+    for version in [CHECKPOINT_FORMAT_VERSION + 1, CHECKPOINT_FORMAT_VERSION] {
+        let (_temp, session, workspace) = test_session()?;
+        let path = workspace.join("tracked.txt");
+        fs::write(&path, b"original")?;
+        let store = checkpoint_store(&session)?;
+        let mut open = store.open(NodeId::new())?;
+        open.capture_path(&path);
+        fs::write(&path, b"agent")?;
+        let first = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
+        let mut invalid = serde_json::to_vec(&StoredCheckpointRecord {
+            version,
+            checkpoint: &first,
+        })?;
+        invalid.push(b'\n');
+        OpenOptions::new()
+            .append(true)
+            .open(&store.journal_path)?
+            .write_all(&invalid)?;
+        let before_append = fs::read(&store.journal_path)?;
+
+        assert!(store.list().is_err());
+        assert!(store.get(&first.node_id).is_err());
+        let mut next = store.open(NodeId::new())?;
+        next.capture_path(&workspace.join("next.txt"));
+        assert!(store
+            .finalize(next, Revision::from_u64(2), CheckpointOutcome::Completed,)
+            .is_err());
+        assert_eq!(fs::read(&store.journal_path)?, before_append);
+    }
+    Ok(())
+}
+
+// Covers: list/append and selecting another checkpoint must not decode unrelated file bodies;
+// the session quota must still charge their serialized bytes.
+// Owner: session checkpoint persistence
+#[test]
+fn checkpoint_headers_skip_file_bodies_but_preserve_quota_accounting() -> anyhow::Result<()> {
     let (_temp, session, workspace) = test_session()?;
     let path = workspace.join("tracked.txt");
     fs::write(&path, b"original")?;
-    let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut store = checkpoint_store(&session)?;
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
-    fs::write(&path, b"agent")?;
     let first = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
-    let mut future = serde_json::to_vec(&StoredCheckpointRecord {
-        version: CHECKPOINT_FORMAT_VERSION + 1,
-        checkpoint: first,
-    })?;
-    future.push(b'\n');
-    OpenOptions::new()
-        .append(true)
-        .open(&store.journal_path)?
-        .write_all(&future)?;
-    let before_append = fs::read(&store.journal_path)?;
 
-    assert!(store.list().is_err());
-    let mut next = store.open(NodeId::new());
-    next.capture_path(&workspace.join("next.txt"));
-    assert!(store
-        .finalize(next, Revision::from_u64(2), CheckpointOutcome::Completed,)
-        .is_err());
+    let mut damaged = serde_json::to_value(StoredCheckpointRecord {
+        version: CHECKPOINT_FORMAT_VERSION,
+        checkpoint: &first,
+    })?;
+    damaged["checkpoint"]["files"][0]["original"]["bytes"] = "not base64!".into();
+    let mut encoded = serde_json::to_vec(&damaged)?;
+    encoded.push(b'\n');
+    fs::write(&store.journal_path, &encoded)?;
+    assert_eq!(store.list()?, vec![summary(&first)]);
+    // A complete record with a valid header is corrupt, not a torn tail,
+    // whether it is the last record or has another checkpoint after it.
+    assert!(store.get(&first.node_id).is_err());
+
+    let second_node = NodeId::new();
+    let mut open = store.open(second_node.clone())?;
+    open.capture_path(&path);
+    let second = store.finalize(open, Revision::from_u64(2), CheckpointOutcome::Completed)?;
+    assert_eq!(store.list()?, vec![summary(&first), summary(&second)]);
+    assert_eq!(store.get(&second_node)?, Some(second));
+    assert!(store.get(&first.node_id).is_err());
+
+    let before_append = fs::read(&store.journal_path)?;
+    let stored_bytes = u64::try_from(before_append.len())?;
+    store.limits.max_session_bytes = stored_bytes;
+    let error = store
+        .finalize(
+            store.open(NodeId::new())?,
+            Revision::from_u64(3),
+            CheckpointOutcome::Completed,
+        )
+        .unwrap_err()
+        .downcast::<CheckpointAppendError>()?;
+    let CheckpointAppendError::QuotaExceeded {
+        asked,
+        limit,
+        turn_bytes,
+    } = error
+    else {
+        panic!("expected typed quota error, got {error:?}");
+    };
+    assert_eq!((asked, limit), (stored_bytes + turn_bytes, stored_bytes));
     assert_eq!(fs::read(&store.journal_path)?, before_append);
+    Ok(())
+}
+
+// Covers: torn bytes near the quota must not pause capture and prevent tail repair.
+// Owner: session checkpoint persistence; exercises capture through durable append.
+#[test]
+fn torn_tail_does_not_consume_capture_budget() -> anyhow::Result<()> {
+    for keep_valid_prefix in [false, true] {
+        let (_temp, session, workspace) = test_session()?;
+        let path = workspace.join("tracked.txt");
+        let original = b"original";
+        fs::write(&path, original)?;
+        let mut store = checkpoint_store(&session)?;
+        let mut open = store.open(NodeId::new())?;
+        open.capture_path(&path);
+        let first = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
+        let valid_prefix = if keep_valid_prefix {
+            fs::read(&store.journal_path)?
+        } else {
+            Vec::new()
+        };
+        // Size the budget from an actual record and capture reservations. Use the
+        // widest timestamps so the next append doesn't depend on the wall clock.
+        let mut sized = first.clone();
+        sized.started_at = u64::MAX;
+        sized.finalized_at = u64::MAX;
+        let turn_bytes = (budget::encode_record(&sized, 0, u64::MAX)?.len() as u64).max(
+            2 * budget::entry_bytes(&path) + budget::encoded_content_bytes(original.len() as u64),
+        );
+        store.limits.max_session_bytes = valid_prefix.len() as u64 + turn_bytes;
+        let mut damaged = valid_prefix.clone();
+        damaged.extend_from_slice(br#"{"version":1,"checkpoint":"#);
+        damaged.resize(usize::try_from(store.limits.max_session_bytes)?, b'x');
+        fs::write(&store.journal_path, &damaged)?;
+
+        let mut next_open = store.open(NodeId::new())?;
+        assert_eq!(next_open.capture_path(&path), CaptureDisposition::Captured);
+        let next = store.finalize(
+            next_open,
+            Revision::from_u64(2),
+            CheckpointOutcome::Completed,
+        )?;
+        let mut repaired = valid_prefix;
+        repaired.extend(budget::encode_record(&next, 0, u64::MAX)?);
+        assert_eq!(fs::read(&store.journal_path)?, repaired);
+        let mut expected = Vec::new();
+        if keep_valid_prefix {
+            expected.push(summary(&first));
+        }
+        expected.push(summary(&next));
+        assert_eq!(store.list()?, expected);
+        assert_eq!(store.get(&next.node_id)?, Some(next));
+    }
     Ok(())
 }
 
@@ -235,6 +374,7 @@ fn restore_plan_classifies_actions_conflicts_unsupported_and_binary_state() -> a
     let checkpoint = WorkspaceCheckpoint {
         session_id: rho_sdk::SessionId::from_string("session")?,
         node_id: NodeId::from_string("node")?,
+        before_node_id: None,
         revision: Revision::from_u64(9),
         started_at: 1,
         finalized_at: 2,
@@ -272,7 +412,7 @@ fn restore_applies_safe_actions_and_audits_conflicts() -> anyhow::Result<()> {
     fs::write(&conflicted, b"original")?;
 
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     for path in [
         &created_before_turn,
         &modified,
@@ -325,7 +465,7 @@ fn restore_recreates_missing_parent_directory() -> anyhow::Result<()> {
     fs::create_dir(path.parent().expect("test path must have a parent"))?;
     fs::write(&path, b"original")?;
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     fs::remove_dir_all(path.parent().expect("test path must have a parent"))?;
     let checkpoint = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
@@ -359,7 +499,7 @@ fn restore_rechecks_state_after_preview() -> anyhow::Result<()> {
     let path = workspace.join("raced.txt");
     fs::write(&path, b"original")?;
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     fs::write(&path, b"agent-change")?;
     let checkpoint = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
@@ -399,7 +539,7 @@ fn restore_does_not_follow_a_replacement_symlink() -> anyhow::Result<()> {
     fs::write(&target, b"original")?;
     fs::write(&outside, b"outside")?;
     let store = checkpoint_store(&session)?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&target);
     fs::write(&target, b"agent-change")?;
     let checkpoint = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)?;
@@ -435,8 +575,26 @@ async fn tracker_captures_native_mutations_for_the_active_turn() -> anyhow::Resu
     let (_temp, session, workspace) = test_session()?;
     let path = workspace.join("tracked.txt");
     fs::write(&path, b"before")?;
+    let baseline = rho_sdk::SessionSnapshot::new(
+        rho_sdk::SessionId::from_string(session.id.clone())?,
+        Revision::from_u64(1),
+        Vec::new(),
+        rho_sdk::model::ModelIdentity::new("provider", "api", "model"),
+        rho_sdk::CompactionState::default(),
+    );
+    session.save_snapshot(&baseline, &[])?;
+    let before_node_id = session.active_checkpoint_target()?.map(|(id, _)| id);
     let tracker = WorkspaceCheckpointTracker::new(true);
     tracker.begin_turn(Some(&session))?;
+    // A save inside the turn must not move its rewind conversation boundary.
+    let intermediate = rho_sdk::SessionSnapshot::new(
+        baseline.session_id().clone(),
+        Revision::from_u64(2),
+        vec![rho_sdk::model::Message::user_text("turn prompt")],
+        baseline.provider().clone(),
+        rho_sdk::CompactionState::default(),
+    );
+    session.save_snapshot(&intermediate, intermediate.history())?;
     rho_tools::WorkspaceMutationObserver::before_mutation(&tracker, &[path.as_path()])
         .await
         .map_err(anyhow::Error::msg)?;
@@ -459,6 +617,7 @@ async fn tracker_captures_native_mutations_for_the_active_turn() -> anyhow::Resu
     let checkpoint = checkpoint_store(&session)?
         .get(&node_id)?
         .expect("checkpoint should be durable");
+    assert_eq!(checkpoint.before_node_id, before_node_id);
     assert_eq!(checkpoint.outcome, CheckpointOutcome::Cancelled);
     assert_eq!(checkpoint.files.len(), 1);
     assert_eq!(
@@ -551,13 +710,25 @@ fn capture_limit_marks_files_unsupported_and_quota_rejects_append() -> anyhow::R
     let store = session
         .workspace_checkpoint_store_with_limits(limits)?
         .ok_or_else(|| anyhow::anyhow!("checkpoint store is unavailable"))?;
-    let mut open = store.open(NodeId::new());
+    let mut open = store.open(NodeId::new())?;
     open.capture_path(&path);
     fs::write(&path, b"12")?;
 
-    let error = store.finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed);
-    assert!(error.is_err());
-    assert_eq!(store.list()?, Vec::<WorkspaceCheckpoint>::new());
+    let error = store
+        .finalize(open, Revision::from_u64(1), CheckpointOutcome::Completed)
+        .unwrap_err()
+        .downcast::<CheckpointAppendError>()?;
+    let CheckpointAppendError::QuotaExceeded {
+        asked,
+        limit,
+        turn_bytes,
+    } = error
+    else {
+        panic!("expected typed quota error, got {error:?}");
+    };
+    assert_eq!((limit, asked), (limits.max_session_bytes, turn_bytes));
+    assert!(asked > limit);
+    assert_eq!(store.list()?, Vec::<WorkspaceCheckpointSummary>::new());
 
     let original = capture_original(&path, 1);
     assert_eq!(

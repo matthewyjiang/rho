@@ -126,6 +126,7 @@ impl App {
             (ConfigRow::Theme, _) => self.open_theme_picker_from_config(),
             (ConfigRow::CheckForUpdates, _) => self.toggle_check_for_updates(),
             (ConfigRow::EnableSubagents, _) => self.toggle_enable_subagents(),
+            (ConfigRow::WorkspaceRewind, _) => self.toggle_workspace_rewind(),
             (
                 ConfigRow::AdvisorMode | ConfigRow::AdvisorModel | ConfigRow::AdvisorReasoning,
                 ConfigCommitCtx::DuringTurn,
@@ -528,6 +529,19 @@ impl App {
         self.refresh_main_config_picker_if_open(config_picker::ADVISOR_REASONING_VALUE)?;
         self.set_status(status);
         Ok(())
+    }
+
+    pub(super) fn toggle_workspace_rewind(&mut self) -> anyhow::Result<()> {
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::WorkspaceRewind,
+                picker_value: config_picker::WORKSPACE_REWIND_VALUE,
+                on_status: "workspace rewind saved: on; restart Rho to apply",
+                off_status: "workspace rewind saved: off; restart Rho to apply",
+                error_noun: "workspace rewind",
+            },
+            |_, _| {},
+        )
     }
 
     pub(super) fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {

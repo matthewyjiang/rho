@@ -24,6 +24,7 @@ pub(super) const OUTPUT_STREAMING_VALUE: &str = "output_streaming";
 pub(super) const THEME_VALUE: &str = "theme";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
+pub(super) const WORKSPACE_REWIND_VALUE: &str = "workspace_rewind";
 pub(super) const AGENT_CONCURRENCY_VALUE: &str = "agent_concurrency";
 pub(super) const QUESTIONNAIRE_TIMEOUT_VALUE: &str = "questionnaire_timeout";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
@@ -434,6 +435,13 @@ pub(super) fn category_picker(
                 Some(config.questionnaire.timeout_seconds.map(|value| format!("{value}s")).unwrap_or_else(|| "Disabled".into())),
                 QUESTIONNAIRE_TIMEOUT_VALUE,
             ));
+            items.push(sectioned_item(
+                Some("Workspace"),
+                "Workspace rewind",
+                "Capture native file-tool changes for /rewind. Checkpoints contain file contents; shell/process effects are not captured. Restart Rho after changing this. Space toggles.",
+                Some(on_off(config.workspace_rewind)),
+                WORKSPACE_REWIND_VALUE,
+            ));
             ("Config / Agent behavior", items)
         }
         CONTEXT_CATEGORY_VALUE => (
@@ -587,6 +595,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | PERMISSION_SCREEN_MODEL_VALUE
         | SCREEN_ALLOW_THRESHOLD_VALUE
         | ENABLE_SUBAGENTS_VALUE
+        | WORKSPACE_REWIND_VALUE
         | AGENT_CONCURRENCY_VALUE
         | QUESTIONNAIRE_TIMEOUT_VALUE
         | ADVISOR_MODE_VALUE

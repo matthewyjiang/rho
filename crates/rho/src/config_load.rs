@@ -220,8 +220,8 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.advisor_mode {
             cfg.advisor_mode = value;
         }
-        if let Some(value) = group.experimental_workspace_rewind {
-            cfg.experimental_workspace_rewind = value;
+        if let Some(value) = group.workspace_rewind {
+            cfg.workspace_rewind = value;
         }
         if let Some(value) = group.permission_mode {
             cfg.permission_mode = value;
@@ -408,7 +408,8 @@ impl PartialConfig {
                 enable_subagents: None,
                 agent_concurrency: None,
                 advisor_mode: None,
-                experimental_workspace_rewind: None,
+                workspace_rewind: None,
+                _legacy_workspace_rewind: None,
                 permission_mode: None,
                 edit_tool: None,
                 credential_store: None,
@@ -420,7 +421,8 @@ impl PartialConfig {
                 enable_subagents: group.enable_subagents.or(enable_subagents),
                 agent_concurrency: group.agent_concurrency,
                 advisor_mode: group.advisor_mode,
-                experimental_workspace_rewind: group.experimental_workspace_rewind,
+                workspace_rewind: group.workspace_rewind,
+                _legacy_workspace_rewind: None,
                 permission_mode: group.permission_mode.or(permission_mode),
                 edit_tool: group.edit_tool,
                 credential_store: group.credential_store,
@@ -701,7 +703,11 @@ struct PartialBehaviorConfig {
     enable_subagents: Option<bool>,
     agent_concurrency: Option<usize>,
     advisor_mode: Option<bool>,
-    experimental_workspace_rewind: Option<bool>,
+    workspace_rewind: Option<bool>,
+    // Rho saved every key, including the old false default. Accept but ignore it;
+    // only the new workspace_rewind key can opt out. Saving drops this legacy key.
+    #[serde(rename = "experimental_workspace_rewind")]
+    _legacy_workspace_rewind: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,
     edit_tool: Option<EditTool>,

@@ -120,7 +120,8 @@ pub(crate) struct InteractiveRuntime {
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
     config: Config,
     permission_mode: PermissionMode,
-    experimental_workspace_rewind: bool,
+    workspace_rewind: bool,
+    checkpoint_paused_sessions: std::collections::HashSet<String>,
     session_writes: crate::permission::SessionWriteLog,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
@@ -192,7 +193,7 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn workspace_rewind_enabled(&self) -> bool {
-        self.experimental_workspace_rewind
+        self.workspace_rewind
     }
 
     pub(crate) fn fast_mode(&self) -> bool {
@@ -535,35 +536,7 @@ impl InteractiveRuntime {
                 )),
             };
         }
-        if let Some(storage) = self.sessions.storage() {
-            self.runs.mark_display_committed();
-            let outcome = match finished.outcome.as_ref() {
-                Ok(_) => crate::session::workspace_checkpoint::CheckpointOutcome::Completed,
-                Err(Error::Cancelled | Error::Interrupted { .. }) => {
-                    crate::session::workspace_checkpoint::CheckpointOutcome::Cancelled
-                }
-                Err(_) => crate::session::workspace_checkpoint::CheckpointOutcome::Failed,
-            };
-            match storage.active_checkpoint_target() {
-                Ok(Some((node_id, revision))) => {
-                    if let Err(error) = self
-                        .tools
-                        .checkpoint_tracker()
-                        .finalize_turn(node_id, revision, outcome)
-                    {
-                        tracing::warn!(%error, "failed to persist workspace checkpoint");
-                        self.tools.checkpoint_tracker().discard_turn();
-                    }
-                }
-                Ok(None) => self.tools.checkpoint_tracker().discard_turn(),
-                Err(error) => {
-                    tracing::warn!(%error, "failed to resolve workspace checkpoint target");
-                    self.tools.checkpoint_tracker().discard_turn();
-                }
-            }
-        } else {
-            self.tools.checkpoint_tracker().discard_turn();
-        }
+        self.finalize_workspace_checkpoint(&finished.outcome);
         self.refresh_context_usage();
         self.completed_runs = self.completed_runs.saturating_add(1);
         Ok(finished.outcome?)

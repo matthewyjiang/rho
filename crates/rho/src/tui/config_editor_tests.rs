@@ -78,7 +78,13 @@ fn editor_cursor_navigation_is_unicode_safe() {
 #[test]
 fn toggles_persist_for_the_next_session() {
     type ReadFlag = fn(&crate::config::Config) -> bool;
-    let cases: [(&str, ConfigToggle, bool, ReadFlag); 6] = [
+    let cases: [(&str, ConfigToggle, bool, ReadFlag); 7] = [
+        (
+            "workspace rewind",
+            ConfigToggle::WorkspaceRewind,
+            false,
+            |config| config.workspace_rewind,
+        ),
         (
             "subagents",
             ConfigToggle::EnableSubagents,

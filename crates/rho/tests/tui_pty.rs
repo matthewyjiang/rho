@@ -28,6 +28,15 @@ fn runner() -> ScenarioRunner {
     ScenarioRunner::new(binary).with_artifacts(artifacts)
 }
 
+// Covers: rewind defaults on, restores before the turn, and respects explicit opt-out.
+// Owner: interactive workspace rewind UX
+#[test]
+fn workspace_rewind() {
+    for scenario in ["workspace_rewind", "workspace_rewind_off"] {
+        assert_pass(scenario);
+    }
+}
+
 fn assert_pass(name: &str) {
     let outcome = run_named(&runner(), name).expect("scenario runner error");
     assert!(

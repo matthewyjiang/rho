@@ -38,6 +38,7 @@ pub(super) enum ConfigRow {
     Theme,
     CheckForUpdates,
     EnableSubagents,
+    WorkspaceRewind,
     AdvisorMode,
     AdvisorModel,
     AdvisorReasoning,
@@ -94,6 +95,7 @@ impl ConfigRow {
             config_picker::THEME_VALUE => Self::Theme,
             config_picker::CHECK_FOR_UPDATES_VALUE => Self::CheckForUpdates,
             config_picker::ENABLE_SUBAGENTS_VALUE => Self::EnableSubagents,
+            config_picker::WORKSPACE_REWIND_VALUE => Self::WorkspaceRewind,
             config_picker::AGENT_CONCURRENCY_VALUE => {
                 Self::Number(ConfigNumberKey::AgentConcurrency)
             }

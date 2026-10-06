@@ -2,6 +2,29 @@ use super::super::ConfigWarning;
 use super::parse_settings;
 use pretty_assertions::assert_eq;
 
+// Covers: saved experimental defaults must not opt out of default-on rewind.
+// Owner: config migration
+#[test]
+fn workspace_rewind_migrates_saved_experimental_defaults() {
+    for (settings, expected) in [
+        ("", true),
+        ("experimental_workspace_rewind = false", true),
+        ("experimental_workspace_rewind = true", true),
+        ("workspace_rewind = false", false),
+        (
+            "experimental_workspace_rewind = true\nworkspace_rewind = false",
+            false,
+        ),
+        (
+            "experimental_workspace_rewind = false\nworkspace_rewind = true",
+            true,
+        ),
+    ] {
+        let (config, _) = parse_settings(&format!("[behavior]\n{settings}\n")).unwrap();
+        assert_eq!(config.workspace_rewind, expected, "{settings}");
+    }
+}
+
 // Covers: a typo or zero duration must fail closed, not enable auto answers.
 // Owner: persisted questionnaire policy parser.
 #[test]
