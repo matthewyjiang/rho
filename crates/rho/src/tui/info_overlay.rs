@@ -1,7 +1,7 @@
 //! `/info` overlay: runtime, usage, and workspace details in one pane.
 //!
-//! The command paints the in-memory snapshot immediately. External runtimes
-//! (Claude, Cursor, Antigravity) and the session tree fill in afterwards. Closing the overlay does not leave a
+//! The command paints the in-memory snapshot and the Antigravity disk read
+//! immediately. Claude, Cursor, and the session tree fill in afterwards. Closing the overlay does not leave a
 //! transcript block. `c` copies the whole report; a drag copies the selection
 //! (shared panel pointer, see `panel_pointer`).
 
