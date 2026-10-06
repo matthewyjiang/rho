@@ -122,7 +122,9 @@ async fn checkpoint_initialization_failure_pauses_capture_but_turns_continue() -
 async fn rewind_retries_after_failed_durable_leaf_commit() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let (mut runtime, storage) = checkpoint_runtime(&temp, Vec::new()).await?;
-    let workspace = temp.path().join("workspace");
+    // Native tools hand the tracker resolved paths. Canonicalize so macOS
+    // (/private/var) and Windows (\\?\) temp roots match the workspace root.
+    let workspace = fs::canonicalize(temp.path().join("workspace"))?;
     let added = workspace.join("added.txt");
     let deleted = workspace.join("deleted.txt");
     let modified = workspace.join("modified.txt");
@@ -157,7 +159,7 @@ async fn rewind_retries_after_failed_durable_leaf_commit() -> anyhow::Result<()>
 
     storage.fail_next_leaf_commit_for_tests();
     let first = runtime.restore_workspace_rewind(&target.0).await?;
-    assert!(first.selection_error.is_some());
+    assert!(first.selection_error.is_some(), "{:?}", first.audit);
     assert!(first.display.is_none());
     assert_eq!(runtime.history(), history);
     assert_eq!(storage.active_checkpoint_target()?, Some(target.clone()));
