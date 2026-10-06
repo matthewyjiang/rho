@@ -302,11 +302,15 @@ impl Progress {
 }
 
 /// Unpack the staged archive, rename it into place as the pinned release,
-/// then prune. Callers hold the root's lock.
+/// then prune. Callers hold the root's lock. The release is durable before
+/// the rename publishes it, because [`ManagedRoot::installed_server`] trusts
+/// any server file it finds: a crash must leave either no release or a whole
+/// one, never a truncated binary later logins would skip reinstalling.
 fn publish(root: &ManagedRoot, staging: tempfile::TempDir) -> anyhow::Result<()> {
     let release = staging.path().join("release");
     std::fs::create_dir(&release)?;
     unpack(&staging.path().join("archive.zip"), &release)?;
+    sync_dir(&release)?;
     let target = root.release_dir();
     // Under the lock, a release directory without the server is an earlier
     // interrupted publish.
@@ -320,6 +324,7 @@ fn publish(root: &ManagedRoot, staging: tempfile::TempDir) -> anyhow::Result<()>
             crate::paths::display(&target)
         )
     })?;
+    sync_dir(&root.0)?;
     for entry in std::fs::read_dir(&root.0)?.flatten() {
         let path = entry.path();
         if path == staging.path() || !prunable(&entry.file_name().to_string_lossy()) {
@@ -343,6 +348,16 @@ fn prunable(name: &str) -> bool {
             .is_some_and(|(release, pinned)| release < pinned)
 }
 
+/// Flush a directory's entries. Windows cannot open a directory as a file
+/// without extra flags, and NTFS journals renames, so this is Unix-only.
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
+}
+
 /// Extract exactly the server and its harness, flat, into `dir`. Any other
 /// layout fails, so a re-pinned archive that moved its files cannot install
 /// a server the runtime would not find.
@@ -364,8 +379,10 @@ fn unpack(archive: &Path, dir: &Path) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+            out.set_permissions(std::fs::Permissions::from_mode(0o755))?;
         }
+        // After the mode change, so the executable bit is durable too.
+        out.sync_all()?;
     }
     Ok(())
 }
