@@ -102,7 +102,6 @@ impl CliExecutable {
         crate::paths::display(&self.program)
     }
 
-    #[cfg(unix)]
     pub(crate) fn path(&self) -> &Path {
         &self.program
     }

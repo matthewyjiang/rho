@@ -7,7 +7,7 @@ use rho_sdk::{
 
 use super::{
     advisor, completed, current_turn_tool_results, edit, last_user_text, tool_result,
-    tool_result_for_name, AGENTS_LIST_CALL_ID, BACKGROUND_AGENT_CALL_ID,
+    tool_result_for_name, AGENTS_LIST_CALL_ID, ANTIGRAVITY_AGENT_CALL_ID, BACKGROUND_AGENT_CALL_ID,
     BACKGROUND_CLAUDE_AGENT_CALL_ID, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_COMPLETION, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
     CODEMODE_CALL_ID, COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID,
@@ -108,6 +108,12 @@ pub(super) fn intercept(
     if let Some(result) = tool_result(request, CURSOR_AGENT_CALL_ID) {
         let receipt = result.content.lines().next().unwrap_or_default();
         return Some(completed(format!("cursor agent dispatched: {receipt}")));
+    }
+    if let Some(result) = tool_result(request, ANTIGRAVITY_AGENT_CALL_ID) {
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return Some(completed(format!(
+            "antigravity agent dispatched: {receipt}"
+        )));
     }
     if let Some(result) = tool_result(request, CLAUDE_AGENT_ERROR_CALL_ID) {
         // End the parent turn so the PTY can observe the failed completion.
@@ -245,6 +251,10 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         format!("claude-background-delivery-{deliveries}: delegated result received")
     } else if prompt.contains("(cursor-worker): ok") && prompt.contains("rho-cursor-acp-e2e-ok") {
         format!("cursor-background-delivery-{deliveries}: delegated result received")
+    } else if prompt.contains("(antigravity-worker): ok")
+        && prompt.contains("rho-antigravity-acp-e2e-ok")
+    {
+        format!("antigravity-background-delivery-{deliveries}: delegated result received")
     } else if prompt.contains("(claude-planner): error") && prompt.contains("hit max turns") {
         format!("claude-background-delivery-{deliveries}: failed result received")
     } else {

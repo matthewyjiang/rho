@@ -3,7 +3,11 @@
 use super::policy::AcpAgentPolicy;
 use agent_client_protocol::{
     schema::{
-        v1::{AuthenticateRequest, InitializeRequest, SetSessionModeRequest},
+        v1::{
+            AuthenticateRequest, InitializeRequest, SessionConfigKind, SessionConfigOption,
+            SessionConfigSelectOptions, SessionConfigValueId, SetSessionConfigOptionRequest,
+            SetSessionModeRequest,
+        },
         ProtocolVersion,
     },
     ActiveSession, Agent, ConnectionTo, Error,
@@ -92,4 +96,79 @@ pub(super) async fn require_mode<P: AcpAgentPolicy>(
         .await?;
     }
     Ok(())
+}
+
+/// Set each policy-required select option, after checking the agent
+/// advertised it with that value. Already-current values are not re-sent.
+/// Each response carries the full option set (one change can move others),
+/// so later choices are checked against the latest one.
+pub(super) async fn require_config<P: AcpAgentPolicy>(
+    session: &ActiveSession<'_, Agent>,
+    policy: &Mutex<P>,
+) -> Result<(), Error> {
+    let choices = policy.lock().expect("ACP policy").session_config();
+    let mut options = session.config_options().unwrap_or_default().to_vec();
+    for choice in choices {
+        let step = format!("session/set_config_option `{}`", choice.id);
+        let Some((current, values)) = options
+            .iter()
+            .find(|option| option.id == choice.id)
+            .and_then(select_state)
+        else {
+            return Err(error(format!(
+                "acp: {step}: the agent does not advertise select option `{}`",
+                choice.id
+            )));
+        };
+        if !values.contains(&&choice.value) {
+            let available = values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(error(format!(
+                "acp: {step}: value `{}` is not advertised (available: {available})",
+                choice.value
+            )));
+        }
+        if *current == choice.value {
+            continue;
+        }
+        options = bounded(
+            &step,
+            session
+                .connection()
+                .send_request(SetSessionConfigOptionRequest::new(
+                    session.session_id().clone(),
+                    choice.id,
+                    choice.value,
+                ))
+                .block_task(),
+        )
+        .await?
+        .config_options;
+    }
+    Ok(())
+}
+
+/// Current value and every offered value of a select option; `None` for
+/// other (including future) option kinds.
+fn select_state(
+    option: &SessionConfigOption,
+) -> Option<(&SessionConfigValueId, Vec<&SessionConfigValueId>)> {
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    let values = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => {
+            options.iter().map(|option| &option.value).collect()
+        }
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| &group.options)
+            .map(|option| &option.value)
+            .collect(),
+        _ => return None,
+    };
+    Some((&select.current_value, values))
 }

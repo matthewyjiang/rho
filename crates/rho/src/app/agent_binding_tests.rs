@@ -306,7 +306,9 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
             assert_eq!(*permission_mode, crate::permission::PermissionMode::Auto);
             assert_eq!(*max_turns, 9);
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::Cursor { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Claude bound runtime")
         }
     }
@@ -567,7 +569,9 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
             );
             assert!(reasoning.is_none());
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::Cursor { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Claude bound runtime")
         }
     }
@@ -644,7 +648,9 @@ fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
         BoundRuntime::ClaudeCli { reasoning, .. } => {
             assert_eq!(*reasoning, Some(rho_sdk::ReasoningLevel::High));
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::Cursor { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Claude bound runtime")
         }
     }
@@ -1070,7 +1076,9 @@ fn cursor_binds_delegated_with_model_and_tools() {
             assert_eq!(tools.as_slice(), [CursorTool::Read, CursorTool::Grep]);
             assert_eq!(*permission_mode, crate::permission::PermissionMode::Bypass);
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::ClaudeCli { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::ClaudeCli { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Cursor bound runtime")
         }
     }
@@ -1165,7 +1173,9 @@ fn cursor_frozen_bind_narrows_plan_to_read_only_tools() {
                     .expect("Plan with Read must spawn");
             assert_eq!(allowed.tools(), &[CursorTool::Read]);
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::ClaudeCli { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::ClaudeCli { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Cursor bound runtime")
         }
     }

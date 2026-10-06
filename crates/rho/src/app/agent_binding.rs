@@ -5,9 +5,16 @@ use rho_providers::credentials::CredentialStore;
 use crate::{
     agent::{
         AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntimeSpec,
-        CursorTool, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
+        AntigravityTool, CursorTool, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
     },
     config::Config,
+};
+
+#[path = "agent_binding_acp.rs"]
+mod acp;
+use acp::{
+    bind_antigravity_runtime, bind_cursor_runtime, frozen_antigravity_runtime,
+    frozen_cursor_runtime,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +37,7 @@ pub(crate) enum CapacityClass {
     Rho,
     Claude,
     Cursor,
+    Antigravity,
 }
 
 /// Runtime-specific values produced by binding.
@@ -65,6 +73,14 @@ pub(crate) enum BoundRuntime {
         /// maps this; Auto / Allow edits / Supervised already failed at bind.
         permission_mode: crate::permission::PermissionMode,
     },
+    Antigravity {
+        /// Session `model` config option. `None` keeps the server default.
+        model: Option<String>,
+        tools: Vec<AntigravityTool>,
+        /// Snapshot of the parent permission mode at bind time; Auto / Allow
+        /// edits / Supervised already failed at bind.
+        permission_mode: crate::permission::PermissionMode,
+    },
 }
 
 impl BoundRuntime {
@@ -73,6 +89,7 @@ impl BoundRuntime {
             Self::Rho { .. } => CapacityClass::Rho,
             Self::ClaudeCli { .. } => CapacityClass::Claude,
             Self::Cursor { .. } => CapacityClass::Cursor,
+            Self::Antigravity { .. } => CapacityClass::Antigravity,
         }
     }
 }
@@ -106,7 +123,9 @@ impl BoundAgent {
     pub(crate) fn rho_config(&self) -> Option<&Config> {
         match &self.runtime {
             BoundRuntime::Rho { config, .. } => Some(config.as_ref()),
-            BoundRuntime::ClaudeCli { .. } | BoundRuntime::Cursor { .. } => None,
+            BoundRuntime::ClaudeCli { .. }
+            | BoundRuntime::Cursor { .. }
+            | BoundRuntime::Antigravity { .. } => None,
         }
     }
 
@@ -126,6 +145,11 @@ impl BoundAgent {
             },
             BoundRuntime::Cursor { model, .. } => PromptModel::ExternalCli {
                 runtime: crate::agent::AgentRuntime::Cursor,
+                requested: model.clone(),
+                resolved: None,
+            },
+            BoundRuntime::Antigravity { model, .. } => PromptModel::ExternalCli {
+                runtime: crate::agent::AgentRuntime::Antigravity,
                 requested: model.clone(),
                 resolved: None,
             },
@@ -153,7 +177,9 @@ impl BoundAgent {
     pub(crate) fn rho_capabilities(&self) -> Option<&AgentCapabilities> {
         match &self.runtime {
             BoundRuntime::Rho { capabilities, .. } => Some(capabilities),
-            BoundRuntime::ClaudeCli { .. } | BoundRuntime::Cursor { .. } => None,
+            BoundRuntime::ClaudeCli { .. }
+            | BoundRuntime::Cursor { .. }
+            | BoundRuntime::Antigravity { .. } => None,
         }
     }
 
@@ -196,6 +222,15 @@ impl BoundAgent {
                 // `None` means no `--model` pin; Cursor chooses.
                 model: model.clone(),
                 runtime: crate::agent::AgentRuntime::Cursor,
+                reasoning: None,
+            },
+            BoundRuntime::Antigravity { model, .. } => crate::run_artifacts::RunArtifactIdentity {
+                agent_id: self.id().to_string(),
+                agent_fingerprint: self.fingerprint().to_string(),
+                provider: crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME.into(),
+                // `None` means no model pin; the server chooses.
+                model: model.clone(),
+                runtime: crate::agent::AgentRuntime::Antigravity,
                 reasoning: None,
             },
         }
@@ -281,6 +316,46 @@ impl BoundAgent {
             overrides: Default::default(),
         })
     }
+
+    /// Build the Antigravity session request for a bound Antigravity runtime.
+    pub(crate) fn into_antigravity_session(
+        self,
+        prompt: String,
+        output_file: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+        cancellation: rho_tools::cancellation::RunCancellation,
+        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
+        started_status: Option<crate::subagent::RunStatus>,
+    ) -> Option<crate::antigravity_runtime::session::AntigravitySessionRequest> {
+        let identity = self.artifact_identity();
+        let BoundRuntime::Antigravity {
+            tools,
+            permission_mode,
+            ..
+        } = self.runtime
+        else {
+            return None;
+        };
+        Some(
+            crate::antigravity_runtime::session::AntigravitySessionRequest {
+                system_prompt: self.definition.prompt.clone(),
+                identity,
+                tools,
+                prompt,
+                output_file,
+                cwd,
+                permission_mode,
+                cancellation,
+                status_tx,
+                started_status,
+                parent_messages: None,
+                home: crate::antigravity_runtime::home::AntigravityHome::from_env(
+                    &crate::paths::home_dir().unwrap_or_default(),
+                ),
+                overrides: Default::default(),
+            },
+        )
+    }
 }
 
 pub(crate) struct AgentBinder;
@@ -330,6 +405,9 @@ impl AgentBinder {
             }
             AgentRuntimeSpec::Cursor(config) => {
                 bind_cursor_runtime(&definition, config, &invocation, host_config)?
+            }
+            AgentRuntimeSpec::Antigravity(config) => {
+                bind_antigravity_runtime(&definition, config, &invocation, host_config)?
             }
         };
         Ok(BoundAgent {
@@ -391,14 +469,10 @@ impl AgentBinder {
                 }
             }
             crate::workflow::AgentRuntime::Cursor => {
-                let tools = frozen_cursor_tools(frozen)?;
-                crate::cursor_runtime::spawn::map_permission_mode(permission_mode, &tools)
-                    .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?;
-                BoundRuntime::Cursor {
-                    model: frozen.model.clone(),
-                    tools,
-                    permission_mode,
-                }
+                frozen_cursor_runtime(frozen, permission_mode)?
+            }
+            crate::workflow::AgentRuntime::Antigravity => {
+                frozen_antigravity_runtime(frozen, permission_mode)?
             }
             crate::workflow::AgentRuntime::ClaudeCli => {
                 let reasoning = frozen
@@ -435,17 +509,6 @@ fn decode_frozen_prompt_policy(encoded: &str) -> anyhow::Result<PromptPolicy> {
     } else {
         anyhow::bail!("frozen prompt policy is invalid")
     }
-}
-
-fn frozen_cursor_tools(frozen: &crate::workflow::ResolvedAgent) -> anyhow::Result<Vec<CursorTool>> {
-    frozen
-        .capabilities
-        .iter()
-        .map(|name| {
-            name.parse::<CursorTool>()
-                .map_err(|error| anyhow::anyhow!("frozen agent '{}': {error}", frozen.agent_id))
-        })
-        .collect()
 }
 
 fn frozen_capabilities(
@@ -806,45 +869,6 @@ set a Claude model name or alias (for example opus), not '{model}'",
             .try_into()
             .expect("run step limit fits in u64"),
         reasoning,
-    })
-}
-
-fn bind_cursor_runtime(
-    definition: &AgentDefinition,
-    config: &crate::agent::CursorAgentConfig,
-    invocation: &AgentInvocation,
-    host_config: &Config,
-) -> anyhow::Result<BoundRuntime> {
-    match invocation.role {
-        AgentRole::Delegated | AgentRole::Workflow => {}
-        AgentRole::InteractiveRoot | AgentRole::AutomationRoot => {
-            anyhow::bail!(
-                "agent '{}': runtime cursor is delegated-only; use it through the agent tool, not as an interactive or automation root",
-                definition.id
-            );
-        }
-    }
-
-    // Defense in depth: parse already rejects these, but constructed configs
-    // (tests, future loaders) must not slip past bind.
-    if let Some(model) = &config.model {
-        if model.starts_with('@') {
-            anyhow::bail!(
-                "agent '{}': runtime cursor does not resolve Rho model aliases; \
-set a Cursor model name (for example gpt-5.3-codex), not '{model}'",
-                definition.id
-            );
-        }
-    }
-
-    // Fail Auto / Allow edits / Supervised here so launch never reaches spawn.
-    crate::cursor_runtime::spawn::map_permission_mode(host_config.permission_mode, &config.tools)
-        .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
-
-    Ok(BoundRuntime::Cursor {
-        model: config.model.clone(),
-        tools: config.tools.clone(),
-        permission_mode: host_config.permission_mode,
     })
 }
 

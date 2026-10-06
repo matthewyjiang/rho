@@ -1,0 +1,64 @@
+{
+  "modes": ["default", "auto_edit", "yolo"],
+  "config_options": [
+    {
+      "id": "model",
+      "name": "Model",
+      "type": "select",
+      "currentValue": "gemini-3.8-flash-high",
+      "options": [
+        {"value": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)"},
+        {"value": "gemini-3.8-flash-low", "name": "Gemini 3.8 Flash (Low)"}
+      ]
+    }
+  ],
+  "turns": [
+    [
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "tool_call",
+          "toolCallId": "run-1",
+          "title": "Run run_command?",
+          "kind": "execute",
+          "status": "pending",
+          "rawInput": {"CommandLine": "cargo test"}
+        }
+      },
+      {
+        "step": "permission",
+        "call": {"toolCallId": "run-1", "title": "Run run_command?", "kind": "execute", "status": "pending"},
+        "options": [
+          {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+          {"optionId": "allow_always", "name": "Allow always", "kind": "allow_always"},
+          {"optionId": "deny", "name": "Deny", "kind": "reject_once"}
+        ]
+      },
+      {
+        "step": "permission",
+        "call": {"toolCallId": "fetch-1", "title": "Run read_url_content?", "kind": "fetch", "status": "pending"},
+        "options": [
+          {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+          {"optionId": "deny", "name": "Deny", "kind": "reject_once"}
+        ]
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "run-1",
+          "status": "completed",
+          "content": [{"type": "content", "content": {"type": "text", "text": "test result: ok. 3 passed"}}]
+        }
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "agent_message_chunk",
+          "content": {"type": "text", "text": "rho-antigravity-acp-e2e-ok"}
+        }
+      },
+      {"step": "stop", "reason": "end_turn"}
+    ]
+  ]
+}

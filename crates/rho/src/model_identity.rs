@@ -36,9 +36,9 @@ use crate::{
 pub(crate) enum PromptModel {
     /// A model Rho drives through one of its providers.
     Rho { provider: String, model: String },
-    /// An external CLI runtime (Claude Code or Cursor Agent).
+    /// An external CLI runtime (Claude Code, Cursor Agent, or Antigravity).
     ///
-    /// `runtime` is [`AgentRuntime::ClaudeCli`] or [`AgentRuntime::Cursor`].
+    /// `runtime` is any runtime but [`AgentRuntime::Rho`].
     /// `requested` is the `--model` value Rho passes through, or `None` when Rho
     /// omits the flag and the CLI chooses. `resolved` is the concrete id a run
     /// reported, when one has. Config and bind paths leave `resolved` empty;
@@ -89,13 +89,15 @@ impl PromptModel {
     /// nothing resolved yet, the label still says the CLI chooses.
     pub(crate) fn from_run_status(status: &RunStatus) -> Option<Self> {
         match status.runtime {
-            Some(runtime @ (AgentRuntime::ClaudeCli | AgentRuntime::Cursor)) => {
-                Some(Self::ExternalCli {
-                    runtime,
-                    requested: non_empty(status.model.as_deref()),
-                    resolved: non_empty(status.claude_model.as_deref()),
-                })
-            }
+            Some(
+                runtime @ (AgentRuntime::ClaudeCli
+                | AgentRuntime::Cursor
+                | AgentRuntime::Antigravity),
+            ) => Some(Self::ExternalCli {
+                runtime,
+                requested: non_empty(status.model.as_deref()),
+                resolved: non_empty(status.claude_model.as_deref()),
+            }),
             Some(AgentRuntime::Rho) | None => Some(Self::Rho {
                 provider: non_empty(status.provider.as_deref())?,
                 model: non_empty(status.model.as_deref())?,
@@ -124,8 +126,9 @@ impl PromptModel {
                     describe_claude_cli(requested.as_deref(), resolved.as_deref())
                 }
                 AgentRuntime::Cursor => describe_cursor(requested.as_deref(), resolved.as_deref()),
+                AgentRuntime::Antigravity => describe_antigravity(requested.as_deref()),
                 AgentRuntime::Rho => {
-                    unreachable!("PromptModel::ExternalCli is only for ClaudeCli and Cursor")
+                    unreachable!("PromptModel::ExternalCli is only for external runtimes")
                 }
             },
         })
@@ -173,6 +176,15 @@ fn describe_cursor(requested: Option<&str>, resolved: Option<&str>) -> String {
     match resolved.or(requested) {
         Some(model) => rho_providers::provider::model_reference(CURSOR_SOURCE_LABEL, model),
         None => format!("{CURSOR_SOURCE_LABEL} (no model pinned; Cursor chooses)"),
+    }
+}
+
+/// Antigravity reports no resolved model id; the pin is what runs.
+fn describe_antigravity(requested: Option<&str>) -> String {
+    use crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME;
+    match requested {
+        Some(model) => rho_providers::provider::model_reference(ANTIGRAVITY_LABEL_NAME, model),
+        None => format!("{ANTIGRAVITY_LABEL_NAME} (no model pinned; Antigravity chooses)"),
     }
 }
 

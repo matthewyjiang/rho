@@ -2,7 +2,8 @@
 //!
 //! Each runtime has its own vocabulary: Rho capabilities (plus `all`), the
 //! offered Claude Code tool names (plus an `Other…` escape to free text for
-//! specifiers and MCP names), and the closed Cursor allow list. Rows carry an
+//! specifiers and MCP names), and the closed Cursor and Antigravity allow
+//! lists. Rows carry an
 //! `on` badge when the draft allows them; confirming a row toggles it and the
 //! picker stays open.
 
@@ -11,7 +12,8 @@ use super::{
     PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
 };
 use crate::agent::{
-    AgentDefinition, AgentRuntimeSpec, CursorTool, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
+    AgentDefinition, AgentRuntimeSpec, AntigravityTool, CursorTool, ToolPolicy,
+    BUILTIN_TOOL_CAPABILITIES,
 };
 use crate::claude_runtime::tools as claude_tools;
 
@@ -21,6 +23,7 @@ pub(super) fn agent_tools_picker(draft: &AgentDefinition) -> UiPicker {
         AgentRuntimeSpec::Rho { tools, .. } => rho_items(tools),
         AgentRuntimeSpec::ClaudeCli(config) => claude_items(config.tools.as_slice()),
         AgentRuntimeSpec::Cursor(config) => cursor_items(&config.tools),
+        AgentRuntimeSpec::Antigravity(config) => antigravity_items(&config.tools),
     };
     UiPicker::edit_agent("tools", items)
         .with_confirm_verb("toggle")
@@ -128,6 +131,20 @@ fn cursor_items(current: &[CursorTool]) -> Vec<PickerItem> {
                 format!("{} ({})", tool.detail(), tool.capability_kind().label()),
                 current.contains(tool),
                 format!("{AGENT_TOOL_ROW_PREFIX}{}", tool.as_flag()),
+            )
+        })
+        .collect()
+}
+
+fn antigravity_items(current: &[AntigravityTool]) -> Vec<PickerItem> {
+    AntigravityTool::ALL
+        .iter()
+        .map(|tool| {
+            tool_row(
+                tool.as_name(),
+                format!("{} ({})", tool.detail(), tool.capability_kind().label()),
+                current.contains(tool),
+                format!("{AGENT_TOOL_ROW_PREFIX}{}", tool.as_name()),
             )
         })
         .collect()

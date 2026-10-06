@@ -393,6 +393,12 @@ impl App {
                 self.open_cursor_agent_model(draft);
                 return;
             }
+            // The server advertises models only after `session/new`, so
+            // there is no list to pick from before a run.
+            AgentRuntime::Antigravity => {
+                self.open_agent_text_input(AgentField::Model, draft.model_text());
+                return;
+            }
             AgentRuntime::Rho => {}
         }
         self.refresh_available_auths();

@@ -1,5 +1,6 @@
 use super::{
     permission::PermissionDecision,
+    policy::SessionConfigChoice,
     scripted_agent::{Record, Script, ScriptedAgent, Signal, Step},
     session::run_on_channel,
     test_support::*,
@@ -12,8 +13,9 @@ use crate::{
 };
 use agent_client_protocol::{
     schema::v1::{
-        ContentChunk, PermissionOption, PermissionOptionKind, SessionUpdate, StopReason, ToolCall,
-        ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+        ContentChunk, PermissionOption, PermissionOptionKind, SessionConfigOption,
+        SessionConfigSelectOption, SessionUpdate, StopReason, ToolCall, ToolCallStatus,
+        ToolCallUpdate, ToolCallUpdateFields, ToolKind,
     },
     Channel, Error,
 };
@@ -41,6 +43,26 @@ fn script(turns: Vec<Vec<Step>>) -> Script {
     Script {
         turns,
         ..Script::default()
+    }
+}
+
+/// A select option `id` currently `current`, offering `values`.
+fn select(id: &str, current: &str, values: &[&str]) -> SessionConfigOption {
+    SessionConfigOption::select(
+        id.to_owned(),
+        id,
+        current.to_owned(),
+        values
+            .iter()
+            .map(|value| SessionConfigSelectOption::new(value.to_string(), *value))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn choice(id: &str, value: &str) -> SessionConfigChoice {
+    SessionConfigChoice {
+        id: id.to_owned().into(),
+        value: value.to_owned().into(),
     }
 }
 
@@ -99,6 +121,82 @@ async fn successful_turn_has_one_terminal_write() {
         [
             json!({"method":"session/new", "params":{"cwd":dir.path(),"mcpServers":[]}}),
             json!({"method":"session/prompt", "params":{"sessionId":"scripted-session", "prompt":[{"type":"text", "text":"task"}]}}),
+        ]
+    );
+}
+
+// Covers: vendor session parameters (tool filters in `_meta`, select options
+// such as the model) reach the agent before the first prompt; an
+// already-current option is not re-sent, judged by the latest option set (a
+// change that moves another option makes it due again).
+// Owner: ACP handshake. Unadvertised options fail in the setup table below.
+#[tokio::test]
+async fn session_parameters_reach_the_agent_before_the_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut policy = TestPolicy::new(dir.path());
+    policy.meta = json!({"agy": {"enabledTools": ["view_file"]}})
+        .as_object()
+        .cloned();
+    policy.config = vec![
+        choice("model", "fast"),
+        choice("effort", "high"),
+        choice("theme", "dark"),
+    ];
+    let record = exercise(
+        request(dir.path(), None),
+        policy,
+        Script {
+            config_options: vec![
+                select("model", "slow", &["slow", "fast"]),
+                select("effort", "high", &["low", "high"]),
+                select("theme", "dark", &["dark", "light"]),
+            ],
+            // Switching the model resets effort.
+            config_options_after_set: vec![
+                select("model", "fast", &["slow", "fast"]),
+                select("effort", "low", &["low", "high"]),
+                select("theme", "dark", &["dark", "light"]),
+            ],
+            ..script(vec![vec![text("answer"), stop()]])
+        },
+    )
+    .await;
+    let requests = record.lock().unwrap().requests.clone();
+    assert_eq!(
+        requests[1..]
+            .iter()
+            .map(|request| (
+                request["method"].clone(),
+                request["params"]["_meta"].clone(),
+                request["params"]["configId"].clone(),
+                request["params"]["value"].clone()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                json!("session/new"),
+                json!({"agy": {"enabledTools": ["view_file"]}}),
+                json!(null),
+                json!(null)
+            ),
+            (
+                json!("session/set_config_option"),
+                json!(null),
+                json!("model"),
+                json!("fast")
+            ),
+            (
+                json!("session/set_config_option"),
+                json!(null),
+                json!("effort"),
+                json!("high")
+            ),
+            (
+                json!("session/prompt"),
+                json!(null),
+                json!(null),
+                json!(null)
+            ),
         ]
     );
 }
@@ -347,7 +445,8 @@ async fn cancellation_is_a_protocol_notification_and_stopped_terminal() {
     }
 }
 
-// Covers: setup failures name the wire step, unavailable modes never prompt,
+// Covers: setup failures name the wire step, unavailable modes or select
+// options never prompt,
 // and EOF mid-turn fails instead of hanging or inventing a stop reason.
 // Owner: ACP runtime error boundaries. Only required diagnostic context is checked.
 #[tokio::test]
@@ -415,11 +514,44 @@ async fn setup_and_connection_failures_are_terminal_errors() {
             true,
         ),
     ];
-    for (script, mode, auth, step, detail, prompted) in cases {
+    let config_cases = [
+        (
+            Script::default(),
+            "session/set_config_option `model`",
+            "does not advertise select option `model`",
+        ),
+        (
+            Script {
+                config_options: vec![select("model", "slow", &["slow", "medium"])],
+                ..Script::default()
+            },
+            "session/set_config_option `model`",
+            "value `fast` is not advertised (available: slow, medium)",
+        ),
+    ]
+    .map(|(script, step, detail)| {
+        (
+            script,
+            None,
+            None,
+            vec![choice("model", "fast")],
+            step,
+            detail,
+            false,
+        )
+    });
+    let cases = cases
+        .map(|(script, mode, auth, step, detail, prompted)| {
+            (script, mode, auth, vec![], step, detail, prompted)
+        })
+        .into_iter()
+        .chain(config_cases);
+    for (script, mode, auth, config, step, detail, prompted) in cases {
         let dir = tempfile::tempdir().unwrap();
         let mut policy = TestPolicy::new(dir.path());
         policy.mode = mode.map(str::to_owned);
         policy.auth = auth.map(str::to_owned);
+        policy.config = config;
         let record = exercise(request(dir.path(), None), policy, script).await;
         let (status, events) = read_artifacts(dir.path());
         assert_eq!(status.state, RunState::Error);

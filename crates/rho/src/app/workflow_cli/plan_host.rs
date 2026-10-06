@@ -227,6 +227,9 @@ fn resolve_agent(
         }
         | BoundRuntime::Cursor {
             permission_mode, ..
+        }
+        | BoundRuntime::Antigravity {
+            permission_mode, ..
         } => permission_mode.to_string(),
     };
     let common = ResolvedAgent {
@@ -236,6 +239,7 @@ fn resolve_agent(
             BoundRuntime::Rho { .. } => crate::workflow::AgentRuntime::Rho,
             BoundRuntime::ClaudeCli { .. } => crate::workflow::AgentRuntime::ClaudeCli,
             BoundRuntime::Cursor { .. } => crate::workflow::AgentRuntime::Cursor,
+            BoundRuntime::Antigravity { .. } => crate::workflow::AgentRuntime::Antigravity,
         },
         source_origin,
         // Workflow-local agents ship with the workflow source the user planned.
@@ -332,6 +336,33 @@ fn resolve_agent(
                 executable: Some(crate::paths::display(&executable)),
                 executable_identity: Some(executable_identity),
                 arguments: plan.args,
+                ..common
+            }
+        }
+        BoundRuntime::Antigravity {
+            model,
+            tools,
+            permission_mode,
+        } => {
+            let (executable, executable_identity) = host
+                .resolve_executable(crate::antigravity_runtime::executable::ANTIGRAVITY_PROGRAM)?;
+            let allowed =
+                crate::antigravity_runtime::fence::map_permission_mode(*permission_mode, tools)?;
+            ResolvedAgent {
+                model: model.clone(),
+                capabilities: allowed
+                    .tools()
+                    .iter()
+                    .map(|tool| tool.as_name().to_owned())
+                    .collect(),
+                executable: Some(crate::paths::display(&executable)),
+                executable_identity: Some(executable_identity),
+                // Unused at launch (the policy rebuilds argv); recorded so the
+                // plan shows what will run.
+                arguments: crate::antigravity_runtime::executable::server_args()
+                    .into_iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
                 ..common
             }
         }

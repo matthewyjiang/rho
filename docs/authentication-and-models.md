@@ -96,7 +96,7 @@ flowchart TD
 
 Interactive logins always show the authorize URL, including when a local browser opened. Headless or remote sessions (SSH, no display, nested harness) skip launching a browser and prefer a device-code flow when the provider has one. In the TUI the URL and any device code stay in the composer, including on first-run setup, so they are visible without the transcript. Press `c` to copy the URL (OSC-52 over SSH), or click **COPY** next to the link. Esc cancels, or goes back when a parent picker is open. `rho login` prints the same URL and code; it selects device-code automatically when no browser can appear, so you do not need `--device-auth` after the fact. `--device-auth` still forces device-code on a graphical session.
 
-Claude Code login is the exception: `/login claude-code` hands the terminal to `claude auth login` and never sees an authorize URL. `/login cursor` does the same for `cursor-agent login`.
+Claude Code login is the exception: `/login claude-code` hands the terminal to `claude auth login` and never sees an authorize URL. `/login cursor` does the same for `cursor-agent login`, and `/login antigravity` for `rho login antigravity`.
 
 Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
 
@@ -121,6 +121,15 @@ Cursor Agent is a **runtime**, not a Rho provider. Agent definitions with `runti
 - Rho reads signed-in state with bounded `cursor-agent status --format json` probes for `/info` and `/doctor`.
 - `/logout cursor` is not available from Rho. Sign out with `cursor-agent logout` yourself.
 - Bare `/login` lists **Cursor** as a top-level row. Choosing it skips the Rho credential-store chooser.
+
+### Antigravity runtime sign-in
+
+Google Antigravity is a **runtime**, not a Rho provider. Agent definitions with `runtime: antigravity` delegate to `agy_acp_server`. Install it first ([installation](/installation#antigravity-acp-server-optional)).
+
+- `/login antigravity` suspends the TUI and runs `rho login antigravity`, which starts the server's Google sign-in, prints the link, and accepts the pasted address of the browser's final page when the browser runs on another machine (SSH). The server waits up to 300 s.
+- The server stores the token in `$GEMINI_HOME/antigravity-acp/acp_token.json` (default `~/.gemini`), separate from the `agy` CLI sign-in. On macOS it uses the Keychain instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
+- `/logout antigravity` is not available from Rho. Delete `settings.json` in that directory and the token to sign out ([details](/subagents/antigravity#how-to-use-it)).
+- Bare `/login` lists **Antigravity** as a top-level row. Choosing it skips the Rho credential-store chooser.
 
 ## Selecting models
 

@@ -60,7 +60,7 @@ enum MessagingSupport {
     /// Rho runtime: steering port is published once the session starts.
     Rho { steering: SteeringSlot },
     /// External CLI runtimes: queued text delivered as the child's next turn
-    /// (Claude stream-json stdin turn, Cursor ACP `session/prompt`).
+    /// (Claude stream-json stdin turn, ACP `session/prompt`).
     Queued {
         messages: crate::cli_runtime::parent_messages::ParentMessageHandle,
     },
@@ -72,6 +72,7 @@ enum Launch {
     Rho(super::agent_binding::BoundAgent),
     ClaudeCli(crate::claude_runtime::session::ClaudeSessionRequest),
     Cursor(crate::cursor_runtime::session::CursorSessionRequest),
+    Antigravity(crate::antigravity_runtime::session::AntigravitySessionRequest),
 }
 
 /// Messaging ports created with the run handle, before the session task starts.
@@ -87,7 +88,8 @@ impl MessagingSupport {
     fn for_runtime(runtime: &super::agent_binding::BoundRuntime) -> RuntimeMessagingPorts {
         match runtime {
             super::agent_binding::BoundRuntime::ClaudeCli { .. }
-            | super::agent_binding::BoundRuntime::Cursor { .. } => {
+            | super::agent_binding::BoundRuntime::Cursor { .. }
+            | super::agent_binding::BoundRuntime::Antigravity { .. } => {
                 let (handle, inbox) = crate::cli_runtime::parent_messages::message_channel();
                 RuntimeMessagingPorts {
                     messaging: Self::Queued { messages: handle },
@@ -386,9 +388,9 @@ impl AgentExecutor {
         let bound = AgentBinder::bind_frozen(&request.agent, &config, &current_tools)?;
         let frozen_cli = match request.agent.runtime {
             crate::workflow::AgentRuntime::Rho => None,
-            crate::workflow::AgentRuntime::ClaudeCli | crate::workflow::AgentRuntime::Cursor => {
-                Some(frozen_cli_launch(request.agent)?)
-            }
+            crate::workflow::AgentRuntime::ClaudeCli
+            | crate::workflow::AgentRuntime::Cursor
+            | crate::workflow::AgentRuntime::Antigravity => Some(frozen_cli_launch(request.agent)?),
         };
         self.spawn_bound(BoundLaunchRequest {
             bound,
@@ -515,6 +517,15 @@ impl AgentExecutor {
                         apply_frozen(&mut session.overrides, frozen);
                     }
                     crate::cursor_runtime::session::run_session(session).await
+                }
+                Launch::Antigravity(mut session) => {
+                    append_child_communication_contract(&mut session.system_prompt);
+                    session.parent_messages = parent_rx;
+                    session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
+                    if let Some(frozen) = frozen_cli {
+                        apply_frozen(&mut session.overrides, frozen);
+                    }
+                    crate::antigravity_runtime::session::run_session(session).await
                 }
                 Launch::Rho(bound) => {
                     let bound_config = bound
@@ -680,6 +691,18 @@ fn into_launch(
                     started_status,
                 )
                 .expect("Cursor bound runtime builds a Cursor session"),
+        ),
+        super::agent_binding::BoundRuntime::Antigravity { .. } => Launch::Antigravity(
+            bound
+                .into_antigravity_session(
+                    prompt,
+                    output_file,
+                    cwd,
+                    cancellation,
+                    status_tx,
+                    started_status,
+                )
+                .expect("Antigravity bound runtime builds an Antigravity session"),
         ),
         super::agent_binding::BoundRuntime::Rho { .. } => Launch::Rho(bound),
     }

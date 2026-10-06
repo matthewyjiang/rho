@@ -64,7 +64,7 @@ impl WorkflowAgentExecutor {
                 )),
                 resume: request.resume.clone(),
             }),
-            AgentRuntime::ClaudeCli | AgentRuntime::Cursor => None,
+            AgentRuntime::ClaudeCli | AgentRuntime::Cursor | AgentRuntime::Antigravity => None,
         };
         let mut handle = self
             .executor

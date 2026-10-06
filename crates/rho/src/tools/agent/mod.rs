@@ -348,7 +348,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: AGENTS_TOOL.into(),
-            description: "Check on, stop, or message a delegated background run. Completions and child notices are delivered automatically at safe provider boundaries during work and before final completion. Completions and requests for parent action can wake an idle parent; informational child notices cannot. Waiting for a result means ending your turn, not polling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result with pending notices as earlier context and counts as delivery, so it will not be redelivered automatically. Use action=message to steer a running child with plain text: Rho-runtime children apply it at the next provider turn; claude-cli and cursor children receive it as their next queued user turn.".into(),
+            description: "Check on, stop, or message a delegated background run. Completions and child notices are delivered automatically at safe provider boundaries during work and before final completion. Completions and requests for parent action can wake an idle parent; informational child notices cannot. Waiting for a result means ending your turn, not polling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result with pending notices as earlier context and counts as delivery, so it will not be redelivered automatically. Use action=message to steer a running child with plain text: Rho-runtime children apply it at the next provider turn; claude-cli, cursor, and antigravity children receive it as their next queued user turn.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -363,7 +363,7 @@ impl Tool for AgentsTool {
                     },
                     "message": {
                         "type": "string",
-                        "description": "Plain-text parent message (required for message). Rho children apply it at the next provider turn; Claude-cli and Cursor children queue it as their next user turn."
+                        "description": "Plain-text parent message (required for message). Rho children apply it at the next provider turn; Claude-cli, Cursor, and Antigravity children queue it as their next user turn."
                     }
                 },
                 "required": ["action"],

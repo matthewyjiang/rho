@@ -264,12 +264,13 @@ fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
 
 fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     use crate::{
-        agent::AgentRuntime, claude_runtime::session::CLAUDE_LABEL,
-        cursor_runtime::models::CURSOR_LABEL,
+        agent::AgentRuntime, antigravity_runtime::ANTIGRAVITY_LABEL,
+        claude_runtime::session::CLAUDE_LABEL, cursor_runtime::models::CURSOR_LABEL,
     };
 
     let label = match snapshot.status.runtime {
         Some(AgentRuntime::Cursor) => CURSOR_LABEL,
+        Some(AgentRuntime::Antigravity) => ANTIGRAVITY_LABEL,
         Some(AgentRuntime::ClaudeCli) | Some(AgentRuntime::Rho) | None => CLAUDE_LABEL,
     };
     if let Some(session_id) = &snapshot.status.claude_session_id {

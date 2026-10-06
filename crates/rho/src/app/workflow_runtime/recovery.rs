@@ -172,7 +172,7 @@ impl UncertainAttempt {
             match leaf.execution {
                 LeafExecution::Command { .. } => reset(ResetReason::CommandNode),
                 LeafExecution::Agent { resolved, .. } => match resolved.runtime {
-                    AgentRuntime::ClaudeCli | AgentRuntime::Cursor => {
+                    AgentRuntime::ClaudeCli | AgentRuntime::Cursor | AgentRuntime::Antigravity => {
                         reset(ResetReason::ForeignAgent)
                     }
                     AgentRuntime::Rho => {

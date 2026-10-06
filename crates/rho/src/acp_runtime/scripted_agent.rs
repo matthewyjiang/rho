@@ -8,9 +8,10 @@ use agent_client_protocol::{
         v1::{
             AuthenticateRequest, AuthenticateResponse, CancelNotification, InitializeRequest,
             InitializeResponse, NewSessionRequest, NewSessionResponse, PermissionOption,
-            PromptRequest, PromptResponse, RequestPermissionRequest, SessionMode, SessionModeState,
-            SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModeResponse,
-            StopReason, ToolCallUpdate,
+            PromptRequest, PromptResponse, RequestPermissionRequest, SessionConfigOption,
+            SessionMode, SessionModeState, SessionNotification, SessionUpdate,
+            SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+            SetSessionModeResponse, StopReason, ToolCallUpdate,
         },
         ProtocolVersion,
     },
@@ -39,6 +40,14 @@ pub(crate) struct Script {
     pub(crate) set_mode_error: Option<String>,
     #[serde(default)]
     pub(crate) modes: Vec<String>,
+    /// Advertised by `session/new`, and echoed by `session/set_config_option`
+    /// unless `config_options_after_set` is nonempty.
+    #[serde(default)]
+    pub(crate) config_options: Vec<SessionConfigOption>,
+    /// The full option set `session/set_config_option` answers with, for
+    /// agents where one change moves other options.
+    #[serde(default)]
+    pub(crate) config_options_after_set: Vec<SessionConfigOption>,
     pub(crate) turns: Vec<Vec<Step>>,
 }
 
@@ -151,6 +160,13 @@ impl ScriptedAgent {
         let modes = script.modes;
         let mode_record = Arc::clone(&record);
         let mode_error = script.set_mode_error;
+        let new_config_options = script.config_options.clone();
+        let config_options = if script.config_options_after_set.is_empty() {
+            script.config_options
+        } else {
+            script.config_options_after_set
+        };
+        let config_record = Arc::clone(&record);
         let prompt_record = Arc::clone(&record);
         let turns = Arc::new(Mutex::new(VecDeque::from(script.turns)));
         let prompt_closed = closed.clone();
@@ -185,15 +201,18 @@ impl ScriptedAgent {
                     match &new_error {
                         Some(message) => responder.respond_with_error(fake_error(message)),
                         None => responder.respond(
-                            NewSessionResponse::new("scripted-session").modes(
-                                SessionModeState::new(
+                            NewSessionResponse::new("scripted-session")
+                                .modes(SessionModeState::new(
                                     "agent",
                                     modes
                                         .iter()
                                         .map(|mode| SessionMode::new(mode.clone(), mode.clone()))
                                         .collect(),
+                                ))
+                                .config_options(
+                                    (!new_config_options.is_empty())
+                                        .then(|| new_config_options.clone()),
                                 ),
-                            ),
                         ),
                     }
                 },
@@ -206,6 +225,13 @@ impl ScriptedAgent {
                         Some(message) => responder.respond_with_error(fake_error(message)),
                         None => responder.respond(SetSessionModeResponse::new()),
                     }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |request: SetSessionConfigOptionRequest, responder, _cx| {
+                    record_request(&config_record, "session/set_config_option", &request);
+                    responder.respond(SetSessionConfigOptionResponse::new(config_options.clone()))
                 },
                 agent_client_protocol::on_receive_request!(),
             )

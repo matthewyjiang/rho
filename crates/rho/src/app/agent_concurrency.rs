@@ -230,8 +230,9 @@ impl AgentConcurrency {
     /// Acquire concurrency for a delegated run in runtime-aware order.
     ///
     /// - Rho: one global permit only.
-    /// - Cursor: one global permit only. No nested Cursor pool: unlike Claude,
-    ///   there is no measured subscription fan-out limit to size one against.
+    /// - Cursor, Antigravity: one global permit only. No nested pool: unlike
+    ///   Claude, there is no measured subscription fan-out limit to size one
+    ///   against.
     /// - Claude: Claude nested permit first, then one global permit.
     ///
     /// Claude-first ordering keeps queued Claude tasks off the global pool until
@@ -245,7 +246,7 @@ impl AgentConcurrency {
     ) -> Option<RuntimePermits> {
         let claude = match capacity_class {
             CapacityClass::Claude => Some(self.claude.acquire(cancellation).await?),
-            CapacityClass::Rho | CapacityClass::Cursor => None,
+            CapacityClass::Rho | CapacityClass::Cursor | CapacityClass::Antigravity => None,
         };
 
         let total = self.total.acquire(cancellation).await?;

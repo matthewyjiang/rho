@@ -153,6 +153,10 @@ impl App {
                     self.report_cursor_logout_unsupported();
                     Ok(())
                 }
+                SignInTarget::Antigravity => {
+                    self.report_antigravity_logout_unsupported();
+                    Ok(())
+                }
                 // Nothing is stored for a host that was never created.
                 SignInTarget::NewCustomHost { .. } => Ok(()),
                 SignInTarget::Provider(provider) => {

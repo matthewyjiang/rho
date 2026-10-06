@@ -414,6 +414,23 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
                 AGENT_FIELD_TOOLS,
             ));
         }
+        AgentRuntime::Antigravity => {
+            items.push(field_item(
+                "Model",
+                "Antigravity model id (for example gemini-3.8-flash-high), set as the session's model option. Empty lets Antigravity choose.",
+                Some(draft.model_badge()),
+                AGENT_FIELD_MODEL,
+            ));
+            items.push(field_item(
+                "Tools",
+                format!(
+                    "Antigravity built-ins this agent may call. At least one is required.\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
+                Some(draft.tools_badge()),
+                AGENT_FIELD_TOOLS,
+            ));
+        }
     }
 
     items.push(field_item(
@@ -523,7 +540,9 @@ fn agent_choice_picker(
                 PromptPolicy::Replace(_) => "replace",
             };
             let options: &[(&str, &str)] = match draft.runtime.runtime() {
-                AgentRuntime::Cursor => &[("extend", "Add the body to the system prompt.")],
+                AgentRuntime::Cursor | AgentRuntime::Antigravity => {
+                    &[("extend", "Add the body to the system prompt.")]
+                }
                 AgentRuntime::Rho | AgentRuntime::ClaudeCli => &[
                     ("extend", "Add the body to the system prompt."),
                     (
@@ -552,6 +571,10 @@ fn agent_choice_picker(
                             AgentRuntime::Cursor.as_str(),
                             "Delegate the loop to cursor-agent with a closed tool allow list.",
                         ),
+                        (
+                            AgentRuntime::Antigravity.as_str(),
+                            "Delegate the loop to agy_acp_server with a closed tool allow list.",
+                        ),
                     ],
                     current,
                     prefix,
@@ -564,6 +587,10 @@ fn agent_choice_picker(
                 AgentRuntime::ClaudeCli | AgentRuntime::Cursor => &[
                     ("inherit", "Inherit the runtime's default model."),
                     ("select", "Pin a model name as --model."),
+                ],
+                AgentRuntime::Antigravity => &[
+                    ("inherit", "Inherit the runtime's default model."),
+                    ("select", "Pin a model id as the session's model option."),
                 ],
                 AgentRuntime::Rho => &[
                     ("inherit", "Use the conversation model."),
@@ -597,9 +624,9 @@ fn agent_choice_picker(
                     detail: Some(
                         match draft.runtime.runtime() {
                             AgentRuntime::ClaudeCli => "Claude --effort level.",
-                            AgentRuntime::Rho | AgentRuntime::Cursor => {
-                                "Reasoning level for this agent."
-                            }
+                            AgentRuntime::Rho
+                            | AgentRuntime::Cursor
+                            | AgentRuntime::Antigravity => "Reasoning level for this agent.",
                         }
                         .into(),
                     ),
@@ -617,6 +644,7 @@ fn agent_choice_picker(
                 AgentRuntimeSpec::ClaudeCli(config) if config.inherit_claude_config => "yes",
                 AgentRuntimeSpec::ClaudeCli(_)
                 | AgentRuntimeSpec::Cursor(_)
+                | AgentRuntimeSpec::Antigravity(_)
                 | AgentRuntimeSpec::Rho { .. } => "no",
             };
             (
@@ -727,13 +755,16 @@ fn selectable_agent_reasoning_levels(
     conversation: ConversationModelView<'_>,
 ) -> Vec<ReasoningLevel> {
     // Claude Code efforts are fixed; Claude model ids are not resolved through
-    // models.dev provider rows in this editor. Cursor has no reasoning flag.
+    // models.dev provider rows in this editor. Cursor and Antigravity have no
+    // reasoning flag.
     let (capabilities, fallback) = match draft.runtime.runtime() {
         AgentRuntime::ClaudeCli => (
             ReasoningCapabilities::Unknown,
             crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.levels(),
         ),
-        AgentRuntime::Cursor => (ReasoningCapabilities::Unknown, &[] as &[ReasoningLevel]),
+        AgentRuntime::Cursor | AgentRuntime::Antigravity => {
+            (ReasoningCapabilities::Unknown, &[] as &[ReasoningLevel])
+        }
         AgentRuntime::Rho => (
             draft_model_reasoning_capabilities(draft, conversation),
             ReasoningLevel::ALL.as_slice(),

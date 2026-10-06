@@ -5,7 +5,14 @@ use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTim
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf, time::Duration};
 
-use super::{claude_e2e, cursor_acp_e2e};
+use super::{acp_e2e::FakeAcpAgent, claude_e2e};
+
+const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
+    program: "cursor-agent",
+    fixtures: "cursor_acp",
+    recorded_env: "CURSOR_CONFIG_DIR",
+    acp_subcommand: Some("acp"),
+};
 
 /// Full fake-Cursor ACP path: matrix parent -> agent tool -> binder/executor
 /// -> `cursor-agent acp` spawn with a managed `CURSOR_CONFIG_DIR` -> scripted
@@ -14,13 +21,13 @@ use super::{claude_e2e, cursor_acp_e2e};
 #[test]
 fn fake_cursor_acp_runtime_end_to_end() {
     let home = IsolatedHome::new().unwrap();
-    cursor_acp_e2e::install_cursor_worker_agent(&home.home);
+    FAKE_CURSOR.install_agent(&home.home, "cursor-worker.md");
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let fake = cursor_acp_e2e::install_fake_cursor_agent(&home.path().join("fake-cursor"), &binary);
+    let fake = FAKE_CURSOR.install(&home.path().join("fake-cursor"), &binary);
     let path = claude_e2e::path_with_fake(&fake.bin_dir);
     assert_eq!(
         claude_e2e::which_on_path("cursor-agent", &path).as_deref(),
-        Some(fake.cursor_agent.as_path()),
+        Some(fake.program.as_path()),
         "PATH must resolve the fake cursor-agent first"
     );
 
@@ -80,9 +87,10 @@ fn fake_cursor_acp_runtime_end_to_end() {
         spawn.cwd.canonicalize().unwrap(),
         home.workspace.canonicalize().unwrap()
     );
-    assert_eq!(spawn.config_dir, run_dir.join("cursor-config"));
+    let config_dir = PathBuf::from(&spawn.env);
+    assert_eq!(config_dir, run_dir.join("cursor-config"));
     assert_eq!(
-        claude_e2e::read_json(&spawn.config_dir.join("cli-config.json")).unwrap(),
+        claude_e2e::read_json(&config_dir.join("cli-config.json")).unwrap(),
         json!({
             "approvalMode": "allowlist",
             "autoAcceptWebSearch": false,

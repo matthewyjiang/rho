@@ -197,7 +197,8 @@ pub enum Command {
     },
     /// Log in to a provider from a browser or device-code flow.
     Login {
-        /// Provider to authenticate, for example openai-codex or github-copilot.
+        /// Provider to authenticate, for example openai-codex or github-copilot,
+        /// or `antigravity` to sign in the Antigravity subagent server.
         #[arg(value_name = "PROVIDER")]
         provider: String,
         /// Use device-code login instead of opening a local browser callback.

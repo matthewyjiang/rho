@@ -396,6 +396,7 @@ pub(crate) enum AgentRuntime {
     Rho,
     ClaudeCli,
     Cursor,
+    Antigravity,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

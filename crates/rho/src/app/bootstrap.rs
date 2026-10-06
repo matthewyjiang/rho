@@ -238,6 +238,18 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         device_auth,
     }) = &cli.command
     {
+        // Antigravity's server owns its sign-in; Rho config and the credential
+        // store are not involved.
+        if provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME) {
+            if *device_auth {
+                anyhow::bail!(
+                    "antigravity login has no device flow; paste the redirect address instead"
+                );
+            }
+            return Ok(EarlyDispatch::Handled(
+                crate::antigravity_runtime::login::run_cli().await,
+            ));
+        }
         let config_repository = ConfigRepository::new(cli.config.clone());
         let mut config = config_repository.load()?;
         let config_path = absolute_config_path(&config_repository)?;

@@ -2,7 +2,7 @@
 
 use super::{
     permission::PermissionDecision,
-    policy::{AcpAgentPolicy, AcpSpawnPlan, ExtensionAnswer},
+    policy::{AcpAgentPolicy, AcpSpawnPlan, ExtensionAnswer, SessionConfigChoice},
     AcpSessionRequest,
 };
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     subagent::{self, RunStatus},
 };
 use agent_client_protocol::schema::v1::{
-    AuthMethod, AuthMethodId, RequestPermissionRequest, SessionModeId,
+    AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionModeId,
 };
 use serde_json::{json, Value};
 use std::{
@@ -33,6 +33,8 @@ pub(super) struct TestPolicy {
     pub(super) decision: PermissionDecision,
     pub(super) mode: Option<String>,
     pub(super) auth: Option<String>,
+    pub(super) meta: Option<Meta>,
+    pub(super) config: Vec<SessionConfigChoice>,
     pub(super) argv: Vec<OsString>,
     pub(super) env: Vec<(OsString, OsString)>,
 }
@@ -44,6 +46,8 @@ impl TestPolicy {
             decision: PermissionDecision::AllowOnce,
             mode: None,
             auth: None,
+            meta: None,
+            config: vec![],
             argv: vec![],
             env: vec![],
         }
@@ -81,6 +85,12 @@ impl AcpAgentPolicy for TestPolicy {
     }
     fn session_mode(&self) -> Option<SessionModeId> {
         self.mode.clone().map(SessionModeId::new)
+    }
+    fn session_meta(&self) -> Option<Meta> {
+        self.meta.clone()
+    }
+    fn session_config(&self) -> Vec<SessionConfigChoice> {
+        self.config.clone()
     }
     fn decide_permission(&self, _request: &RequestPermissionRequest) -> PermissionDecision {
         self.decision

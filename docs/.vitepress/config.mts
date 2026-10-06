@@ -178,6 +178,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'Binding and security', link: '/subagents/binding-and-security' },
           { text: 'Claude Code runtime', link: '/subagents/claude-cli' },
           { text: 'Cursor runtime', link: '/subagents/cursor' },
+          { text: 'Antigravity runtime', link: '/subagents/antigravity' },
           { text: 'Attachment and artifacts', link: '/subagents/attachment-and-artifacts' },
         ],
       },

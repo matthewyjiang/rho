@@ -3,6 +3,7 @@
 
 mod acp_runtime;
 mod agent;
+mod antigravity_runtime;
 mod app;
 mod changelog;
 mod child_env;

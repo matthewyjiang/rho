@@ -36,9 +36,9 @@ Parentless runs, including delegated work started by `rho run`, remain under `~/
 
 Each run directory can contain:
 
-- `result.json` - live status, agent ID, runtime (`rho`, `claude-cli`, or `cursor`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id` (Claude and Cursor share this field until the next major; Cursor resume uses `cursor-agent --resume <id>`)
+- `result.json` - live status, agent ID, runtime (`rho`, `claude-cli`, `cursor`, or `antigravity`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id` (Claude, Cursor, and Antigravity share this field until the next major; for Cursor and Antigravity it is the ACP session id, with no resume command)
 - `events.jsonl` - display events used by attachment
-- `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs
+- `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs, server stderr for `runtime: antigravity` runs
 
 On a slow disk, terminal status can appear before the background writer appends
 its terminal display event. If recording cannot keep up, `attachment_error` in
