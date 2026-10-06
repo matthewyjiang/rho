@@ -29,13 +29,24 @@ pub(super) struct SelectionPosition {
 pub(super) struct TextSelection {
     anchor: SelectionPosition,
     focus: SelectionPosition,
+    /// Leading columns of every row that hold layout chrome rather than
+    /// text, such as the transcript gutter. Highlight and copy skip them.
+    leading_gutter: usize,
 }
 
 impl TextSelection {
     pub(super) fn new(position: SelectionPosition) -> Self {
+        Self::with_leading_gutter(position, /*leading_gutter*/ 0)
+    }
+
+    /// Anchors a selection whose rows start text after `leading_gutter`
+    /// columns. Pointer positions stay raw so a drag out of the gutter still
+    /// counts as movement; only the selected columns skip the gutter.
+    pub(super) fn with_leading_gutter(position: SelectionPosition, leading_gutter: usize) -> Self {
         Self {
             anchor: position,
             focus: position,
+            leading_gutter,
         }
     }
 
@@ -57,22 +68,13 @@ impl TextSelection {
             return None;
         }
 
-        let (start, end) = self.ordered_positions();
-        let mut selected = Vec::with_capacity(end.line.saturating_sub(start.line) + 1);
-        for line_index in start.line..=end.line {
+        let lines_range = self.selected_line_range();
+        let mut selected = Vec::with_capacity(lines_range.len());
+        for line_index in lines_range {
             let line = lines.get(line_index.checked_sub(first_line)?)?;
-            let start_column = if line_index == start.line {
-                start.column
-            } else {
-                0
-            };
-            let end_column = if line_index == end.line {
-                end.column.saturating_add(1)
-            } else {
-                usize::MAX
-            };
+            let columns = self.selected_columns(line_index)?;
             selected.push(
-                selectable_text_for_display_columns(line, start_column..end_column)
+                selectable_text_for_display_columns(line, columns)
                     .trim_end_matches(' ')
                     .to_string(),
             );
@@ -91,7 +93,11 @@ impl TextSelection {
             return None;
         }
 
-        let start_column = if line == start.line { start.column } else { 0 };
+        let start_column = if line == start.line {
+            start.column.max(self.leading_gutter)
+        } else {
+            self.leading_gutter
+        };
         let end_column = if line == end.line {
             end.column.saturating_add(1)
         } else {

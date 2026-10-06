@@ -872,11 +872,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "text_selection_drag",
-        "Update the drag selection highlight before release; a composer click keeps a recalled prompt",
+        "Update the drag selection highlight before release, copy transcript rows without gutters, and keep a recalled prompt on composer click",
         DEFAULT_SIZE,
         TEXT_SELECTION_DRAG_STEPS,
         false,
-    ),
+    )
+    // Exercise OSC 52 on every host instead of the runner's native clipboard.
+    .with_env(&[("SSH_TTY", "rho-pty-clipboard")]),
     Scenario::new(
         "screen_text_selection",
         "Click and drag in the composer to place the caret and replace selected text",
