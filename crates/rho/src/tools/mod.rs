@@ -12,6 +12,7 @@ mod notification_format_tests;
 #[cfg(test)]
 #[path = "output_contract_tests.rs"]
 mod output_contract_tests;
+pub(crate) mod plan_exit;
 pub(crate) mod process;
 pub mod rho;
 mod save_agent;
@@ -41,6 +42,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "bash",
             "computer",
             "codemode",
+            "exit_plan_mode",
             "fetch_content",
             "get_search_content",
             "glob",
@@ -83,6 +85,7 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
         | "save_agent" | "workflow" | "workflow_command" | "write" => Some(true),
         name if rho_tools::EditFormat::is_edit_tool_name(name) => Some(true),
         "advisor"
+        | "exit_plan_mode"
         | "fetch_content"
         | "get_search_content"
         | "glob"

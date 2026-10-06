@@ -4,6 +4,13 @@ use crate::{
     permission::PermissionMode,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PermissionPersistence {
+    Save,
+    /// Applies across /new and /resume until the process exits, without saving config.
+    UntilExit,
+}
+
 const SELECT_CLASSIFIER_MODEL_STATUS: &str =
     "select a permission classifier model to turn Auto mode on";
 const SELECT_CLASSIFIER_MODEL_EDIT_STATUS: &str = "select a permission classifier model";

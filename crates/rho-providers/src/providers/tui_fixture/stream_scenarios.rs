@@ -23,6 +23,9 @@ pub(super) async fn intercept(
     events: &ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
     match prompt {
+        prompt if prompt.starts_with("fixture queued confirmation ") => {
+            Some(super::send_confirm::stream(prompt, request, events).await)
+        }
         "fixture slow stream" => {
             if let Err(error) = fixture_sleep(&request.cancellation, Duration::from_secs(4)).await {
                 return Some(Err(error));

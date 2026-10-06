@@ -20,6 +20,9 @@ pub(in crate::app::interactive_presenter) use results::{push_error_output, split
 mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
+#[path = "interactive_presenter_plan_exit.rs"]
+mod plan_exit_format;
+
 use super::{
     agent_format, codemode_format, sessions_format, todo_format, tool_search_format,
     PresentedToolCard, ToolBodySyntax, ToolKind, ToolPresentation, ToolView,
@@ -46,6 +49,7 @@ pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
         | ToolKind::GetSearchContent
         | ToolKind::Questionnaire
         | ToolKind::Todo
+        | ToolKind::ExitPlanMode
         | ToolKind::Sessions
         | ToolKind::ToolSearch
         | ToolKind::Mcp
@@ -237,6 +241,7 @@ pub(super) fn preview_card(
             ),
         ),
         ToolKind::Todo => todo_format::card(arguments, status),
+        ToolKind::ExitPlanMode => plan_exit_format::card(arguments, status),
         ToolKind::Questionnaire => match crate::questionnaire::parse_request(arguments.clone()) {
             Ok(request) => {
                 let primary = request.title.clone().or_else(|| Some(name.to_string()));
@@ -493,6 +498,13 @@ pub(super) fn finished_card(
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
         ToolKind::GetSearchContent => get_search_content_card(content, status),
         ToolKind::Todo => todo_format::finished_card(&view.arguments, content, ok),
+        ToolKind::ExitPlanMode => {
+            let mut card = plan_exit_format::card(&view.arguments, status);
+            if !ok {
+                push_error_output(&mut card, content);
+            }
+            card
+        }
         ToolKind::Questionnaire => {
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
@@ -642,7 +654,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
         }
-        ToolKind::Questionnaire => ToolFamily::Form,
+        ToolKind::Questionnaire | ToolKind::ExitPlanMode => ToolFamily::Form,
         ToolKind::Mcp
         | ToolKind::Sessions
         | ToolKind::Codemode

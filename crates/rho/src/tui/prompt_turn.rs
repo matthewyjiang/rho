@@ -2,6 +2,9 @@ use super::subagent_delivery::TurnBoundaryDelivery;
 use super::*;
 use crate::app::interactive_runtime::DisplayCommit;
 
+#[path = "turn_continuation.rs"]
+mod continuation;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct FailedTurn {
     input: rho_sdk::UserInput,
@@ -218,7 +221,7 @@ impl App {
         .await
     }
 
-    fn run_prompt_turn_request<'a>(
+    fn run_single_prompt_turn_request<'a>(
         &'a mut self,
         request: PromptTurnRequest,
         authorization: super::send_confirm::SendAuthorization,
@@ -741,6 +744,7 @@ impl App {
             self.preserve_unapplied_steering_as_follow_ups();
         }
         self.clear_accepted_steering();
+        self.finish_plan_exit(&outcome, agent).await;
         self.apply_pending_model_selection(agent).await?;
         self.apply_pending_permission_mode(agent).await?;
         self.notifier.turn_finished();

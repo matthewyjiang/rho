@@ -46,6 +46,43 @@ fn assert_pass(name: &str) {
     );
 }
 
+// Covers: confirmation rejection/failure parks remaining queued follow-ups.
+// Owner: interactive turn orchestration (PTY).
+#[test]
+fn send_confirm_handoff() {
+    assert_pass("send_confirm_handoff");
+}
+
+// Covers: review a long plan and preserve approval feedback in model history.
+// Owner: interactive UX (PTY).
+#[test]
+fn plan_exit_approve() {
+    assert_pass("plan_exit_approve");
+}
+
+// Covers: reserved approval text in feedback must not grant permission or execute.
+// Owner: interactive UX (PTY).
+#[test]
+fn plan_exit_keep_planning() {
+    assert_pass("plan_exit_keep_planning");
+}
+
+// Covers: handoff from both goal and idle completion drivers must run before returning.
+// Owner: interactive turn orchestration (PTY).
+#[test]
+fn plan_exit_non_composer_drivers() {
+    for scenario in ["plan_exit_goal", "plan_exit_idle_completion"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: a proposal turn failing after approval must discard intent, not execute.
+// Owner: interactive UX (PTY).
+#[test]
+fn plan_exit_failed_turn() {
+    assert_pass("plan_exit_failed_turn");
+}
+
 // Covers: debug startup and the first turn fit the Windows main-thread stack.
 // Owner: process startup through the interactive TUI.
 #[test]

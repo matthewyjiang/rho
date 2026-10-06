@@ -126,7 +126,7 @@ payload reports only the first. Policy denials still include the request.
 The `tools` matcher accepts only these names. They are part of the hook
 contract and do not change with which tools a given run enables:
 
-`agent`, `agents`, `apply_patch`, `bash`, `edit`,
+`agent`, `agents`, `apply_patch`, `bash`, `edit`, `exit_plan_mode`,
 `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`,
 `process`, `questionnaire`, `read_file`, `rho`, `skill`, `str_replace`, `todo`, `web_search`, `write`.
 

@@ -36,6 +36,8 @@ mod context;
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]
 mod mcp;
+#[path = "interactive_runtime_permission.rs"]
+mod permission;
 #[path = "interactive_runtime_provider.rs"]
 mod provider;
 #[path = "interactive_runtime_hooks.rs"]
@@ -179,6 +181,7 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn update_config(&mut self, config: Config) {
+        self.tools.update_plan_exit_classifier(&config);
         if let Some(manager) = self.tools.subagents() {
             manager.update_internal_agents(&config.internal_agents);
         }
@@ -214,78 +217,6 @@ impl InteractiveRuntime {
     /// without an active provider run.
     pub(crate) fn is_run_active(&self) -> bool {
         self.runs.is_active()
-    }
-
-    /// Rebuilds the SDK runtime so the requested permission mode applies to the next turn.
-    pub(crate) async fn set_permission_mode(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
-        if self.is_session_busy() {
-            anyhow::bail!(if self.runs.is_active() {
-                "permission mode cannot change while a run is active"
-            } else {
-                "permission mode cannot change while compaction is active"
-            });
-        }
-        if self.permission_mode == mode {
-            return Ok(());
-        }
-        if mode == PermissionMode::Plan {
-            self.revoke_computer_use();
-        }
-
-        let session_writes = self
-            .session_writes
-            .clone()
-            .carried_across(self.permission_mode, mode);
-        let snapshot = self.sessions.session().snapshot();
-        let approval_channel = approval_channel_for(
-            mode,
-            ApprovalChannelOptions {
-                config: self.config.clone(),
-                workspace_path: self.workspace.root().to_path_buf(),
-                usage_recording: self.usage_recording.clone(),
-                session_writes: session_writes.clone(),
-            },
-        );
-        let replacement_runtime = build_runtime(RuntimeBuildOptions {
-            provider: Arc::clone(self.provider.provider()),
-            tools: &self.tools,
-            workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(mode, session_writes.clone()),
-            approval_session: approval_channel
-                .handler
-                .clone()
-                .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: self.active_system_prompt(),
-            reasoning: self.provider.reasoning(),
-            service_tier: self.sessions.session().service_tier(),
-            compaction: self.compaction.clone(),
-            context_window: self.context_window,
-            usage_purpose: "agent",
-            usage_parent_session_id: None,
-            usage_recording: self.usage_recording.clone(),
-            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            hooks: self.hooks.as_ref(),
-            diagnostics: self.diagnostics.clone(),
-            recall: self.tools.recall_store(),
-        })?;
-        let replacement_session = replacement_runtime
-            .rebind_session(SessionOptions::from_snapshot(snapshot))
-            .await?;
-
-        let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
-        self.sessions.replace_runtime_session(replacement_session);
-        self.computer_runtime_dirty = false;
-        self.permission_mode = mode;
-        self.config.permission_mode = mode;
-        self.session_writes = session_writes;
-        self.approval_handler = approval_channel.handler;
-        self.approval_receiver = approval_channel.receiver;
-        self.classifier_approval_handler = approval_channel.classifier;
-        if let Some(manager) = self.tools.subagents() {
-            manager.update_permission_mode(mode);
-        }
-        previous_runtime.shutdown();
-        Ok(())
     }
 
     pub(crate) fn approval_receiver(&mut self) -> Option<&mut ApprovalRequestReceiver> {
@@ -873,58 +804,6 @@ impl InteractiveRuntime {
         }
         Ok(())
     }
-
-    fn permission_for_rebuild(&self, writes: SessionWriteRetention) -> RebuiltPermission {
-        match writes {
-            SessionWriteRetention::Keep => RebuiltPermission {
-                workspace_policy: self.workspace_policy(),
-                approval_session: self
-                    .approval_handler
-                    .clone()
-                    .map(ApprovalSession::from_shared),
-                pending: None,
-            },
-            SessionWriteRetention::Forget => {
-                let session_writes = crate::permission::SessionWriteLog::default();
-                let channel = approval_channel_for(
-                    self.permission_mode,
-                    ApprovalChannelOptions {
-                        config: self.config.clone(),
-                        workspace_path: self.workspace.root().to_path_buf(),
-                        usage_recording: self.usage_recording.clone(),
-                        session_writes: session_writes.clone(),
-                    },
-                );
-                RebuiltPermission {
-                    workspace_policy: AppPolicy::for_mode(
-                        self.permission_mode,
-                        session_writes.clone(),
-                    ),
-                    approval_session: channel.handler.clone().map(ApprovalSession::from_shared),
-                    pending: Some((session_writes, channel)),
-                }
-            }
-        }
-    }
-
-    fn install_rebuilt_permission(
-        &mut self,
-        pending: Option<(crate::permission::SessionWriteLog, startup::ApprovalChannel)>,
-    ) {
-        let Some((session_writes, channel)) = pending else {
-            return;
-        };
-        self.session_writes = session_writes;
-        self.approval_handler = channel.handler;
-        self.approval_receiver = channel.receiver;
-        self.classifier_approval_handler = channel.classifier;
-    }
-}
-
-struct RebuiltPermission {
-    workspace_policy: AppPolicy,
-    approval_session: Option<ApprovalSession>,
-    pending: Option<(crate::permission::SessionWriteLog, startup::ApprovalChannel)>,
 }
 
 pub(crate) use compact::CompactTaskPoll;
