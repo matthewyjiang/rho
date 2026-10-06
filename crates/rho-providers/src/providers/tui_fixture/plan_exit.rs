@@ -12,6 +12,7 @@ const PROMPT: &str = "fixture plan exit";
 const LONG_PROMPT: &str = "fixture plan exit long";
 const FAIL_PROMPT: &str = "fixture plan exit fail";
 const BACKGROUND_PROMPT: &str = "fixture plan exit background";
+const HELD_PROMPT: &str = "fixture plan exit held";
 const CHILD_PROMPT: &str = "fixture plan exit child";
 const CHILD_RESULT: &str = "fixture plan child complete";
 const AGENT_CALL_ID: &str = "tui-fixture-plan-agent";
@@ -39,6 +40,28 @@ pub(super) async fn intercept_child(
     )
 }
 
+/// Holds the proposal turn after the approval answer until the PTY releases it,
+/// so a test can queue Alt+M while the approved turn is still running.
+pub(super) async fn intercept_held(
+    prompt: &str,
+    request: &ModelRequest<'_>,
+) -> Option<Result<ModelResponse, ProviderError>> {
+    if prompt != HELD_PROMPT || tool_result(request, CALL_ID).is_none() {
+        return None;
+    }
+    Some(
+        match super::release::wait_for_release_or_cancel(
+            ".rho-fixture-release-plan-held",
+            &request.cancellation,
+        )
+        .await
+        {
+            Ok(()) => completed("fixture plan review complete"),
+            Err(error) => Err(error),
+        },
+    )
+}
+
 pub(super) fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
@@ -57,7 +80,10 @@ pub(super) fn intercept(
     let goal_proposal = prompt.contains("The user invoked Rho's `/goal` command")
         && prompt.contains("Goal:\nfixture plan exit\n\n");
     let idle_proposal = prompt.contains("[agent notification]") && prompt.contains(CHILD_RESULT);
-    if matches!(prompt, PROMPT | LONG_PROMPT | FAIL_PROMPT) || goal_proposal || idle_proposal {
+    if matches!(prompt, PROMPT | LONG_PROMPT | FAIL_PROMPT | HELD_PROMPT)
+        || goal_proposal
+        || idle_proposal
+    {
         return Some(if tool_result(request, CALL_ID).is_some() {
             if prompt == FAIL_PROMPT {
                 Err(ProviderError::new(

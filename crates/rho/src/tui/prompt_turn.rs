@@ -744,11 +744,11 @@ impl App {
             self.preserve_unapplied_steering_as_follow_ups();
         }
         self.clear_accepted_steering();
+        // Plan approval runs first: it requires the proposal turn's Plan mode
+        // and supersedes any Alt+M change queued during that turn.
+        self.finish_plan_exit(&outcome, agent).await;
         self.apply_pending_model_selection(agent).await?;
         self.apply_pending_permission_mode(agent).await?;
-        // An approved plan names the mode for its implementation turn, so it
-        // lands after any Alt+M change queued during the proposal turn.
-        self.finish_plan_exit(&outcome, agent).await;
         self.notifier.turn_finished();
         if self.pending_subagent_questionnaire.is_some() {
             self.set_status(UserWait::Questionnaire.message());

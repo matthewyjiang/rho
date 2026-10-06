@@ -175,6 +175,9 @@ async fn fixture_stream(
     if let Some(response) = plan_exit::intercept_child(&prompt, &request).await {
         return response;
     }
+    if let Some(response) = plan_exit::intercept_held(&prompt, &request).await {
+        return response;
+    }
     if let Some(response) = goal::intercept(&prompt, &request, &events).await {
         return response;
     }

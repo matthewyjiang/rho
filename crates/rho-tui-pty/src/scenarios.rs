@@ -485,6 +485,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,
     plan_exit::FAILED_SCENARIO,
+    plan_exit::QUEUED_CYCLE_SCENARIO,
     Scenario::new(
         "auto_permission_mode_config",
         "Gate Auto behind a classifier model picker, cancel safely, then enable it",

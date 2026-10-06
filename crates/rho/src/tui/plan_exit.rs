@@ -38,6 +38,9 @@ impl App {
             .await
         {
             Ok(()) => {
+                // The approval names the implementation turn's mode; a cycle
+                // queued during the proposal turn would otherwise overwrite it.
+                self.pending_permission_mode = None;
                 self.insert_entry(&Entry::Notice(format!(
                     "plan approved; permission mode: {} until Rho exits (not saved; next launch starts in your saved mode)",
                     decision.target.label().to_lowercase(),

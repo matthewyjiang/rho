@@ -102,6 +102,52 @@ fn release_plan_child(harness: &mut PtyHarness) -> Result<()> {
     super::release_fixture(harness, ".rho-fixture-release-plan-child")
 }
 
+fn release_held_proposal(harness: &mut PtyHarness) -> Result<()> {
+    super::release_fixture(harness, ".rho-fixture-release-plan-held")
+}
+
+// Covers: an Alt+M press queued during the proposal turn must not consume the
+// approval; the approved mode applies and implementation still starts.
+// Owner: turn-end permission ordering (PTY).
+pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
+    "plan_exit_queued_cycle",
+    "Apply an approved plan's mode over an Alt+M change queued during the proposal turn",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("fixture plan exit held"),
+        Step::WaitText {
+            text: "Plan ready. How should Rho continue?",
+            timeout: STREAM,
+        },
+        Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "Optional feedback for the plan",
+            timeout: STREAM,
+        },
+        Step::Key(Key::Enter),
+        Step::Key(Key::Alt('m')),
+        Step::WaitText {
+            text: "permission mode supervised queued for next turn",
+            timeout: SETTLE,
+        },
+        Step::Custom(release_held_proposal),
+        Step::WaitText {
+            text: "fixture plan implementation reached",
+            timeout: STREAM,
+        },
+        Step::Custom(assert_allow_edits),
+        Step::ExitCommand,
+        Step::Custom(assert_config_unchanged),
+    ],
+    /*smoke*/ false,
+)
+.with_setup(setup)
+.with_args(&["--permission-mode", "plan"]);
+
 // Covers: every turn driver must deliver the implementation handoff before
 // evaluating the goal or returning to idle background delivery.
 // Owner: interactive turn orchestration (PTY).

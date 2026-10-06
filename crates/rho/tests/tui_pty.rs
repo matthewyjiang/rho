@@ -83,6 +83,13 @@ fn plan_exit_failed_turn() {
     assert_pass("plan_exit_failed_turn");
 }
 
+// Covers: an Alt+M press queued during the proposal turn must not discard approval.
+// Owner: turn-end permission ordering (PTY).
+#[test]
+fn plan_exit_queued_cycle() {
+    assert_pass("plan_exit_queued_cycle");
+}
+
 // Covers: debug startup and the first turn fit the Windows main-thread stack.
 // Owner: process startup through the interactive TUI.
 #[test]
