@@ -113,6 +113,34 @@ fn active_session_lease_blocks_delete_until_session_closes() {
     assert!(!path.exists());
 }
 
+// Covers: a child spawned while the session was open keeps a copy of the
+// lease handle until exec, so closing the session must release the lease itself.
+// Owner: session deletion
+#[cfg(unix)]
+#[test]
+fn closed_session_is_deletable_while_an_inherited_lease_handle_is_open() {
+    let sessions = tempfile::tempdir().unwrap();
+    let subagents = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let id = "00000000-0000-0000-0000-000000000127";
+    let session = create_session(sessions.path(), workspace.path(), id);
+    let inherited = session
+        .active_lease_for_tests()
+        .inherited_handle_for_tests();
+    let path = session.path().to_path_buf();
+    drop(session);
+
+    delete_target_in_roots(
+        sessions.path(),
+        subagents.path(),
+        &SessionTarget::new(id, workspace.path()),
+        &DeleteOptions::default(),
+    )
+    .unwrap();
+    assert!(!path.exists());
+    drop(inherited);
+}
+
 // Covers: batch deletion removes only targets reviewed before confirmation, so
 // a session created between preview and confirmation survives.
 // Owner: session deletion

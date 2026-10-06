@@ -67,7 +67,7 @@ pub struct Session {
     cwd: PathBuf,
     workspace_key: String,
     write_lock: Arc<Mutex<AppendCursor>>,
-    _active_lease: Arc<File>,
+    _active_lease: Arc<SessionLease>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +152,29 @@ pub(super) struct SessionIndexRecord {
     pub(super) active_leaf_id: Option<String>,
     pub(super) effective_format_version: u32,
 }
+/// A held session lease. Dropping it unlocks explicitly before closing: a
+/// child process spawned elsewhere in Rho shares the lock until it execs, so
+/// closing the handle alone can keep the session looking active.
+#[derive(Debug)]
+pub(crate) struct SessionLease {
+    file: File,
+}
+
+impl SessionLease {
+    /// A duplicate of the leased handle, standing in for one a child process
+    /// inherits between fork and exec.
+    #[cfg(test)]
+    pub(crate) fn inherited_handle_for_tests(&self) -> File {
+        self.file.try_clone().unwrap()
+    }
+}
+
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
 #[derive(Clone, Copy)]
 enum LeaseMode {
     Active,
@@ -163,7 +186,7 @@ fn acquire_session_lease(
     cwd: &Path,
     id: &str,
     mode: LeaseMode,
-) -> anyhow::Result<File> {
+) -> anyhow::Result<SessionLease> {
     let dir = session_dir_in_root(session_root, cwd);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!(".{id}.active.lock"));
@@ -179,7 +202,7 @@ fn acquire_session_lease(
         LeaseMode::Delete => fs2::FileExt::try_lock_exclusive(&file),
     };
     match lock {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(SessionLease { file }),
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => match mode {
             LeaseMode::Active => anyhow::bail!(
                 "session '{}' is being deleted by another Rho process; refresh the session list",
@@ -194,7 +217,11 @@ fn acquire_session_lease(
     }
 }
 
-fn acquire_delete_session_lease(session_root: &Path, cwd: &Path, id: &str) -> anyhow::Result<File> {
+fn acquire_delete_session_lease(
+    session_root: &Path,
+    cwd: &Path,
+    id: &str,
+) -> anyhow::Result<SessionLease> {
     acquire_session_lease(session_root, cwd, id, LeaseMode::Delete)
 }
 
@@ -692,7 +719,7 @@ impl Session {
         cwd: PathBuf,
         id: String,
         path: PathBuf,
-        active_lease: File,
+        active_lease: SessionLease,
     ) -> Self {
         Self {
             workspace_key: workspace_key(&cwd),
@@ -703,6 +730,11 @@ impl Session {
             write_lock: Arc::new(Mutex::new(AppendCursor::default())),
             _active_lease: Arc::new(active_lease),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_lease_for_tests(&self) -> &SessionLease {
+        &self._active_lease
     }
 
     #[cfg(test)]
