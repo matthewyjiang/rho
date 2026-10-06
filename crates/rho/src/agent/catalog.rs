@@ -38,6 +38,20 @@ pub enum AgentOrigin {
     Workflow,
 }
 
+impl AgentOrigin {
+    /// Stable snake_case name for structured output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Internal => "internal",
+            Self::BuiltIn => "built_in",
+            Self::AgentsHome => "agents_home",
+            Self::RhoHome => "rho_home",
+            Self::Project => "project",
+            Self::Workflow => "workflow",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentCatalogMetadata {
     pub origin: AgentOrigin,
