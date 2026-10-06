@@ -54,7 +54,7 @@ mod workspace_rewind;
 use super::{
     agent_binding::BoundAgent,
     interactive_run_controller::{InteractiveRunController, PendingTurn},
-    interactive_session_controller::{InteractiveSessionController, ReplacementSessionSource},
+    interactive_session_controller::InteractiveSessionController,
     policy::AppPolicy,
     provider_controller::ProviderController,
     runtime_builder::{
@@ -618,12 +618,12 @@ impl InteractiveRuntime {
             anyhow::bail!("cannot switch sessions while compaction is active");
         }
         let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
-        let id = storage.id().to_string();
+        let snapshot = storage.snapshot_for_resume(
+            self.provider.provider().identity(),
+            prompt_cache_key(storage.id()),
+        )?;
         self.rebuild_session(
-            ReplacementSessionSource::Snapshot {
-                storage: storage.clone(),
-                id,
-            },
+            snapshot,
             ReplacementLifecycle::Started,
             SessionWriteRetention::Forget,
             prepared_prompt.map_or(PromptTransition::Keep, PromptTransition::Replace),
@@ -780,26 +780,23 @@ impl InteractiveRuntime {
         } else {
             PromptTransition::Keep
         };
-        let (storage, source) = match checkpoint {
-            Some((storage, snapshot)) => (
-                storage,
-                ReplacementSessionSource::DurableSnapshot { snapshot },
-            ),
+        let (storage, snapshot) = match checkpoint {
+            Some(checkpoint) => checkpoint,
             None => {
                 let storage = self
                     .sessions
                     .storage()
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("durable session storage is unavailable"))?;
-                let source = ReplacementSessionSource::Snapshot {
-                    storage: storage.clone(),
-                    id: storage.id().to_string(),
-                };
-                (storage, source)
+                let snapshot = storage.snapshot_for_resume(
+                    self.provider.provider().identity(),
+                    prompt_cache_key(storage.id()),
+                )?;
+                (storage, snapshot)
             }
         };
         self.rebuild_session(
-            source,
+            snapshot,
             ReplacementLifecycle::Rebound,
             SessionWriteRetention::Keep,
             prompt_transition,
@@ -811,36 +808,17 @@ impl InteractiveRuntime {
 
     async fn rebuild_session(
         &mut self,
-        source: ReplacementSessionSource,
+        snapshot: rho_sdk::SessionSnapshot,
         lifecycle: ReplacementLifecycle,
         writes: SessionWriteRetention,
         prompt_transition: PromptTransition,
     ) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
-        let snapshot_options = |snapshot: rho_sdk::SessionSnapshot| -> anyhow::Result<_> {
-            let prompt = matches!(prompt_transition, PromptTransition::Restore)
-                .then(|| ActivePrompt::from_snapshot(&snapshot))
-                .transpose()?;
-            let omission = resume_omissions_report(&snapshot, &identity);
-            Ok((SessionOptions::from_snapshot(snapshot), omission, prompt))
-        };
-        let (options, resume_omission, restored_prompt) = match source {
-            ReplacementSessionSource::DurableSnapshot { snapshot } => snapshot_options(snapshot)?,
-            ReplacementSessionSource::Snapshot { storage, id } => {
-                let snapshot =
-                    storage.snapshot_for_resume(identity.clone(), prompt_cache_key(&id))?;
-                snapshot_options(snapshot)?
-            }
-            ReplacementSessionSource::History { history, id } => {
-                let mut options = SessionOptions::new().history(history);
-                if let Some(id) = id {
-                    options = options
-                        .id(SessionId::from_string(&id)?)
-                        .prompt_cache_key(prompt_cache_key(&id));
-                }
-                (options, None, None)
-            }
-        };
+        let restored_prompt = matches!(prompt_transition, PromptTransition::Restore)
+            .then(|| ActivePrompt::from_snapshot(&snapshot))
+            .transpose()?;
+        let resume_omission = resume_omissions_report(&snapshot, &identity);
+        let options = SessionOptions::from_snapshot(snapshot);
         let system_prompt = match &prompt_transition {
             PromptTransition::Keep => self.active_system_prompt(),
             PromptTransition::Replace(prompt) => rho_sdk::SystemPrompt::Custom(prompt.text.clone()),

@@ -105,6 +105,14 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: /new must not discard the system prompt when storage is attached
+// before the first turn, including the saved session subsequently resumed.
+// Owner: interactive session lifecycle through provider requests.
+#[test]
+fn new_session_preserves_system_prompt() {
+    assert_pass("new_session_system_prompt");
+}
+
 // Covers: single-line overlays keep long edits and masked carets visible across
 // navigation and resize. Owner: interactive TUI.
 #[test]

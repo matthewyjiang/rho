@@ -58,6 +58,76 @@ async fn failed_save_does_not_skip_the_next_turn_display() {
     assert_eq!(histories.display, vec![next]);
 }
 
+// Covers: context persisted between /new and its first turn uses the new durable
+// identity and retains launch-owned prompts on resume, including an intentional
+// no-system-prompt policy. PTY owns the newborn-empty-store request path instead.
+// Owner: interactive session controller persistence.
+#[tokio::test]
+async fn pending_reset_context_snapshot_preserves_prompt_on_resume() {
+    for system in [
+        rho_sdk::SystemPrompt::None,
+        rho_sdk::SystemPrompt::Custom("pinned replacement".into()),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let storage = StoredSession::create_in_root(root.path(), cwd.path()).unwrap();
+        let runtime = Rho::builder()
+            .provider(ScriptedProvider::new(
+                ModelIdentity::new("test", "test", "test"),
+                Vec::new(),
+            ))
+            .system_prompt(system.clone())
+            .build()
+            .unwrap();
+        let session = runtime.session(SessionOptions::new()).await.unwrap();
+        let mut controller = InteractiveSessionController::new(
+            session,
+            /*storage*/ None,
+            WebAccessStore::new(),
+            /*recall*/ None,
+            /*advisor*/ None,
+        );
+        controller.prompt =
+            crate::app::active_prompt::ActivePrompt::new(system.clone(), None, Vec::new());
+        controller.reset().unwrap();
+        // Production creates storage with reset's ID. This private-state test
+        // uses the isolated store's allocated ID for the same pending identity.
+        controller.pending_session_id = Some(SessionId::from_string(storage.id()).unwrap());
+        controller.attach_storage(storage.clone());
+        controller
+            .session()
+            .append_message(Message::user_text("pre-turn context"))
+            .unwrap();
+        controller
+            .save_snapshot(&[Message::user_text("context notice")])
+            .unwrap();
+
+        let snapshot = controller.snapshot();
+        let saved = storage
+            .snapshot_for_resume(
+                ModelIdentity::new("test", "test", "test"),
+                format!("rho:{}", storage.id()),
+            )
+            .unwrap();
+        assert_eq!(saved, snapshot);
+        let restored_prompt =
+            crate::app::active_prompt::ActivePrompt::from_snapshot(&saved).unwrap();
+        assert_eq!(restored_prompt.system, system);
+        // This runtime has no prompt template: resume takes Keep, so it cannot
+        // mask a missing stored prompt by preparing a replacement from disk.
+        let mut resumed = crate::app::interactive_runtime::test_runtime(Vec::new()).await;
+        resumed.resume(storage.clone()).await.unwrap();
+        assert_eq!(resumed.history(), controller.history());
+        let (_, histories) =
+            StoredSession::open_by_id_with_histories_in_root(root.path(), cwd.path(), storage.id())
+                .unwrap();
+        assert_eq!(
+            histories.display,
+            vec![Message::user_text("context notice")]
+        );
+    }
+}
+
 // Covers: recall follows the durable storage through every storage change:
 // unbound without storage, bound on attach, cleared by /new's reset, and
 // rebound on resume. A stale binding would stub results into a retired session.

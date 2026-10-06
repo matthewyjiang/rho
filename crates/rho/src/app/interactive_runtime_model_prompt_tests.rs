@@ -148,6 +148,27 @@ async fn durable_recovery_preserves_launch_owned_prompt_policy() {
         };
         assert_eq!(runtime.history(), expected);
         assert!(!runtime.may_rewrite_startup_prompt);
+
+        // --no-save has no durable source. Realizing /new must still retain
+        // pre-turn context without injecting a default or duplicate prompt.
+        runtime
+            .append_user_context_with_display("pre-turn context".into(), "context notice".into())
+            .unwrap();
+        let mut expected = expected;
+        expected.push(Message::user_text("pre-turn context"));
+        let id = runtime.session_id().clone();
+        let snapshot = runtime.sessions.pending_replacement().unwrap();
+        runtime
+            .rebuild_session(
+                snapshot,
+                crate::app::interactive_runtime::ReplacementLifecycle::AfterReset,
+                crate::app::interactive_runtime::SessionWriteRetention::Keep,
+                crate::app::active_prompt::PromptTransition::Keep,
+            )
+            .await
+            .unwrap();
+        assert_eq!(runtime.history(), expected);
+        assert_eq!(runtime.sessions.session().id(), &id);
     }
 }
 

@@ -48,6 +48,7 @@ mod mcp;
 mod mermaid;
 mod model_cycle_reasoning;
 mod model_prompts;
+mod new_session_prompt;
 mod no_save;
 mod palette_click;
 mod panel_pointer;
@@ -888,6 +889,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     quiet_subagent::COMPLETION_AFTER_NEW_SCENARIO,
     #[cfg(unix)]
     terminal_ownership::SHELL_KEEPS_TERMINAL_SCENARIO,
+    new_session_prompt::SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     boundary_notifications::SCENARIO,
     calibrated_context::SCENARIO,

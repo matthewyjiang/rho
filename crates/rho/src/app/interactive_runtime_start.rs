@@ -59,9 +59,9 @@ impl InteractiveRuntime {
             ComputerUseUpdate::Revoked(notice) => self.sessions.queue_notice(notice),
         }
         self.runs.reset_display_committed();
-        if let Some(source) = self.sessions.pending_replacement() {
+        if let Some(snapshot) = self.sessions.pending_replacement() {
             self.rebuild_session(
-                source,
+                snapshot,
                 ReplacementLifecycle::AfterReset,
                 SessionWriteRetention::Keep,
                 crate::app::active_prompt::PromptTransition::Keep,
