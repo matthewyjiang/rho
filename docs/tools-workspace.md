@@ -44,6 +44,7 @@ Additional tools:
 | `skill` | Load a skill into the session |
 | `save_agent` | Validate, canonicalize, and save a user agent definition |
 | `rho` | Read-only harness diagnostics |
+| `todo` | Replace the task checklist shown in the transcript |
 | `sessions` | Search and read prior session evidence without resuming it |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
@@ -52,6 +53,12 @@ The `bash` tool and the [inline shell](/inline-shell) (bash or zsh) run a login 
 Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so workspace-scoped searches work in every permission mode including `plan`. Agent shell commands can use [RTK](/integrations/rtk) for token-efficient output when the binary is installed.
 
 Built-in skills that ship with the binary include `rho-config`, `rho-agent-creator`, and `rho-workflow-authoring`. The agent creator powers `/agents create` and `/create-agent`; it is hidden from automatic model invocation. The `rho` tool documents its read-only diagnostics actions in its input schema. Custom skills live under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to keep it available only through `/skill:<name>`.
+
+## Task checklists
+
+`todo` replaces the whole checklist with `{"todos":[{"content":"Implement the change","status":"in_progress"}]}`. Each item has non-empty content and a status of `pending`, `in_progress`, or `completed`. Lists accept at most 50 items and at most one item in progress; an empty list clears the checklist. Use it for work with three or more steps rather than trivial single-step tasks.
+
+The interactive card shows ☑ completed, ◐ in progress, and ☐ pending items. Collapsed cards follow the normal tool-output row budget; press Ctrl+O to expand and see every item. Calls stay in the session transcript and their cards are rebuilt when you resume. The tool is available by default, including delegated roles and Plan mode: it writes no files and needs no permission approval. Agent tool allowlists can include `todo` explicitly.
 
 ## Security and workspace boundaries
 

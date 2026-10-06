@@ -21,8 +21,8 @@ mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
 use super::{
-    agent_format, codemode_format, sessions_format, tool_search_format, PresentedToolCard,
-    ToolBodySyntax, ToolKind, ToolPresentation, ToolView,
+    agent_format, codemode_format, sessions_format, todo_format, tool_search_format,
+    PresentedToolCard, ToolBodySyntax, ToolKind, ToolPresentation, ToolView,
 };
 
 pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
@@ -45,6 +45,7 @@ pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
         | ToolKind::FetchContent
         | ToolKind::GetSearchContent
         | ToolKind::Questionnaire
+        | ToolKind::Todo
         | ToolKind::Sessions
         | ToolKind::ToolSearch
         | ToolKind::Mcp
@@ -235,6 +236,7 @@ pub(super) fn preview_card(
                 string_arg(arguments, "name").filter(|name| !name.is_empty()),
             ),
         ),
+        ToolKind::Todo => todo_format::card(arguments, status),
         ToolKind::Questionnaire => match crate::questionnaire::parse_request(arguments.clone()) {
             Ok(request) => {
                 let primary = request.title.clone().or_else(|| Some(name.to_string()));
@@ -490,6 +492,7 @@ pub(super) fn finished_card(
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
         ToolKind::GetSearchContent => get_search_content_card(content, status),
+        ToolKind::Todo => todo_format::finished_card(&view.arguments, content, ok),
         ToolKind::Questionnaire => {
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
@@ -640,9 +643,11 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
             ToolFamily::Web
         }
         ToolKind::Questionnaire => ToolFamily::Form,
-        ToolKind::Mcp | ToolKind::Sessions | ToolKind::Codemode | ToolKind::ToolSearch => {
-            ToolFamily::Default
-        }
+        ToolKind::Mcp
+        | ToolKind::Sessions
+        | ToolKind::Codemode
+        | ToolKind::ToolSearch
+        | ToolKind::Todo => ToolFamily::Default,
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),

@@ -277,6 +277,9 @@ impl AppToolSet {
         if capabilities.contains(&ToolCapability::Rho) {
             tool_set.add_bundle(super::rho::sdk_bundle(diagnostics, config.max_output_bytes));
         }
+        if capabilities.contains(&ToolCapability::Todo) {
+            tool_set.add_bundle(super::todo::sdk_bundle());
+        }
         if capabilities.contains(&ToolCapability::Questionnaire) {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
         }

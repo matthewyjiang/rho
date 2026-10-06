@@ -120,6 +120,7 @@ read_file
 rho
 shell
 skill
+todo
 web_search
 write
 ```

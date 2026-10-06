@@ -567,7 +567,7 @@ fn security_declarations_distinguish_network_builtins_from_host_tools() {
     let tool_set = AppToolSet::new(
         &config,
         RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["web_search", "rho"])),
+        ToolSetOptions::new(capabilities(&["web_search", "rho", "todo"])),
     );
     let security = |name: &str| {
         tool_set
@@ -581,9 +581,11 @@ fn security_declarations_distinguish_network_builtins_from_host_tools() {
     let web_search = security("web_search");
     assert_eq!(web_search.origin(), ToolOrigin::BuiltIn);
     assert_eq!(web_search.capabilities(), [CapabilityKind::Network]);
-    let rho = security("rho");
-    assert_eq!(rho.origin(), ToolOrigin::BuiltIn);
-    assert!(rho.capabilities().is_empty());
+    for name in ["rho", "todo"] {
+        let security = security(name);
+        assert_eq!(security.origin(), ToolOrigin::BuiltIn);
+        assert!(security.capabilities().is_empty());
+    }
 }
 
 // Covers: /advisor must immediately add/remove the tool in execution, nesting,

@@ -91,6 +91,13 @@ fn setup_line_editor_keeps_its_capped_viewport() {
     assert_pass("setup_line_editor_viewport");
 }
 
+// Covers: native todos remain visible with status markers and overflow in Plan mode.
+// Owner: interactive TUI tool lifecycle and checklist card.
+#[test]
+fn todo_card_shows_checklist_in_plan_mode() {
+    assert_pass("todo_card");
+}
+
 // Covers: menu and shortcut share a saved streaming preference during a turn.
 // Owner: interactive TUI
 #[test]
