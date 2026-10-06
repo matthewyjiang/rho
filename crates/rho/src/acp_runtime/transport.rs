@@ -10,7 +10,7 @@ use tokio::{
     process::{ChildStdin, ChildStdout},
 };
 
-pub(super) fn child_transport(
+pub(crate) fn child_transport(
     stdin: ChildStdin,
     stdout: ChildStdout,
     program: &'static str,

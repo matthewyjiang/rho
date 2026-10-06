@@ -88,6 +88,7 @@ fn plural_suffix(count: usize) -> &'static str {
 
 pub(crate) use first_run::SetupEntry;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
+mod antigravity_login;
 mod changelog_command;
 mod chat_media;
 mod choice_actions;

@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use rho_providers::reasoning::ReasoningLevel;
 
-use super::CursorTool;
+use super::{AntigravityTool, CursorTool};
 
 macro_rules! define_tool_capabilities {
     ($($variant:ident => $name:literal : $detail:literal),+ $(,)?) => {
@@ -255,7 +255,8 @@ pub enum ToolPolicy {
 /// Runtime is independent of model selection. `Rho` uses Rho's own loop and
 /// tool vocabulary. `ClaudeCli` delegates the loop to the `claude` binary and
 /// uses Claude Code tool names. `Cursor` delegates the loop to `cursor-agent`
-/// and uses the closed Cursor tool vocabulary.
+/// and uses the closed Cursor tool vocabulary. `Antigravity` delegates the
+/// loop to `agy_acp_server` and uses the closed Antigravity tool vocabulary.
 #[derive(
     Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -265,6 +266,7 @@ pub enum AgentRuntime {
     Rho,
     ClaudeCli,
     Cursor,
+    Antigravity,
 }
 
 impl AgentRuntime {
@@ -273,15 +275,19 @@ impl AgentRuntime {
             Self::Rho => "rho",
             Self::ClaudeCli => "claude-cli",
             Self::Cursor => "cursor",
+            Self::Antigravity => "antigravity",
         }
     }
 
     /// Whether this runtime delegates the agent loop to an external binary.
     ///
-    /// True for [`Self::ClaudeCli`] and [`Self::Cursor`]. Those runtimes pass
-    /// `model` through as `--model` and do not use Rho provider or auth.
+    /// True for every runtime but [`Self::Rho`]. Those runtimes pass `model`
+    /// through to the harness and do not use Rho provider or auth.
     pub fn is_external_cli(self) -> bool {
-        matches!(self, Self::ClaudeCli | Self::Cursor)
+        match self {
+            Self::Rho => false,
+            Self::ClaudeCli | Self::Cursor | Self::Antigravity => true,
+        }
     }
 }
 
@@ -299,6 +305,7 @@ impl FromStr for AgentRuntime {
             "rho" => Ok(Self::Rho),
             "claude-cli" => Ok(Self::ClaudeCli),
             "cursor" => Ok(Self::Cursor),
+            "antigravity" => Ok(Self::Antigravity),
             _ => Err(AgentRuntimeError {
                 value: value.to_string(),
             }),
@@ -307,7 +314,7 @@ impl FromStr for AgentRuntime {
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("unknown runtime '{value}'; expected rho, claude-cli, or cursor")]
+#[error("unknown runtime '{value}'; expected rho, claude-cli, cursor, or antigravity")]
 pub struct AgentRuntimeError {
     value: String,
 }
@@ -371,6 +378,19 @@ pub struct CursorAgentConfig {
     pub model: Option<String>,
 }
 
+/// Settings that only the Antigravity runtime understands.
+///
+/// Built at parse time with a nonempty closed tool allow list. Each run sends
+/// `tools` as the session's built-in allowlist and answers permissions from
+/// it. Antigravity has no reasoning setting outside the model id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AntigravityAgentConfig {
+    /// Nonempty closed allow list. Enforced at parse and edit validation.
+    pub tools: Vec<AntigravityTool>,
+    /// Session `model` config option value. `None` keeps the server default.
+    pub model: Option<String>,
+}
+
 /// The runtime together with the settings only that runtime understands.
 ///
 /// One value carries the whole runtime axis, so a definition cannot pair one
@@ -384,6 +404,7 @@ pub enum AgentRuntimeSpec {
     },
     ClaudeCli(ClaudeAgentConfig),
     Cursor(CursorAgentConfig),
+    Antigravity(AntigravityAgentConfig),
 }
 
 impl Default for AgentRuntimeSpec {
@@ -402,6 +423,7 @@ impl AgentRuntimeSpec {
             Self::Rho { .. } => AgentRuntime::Rho,
             Self::ClaudeCli(_) => AgentRuntime::ClaudeCli,
             Self::Cursor(_) => AgentRuntime::Cursor,
+            Self::Antigravity(_) => AgentRuntime::Antigravity,
         }
     }
 
@@ -413,6 +435,7 @@ impl AgentRuntimeSpec {
         match self {
             Self::ClaudeCli(config) => Some(&config.model),
             Self::Cursor(config) => Some(&config.model),
+            Self::Antigravity(config) => Some(&config.model),
             Self::Rho { .. } => None,
         }
     }
@@ -422,6 +445,7 @@ impl AgentRuntimeSpec {
         match self {
             Self::ClaudeCli(config) => Some(&mut config.model),
             Self::Cursor(config) => Some(&mut config.model),
+            Self::Antigravity(config) => Some(&mut config.model),
             Self::Rho { .. } => None,
         }
     }
@@ -445,7 +469,9 @@ impl AgentDefinition {
             Some(model) => Cow::Owned(pass_through_model_policy(model.as_deref())),
             None => match &self.runtime {
                 AgentRuntimeSpec::Rho { model, .. } => Cow::Borrowed(model),
-                AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+                AgentRuntimeSpec::ClaudeCli(_)
+                | AgentRuntimeSpec::Cursor(_)
+                | AgentRuntimeSpec::Antigravity(_) => {
                     unreachable!("external CLI runtimes expose a pass-through model")
                 }
             },
@@ -457,7 +483,7 @@ impl AgentDefinition {
         match &self.runtime {
             AgentRuntimeSpec::Rho { reasoning, .. } => *reasoning,
             AgentRuntimeSpec::ClaudeCli(config) => config.reasoning,
-            AgentRuntimeSpec::Cursor(_) => None,
+            AgentRuntimeSpec::Cursor(_) | AgentRuntimeSpec::Antigravity(_) => None,
         }
     }
 
@@ -487,7 +513,9 @@ impl AgentDefinition {
             AgentRuntimeSpec::Rho { tools, .. } => {
                 Some(self.hash_semantic(FingerprintEncoding::LegacyV1 { tools }))
             }
-            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => None,
+            AgentRuntimeSpec::ClaudeCli(_)
+            | AgentRuntimeSpec::Cursor(_)
+            | AgentRuntimeSpec::Antigravity(_) => None,
         }
     }
 
@@ -557,6 +585,12 @@ impl AgentDefinition {
                         hash_field(&mut hash, b"tools:cursor");
                         for tool in &config.tools {
                             hash_field(&mut hash, tool.as_flag().as_bytes());
+                        }
+                    }
+                    AgentRuntimeSpec::Antigravity(config) => {
+                        hash_field(&mut hash, b"tools:antigravity");
+                        for tool in &config.tools {
+                            hash_field(&mut hash, tool.as_name().as_bytes());
                         }
                     }
                 }

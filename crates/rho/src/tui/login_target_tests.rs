@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 
 use super::SignInTarget;
 
-// Covers: /login claude-code, cursor, and cursor-agent route to their external
+// Covers: /login claude-code, cursor, cursor-agent, and antigravity route to their external
 // runtimes case-insensitively instead of falling through as a provider id
 // Owner: login routing
 #[test]
@@ -11,6 +11,7 @@ fn sign_in_target_routes_external_runtimes_case_insensitively() {
         match target {
             SignInTarget::ClaudeCode => "claude-code".into(),
             SignInTarget::Cursor => "cursor".into(),
+            SignInTarget::Antigravity => "antigravity".into(),
             SignInTarget::NewCustomHost { .. } => "new-custom-host".into(),
             SignInTarget::Provider(provider) => format!("provider:{provider}"),
         }
@@ -22,6 +23,7 @@ fn sign_in_target_routes_external_runtimes_case_insensitively() {
         (" Cursor ", "cursor"),
         ("cursor-agent", "cursor"),
         ("CURSOR-AGENT", "cursor"),
+        (" Antigravity ", "antigravity"),
         (" anthropic ", "provider:anthropic"),
     ] {
         assert_eq!(route(SignInTarget::parse(value)), expected, "{value:?}");

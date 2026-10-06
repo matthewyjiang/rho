@@ -12,7 +12,7 @@ const CURSOR_AGENT_ALIAS: &str = "cursor-agent";
 ///
 /// The picker renders whatever it is handed; `group_id: None` is a top-level
 /// row, while `Some(id)` nests the method under that login group.
-pub(super) fn external_login_methods() -> [ExternalLoginMethod; 2] {
+pub(super) fn external_login_methods() -> [ExternalLoginMethod; 3] {
     [
         ExternalLoginMethod {
             // Claude Code is an Anthropic-family runtime for delegation, not a
@@ -28,6 +28,13 @@ Credentials are managed by Claude Code, not Rho.",
             value: AgentRuntime::Cursor.as_str(),
             label: "Cursor",
             detail: "Cursor Agent CLI (cursor-agent login)",
+        },
+        ExternalLoginMethod {
+            group_id: None,
+            value: AgentRuntime::Antigravity.as_str(),
+            label: "Antigravity",
+            detail: "Google Antigravity ACP server sign-in (delegation only). \
+Credentials are managed by the server, not Rho.",
         },
     ]
 }
@@ -51,6 +58,8 @@ pub(super) enum SignInTarget {
     ClaudeCode,
     /// Cursor Agent CLI, whose credential `cursor-agent` owns.
     Cursor,
+    /// Antigravity ACP server, which owns its Google sign-in.
+    Antigravity,
     /// Onboarding for a host that does not exist yet.
     NewCustomHost { api: OpenAiCompatibleApi },
     /// A Rho provider credential.
@@ -64,6 +73,8 @@ impl SignInTarget {
             Self::ClaudeCode
         } else if is_cursor_login_target(value) {
             Self::Cursor
+        } else if value.eq_ignore_ascii_case(AgentRuntime::Antigravity.as_str()) {
+            Self::Antigravity
         } else if let Some(api) = super::custom_provider_login::parse_custom_host_api(value) {
             Self::NewCustomHost { api }
         } else {

@@ -434,9 +434,13 @@ fn validate_output_reference(
 }
 
 impl AgentRuntime {
-    /// External CLI runtimes (Claude Code, Cursor Agent) mutate the workspace.
+    /// External CLI runtimes (Claude Code, Cursor Agent, Antigravity) mutate
+    /// the workspace.
     pub(crate) fn is_external_cli(self) -> bool {
-        matches!(self, Self::ClaudeCli | Self::Cursor)
+        match self {
+            Self::Rho => false,
+            Self::ClaudeCli | Self::Cursor | Self::Antigravity => true,
+        }
     }
 }
 
@@ -446,6 +450,7 @@ impl fmt::Display for AgentRuntime {
             Self::Rho => "rho",
             Self::ClaudeCli => "claude-cli",
             Self::Cursor => "cursor",
+            Self::Antigravity => "antigravity",
         })
     }
 }

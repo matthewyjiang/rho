@@ -10,9 +10,9 @@ use crate::config_writer::edit_lock::{acquire_edit_lock, EditFileLock};
 
 use super::{
     parse_definition, parse_tools_list_text, serialize_definition, AgentDefinition, AgentRuntime,
-    AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy, CursorAgentConfig, CursorTool,
-    ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability, ToolCapabilitySet,
-    ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
+    AgentRuntimeSpec, AntigravityAgentConfig, ClaudeAgentConfig, ClaudeToolPolicy,
+    CursorAgentConfig, ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability,
+    ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
 };
 
 /// Outcome of [`AgentDefinition::toggle_tools_all`].
@@ -50,8 +50,8 @@ impl AgentDefinition {
 
     /// Switches runtime, carrying compatible model/reasoning and resetting the rest.
     ///
-    /// Switching to Cursor forces `prompt: extend` because Cursor cannot replace
-    /// its system prompt.
+    /// Switching to an ACP runtime (Cursor, Antigravity) forces `prompt: extend`
+    /// because ACP cannot replace the system prompt.
     pub(crate) fn switch_runtime_kind(&mut self, value: &str) -> bool {
         let Ok(next) = value.parse::<AgentRuntime>() else {
             return false;
@@ -62,8 +62,11 @@ impl AgentDefinition {
         let reasoning = self.reasoning();
         let model_policy = self.model_policy().into_owned();
         self.runtime = build_runtime_spec(next, &model_policy, reasoning);
-        if next == AgentRuntime::Cursor {
-            let _ = self.set_prompt_policy_kind("extend");
+        match next {
+            AgentRuntime::Cursor | AgentRuntime::Antigravity => {
+                let _ = self.set_prompt_policy_kind("extend");
+            }
+            AgentRuntime::Rho | AgentRuntime::ClaudeCli => {}
         }
         true
     }
@@ -120,7 +123,9 @@ impl AgentDefinition {
                 config.inherit_claude_config = inherit;
                 true
             }
-            AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::Cursor(_) => false,
+            AgentRuntimeSpec::Rho { .. }
+            | AgentRuntimeSpec::Cursor(_)
+            | AgentRuntimeSpec::Antigravity(_) => false,
         }
     }
 
@@ -139,7 +144,9 @@ impl AgentDefinition {
                 }
                 None => !enabled,
             },
-            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => !enabled,
+            AgentRuntimeSpec::ClaudeCli(_)
+            | AgentRuntimeSpec::Cursor(_)
+            | AgentRuntimeSpec::Antigravity(_) => !enabled,
         }
     }
 
@@ -298,7 +305,9 @@ impl AgentDefinition {
         }
         match &mut self.runtime {
             AgentRuntimeSpec::Rho { model, .. } => *model = policy,
-            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+            AgentRuntimeSpec::ClaudeCli(_)
+            | AgentRuntimeSpec::Cursor(_)
+            | AgentRuntimeSpec::Antigravity(_) => {
                 unreachable!("external CLI runtimes expose a pass-through model")
             }
         }
@@ -312,7 +321,7 @@ impl AgentDefinition {
                     !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal)
                 });
             }
-            AgentRuntimeSpec::Cursor(_) => {}
+            AgentRuntimeSpec::Cursor(_) | AgentRuntimeSpec::Antigravity(_) => {}
         }
     }
 
@@ -343,21 +352,11 @@ impl AgentDefinition {
                 Ok(())
             }
             AgentRuntimeSpec::Cursor(config) => {
-                if trimmed == "all" {
-                    return Err(
-                        "runtime: cursor does not support tools: all; list closed snake_case names"
-                            .into(),
-                    );
-                }
-                let names = parse_tools_list_text(trimmed)?;
-                if names.is_empty() {
-                    return Err("cursor agents need at least one tool".into());
-                }
-                let mut tools = Vec::with_capacity(names.len());
-                for name in names {
-                    tools.push(CursorTool::from_str(&name).map_err(|error| error.to_string())?);
-                }
-                config.tools = tools;
+                config.tools = parse_closed_tools_text(AgentRuntime::Cursor, trimmed)?;
+                Ok(())
+            }
+            AgentRuntimeSpec::Antigravity(config) => {
+                config.tools = parse_closed_tools_text(AgentRuntime::Antigravity, trimmed)?;
                 Ok(())
             }
         }
@@ -366,8 +365,9 @@ impl AgentDefinition {
     /// Flips one tool in the runtime allow list.
     ///
     /// Rho `all` expands to the built-in set first so a single tool can be
-    /// removed from it; [`Self::toggle_tools_all`] is the way back. Cursor may go
-    /// empty here because `validate_for_edit` rejects that at save.
+    /// removed from it; [`Self::toggle_tools_all`] is the way back. Closed lists
+    /// (Cursor, Antigravity) may go empty here because `validate_for_edit`
+    /// rejects that at save.
     pub(crate) fn toggle_tool(&mut self, name: &str) -> Result<(), String> {
         match &mut self.runtime {
             AgentRuntimeSpec::Rho { tools, .. } => {
@@ -401,16 +401,8 @@ impl AgentDefinition {
                 };
                 Ok(())
             }
-            AgentRuntimeSpec::Cursor(config) => {
-                let tool = CursorTool::from_str(name).map_err(|error| error.to_string())?;
-                match config.tools.iter().position(|current| *current == tool) {
-                    Some(index) => {
-                        config.tools.remove(index);
-                    }
-                    None => config.tools.push(tool),
-                }
-                Ok(())
-            }
+            AgentRuntimeSpec::Cursor(config) => toggle_closed_tool(&mut config.tools, name),
+            AgentRuntimeSpec::Antigravity(config) => toggle_closed_tool(&mut config.tools, name),
         }
     }
 
@@ -430,9 +422,9 @@ impl AgentDefinition {
                     ToolPolicy::Allow(replaced) => ToolsAllToggle::TurnedOn { replaced },
                 }
             }
-            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
-                ToolsAllToggle::Unsupported
-            }
+            AgentRuntimeSpec::ClaudeCli(_)
+            | AgentRuntimeSpec::Cursor(_)
+            | AgentRuntimeSpec::Antigravity(_) => ToolsAllToggle::Unsupported,
         }
     }
 
@@ -463,6 +455,15 @@ impl AgentDefinition {
                     .tools
                     .iter()
                     .map(|tool| tool.as_flag())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            AgentRuntimeSpec::Antigravity(config) => format!(
+                "[{}]",
+                config
+                    .tools
+                    .iter()
+                    .map(|tool| tool.as_name())
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
@@ -554,6 +555,11 @@ impl AgentDefinition {
                 .iter()
                 .map(|tool| tool.label().to_string())
                 .collect(),
+            AgentRuntimeSpec::Antigravity(config) => config
+                .tools
+                .iter()
+                .map(|tool| tool.as_name().to_string())
+                .collect(),
         }
     }
 
@@ -594,18 +600,20 @@ impl AgentDefinition {
                 self.model_badge()
             ));
         }
-        match &self.runtime {
-            AgentRuntimeSpec::Cursor(config) if config.tools.is_empty() => {
-                Some("cursor agents need at least one tool".into())
-            }
-            AgentRuntimeSpec::Cursor(_) => {
-                if matches!(self.prompt, PromptPolicy::Replace(_)) {
-                    Some("cursor cannot replace its system prompt; use extend".into())
-                } else {
-                    None
-                }
-            }
-            AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::ClaudeCli(_) => None,
+        let closed_tools_empty = match &self.runtime {
+            AgentRuntimeSpec::Cursor(config) => config.tools.is_empty(),
+            AgentRuntimeSpec::Antigravity(config) => config.tools.is_empty(),
+            AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::ClaudeCli(_) => return None,
+        };
+        let runtime = self.runtime.runtime();
+        if closed_tools_empty {
+            Some(format!("{runtime} agents need at least one tool"))
+        } else if matches!(self.prompt, PromptPolicy::Replace(_)) {
+            Some(format!(
+                "{runtime} cannot replace its system prompt; use extend"
+            ))
+        } else {
+            None
         }
     }
 }
@@ -649,7 +657,54 @@ fn build_runtime_spec(
                 model,
             })
         }
+        AgentRuntime::Antigravity => {
+            let model = model_policy
+                .selection()
+                .map(|selection| selection.model.clone());
+            AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
+                tools: Vec::new(),
+                model,
+            })
+        }
     }
+}
+
+/// Parse editor text into a closed vocabulary list (Cursor, Antigravity),
+/// which has no `all` and must be nonempty.
+fn parse_closed_tools_text<T>(runtime: AgentRuntime, text: &str) -> Result<Vec<T>, String>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    if text == "all" {
+        return Err(format!(
+            "runtime: {runtime} does not support tools: all; list closed snake_case names"
+        ));
+    }
+    let names = parse_tools_list_text(text)?;
+    if names.is_empty() {
+        return Err(format!("{runtime} agents need at least one tool"));
+    }
+    names
+        .iter()
+        .map(|name| T::from_str(name).map_err(|error| error.to_string()))
+        .collect()
+}
+
+/// Flip one name in a closed vocabulary list.
+fn toggle_closed_tool<T>(tools: &mut Vec<T>, name: &str) -> Result<(), String>
+where
+    T: FromStr + PartialEq,
+    T::Err: std::fmt::Display,
+{
+    let tool = T::from_str(name).map_err(|error| error.to_string())?;
+    match tools.iter().position(|current| *current == tool) {
+        Some(index) => {
+            tools.remove(index);
+        }
+        None => tools.push(tool),
+    }
+    Ok(())
 }
 
 /// Saves a draft when the file still matches `original_contents`.

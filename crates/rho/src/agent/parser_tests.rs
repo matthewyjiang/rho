@@ -4,7 +4,8 @@ use pretty_assertions::assert_eq;
 
 use super::{parse_definition, parse_draft_definition};
 use crate::agent::{
-    AgentRuntimeSpec, CursorAgentConfig, CursorTool, ModelPolicy, ModelSelection, ToolPolicy,
+    AgentRuntimeSpec, AntigravityAgentConfig, AntigravityTool, CursorAgentConfig, CursorTool,
+    ModelPolicy, ModelSelection, ToolPolicy,
 };
 
 fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::AgentCatalogError> {
@@ -74,7 +75,7 @@ fn rejects_unknown_runtime_values() {
     assert_eq!(error.field.as_deref(), Some("runtime"));
     assert!(error
         .to_string()
-        .contains("expected rho, claude-cli, or cursor"));
+        .contains("expected rho, claude-cli, cursor, or antigravity"));
 }
 
 #[test]
@@ -436,70 +437,77 @@ fn auth_selection_round_trips_through_serialize() {
     assert_eq!(again, original);
 }
 
-// Covers: cursor frontmatter is a closed tool allow list with no reasoning,
-// no replace prompt, and no Claude-only fields.
+// Covers: closed-vocabulary runtimes (cursor, antigravity) take a nonempty
+// known tool allow list with no reasoning, no replace prompt, and no
+// Claude-only fields; a model passes through byte-for-byte.
 // Owner: agent parser
 #[test]
-fn cursor_runtime_frontmatter_rules() {
-    let accepted = [
+fn closed_tool_runtime_frontmatter_rules() {
+    let runtimes = [
         (
-            "minimal",
-            "---\ndescription: demo\nruntime: cursor\ntools: [read_tool_call]\n---\nbody\n",
-            AgentRuntimeSpec::Cursor(CursorAgentConfig {
-                tools: vec![CursorTool::Read],
-                model: None,
-            }),
-        ),
-        (
-            "bracket model with commas",
-            "---\ndescription: demo\nruntime: cursor\nmodel: \"gpt-5.3-codex[effort=high,fast=false]\"\ntools: [read_tool_call]\n---\nbody\n",
+            "cursor",
+            "read_tool_call",
+            "task_tool_call",
             AgentRuntimeSpec::Cursor(CursorAgentConfig {
                 tools: vec![CursorTool::Read],
                 model: Some("gpt-5.3-codex[effort=high,fast=false]".into()),
             }),
         ),
+        (
+            "antigravity",
+            "view_file",
+            "start_subagent",
+            AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
+                tools: vec![AntigravityTool::ViewFile],
+                model: Some("gpt-5.3-codex[effort=high,fast=false]".into()),
+            }),
+        ),
     ];
-    for (name, contents, expected) in accepted {
-        let definition = parse(contents).unwrap_or_else(|error| panic!("{name}: {error}"));
-        assert_eq!(definition.runtime, expected, "{name}");
-        assert_eq!(definition.reasoning(), None, "{name}");
-    }
+    for (runtime, tool, unknown, expected) in runtimes {
+        let definition = parse(&format!(
+            "---\ndescription: demo\nruntime: {runtime}\nmodel: \"gpt-5.3-codex[effort=high,fast=false]\"\ntools: [{tool}]\n---\nbody\n"
+        ))
+        .unwrap_or_else(|error| panic!("{runtime}: {error}"));
+        assert_eq!(definition.runtime, expected, "{runtime}");
+        assert_eq!(definition.reasoning(), None, "{runtime}");
 
-    let rejected = [
-        (
-            "tools: all",
-            "---\ndescription: demo\nruntime: cursor\ntools: all\n---\n",
-            "tools",
-        ),
-        (
-            "empty tools",
-            "---\ndescription: demo\nruntime: cursor\ntools: []\n---\n",
-            "tools",
-        ),
-        (
-            "task_tool_call",
-            "---\ndescription: demo\nruntime: cursor\ntools: [task_tool_call]\n---\n",
-            "tools",
-        ),
-        (
-            "reasoning",
-            "---\ndescription: demo\nruntime: cursor\nreasoning: high\ntools: [read_tool_call]\n---\n",
-            "reasoning",
-        ),
-        (
-            "replace prompt",
-            "---\ndescription: demo\nruntime: cursor\nprompt: replace\ntools: [read_tool_call]\n---\nReplacement\n",
-            "prompt",
-        ),
-        (
-            "inherit_claude_config",
-            "---\ndescription: demo\nruntime: cursor\ninherit_claude_config: true\ntools: [read_tool_call]\n---\n",
-            "inherit_claude_config",
-        ),
-    ];
-    for (name, contents, field) in rejected {
-        let error = parse(contents).expect_err(name);
-        assert_eq!(error.field.as_deref(), Some(field), "{name}: {error}");
+        let rejected = [
+            ("tools: all", "tools: all".to_owned(), "tools"),
+            ("empty tools", "tools: []".to_owned(), "tools"),
+            ("missing tools", String::new(), "tools"),
+            ("unknown tool", format!("tools: [{unknown}]"), "tools"),
+            (
+                "duplicate tool",
+                format!("tools: [{tool}, {tool}]"),
+                "tools",
+            ),
+            (
+                "reasoning",
+                format!("reasoning: high\ntools: [{tool}]"),
+                "reasoning",
+            ),
+            (
+                "inherit_claude_config",
+                format!("inherit_claude_config: true\ntools: [{tool}]"),
+                "inherit_claude_config",
+            ),
+        ];
+        for (name, extra, field) in rejected {
+            let error = parse(&format!(
+                "---\ndescription: demo\nruntime: {runtime}\n{extra}\n---\n"
+            ))
+            .expect_err(name);
+            assert_eq!(
+                error.field.as_deref(),
+                Some(field),
+                "{runtime} {name}: {error}"
+            );
+        }
+        let error = parse(&format!(
+            "---\ndescription: demo\nruntime: {runtime}\nprompt: replace\ntools: [{tool}]\n---\nReplacement\n"
+        ))
+        .expect_err("replace prompt");
+        assert_eq!(error.field.as_deref(), Some("prompt"), "{runtime}: {error}");
     }
 }
 

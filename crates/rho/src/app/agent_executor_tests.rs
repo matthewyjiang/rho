@@ -149,7 +149,9 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
             assert!(!*inherit_claude_config);
             assert_eq!(*permission_mode, crate::permission::PermissionMode::Plan);
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::Cursor { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Claude bound runtime")
         }
     }
@@ -175,7 +177,9 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
             // Permission mode is the only host field Claude bind snapshots.
             assert_eq!(*permission_mode, crate::permission::PermissionMode::Plan);
         }
-        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+        BoundRuntime::Rho { .. }
+        | BoundRuntime::Cursor { .. }
+        | BoundRuntime::Antigravity { .. } => {
             panic!("expected Claude bound runtime")
         }
     }

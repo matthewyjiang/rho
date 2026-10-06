@@ -5,17 +5,17 @@ use rho_providers::reasoning::ReasoningLevel;
 use super::{
     catalog::AgentCatalogError,
     definition::{
-        AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ClaudeAgentConfig,
-        ClaudeToolPolicy, CursorAgentConfig, ModelPolicy, ModelSelection, PromptPolicy,
-        ToolCapability, ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
+        AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, AntigravityAgentConfig,
+        ClaudeAgentConfig, ClaudeToolPolicy, CursorAgentConfig, ModelPolicy, ModelSelection,
+        PromptPolicy, ToolCapability, ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
     },
-    CursorTool,
 };
 
 const MAX_DESCRIPTION_LEN: usize = 1024;
 const RHO_TOOLS_EXAMPLE: &str = "tools: [read_file, shell]";
 const CLAUDE_TOOLS_EXAMPLE: &str = "tools: [Read, Edit, \"Bash(git *)\"]";
 const CURSOR_TOOLS_EXAMPLE: &str = "tools: [read_tool_call]";
+const ANTIGRAVITY_TOOLS_EXAMPLE: &str = "tools: [view_file]";
 
 #[derive(Default)]
 struct RawDefinition {
@@ -112,12 +112,13 @@ fn parse_definition_with_fallback(
     };
 
     match runtime {
-        AgentRuntime::Cursor => {
+        // ACP `session/prompt` has no system-role override.
+        AgentRuntime::Cursor | AgentRuntime::Antigravity => {
             if let PromptPolicy::Replace(_) = &prompt {
                 return Err(AgentCatalogError::at_field(
                     path.to_path_buf(),
                     "prompt",
-                    "cursor cannot replace its system prompt; use extend",
+                    format!("{runtime} cannot replace its system prompt; use extend"),
                 ));
             }
         }
@@ -154,12 +155,19 @@ fn parse_reasoning(
     runtime: AgentRuntime,
     reasoning: Option<String>,
 ) -> Result<Option<ReasoningLevel>, AgentCatalogError> {
-    if runtime == AgentRuntime::Cursor {
+    let effort_example = match runtime {
+        AgentRuntime::Cursor => Some("gpt-5.3-codex-high or name[effort=high]"),
+        AgentRuntime::Antigravity => Some("gemini-3.8-flash-high"),
+        AgentRuntime::Rho | AgentRuntime::ClaudeCli => None,
+    };
+    if let Some(example) = effort_example {
         if reasoning.is_some() {
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "reasoning",
-                "cursor has no reasoning flag; put effort in `model` (for example gpt-5.3-codex-high or name[effort=high])",
+                format!(
+                    "{runtime} has no reasoning flag; put effort in `model` (for example {example})"
+                ),
             ));
         }
         return Ok(None);
@@ -446,80 +454,72 @@ fn parse_runtime_spec(
                     }
                 }
             };
-            let model = match model {
-                ModelPolicy::Inherit => None,
-                ModelPolicy::Select(selection)
-                | ModelPolicy::Prefer(selection)
-                | ModelPolicy::Require(selection) => Some(selection.model),
-            };
             Ok(AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
                 tools,
                 inherit_claude_config,
-                model,
+                model: pass_through_model(model),
                 reasoning,
             }))
         }
-        AgentRuntime::Cursor => {
-            let tools = match tools {
-                None => {
-                    return Err(AgentCatalogError::at_field(
-                        path.to_path_buf(),
-                        "tools",
-                        format!(
-                            "is required for runtime: cursor and must be a nonempty closed allow list, for example {CURSOR_TOOLS_EXAMPLE}"
-                        ),
-                    ))
-                }
-                Some(RawTools::All) => {
-                    return Err(AgentCatalogError::at_field(
-                        path.to_path_buf(),
-                        "tools",
-                        format!(
-                            "runtime: cursor does not support tools: all; Cursor enables every tool by default and Rho fences only classified names, so list closed snake_case names, for example {CURSOR_TOOLS_EXAMPLE}"
-                        ),
-                    ))
-                }
-                Some(RawTools::Names(names)) => {
-                    let tools = validate_cursor_tools(path, names)?;
-                    if tools.is_empty() {
-                        return Err(AgentCatalogError::at_field(
-                            path.to_path_buf(),
-                            "tools",
-                            format!(
-                                "runtime: cursor requires at least one tool, for example {CURSOR_TOOLS_EXAMPLE}"
-                            ),
-                        ));
-                    }
-                    tools
-                }
-            };
-            let model = match model {
-                ModelPolicy::Inherit => None,
-                ModelPolicy::Select(selection)
-                | ModelPolicy::Prefer(selection)
-                | ModelPolicy::Require(selection) => Some(selection.model),
-            };
-            Ok(AgentRuntimeSpec::Cursor(CursorAgentConfig { tools, model }))
-        }
+        AgentRuntime::Cursor => Ok(AgentRuntimeSpec::Cursor(CursorAgentConfig {
+            tools: parse_closed_tools(path, runtime, tools, CURSOR_TOOLS_EXAMPLE)?,
+            model: pass_through_model(model),
+        })),
+        AgentRuntime::Antigravity => Ok(AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
+            tools: parse_closed_tools(path, runtime, tools, ANTIGRAVITY_TOOLS_EXAMPLE)?,
+            model: pass_through_model(model),
+        })),
     }
 }
 
-fn validate_cursor_tools(
+fn pass_through_model(model: ModelPolicy) -> Option<String> {
+    match model {
+        ModelPolicy::Inherit => None,
+        ModelPolicy::Select(selection)
+        | ModelPolicy::Prefer(selection)
+        | ModelPolicy::Require(selection) => Some(selection.model),
+    }
+}
+
+/// A closed vocabulary runtime's tools: required, nonempty, known, unique.
+/// These harnesses enable every built-in by default and Rho fences only
+/// classified names, so `tools: all` has no meaning.
+fn parse_closed_tools<T>(
     path: &Path,
-    names: Vec<String>,
-) -> Result<Vec<CursorTool>, AgentCatalogError> {
+    runtime: AgentRuntime,
+    tools: Option<RawTools>,
+    example: &str,
+) -> Result<Vec<T>, AgentCatalogError>
+where
+    T: FromStr + Ord + Copy,
+    T::Err: std::fmt::Display,
+{
+    let invalid =
+        |message: String| AgentCatalogError::at_field(path.to_path_buf(), "tools", message);
+    let names = match tools {
+        None => {
+            return Err(invalid(format!(
+                "is required for runtime: {runtime} and must be a nonempty closed allow list, for example {example}"
+            )))
+        }
+        Some(RawTools::All) => {
+            return Err(invalid(format!(
+                "runtime: {runtime} does not support tools: all; it enables every tool by default and Rho fences only classified names, so list closed snake_case names, for example {example}"
+            )))
+        }
+        Some(RawTools::Names(names)) => names,
+    };
+    if names.is_empty() {
+        return Err(invalid(format!(
+            "runtime: {runtime} requires at least one tool, for example {example}"
+        )));
+    }
     let mut tools = Vec::with_capacity(names.len());
     let mut seen = BTreeSet::new();
     for name in names {
-        let tool = CursorTool::from_str(&name).map_err(|error| {
-            AgentCatalogError::at_field(path.to_path_buf(), "tools", error.to_string())
-        })?;
+        let tool = T::from_str(&name).map_err(|error| invalid(error.to_string()))?;
         if !seen.insert(tool) {
-            return Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "tools",
-                format!("duplicate tool '{name}'"),
-            ));
+            return Err(invalid(format!("duplicate tool '{name}'")));
         }
         tools.push(tool);
     }

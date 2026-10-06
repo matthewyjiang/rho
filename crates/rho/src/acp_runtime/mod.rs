@@ -5,6 +5,7 @@
 
 mod driver;
 mod handshake;
+pub(crate) mod login;
 pub(crate) mod permission;
 pub(crate) mod policy;
 mod session;
@@ -13,6 +14,7 @@ mod turn;
 
 pub(crate) use policy::{AcpAgentPolicy, AcpSpawnPlan, ExtensionAnswer, SessionConfigChoice};
 pub(crate) use session::AcpSessionRequest;
+pub(crate) use transport::child_transport;
 
 /// Run one delegated ACP process through the shared artifact boundary.
 /// The implementation mechanics and single terminal-write gate live in session.

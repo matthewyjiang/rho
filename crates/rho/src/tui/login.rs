@@ -178,6 +178,10 @@ impl App {
                 self.report_cursor_logout_unsupported();
                 Ok(())
             }
+            login_target::SignInTarget::Antigravity => {
+                self.report_antigravity_logout_unsupported();
+                Ok(())
+            }
             // Nothing is stored for a host that was never created.
             login_target::SignInTarget::NewCustomHost { .. } => Ok(()),
             login_target::SignInTarget::Provider(provider) => {
@@ -290,6 +294,9 @@ impl App {
                 self.execute_claude_code_login(terminal).await
             }
             login_target::SignInTarget::Cursor => self.execute_cursor_login(terminal).await,
+            login_target::SignInTarget::Antigravity => {
+                self.execute_antigravity_login(terminal).await
+            }
             login_target::SignInTarget::NewCustomHost { api } => {
                 self.start_custom_provider_onboarding(api);
                 Ok(())
@@ -362,9 +369,10 @@ impl App {
         providers.dedup();
         let providers = providers.join(", ");
         self.insert_entry(&Entry::Error(format!(
-            "unsupported login provider '{provider}'. Use {providers}, /login {}, /login {}",
+            "unsupported login provider '{provider}'. Use {providers}, /login {}, /login {}, /login {}",
             claude_login::CLAUDE_CODE_TARGET,
-            crate::agent::AgentRuntime::Cursor.as_str()
+            crate::agent::AgentRuntime::Cursor.as_str(),
+            crate::agent::AgentRuntime::Antigravity.as_str()
         )));
         self.set_status("login failed");
         Ok(())

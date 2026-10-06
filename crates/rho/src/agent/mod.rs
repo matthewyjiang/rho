@@ -4,6 +4,7 @@
 //! catalog metadata and do not affect semantic fingerprints.
 
 mod advertisement;
+mod antigravity_tools;
 mod authorize;
 mod catalog;
 mod cursor_tools;
@@ -16,6 +17,7 @@ mod persist;
 mod serializer;
 
 pub(crate) use advertisement::{AdvertisedAgents, AdvertisedChange};
+pub(crate) use antigravity_tools::*;
 pub(crate) use authorize::authorize_existing_agent_file;
 pub(crate) use catalog::*;
 pub(crate) use cursor_tools::*;

@@ -271,7 +271,9 @@ fn validate_definition(definition: &AgentDefinition) -> anyhow::Result<()> {
                 definition.id
             );
         }
-        AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+        AgentRuntimeSpec::ClaudeCli(_)
+        | AgentRuntimeSpec::Cursor(_)
+        | AgentRuntimeSpec::Antigravity(_) => {
             unreachable!("external CLI runtimes are rejected above")
         }
     }

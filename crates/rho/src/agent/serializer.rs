@@ -95,7 +95,9 @@ fn write_model(out: &mut String, runtime: &AgentRuntimeSpec) {
                 }
             }
         },
-        AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+        AgentRuntimeSpec::ClaudeCli(_)
+        | AgentRuntimeSpec::Cursor(_)
+        | AgentRuntimeSpec::Antigravity(_) => {
             unreachable!("external CLI runtimes expose a pass-through model")
         }
     }
@@ -105,7 +107,7 @@ fn write_reasoning(out: &mut String, runtime: &AgentRuntimeSpec) {
     let reasoning = match runtime {
         AgentRuntimeSpec::Rho { reasoning, .. } => *reasoning,
         AgentRuntimeSpec::ClaudeCli(config) => config.reasoning,
-        AgentRuntimeSpec::Cursor(_) => None,
+        AgentRuntimeSpec::Cursor(_) | AgentRuntimeSpec::Antigravity(_) => None,
     };
     if let Some(level) = reasoning {
         let _ = writeln!(out, "reasoning: {level}");
@@ -145,6 +147,9 @@ fn write_tools(out: &mut String, runtime: &AgentRuntimeSpec) {
         },
         AgentRuntimeSpec::Cursor(config) => {
             write_tool_list(out, config.tools.iter().map(|tool| tool.as_flag()));
+        }
+        AgentRuntimeSpec::Antigravity(config) => {
+            write_tool_list(out, config.tools.iter().map(|tool| tool.as_name()));
         }
     }
 }
