@@ -140,6 +140,15 @@ async fn fixture_stream(
     if let Some(response) = title_response(&request) {
         return response;
     }
+    if let Some(phase) = prompt.strip_prefix("fixture system prompt probe ") {
+        let present = matches!(
+            request.messages.first(),
+            Some(Message::System(text))
+                if text.contains("You are a coding agent in the rho coding-agent harness")
+        );
+        let status = if present { "present" } else { "missing" };
+        return completed(format!("system prompt {status}: {phase}"));
+    }
     if let Some(response) = agent_message::intercept(&prompt, &request).await {
         return response;
     }

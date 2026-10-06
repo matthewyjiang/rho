@@ -12,17 +12,9 @@ use crate::{
 use super::interactive_run_controller::PendingTurn;
 
 pub(crate) enum ReplacementSessionSource {
-    History {
-        history: Vec<Message>,
-        id: Option<String>,
-    },
-    DurableSnapshot {
-        snapshot: rho_sdk::SessionSnapshot,
-    },
-    Snapshot {
-        storage: StoredSession,
-        id: String,
-    },
+    ResetSnapshot { snapshot: rho_sdk::SessionSnapshot },
+    DurableSnapshot { snapshot: rho_sdk::SessionSnapshot },
+    Snapshot { storage: StoredSession, id: String },
 }
 
 pub(crate) struct InteractiveSessionController {
@@ -88,7 +80,25 @@ impl InteractiveSessionController {
     }
 
     pub(crate) fn snapshot(&self) -> rho_sdk::SessionSnapshot {
-        self.prompt.decorate(self.session.snapshot())
+        let mut snapshot = self.session.snapshot();
+        if let Some(id) = &self.pending_session_id {
+            // /new allocates its durable identity before rebuilding the SDK
+            // session. Pre-turn context saves must already use that identity.
+            let mut pending = rho_sdk::SessionSnapshot::new(
+                id.clone(),
+                snapshot.revision(),
+                snapshot.history().to_vec(),
+                snapshot.provider().clone(),
+                snapshot.compaction().clone(),
+            );
+            for (key, value) in snapshot.metadata() {
+                pending = pending.with_metadata(key.clone(), value.clone());
+            }
+            snapshot = pending.with_prompt_cache_key(
+                super::interactive_runtime::startup::prompt_cache_key(id.as_str()),
+            );
+        }
+        self.prompt.decorate(snapshot)
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
@@ -149,16 +159,12 @@ impl InteractiveSessionController {
     }
 
     pub(crate) fn pending_replacement(&self) -> Option<ReplacementSessionSource> {
-        let id = self.pending_session_id.as_ref()?.to_string();
-        Some(match &self.storage {
-            Some(storage) => ReplacementSessionSource::Snapshot {
-                storage: storage.clone(),
-                id,
-            },
-            None => ReplacementSessionSource::History {
-                history: Vec::new(),
-                id: Some(id),
-            },
+        self.pending_session_id.as_ref()?;
+        // /new is still an in-memory draft. Attached storage may contain only
+        // metadata or an earlier context save. Live state owns the assembled
+        // prompt and pre-turn context until the replacement is realized.
+        Some(ReplacementSessionSource::ResetSnapshot {
+            snapshot: self.snapshot(),
         })
     }
 

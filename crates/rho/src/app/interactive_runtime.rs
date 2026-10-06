@@ -825,20 +825,12 @@ impl InteractiveRuntime {
             Ok((SessionOptions::from_snapshot(snapshot), omission, prompt))
         };
         let (options, resume_omission, restored_prompt) = match source {
-            ReplacementSessionSource::DurableSnapshot { snapshot } => snapshot_options(snapshot)?,
+            ReplacementSessionSource::ResetSnapshot { snapshot }
+            | ReplacementSessionSource::DurableSnapshot { snapshot } => snapshot_options(snapshot)?,
             ReplacementSessionSource::Snapshot { storage, id } => {
                 let snapshot =
                     storage.snapshot_for_resume(identity.clone(), prompt_cache_key(&id))?;
                 snapshot_options(snapshot)?
-            }
-            ReplacementSessionSource::History { history, id } => {
-                let mut options = SessionOptions::new().history(history);
-                if let Some(id) = id {
-                    options = options
-                        .id(SessionId::from_string(&id)?)
-                        .prompt_cache_key(prompt_cache_key(&id));
-                }
-                (options, None, None)
             }
         };
         let system_prompt = match &prompt_transition {
