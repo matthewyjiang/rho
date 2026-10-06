@@ -25,8 +25,9 @@ use super::stream_format::apply_status_patch;
 pub(crate) struct RuntimeLabel {
     pub(crate) starting_activity: &'static str,
     pub(crate) program: &'static str,
-    /// Binary invoked for `--resume <session-id>`.
-    pub(crate) resume_command: &'static str,
+    /// Binary invoked for `--resume <session-id>`. `None` when the recorded
+    /// session id cannot be resumed (ACP session ids are not CLI resume ids).
+    pub(crate) resume_command: Option<&'static str>,
     /// Prefix for session metadata, e.g. `claude session`.
     pub(crate) session_label: &'static str,
     /// Cost line label, e.g. `claude cost`.

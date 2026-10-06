@@ -364,3 +364,50 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         ));
     }
 }
+
+/// Covers: a frozen script launched through its interpreter keeps the script
+/// path ahead of the CLI argv (dropping it hands CLI flags to the interpreter,
+/// `bash --trust`), and a shim interpreter keeps its shim invocation rules.
+/// Owner: `CliExecutable::plan` for interpreted frozen launches.
+#[test]
+fn interpreted_executable_prefixes_script_before_cli_argv() {
+    let os = |values: &[&str]| values.iter().map(OsString::from).collect::<Vec<_>>();
+    let cases = [
+        (
+            "/usr/bin/bash",
+            CliArgv {
+                program: PathBuf::from("/usr/bin/bash"),
+                args: os(&["/proc/self/fd/17", "--trust", "acp"]),
+            },
+        ),
+        (
+            "C:/tools/run.ps1",
+            CliArgv {
+                program: PathBuf::from("powershell.exe"),
+                args: os(&[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    "C:/tools/run.ps1",
+                    "/proc/self/fd/17",
+                    "--trust",
+                    "acp",
+                ]),
+            },
+        ),
+    ];
+    for (interpreter, expected) in cases {
+        let exe = CliExecutable::interpreted(
+            PathBuf::from(interpreter),
+            vec![OsString::from("/proc/self/fd/17")],
+        );
+        assert_eq!(exe.plan(["--trust", "acp"]).unwrap(), expected);
+    }
+    let cmd = CliExecutable::interpreted(PathBuf::from("C:/tools/run.cmd"), Vec::new());
+    assert_eq!(
+        cmd.plan(["ok\nbad"]).unwrap_err(),
+        CliExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
+    );
+}

@@ -1,9 +1,9 @@
-//! Cursor Agent tool names accepted on `--allowed-tools`.
+//! Cursor Agent tool names a `runtime: cursor` agent may declare.
 //!
-//! Closed set: Rho only puts names it has classified on argv, because
-//! `cursor-agent -p` is full-power by default and `--exclude-tools` does not
-//! fence. An allow list is therefore mandatory, and unknown names never reach
-//! the child.
+//! Closed set: Rho derives Cursor's per-run fence (config denies plus
+//! permission answers, see `cursor_runtime::acp_config`) only from names it
+//! has classified. Cursor enables every tool by default, so a nonempty list is
+//! mandatory and unknown names are rejected at parse time.
 //!
 //! Deliberately absent:
 //! - `task_tool_call` (nested fan-out)
@@ -16,7 +16,7 @@ use std::{fmt, str::FromStr};
 use rho_sdk::CapabilityKind;
 use thiserror::Error;
 
-/// Cursor Agent tool names accepted on `--allowed-tools`.
+/// Cursor Agent tool names Rho has classified for fencing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CursorTool {
     Read,
@@ -65,7 +65,7 @@ impl CursorTool {
         Self::ApplyAgentDiff,
     ];
 
-    /// Exact snake_case name passed to `--allowed-tools`.
+    /// Exact snake_case Cursor tool name, as written in agent definitions.
     pub fn as_flag(self) -> &'static str {
         match self {
             Self::Read => "read_tool_call",

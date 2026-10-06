@@ -182,29 +182,3 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
     assert_ne!(host_after.model, "opus");
     assert_ne!(host_after.provider, "claude-code");
 }
-
-// Covers: Cursor children are process-per-turn and reject parent messages.
-// Owner: delegated agent executor
-#[tokio::test]
-async fn cursor_child_refuses_parent_messages() {
-    use pretty_assertions::assert_eq;
-
-    let (_status_tx, status_rx) = tokio::sync::watch::channel(RunStatus::default());
-    let (_completion_tx, completion_rx) = tokio::sync::watch::channel(false);
-    let handle = AgentRunHandle {
-        cancellation: RunCancellation::new(),
-        status: status_rx,
-        completion: completion_rx,
-        messaging: MessagingSupport::Unsupported,
-    };
-    let error = handle
-        .message_from_parent(
-            &crate::app::subagent_messaging::ValidatedMessage::parse("steer").unwrap(),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "cursor runs are process-per-turn and cannot accept messages; wait for completion"
-    );
-}

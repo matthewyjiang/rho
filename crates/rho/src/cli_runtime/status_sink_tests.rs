@@ -16,7 +16,7 @@ use crate::{
 const TEST_LABEL: RuntimeLabel = RuntimeLabel {
     starting_activity: "starting claude",
     program: "claude code",
-    resume_command: "claude",
+    resume_command: Some("claude"),
     session_label: "claude session",
     cost_label: "claude cost",
 };

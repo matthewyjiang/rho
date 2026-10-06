@@ -73,7 +73,7 @@ fn switching_to_claude_cli_resets_incompatible_fields() {
 }
 
 // Covers: switching to cursor drops reasoning and starts with no tools so
-// save cannot emit an unrestricted cursor-agent -p allow list.
+// save cannot emit an unfenced Cursor agent.
 // Owner: agent edit
 #[test]
 fn switching_to_cursor_resets_reasoning_and_requires_tools() {

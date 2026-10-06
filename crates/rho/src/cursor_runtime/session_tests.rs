@@ -1,38 +1,4 @@
-#[cfg(unix)]
-use crate::agent::PromptPolicy;
-#[cfg(unix)]
-use crate::subagent;
-
 use super::*;
-
-#[cfg(unix)]
-fn system_prompt() -> PromptPolicy {
-    PromptPolicy::Extend(String::new())
-}
-
-#[cfg(unix)]
-fn logged_in() -> CursorAuthStatus {
-    CursorAuthStatus {
-        status: "authenticated".into(),
-        is_authenticated: true,
-        message: None,
-        user_info: Some(super::auth::CursorUserInfo {
-            email: Some("t@example.com".into()),
-        }),
-    }
-}
-
-#[cfg(unix)]
-fn cursor_identity() -> RunArtifactIdentity {
-    RunArtifactIdentity {
-        agent_id: "cursor-worker".into(),
-        agent_fingerprint: "fp".into(),
-        provider: "cursor".into(),
-        model: Some("composer-2.5".into()),
-        runtime: crate::agent::AgentRuntime::Cursor,
-        reasoning: None,
-    }
-}
 
 // Covers: a pinned Cursor model missing from a non-empty cache warns at
 // preflight and still launches.
@@ -70,7 +36,3 @@ fn unknown_cached_model_warns() {
         assert_eq!(unknown_cursor_model_warning(None), None);
     });
 }
-
-#[cfg(unix)]
-#[path = "session_process_tests.rs"]
-mod unix_fake_matrix;

@@ -187,7 +187,7 @@ Full guide: [Claude Code as a delegated runtime](/subagents/claude-cli).
 
 Rho can hand a **delegated** agent to the installed `cursor-agent` binary so a child run can use a Cursor sign-in while the parent stays in Rho. This is not available as the root session runtime.
 
-Quick path: install `cursor-agent`, run `/login cursor`, define an agent with `runtime: cursor` and a nonempty classified `tools:` list, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind. Cursor children cannot be messaged (process-per-turn).
+Quick path: install `cursor-agent`, run `/login cursor`, define an agent with `runtime: cursor` and a nonempty classified `tools:` list, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind. Rho drives Cursor over ACP; parent messages arrive as the child's next turn.
 
 Full guide: [Cursor Agent as a delegated runtime](/subagents/cursor).
 

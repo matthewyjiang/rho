@@ -59,12 +59,11 @@ pub(crate) struct FrozenAgentLaunchRequest {
 enum MessagingSupport {
     /// Rho runtime: steering port is published once the session starts.
     Rho { steering: SteeringSlot },
-    /// Claude-cli runtime: stream-json stdin turns while the child is live.
-    Claude {
-        messages: crate::claude_runtime::messaging::ClaudeMessageHandle,
+    /// External CLI runtimes: queued text delivered as the child's next turn
+    /// (Claude stream-json stdin turn, Cursor ACP `session/prompt`).
+    Queued {
+        messages: crate::cli_runtime::parent_messages::ParentMessageHandle,
     },
-    /// Cursor runtime: one prompt on stdin, then the process ends.
-    Unsupported,
 }
 
 /// Exhaustive launch target after bind. The session task matches this instead
@@ -79,7 +78,7 @@ enum Launch {
 struct RuntimeMessagingPorts {
     messaging: MessagingSupport,
     steering_slot: Option<SteeringSlot>,
-    claude_parent_rx: Option<crate::claude_runtime::messaging::ClaudeMessageInbox>,
+    parent_rx: Option<crate::cli_runtime::parent_messages::ParentMessageInbox>,
 }
 
 impl MessagingSupport {
@@ -87,12 +86,13 @@ impl MessagingSupport {
     /// handle and session task cannot disagree about which path is live.
     fn for_runtime(runtime: &super::agent_binding::BoundRuntime) -> RuntimeMessagingPorts {
         match runtime {
-            super::agent_binding::BoundRuntime::ClaudeCli { .. } => {
-                let (handle, inbox) = crate::claude_runtime::messaging::message_channel();
+            super::agent_binding::BoundRuntime::ClaudeCli { .. }
+            | super::agent_binding::BoundRuntime::Cursor { .. } => {
+                let (handle, inbox) = crate::cli_runtime::parent_messages::message_channel();
                 RuntimeMessagingPorts {
-                    messaging: Self::Claude { messages: handle },
+                    messaging: Self::Queued { messages: handle },
                     steering_slot: None,
-                    claude_parent_rx: Some(inbox),
+                    parent_rx: Some(inbox),
                 }
             }
             super::agent_binding::BoundRuntime::Rho { .. } => {
@@ -102,14 +102,9 @@ impl MessagingSupport {
                         steering: steering.clone(),
                     },
                     steering_slot: Some(steering),
-                    claude_parent_rx: None,
+                    parent_rx: None,
                 }
             }
-            super::agent_binding::BoundRuntime::Cursor { .. } => RuntimeMessagingPorts {
-                messaging: Self::Unsupported,
-                steering_slot: None,
-                claude_parent_rx: None,
-            },
         }
     }
 }
@@ -149,7 +144,7 @@ impl AgentRunHandle {
         self.status.clone()
     }
 
-    /// Stages a parent message for the next Rho provider turn or Claude stdin turn.
+    /// Stages a parent message for the next Rho provider turn or CLI child turn.
     pub(crate) async fn message_from_parent(
         &self,
         message: &ValidatedMessage,
@@ -161,19 +156,15 @@ impl AgentRunHandle {
                 }
                 steering.send(message).await
             }
-            MessagingSupport::Claude { messages } => {
+            MessagingSupport::Queued { messages } => {
                 if self.is_complete() {
                     anyhow::bail!("delegated run has already finished");
                 }
                 // Drain frames the body the same way Rho steering does.
                 messages
                     .send(message.as_str().to_string())
-                    .await
                     .map_err(|error| anyhow::anyhow!("{error}"))
             }
-            MessagingSupport::Unsupported => anyhow::bail!(
-                "cursor runs are process-per-turn and cannot accept messages; wait for completion"
-            ),
         }
     }
 
@@ -183,11 +174,14 @@ impl AgentRunHandle {
         completion: tokio::sync::watch::Receiver<bool>,
         cancellation: RunCancellation,
     ) -> Self {
+        let (messages, inbox) = crate::cli_runtime::parent_messages::message_channel();
+        // No child reads this inbox; parent messages fail closed.
+        drop(inbox);
         Self {
             cancellation,
             status,
             completion,
-            messaging: MessagingSupport::Unsupported,
+            messaging: MessagingSupport::Queued { messages },
         }
     }
 
@@ -195,14 +189,14 @@ impl AgentRunHandle {
     pub(crate) fn completed_for_test(status: RunStatus) -> Self {
         let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
         let (_completion_tx, completion_rx) = tokio::sync::watch::channel(true);
-        let (messages, inbox) = crate::claude_runtime::messaging::message_channel();
+        let (messages, inbox) = crate::cli_runtime::parent_messages::message_channel();
         // Drop the inbox so late parent messages fail closed like a finished run.
         drop(inbox);
         Self {
             cancellation: RunCancellation::new(),
             status: status_rx,
             completion: completion_rx,
-            messaging: MessagingSupport::Claude { messages },
+            messaging: MessagingSupport::Queued { messages },
         }
     }
 }
@@ -428,7 +422,7 @@ impl AgentExecutor {
         let RuntimeMessagingPorts {
             messaging,
             steering_slot,
-            claude_parent_rx,
+            parent_rx,
         } = MessagingSupport::for_runtime(bound.runtime());
 
         let mut initial = bound.artifact_identity().starting_status();
@@ -506,7 +500,7 @@ impl AgentExecutor {
             ) {
                 Launch::ClaudeCli(mut session) => {
                     append_child_communication_contract(&mut session.system_prompt);
-                    session.parent_messages = claude_parent_rx;
+                    session.parent_messages = parent_rx;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
                         apply_frozen(&mut session.overrides, frozen);
@@ -515,6 +509,7 @@ impl AgentExecutor {
                 }
                 Launch::Cursor(mut session) => {
                     append_child_communication_contract(&mut session.system_prompt);
+                    session.parent_messages = parent_rx;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
                         apply_frozen(&mut session.overrides, frozen);
@@ -609,7 +604,10 @@ struct BoundLaunchRequest {
 }
 
 struct FrozenCliLaunch {
-    executable: PathBuf,
+    /// Frozen image, wrapped in its interpreter when the binary is a script.
+    executable: crate::cli_runtime::CliExecutable,
+    /// The CLI's own frozen argv; never contains the interpreter prefix, so
+    /// runtimes can regenerate argv and overlay identity flags from it.
     arguments: Vec<String>,
     executable_identity: crate::workflow::ExecutableIdentity,
     // Keep descriptor-backed paths alive until the child has exited.
@@ -626,23 +624,24 @@ fn frozen_cli_launch(agent: crate::workflow::ResolvedAgent) -> anyhow::Result<Fr
         &verified_executable.executable.file,
         std::path::Path::new(&identity.file.canonical_path),
     )?;
-    let mut arguments = agent.arguments;
     let executable = if let Some(interpreter) = &verified_executable.interpreter {
         let interpreter_path = crate::workflow::verified_handle_path(
             &interpreter.file,
             std::path::Path::new(&interpreter.identity.canonical_path),
         )?;
-        let mut interpreter_arguments = verified_executable.interpreter_arguments.clone();
-        interpreter_arguments.push(crate::paths::display(&script_path));
-        interpreter_arguments.extend(arguments);
-        arguments = interpreter_arguments;
-        interpreter_path
+        let leading_args = verified_executable
+            .interpreter_arguments
+            .iter()
+            .map(std::ffi::OsString::from)
+            .chain([script_path.into_os_string()])
+            .collect();
+        crate::cli_runtime::CliExecutable::interpreted(interpreter_path, leading_args)
     } else {
-        script_path
+        crate::cli_runtime::CliExecutable::from_path(script_path)
     };
     Ok(FrozenCliLaunch {
         executable,
-        arguments,
+        arguments: agent.arguments,
         executable_identity: identity.clone(),
         _verified_executable: verified_executable,
     })
@@ -689,9 +688,7 @@ fn into_launch(
 fn apply_frozen(overrides: &mut crate::cli_runtime::CliSessionOverrides, frozen: FrozenCliLaunch) {
     let expected_identity = frozen.executable_identity;
     let verified_executable = frozen._verified_executable;
-    overrides.executable = Some(crate::cli_runtime::CliExecutable::from_path(
-        frozen.executable,
-    ));
+    overrides.executable = Some(frozen.executable);
     overrides.frozen_argv = Some(frozen.arguments);
     overrides.before_spawn = Some(Box::new(move |command| {
         crate::workflow::verify_executable_identity(&expected_identity)

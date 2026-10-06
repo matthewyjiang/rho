@@ -323,7 +323,6 @@ fn resolve_agent(
             let plan = crate::cursor_runtime::spawn::build_spawn_plan(
                 &crate::cursor_runtime::spawn::CursorSpawnRequest {
                     model: model.clone(),
-                    allowed,
                     cwd: host.workspace().to_path_buf(),
                 },
             );
@@ -360,9 +359,13 @@ fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeS
 
 fn resolve_executable_path(executable: &str, workspace: &Path) -> anyhow::Result<PathBuf> {
     let path = Path::new(executable);
+    // Every branch canonicalizes: validation requires the frozen path to equal
+    // the identity's canonical path, and PATH entries are often symlinks
+    // (`~/.local/bin/cursor-agent -> versions/<v>/cursor-agent`).
     let resolved = if path.components().count() == 1 {
         crate::executable::find_on_path(executable)
             .ok_or_else(|| anyhow::anyhow!("executable '{executable}' was not found on PATH"))?
+            .canonicalize()?
     } else if path.is_absolute() {
         path.canonicalize()?
     } else {

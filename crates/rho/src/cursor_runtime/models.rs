@@ -35,7 +35,8 @@ pub(crate) const CURSOR_PROGRAM_LABEL: &str = "cursor";
 pub(crate) const CURSOR_LABEL: RuntimeLabel = RuntimeLabel {
     starting_activity: "starting cursor",
     program: CURSOR_PROGRAM_LABEL,
-    resume_command: CURSOR_PROGRAM,
+    // The ACP sessionId is not a `cursor-agent --resume` id (spike 2026-10-05).
+    resume_command: None,
     session_label: "cursor session",
     cost_label: "cursor cost",
 };

@@ -475,7 +475,7 @@ fn parse_runtime_spec(
                         path.to_path_buf(),
                         "tools",
                         format!(
-                            "runtime: cursor does not support tools: all; cursor-agent -p is full-power by default and --exclude-tools does not fence, so list closed snake_case names, for example {CURSOR_TOOLS_EXAMPLE}"
+                            "runtime: cursor does not support tools: all; Cursor enables every tool by default and Rho fences only classified names, so list closed snake_case names, for example {CURSOR_TOOLS_EXAMPLE}"
                         ),
                     ))
                 }
