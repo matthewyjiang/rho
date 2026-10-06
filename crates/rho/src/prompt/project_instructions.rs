@@ -1,4 +1,4 @@
-//! Cached AGENTS.md context, refreshed only at the new-session boundary.
+//! Cached AGENTS.md context, refreshed when entering a different session.
 
 use std::path::{Path, PathBuf};
 
@@ -7,15 +7,13 @@ use super::{agent_instruction_files, push_context_file, PromptSource, PromptSour
 #[derive(Clone)]
 pub(super) struct ProjectInstructions {
     cwd: PathBuf,
-    pub(super) retained_offset: usize,
     files: Vec<(PathBuf, String)>,
 }
 
 impl ProjectInstructions {
-    pub(super) fn new(cwd: &Path, home: Option<&Path>, retained_offset: usize) -> Self {
+    pub(super) fn new(cwd: &Path, home: Option<&Path>) -> Self {
         Self {
             cwd: cwd.to_path_buf(),
-            retained_offset,
             files: agent_instruction_files(cwd, home),
         }
     }
@@ -33,19 +31,14 @@ impl ProjectInstructions {
             "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n",
         );
         sources[0].bytes += text.len() - start;
-        let index = sources
-            .iter()
-            .position(|source| source.kind == PromptSourceKind::Skills)
-            .unwrap_or(sources.len());
-        let instruction_sources = self.files.iter().map(|(path, contents)| {
+        for (path, contents) in &self.files {
             let start = text.len();
             push_context_file(text, "agents_instructions", path, contents);
-            PromptSource {
+            sources.push(PromptSource {
                 kind: PromptSourceKind::Agents,
                 path: Some(path.display().to_string()),
                 bytes: text.len() - start,
-            }
-        });
-        drop(sources.splice(index..index, instruction_sources));
+            });
+        }
     }
 }

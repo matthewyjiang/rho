@@ -8,7 +8,7 @@ pub(crate) mod model_prompt_edit;
 mod model_prompt_template;
 pub(crate) mod model_prompts;
 mod project_instructions;
-pub(crate) use model_prompt_template::ModelPromptTemplate;
+pub(crate) use model_prompt_template::{ModelPromptTemplate, PromptSession};
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -212,13 +212,15 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
         );
     }
 
-    let mut sources = vec![PromptSource {
+    let sources = vec![PromptSource {
         kind: PromptSourceKind::Base,
         path: None,
         bytes: text.len(),
     }];
-
-    let instruction_offset = text.len();
+    let mut template =
+        ModelPromptTemplate::new(home, before_model, text, sources).with_project_instructions(cwd);
+    let mut text = String::new();
+    let mut sources = Vec::new();
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
         match plugin_skills {
@@ -259,8 +261,8 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
         });
     }
 
-    ModelPromptTemplate::new(home, before_model, text, sources)
-        .with_project_instructions(cwd, instruction_offset)
+    template.append_section(text, sources);
+    template
 }
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {

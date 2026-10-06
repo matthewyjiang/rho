@@ -73,7 +73,7 @@ Run `/init` in the [interactive TUI](/interactive-tui#commands) to survey the re
 
 `/init` starts a model turn using a built-in skill and the active agent's file tools. It is unavailable during a running turn, in Plan permission mode, or when the active agent lacks the required skill, write, or file-edit tools. Normal write permissions still apply.
 
-Instructions are cached for the current session. After `/init` or a manual instruction edit, run `/new` to re-read the global and project files, or restart Rho. Model switches do not reload `AGENTS.md`. `--no-system-prompt` omits instruction files entirely.
+Instructions are cached for the current session and re-read from disk whenever you start or switch to a different session: `/new` (or `/clear`), `/resume` of another session, or cross-session tree selection. After `/init` or a manual instruction edit, start or switch sessions to load the updated global and project files, or restart Rho. Model switches and same-session tree navigation do not reload `AGENTS.md`. `--no-system-prompt` omits instruction files entirely.
 
 ## CLI overrides
 

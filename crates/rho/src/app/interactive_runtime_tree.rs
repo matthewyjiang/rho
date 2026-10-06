@@ -18,7 +18,8 @@ impl InteractiveRuntime {
         }
         let identity = self.provider.provider().identity();
         let id = storage.id().to_string();
-        let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
+        let prepared = self.prepare_session_prompt(self.prompt_session(storage.id()))?;
+        let prepared_prompt = prepared.prompt;
         let snapshot =
             storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
         let resume_omission = resume_omissions_report(&snapshot, &identity);
@@ -83,6 +84,7 @@ impl InteractiveRuntime {
         if let Some(prompt) = prepared_prompt {
             self.adopt_model_prompt(prompt);
         }
+        self.prompt_template = prepared.template;
         if let Some(notice) = prompt_notice {
             self.sessions.queue_notice(notice);
         }

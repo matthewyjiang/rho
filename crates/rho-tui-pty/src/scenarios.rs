@@ -41,6 +41,7 @@ mod hooks;
 mod hover_clicks;
 mod init_command;
 mod inline_choice_click;
+mod inline_shell;
 mod limits;
 mod line_editor;
 mod login;
@@ -136,7 +137,8 @@ use goal::{
 };
 use header_hints::HEADER_HINTS_SCENARIO;
 use hooks::HOOKS_CONTRACT_SCENARIO;
-use init_command::{INIT_COMMAND_SCENARIO, INIT_PLAN_SCENARIO};
+use init_command::{INIT_COMMAND_SCENARIO, INIT_EXISTING_SCENARIO, INIT_PLAN_SCENARIO};
+use inline_shell::INLINE_SHELL_DURING_TURN_SCENARIO;
 use limits::LIMITS_OVERLAY_SCENARIO;
 use login::{
     LOGIN_CUSTOM_PROVIDER_STEPS, LOGIN_OAUTH_FLOW_CHOICE_SCENARIO, LOGIN_OLLAMA_STEPS,
@@ -236,64 +238,6 @@ const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::WaitText {
         text: "fixture response: hello after cancel",
         timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-const INLINE_SHELL_DURING_TURN_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("!!printf idle-stream-%s start; sleep 2; printf idle-stream-%s end"),
-    Step::WaitText {
-        text: "idle-stream-start",
-        timeout: STREAM,
-    },
-    Step::Custom(assert_idle_shell_still_streaming),
-    Step::WaitText {
-        text: "idle-stream-end",
-        timeout: STREAM,
-    },
-    Step::SubmitText("!!printf cancel-%s started; sleep 1; printf cancel-%s escaped-output"),
-    Step::WaitText {
-        text: "cancel-started",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "cancelled",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(1_200),
-        timeout: STREAM,
-    },
-    Step::Custom(assert_inline_shell_cancelled),
-    Step::SubmitText("fixture delay"),
-    Step::WaitText {
-        text: "partial assistant before cancellation",
-        timeout: STREAM,
-    },
-    Step::SubmitText("!!printf streamed-%s start; sleep 1; printf streamed-%s end"),
-    Step::WaitText {
-        text: "streamed-start",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "streamed-end",
-        timeout: STREAM,
-    },
-    Step::SubmitText("!printf context-%s during-turn"),
-    Step::WaitText {
-        text: "context-during-turn",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
     },
     Step::ExitCommand,
 ];
@@ -425,6 +369,7 @@ const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
     INIT_COMMAND_SCENARIO,
+    INIT_EXISTING_SCENARIO,
     INIT_PLAN_SCENARIO,
     STARTUP_FIRST_FRAME_SCENARIO,
     STARTUP_STREAM_EXIT_SCENARIO,
@@ -444,13 +389,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         CANCEL_AND_RESUBMIT_STEPS,
         true,
     ),
-    Scenario::new(
-        "inline_shell_during_turn",
-        "Run local and context shell commands during an active turn",
-        DEFAULT_SIZE,
-        INLINE_SHELL_DURING_TURN_STEPS,
-        false,
-    ),
+    INLINE_SHELL_DURING_TURN_SCENARIO,
     Scenario::new(
         "type_during_stream",
         "Keep composer input responsive; overlay Esc must not abort, empty Esc must",
@@ -993,6 +932,4 @@ use fixture_release::release_fixture;
 
 pub use dispatch::run_named;
 
-use assert_helpers::{
-    assert_idle_shell_still_streaming, assert_inline_shell_cancelled, assert_terminal_restored,
-};
+use assert_helpers::assert_terminal_restored;

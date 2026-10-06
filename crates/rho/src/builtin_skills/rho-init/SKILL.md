@@ -27,4 +27,4 @@ If the target does not exist, create it with `write`. If it already exists, pres
 
 ## Finish
 
-Tell the user the final `AGENTS.md` path and briefly summarize what changed. Tell them to run `/new` to reload instructions from disk; the current session's instructions remain unchanged until then (or the next Rho start).
+Tell the user the final `AGENTS.md` path and briefly summarize what changed. Instructions are re-read from disk when they start or switch to a different session (`/new`, `/resume`, or cross-session tree selection), or restart Rho. The current session keeps its cached instructions, including on model switches and same-session tree navigation.
