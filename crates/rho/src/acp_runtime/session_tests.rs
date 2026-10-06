@@ -91,99 +91,85 @@ async fn successful_turn_has_one_terminal_write() {
             vec![AttachmentEvent::Completed]
         )
     );
+    // The method sequence is asserted end to end by the Cursor PTY scenario;
+    // here only the exact session/new and prompt payloads.
     let record = record.lock().unwrap();
     assert_eq!(
-        record
-            .requests
-            .iter()
-            .map(|request| request["method"].clone())
-            .collect::<Vec<_>>(),
-        vec![
-            json!("initialize"),
-            json!("session/new"),
-            json!("session/prompt")
+        record.requests[1..],
+        [
+            json!({"method":"session/new", "params":{"cwd":dir.path(),"mcpServers":[]}}),
+            json!({"method":"session/prompt", "params":{"sessionId":"scripted-session", "prompt":[{"type":"text", "text":"task"}]}}),
         ]
-    );
-    assert_eq!(
-        record.requests[1],
-        json!({"method":"session/new", "params":{"cwd":dir.path(),"mcpServers":[]}})
-    );
-    assert_eq!(
-        record.requests[2],
-        json!({"method":"session/prompt", "params":{"sessionId":"scripted-session", "prompt":[{"type":"text", "text":"task"}]}})
     );
 }
 
-// Covers: the chosen permission id reaches the agent, and Cursor-style completed
-// rejection updates cannot masquerade as successful tool execution.
-// Owner: ACP request/update loop; selection's security table is tested separately.
+// Covers: a rejected request answers with the agent's own reject option id,
+// and Cursor's later `completed` update for that call cannot masquerade as a
+// successful tool run. The allow path is covered end to end by the Cursor PTY
+// scenario. Owner: ACP request/update loop; the selection table is separate.
 #[tokio::test]
-async fn permission_reply_and_rejected_completion_follow_policy() {
-    for (decision, id, status) in [
-        (PermissionDecision::AllowOnce, "opaque-yes", ToolStatus::Ok),
-        (PermissionDecision::Reject, "opaque-no", ToolStatus::Error),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let mut policy = TestPolicy::new(dir.path());
-        policy.decision = decision;
-        let call = ToolCall::new("shell-1", "run").kind(ToolKind::Execute);
-        let permission = Step::Permission {
-            call: Box::new(ToolCallUpdate::new(
-                "shell-1",
-                ToolCallUpdateFields::new().kind(ToolKind::Execute),
-            )),
-            options: vec![
-                PermissionOption::new("opaque-yes", "yes", PermissionOptionKind::AllowOnce),
-                PermissionOption::new("opaque-no", "no", PermissionOptionKind::RejectOnce),
-            ],
-        };
-        let completed = ToolCallUpdate::new(
+async fn rejected_permission_replies_and_fails_the_completed_card() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut policy = TestPolicy::new(dir.path());
+    policy.decision = PermissionDecision::Reject;
+    let permission = Step::Permission {
+        call: Box::new(ToolCallUpdate::new(
             "shell-1",
-            ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
-        );
-        let record = exercise(
-            request(dir.path(), None),
-            policy,
-            script(vec![vec![
-                update(SessionUpdate::ToolCall(call)),
-                permission,
-                update(SessionUpdate::ToolCallUpdate(completed)),
-                text("done"),
-                stop(),
-            ]]),
-        )
-        .await;
-        assert_eq!(
-            record.lock().unwrap().replies,
-            vec![
-                json!({"method":"session/request_permission", "result":{"outcome":{"outcome":"selected", "optionId":id}}})
-            ]
-        );
-        let (run, events) = read_artifacts(dir.path());
-        assert_eq!(run.state, RunState::Ok);
-        let mut card = ToolCard::new(
-            status,
-            ToolFamily::FileCommand,
-            ToolHeader::call("Execute", Some("run".into())),
-        );
-        if status == ToolStatus::Error {
-            card.body = ToolBody::Lines(vec!["rejected by Rho permission policy".into()]);
-            card.push_fact(ToolFact::Error {
-                text: "rejected by Rho permission policy".into(),
-            });
-        }
-        let finished = events
-            .into_iter()
-            .filter(|event| matches!(event, AttachmentEvent::ToolFinished { .. }))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            finished,
+            ToolCallUpdateFields::new().kind(ToolKind::Execute),
+        )),
+        options: vec![
+            PermissionOption::new("opaque-yes", "yes", PermissionOptionKind::AllowOnce),
+            PermissionOption::new("opaque-no", "no", PermissionOptionKind::RejectOnce),
+        ],
+    };
+    let completed = ToolCallUpdate::new(
+        "shell-1",
+        ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+    );
+    let record = exercise(
+        request(dir.path(), None),
+        policy,
+        script(vec![vec![
+            update(SessionUpdate::ToolCall(
+                ToolCall::new("shell-1", "run").kind(ToolKind::Execute),
+            )),
+            permission,
+            update(SessionUpdate::ToolCallUpdate(completed)),
+            text("done"),
+            stop(),
+        ]]),
+    )
+    .await;
+    assert_eq!(
+        record.lock().unwrap().replies,
+        vec![
+            json!({"method":"session/request_permission", "result":{"outcome":{"outcome":"selected", "optionId":"opaque-no"}}})
+        ]
+    );
+    let (run, events) = read_artifacts(dir.path());
+    let mut card = ToolCard::new(
+        ToolStatus::Error,
+        ToolFamily::FileCommand,
+        ToolHeader::call("Execute", Some("run".into())),
+    );
+    card.body = ToolBody::Lines(vec!["rejected by Rho permission policy".into()]);
+    card.push_fact(ToolFact::Error {
+        text: "rejected by Rho permission policy".into(),
+    });
+    let finished = events
+        .into_iter()
+        .filter(|event| matches!(event, AttachmentEvent::ToolFinished { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (run.state, finished),
+        (
+            RunState::Ok,
             vec![AttachmentEvent::ToolFinished {
                 key: Some("shell-1".into()),
                 presentation: card.into()
             }]
-        );
-    }
+        )
+    );
 }
 
 // Covers: a blocking non-underscore/no-sessionId extension receives either a

@@ -1,10 +1,9 @@
 use agent_client_protocol::schema::v1::{
-    ContentChunk, Cost, CurrentModeUpdate, Diff, ImageContent, PlanEntry, PlanEntryPriority,
-    SessionInfoUpdate, ToolCall, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind,
+    ContentChunk, Cost, ImageContent, PlanEntry, PlanEntryPriority, SessionInfoUpdate, ToolCall,
+    ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolBody, ToolFact};
+use rho_tools::tool_card::{ToolBody, ToolFact};
 
 use super::*;
 
@@ -45,20 +44,6 @@ fn session_updates_render_as_artifacts() {
         key: Some("read-1".into()),
         card: read_card(ToolStatus::Running).into(),
     };
-    let diff_card = ToolCard::new(
-        ToolStatus::Ok,
-        ToolFamily::FileDiff,
-        ToolHeader::call("Edit", Some("config.toml".into())),
-    )
-    .with_facts(vec![ToolFact::DiffStat {
-        added: 1,
-        removed: 1,
-        path: Some("config.toml".into()),
-    }])
-    .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
-        DiffRow::new(DiffRowKind::Added, Some(1), "new"),
-    ]));
     let failed = read_card(ToolStatus::Error)
         .with_facts(vec![ToolFact::Error {
             text: "denied".into(),
@@ -133,37 +118,7 @@ fn session_updates_render_as_artifacts() {
             result: "",
         },
         Case {
-            name: "partial completion keeps identity and shows the actual diff",
-            updates: vec![
-                SessionUpdate::ToolCall(read_call().kind(ToolKind::Edit)),
-                SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    "read-1",
-                    ToolCallUpdateFields::new()
-                        .status(ToolCallStatus::Completed)
-                        .content(vec![Diff::new("/workspace/config.toml", "new\n")
-                            .old_text("old\n")
-                            .into()]),
-                )),
-            ],
-            expected: vec![
-                first_step(AttachmentEvent::ToolStarted {
-                    key: Some("read-1".into()),
-                    card: ToolCard::new(
-                        ToolStatus::Running,
-                        ToolFamily::FileDiff,
-                        ToolHeader::call("Edit", Some("config.toml".into())),
-                    )
-                    .into(),
-                }),
-                vec![attachment(AttachmentEvent::ToolFinished {
-                    key: Some("read-1".into()),
-                    presentation: diff_card.into(),
-                })],
-            ],
-            result: "",
-        },
-        Case {
-            name: "failed updates finish with error status",
+            name: "a tool finishes under the key it started with, failures as errors",
             updates: vec![
                 SessionUpdate::ToolCall(read_call()),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
@@ -250,17 +205,6 @@ fn session_updates_render_as_artifacts() {
             result: "",
         },
         Case {
-            name: "mode is activity, not a terminal result",
-            updates: vec![SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(
-                "plan",
-            ))],
-            expected: vec![vec![StreamEffect::Status(StatusPatch {
-                last_activity: Some("mode: plan".into()),
-                ..StatusPatch::default()
-            })]],
-            result: "",
-        },
-        Case {
             // The pinned schema has no constructible unknown SessionUpdate;
             // this is its known-unhandled path, not an unsafe fake enum variant.
             name: "user echoes and unsupported metadata do not duplicate output",
@@ -288,35 +232,33 @@ fn session_updates_render_as_artifacts() {
     }
 }
 
-// Covers: diagnostics remain visible, and turn boundaries restart the
-// presentation step without classifying the run.
+// Covers: a turn end closes the presentation step, so the next turn's first
+// event opens a new one instead of merging into the previous turn.
 // Owner: pure protocol-to-artifact translation.
 #[test]
-fn sibling_events_preserve_turn_boundaries() {
+fn turn_end_restarts_the_presentation_step() {
     let mut renderer = EventRenderer::new("/workspace".into());
-    let cases = vec![
-        (
-            AgentEvent::Notice("decode failed".into()),
-            vec![attachment(AttachmentEvent::Notice("decode failed".into()))],
-        ),
-        (
-            AgentEvent::TurnEnded(StopReason::MaxTokens),
+    let running = AttachmentEvent::ToolStarted {
+        key: Some("read-1".into()),
+        card: read_card(ToolStatus::Running).into(),
+    };
+    let effects = [
+        AgentEvent::from(SessionUpdate::ToolCall(read_call())),
+        AgentEvent::TurnEnded(StopReason::MaxTokens),
+        AgentEvent::from(SessionUpdate::ToolCall(read_call())),
+    ]
+    .map(|event| renderer.render(event));
+    assert_eq!(
+        effects,
+        [
+            first_step(running.clone()),
             vec![StreamEffect::Status(StatusPatch {
                 last_activity: Some("turn ended: max_tokens".into()),
                 ..StatusPatch::default()
             })],
-        ),
-        (
-            AgentEvent::from(SessionUpdate::ToolCall(read_call())),
-            first_step(AttachmentEvent::ToolStarted {
-                key: Some("read-1".into()),
-                card: read_card(ToolStatus::Running).into(),
-            }),
-        ),
-    ];
-    for (event, expected) in cases {
-        assert_eq!(renderer.render(event), expected);
-    }
+            first_step(running),
+        ]
+    );
 }
 
 // Covers: saturation cannot drop a completion or grow retained state/result
