@@ -19,6 +19,11 @@ use crate::config_writer::{self, edit_lock::acquire_lock_file};
 /// The lock lives under `lock_dir` (Rho's data directory), not beside the
 /// file: a sidecar in a repository root would show up in `git status`.
 pub(crate) fn append_instruction(path: &Path, lock_dir: &Path, text: &str) -> Result<()> {
+    // Create the parent first so every caller canonicalizes the same
+    // directory into the same lock key, even on the first write.
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let _lock = acquire_lock_file(&instruction_lock_path(path, lock_dir)).map_err(|error| {
         if error.kind() == ErrorKind::WouldBlock {
             anyhow::anyhow!("another session is saving instructions; retry")
@@ -45,9 +50,6 @@ pub(crate) fn append_instruction(path: &Path, lock_dir: &Path, text: &str) -> Re
     if existing.is_none() {
         // AGENTS.md is shared project text, not a secret: create it with the
         // process umask like any editor would, then fill it atomically.
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         OpenOptions::new().write(true).create_new(true).open(path)?;
     }
     config_writer::replace_regular_file_atomically(path, contents.as_bytes())?;
