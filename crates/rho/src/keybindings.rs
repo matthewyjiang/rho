@@ -190,19 +190,66 @@ impl<'de> Deserialize<'de> for Keybindings {
                 )));
             }
         }
-        if keybindings.cycle_permission_mode == Self::queue_prompt_fallback()
-            || keybindings.cycle_permission_mode == KeyBinding::alt(KeyCode::Char('v'))
-            || keybindings.cycle_permission_mode
-                == (KeyBinding {
-                    modifiers: KeyModifiers::SHIFT,
-                    code: KeyCode::Tab,
-                })
+        let binding = &keybindings.cycle_permission_mode;
+        if let Some(reserved) =
+            ReservedComposerKey::from_key(KeyEvent::new(binding.code, binding.modifiers))
         {
-            return Err(serde::de::Error::custom(
-                "cycle_permission_mode conflicts with a reserved composer key",
-            ));
+            return Err(serde::de::Error::custom(format!(
+                "cycle_permission_mode = \"{binding}\" conflicts with a reserved composer key: {}",
+                reserved.reason()
+            )));
         }
         Ok(keybindings)
+    }
+}
+
+/// Fixed composer key classes that a configurable shortcut must not shadow.
+/// Shared with dispatch so modifier-insensitive handlers stay in sync with validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReservedComposerKey {
+    ReasoningCycle,
+    TabCompletion,
+    HistoryPageUp,
+    HistoryPageDown,
+    TextInput(char),
+    QueuePromptFallback,
+    PasteImageFallback,
+}
+
+impl ReservedComposerKey {
+    pub(crate) fn from_key(key: KeyEvent) -> Option<Self> {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::BackTab) => Some(Self::ReasoningCycle),
+            (modifiers, KeyCode::Tab) if modifiers.contains(KeyModifiers::SHIFT) => {
+                Some(Self::ReasoningCycle)
+            }
+            (_, KeyCode::Tab) => Some(Self::TabCompletion),
+            (_, KeyCode::PageUp) => Some(Self::HistoryPageUp),
+            (_, KeyCode::PageDown) => Some(Self::HistoryPageDown),
+            (modifiers, KeyCode::Char(ch))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Some(Self::TextInput(ch))
+            }
+            _ if Keybindings::queue_prompt_fallback().matches(key) => {
+                Some(Self::QueuePromptFallback)
+            }
+            (KeyModifiers::ALT, KeyCode::Char('v' | 'V')) => Some(Self::PasteImageFallback),
+            _ => None,
+        }
+    }
+
+    fn reason(self) -> &'static str {
+        match self {
+            Self::ReasoningCycle => "Shift+Tab and BackTab cycle reasoning",
+            Self::TabCompletion => "Tab is reserved for composer completion",
+            Self::HistoryPageUp | Self::HistoryPageDown => {
+                "PageUp and PageDown scroll history regardless of modifiers"
+            }
+            Self::TextInput(_) => "characters without Ctrl or Alt are composer text input",
+            Self::QueuePromptFallback => "Ctrl+Enter is the queue_prompt fallback",
+            Self::PasteImageFallback => "Alt+V is the paste_image fallback",
+        }
     }
 }
 

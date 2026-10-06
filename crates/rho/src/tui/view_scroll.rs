@@ -2,12 +2,14 @@
 
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use ratatui::{
     backend::Backend,
     text::{Line, Span},
     Terminal,
 };
+
+use crate::keybindings::ReservedComposerKey;
 
 use super::{
     activity,
@@ -223,8 +225,8 @@ impl App {
         let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
         let ctx = self.frame_context(area);
-        match (key.modifiers, key.code) {
-            (_, KeyCode::PageUp) => {
+        match ReservedComposerKey::from_key(key) {
+            Some(ReservedComposerKey::HistoryPageUp) => {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 let page = (ctx.layout.history_content.height as usize).max(1);
@@ -233,7 +235,7 @@ impl App {
                 self.ctrl_c_streak = 0;
                 Ok(true)
             }
-            (_, KeyCode::PageDown) => {
+            Some(ReservedComposerKey::HistoryPageDown) => {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 let page = (ctx.layout.history_content.height as usize).max(1);
