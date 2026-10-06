@@ -11,8 +11,8 @@ use super::{
     BACKGROUND_CLAUDE_AGENT_CALL_ID, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_COMPLETION, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
     CODEMODE_CALL_ID, COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID,
-    HOVER_TOOL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
-    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
+    CURSOR_AGENT_CALL_ID, HOVER_TOOL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID,
+    QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) fn compaction(
@@ -104,6 +104,10 @@ pub(super) fn intercept(
         return Some(completed(format!(
             "background claude agent dispatched: {receipt}"
         )));
+    }
+    if let Some(result) = tool_result(request, CURSOR_AGENT_CALL_ID) {
+        let receipt = result.content.lines().next().unwrap_or_default();
+        return Some(completed(format!("cursor agent dispatched: {receipt}")));
     }
     if let Some(result) = tool_result(request, CLAUDE_AGENT_ERROR_CALL_ID) {
         // End the parent turn so the PTY can observe the failed completion.
@@ -239,6 +243,8 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         }
     } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
         format!("claude-background-delivery-{deliveries}: delegated result received")
+    } else if prompt.contains("(cursor-worker): ok") && prompt.contains("rho-cursor-acp-e2e-ok") {
+        format!("cursor-background-delivery-{deliveries}: delegated result received")
     } else if prompt.contains("(claude-planner): error") && prompt.contains("hit max turns") {
         format!("claude-background-delivery-{deliveries}: failed result received")
     } else {

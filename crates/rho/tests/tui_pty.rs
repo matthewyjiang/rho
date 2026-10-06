@@ -13,6 +13,10 @@ mod claude_e2e;
 mod claude_runtime;
 #[path = "support/composer_unicode.rs"]
 mod composer_unicode;
+#[path = "support/cursor_acp_e2e.rs"]
+mod cursor_acp_e2e;
+#[path = "support/tui_pty_cursor_runtime.rs"]
+mod cursor_runtime;
 #[path = "support/tui_pty_login.rs"]
 mod login;
 

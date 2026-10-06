@@ -31,8 +31,8 @@ pub(crate) async fn run_session<P: AcpAgentPolicy>(
     Ok(())
 }
 
-// Phase 5 widens this to debug builds for the hidden fixture subcommand.
-#[cfg(test)]
+// Debug builds also serve it as `rho __acp-fixture-agent` for offline E2E.
+#[cfg(any(test, debug_assertions))]
 pub(crate) mod scripted_agent;
 
 #[cfg(test)]

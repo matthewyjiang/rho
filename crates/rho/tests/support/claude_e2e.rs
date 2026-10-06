@@ -173,6 +173,17 @@ pub fn path_with_fake(bin_dir: &Path) -> String {
     }
 }
 
+/// Resolve `program` on a PATH string the same way a shell would (first hit).
+pub fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
+    for dir in path_var.split(':').filter(|dir| !dir.is_empty()) {
+        let candidate = PathBuf::from(dir).join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Paths for a login-only fake `claude` used by `/login claude-code` PTY tests.
 #[derive(Debug)]
 #[allow(dead_code)]

@@ -197,6 +197,8 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Acp,
         )
         | None => Ok(None),
+        #[cfg(debug_assertions)]
+        Some(Command::AcpFixtureAgent(_)) => Ok(None),
     }
 }
 

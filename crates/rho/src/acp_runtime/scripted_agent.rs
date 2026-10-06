@@ -1,6 +1,7 @@
-//! Deterministic ACP peer shared by Channel tests and the future debug fixture
-//! subcommand. Blocking client requests run in spawned foreground-independent
-//! tasks; callbacks never await an outgoing request on the dispatch loop.
+//! Deterministic ACP peer shared by Channel tests and the debug-only
+//! `rho __acp-fixture-agent` subcommand. Blocking client requests run in
+//! spawned foreground-independent tasks; callbacks never await an outgoing
+//! request on the dispatch loop.
 
 use agent_client_protocol::{
     schema::{
@@ -20,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
+    fs::File,
+    io::Write,
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc;
@@ -67,6 +70,28 @@ pub(crate) enum Step {
 pub(crate) struct Record {
     pub(crate) requests: Vec<Value>,
     pub(crate) replies: Vec<Value>,
+    /// Each entry is also appended here as one JSON line. The debug fixture
+    /// needs this because Rho terminates the agent rather than letting it exit.
+    #[serde(skip)]
+    journal: Option<File>,
+}
+
+impl Record {
+    fn push_request(&mut self, request: Value) {
+        self.write_journal(&json!({"request": request}));
+        self.requests.push(request);
+    }
+
+    fn push_reply(&mut self, reply: Value) {
+        self.write_journal(&json!({"reply": reply}));
+        self.replies.push(reply);
+    }
+
+    fn write_journal(&mut self, entry: &Value) {
+        if let Some(journal) = self.journal.as_mut() {
+            writeln!(journal, "{entry}").expect("write scripted agent journal");
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -97,6 +122,13 @@ impl ScriptedAgent {
             record,
             receiver,
         )
+    }
+
+    /// Also append every recorded request and reply to `journal` as JSONL.
+    #[cfg(debug_assertions)]
+    pub(crate) fn with_journal(self, journal: File) -> Self {
+        self.record.lock().expect("script record").journal = Some(journal);
+        self
     }
 
     pub(crate) async fn run(self, transport: impl ConnectTo<Agent> + 'static) -> Result<(), Error> {
@@ -226,8 +258,7 @@ fn record_request(record: &Mutex<Record>, method: &str, request: &impl Serialize
     record
         .lock()
         .expect("script record")
-        .requests
-        .push(json!({"method": method, "params": request}));
+        .push_request(json!({"method": method, "params": request}));
 }
 
 fn fake_error(message: &str) -> Error {
@@ -271,11 +302,9 @@ async fn play_turn(
                     ))
                     .block_task()
                     .await?;
-                record
-                    .lock()
-                    .expect("script record")
-                    .replies
-                    .push(json!({"method": "session/request_permission", "result": response}));
+                record.lock().expect("script record").push_reply(
+                    json!({"method": "session/request_permission", "result": response}),
+                );
             }
             Step::Extension { method, params } => {
                 let response = cx
@@ -286,7 +315,7 @@ async fn play_turn(
                     Ok(result) => json!({"method": method, "result": result}),
                     Err(error) => json!({"method": method, "error": error}),
                 };
-                record.lock().expect("script record").replies.push(reply);
+                record.lock().expect("script record").push_reply(reply);
             }
             Step::Stop { reason } => return responder.respond(PromptResponse::new(reason)),
             Step::Hang => {
