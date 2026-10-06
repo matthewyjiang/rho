@@ -88,6 +88,10 @@ impl App {
                 self.execute_resume_command(invocation, terminal, agent)
                     .await
             }
+            CommandId::Remember => {
+                invocation.args = slash_command_args(&turn.model).trim().to_string();
+                self.execute_remember_command(&invocation, agent)
+            }
             CommandId::Rewind => self.execute_rewind_command(invocation, agent),
             CommandId::Sessions => {
                 self.execute_sessions_command();

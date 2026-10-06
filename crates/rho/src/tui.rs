@@ -168,6 +168,7 @@ mod provider_picker;
 mod questionnaire;
 mod questionnaire_input;
 mod reasoning_metadata;
+mod remember_command;
 mod render;
 mod rendered_entry;
 mod run_lifecycle;

@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(crate) mod edit_lock;
+
 /// How hard an atomic write works to survive a power loss.
 ///
 /// Every variant keeps the same reader contract: a unique temp file is written

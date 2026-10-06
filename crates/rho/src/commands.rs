@@ -11,6 +11,7 @@ pub enum CommandId {
     Logout,
     Model,
     RefreshModels,
+    Remember,
     Resume,
     Rewind,
     Sessions,
@@ -127,6 +128,12 @@ const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
         description: "stop and clear the current goal",
     },
 ];
+
+const REMEMBER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
+    completion: "/remember global",
+    usage: "/remember global <text>",
+    description: "remember an instruction for every project",
+}];
 
 const AGENTS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
     completion: "/agents create",
@@ -443,6 +450,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/refresh-models",
         description: "refresh cached provider model lists and the models.dev catalog",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Remember,
+        name: "remember",
+        usage: "/remember [global] <text>",
+        description: "append a standing instruction to AGENTS.md without a model turn",
+        argument_choices: REMEMBER_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Resume,

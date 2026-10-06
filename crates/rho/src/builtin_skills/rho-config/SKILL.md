@@ -9,7 +9,7 @@ Help the user configure rho. Determine what they want to change, then guide them
 
 ## The global `~/.rho` directory
 
-`~/.rho` is rho's home data and settings directory. `RHO_HOME` overrides its location; every path below moves under `$RHO_HOME` when it is set. What lives there:
+`~/.rho` is rho's home data and settings directory. `RHO_HOME` overrides its data location, but global instructions, loose skills, and agent definition discovery still use the home-directory paths below. What lives there:
 
 - `config.toml` - persistent settings (see below).
 - `AGENTS.md` - your global instructions, applied to every session (see below).
@@ -31,7 +31,9 @@ Help the user configure rho. Determine what they want to change, then guide them
 
 `~/.rho/AGENTS.md` holds instructions that apply to every rho session regardless of project. It is loaded as a project-instruction file before any project `AGENTS.md`, so project files appear later and take precedence on conflict. Edit it to set house rules that should always apply: prose style, commit conventions, safety boundaries, build hygiene, or any standing policy. Keep it focused; everything in it is injected into the system prompt for every session.
 
-To add or change global instructions, edit `~/.rho/AGENTS.md` directly with the file tools, or open it for the user and make the edit. Offer a concrete draft when the user describes a rule in prose. Project `AGENTS.md` files live at `<project>/AGENTS.md`; the global file sits in the home directory, not in any project.
+For a quick addition in the interactive TUI, use `/remember global <text>` to append one bullet to `~/.rho/AGENTS.md`, or `/remember <text>` for the project-root `AGENTS.md` (the Git root, or the current directory outside a repository). The text must be a non-empty single line. These commands run between model turns, write the file locally, and add the instruction to the current conversation without a model response. The file is re-read when you start or switch to a different session (`/new`, `/resume` of another session, or the next launch). Global instructions stay at `~/.rho/AGENTS.md` even when `RHO_HOME` redirects data.
+
+To revise or remove instructions, edit `~/.rho/AGENTS.md` directly with the file tools, or open it for the user and make the edit. Offer a concrete draft when the user describes a rule in prose. Project `AGENTS.md` files live at `<project>/AGENTS.md`; the global file sits in the home directory, not in any project.
 
 For project onboarding, `/init` surveys the repository and creates or updates `AGENTS.md` at the git root (or current directory outside a repository). It preserves existing files with targeted edits and requires write permission; it is unavailable in Plan mode. Rho loads project `AGENTS.md` files from the git root through the current directory, with more specific files taking precedence. `AGENTS.md` is the only instruction filename; `CLAUDE.md` is not supported. After `/init` or any manual global/project instruction edit, run `/new` or restart Rho to reload the files. Model switches keep the cached instructions.
 
@@ -67,7 +69,7 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 - **Web search**: under Tools in `/config`. `web_search.mode` is `auto` (native if supported, otherwise the selected backend), `backend` (force that backend), or `off`. `web_search.backend` selects `openai`, `exa`, `brave`, or `firecrawl`; failures never switch services. Each backend has its own `api_base_url`. OpenAI explicitly selects `api` or fixed-endpoint `codex`; Exa selects `api` or `mcp` with a separate `mcp_url`. Store keys in the credential editor or environment. Firecrawl Cloud requires a key; custom selfhost URLs can omit auth. TUI changes apply before the next turn, preserving an active turn's route and credentials. Direct file edits require restart. Test connection asks before sending a potentially billed query, even in Auto or Off mode.
 - **Edit tool**: under Tools in `/config`, choose `auto`, `hashline`, `apply_patch`, or `str_replace`. Exactly one edit schema is exposed under its own tool name (`edit`, `apply_patch`, or `str_replace`). `auto` keeps that preference in config and advertises the preferred format for the active provider, switching live when the provider changes. Prefer `auto` so models get the edit tool their first-party harness trained them on (Codex → `apply_patch`, Anthropic/xAI → `str_replace`, otherwise Rho `hashline`). Pinned formats stay fixed. The change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. It cannot change while a model turn is running.
 - **Prompt templates**: add a file under `~/.rho/prompts/` or `<project>/.rho/prompts/`, or define `[prompt_templates]` inline in config. The filename or key becomes the slash command. Restart rho after adding or editing templates.
-- **Global instructions**: to change rules that apply to every session, edit `~/.rho/AGENTS.md` (see above).
+- **Global instructions**: add a standing rule with `/remember global <text>` between turns, or edit `~/.rho/AGENTS.md` to revise or remove rules (see above). Use `/remember <text>` for project-only instructions.
 - **Keybindings**: edit `[keybindings]` in config. Values use `+`-separated modifiers and keys. Keybinding changes take effect at startup.
 
 ## Applying a change

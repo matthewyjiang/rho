@@ -18,7 +18,7 @@ Unknown keys in `config.toml` are a load error, so typos fail loudly. Values tha
 | Concurrent agents, subagents, rewind | [Behavior](#behavior) |
 | Questionnaire timeout | [Questionnaire timeout](#questionnaire-timeout) |
 | Prompt templates | [Prompt templates](#prompt-templates) |
-| Project and global instructions | [AGENTS.md](#project-and-global-instructions) and `/init` |
+| Project and global instructions | [AGENTS.md](#project-and-global-instructions), `/init`, and `/remember [global] <text>` |
 | Model-scoped system instructions | [Model prompts](/configuration/model-prompts) |
 | Web search | [Web search](/configuration/web-search) |
 | xAI image generation | [xAI](/providers/xai#notes) |
@@ -74,6 +74,15 @@ Run `/init` in the [interactive TUI](/interactive-tui#commands) to survey the re
 `/init` starts a model turn using a built-in skill and the active agent's file tools. It is unavailable during a running turn, in Plan permission mode, or when the active agent lacks the required skill, write, or file-edit tools. Normal write permissions still apply.
 
 Instructions are cached for the current session and re-read from disk whenever you start or switch to a different session: `/new` (or `/clear`), `/resume` of another session, or cross-session tree selection. After `/init` or a manual instruction edit, start or switch sessions to load the updated global and project files, or restart Rho. Model switches and same-session tree navigation do not reload `AGENTS.md`. `--no-system-prompt` omits instruction files entirely.
+
+Use `/remember <text>` in the [interactive TUI](/interactive-tui#commands) to append one bullet to the Git-root `AGENTS.md` (or the current directory's file outside a repository). Use `/remember global <text>` for an instruction that applies across projects:
+
+```text
+/remember use max jobs 8
+/remember global keep explanations concise
+```
+
+The text must be a non-empty single line. Rho creates the file if needed, preserves existing instructions, and adds the new instruction to the current conversation without starting a model turn. The file is re-read whenever you start or switch to a different session, as described above. `/remember` is available only between model turns. To revise or remove instructions, edit `AGENTS.md` directly. Global instructions always live at `~/.rho/AGENTS.md`, even when `RHO_HOME` redirects Rho's data directory.
 
 ## CLI overrides
 

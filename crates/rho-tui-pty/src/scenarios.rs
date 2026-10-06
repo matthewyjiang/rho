@@ -64,6 +64,7 @@ mod questionnaire_timeout;
 #[cfg(unix)]
 mod quiet_subagent;
 mod reasoning_output;
+mod remember;
 mod resume_delete;
 mod resume_scrollback;
 mod runtime_info;
@@ -377,6 +378,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_STREAM_EXIT_SCENARIO,
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     NO_SAVE_SESSION_SCENARIO,
+    remember::REMEMBER_SCENARIO,
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     ZEN_TOOL_RUN_SUMMARY_SCENARIO,
     HEADER_HINTS_SCENARIO,
