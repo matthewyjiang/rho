@@ -164,18 +164,8 @@ impl App {
         ) else {
             return false;
         };
-        let index = match step {
-            HistoryStep::Recall { index, save_draft } => {
-                if save_draft {
-                    self.input_ui.set_history_draft(Some(InputDraft {
-                        input: self.input_ui.text().to_string(),
-                        paste_segments: self.input_ui.paste_segments().to_vec(),
-                        submission_mode: self.input_ui.submission_mode(),
-                        shell_mode: self.input_ui.shell_mode(),
-                    }));
-                }
-                index
-            }
+        match step {
+            HistoryStep::Recall { index, .. } => self.recall_history_entry(index),
             HistoryStep::RestoreDraft => {
                 let draft = self.input_ui.take_history_draft().unwrap_or(InputDraft {
                     input: String::new(),
@@ -188,10 +178,22 @@ impl App {
                 // The draft was live typed text, so palettes reopen if it
                 // still looks like a command or file mention.
                 self.input_changed();
-                return true;
             }
-        };
+        }
+        true
+    }
 
+    /// Shows history entry `index` in the composer, as Up/Down would. Leaving
+    /// the live draft saves it so stepping past the newest entry restores it.
+    pub(super) fn recall_history_entry(&mut self, index: usize) {
+        if self.input_ui.history_cursor().is_none() {
+            self.input_ui.set_history_draft(Some(InputDraft {
+                input: self.input_ui.text().to_string(),
+                paste_segments: self.input_ui.paste_segments().to_vec(),
+                submission_mode: self.input_ui.submission_mode(),
+                shell_mode: self.input_ui.shell_mode(),
+            }));
+        }
         self.apply_composer_text(
             self.input_ui.history()[index].clone(),
             Vec::new(),
@@ -202,7 +204,6 @@ impl App {
         // palettes closed until the next typed edit.
         self.input_ui.set_command_palette_dismissed(true);
         self.input_ui.set_file_palette_dismissed(true);
-        true
     }
 
     /// Apply a shared edit key to the main composer, with its history,

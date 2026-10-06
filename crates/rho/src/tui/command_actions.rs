@@ -2,7 +2,7 @@ use crate::tui::DefaultTerminal;
 
 use super::{
     command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation,
-    ComposerMode, Entry, InteractiveRuntime, PasteSegment, TurnPrompt,
+    ComposerMode, Entry, InputSubmissionMode, InteractiveRuntime, PasteSegment, TurnPrompt,
 };
 
 /// Fully-owned composer state transferred to a slash command.
@@ -157,21 +157,32 @@ impl App {
         Ok(())
     }
 
-    async fn execute_new_command(
+    pub(super) async fn execute_new_command(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        // Reset refuses to run under compaction, so stop it first.
         self.abort_compact(agent).await;
+        if let Err(error) = agent.reset().await {
+            // The old session is still live: report the failure and keep its
+            // pending work instead of clearing the UI as though one started.
+            self.insert_entry(&Entry::Error(format!(
+                "could not start new session: {error}"
+            )));
+            return Ok(());
+        }
         self.held_turns.clear();
         self.clear_mcp_connecting_activity();
         self.start_follow_ups = None;
-        agent.reset().await?;
         self.info.session.session_id = None;
         self.input_ui.set_composer(ComposerMode::Input);
         self.input_ui.clear_text();
         self.input_ui.clear_paste_segments();
         self.input_ui.set_shell_mode(None);
+        self.input_ui
+            .set_submission_mode(InputSubmissionMode::ParseCommands);
+        self.input_ui.reset_history_navigation();
         self.input_ui.set_cursor(0);
         self.cancel_all_pending_attachments();
         self.input_ui.clear_attachments();

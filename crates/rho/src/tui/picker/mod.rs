@@ -22,6 +22,7 @@ mod rows;
 pub(in crate::tui) mod runner;
 pub(in crate::tui) mod standalone;
 
+use action::PickerFilterMode;
 pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
 pub(in crate::tui) use detail::{
     DetailBlock, DetailField, DetailSheet, DetailTone, DiffDetail, ExcerptAnchor, PickerDetail,
@@ -174,7 +175,7 @@ pub(super) struct UiPicker {
     empty_message: Option<String>,
     /// Status set when this picker is restored as a parent.
     restore_status: &'static str,
-    /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
+    /// When set, overrides [`PickerAction::filter_mode`] with fuzzy matching.
     pub(super) force_fuzzy_filter: bool,
     /// When set, Space confirms the row like Enter (toggle-style pickers).
     space_confirms: bool,
@@ -325,6 +326,7 @@ impl UiPicker {
         switch_auth_mode => SwitchAuthMode,
         refresh_model_list => RefreshModelList,
         insert_skill => InsertSkillCommand,
+        prompt_history => RecallPrompt,
         view_agent => ViewAgent,
         view_mcp => ViewMcpServers,
         resume_session => ResumeSession,
@@ -390,8 +392,12 @@ impl UiPicker {
         self
     }
 
-    pub(super) fn uses_regex_filter(&self) -> bool {
-        !self.force_fuzzy_filter && self.action.uses_regex_filter()
+    pub(super) fn filter_mode(&self) -> PickerFilterMode {
+        if self.force_fuzzy_filter {
+            PickerFilterMode::Fuzzy
+        } else {
+            self.action.filter_mode()
+        }
     }
 
     pub(super) fn with_badge_placement(mut self, placement: PickerBadgePlacement) -> Self {
@@ -736,10 +742,9 @@ impl UiPicker {
         if !Self::row_allows_filter_completion(item) {
             return;
         }
-        self.filter = if self.uses_regex_filter() {
-            regex::escape(&item.value)
-        } else {
-            item.value.clone()
+        self.filter = match self.filter_mode() {
+            PickerFilterMode::Regex => regex::escape(&item.value),
+            PickerFilterMode::Fuzzy | PickerFilterMode::Literal => item.value.clone(),
         };
     }
 
@@ -770,7 +775,8 @@ impl UiPicker {
         };
         if stale {
             let filter = self.filter.trim();
-            let (regex, invalid_regex) = if self.uses_regex_filter() && !filter.is_empty() {
+            let mode = self.filter_mode();
+            let (regex, invalid_regex) = if mode == PickerFilterMode::Regex && !filter.is_empty() {
                 match RegexBuilder::new(filter).case_insensitive(true).build() {
                     Ok(regex) => (Some(regex), false),
                     Err(_) => (None, true),
@@ -778,10 +784,12 @@ impl UiPicker {
             } else {
                 (None, false)
             };
-            let indices = if self.uses_regex_filter() {
-                picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
-            } else {
-                fuzzy_picker_matching_indices(&self.items, filter)
+            let indices = match mode {
+                PickerFilterMode::Regex => {
+                    picker_matching_indices_with_regex(&self.items, filter, regex.as_ref())
+                }
+                PickerFilterMode::Fuzzy => fuzzy_picker_matching_indices(&self.items, filter),
+                PickerFilterMode::Literal => literal_matching_indices(&self.items, filter),
             };
             *self.matches.borrow_mut() = PickerMatchCache {
                 initialized: true,
@@ -823,6 +831,22 @@ fn picker_matching_indices_with_regex(
         .iter()
         .enumerate()
         .filter_map(|(index, item)| regex.is_match(&picker_haystack(item)).then_some(index))
+        .collect()
+}
+
+/// Rows whose label or value contains `filter`, ignoring case, in row order.
+/// Fields are checked one at a time so a match cannot span two of them.
+fn literal_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
+    let filter = filter.to_lowercase();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            [&item.label, &item.value]
+                .into_iter()
+                .any(|field| field.to_lowercase().contains(&filter))
+        })
+        .map(|(index, _)| index)
         .collect()
 }
 

@@ -159,6 +159,7 @@ mod pointer_actions;
 mod process_panel;
 mod process_peek;
 mod prompt_history;
+mod prompt_history_search;
 mod prompt_turn;
 mod provider_actions;
 mod provider_attempt;

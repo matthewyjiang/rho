@@ -57,8 +57,7 @@ rho --no-save --prompt "explain this function"
 
 The conversation stays in memory. Rho never creates a session folder or writes
 these prompts to shared prompt history. You can still recall prompts within the
-running session. The statusline shows `not saved`, and both `/new` and `Ctrl+R`
-keep this mode.
+running session. The statusline shows `not saved`, and `/new` keeps this mode.
 Exiting or crashing loses the conversation; it won't appear in session history
 and cannot be resumed.
 

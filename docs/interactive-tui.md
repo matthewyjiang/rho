@@ -87,7 +87,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
 | `alt-enter` | Queue the composer contents as a follow-up that runs after the current turn ends; while idle, insert a newline. `ctrl-enter` always works as a fallback for terminals that bind `alt-enter` to fullscreen (Windows Terminal, Windows Alacritty, WezTerm). Configurable as `queue_prompt` |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
-| `ctrl-r` | Reset conversation history |
+| `ctrl-r` | Search previous prompts, newest first. Type to filter, then `enter` recalls the prompt into the composer; `down` steps forward and back to your draft. Configurable as `search_prompt_history`. Start a new session with `/new`; `reset_conversation` has no default key |
 | `pageup` / `pagedown` | Scroll the transcript viewport |
 | `ctrl-g` | Open the current composer text in a non-empty `$VISUAL`, else `$EDITOR` |
 | `ctrl-end` | Jump the transcript viewport back to the bottom |

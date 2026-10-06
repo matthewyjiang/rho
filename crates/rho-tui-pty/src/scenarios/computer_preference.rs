@@ -3,9 +3,8 @@
 use anyhow::{ensure, Result};
 
 use super::{
-    computer::{setup_driver, wait_for_turn_completion_after},
-    config::find_latest_session,
-    SETTLE, STARTUP, STREAM,
+    assert_helpers::wait_for_turn_completion_after, computer::setup_driver,
+    config::find_latest_session, SETTLE, STARTUP, STREAM,
 };
 use crate::{
     artifacts::ArtifactWriter,
