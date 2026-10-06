@@ -11,8 +11,8 @@ use super::{
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
     frame_context::FrameContext,
     picker::PickerMouseEvent,
-    render::padded_content_columns,
-    text_selection::{screen_lines, CopyNotice, SelectableColumns, TextSelection},
+    render::TRANSCRIPT_LEADING_GUTTER,
+    text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
     view::LiveHistory,
@@ -296,11 +296,11 @@ impl App {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.clear_rail_pointer_state();
                     self.history.set_scrollbar_drag(None);
-                    // Transcript rows carry a one-column gutter on each side;
-                    // keep it out of the highlight and the copied text.
-                    *self.history.text_selection_mut() = Some(TextSelection::within(
+                    // Keep the transcript gutter out of the highlight and the
+                    // copied text; trailing gutter spaces are trimmed on copy.
+                    *self.history.text_selection_mut() = Some(TextSelection::with_leading_gutter(
                         position,
-                        SelectableColumns::new(padded_content_columns(history.width as usize)),
+                        TRANSCRIPT_LEADING_GUTTER,
                     ));
                 } else {
                     self.input_ui.clear_selection();

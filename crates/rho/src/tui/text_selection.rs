@@ -25,65 +25,33 @@ pub(super) struct SelectionPosition {
     pub(super) column: usize,
 }
 
-/// Display columns a selection may cover on every row.
-///
-/// Columns outside this range hold layout chrome, such as the transcript's
-/// one-column gutter, so the highlight and the copied text both skip them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct SelectableColumns {
-    start: usize,
-    end: usize,
-}
-
-impl SelectableColumns {
-    /// Every column of the row is text.
-    pub(super) const ALL: Self = Self {
-        start: 0,
-        end: usize::MAX,
-    };
-
-    pub(super) fn new(columns: Range<usize>) -> Self {
-        Self {
-            start: columns.start,
-            end: columns.end.max(columns.start.saturating_add(1)),
-        }
-    }
-
-    fn clamp(self, position: SelectionPosition) -> SelectionPosition {
-        SelectionPosition {
-            column: position
-                .column
-                .clamp(self.start, self.end.saturating_sub(1)),
-            ..position
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TextSelection {
     anchor: SelectionPosition,
     focus: SelectionPosition,
-    columns: SelectableColumns,
+    /// Leading columns of every row that hold layout chrome rather than
+    /// text, such as the transcript gutter. Highlight and copy skip them.
+    leading_gutter: usize,
 }
 
 impl TextSelection {
     pub(super) fn new(position: SelectionPosition) -> Self {
-        Self::within(position, SelectableColumns::ALL)
+        Self::with_leading_gutter(position, /*leading_gutter*/ 0)
     }
 
-    /// Anchors a selection that never leaves `columns`; positions outside are
-    /// clamped to the nearest selectable column.
-    pub(super) fn within(position: SelectionPosition, columns: SelectableColumns) -> Self {
-        let position = columns.clamp(position);
+    /// Anchors a selection whose rows start text after `leading_gutter`
+    /// columns. Pointer positions stay raw so a drag out of the gutter still
+    /// counts as movement; only the selected columns skip the gutter.
+    pub(super) fn with_leading_gutter(position: SelectionPosition, leading_gutter: usize) -> Self {
         Self {
             anchor: position,
             focus: position,
-            columns,
+            leading_gutter,
         }
     }
 
     pub(super) fn update(&mut self, position: SelectionPosition) {
-        self.focus = self.columns.clamp(position);
+        self.focus = position;
     }
 
     pub(super) fn has_moved(self) -> bool {
@@ -126,14 +94,14 @@ impl TextSelection {
         }
 
         let start_column = if line == start.line {
-            start.column
+            start.column.max(self.leading_gutter)
         } else {
-            self.columns.start
+            self.leading_gutter
         };
         let end_column = if line == end.line {
             end.column.saturating_add(1)
         } else {
-            self.columns.end
+            usize::MAX
         };
         Some(start_column..end_column)
     }

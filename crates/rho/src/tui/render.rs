@@ -648,11 +648,11 @@ pub(super) fn padded_content_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 
-/// Display columns of a `width`-wide [`pad_display_line`] row that hold
-/// content rather than gutter, so selections can leave the gutter out.
-pub(super) fn padded_content_columns(width: usize) -> std::ops::Range<usize> {
-    1..width.saturating_sub(1)
-}
+/// Leading gutter columns on every transcript row. [`pad_display_line`] adds
+/// one, and the session header keeps the same leading indent, so selections
+/// can leave it out. (The right edge is not reserved on every row: the session
+/// header may fill the last column.)
+pub(super) const TRANSCRIPT_LEADING_GUTTER: usize = 1;
 
 /// Indent a rendered line by one column on each side.
 ///

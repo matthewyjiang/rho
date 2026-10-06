@@ -85,9 +85,12 @@ fn assert_drag_updates_highlight_before_release(harness: &mut PtyHarness) -> Res
 /// row, with no gutter cells on either side of any row.
 const PROMPT_AND_REPLY_COPY: &[u8] =
     b"\x1b]52;c;ZHJhZyBzZWxlY3QgdGFyZ2V0CgpmaXh0dXJlIHJlc3BvbnNlOiBkcmFnIHNlbGVjdCB0YXJnZXQ=\x1b\\";
+/// Complete OSC 52 write of exactly `f`, the reply's first character.
+const FIRST_REPLY_CHAR_COPY: &[u8] = b"\x1b]52;c;Zg==\x1b\\";
 
-// Covers: a multi-row transcript drag that starts in the left gutter and ends
-// in the right one must copy only row text, not the gutter spaces.
+// Covers: a transcript drag that starts in the left gutter copies only row
+// text, not gutter spaces, and a drag from the gutter onto the first cell still
+// counts as a drag that copies that cell.
 // Owner: interactive UX (PTY).
 fn assert_drag_copy_skips_gutters(harness: &mut PtyHarness) -> Result<()> {
     // Top-down, the prompt row is the first row showing the needle.
@@ -104,6 +107,16 @@ fn assert_drag_copy_skips_gutters(harness: &mut PtyHarness) -> Result<()> {
         PROMPT_AND_REPLY_COPY,
         before + 1,
         WaitTimeout::secs(5, "gutter-free drag copy"),
+    )?;
+
+    let before = harness.raw_sequence_occurrences(FIRST_REPLY_CHAR_COPY);
+    harness.mouse(MouseButton::Left, 1, reply_row + 1, true)?;
+    harness.mouse_drag(2, reply_row + 1)?;
+    harness.mouse(MouseButton::Left, 2, reply_row + 1, false)?;
+    harness.wait_for_raw_sequence_occurrences(
+        FIRST_REPLY_CHAR_COPY,
+        before + 1,
+        WaitTimeout::secs(5, "gutter-to-first-cell drag copy"),
     )
 }
 
