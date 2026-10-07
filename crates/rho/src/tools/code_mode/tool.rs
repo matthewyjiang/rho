@@ -13,30 +13,30 @@ use super::exposure::CodeModeSurface;
 
 /// Model-facing contract. Batching guidance lives here and in the system
 /// prompt so models fan out independent calls instead of issuing them in turn.
-/// The example leads because models copy an example before they read rules.
 const DESCRIPTION: &str = "\
 Run a Starlark (Python-like) script that calls other tools. Only the script's output reaches you, \
 so use it to batch independent calls, chain dependent ones, and filter large results.
+Tool calls return native Starlark dictionaries with string keys \"is_error\", \"content\", and \
+\"data\". Use bracket indexing, not dot access. JSON objects in data and discovery entries \
+are also dictionaries; JSON arrays are lists.
 Example:
-for r in call_tools([(\"read_file\", {\"path\": \"a.rs\"}), (\"grep\", {\"pattern\": \"todo\"})]):
-    print(r.content)
-hits = tools.grep(pattern=\"fn main\", path=\"src\")
-if not hits.is_error and hits.data:
-    print(hits.data[\"files\"])
+for response in call_tools([(\"read_file\", {\"path\": \"a.rs\"}), (\"grep\", {\"pattern\": \"todo\"})]):
+    print(response[\"content\"])
 - `call_tools([(name, args), ...])` runs independent calls concurrently and returns their results \
 in order. Prefer it whenever calls do not depend on each other.
-- `tools.<name>(args)` or `tools.<name>(key=value)` runs one call; names with `-` use `_`, and an \
-ambiguous alias fails. `call_tool(name, args)` takes the exact name.
-- Each result has `is_error`, `content` (the text you would see), and `data` (the tool's \
-structured value or None), read as `r.content` or `r[\"content\"]`. `data` holds plain dicts \
-and lists: index them, as in `r.data[\"next_cursor\"]`. Failed calls are values; check `is_error`.
+- `call_tool(name, args)` runs one call using the exact tool name and an argument dictionary. \
+There is no `tools` namespace.
+- Each result dictionary contains `\"is_error\"`, `\"content\"` (the text you would see), and \
+`\"data\"` (the tool's structured value or None). Check `\"is_error\"` before using a result \
+and check that `\"data\"` is not None before indexing it.
 - `list_tools()` and `search_tools(query)` return `[{name, description}]`; `describe_tool(name)` \
 adds the parameter and return schemas.
-- Output: `print()` lines, then the global `result` as JSON.
+- Output: `print()` lines, then the global `result` as JSON. Other variable names are your choice.
 - Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
 or exceptions. At most 64 nested calls per script.
 - Nested calls follow the session's permissions and pause for approvals. Scripts get no process \
-exit notifications: poll using data[\"next_cursor\"] until data[\"state\"] is no longer running or starting.";
+exit notifications: for a process result named `response`, poll using \
+`response[\"data\"][\"next_cursor\"]` until `response[\"data\"][\"state\"]` is no longer running or starting.";
 
 #[derive(Deserialize)]
 struct Args {

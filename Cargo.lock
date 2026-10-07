@@ -4849,7 +4849,6 @@ name = "rho-coding-agent"
 version = "2.19.0"
 dependencies = [
  "agent-client-protocol",
- "allocative",
  "anyhow",
  "arboard",
  "async-trait",
