@@ -99,7 +99,7 @@ impl Tool for StubTool {
     }
 }
 
-fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
+pub(super) fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
     let surface = Arc::new(CodeModeSurface::default());
     surface.sync(&tools);
     surface
@@ -115,7 +115,7 @@ fn host(probe: StubTool) -> ToolHost {
 
 /// The script's `result`, or its failure text. A raising script is a
 /// completed failure that keeps partial output, not a host error.
-async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
+pub(super) async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
     let output = host
         .invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
@@ -470,51 +470,6 @@ async fn cancelled_parent_does_not_start_subsequent_nested_calls() {
 async fn control_flow_composes_nested_results() {
     let host = host(StubTool::output(ToolOutput::text("ok")));
     assert_eq!(script(&host, "seen = []\nfor name in [\"a\", \"b\", \"c\"]:\n    if name != \"b\":\n        seen.append(call_tool(\"probe\")[\"content\"])\nresult = seen").await.unwrap(), json!(["ok", "ok"]));
-}
-
-/// Returns its arguments as structured data, under a name that is not an identifier.
-struct EchoTool;
-
-impl Tool for EchoTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "get-docs".into(),
-            description: "fixture echo".into(),
-            input_schema: json!({"type": "object"}),
-        }
-    }
-
-    fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
-        let arguments = invocation.arguments().clone();
-        Box::pin(async move { Ok(ToolOutput::text("echo").with_structured_content(arguments)) })
-    }
-}
-
-// Covers: the Codex-shaped script a GPT model writes first works as written:
-// `tools.<name>(...)` with a dict and/or keywords, identifier-normalized tool
-// names, and attribute reads on direct and batched results.
-// Owner: codemode `tools` namespace / ToolHost integration.
-#[tokio::test]
-async fn codex_shaped_scripts_run_first_try() {
-    let host = ToolHost::builder()
-        .tool(CodeModeTool::new(surface(vec![Arc::new(EchoTool)])))
-        .build()
-        .unwrap();
-    for (source, expected) in [
-        (
-            "r = tools.get_docs({\"a\": 1, \"b\": 1}, b=2)\nresult = [r.content, r.data]",
-            Ok(json!(["echo", {"a": 1, "b": 2}])),
-        ),
-        (
-            "rs = call_tools([(\"get-docs\", {\"n\": 1}), (\"get-docs\", {\"n\": 2})])\nresult = [r.data.n for r in rs]",
-            Ok(json!([1, 2])),
-        ),
-        ("result = tools.missing()", Err(())),
-        ("result = tools.get_docs([1])", Err(())),
-    ] {
-        let actual = script(&host, source).await.map_err(|_| ());
-        assert_eq!(actual, expected, "{source}");
-    }
 }
 
 // Covers: evaluation budget, non-JSON result, and nested-call budget fail at

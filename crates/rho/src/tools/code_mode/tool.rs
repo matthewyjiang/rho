@@ -20,23 +20,23 @@ so use it to batch independent calls, chain dependent ones, and filter large res
 Example:
 for r in call_tools([(\"read_file\", {\"path\": \"a.rs\"}), (\"grep\", {\"pattern\": \"todo\"})]):
     print(r.content)
-log = tools.bash(command=\"git log -1\")
-if not log.is_error:
-    print(log.content)
+hits = tools.grep(pattern=\"fn main\", path=\"src\")
+if not hits.is_error and hits.data:
+    print(hits.data[\"files\"])
 - `call_tools([(name, args), ...])` runs independent calls concurrently and returns their results \
 in order. Prefer it whenever calls do not depend on each other.
-- `tools.<name>(args)` or `tools.<name>(key=value)` runs one call; names with `-` use `_`. \
-`call_tool(name, args)` is the same by string name.
+- `tools.<name>(args)` or `tools.<name>(key=value)` runs one call; names with `-` use `_`, and an \
+ambiguous alias fails. `call_tool(name, args)` takes the exact name.
 - Each result has `is_error`, `content` (the text you would see), and `data` (the tool's \
-structured value or None). Read objects as `r.content` or `r[\"content\"]`. Failed calls are \
-values; check `is_error`.
+structured value or None), read as `r.content` or `r[\"content\"]`. `data` holds plain dicts \
+and lists: index them, as in `r.data[\"next_cursor\"]`. Failed calls are values; check `is_error`.
 - `list_tools()` and `search_tools(query)` return `[{name, description}]`; `describe_tool(name)` \
 adds the parameter and return schemas.
 - Output: `print()` lines, then the global `result` as JSON.
 - Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
 or exceptions. At most 64 nested calls per script.
 - Nested calls follow the session's permissions and pause for approvals. Scripts get no process \
-exit notifications: poll using data.next_cursor until data.state is no longer running or starting.";
+exit notifications: poll using data[\"next_cursor\"] until data[\"state\"] is no longer running or starting.";
 
 #[derive(Deserialize)]
 struct Args {

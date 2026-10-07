@@ -2,8 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::json_object::alloc_json;
-use super::tools_namespace::ToolsNamespace;
+use super::tool_result::alloc_tool_result;
+use super::tools_namespace::tools_namespace;
 use super::{bridge::ToolHostBridge, script_output};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -153,7 +153,7 @@ pub(super) fn evaluate_code_mode(
     let print_handler = StatePrint(Mutex::default());
     let mut builder = GlobalsBuilder::extended_by(&[LibraryExtension::Print]);
     code_mode_api(&mut builder);
-    builder.set("tools", ToolsNamespace::new(state.bridge.tool_names()));
+    tools_namespace(&mut builder, state.bridge.tool_names());
     let globals = builder.build();
     let result =
         AstModule::parse("codemode.star", source.to_owned(), &CODEMODE_DIALECT).and_then(|ast| {
@@ -200,7 +200,7 @@ fn summaries<'v>(
         .into_iter()
         .map(|entry| json!({"name": entry.name, "description": entry.description}))
         .collect();
-    Ok(alloc_json(eval.heap(), &JsonValue::Array(hits)))
+    Ok(eval.heap().alloc(JsonValue::Array(hits)))
 }
 
 /// One nested call, shared by `call_tool` and `tools.<name>(...)`.
@@ -213,7 +213,10 @@ pub(super) fn call_one<'v>(
     let output = state
         .runtime
         .block_on(state.bridge.call_tool(name, arguments))?;
-    Ok(alloc_json(eval.heap(), &script_output::value(&output)))
+    Ok(alloc_tool_result(
+        eval.heap(),
+        &script_output::value(&output),
+    ))
 }
 
 /// Accepts `name`, `(name,)`, or `(name, args)` per batch item.
@@ -270,14 +273,18 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let state = guest(eval)?;
         let results = state.runtime.block_on(state.bridge.call_tools(calls))?;
-        let values = results
+        let heap = eval.heap();
+        let values: Vec<_> = results
             .into_iter()
-            .map(|result| match result {
-                Ok(output) => script_output::value(&output),
-                Err(error) => script_output::error_value(&error.to_string()),
+            .map(|result| {
+                let envelope = match result {
+                    Ok(output) => script_output::value(&output),
+                    Err(error) => script_output::error_value(&error.to_string()),
+                };
+                alloc_tool_result(heap, &envelope)
             })
             .collect();
-        Ok(alloc_json(eval.heap(), &JsonValue::Array(values)))
+        Ok(heap.alloc(values))
     }
 
     fn search_tools<'v>(
@@ -301,7 +308,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<Value<'v>> {
         Ok(match guest(eval)?.bridge.describe(name) {
-            Some(entry) => alloc_json(eval.heap(), &serde_json::to_value(entry)?),
+            Some(entry) => eval.heap().alloc(serde_json::to_value(entry)?),
             None => Value::new_none(),
         })
     }

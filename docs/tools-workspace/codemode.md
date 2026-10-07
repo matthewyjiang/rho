@@ -77,6 +77,11 @@ There is no `while`, `try`, `import`, or exception handling.
 `tools.<name>` takes an optional dict of arguments, keyword arguments, or
 both; keywords override dict keys. Tool names that are not identifiers use `_`
 for other characters, so `get-docs` is `tools.get_docs`.
+An exact name such as `get_docs` takes precedence over normalized aliases. If
+multiple tools normalize to the same alias (for example, `get-docs` and
+`get.docs`), calling that alias fails before any tool starts. Use
+`call_tool("get-docs", args)` or `call_tool("get.docs", args)` to select the
+exact tool instead.
 
 Each result envelope is `{is_error, content, data}`:
 
@@ -102,13 +107,12 @@ Check every returned envelope before using its data, including batch results.
 A non-error envelope can still have `data: None` for text-only or oversized
 results.
 
-Every JSON object a script receives, including envelopes and objects nested in
-`data`, is a dict that also allows attribute reads: `r.content` and
-`r["content"]` are the same, as are `r.data.next_cursor` and
-`r["data"]["next_cursor"]`. A key takes precedence over a dict method of the
-same name: when `data` has an `items` key, `r.data.items` is that value.
-Compare with the received object on the left: `r.data == {...}` compares
-contents, while `{...} == r.data` is always `False`.
+Read envelope fields as attributes or keys: `r.content` and `r["content"]`
+are the same. The envelope itself is not a dict: it has exactly these three
+fields, supports `in`, and equals only another envelope with equal fields.
+Everything inside `data`, like discovery entries from `list_tools`,
+`search_tools`, and `describe_tool`, is a plain Starlark dict or list, so
+index it (`r.data["next_cursor"]`) and use dict operations on it as usual.
 
 Assign `result = ...` to return a JSON value. On success, the model receives the
 printed lines followed by `result`. A value that cannot be represented as JSON
@@ -116,7 +120,7 @@ fails the script instead of becoming `null`.
 
 ```python
 hits = tools.grep(pattern="TODO", path="src")
-files = [] if hits.is_error else [f.path for f in hits.data.files]
+files = [] if hits.is_error else [f["path"] for f in hits.data["files"]]
 print(f"{len(files)} files with TODOs")
 result = files[:20]
 ```
