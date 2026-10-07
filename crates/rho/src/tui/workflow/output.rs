@@ -8,7 +8,10 @@ use std::{
 
 use ratatui::text::Line;
 
-use super::event_adapter::{ArtifactReference, WorkflowNodeSnapshot};
+use super::{
+    event_adapter::{ArtifactReference, WorkflowNodeSnapshot},
+    json_outline,
+};
 use crate::workflow::{ArtifactKind, Digest};
 
 /// Preferred artifact kinds for the details body, most useful first.
@@ -101,6 +104,12 @@ pub(super) fn render_body_lines(body: &NodeOutputBody, width: usize) -> Vec<Line
         return lines;
     }
 
+    // Schema agents answer in raw JSON; outline any JSON document so it is
+    // readable instead of one wrapped blob.
+    if let Some(document) = json_document(&body.text) {
+        lines.extend(json_outline::outline_lines(&document, width));
+        return lines;
+    }
     match body.kind {
         ArtifactKind::AgentAnswer => {
             let mut state = super::super::markdown::CodeFenceState::default();
@@ -108,21 +117,26 @@ pub(super) fn render_body_lines(body: &NodeOutputBody, width: usize) -> Vec<Line
                 &body.text, width, &mut state,
             ));
         }
-        ArtifactKind::StructuredOutput | ArtifactKind::CommandOutcome => {
-            lines.extend(render_structured(&body.text, width));
-        }
-        ArtifactKind::Stdout | ArtifactKind::Stderr => {
+        ArtifactKind::StructuredOutput
+        | ArtifactKind::CommandOutcome
+        | ArtifactKind::Stdout
+        | ArtifactKind::Stderr => {
             lines.extend(render_plain(&body.text, width));
         }
     }
     lines
 }
 
-fn render_structured(text: &str, width: usize) -> Vec<Line<'static>> {
-    let pretty = pretty_json(text).unwrap_or_else(|| text.to_owned());
-    let fenced = format!("```json\n{}\n```", pretty.trim_end());
-    let mut state = super::super::markdown::CodeFenceState::default();
-    super::super::markdown::markdown_lines(&fenced, width, &mut state)
+/// Parse `text` as a JSON object or array. Bare scalars stay text so an
+/// answer like `42` or `"done"` is not reformatted.
+fn json_document(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    serde_json::from_str(trimmed)
+        .ok()
+        .filter(|value: &serde_json::Value| value.is_object() || value.is_array())
 }
 
 fn render_plain(text: &str, width: usize) -> Vec<Line<'static>> {
@@ -138,11 +152,6 @@ fn render_plain(text: &str, width: usize) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
     }
     lines
-}
-
-fn pretty_json(text: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
-    serde_json::to_string_pretty(&value).ok()
 }
 
 fn read_artifact_text(

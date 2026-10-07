@@ -98,6 +98,25 @@ fn loads_and_renders_markdown_answer() {
     assert!(text.contains("risk low"));
 }
 
+// Covers: a schema agent's raw JSON answer renders as an outline, not one
+// wrapped JSON blob.
+// Owner: workflow TUI output projection.
+#[test]
+fn json_answer_renders_as_outline() {
+    let dir = tempdir().unwrap();
+    let relative = "artifacts/review/answer.txt";
+    let bytes = br#"{"status":"fixed","files":["a.rs"]}"#;
+    write_private(dir.path(), relative, bytes);
+
+    let node = terminal_agent(vec![artifact(ArtifactKind::AgentAnswer, relative, bytes)]);
+    let body = load_finished_output(dir.path(), &node).expect("body");
+    let text = render_body_lines(&body, 40)
+        .iter()
+        .map(|line| line.to_string().trim_end().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(text, vec!["status  fixed", "files · 1", "  • a.rs"]);
+}
+
 // Covers: non-private artifact files fail closed instead of plain open fallback.
 // Owner: workflow TUI output projection.
 #[cfg(unix)]

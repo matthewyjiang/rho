@@ -18,6 +18,7 @@ mod dag_pane;
 mod details;
 mod event_adapter;
 mod input;
+mod json_outline;
 mod output;
 pub(crate) mod snapshot;
 mod state;
