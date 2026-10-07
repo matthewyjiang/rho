@@ -87,6 +87,7 @@ fn sectioned_item(
         value: value.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -508,8 +509,8 @@ pub(super) fn category_picker(
             ];
             if xai_image_generation_visible(&info.provider) {
                 items.push(item(
-                    "xAI image generation",
-                    "Attach xAI hosted image_generation on create turns. Space or Enter toggles. Applies to the next session.",
+                    "SpaceXAI image generation",
+                    "Attach SpaceXAI hosted image_generation on create turns. Space or Enter toggles. Applies to the next session.",
                     Some(on_off(config.xai_image_generation)),
                     XAI_IMAGE_GENERATION_VALUE,
                 ));
@@ -637,6 +638,7 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
                 value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             })
             .collect(),
     )
@@ -677,6 +679,7 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
                 value: format!("{INLINE_SHELL_PREFIX}{shell}"),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             })
             .collect(),
     )
@@ -699,6 +702,7 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
                 value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             })
             .collect(),
     )

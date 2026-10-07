@@ -396,7 +396,7 @@ async fn native_compact_posts_to_responses_compact_and_returns_marker() {
     };
     assert_eq!(marker.provider_context[0].data["encrypted_content"], "blob");
     assert!(marker.portable_fallback().is_some_and(|text| {
-        text.contains("xAI server-side") && !text.contains("Retained recent user messages")
+        text.contains("SpaceXAI server-side") && !text.contains("Retained recent user messages")
     }));
     server.await.unwrap();
 }

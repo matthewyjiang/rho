@@ -438,6 +438,7 @@ fn picker_lists_more_items_on_a_taller_viewport() {
             value: format!("model-{index}"),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect();
     let picker = UiPicker::models("models", items);
@@ -474,6 +475,7 @@ fn picker_reserves_wrapped_footer_rows() {
             value: format!("model-{index}"),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect();
     let picker = UiPicker::models("select model", items).with_key_hints(PickerKeyHints {

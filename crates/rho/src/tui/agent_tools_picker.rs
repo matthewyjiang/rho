@@ -47,6 +47,7 @@ fn tool_row(name: &str, detail: impl Into<String>, on: bool, value: String) -> P
         value,
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -64,6 +65,7 @@ fn rho_items(tools: &ToolPolicy) -> Vec<PickerItem> {
         value: AGENT_TOOL_ALL.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }];
     items.extend(BUILTIN_TOOL_CAPABILITIES.iter().map(|capability| {
         let on = match tools {
@@ -118,6 +120,7 @@ fn claude_items(current: &[String]) -> Vec<PickerItem> {
         value: AGENT_TOOL_OTHER.into(),
         selection_verb: Some("edit"),
         allow_filter_completion: false,
+        search_terms: Vec::new(),
     });
     items
 }

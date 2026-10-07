@@ -224,6 +224,7 @@ fn file_item(file: &ChangedFile) -> PickerItem {
         value: file.path.clone(),
         selection_verb: None,
         allow_filter_completion: false,
+        search_terms: Vec::new(),
     }
 }
 

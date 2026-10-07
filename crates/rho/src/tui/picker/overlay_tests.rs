@@ -23,6 +23,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 value: "explorer".into(),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             },
             PickerItem {
                 section: None,
@@ -33,6 +34,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 value: "worker".into(),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             },
         ],
         PickerAction::ViewAgent,
@@ -198,6 +200,7 @@ fn overflowing_panes_render_scrollbars() {
             value: format!("agent-{index:02}"),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         })
         .collect();
     let picker =

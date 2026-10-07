@@ -183,16 +183,16 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         id: ProviderId::Google,
         runtime: ProviderRuntime::Google,
         name: "google",
-        display_name: "Google Gemini",
+        display_name: "Google",
         auth_modes: &[
         AuthMode {
             id: "google-api-key",
-            login_label: "Google Gemini API key",
+            login_label: "Gemini API key",
             auth_kind: ProviderAuthKind::ApiKey {
             env_var: "GEMINI_API_KEY",
             account: GOOGLE_API_KEY_ACCOUNT,
-            entry_label: "Google Gemini API key",
-            missing_message: "missing Google Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override",
+            entry_label: "Gemini API key",
+            missing_message: "missing Gemini API key; run /login google in the TUI or set GEMINI_API_KEY as a CI/dev override",
         },
         }
         ],
@@ -516,25 +516,25 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         id: ProviderId::Xai,
         runtime: ProviderRuntime::Xai,
         name: "xai",
-        display_name: "xAI",
+        display_name: "SpaceXAI",
         auth_modes: &[
         AuthMode {
             id: "xai-api-key",
-            login_label: "xAI API key",
+            login_label: "SpaceXAI API key",
             auth_kind: ProviderAuthKind::ApiKey {
             env_var: "XAI_API_KEY",
             account: XAI_API_KEY_ACCOUNT,
-            entry_label: "xAI API key",
-            missing_message: "missing xAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
+            entry_label: "SpaceXAI API key",
+            missing_message: "missing SpaceXAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
         },
         },
         AuthMode {
             id: "xai-oauth",
-            login_label: "xAI OAuth",
+            login_label: "SpaceXAI OAuth",
             auth_kind: ProviderAuthKind::XaiOAuth {
             env_var: "XAI_ACCESS_TOKEN",
             account: XAI_TOKENS_ACCOUNT,
-            missing_message: "missing xAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override",
+            missing_message: "missing SpaceXAI OAuth credentials; run /login xai-oauth in the TUI or set XAI_ACCESS_TOKEN as a CI/dev override",
         },
         }
         ],

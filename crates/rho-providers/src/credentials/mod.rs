@@ -366,7 +366,7 @@ pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<X
         return Ok(None);
     };
     serde_json::from_str(&secret).map(Some).map_err(|err| {
-        CredentialError::InvalidData(format!("invalid stored xAI token JSON: {err}"))
+        CredentialError::InvalidData(format!("invalid stored SpaceXAI token JSON: {err}"))
     })
 }
 

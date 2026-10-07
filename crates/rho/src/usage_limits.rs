@@ -491,7 +491,7 @@ impl UsageProvider for XaiUsage {
     type Source = TokenAuthSource;
     type Payload = XaiBillingPayload;
 
-    const PROVIDER: &'static str = "xAI";
+    const PROVIDER: &'static str = "SpaceXAI";
     const LOGIN: &'static str = "/login xai-oauth";
     const URL: &'static str = XAI_BILLING_URL;
 

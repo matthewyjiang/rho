@@ -422,7 +422,7 @@ fn connected_kinds(store: &dyn CredentialStore) -> Vec<UsageProviderKind> {
 }
 
 fn empty_note() -> String {
-    "no supported providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, xAI with /login xai-oauth, OpenCode Go with /login opencode-go, or sign in with /login claude-code"
+    "no supported providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, SpaceXAI with /login xai-oauth, OpenCode Go with /login opencode-go, or sign in with /login claude-code"
         .into()
 }
 

@@ -113,6 +113,7 @@ fn sectioned_item(
         value: value.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

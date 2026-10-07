@@ -255,6 +255,7 @@ fn field_item(
         value: value.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -482,6 +483,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
         value: prefix.to_string(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }];
     items.extend(
         claude_models::CLAUDE_MODEL_ALIASES
@@ -495,6 +497,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
                 value: format!("{prefix}{}", alias.name),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             }),
     );
     if !current.is_empty() && !claude_models::is_offered_alias(&current) {
@@ -507,6 +510,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
             value: format!("{prefix}{current}"),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         });
     }
     items
@@ -615,6 +619,7 @@ fn agent_choice_picker(
                 value: format!("{prefix}inherit"),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             }];
             items.extend(levels.into_iter().map(|level| {
                 let selected = current == Some(level);
@@ -635,6 +640,7 @@ fn agent_choice_picker(
                     value: format!("{prefix}{level}"),
                     selection_verb: None,
                     allow_filter_completion: true,
+                    search_terms: Vec::new(),
                 }
             }));
             ("reasoning", items)
@@ -690,6 +696,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
         value: prefix.to_string(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }];
     let mut modes: Vec<(String, String)> = available_auths
         .iter()
@@ -722,6 +729,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
             value: format!("{prefix}{id}"),
             selection_verb: None,
             allow_filter_completion: true,
+            search_terms: Vec::new(),
         }
     }));
     UiPicker::edit_agent("auth", items).with_confirm_verb("set")
@@ -741,6 +749,7 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
                 value: format!("{value_prefix}{label}"),
                 selection_verb: None,
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             }
         })
         .collect()

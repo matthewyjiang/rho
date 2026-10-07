@@ -35,6 +35,7 @@ impl App {
                         value: assistant.text.clone(),
                         selection_verb: None,
                         allow_filter_completion: false,
+                        search_terms: Vec::new(),
                     });
                 }
                 Entry::Assistant(_)

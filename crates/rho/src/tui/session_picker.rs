@@ -56,6 +56,7 @@ fn session_item(session: SessionSummary, now: u64) -> PickerItem {
         value: session.id,
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

@@ -17,6 +17,8 @@ Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/ap
 /login google
 ```
 
+In the bare `/login` picker, **Google** opens a method picker with **API Key** and **Antigravity (delegation only)**, the sign-in for the [Antigravity runtime](/subagents/antigravity).
+
 Rho stores the key in the configured credential store. For CI or local development, set `GEMINI_API_KEY` instead. The environment value takes priority over the stored key.
 
 Google AI Studio offers a free tier for selected models. Google may use free-tier request content to improve its products, so use synthetic prompts and do not send private source code or secrets when testing on that tier.

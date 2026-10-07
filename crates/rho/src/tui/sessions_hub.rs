@@ -137,6 +137,7 @@ fn directory_row(
         value,
         selection_verb: Some("browse"),
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -186,6 +187,7 @@ fn session_row(
             "resume"
         }),
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -204,6 +206,7 @@ fn cleanup_missing_workspaces_row(missing: &[DirectoryGroup], value: String) -> 
         value,
         selection_verb: Some("clean up"),
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 

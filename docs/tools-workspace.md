@@ -29,7 +29,7 @@ Core workspace tools on every platform:
 | `grep` | Search file contents with a regex (in-process) |
 | `glob` | List paths that match a glob (in-process) |
 
-Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the format the active provider's models were trained to use in their first-party harness (`apply_patch` for Codex, `str_replace` for Anthropic and xAI, `hashline` otherwise). See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
+Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the format the active provider's models were trained to use in their first-party harness (`apply_patch` for Codex, `str_replace` for Anthropic and SpaceXAI, `hashline` otherwise). See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
 
 Additional tools:
 
@@ -106,7 +106,7 @@ Details: [Documents and images](/tools-workspace/documents-and-images).
 
 ## Web access and related tools
 
-Web tools store large bodies by `responseId`, refuse private destinations by default, and add provider amenities such as xAI `x_search` and `image_generation` when relevant.
+Web tools store large bodies by `responseId`, refuse private destinations by default, and add provider amenities such as SpaceXAI `x_search` and `image_generation` when relevant.
 
 Details: [Web access and related tools](/tools-workspace/web-access).
 

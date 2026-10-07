@@ -43,6 +43,7 @@ fn model_item(model: &CursorModel) -> PickerItem {
         value: model.id.clone(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     }
 }
 
@@ -59,6 +60,7 @@ fn other_item() -> PickerItem {
         value: CURSOR_MODEL_OTHER.into(),
         selection_verb: None,
         allow_filter_completion: false,
+        search_terms: Vec::new(),
     }
 }
 

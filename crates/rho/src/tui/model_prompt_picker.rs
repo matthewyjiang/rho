@@ -52,6 +52,7 @@ pub(crate) async fn select(
                 value: reference,
                 selection_verb: Some("edit"),
                 allow_filter_completion: true,
+                search_terms: Vec::new(),
             }
         })
         .collect();

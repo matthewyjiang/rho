@@ -24,7 +24,7 @@ Rho's implemented providers are:
 | `anthropic` | `anthropic-api-key` | [Anthropic](/providers/anthropic) |
 | `google` | `google-api-key` | [Google Gemini](/providers/google-gemini) |
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
-| `xai` | `xai-api-key`, `xai-oauth` | [xAI](/providers/xai) |
+| `xai` | `xai-api-key`, `xai-oauth` | [SpaceXAI](/providers/xai) |
 | `poolside` | `poolside-api-key` | [Poolside](/providers/poolside) |
 | `openrouter` | `openrouter-api-key`, `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
 | `ollama` | `none`, optional `ollama-api-key` | [Ollama](/providers/ollama) |
@@ -39,7 +39,7 @@ Rho's implemented providers are:
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key. Custom hosts can run without a key. OpenAI Codex OAuth and xAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
+Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
 
 ## First run
 
@@ -92,7 +92,7 @@ flowchart TD
     logoutCmd["/logout"] --> remove[Delete stored credentials]
 ```
 
-`/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. OAuth profiles that have both a local browser callback and device-code, currently Codex and xAI, then ask whether to use a browser callback or device-code, even when a browser is available. The default option is browser on a graphical session and device-code when headless. **Custom · Chat Completions** and **Custom · Responses** each collect a name, a base URL, and an optional API key. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
+`/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. OAuth profiles that have both a local browser callback and device-code, currently Codex and SpaceXAI, then ask whether to use a browser callback or device-code, even when a browser is available. The default option is browser on a graphical session and device-code when headless. **Custom · Chat Completions** and **Custom · Responses** each collect a name, a base URL, and an optional API key. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
 
 Interactive logins always show the authorize URL, including when a local browser opened. Headless or remote sessions (SSH, no display, nested harness) skip launching a browser and prefer a device-code flow when the provider has one. In the TUI the URL and any device code stay in the composer, including on first-run setup, so they are visible without the transcript. Press `c` to copy the URL (OSC-52 over SSH), or click **COPY** next to the link. Esc cancels, or goes back when a parent picker is open. `rho login` prints the same URL and code; it selects device-code automatically when no browser can appear, so you do not need `--device-auth` after the fact. `--device-auth` still forces device-code on a graphical session.
 
@@ -116,21 +116,21 @@ Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthr
 
 Cursor Agent is a **runtime**, not a Rho provider. Agent definitions with `runtime: cursor` delegate to `cursor-agent`. Install that binary first ([installation](/installation#cursor-agent-binary-optional)).
 
-- `/login cursor` (alias `/login cursor-agent`) suspends the TUI and hands the terminal to `cursor-agent login`. Set `NO_OPEN_BROWSER=1` on the child environment if you need the URL printed instead of a browser open. After the handoff there is no cancel key inside the Cursor prompt.
+- `/login cursor` (alias `/login cursor-agent`, or **SpaceXAI** → **Cursor (delegation only)** in the picker) suspends the TUI and hands the terminal to `cursor-agent login`. Set `NO_OPEN_BROWSER=1` on the child environment if you need the URL printed instead of a browser open. After the handoff there is no cancel key inside the Cursor prompt.
 - Cursor Agent runs the sign-in UI and stores credentials in `~/.cursor`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
 - Rho reads signed-in state with bounded `cursor-agent status --format json` probes for `/info` and `/doctor`.
 - `/logout cursor` is not available from Rho. Sign out with `cursor-agent logout` yourself.
-- Bare `/login` lists **Cursor** as a top-level row. Choosing it skips the Rho credential-store chooser.
+- Bare `/login` lists Cursor under the SpaceXAI group next to the SpaceXAI API key and OAuth methods. Choosing it skips the Rho credential-store chooser.
 
 ### Antigravity runtime sign-in
 
 Google Antigravity is a **runtime**, not a Rho provider. Agent definitions with `runtime: antigravity` delegate to `agy_acp_server`, which `/login antigravity` offers to install when it is missing ([installation](/installation#antigravity-acp-server-optional)).
 
-- `/login antigravity` suspends the TUI and runs `rho login antigravity`, which starts the server's Google sign-in, prints the link, and accepts the pasted address of the browser's final page when the browser runs on another machine (SSH). The server waits up to 300 s.
+- `/login antigravity` (or **Google** → **Antigravity (delegation only)** in the picker) suspends the TUI and runs `rho login antigravity`, which starts the server's Google sign-in, prints the link, and accepts the pasted address of the browser's final page when the browser runs on another machine (SSH). The server waits up to 300 s.
 - The server stores the token in `$GEMINI_HOME/antigravity-acp/acp_token.json` (default `~/.gemini`), separate from the `agy` CLI sign-in. On macOS it uses the Keychain instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
 - `/doctor` and `/info` read the sign-in method from `settings.json` without starting the server.
 - `/logout antigravity` is not available from Rho. Delete `settings.json` in that directory and the token to sign out ([details](/subagents/antigravity#how-to-use-it)).
-- Bare `/login` lists **Antigravity** as a top-level row. Choosing it skips the Rho credential-store chooser.
+- Bare `/login` lists Antigravity under the Google group next to the Gemini API key method. Choosing it skips the Rho credential-store chooser.
 
 ## Selecting models
 
@@ -150,7 +150,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-Refresh a provider list with `/refresh-models` or `/config` → **Providers** → **Refresh model lists** before selecting a newly released model. Codex OAuth and xAI OAuth stay on static allowlists.
+Refresh a provider list with `/refresh-models` or `/config` → **Providers** → **Refresh model lists** before selecting a newly released model. Codex OAuth and SpaceXAI OAuth stay on static allowlists.
 
 ## Where credentials live
 
@@ -187,6 +187,6 @@ For normal interactive setup, prefer `/login`. Environment variables are CI/deve
 
 Rho uses cached model metadata to choose context windows for status display and [auto compaction](/configuration/compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), so the TUI can skip unsupported choices without model-name allowlists. Override a window or reasoning list in `~/.rho/models.toml`. A custom OpenAI-compatible host that is not itself in models.dev can set `catalog` to another provider slug and borrow that catalog. See [local model metadata](/configuration#local-model-metadata) and [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-For subscription auth modes such as Codex OAuth, xAI OAuth, and Muse subscription, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
+For subscription auth modes such as Codex OAuth, SpaceXAI OAuth, and Muse subscription, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
 
 For persistent defaults, see [configuration](/configuration). For one-shot prompts, see [automation and CLI](/automation-cli).

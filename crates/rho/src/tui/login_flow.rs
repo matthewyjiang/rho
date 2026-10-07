@@ -47,6 +47,7 @@ fn login_flow_picker(target: LoginFlowTarget, preferred: InteractiveLoginMode) -
         value: value.into(),
         selection_verb: None,
         allow_filter_completion: true,
+        search_terms: Vec::new(),
     })
     .collect();
     let mut picker = UiPicker::login_flow(

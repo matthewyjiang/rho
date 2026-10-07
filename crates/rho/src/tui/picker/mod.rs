@@ -199,6 +199,9 @@ pub(super) struct PickerItem {
     pub(super) selection_verb: Option<&'static str>,
     /// When false, Tab does not copy this row into the filter.
     pub(super) allow_filter_completion: bool,
+    /// Hidden terms the filter also matches, such as the labels and values of
+    /// choices nested under this row. Never rendered.
+    pub(super) search_terms: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -834,8 +837,9 @@ fn picker_matching_indices_with_regex(
         .collect()
 }
 
-/// Rows whose label or value contains `filter`, ignoring case, in row order.
-/// Fields are checked one at a time so a match cannot span two of them.
+/// Rows whose label, value, or search term contains `filter`, ignoring case,
+/// in row order. Fields are checked one at a time so a match cannot span two
+/// of them.
 fn literal_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
     let filter = filter.to_lowercase();
     items
@@ -844,6 +848,7 @@ fn literal_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
         .filter(|(_, item)| {
             [&item.label, &item.value]
                 .into_iter()
+                .chain(&item.search_terms)
                 .any(|field| field.to_lowercase().contains(&filter))
         })
         .map(|(index, _)| index)
@@ -873,7 +878,9 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
     matches.into_iter().map(|(index, _)| index).collect()
 }
 
-/// Best fuzzy score across the fields a user can see and reasonably type.
+/// Best fuzzy score across the fields a user can see and reasonably type,
+/// plus the row's hidden search terms, which stand in for nested choices the
+/// user expects to reach from this row.
 ///
 /// Long free text (detail, preview) stays out: subsequence matching over a
 /// paragraph matches almost any filter and would drown the ranking.
@@ -886,6 +893,7 @@ fn fuzzy_item_score(item: &PickerItem, filter: &str) -> Option<i64> {
     ]
     .into_iter()
     .flatten()
+    .chain(item.search_terms.iter().map(String::as_str))
     .filter_map(|field| fuzzy_match_score(field, filter))
     .max()
 }
@@ -903,9 +911,10 @@ fn picker_haystack(item: &PickerItem) -> String {
         .as_ref()
         .map(|badge| badge.text.as_str())
         .unwrap_or_default();
+    let search_terms = item.search_terms.join(" ");
     format!(
-        "{} {} {} {} {} {}",
-        item.label, item.value, section, detail, preview, badge
+        "{} {} {} {} {} {} {}",
+        item.label, item.value, section, detail, preview, badge, search_terms
     )
 }
 

@@ -21,7 +21,7 @@ Unknown keys in `config.toml` are a load error, so typos fail loudly. Values tha
 | Project and global instructions | [AGENTS.md](#project-and-global-instructions), `/init`, and `/remember [global] <text>` |
 | Model-scoped system instructions | [Model prompts](/configuration/model-prompts) |
 | Web search | [Web search](/configuration/web-search) |
-| xAI image generation | [xAI](/providers/xai#notes) |
+| SpaceXAI image generation | [SpaceXAI](/providers/xai#notes) |
 | Edit tool | [Edit tool](#edit-tool) |
 | MCP servers | `[mcp.servers]`. Inspect with `/mcp` or `rho mcp list`. See [Model Context Protocol](/integrations/mcp) |
 | Auto compaction | [Auto compaction](/configuration/compaction) |
@@ -42,14 +42,14 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 | Appearance | Theme, zen mode, reasoning display, cache miss notices, header hints, notifications, collapsed tool-output lines, output streaming |
 | Agent behavior | Permission mode, Auto classifier, advisor mode, delegation, concurrent agents, questionnaire timeout |
 | Context & limits | Auto compaction, max output bytes, prompt history |
-| Tools | Inline shell, edit tool, web search, and xAI image generation when the conversation provider is xAI |
+| Tools | Inline shell, edit tool, web search, and SpaceXAI image generation when the conversation provider is SpaceXAI |
 | Providers | Login, logout, model-list refresh, models.dev catalog refresh, startup update check |
 
 Apply timing:
 
 - Before the next turn: permission mode, edit tool, advisor mode, web search.
 - Immediately, including mid-turn: reasoning, theme, zen, reasoning display, cache miss notices, header hints, notifications, output streaming, concurrent agents.
-- Next session: `enable_subagents`, `max_output_bytes`, xAI image generation.
+- Next session: `enable_subagents`, `max_output_bytes`, SpaceXAI image generation.
 - Restart: keybindings, and any direct edit of `config.toml`.
 
 When `cache_miss_notices` is on, a completed turn that re-billed a large uncached prompt, over 20K tokens or $0.10, inserts a transcript notice. `/info` always shows session and latest-request cache hit rates, plus re-billed totals once misses were counted.

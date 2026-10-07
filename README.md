@@ -11,7 +11,7 @@ Rho is a fast Rust agent harness with a small footprint and opinionated defaults
 - **Fast and small**: Compare CLI startup time and peak RSS with other coding harnesses:
 ![CLI startup time and peak RSS for rho versus Codex, Claude Code, OpenCode, and Pi without extensions](docs/assets/cli-overhead.svg)
 
-- **Bring your own provider**: OpenAI, Kimi, xAI, Anthropic, Gemini, Copilot, Ollama, Ollama Cloud, OpenRouter, and more. Use API keys or subscription plans.
+- **Bring your own provider**: OpenAI, Kimi, SpaceXAI, Anthropic, Gemini, Copilot, Ollama, Ollama Cloud, OpenRouter, and more. Use API keys or subscription plans.
 - **Agent orchestration**: Delegate work across providers, including [Claude Code agents](https://matthewyjiang.github.io/rho/subagents/claude-cli) backed by your Claude subscription. Setup: [agents and delegation](https://matthewyjiang.github.io/rho/subagents).
 - **Embeddable SDK**: Build headless Rust agents with explicit providers, tools, sessions, and cancellation.
 

@@ -11,7 +11,7 @@ fn provider_setup_errors_are_nonfatal_for_interactive_startup() {
     for (case, error) in [
         (
             "missing credentials",
-            ModelError::missing_credentials("missing xAI API key"),
+            ModelError::missing_credentials("missing SpaceXAI API key"),
         ),
         (
             "unsupported provider",
