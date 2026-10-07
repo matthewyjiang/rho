@@ -12,7 +12,7 @@ use crate::workflow::{
     CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome, WorkspaceAccess,
 };
 
-use super::super::text_selection::render_copy_notice;
+use super::super::{text_selection::render_copy_notice, theme::Theme};
 #[cfg(any(test, debug_assertions))]
 use super::control::ConfirmKind;
 use super::{
@@ -180,17 +180,19 @@ fn detail_meta_lines<'a>(
                 node.display_name.as_str(),
                 Style::default().add_modifier(Modifier::BOLD),
             ),
+            Span::styled(
+                format!("  {}", state_label(&node.state)),
+                state_style(&node.state),
+            ),
         ]),
-        Line::from(state_label(&node.state)),
         Line::from(kind_line(node)),
     ];
 
     if !node.work.is_empty() {
-        lines.push(Line::from(format!("task {}", node.work)));
-    }
-
-    if matches!(node.access, WorkspaceAccess::Mutating) {
-        lines.push(Line::from("writes to the workspace"));
+        lines.push(Line::from(vec![
+            Span::styled("task ", Theme::dim()),
+            Span::raw(node.work.as_str()),
+        ]));
     }
 
     let waiting = waiting_on(node, state);
@@ -368,7 +370,7 @@ fn run_status_label(
 }
 
 fn kind_line(node: &WorkflowNodeSnapshot) -> String {
-    match &node.execution {
+    let kind = match &node.execution {
         ExecutionMetadata::Agent {
             name,
             provider,
@@ -392,6 +394,10 @@ fn kind_line(node: &WorkflowNodeSnapshot) -> String {
                 .unwrap_or(executable);
             format!("{mode} {name}")
         }
+    };
+    match node.access {
+        WorkspaceAccess::Mutating => format!("{kind} · writes workspace"),
+        WorkspaceAccess::ReadOnly => kind,
     }
 }
 

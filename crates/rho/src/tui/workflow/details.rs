@@ -13,6 +13,7 @@ use crate::workflow::TaskInstanceId;
 
 use super::super::{
     drag_selection::{DragSelection, SelectionBody},
+    render::{display_width, truncate_keep_end, truncate_one_line},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     theme::Theme,
     HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
@@ -112,13 +113,7 @@ impl DetailPane {
             self.clear_selection();
             self.cached_lines = match self.body.as_ref() {
                 Some(body) => {
-                    let mut lines = vec![
-                        Line::from(Span::styled(
-                            format!("{} · {}", body.kind.label(), body.relative_path),
-                            Theme::dim(),
-                        )),
-                        Line::styled("─".repeat(width), Theme::dim()),
-                    ];
+                    let mut lines = vec![section_rule(body, width), Line::from("")];
                     lines.extend(output::render_body_lines(body, width));
                     lines
                 }
@@ -298,6 +293,31 @@ impl DetailPane {
         self.cached_width = None;
         self.cached_lines.clear();
     }
+}
+
+/// One rule row that names the artifact: `── answer · nodes/…/answer.txt ───`.
+/// The path keeps its file name when the pane is too narrow for all of it.
+fn section_rule(body: &NodeOutputBody, width: usize) -> Line<'static> {
+    let label = body.kind.label();
+    if 3 + display_width(label) + 1 > width {
+        // Too narrow for the decorated rule; keep one row that fits.
+        let text = truncate_one_line(&format!("── {label}"), width);
+        return Line::styled(text, Theme::dim());
+    }
+    // "── " + label + " · " + path + " " + at least one rule glyph.
+    let fixed = 3 + display_width(label) + 3 + 2;
+    let path = truncate_keep_end(&body.relative_path, width.saturating_sub(fixed));
+    let tail = if path.is_empty() {
+        " ".to_owned()
+    } else {
+        format!(" · {path} ")
+    };
+    let fill = width.saturating_sub(3 + display_width(label) + display_width(&tail));
+    Line::from(vec![
+        Span::styled("── ", Theme::dim()),
+        Span::styled(label, Theme::accent()),
+        Span::styled(format!("{tail}{}", "─".repeat(fill)), Theme::dim()),
+    ])
 }
 
 #[cfg(test)]

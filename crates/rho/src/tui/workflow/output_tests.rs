@@ -98,6 +98,36 @@ fn loads_and_renders_markdown_answer() {
     assert!(text.contains("risk low"));
 }
 
+// Covers: schema agent JSON answers render as an outline instead of one
+// wrapped blob, while process streams that happen to be JSON stay verbatim.
+// Owner: workflow TUI output projection.
+#[test]
+fn json_outlines_only_for_node_results() {
+    let dir = tempdir().unwrap();
+    let bytes = br#"{"status":"fixed","files":["a.rs"]}"#;
+    let cases = [
+        (
+            ArtifactKind::AgentAnswer,
+            vec!["status  fixed", "files · 1", "  • a.rs"],
+        ),
+        (
+            ArtifactKind::Stdout,
+            vec![r#"{"status":"fixed","files":["a.rs"]}"#],
+        ),
+    ];
+    for (kind, expected) in cases {
+        let relative = format!("artifacts/review/{}", kind.label());
+        write_private(dir.path(), &relative, bytes);
+        let node = terminal_agent(vec![artifact(kind, &relative, bytes)]);
+        let body = load_finished_output(dir.path(), &node).expect("body");
+        let text = render_body_lines(&body, 60)
+            .iter()
+            .map(|line| line.to_string().trim_end().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(text, expected, "{kind:?}");
+    }
+}
+
 // Covers: non-private artifact files fail closed instead of plain open fallback.
 // Owner: workflow TUI output projection.
 #[cfg(unix)]
