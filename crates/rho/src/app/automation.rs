@@ -568,7 +568,12 @@ async fn run_session_with_output(
     .await?;
     let session = &built.session;
     if let Some(checkpoint) = &startup.checkpoint {
-        session.set_checkpoint_store(Some(Arc::clone(&checkpoint.store)))?;
+        session.set_checkpoint_store(Some(
+            built
+                .tools
+                .todo_state()
+                .checkpoint_store(Arc::clone(&checkpoint.store)),
+        ))?;
     }
     let mut delegation = super::headless_delegation::HeadlessDelegation::attach(
         session,

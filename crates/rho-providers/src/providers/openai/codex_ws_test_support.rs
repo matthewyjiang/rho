@@ -6,6 +6,21 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 use crate::credentials::CodexTokens;
+use crate::model::{Message as ModelMessage, ModelRequest};
+
+pub(super) fn request_body(messages: &[ModelMessage]) -> Value {
+    super::super::codex_request::build_codex_responses_body(
+        "gpt-5-codex",
+        ModelRequest {
+            messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: crate::reasoning::ReasoningLevel::Low,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap()
+}
 
 pub(super) fn body(input: Vec<Value>) -> Value {
     json!({

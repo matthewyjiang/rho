@@ -62,6 +62,7 @@ are not SDK exports.
 ### Crate-root runtime surface
 
 - Runtime construction: `Rho`, `RhoBuilder`, `SystemPrompt`, `ShutdownOutcome`
+- Live request-only context: `RequestContext`, configured with `RhoBuilder::request_context`
 - Sessions and runs: `SessionOptions`, `Session`, `SessionState`, `UserInput`,
   `Run`, `RunEvent`, `RunOutcome`, `StopReason`
 - Cancellation and reasoning: `CancellationToken`, `ReasoningLevel`,
@@ -82,6 +83,10 @@ are not SDK exports.
 - Tool results re-exported at the root
 
 ### `rho_sdk::model`
+
+`Message::model_context` and `Message::as_model_context` construct and recognize live host context. Until a typed message variant is available, `Message::semantic()` classifies it as `User`; request readers must check the helper when distinguishing context from human input. This recognition is attribution, not authentication.
+
+`NEXT_MAJOR(rho-sdk): add a typed model-context message and SemanticMessage::ModelContext instead of encoding request context as user-role blocks.`
 
 The provider-neutral model exports are the tool-call, content, message, model
 identity, provider-context, request/response/event, and usage DTOs. Their public

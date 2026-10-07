@@ -275,6 +275,7 @@ where
         }
     };
     tool_set.bind_session_search(session.id().as_str());
+    tool_set.todo_state().restore(&session.snapshot());
     if let Some(advisor) = tool_set.advisor() {
         advisor.bind_session(session.clone());
     }

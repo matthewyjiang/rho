@@ -99,7 +99,7 @@ impl Tool for StubTool {
     }
 }
 
-pub(super) fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
+fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
     let surface = Arc::new(CodeModeSurface::default());
     surface.sync(&tools);
     surface
@@ -115,7 +115,7 @@ fn host(probe: StubTool) -> ToolHost {
 
 /// The script's `result`, or its failure text. A raising script is a
 /// completed failure that keeps partial output, not a host error.
-pub(super) async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
+async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
     let output = host
         .invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
@@ -130,7 +130,8 @@ pub(super) async fn script(host: &ToolHost, source: &str) -> Result<Value, Strin
 }
 
 // Covers: completed failures stay values, host status wins over payload status,
-// and floats remain numeric through JSON -> Starlark -> JSON.
+// envelopes support native dictionary operations, and floats remain numeric
+// through JSON -> Starlark -> JSON.
 // Owner: codemode engine / ToolHost bridge.
 #[tokio::test]
 async fn nested_outcomes_preserve_values_and_failure_status() {
@@ -179,7 +180,7 @@ async fn nested_outcomes_preserve_values_and_failure_status() {
             .tool(CodeModeTool::new(surface))
             .build()
             .unwrap();
-        let actual = script(&host, "result = call_tool(\"probe\")")
+        let actual = script(&host, "result = dict(call_tool(\"probe\"))")
             .await
             .map_err(|_| ());
         if let Ok(value) = &actual {
@@ -187,6 +188,14 @@ async fn nested_outcomes_preserve_values_and_failure_status() {
                 .unwrap()
                 .validate(value)
                 .unwrap();
+            assert_eq!(
+                script(
+                    &host,
+                    "copy = {}\ncopy.update(call_tools([\"probe\"])[0])\nresult = copy"
+                )
+                .await,
+                Ok(value.clone())
+            );
         }
         assert_eq!(actual, expected);
     }
@@ -761,7 +770,7 @@ async fn call_tools_runs_batch_concurrently_in_order() {
         std::time::Duration::from_secs(30),
         host.invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
-            json!({"script": format!("result = [[r[\"content\"], r[\"is_error\"]] for r in call_tools([(\"meet\", {{\"id\": i}}) for i in range({})] + [\"missing\"])]", width + 1)}),
+            json!({"script": format!("result = [[r.get(\"content\"), r.get(\"is_error\")] for r in call_tools([(\"meet\", {{\"id\": i}}) for i in range({})] + [\"missing\"])]", width + 1)}),
         )),
     )
     .await

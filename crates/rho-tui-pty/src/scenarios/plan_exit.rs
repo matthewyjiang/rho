@@ -1,7 +1,5 @@
 //! Plan approval hands the next turn to an execution policy lasting until exit.
 
-use std::time::Duration;
-
 use anyhow::{ensure, Context, Result};
 
 use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
@@ -233,9 +231,11 @@ pub(super) const IDLE_COMPLETION_SCENARIO: Scenario = Scenario::new(
             text: "fixture plan background dispatched",
             timeout: STREAM,
         },
-        Step::WaitQuiet {
-            quiet_for: Duration::from_millis(250),
-            timeout: SETTLE,
+        // The held child keeps animating the rail, so screen quiet cannot
+        // establish parent completion. Its worked-for receipt can.
+        Step::WaitText {
+            text: "Worked for",
+            timeout: STREAM,
         },
         // Confirm the idle command path before releasing the child. During-
         // turn /permissions is unavailable, so an in-turn delivery cannot pass.

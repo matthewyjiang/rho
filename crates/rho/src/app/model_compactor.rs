@@ -42,6 +42,7 @@ pub(crate) struct ModelCompactor {
     pub(super) context_window: Option<u64>,
     pub(super) diagnostics: RuntimeDiagnostics,
     pub(super) recall: Option<RecallStore>,
+    pub(super) todo: Option<crate::tools::todo::TodoState>,
     /// Built from `config.summarizer`; `None` summarizes with the session model.
     pub(super) summarizer: Option<Summarizer>,
 }
@@ -98,7 +99,48 @@ impl Compactor for ModelCompactor {
             let started = std::time::Instant::now();
             let occurred_at_ms = chrono::Utc::now().timestamp_millis();
             let mut trace = Trace::default();
-            let result = self.compact_tiers(&request, &mut trace).await;
+            let todo = self.todo.as_ref().map(|todo| todo.checkpoint());
+            let retained_context = todo.as_ref().map_or(&[][..], |todo| todo.messages());
+            let retained_tokens =
+                rho_sdk::model::context::estimate_messages_tokens(retained_context);
+            let tools = self.tool_specs(&request);
+            let context = request.context_estimate().unwrap_or_else(|| {
+                ContextEstimate::from_estimated_tokens(
+                    estimate_context_tokens(request.messages(), tools)
+                        .saturating_add(retained_tokens),
+                )
+            });
+            let context_window = match (self.context_window, context.reported_context_window()) {
+                (Some(configured), Some(reported)) => Some(configured.min(reported)),
+                (configured, reported) => configured.or(reported),
+            };
+            let result = self
+                .compact_tiers(
+                    &request,
+                    retained_tokens,
+                    context,
+                    context_window,
+                    &mut trace,
+                )
+                .await
+                .map(|output| {
+                    // A real replacement may crowd out a previously admitted
+                    // checklist. Preserve its exact captured metadata, but
+                    // bound the live projection against the measured history
+                    // so the next provider turn can shorten or clear it.
+                    if let Some(state) = &self.todo {
+                        state.set_context_budget(
+                            self.context_window,
+                            context,
+                            output.messages(),
+                            tools,
+                        );
+                    }
+                    match todo {
+                        Some(todo) => todo.retain(output),
+                        None => output,
+                    }
+                });
             let removed = match &result {
                 Ok(output) => removed_tool_calls(request.messages(), output.messages()),
                 Err(_) => Default::default(),
@@ -210,21 +252,25 @@ impl ModelCompactor {
     async fn compact_tiers(
         &self,
         request: &CompactionRequest,
+        retained_tokens: u64,
+        context: ContextEstimate,
+        context_window: Option<u64>,
         trace: &mut Trace,
     ) -> Result<CompactionOutput, Error> {
         let cancellation = request.cancellation().clone();
         let mut next_attempt_index = 1usize;
         let tools = self.tool_specs(request);
-        let context = request.context_estimate().unwrap_or_else(|| {
-            ContextEstimate::from_estimated_tokens(estimate_context_tokens(
-                request.messages(),
-                tools,
-            ))
-        });
         trace.context_tokens = context.tokens();
-        let target_tokens =
+        let total_target =
             self.config
-                .target_tokens_for_context(self.context_window, request.trigger(), context);
+                .target_tokens_for_context(context_window, request.trigger(), context);
+        // Retention is a soft goal: a fixed prompt or the newest message group
+        // can exceed it. Only the actual model window is a capacity limit.
+        let capacity = context_window.map(|window| context.estimated_budget(window));
+        // Prefer retaining the exact live projection. If irreducible history
+        // still crowds it out, the final budget refresh suspends projection
+        // rather than making compaction itself an unrecoverable failure.
+        let target_tokens = total_target.saturating_sub(retained_tokens);
         let (elided, elided_tool_results) = match self.elide(request, target_tokens) {
             Some(elision) => (Some(elision.messages), elision.originals.len()),
             None => (None, 0),
@@ -238,6 +284,7 @@ impl ModelCompactor {
             }
         }
         let messages = elided.as_deref().unwrap_or(request.messages());
+        let mut rejected_native_usage = ModelUsage::default();
 
         match self
             .try_native_compaction(
@@ -251,8 +298,19 @@ impl ModelCompactor {
             .await
         {
             NativeCompactionResult::Success(output) => {
-                trace.tier = Some(CompactionTier::Native);
-                return Ok(output);
+                if retained_tokens == 0
+                    || capacity.is_none_or(|limit| {
+                        estimate_context_tokens(output.messages(), tools)
+                            .saturating_add(retained_tokens)
+                            <= limit
+                    })
+                {
+                    trace.tier = Some(CompactionTier::Native);
+                    return Ok(output);
+                }
+                // A native replacement that crowds out mandatory context is
+                // not usable; the portable summary gets the reduced budget.
+                rejected_native_usage = output.usage().clone();
             }
             NativeCompactionResult::Cancelled => {
                 trace.tier = Some(CompactionTier::Native);
@@ -268,7 +326,7 @@ impl ModelCompactor {
                 Some(_) => CompactionTier::Elision,
                 None => CompactionTier::Unchanged,
             });
-            return CompactionOutput::new(messages.to_vec());
+            return CompactionOutput::with_usage(messages.to_vec(), rejected_native_usage);
         };
         trace.tier = Some(CompactionTier::TextSummary);
         let summary = self
@@ -286,7 +344,10 @@ impl ModelCompactor {
         if !summary.from_elided {
             trace.elided_tool_results = 0;
         }
-        CompactionOutput::with_usage(summary.replacement, summary.usage)
+        CompactionOutput::with_usage(
+            summary.replacement,
+            summary.usage.saturating_add(&rejected_native_usage),
+        )
     }
 
     /// Elides only when the agent can recall, and only after the originals are
@@ -602,3 +663,7 @@ mod tests;
 #[cfg(test)]
 #[path = "model_compactor_session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "model_compactor_todo_tests.rs"]
+mod todo_tests;

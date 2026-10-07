@@ -227,6 +227,11 @@ impl InteractiveRuntime {
         self.sessions.history()
     }
 
+    /// Latest successful replacement; clones only the checklist, not history.
+    pub(crate) fn todo_list(&self) -> Option<crate::tools::todo::TodoList> {
+        self.tools.todo_state().list()
+    }
+
     pub(crate) fn provider_identity(&self) -> rho_sdk::model::ModelIdentity {
         self.provider.provider().identity()
     }
@@ -562,6 +567,7 @@ impl InteractiveRuntime {
                 usage_recording: self.usage_recording.clone(),
                 diagnostics: self.diagnostics.clone(),
                 recall: self.tools.recall_store(),
+                todo: Some(self.tools.todo_state()),
             },
         )
     }
@@ -811,6 +817,10 @@ pub(crate) use compact::CompactTaskPoll;
 #[cfg(test)]
 #[path = "interactive_runtime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "interactive_runtime_todo_tests.rs"]
+mod todo_tests;
 
 #[cfg(test)]
 pub(crate) use tests::test_runtime;

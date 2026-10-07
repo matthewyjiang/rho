@@ -576,6 +576,7 @@ impl App {
         changed |= self
             .workflow_panel
             .update(agent.workflow_tracker(), agent.session_id().as_str());
+        changed |= self.refresh_todo_list(agent);
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

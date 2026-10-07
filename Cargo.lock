@@ -4849,7 +4849,6 @@ name = "rho-coding-agent"
 version = "2.19.0"
 dependencies = [
  "agent-client-protocol",
- "allocative",
  "anyhow",
  "arboard",
  "async-trait",
@@ -4952,7 +4951,7 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "5.8.0"
+version = "5.9.0"
 dependencies = [
  "pretty_assertions",
  "proptest",

@@ -288,7 +288,8 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
             crate::tools::web::WebAccessStore::new(),
             tools.recall_store(),
             tools.advisor().cloned(),
-        ),
+        )
+        .with_todo_state(tools.todo_state()),
         mcp_sampling: crate::tools::mcp::McpSamplingBridge::new(),
         provider: ProviderController::new(shared_provider, rho_sdk::ReasoningLevel::Off),
         tools,
