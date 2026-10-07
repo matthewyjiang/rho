@@ -86,6 +86,7 @@ mod supervised_approval;
 mod terminal_ownership;
 mod text_selection;
 mod todo_card;
+mod todo_progress;
 mod tool_card_hover;
 mod turn_notifications;
 mod type_during_stream;
@@ -543,6 +544,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     EDIT_DIFF_SCENARIO,
     todo_card::TODO_CARD_SCENARIO,
+    todo_progress::TODO_PROGRESS_SCENARIO,
     write_stream::WRITE_INPUT_STREAM_SCENARIO,
     Scenario::new(
         "concurrent_progress",

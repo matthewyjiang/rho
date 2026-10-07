@@ -184,6 +184,7 @@ pub struct RhoBuilder {
     hook_host_labels: crate::hooks::HookHostLabels,
     force_publish_live_history: bool,
     tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,
+    request_context: Option<Arc<dyn crate::RequestContext>>,
 }
 
 impl RhoBuilder {
@@ -197,6 +198,13 @@ impl RhoBuilder {
 
     pub fn provider_shared(mut self, provider: Arc<dyn ModelProvider>) -> Self {
         self.provider = Some(provider);
+        self
+    }
+
+    /// Supplies live host context appended only to model requests. The source
+    /// owns persistence; conversation history and compaction input stay unchanged.
+    pub fn request_context(mut self, source: impl crate::RequestContext + 'static) -> Self {
+        self.request_context = Some(Arc::new(source));
         self
     }
 
@@ -461,6 +469,7 @@ impl RhoBuilder {
             boundary_inputs: None,
             tool_visibility: self.tool_visibility,
             checkpoint_store: None,
+            request_context: self.request_context,
         })
     }
 }
@@ -497,6 +506,7 @@ pub struct Rho {
     pub(crate) tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,
     /// Per-session step checkpoints; see [`crate::Session::set_checkpoint_store`].
     pub(crate) checkpoint_store: Option<Arc<dyn crate::SessionStore>>,
+    pub(crate) request_context: Option<Arc<dyn crate::RequestContext>>,
 }
 
 impl Rho {

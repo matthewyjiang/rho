@@ -474,6 +474,7 @@ fn context_anchor_validates_tools_identity_and_prefix() {
     let request_estimate = accounting.current(&tools, &identity());
     accounting.record(
         &history,
+        /*source*/ &[],
         &tools,
         identity(),
         &ModelUsage {
@@ -494,7 +495,7 @@ fn context_anchor_validates_tools_identity_and_prefix() {
         ),
         (Vec::new(), tools.clone(), identity()),
     ] {
-        let estimate = accounting.estimate(&messages, &specs, &model);
+        let estimate = accounting.estimate(&messages, /*source*/ &[], &specs, &model);
         assert_eq!(
             estimate,
             ContextEstimate::from_estimated_tokens(estimate_context_tokens(&messages, &specs))

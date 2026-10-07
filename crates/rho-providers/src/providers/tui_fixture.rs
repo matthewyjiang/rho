@@ -272,6 +272,9 @@ fn title_response(request: &ModelRequest<'_>) -> Option<Result<ModelResponse, Pr
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
     request.messages.iter().rev().find_map(|message| {
+        if message.as_model_context().is_some() {
+            return None;
+        }
         let SemanticMessage::User(content) = message.semantic() else {
             return None;
         };
@@ -294,7 +297,10 @@ fn tool_result_for_name<'a>(
         .messages
         .iter()
         .rev()
-        .take_while(|message| !matches!(message.semantic(), SemanticMessage::User(_)))
+        .take_while(|message| {
+            message.as_model_context().is_some()
+                || !matches!(message.semantic(), SemanticMessage::User(_))
+        })
         .collect::<Vec<_>>();
     let call_id = current_turn.iter().find_map(|message| {
         message
@@ -318,7 +324,10 @@ fn current_turn_tool_results<'a>(
         .messages
         .iter()
         .rev()
-        .take_while(|message| !matches!(message.semantic(), SemanticMessage::User(_)))
+        .take_while(|message| {
+            message.as_model_context().is_some()
+                || !matches!(message.semantic(), SemanticMessage::User(_))
+        })
         .filter_map(|message| match message {
             Message::ToolResult(result) => Some(result),
             _ => None,

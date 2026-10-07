@@ -934,6 +934,9 @@ fn codex_ws_url(api_base: &str) -> String {
 #[path = "codex_ws_test_support.rs"]
 mod codex_ws_test_support;
 #[cfg(test)]
+#[path = "codex_ws_context_tests.rs"]
+mod context_tests;
+#[cfg(test)]
 #[path = "codex_ws_steering_tests.rs"]
 mod steering_tests;
 #[cfg(test)]

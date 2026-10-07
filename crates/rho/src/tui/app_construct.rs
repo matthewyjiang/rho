@@ -139,6 +139,7 @@ impl App {
             pending_sessions_task: None,
             pending_session_title: None,
             session_title_locked: false,
+            todo_list: None,
             clipboard: Box::new(SystemClipboard::default()),
             media_attach_tasks: Vec::new(),
             composer_attachment_layout_cache: None,

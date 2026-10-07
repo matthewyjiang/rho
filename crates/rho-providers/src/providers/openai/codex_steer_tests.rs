@@ -58,12 +58,75 @@ fn pending_steer_match_table() {
             candidate(vec![original.clone(), assistant]),
             SteerMatch::FullReplay,
         ),
+        (
+            "rewritten prefix",
+            candidate(vec![
+                json!({"role":"user","content":"changed"}),
+                steer[0].clone(),
+            ]),
+            SteerMatch::FullReplay,
+        ),
     ];
 
     let pending = pending(steer);
     for (name, candidate, expected) in cases {
         assert_eq!(pending.matches(&candidate), expected, "{name}");
     }
+}
+
+// Covers: auto-continuation has already sampled context; reuse must tolerate
+// identical projection after the steer but never silently discard an update.
+// Owner: openai websocket steering
+#[test]
+fn pending_steer_context_match_table() {
+    use crate::model::Message;
+    use crate::protocol::openai_responses::codex_input_items;
+
+    let context =
+        |text: &str| codex_input_items(&[Message::model_context(text)], &mut Vec::new()).unwrap();
+    let original_context = context("original");
+    let steer = vec![json!({"role":"user","content":"S1"})];
+    let mut active = pending(steer.clone());
+    active.request_input.extend(original_context.clone());
+    let history = vec![
+        active.request_input[0].clone(),
+        json!({"role":"assistant","content":"partial"}),
+        steer[0].clone(),
+    ];
+    for (name, trailing, expected) in [
+        ("identical", original_context.clone(), SteerMatch::Reuse),
+        ("changed", context("changed"), SteerMatch::FullReplay),
+        ("removed", vec![], SteerMatch::FullReplay),
+        (
+            "added context item",
+            [original_context.clone(), context("extra")].concat(),
+            SteerMatch::FullReplay,
+        ),
+        (
+            "ordinary user suffix",
+            vec![json!({"role":"user","content":"extra"})],
+            SteerMatch::FullReplay,
+        ),
+    ] {
+        assert_eq!(
+            active.matches(&candidate([history.clone(), trailing].concat())),
+            expected,
+            "{name}"
+        );
+    }
+    active.request_input.pop();
+    assert_eq!(
+        active.matches(&candidate([history, original_context].concat())),
+        SteerMatch::FullReplay,
+        "new context must be delivered"
+    );
+
+    // A suffix that overlaps the prefix is not an extension and must not panic.
+    let pending = pending(vec![json!({"role":"user","content":"one"})]);
+    assert_eq!(
+        pending.matches(&candidate(pending.request_input.clone())),
+        SteerMatch::FullReplay
+    );
 }
 
 #[test]

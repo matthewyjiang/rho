@@ -6,15 +6,20 @@ use rho_sdk::{
     ProviderError,
 };
 
-use super::{completed, completed_tool_call, tool_result};
+use super::{completed, completed_tool_call, release, tool_result};
 
 const CALL_ID: &str = "tui-fixture-todo";
+const UPDATE_ID: &str = "tui-fixture-todo-update";
+const UPDATE_RELEASE: &str = ".rho-fixture-release-todo-update";
 
 pub(super) async fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if prompt == "fixture todo update" {
+        return Some(update(request, events).await);
+    }
     if prompt != "fixture todo" {
         return None;
     }
@@ -51,4 +56,46 @@ pub(super) async fn intercept(
         return Some(Err(error));
     }
     Some(completed_tool_call(CALL_ID, "todo", arguments))
+}
+
+/// Wait for the PTY to open the overlay, then update through codemode without
+/// printing the nested result. The overlay must read task state, not tool text.
+async fn update(
+    request: &ModelRequest<'_>,
+    events: &ProviderEventSender,
+) -> Result<ModelResponse, ProviderError> {
+    if let Some(result) = tool_result(request, UPDATE_ID) {
+        return completed(if result.ok {
+            "todo update complete"
+        } else {
+            "todo update failed"
+        });
+    }
+    release::consume_release(UPDATE_RELEASE)?;
+    events
+        .send(ModelEvent::OutputDelta(
+            "waiting to update checklist".into(),
+        ))
+        .await?;
+    release::wait_for_release_or_cancel(UPDATE_RELEASE, &request.cancellation).await?;
+    let todos = (1..=12)
+        .map(|index| {
+            let (content, status) = if index == 12 {
+                (
+                    "verify task retention\n  preserve exact task details\n\nfinish review"
+                        .to_owned(),
+                    "in_progress",
+                )
+            } else {
+                (format!("finished step {index}"), "completed")
+            };
+            serde_json::json!({"content": content, "status": status})
+        })
+        .collect::<Vec<_>>();
+    let arguments = serde_json::json!({"todos": todos});
+    completed_tool_call(
+        UPDATE_ID,
+        "codemode",
+        serde_json::json!({"script": format!("call_tool(\"todo\", {arguments})")}),
+    )
 }

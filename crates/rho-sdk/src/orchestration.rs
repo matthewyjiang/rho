@@ -280,7 +280,7 @@ async fn execute_turn_loop(
         // Emit before the provider call so quiet hosts still show context fill
         // while thinking and tool-call JSON stream (usage often arrives only at
         // the end of the OpenAI-compatible stream).
-        let mut context_estimate =
+        let context_estimate =
             compaction_estimate.unwrap_or_else(|| core.advance_context(&history, &tool_specs));
         let estimated_context_tokens = context_estimate.estimated_tokens();
         match emit(
@@ -303,10 +303,15 @@ async fn execute_turn_loop(
             return control.terminate(core, history, error).await;
         }
         let mut overflow_recovered = false;
-        let (response, mut capture) = loop {
+        let (response, mut capture, request_context, request_estimate) = loop {
+            // Late boundary input, staged steering, and overflow recovery may
+            // have changed history since the automatic compaction policy check.
+            core.prepare_request_context(&history, &tool_specs);
+            let messages = runtime.request_messages(core.id(), &history);
+            let estimate = core.advance_request_context(&history, &messages.context, &tool_specs);
             let error = match request_valid_response(
                 request_scope,
-                &history,
+                &messages.messages,
                 &tool_specs,
                 &accumulated_usage,
                 runtime.reasoning_level,
@@ -315,9 +320,12 @@ async fn execute_turn_loop(
             )
             .await
             {
-                Ok(result) => break result,
+                Ok((response, capture)) => {
+                    break (response, capture, messages.context, estimate);
+                }
                 Err(error) => error,
             };
+            drop(messages);
             // One compaction per step, within the step's limit. Provider-accepted
             // steering ties the request to state compaction must not rewrite.
             let recover = !overflow_recovered && !control.steering.has_delivered();
@@ -341,7 +349,7 @@ async fn execute_turn_loop(
                         if let CompactionLimit::BeforePendingCalls(end) = limit {
                             pending_compacted_end = Some(end);
                         }
-                        context_estimate = core.advance_context(&history, &tool_specs);
+                        core.advance_context(&history, &tool_specs);
                         continue;
                     }
                     Ok(OverflowRecovery::GiveUp) => {}
@@ -375,7 +383,13 @@ async fn execute_turn_loop(
         } else {
             // Associate usage with the estimate of this exact immutable request,
             // not whichever context snapshot was published most recently.
-            core.record_context_usage(&history, &tool_specs, capture.usage(), context_estimate);
+            core.record_context_usage(
+                &history,
+                &request_context,
+                &tool_specs,
+                capture.usage(),
+                request_estimate,
+            );
         }
 
         let ModelResponse::Assistant(content) = response;

@@ -201,6 +201,7 @@ pub struct AppToolSet {
     /// Present only when the `sessions` tool is installed, since recall is
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
+    todo: super::todo::TodoState,
 }
 
 impl AppToolSet {
@@ -225,6 +226,7 @@ impl AppToolSet {
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
+            todo: super::todo::TodoState::default(),
         }
     }
 
@@ -283,7 +285,7 @@ impl AppToolSet {
             tool_set.add_bundle(super::rho::sdk_bundle(diagnostics, config.max_output_bytes));
         }
         if capabilities.contains(&ToolCapability::Todo) {
-            tool_set.add_bundle(super::todo::sdk_bundle());
+            tool_set.add_bundle(super::todo::sdk_bundle(tool_set.todo.clone()));
         }
         if capabilities.contains(&ToolCapability::Questionnaire) {
             tool_set.add_bundle(super::sdk_features::questionnaire_bundle());
@@ -386,6 +388,10 @@ impl AppToolSet {
     /// this agent cannot call `sessions` and so could never recall.
     pub(crate) fn recall_store(&self) -> Option<crate::session::recall::RecallStore> {
         self.recall.clone()
+    }
+
+    pub(crate) fn todo_state(&self) -> super::todo::TodoState {
+        self.todo.clone()
     }
 
     /// Attach the root interactive session's host-controlled desktop grant.

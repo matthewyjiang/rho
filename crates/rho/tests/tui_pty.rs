@@ -157,6 +157,13 @@ fn todo_card_shows_checklist_in_plan_mode() {
     assert_pass("todo_card");
 }
 
+// Covers: live nested updates, current-item focus, and new-session isolation.
+// Owner: interactive task-progress UX.
+#[test]
+fn todo_progress_stays_current() {
+    assert_pass("todo_progress");
+}
+
 // Covers: default and remapped permission shortcuts change the session policy
 // without saving it, including wrapping and configured Auto.
 // Owner: interactive permission shortcut through PTY

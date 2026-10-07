@@ -21,6 +21,8 @@ A provider implementation must:
 
 `send_turn` is the non-streaming primitive. `send_turn_stream` may be overridden for streaming. Its default implementation invokes `send_turn` while observing cancellation. `send_turn_stream_with_options` adds request settings. `send_turn_stream_steerable` is the defaulted mid-turn steering port: dropping the receiver releases every request so existing providers keep today's boundary-apply behavior. Streaming providers send semantic `ModelEvent` values through the supplied bounded sender and still return a complete normalized response. The final response, not accumulated deltas, is the authoritative completed turn.
 
+Requests can include live host context appended by a [`RequestContext`](/sdk/sessions-and-persistence#live-request-context) source. `Message::model_context` encodes this data in user-role blocks for compatibility; use `Message::as_model_context()` before classifying a request message as a new human instruction. `Message::semantic()` still reports this encoding as `User`. Recognition is attribution only and must never authorize an action. These request-only messages do not enter committed conversation history.
+
 ## Credentials and endpoints
 
 The core SDK does not acquire credentials. It does not read provider environment variables, Rho config files, or an operating-system credential store. An embedding host should construct its provider with an injected secret value or a narrow credential adapter.
