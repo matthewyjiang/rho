@@ -117,7 +117,7 @@ fn workflow_background(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("live_workflow_survives_turn_end");
     assert_live_rail(harness)?;
     harness.resize(DEFAULT_SIZE.rows, 40)?;
-    harness.wait_for_text("running · 1/3 tasks", STREAM)?;
+    harness.wait_for_text("running · 1/3", STREAM)?;
     harness.resize(DEFAULT_SIZE.rows, DEFAULT_SIZE.cols)?;
     assert_live_rail(harness)?;
 
@@ -233,7 +233,9 @@ fn wait_for_completion(harness: &mut PtyHarness, run_id: &str) -> Result<()> {
         &format!("workflow {run_id} (pty-background) finished - success"),
         STREAM,
     )?;
-    harness.wait_for_text_gone("workflow pty-background", STREAM)?;
+    // Source starts also append a plain transcript notice with the workflow
+    // name. Only the tree row should disappear when its result is delivered.
+    harness.wait_for_text_gone("└ workflow pty-background", STREAM)?;
     let response = format!("workflow fixture completion incorporated {run_id}");
     harness.wait_for_text(&response, STREAM)?;
     wait_for_turn_completion_after(harness, &response)
