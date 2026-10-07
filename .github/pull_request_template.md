@@ -30,9 +30,9 @@ PTY exception, if any:
 N/A
 ```
 
-## Breaking changes
+## Major release
 
-<!-- Delete if none. Describe the break and the migration. -->
+<!-- Delete unless the maintainer approved a major release. `!` or a `BREAKING CHANGE:` footer anywhere in the squash message publishes a new major. Describe the break and the migration. Behavior changes that ship in a minor belong in the summary. -->
 
 ## Next-major debt
 
