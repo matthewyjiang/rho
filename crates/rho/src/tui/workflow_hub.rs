@@ -741,6 +741,7 @@ impl App {
             self.insert_entry(&Entry::Error(
                 "could not start workflow: already running".into(),
             ));
+            self.set_status("workflow already running");
             return Ok(());
         }
         match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
