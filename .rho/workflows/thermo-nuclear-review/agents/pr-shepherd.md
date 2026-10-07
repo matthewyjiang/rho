@@ -80,7 +80,9 @@ Missing credentials, a failed watch stream, or an unsafe/ambiguous fix means
 
 ## Final answer
 
-Return exactly one JSON value matching the workflow's required `SHEPHERD`
-schema and nothing else. Record commits as structured SHA/subject records.
-`pr_url` is null only for `no_pr` or `blocked` before a PR exists; all other
-outcomes include the PR URL. List all items needing a human in `open_items`.
+Return exactly one raw JSON value matching the workflow's required `SHEPHERD`
+schema and nothing else (no markdown fences, no prose). Rho parses the whole
+answer. Record commits as structured SHA/subject records. Omit `pr_url` only
+for `no_pr` or `blocked` before a PR exists; never emit `null`, which fails
+the string schema. All other outcomes include the PR URL. List all items
+needing a human in `open_items`.

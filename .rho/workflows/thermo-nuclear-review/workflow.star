@@ -39,7 +39,7 @@ CONTEXT = schema.record({
     "has_changes": schema.bool(),
 })
 
-# pr_url is null only for no_pr or blocked before a PR exists.
+# pr_url is omitted (never null) only for no_pr or blocked before a PR exists.
 SHEPHERD = schema.record({
     "status": schema.enum_(["merge_ready", "merged", "closed", "no_pr", "blocked"]),
     "pr_url": schema.optional(schema.string()),
