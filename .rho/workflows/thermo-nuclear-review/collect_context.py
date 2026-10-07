@@ -125,6 +125,9 @@ def deduplicate(paths: list[str]) -> list[str]:
 
 # PR text can be long; the intent only needs the summary near the top.
 MAX_PR_BODY_CHARS = 8_000
+# Match the existing per-diff ceiling: over 15x the largest reachable commit
+# message measured here (21,916 chars), so ordinary intent stays intact.
+MAX_COMMIT_LOG_CHARS = 350_000
 
 
 def pr_intent() -> str | None:
@@ -152,6 +155,16 @@ def intent_section(pr_text: str | None, commit_log: str) -> list[str]:
     Reviewers and the fix stage must keep this goal intact; a finding that can
     only be fixed by undoing it is a conflict to report, not a fix to apply.
     """
+    commit_log = commit_log.rstrip()
+    if len(commit_log) > MAX_COMMIT_LOG_CHARS:
+        actual = len(commit_log)
+        omitted = actual - MAX_COMMIT_LOG_CHARS
+        commit_log = (
+            commit_log[:MAX_COMMIT_LOG_CHARS]
+            + "\n\n... [commit messages truncated; "
+            + f"MAX_COMMIT_LOG_CHARS={MAX_COMMIT_LOG_CHARS}, actual={actual}; "
+            + f"{omitted} chars omitted] ..."
+        )
     lines = ["## Intent", ""]
     # JSON escapes newlines; HTML escaping keeps payloads from closing tags.
     if pr_text:
@@ -162,7 +175,7 @@ def intent_section(pr_text: str | None, commit_log: str) -> list[str]:
     if commit_log.strip():
         lines.extend([
             "<commit_messages>",
-            html.escape(json.dumps(commit_log.rstrip()), quote=False),
+            html.escape(json.dumps(commit_log), quote=False),
             "</commit_messages>", "",
         ])
     if len(lines) == 2:

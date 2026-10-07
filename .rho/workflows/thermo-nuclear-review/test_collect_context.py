@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import html
 import json
 import subprocess
 import unittest
@@ -94,6 +95,22 @@ class PrIntentTests(unittest.TestCase):
 
 
 class IntentSectionTests(unittest.TestCase):
+    def test_commit_log_is_clipped_with_visible_budget(self) -> None:
+        # Covers: oversized commit messages must leave room for the diff.
+        cases = [
+            (349_999, "x" * 349_999),
+            (350_000, "x" * 350_000),
+            (
+                350_001,
+                "x" * 350_000 + "\n\n... [commit messages truncated; "
+                "MAX_COMMIT_LOG_CHARS=350000, actual=350001; 1 chars omitted] ...",
+            ),
+        ]
+        for length, expected in cases:
+            with self.subTest(length=length):
+                lines = collect_context.intent_section(None, "x" * length)
+                self.assertEqual(json.loads(html.unescape(lines[3])), expected)
+
     def test_section_lists_pr_text_then_commits_or_says_none(self) -> None:
         cases = [
             (
