@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub(super) fn card(arguments: &serde_json::Value, status: ToolStatus) -> ToolCard {
-    let mut card = ToolCard::new(status, ToolFamily::Default, ToolHeader::call("todo", None));
+    let mut card = ToolCard::new(status, ToolFamily::Form, ToolHeader::call("todo", None));
     if let Some(todos) = arguments.get("todos").and_then(serde_json::Value::as_array) {
         // Repaired streaming JSON can contain a trailing item without content or
         // a complete status. Project usable items independently so that fragment
@@ -41,7 +41,7 @@ pub(super) fn finished_card(arguments: &serde_json::Value, content: &str, ok: bo
     // visible even when the generic card renderer collapses long output.
     let mut card = ToolCard::new(
         ToolStatus::Error,
-        ToolFamily::Default,
+        ToolFamily::Form,
         ToolHeader::call("todo", None),
     );
     super::format::push_error_output(&mut card, content);

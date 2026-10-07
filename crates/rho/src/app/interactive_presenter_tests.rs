@@ -19,18 +19,18 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     };
     let expected = ToolCard::new(
         ToolStatus::Ok,
-        ToolFamily::Default,
+        ToolFamily::Form,
         ToolHeader::call("todo", None),
     )
     .with_facts(vec![
         ToolFact::Text {
-            text: "☑ inspect".into(),
+            text: "✓ inspect".into(),
         },
         ToolFact::Text {
-            text: "◐ implement".into(),
+            text: "▸ implement".into(),
         },
         ToolFact::Text {
-            text: "☐ verify".into(),
+            text: "○ verify".into(),
         },
     ]);
     let mut expected_preview = expected.clone();
@@ -75,7 +75,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     let rejection = "todo rejected by hook";
     let rejected = ToolCard::new(
         ToolStatus::Error,
-        ToolFamily::Default,
+        ToolFamily::Form,
         ToolHeader::call("todo", None),
     )
     .with_facts(vec![ToolFact::Error {

@@ -33,12 +33,12 @@ pub(super) const TODO_CARD_SCENARIO: Scenario = Scenario::new(
         Step::Custom(assert_tail_hidden),
         Step::Key(Key::Ctrl('o')),
         Step::WaitText {
-            text: "☐ remaining step 12",
+            text: "○ remaining step 12",
             timeout: STREAM,
         },
-        Step::AssertText("◐ implement checklist"),
-        Step::AssertText("☑ inspect requirements"),
-        Step::AssertText("☐ remaining step 4"),
+        Step::AssertText("▸ implement checklist"),
+        Step::AssertText("✓ inspect requirements"),
+        Step::AssertText("○ remaining step 4"),
         Step::Key(Key::Ctrl('o')),
         Step::WaitTextGone {
             text: "remaining step 12",
