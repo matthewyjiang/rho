@@ -256,3 +256,39 @@ fn steered_incomplete_completes_with_created_response_id() {
         assert_eq!(response.steered, expected_steered, "{name}");
     }
 }
+
+// Covers: only a `response.completed` empty turn is a retryable
+// `empty_assistant`. An empty steered incomplete must stay permanent, because a
+// retry would replay the pre-steer request and drop the steer.
+// Owner: providers stream parse
+#[test]
+fn empty_turn_retries_only_when_completed_without_steer() {
+    let cases = [
+        (
+            "completed",
+            r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#,
+            Some("empty_assistant"),
+        ),
+        (
+            "steered incomplete",
+            r#"data: {"type":"response.incomplete","response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"steered"}}}"#,
+            None,
+        ),
+        (
+            "no terminal event",
+            r#"data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}"#,
+            None,
+        ),
+    ];
+
+    for (name, line, expected_retryable_type) in cases {
+        let mut state = CodexSseState::default();
+        handle_codex_sse_line(line, &mut state, &mut None).unwrap();
+        let retryable_type = match state.into_response().unwrap_err() {
+            ModelError::RetryableInvalidResponse { error_type, .. } => Some(error_type),
+            ModelError::InvalidResponse(_) => None,
+            other => panic!("{name}: unexpected error {other:?}"),
+        };
+        assert_eq!(retryable_type.as_deref(), expected_retryable_type, "{name}");
+    }
+}
