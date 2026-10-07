@@ -116,6 +116,7 @@ review = "Review this code for correctness, security, and maintainability."
 
 [keybindings]
 search_prompt_history = "ctrl+r"
+search_transcript = "ctrl+f"
 # reset_conversation = "ctrl+shift+n" # same as /new; unbound by default
 open_editor = "ctrl+g"
 jump_to_bottom = "ctrl+end"

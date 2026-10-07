@@ -58,6 +58,9 @@ impl App {
             .matches(key)
         {
             self.open_prompt_history_search();
+        } else if self.info.runtime.keybindings.search_transcript.matches(key) {
+            self.open_transcript_search(terminal)
+                .map_err(|error| anyhow::anyhow!("could not read terminal size: {error}"))?;
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {
@@ -125,6 +128,8 @@ impl App {
             .matches(key)
         {
             self.open_prompt_history_search();
+        } else if self.info.runtime.keybindings.search_transcript.matches(key) {
+            self.open_transcript_search(terminal)?;
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
             self.insert_input_char('\n');
         } else {

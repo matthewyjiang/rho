@@ -88,6 +88,7 @@ mod text_selection;
 mod todo_card;
 mod todo_progress;
 mod tool_card_hover;
+mod transcript_search;
 mod turn_notifications;
 mod type_during_stream;
 mod web_search;
@@ -195,6 +196,7 @@ use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
+use transcript_search::TRANSCRIPT_SEARCH_SCENARIO;
 use turn_notifications::TURN_NOTIFICATIONS_SCENARIO;
 use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
@@ -390,6 +392,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     HEADER_HINTS_SCENARIO,
     TURN_NOTIFICATIONS_SCENARIO,
     PROMPT_HISTORY_SEARCH_SCENARIO,
+    TRANSCRIPT_SEARCH_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(

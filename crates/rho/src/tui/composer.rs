@@ -82,6 +82,7 @@ impl App {
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
+            | ComposerMode::TranscriptSearch(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)
             | ComposerMode::InlineChoice(_)
@@ -115,6 +116,7 @@ impl App {
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
+            | ComposerMode::TranscriptSearch(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)
             | ComposerMode::InlineChoice(_)
@@ -134,6 +136,7 @@ impl App {
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
+            | ComposerMode::TranscriptSearch(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Panel(_)
             | ComposerMode::InlineChoice(_)
@@ -435,6 +438,7 @@ impl App {
             ComposerMode::SecretInput(secret) => secret.editor.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
             ComposerMode::TextInput(input) => input.editor.insert_text(text),
+            ComposerMode::TranscriptSearch(search) => search.insert_text(text),
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_text(text);
             }

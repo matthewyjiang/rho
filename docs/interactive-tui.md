@@ -89,6 +89,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `alt-enter` | Queue the composer contents as a follow-up that runs after the current turn ends; while idle, insert a newline. `ctrl-enter` always works as a fallback for terminals that bind `alt-enter` to fullscreen (Windows Terminal, Windows Alacritty, WezTerm). Configurable as `queue_prompt` |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Search previous prompts, newest first. Type to filter, then `enter` recalls the prompt into the composer; `down` steps forward and back to your draft. Configurable as `search_prompt_history`. Start a new session with `/new`; `reset_conversation` has no default key |
+| `ctrl-f` | Find text in the transcript. See [Find in the transcript](/interactive-tui/transcript#find-in-the-transcript). Configurable as `search_transcript` |
 | `pageup` / `pagedown` | Scroll the transcript viewport |
 | `ctrl-g` | Open the current composer text in a non-empty `$VISUAL`, else `$EDITOR` |
 | `ctrl-end` | Jump the transcript viewport back to the bottom |

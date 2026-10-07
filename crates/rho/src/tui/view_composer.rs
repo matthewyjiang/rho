@@ -25,6 +25,7 @@ use super::{
     palette::{ActivePalette, PaletteFrame, PaletteRow},
     questionnaire_frame, styled_line,
     text_input::text_input_frame,
+    transcript_search::transcript_search_frame,
     truncate_one_line, App, ComposerMode, InputFrame, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
@@ -88,6 +89,7 @@ impl App {
             ComposerMode::SecretInput(input) => input.editor.retain_window(window),
             ComposerMode::ConfigNumberInput(input) => input.editor.retain_window(window),
             ComposerMode::TextInput(input) => input.editor.retain_window(window),
+            ComposerMode::TranscriptSearch(search) => search.editor.retain_window(window),
             ComposerMode::Input
             | ComposerMode::Picker(_)
             | ComposerMode::InteractivePending(_)
@@ -108,7 +110,8 @@ impl App {
             | ComposerMode::Side
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
-            | ComposerMode::InlineChoice(_) => Theme::input_prompt(),
+            | ComposerMode::InlineChoice(_)
+            | ComposerMode::TranscriptSearch(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
@@ -220,6 +223,7 @@ impl App {
             ComposerMode::SecretInput(secret) => secret_input_frame(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_frame(input, width),
             ComposerMode::TextInput(input) => text_input_frame(input, width),
+            ComposerMode::TranscriptSearch(search) => transcript_search_frame(search, width),
             ComposerMode::InteractivePending(pending) => {
                 let view =
                     login_composer_view(pending, width, /*hovered*/ composer_copy_hovered);

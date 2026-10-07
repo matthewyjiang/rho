@@ -74,6 +74,18 @@ impl HistoryScrollChrome {
         self.hide();
     }
 
+    /// Return to a position saved earlier, such as when transcript search is
+    /// cancelled. Rendering clamps a stale top line to the current content.
+    pub(super) fn restore(&mut self, scroll: HistoryScroll) {
+        match scroll {
+            HistoryScroll::Bottom => self.scroll_to_bottom(),
+            HistoryScroll::Manual { .. } => {
+                self.scroll = scroll;
+                self.drag = None;
+            }
+        }
+    }
+
     pub(super) fn scroll_by(&mut self, content_len: usize, viewport_len: usize, delta: isize) {
         let max_start = content_len.saturating_sub(viewport_len);
         let next = self

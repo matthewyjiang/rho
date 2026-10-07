@@ -356,6 +356,18 @@ impl HistoryLineCache {
         self.entry_ranges.get(cache_index).cloned()
     }
 
+    /// Every measured transcript row in paint order, after bringing the cache
+    /// current. Rows before an unmeasured prefix are not included.
+    pub(super) fn measured_lines(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        image_resolver: EntryImageResolver<'_>,
+    ) -> impl Iterator<Item = &Line<'static>> {
+        self.ensure_current(entries, settings, image_resolver);
+        self.entries.iter().flat_map(|entry| entry.lines.iter())
+    }
+
     #[cfg(test)]
     pub(super) fn entry_render_count(&self) -> u64 {
         self.entry_renders

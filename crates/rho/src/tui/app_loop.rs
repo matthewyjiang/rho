@@ -491,6 +491,7 @@ impl App {
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
+            | ComposerMode::TranscriptSearch(_)
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => None,
         };

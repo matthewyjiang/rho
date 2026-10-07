@@ -724,6 +724,15 @@ impl Theme {
             .remove_modifier(Modifier::UNDERLINED)
     }
 
+    /// Focused transcript find hit. Other hits use [`Self::search_match`].
+    pub(super) fn transcript_search_focus() -> Style {
+        let accent = Palette::current().accent;
+        Style::default()
+            .bg(accent)
+            .fg(Self::contrasting_ink_on(accent))
+            .add_modifier(Modifier::BOLD)
+    }
+
     pub(super) fn markdown_code_copy_button(hovered: bool) -> Style {
         let palette = Palette::current();
         if hovered {

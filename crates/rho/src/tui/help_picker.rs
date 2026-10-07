@@ -19,6 +19,7 @@ pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
 
 fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let search_history = keybindings.search_prompt_history.chrome_label();
+    let search_transcript = keybindings.search_transcript.chrome_label();
     let editor = keybindings.open_editor.chrome_label();
     let jump = keybindings.jump_to_bottom.chrome_label();
     let toggle_tools = keybindings.toggle_tool_output.chrome_label();
@@ -108,6 +109,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             search_history,
             "Search history",
             "Search previous prompts, newest first. Type to filter, then Enter recalls the prompt into the composer; Down returns to your draft.",
+        ),
+        entry(
+            search_transcript,
+            "Find in transcript",
+            "Search the rendered transcript, highlighting matches as you type. Up/Down move between matches and scroll to each one. Enter keeps the current position; Esc returns to where you started.",
         ),
         entry(
             editor,

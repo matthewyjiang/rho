@@ -85,6 +85,9 @@ impl App {
         if self.handle_history_key(key, terminal)? {
             return Ok(());
         }
+        if self.handle_transcript_search_key(key) {
+            return Ok(());
+        }
 
         if self.handle_questionnaire_transcript_key(key, terminal)? {
             return Ok(());

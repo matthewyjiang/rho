@@ -304,7 +304,7 @@ fn selectable_text_for_display_columns(line: &Line<'_>, columns: Range<usize>) -
     selected
 }
 
-fn is_code_block_copy_span(span: &ratatui::text::Span<'_>) -> bool {
+pub(super) fn is_code_block_copy_span(span: &ratatui::text::Span<'_>) -> bool {
     matches!(span.content.as_ref(), " COPY " | "COPY")
         && span.style == Theme::markdown_code_copy_button(/*hovered*/ false)
 }
