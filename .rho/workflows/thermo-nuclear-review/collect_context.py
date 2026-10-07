@@ -7,6 +7,7 @@ on stdout for downstream workflow nodes.
 
 from __future__ import annotations
 
+import html
 import json
 import subprocess
 import sys
@@ -152,10 +153,18 @@ def intent_section(pr_text: str | None, commit_log: str) -> list[str]:
     only be fixed by undoing it is a conflict to report, not a fix to apply.
     """
     lines = ["## Intent", ""]
+    # JSON escapes newlines; HTML escaping keeps payloads from closing tags.
     if pr_text:
-        lines.extend(["PR description:", "", pr_text, ""])
+        lines.extend([
+            "<pr_description>", html.escape(json.dumps(pr_text), quote=False),
+            "</pr_description>", "",
+        ])
     if commit_log.strip():
-        lines.extend(["Commit messages:", "", "```", commit_log.rstrip(), "```", ""])
+        lines.extend([
+            "<commit_messages>",
+            html.escape(json.dumps(commit_log.rstrip()), quote=False),
+            "</commit_messages>", "",
+        ])
     if len(lines) == 2:
         lines.extend(["(no PR description or commit messages; infer intent from the diff)", ""])
     return lines

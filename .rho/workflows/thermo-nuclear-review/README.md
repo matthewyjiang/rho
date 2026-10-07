@@ -10,7 +10,8 @@ until it is merge ready.
    is missing, before any review agent runs
 1. `collect_context` - writes a git context pack to `target/thermo-nuclear-review/context.md`.
    It opens with an Intent section: the branch PR's title and body (when `gh`
-   finds one) and the commit messages since the base.
+   finds one) and the commit messages since the base. These author-controlled
+   values are HTML-escaped JSON strings inside labeled tags, not instructions.
 2. Parallel review lanes (only if there are in-scope changes):
    - `structure_judo` - standards 0 and 3 (code judo / design cleaning)
    - `spaghetti_flow` - standards 1, 2, 4, and 7 (file size, spaghetti, magic, orchestration)
@@ -19,7 +20,9 @@ until it is merge ready.
    The change's intent comes first: a finding that can only be fixed by
    removing or gating the behavior the change adds is skipped as
    `conflicts with intent`, and the stage reports `partial` instead of
-   `fixed`, so the shepherd lists it as an open item.
+   `fixed` (or `blocked` when nothing safe can be applied). The shepherd treats
+   every intent-conflict skip as a hard stop: it reports `blocked` and lists the
+   conflict in `open_items`, even if an existing PR is approved with green CI.
 4. `no_changes` - cheap no-op path when the change set is empty
 5. Babysit the PR with the `pr-shepherd` agent, on whichever path ran:
    - `ship_and_babysit` (after `apply_fixes`, including `partial` and
