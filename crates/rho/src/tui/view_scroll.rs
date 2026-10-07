@@ -92,20 +92,29 @@ impl App {
             .scroll_by(history_len, content_height, delta);
     }
 
-    /// Measure every unmeasured prefix entry so whole-transcript features see
-    /// all rows. A manual viewport keeps showing the same rows; following the
-    /// bottom stays at the bottom.
-    pub(super) fn measure_full_history(
+    /// Measure unmeasured prefix entries, one pane at a time, until
+    /// `deadline` passes or the transcript starts. Always measures at least
+    /// one entry, so repeated calls finish. A manual viewport keeps showing
+    /// the same rows; following the bottom stays at the bottom.
+    pub(super) fn measure_history_prefix_until(
         &mut self,
         layout: &ScreenLayout,
         settings: HistoryRenderSettings,
+        deadline: Instant,
     ) {
         if !self.history.has_unmeasured_prefix() {
             return;
         }
         let content_height = layout.history_content.height as usize;
         let start = self.visible_history_start(layout.history_len, content_height);
-        let prepended = self.grow_measured_history_prefix(settings, usize::MAX);
+        let mut prepended = 0usize;
+        loop {
+            prepended = prepended
+                .saturating_add(self.grow_measured_history_prefix(settings, content_height.max(1)));
+            if !self.history.has_unmeasured_prefix() || Instant::now() >= deadline {
+                break;
+            }
+        }
         // The session header joins the document once no prefix is unmeasured.
         let shift = prepended.saturating_add(self.visible_session_header_len(settings.width));
         if matches!(self.history.scroll(), HistoryScroll::Manual { .. }) {

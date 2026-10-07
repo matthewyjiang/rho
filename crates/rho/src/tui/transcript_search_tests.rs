@@ -52,6 +52,12 @@ fn line_matches_report_display_columns() {
             vec![(1, 3)],
         ),
         (
+            "ascii query on a tool tree row",
+            Line::raw("│ Foo foo"),
+            "foo",
+            vec![(2, 5), (6, 9)],
+        ),
+        (
             "graphemes paint as one cell run",
             Line::raw("👩\u{200d}💻 path"),
             "path",

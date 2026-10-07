@@ -125,10 +125,7 @@ impl App {
 
     fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
         self.settle_turn_finished_attention();
-        let mut ctx = self.frame_context(area);
-        if self.sync_transcript_search(&ctx) {
-            ctx = self.frame_context(area);
-        }
+        let ctx = self.search_frame_context(area);
         let (history_start, history_count) = self
             .visible_history_window(ctx.history_len, ctx.layout.history_content.height as usize);
         let surface = DrawSurface {

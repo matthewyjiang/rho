@@ -308,6 +308,10 @@ impl App {
     }
 
     pub(super) fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {
+        // Each frame measures one slice of older rows; input still wins the race.
+        if self.transcript_search_indexing() {
+            return Duration::ZERO;
+        }
         let now = Instant::now();
         let timeout = self.input_ui.paste_burst().poll_timeout(now, idle_timeout);
         let timeout = self
@@ -331,6 +335,7 @@ impl App {
 
     pub(super) fn animation_active(&self, now: Instant) -> bool {
         self.loading_active()
+            || self.transcript_search_indexing()
             || self.exclusive_should_redraw(now)
             || self.subagent_panel.is_active()
             || self.process_panel.is_active()

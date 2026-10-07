@@ -64,7 +64,11 @@ nothing matches, or you clear the query, the view returns to where you started.
 Matching ignores case and finds text as it is drawn: a match cannot span a
 wrapped row, and text hidden by collapsed tool output, hidden reasoning, or
 zen mode is not searched. Expand a tool card first to search its full output.
-Opening search on a long resumed session lays out the whole transcript once.
+
+A resumed session lays out its older rows only when you scroll to them. Search
+opens right away and lays out the rest in the background; the prompt shows
+`indexing` until every row is searchable, and matches in older rows appear as
+they are reached.
 
 The binding is `keybindings.search_transcript` in config (default `ctrl+f`).
 

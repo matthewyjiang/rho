@@ -8,7 +8,7 @@ use crate::{
     artifacts::ArtifactWriter,
     env::{IsolatedHome, RhoLaunchPlan},
     harness::{PtyHarness, WaitTimeout},
-    keys::MouseButton,
+    keys::{Key, MouseButton},
     pty::PtySize,
     scenario::{ScenarioOutcome, ScenarioRunner},
 };
@@ -26,9 +26,15 @@ const EARLY_LINE: &str = "fixture bulk one line 001";
 const LATE_LINE: &str = "fixture bulk one line 180";
 // Brand/version row is unique to the session header. Tip copy is not locked.
 const SESSION_HEADER_MARK: &str = "rho  v";
+// Pinned so a search query can stop short of the full header row, which the
+// find prompt therefore never echoes.
+const HEADER_VERSION: &str = "9.8.7";
+const HEADER_QUERY: &str = "rho  v9";
+const HEADER_ROW: &str = "rho  v9.8.7";
 
 // Covers: resume wheel scroll reaches early rows, then the session header.
 // Owner: interactive TUI
+// See also `run_search_phases` for find on a lazily measured resume.
 pub(super) fn is_resume_scrollback_scenario(name: &str) -> bool {
     name == RESUME_SCROLLBACK_ID
 }
@@ -89,27 +95,18 @@ credential_store = "file"
     if let Some(root) = &runner.artifact_root {
         harness.set_artifact_writer(ArtifactWriter::new(root));
     }
-    let result = (|| -> Result<()> {
-        harness.set_phase("resumed_tail");
-        harness.wait_for_text(LATE_LINE, STARTUP)?;
-        harness.set_phase("wheel_mid_transcript");
-        for _ in 0..4 {
-            harness.mouse(MouseButton::WheelUp, 40, 10, true)?;
+    let result = run_wheel_phases(&mut harness).and_then(|()| {
+        // A fresh resume: wheeling above already measured the whole prefix.
+        let search_plan = resume_plan
+            .clone()
+            .with_env("RHO_TUI_DISPLAY_VERSION", HEADER_VERSION);
+        harness = PtyHarness::spawn_named(&search_plan, RESUME_SCROLLBACK_ID)?;
+        harness.enable_timing(runner.record_timing);
+        if let Some(root) = &runner.artifact_root {
+            harness.set_artifact_writer(ArtifactWriter::new(root));
         }
-        harness.poll(Duration::from_millis(50));
-        if harness.screen().contains_text(SESSION_HEADER_MARK) {
-            anyhow::bail!("session header must stay off the measured resume tail");
-        }
-        harness.set_phase("wheel_to_early_line");
-        wheel_up_until_text(&mut harness, EARLY_LINE, STREAM)?;
-        harness.set_phase("wheel_to_header");
-        wheel_up_until_text(&mut harness, SESSION_HEADER_MARK, STREAM)?;
-        let code = harness.quit_with_exit_command()?;
-        if code != 0 {
-            anyhow::bail!("resume session exited with code {code}");
-        }
-        Ok(())
-    })();
+        run_search_phases(&mut harness)
+    });
     Ok(match result {
         Ok(()) => ScenarioOutcome {
             id: RESUME_SCROLLBACK_ID.into(),
@@ -131,6 +128,67 @@ credential_store = "file"
             }
         }
     })
+}
+
+fn run_wheel_phases(harness: &mut PtyHarness) -> Result<()> {
+    harness.set_phase("resumed_tail");
+    harness.wait_for_text(LATE_LINE, STARTUP)?;
+    harness.set_phase("wheel_mid_transcript");
+    for _ in 0..4 {
+        harness.mouse(MouseButton::WheelUp, 40, 10, true)?;
+    }
+    harness.poll(Duration::from_millis(50));
+    if harness.screen().contains_text(SESSION_HEADER_MARK) {
+        anyhow::bail!("session header must stay off the measured resume tail");
+    }
+    harness.set_phase("wheel_to_early_line");
+    wheel_up_until_text(harness, EARLY_LINE, STREAM)?;
+    harness.set_phase("wheel_to_header");
+    wheel_up_until_text(harness, SESSION_HEADER_MARK, STREAM)?;
+    let code = harness.quit_with_exit_command()?;
+    if code != 0 {
+        anyhow::bail!("resume session exited with code {code}");
+    }
+    Ok(())
+}
+
+// Covers: search on a resume finds rows that were not measured yet (the
+// session header), and Esc returns to the same rows after measuring older
+// entries moved them down.
+fn run_search_phases(harness: &mut PtyHarness) -> Result<()> {
+    harness.set_phase("resumed_search_tail");
+    harness.wait_for_text(LATE_LINE, STARTUP)?;
+    harness.inject_key(&Key::PageUp)?;
+    harness.wait_for_text_gone(LATE_LINE, STREAM)?;
+    let before = history_rows(harness);
+    harness.set_phase("search_unmeasured_header");
+    harness.inject_key(&Key::Ctrl('f'))?;
+    harness.type_text(HEADER_QUERY)?;
+    harness.wait_for_text(HEADER_ROW, STREAM)?;
+    harness.set_phase("esc_restores_shifted_view");
+    harness.inject_key(&Key::Esc)?;
+    harness.wait_for_text_gone(HEADER_ROW, STREAM)?;
+    let after = history_rows(harness);
+    if after != before {
+        anyhow::bail!(
+            "Esc must restore the rows shown before search:\nbefore {before:#?}\nafter {after:#?}"
+        );
+    }
+    let code = harness.quit_with_exit_command()?;
+    if code != 0 {
+        anyhow::bail!("resume session exited with code {code}");
+    }
+    Ok(())
+}
+
+/// Screen rows showing fixture lines, which only the transcript paints.
+fn history_rows(harness: &PtyHarness) -> Vec<String> {
+    harness
+        .screen()
+        .rows_text()
+        .into_iter()
+        .filter(|row| row.contains("fixture bulk one line"))
+        .collect()
 }
 
 fn wheel_up_until_text(harness: &mut PtyHarness, needle: &str, timeout: WaitTimeout) -> Result<()> {

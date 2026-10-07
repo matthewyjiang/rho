@@ -8,7 +8,10 @@
 //! search is open recollects matches against the painted document, so
 //! streaming text and live tool rows stay current, then applies the step.
 
-use std::ops::Range;
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{backend::Backend, buffer::Buffer, layout::Rect, style::Style, text::Line, Terminal};
@@ -24,6 +27,12 @@ use super::{
     view_composer::{editor_frame, ComposerFrame},
     App, ComposerMode, HistoryScroll, Theme,
 };
+
+/// Measuring time per frame while search indexes a lazily measured resume:
+/// one 60 Hz frame, so keys typed meanwhile still land within a frame or so.
+/// One entry can overrun it; the slowest measured on a real 957-entry resume
+/// took 14 ms (release).
+const INDEX_SLICE: Duration = Duration::from_millis(16);
 
 /// One hit: an absolute history row and the display columns it covers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,10 +67,16 @@ pub(super) struct TranscriptSearch {
     /// Width and row count the matches were last collected against.
     collected_for: Option<(usize, usize)>,
     pending: Option<SearchStep>,
+    /// First measured transcript entry that the row numbers above count
+    /// from. Measuring older entries inserts rows above it, so every stored
+    /// row moves down by their height.
+    measured_from: usize,
+    /// Older entries are still being measured, so more hits may appear.
+    indexing: bool,
 }
 
 impl TranscriptSearch {
-    fn new(origin: HistoryScroll, anchor_line: usize) -> Self {
+    fn new(origin: HistoryScroll, anchor_line: usize, measured_from: usize) -> Self {
         Self {
             editor: LineEditor::new(""),
             origin,
@@ -70,6 +85,8 @@ impl TranscriptSearch {
             focus: None,
             collected_for: None,
             pending: None,
+            measured_from,
+            indexing: measured_from > 0,
         }
     }
 
@@ -88,12 +105,38 @@ impl TranscriptSearch {
             None => "no matches".into(),
         })
     }
+
+    /// Move every stored row down by `rows` inserted above them, then add the
+    /// hits found in those rows.
+    fn shift_down(&mut self, rows: usize, hits_above: Vec<TranscriptMatch>) {
+        self.anchor_line = self.anchor_line.saturating_add(rows);
+        if let HistoryScroll::Manual { top_line } = &mut self.origin {
+            *top_line = top_line.saturating_add(rows);
+        }
+        if let Some((_, len)) = &mut self.collected_for {
+            *len = len.saturating_add(rows);
+        }
+        for hit in &mut self.matches {
+            hit.line = hit.line.saturating_add(rows);
+        }
+        let added = hits_above.len();
+        self.matches.splice(0..0, hits_above);
+        match self.focus {
+            Some(index) => self.focus = Some(index + added),
+            // Older rows held the first hits for this query: focus one.
+            None if added > 0 => {
+                self.pending.get_or_insert(SearchStep::Query);
+            }
+            None => {}
+        }
+    }
 }
 
 pub(super) fn transcript_search_frame(search: &TranscriptSearch, width: usize) -> ComposerFrame {
     let position = search.position_label();
+    let indexing = if search.indexing { "indexing" } else { "" };
     let prompt = join_footer_parts(
-        ["find", position.as_deref().unwrap_or_default()]
+        ["find", position.as_deref().unwrap_or_default(), indexing]
             .into_iter()
             .chain(["↑↓ match", "Enter keep", "Esc cancel"]),
     );
@@ -104,25 +147,24 @@ pub(super) fn transcript_search_frame(search: &TranscriptSearch, width: usize) -
     )
 }
 
-/// A lowercased query, plus its text when ASCII for the fast row filter.
+/// A lowercased query, as characters for the column walk and as text for
+/// the substring check.
 pub(super) struct Needle {
     chars: Vec<char>,
-    ascii: Option<String>,
+    text: String,
 }
 
 pub(super) fn needle(query: &str) -> Needle {
     let chars: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
-    let ascii = chars
-        .iter()
-        .all(char::is_ascii)
-        .then(|| chars.iter().collect());
-    Needle { chars, ascii }
+    let text = chars.iter().collect();
+    Needle { chars, text }
 }
 
 /// Scratch space reused across rows so a whole-transcript scan does not
 /// allocate per row.
 #[derive(Default)]
 struct ScanBuffers {
+    /// The row lowercased per character, as the walk sees it.
     text: String,
     /// Lowercased characters with the display columns of their grapheme.
     haystack: Vec<(char, Range<usize>)>,
@@ -141,21 +183,38 @@ fn scan_line(
     if needle_chars.is_empty() {
         return;
     }
-    // Most rows miss. For ASCII rows a lowercase substring check rejects them
-    // without the grapheme walk; it never rejects a row the walk would match.
-    if let Some(ascii) = &needle.ascii {
-        let text = &mut buffers.text;
-        text.clear();
-        for span in &line.spans {
-            text.push_str(&span.content);
+    // Lowercase the row the same way the column walk below does, so a plain
+    // substring check rejects most rows without walking graphemes.
+    let text = &mut buffers.text;
+    text.clear();
+    let mut printable_ascii = true;
+    for span in &line.spans {
+        if is_code_block_copy_span(span) {
+            text.push('\0');
+            printable_ascii = false;
+            continue;
         }
-        if text.is_ascii() {
-            text.retain(|ch| !ch.is_ascii_control());
-            text.make_ascii_lowercase();
-            if !text.contains(ascii.as_str()) {
-                return;
+        for ch in span.content.chars() {
+            if ch.is_control() {
+                printable_ascii = false;
+            } else if ch.is_ascii() {
+                text.push(ch.to_ascii_lowercase());
+            } else {
+                printable_ascii = false;
+                text.extend(ch.to_lowercase());
             }
         }
+    }
+    if !text.contains(needle.text.as_str()) {
+        return;
+    }
+    if printable_ascii {
+        // Printable ASCII paints one column per byte, so byte offsets are the
+        // columns the walk would report.
+        for (start, matched) in text.match_indices(needle.text.as_str()) {
+            hit(start..start + matched.len());
+        }
+        return;
     }
     let haystack = &mut buffers.haystack;
     haystack.clear();
@@ -243,24 +302,81 @@ fn relocate_focus(matches: &[TranscriptMatch], previous: &TranscriptMatch) -> Op
 }
 
 impl App {
+    /// Open the find prompt without measuring anything: on a lazily measured
+    /// resume, older rows are measured over the next frames instead, see
+    /// [`Self::search_frame_context`].
     pub(super) fn open_transcript_search<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
-        let area = Rect::new(0, 0, size.width, size.height);
-        let ctx = self.frame_context(area);
-        self.measure_full_history(&ctx.layout, ctx.settings);
-        let ctx = self.frame_context(area);
+        let ctx = self.frame_context(Rect::new(0, 0, size.width, size.height));
         let height = ctx.layout.history_content.height as usize;
         let anchor_line = self
             .visible_history_start(ctx.history_len, height)
             .saturating_add(height);
-        let search = TranscriptSearch::new(self.history.scroll(), anchor_line);
+        let search = TranscriptSearch::new(
+            self.history.scroll(),
+            anchor_line,
+            self.history.measured_from(),
+        );
         self.input_ui
             .set_composer(ComposerMode::TranscriptSearch(search));
         self.set_status_quiet("search transcript");
         Ok(())
+    }
+
+    /// Search is open and older transcript rows are still unmeasured. The
+    /// event loops keep painting frames until this clears.
+    pub(super) fn transcript_search_indexing(&self) -> bool {
+        matches!(self.input_ui.composer(), ComposerMode::TranscriptSearch(_))
+            && self.history.has_unmeasured_prefix()
+    }
+
+    /// Frame context for one paint. While search is open this first measures
+    /// up to [`INDEX_SLICE`] of older rows, then brings matches up to date.
+    pub(super) fn search_frame_context(&mut self, area: Rect) -> FrameContext {
+        let mut ctx = self.frame_context(area);
+        if !matches!(self.input_ui.composer(), ComposerMode::TranscriptSearch(_)) {
+            return ctx;
+        }
+        if self.history.has_unmeasured_prefix() {
+            let deadline = Instant::now() + INDEX_SLICE;
+            self.measure_history_prefix_until(&ctx.layout, ctx.settings, deadline);
+            ctx = self.frame_context(area);
+        }
+        let shifted = self.follow_measured_prefix(&ctx);
+        if self.sync_transcript_search(&ctx) || shifted {
+            ctx = self.frame_context(area);
+        }
+        ctx
+    }
+
+    /// Keep stored rows on the same text after older entries were measured,
+    /// whether by indexing or by scrolling up, and scan only the new rows.
+    /// Returns true when the search state changed.
+    fn follow_measured_prefix(&mut self, ctx: &FrameContext) -> bool {
+        let measured_from = self.history.measured_from();
+        let ComposerMode::TranscriptSearch(search) = self.input_ui.composer_mut() else {
+            return false;
+        };
+        search.indexing = measured_from > 0;
+        let previous = std::mem::replace(&mut search.measured_from, measured_from);
+        if measured_from >= previous {
+            return false;
+        }
+        let needle = needle(&search.editor.value);
+        let entry_rows = self
+            .history
+            .lines_mut()
+            .entry_line_range(previous)
+            .map_or(0, |rows| rows.start);
+        let rows = entry_rows.saturating_add(self.visible_session_header_len(ctx.width));
+        let hits = self.collect_transcript_matches(ctx, &needle, rows);
+        if let ComposerMode::TranscriptSearch(search) = self.input_ui.composer_mut() {
+            search.shift_down(rows, hits);
+        }
+        true
     }
 
     /// Keys while transcript search owns the composer. Returns false in any
@@ -337,7 +453,7 @@ impl App {
     /// A document at rest (no turn, no live rows, same width and row count)
     /// cannot have changed text, so its matches are reused. Otherwise rows can
     /// change in place, such as a streaming line, and every frame rescans.
-    pub(super) fn sync_transcript_search(&mut self, ctx: &FrameContext) -> bool {
+    fn sync_transcript_search(&mut self, ctx: &FrameContext) -> bool {
         let shape = (ctx.width, ctx.history_len);
         let at_rest = !self.loading_active() && ctx.live_history.lines.is_empty();
         let needle = match self.input_ui.composer() {
@@ -348,14 +464,11 @@ impl App {
             }
             _ => return false,
         };
-        let matches = self.collect_transcript_matches(ctx, &needle);
+        let matches = self.collect_transcript_matches(ctx, &needle, usize::MAX);
         let ComposerMode::TranscriptSearch(search) = self.input_ui.composer_mut() else {
             return false;
         };
         search.collected_for = Some(shape);
-        let ComposerMode::TranscriptSearch(search) = self.input_ui.composer_mut() else {
-            return false;
-        };
         let previous = search
             .focus
             .and_then(|index| search.matches.get(index).cloned());
@@ -393,19 +506,20 @@ impl App {
         );
     }
 
-    /// Hits across the session header, measured transcript rows, and live
-    /// rows, numbered the same way as the painted history document.
+    /// Hits in the first `limit` rows of the session header, measured
+    /// transcript rows, and live rows, numbered like the painted document.
     fn collect_transcript_matches(
         &mut self,
         ctx: &FrameContext,
         needle: &Needle,
+        limit: usize,
     ) -> Vec<TranscriptMatch> {
         let mut matches = Vec::new();
         if needle.chars.is_empty() {
             return matches;
         }
         let mut buffers = ScanBuffers::default();
-        let header_len = self.visible_session_header_len(ctx.width);
+        let header_len = self.visible_session_header_len(ctx.width).min(limit);
         let header = self.session_header_lines(ctx.width)[..header_len].to_vec();
         let mut line = collect_matches(&mut matches, &mut buffers, &header, 0, needle);
         self.sync_open_stream_tail();
@@ -416,15 +530,12 @@ impl App {
                 let rows = cache.measured_lines(entries, ctx.settings, &|index, sources| {
                     images.ready_images(index, sources, &cwd)
                 });
+                let rows = rows.take(limit.saturating_sub(line));
                 collect_matches(&mut matches, &mut buffers, rows, line, needle)
             });
-        collect_matches(
-            &mut matches,
-            &mut buffers,
-            &ctx.live_history.lines,
-            line,
-            needle,
-        );
+        let live = ctx.live_history.lines.iter();
+        let live = live.take(limit.saturating_sub(line));
+        collect_matches(&mut matches, &mut buffers, live, line, needle);
         matches
     }
 

@@ -153,6 +153,11 @@ impl HistoryLineCache {
         self.measured_from > 0
     }
 
+    /// First transcript entry with wrapped rows; entries before it are unmeasured.
+    pub(super) fn measured_from(&self) -> usize {
+        self.measured_from
+    }
+
     pub(super) fn invalidate_from(&mut self, index: usize) {
         self.appended_entry = None;
         // Fold pending surgical marks into the suffix rebuild so an earlier

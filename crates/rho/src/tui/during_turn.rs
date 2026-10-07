@@ -410,6 +410,9 @@ impl App {
         &self,
         deferred_frame_deadline: Option<Instant>,
     ) -> tokio::time::Instant {
+        if self.transcript_search_indexing() {
+            return tokio::time::Instant::now();
+        }
         let spinner_deadline = Instant::now() + LoadingSpinner::FRAME_INTERVAL;
         let deadline = deferred_frame_deadline.map_or(spinner_deadline, |deferred_deadline| {
             deferred_deadline.min(spinner_deadline)
