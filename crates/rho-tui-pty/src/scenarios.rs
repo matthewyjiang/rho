@@ -457,6 +457,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     #[cfg(unix)]
     workflow_background::WORKFLOW_BACKGROUND_SCENARIO,
+    #[cfg(unix)]
+    workflow_background::WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     questionnaire_timeout::TIMEOUT,

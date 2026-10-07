@@ -458,6 +458,13 @@ fn workflow_cancel_then_resume_preserves_completed_nodes() {
     assert_pass("workflow_cancel_resume");
 }
 
+// Covers: retrying a failed hub launch reuses the ready run; watch never starts it.
+// Owner: interactive workflow hub recovery.
+#[test]
+fn workflow_hub_retries_planned_run() {
+    assert_pass("workflow_hub_planned_retry");
+}
+
 // Covers: pasting an absolute document path must attach extracted text instead of parsing it as a
 // slash command.
 // Owner: interactive TUI

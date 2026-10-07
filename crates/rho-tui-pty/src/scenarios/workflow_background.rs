@@ -42,6 +42,25 @@ pub(super) const WORKFLOW_BACKGROUND_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_workflow);
 
+// Covers: a failed background launch leaves a ready run that must be retried
+// explicitly with the same id; watching it must not start a duplicate driver.
+// Owner: workflow hub UX. The CLI matrix never calls spawn_background_run.
+pub(super) const WORKFLOW_HUB_PLANNED_RETRY_SCENARIO: Scenario = Scenario::new(
+    "workflow_hub_planned_retry",
+    "Recover a failed background launch through Retry start without creating a second run",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Custom(retry_planned_run),
+        Step::ExitCommand,
+    ],
+    /*smoke*/ true,
+)
+.with_setup(setup_workflow);
+
 fn setup_workflow(home: &IsolatedHome) -> Result<()> {
     let gate = CString::new(home.workspace.join(GATE).as_os_str().as_bytes())?;
     // A FIFO read blocks in the real command runner until the PTY writes it.
@@ -52,9 +71,10 @@ fn setup_workflow(home: &IsolatedHome) -> Result<()> {
     }
     let directory = home.workspace.join(".rho/workflows");
     fs::create_dir_all(&directory)?;
-    // The held command's failure bound covers every preceding bounded screen
-    // wait. Output capacities are the exact fixed stdout bytes of each node.
-    let timeout_seconds = STARTUP.duration.as_secs() + 5 * STREAM.duration.as_secs();
+    // The retry's held command spans seven bounded waits before release:
+    // live rail, hub, selected row, graph, leave hint, return rail, FIFO reader.
+    // Include startup headroom. Output capacities are exact fixed stdout bytes.
+    let timeout_seconds = STARTUP.duration.as_secs() + 7 * STREAM.duration.as_secs();
     fs::write(
         directory.join("pty-background.star"),
         format!(
@@ -89,6 +109,108 @@ WORKFLOW = define(inputs = {{}}, build = build)
         ),
     )
     .context("seed real background workflow source")
+}
+
+fn retry_planned_run(harness: &mut PtyHarness) -> Result<()> {
+    let isolated = harness
+        .working_directory()
+        .and_then(Path::parent)
+        .context("matrix workspace has no isolated home parent")?;
+    let store = isolated.join("home/.rho/workflows");
+    let config = isolated.join("home/.rho/config.toml");
+    let original_config = fs::read_to_string(&config)?;
+
+    harness.set_phase("fail_background_start_after_run_creation");
+    // Planning command-only workflows succeeds in Auto, but the background
+    // runtime cannot start without a classifier. Change the isolated config
+    // after chat startup so its own classifier setup does not intercept us.
+    fs::write(
+        &config,
+        format!("permission_mode = \"auto\"\n{original_config}"),
+    )?;
+    harness.submit_text("/workflow")?;
+    harness.wait_for_text("Workflows", STREAM)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("could not start workflow in the background", STREAM)?;
+    let runs = record_ids(&store.join("runs"))?;
+    ensure!(
+        runs.len() == 1,
+        "failed launch must persist one run: {runs:?}"
+    );
+    let run_id = &runs[0];
+    let state_path = store.join("runs").join(run_id).join("state.json");
+    let planned: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
+    ensure!(
+        planned["state"]["lifecycle"] == "planned",
+        "run must remain ready: {planned}"
+    );
+    let response = format!("workflow fixture completion incorporated {run_id}");
+    harness.wait_for_text(&response, STREAM)?;
+    wait_for_turn_completion_after(harness, &response)?;
+    fs::write(
+        &config,
+        format!("permission_mode = \"bypass\"\n{original_config}"),
+    )?;
+
+    harness.set_phase("watch_ready_run_without_launching");
+    harness.submit_text("/workflow")?;
+    harness.wait_for_text("Workflows", STREAM)?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("Enter watch", STREAM)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("Graph", STREAM)?;
+    harness.wait_for_text("q leave", STREAM)?;
+    let watched: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
+    ensure!(
+        watched == planned,
+        "watch must not mutate or launch a ready run"
+    );
+    harness.inject_key(&Key::Char('q'))?;
+    harness.wait_for_text("left watch for run", STREAM)?;
+
+    harness.set_phase("retry_existing_run");
+    harness.submit_text("/workflow")?;
+    harness.wait_for_text("Workflows", STREAM)?;
+    harness.inject_key(&Key::Down)?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("Enter retry", STREAM)?;
+    harness.inject_key(&Key::Enter)?;
+    assert_live_rail(harness)?;
+    ensure!(
+        record_ids(&store.join("runs"))? == runs,
+        "retry must reuse the run id"
+    );
+    ensure!(
+        record_ids(&store.join("plans"))?.is_empty(),
+        "retry must not create a new launch plan"
+    );
+
+    harness.set_phase("watch_running_retry_without_starting_another_driver");
+    harness.submit_text("/workflow")?;
+    harness.wait_for_text("Workflows", STREAM)?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("Enter watch", STREAM)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("Graph", STREAM)?;
+    harness.wait_for_text("q leave", STREAM)?;
+    harness.inject_key(&Key::Char('q'))?;
+    assert_live_rail(harness)?;
+    release_gate(harness)?;
+    let receipt = format!("workflow {run_id} (pty-background) finished - success");
+    harness.wait_for_text(&receipt, STREAM)?;
+    // The failed and successful notifications share an id. Wait for the new
+    // successful receipt's turn, not the earlier failure response's receipt.
+    wait_for_turn_completion_after(harness, &receipt)?;
+    let completed: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
+    ensure!(
+        completed["state"]["lifecycle"] == "completed"
+            && completed["state"]["scopes"]["s0"]["result"]["outcome"] == "success"
+            && completed["state"]["scopes"]["s0"]["durable"]["last_attempts"]
+                == serde_json::json!({"prepare": 1, "hold": 1, "finish": 1})
+            && record_ids(&store.join("runs"))? == runs,
+        "retry must complete the original run with exactly one attempt per task: {completed}"
+    );
+    Ok(())
 }
 
 fn workflow_background(harness: &mut PtyHarness) -> Result<()> {

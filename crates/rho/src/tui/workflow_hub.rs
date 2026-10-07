@@ -24,6 +24,7 @@ use crate::{
 const SOURCE_PREFIX: &str = "source:";
 const PLAN_PREFIX: &str = "plan:";
 const RUN_PREFIX: &str = "run:";
+const RETRY_RUN_PREFIX: &str = "retry-run:";
 const READ_ONLY_PLAN_PREFIX: &str = "read-only-plan:";
 const READ_ONLY_RUN_PREFIX: &str = "read-only-run:";
 
@@ -192,7 +193,21 @@ pub(super) fn hub_picker(
             Some("close"),
         ));
     } else {
-        items.extend(active.into_iter().chain(finished).map(run_item));
+        for run in active.into_iter().chain(finished) {
+            items.push(run_item(run));
+            if run.access == RecordAccess::Executable && run.lifecycle == RunLifecycle::Planned {
+                let id = run.run_id.to_string();
+                let short = short_id(&id);
+                items.push(item(
+                    Some("RUNS"),
+                    format!("Retry start  ·  {short}"),
+                    format!("{}\nRetry launching this ready run in the background using its existing frozen graph and run id. Watch only inspects it.\nRun id {short}", run.name),
+                    format!("{RETRY_RUN_PREFIX}{id}"),
+                    None,
+                    Some("retry"),
+                ));
+            }
+        }
     }
 
     if !plans.is_empty() {
@@ -304,6 +319,7 @@ impl App {
         }
         if let Some(run_id) = value
             .strip_prefix(RUN_PREFIX)
+            .or_else(|| value.strip_prefix(RETRY_RUN_PREFIX))
             .or_else(|| value.strip_prefix(READ_ONLY_RUN_PREFIX))
         {
             let short = short_id(run_id);
@@ -455,6 +471,24 @@ impl App {
                     .strip_prefix(PLAN_PREFIX)
                     .expect("prefix checked above");
                 self.run_workflow_plan(id, terminal, agent).await
+            }
+            // Retry is explicit; watching a ready run must never start a driver.
+            value if value.starts_with(RETRY_RUN_PREFIX) => {
+                let id = value
+                    .strip_prefix(RETRY_RUN_PREFIX)
+                    .expect("prefix checked above");
+                let Some(run) = self.load_run_for_watch(id.parse()?)? else {
+                    return Ok(());
+                };
+                // Inventory can be stale if another process started the run.
+                // Normal resume retains the tracker and durable driver guards.
+                if run.state.state.lifecycle != RunLifecycle::Planned {
+                    self.open_workflow_hub()?;
+                    self.set_status("run is no longer ready; refreshed workflows");
+                    return Ok(());
+                }
+                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal, agent)
+                    .await
             }
             // Enter on a run opens the live screen or finished status.
             value if value.starts_with(RUN_PREFIX) => {
