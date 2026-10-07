@@ -4,9 +4,11 @@ mod bridge;
 mod call_log;
 mod engine;
 mod exposure;
+mod json_object;
 pub(crate) mod script_output;
 mod tool;
 mod tool_search;
+mod tools_namespace;
 
 pub(crate) use bridge::CODEMODE_TOOL_NAME;
 pub(crate) use exposure::{CodeModeSurface, ToolCatalogEntry};

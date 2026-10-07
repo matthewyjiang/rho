@@ -63,6 +63,13 @@ impl ToolHostBridge {
         search_entries(self.catalog.iter(), query, limit)
     }
 
+    pub(super) fn tool_names(&self) -> Vec<String> {
+        self.catalog
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
+    }
+
     pub(super) fn describe(&self, name: &str) -> Option<ToolCatalogEntry> {
         self.catalog
             .iter()

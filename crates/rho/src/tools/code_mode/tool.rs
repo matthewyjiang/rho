@@ -13,14 +13,23 @@ use super::exposure::CodeModeSurface;
 
 /// Model-facing contract. Batching guidance lives here and in the system
 /// prompt so models fan out independent calls instead of issuing them in turn.
+/// The example leads because models copy an example before they read rules.
 const DESCRIPTION: &str = "\
 Run a Starlark (Python-like) script that calls other tools. Only the script's output reaches you, \
 so use it to batch independent calls, chain dependent ones, and filter large results.
+Example:
+for r in call_tools([(\"read_file\", {\"path\": \"a.rs\"}), (\"grep\", {\"pattern\": \"todo\"})]):
+    print(r.content)
+log = tools.bash(command=\"git log -1\")
+if not log.is_error:
+    print(log.content)
 - `call_tools([(name, args), ...])` runs independent calls concurrently and returns their results \
 in order. Prefer it whenever calls do not depend on each other.
-- `call_tool(name, args)` runs one call and returns its result.
-- Each result is `{is_error, content, data}`: `content` is the text you would see, `data` the \
-tool's structured value or None. Failed calls are values; check `is_error`.
+- `tools.<name>(args)` or `tools.<name>(key=value)` runs one call; names with `-` use `_`. \
+`call_tool(name, args)` is the same by string name.
+- Each result has `is_error`, `content` (the text you would see), and `data` (the tool's \
+structured value or None). Read objects as `r.content` or `r[\"content\"]`. Failed calls are \
+values; check `is_error`.
 - `list_tools()` and `search_tools(query)` return `[{name, description}]`; `describe_tool(name)` \
 adds the parameter and return schemas.
 - Output: `print()` lines, then the global `result` as JSON.

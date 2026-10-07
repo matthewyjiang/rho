@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use super::json_object::alloc_json;
+use super::tools_namespace::ToolsNamespace;
 use super::{bridge::ToolHostBridge, script_output};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -151,6 +153,7 @@ pub(super) fn evaluate_code_mode(
     let print_handler = StatePrint(Mutex::default());
     let mut builder = GlobalsBuilder::extended_by(&[LibraryExtension::Print]);
     code_mode_api(&mut builder);
+    builder.set("tools", ToolsNamespace::new(state.bridge.tool_names()));
     let globals = builder.build();
     let result =
         AstModule::parse("codemode.star", source.to_owned(), &CODEMODE_DIALECT).and_then(|ast| {
@@ -197,7 +200,20 @@ fn summaries<'v>(
         .into_iter()
         .map(|entry| json!({"name": entry.name, "description": entry.description}))
         .collect();
-    Ok(eval.heap().alloc(JsonValue::Array(hits)))
+    Ok(alloc_json(eval.heap(), &JsonValue::Array(hits)))
+}
+
+/// One nested call, shared by `call_tool` and `tools.<name>(...)`.
+pub(super) fn call_one<'v>(
+    name: &str,
+    arguments: JsonValue,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> anyhow::Result<Value<'v>> {
+    let state = guest(eval)?;
+    let output = state
+        .runtime
+        .block_on(state.bridge.call_tool(name, arguments))?;
+    Ok(alloc_json(eval.heap(), &script_output::value(&output)))
 }
 
 /// Accepts `name`, `(name,)`, or `(name, args)` per batch item.
@@ -235,11 +251,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         } else {
             starlark_to_json(args).map_err(starlark::Error::into_anyhow)?
         };
-        let state = guest(eval)?;
-        let output = state
-            .runtime
-            .block_on(state.bridge.call_tool(name, arguments))?;
-        Ok(eval.heap().alloc(script_output::value(&output)))
+        call_one(name, arguments, eval)
     }
 
     /// Runs independent calls concurrently. A call that cannot complete
@@ -265,7 +277,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
                 Err(error) => script_output::error_value(&error.to_string()),
             })
             .collect();
-        Ok(eval.heap().alloc(JsonValue::Array(values)))
+        Ok(alloc_json(eval.heap(), &JsonValue::Array(values)))
     }
 
     fn search_tools<'v>(
@@ -289,13 +301,13 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<Value<'v>> {
         Ok(match guest(eval)?.bridge.describe(name) {
-            Some(entry) => eval.heap().alloc(serde_json::to_value(entry)?),
+            Some(entry) => alloc_json(eval.heap(), &serde_json::to_value(entry)?),
             None => Value::new_none(),
         })
     }
 }
 
-fn starlark_to_json(value: Value<'_>) -> starlark::Result<JsonValue> {
+pub(super) fn starlark_to_json(value: Value<'_>) -> starlark::Result<JsonValue> {
     value.to_json_value().map_err(starlark::Error::new_value)
 }
 

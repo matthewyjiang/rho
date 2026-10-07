@@ -67,11 +67,16 @@ There is no `while`, `try`, `import`, or exception handling.
 | Function | Returns |
 | --- | --- |
 | `call_tool(name, args=None)` | One result envelope |
+| `tools.<name>(args=None, **kwargs)` | One result envelope; same as `call_tool` |
 | `call_tools([(name, args), ...])` | Result envelopes in input order |
 | `search_tools(query, limit=10)` | `[{name, description}]` rows |
 | `list_tools(limit=50)` | `[{name, description}]` rows |
 | `describe_tool(name)` | Full catalog entry, including the `parameters` and `returns` schemas |
 | `print(...)` | Captures a line of output |
+
+`tools.<name>` takes an optional dict of arguments, keyword arguments, or
+both; keywords override dict keys. Tool names that are not identifiers use `_`
+for other characters, so `get-docs` is `tools.get_docs`.
 
 Each result envelope is `{is_error, content, data}`:
 
@@ -97,13 +102,21 @@ Check every returned envelope before using its data, including batch results.
 A non-error envelope can still have `data: None` for text-only or oversized
 results.
 
+Every JSON object a script receives, including envelopes and objects nested in
+`data`, is a dict that also allows attribute reads: `r.content` and
+`r["content"]` are the same, as are `r.data.next_cursor` and
+`r["data"]["next_cursor"]`. A key takes precedence over a dict method of the
+same name: when `data` has an `items` key, `r.data.items` is that value.
+Compare with the received object on the left: `r.data == {...}` compares
+contents, while `{...} == r.data` is always `False`.
+
 Assign `result = ...` to return a JSON value. On success, the model receives the
 printed lines followed by `result`. A value that cannot be represented as JSON
 fails the script instead of becoming `null`.
 
 ```python
-hits = call_tool("grep", {"pattern": "TODO", "path": "src"})
-files = [] if hits["is_error"] else [f["path"] for f in hits["data"]["files"]]
+hits = tools.grep(pattern="TODO", path="src")
+files = [] if hits.is_error else [f.path for f in hits.data.files]
 print(f"{len(files)} files with TODOs")
 result = files[:20]
 ```
