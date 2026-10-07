@@ -22,11 +22,17 @@ pub(super) fn login_group_picker() -> UiPicker {
         .map(|group| {
             let label = group.prompt.clone();
             let value = group.id.clone();
-            // Nested method labels and values stay searchable from the top
-            // level, so `cursor` or `kimi` still finds the group that owns it.
-            let search_terms = login_method_items(group)
-                .into_iter()
-                .flat_map(|method| [method.label, method.value])
+            // Nested method values stay searchable from the top level, so
+            // `cursor` or `kimi` still finds the group that owns it. Generic
+            // method labels ("API Key", "OAuth") would match nearly every
+            // group, so only delegated labels join, keeping `delegation` useful.
+            let search_terms = delegated_methods(&value)
+                .map(|method| method.label())
+                .chain(
+                    login_method_items(group)
+                        .into_iter()
+                        .map(|method| method.value),
+                )
                 .collect();
             PickerItem {
                 section: None,
@@ -114,13 +120,17 @@ fn login_method_items(group: catalog::LoginGroup) -> Vec<PickerItem> {
             search_terms: Vec::new(),
         })
         .collect::<Vec<_>>();
-    items.extend(
-        super::login_target::external_login_methods()
-            .into_iter()
-            .filter(|method| method.group_id == group_id)
-            .map(external_login_picker_item),
-    );
+    items.extend(delegated_methods(&group_id).map(external_login_picker_item));
     items
+}
+
+/// Delegated runtimes offered under one login group.
+fn delegated_methods(
+    group_id: &str,
+) -> impl Iterator<Item = super::login_target::ExternalLoginMethod> + '_ {
+    super::login_target::external_login_methods()
+        .into_iter()
+        .filter(move |method| method.group_id == group_id)
 }
 
 pub(super) fn auth_mode_picker(
@@ -312,8 +322,9 @@ mod tests {
         pretty_assertions::assert_eq!(values, ["meta-api-key", "meta-muse"]);
     }
 
-    // Covers: typing a nested method label or value at the top level finds the
-    // group that owns it, since delegated runtimes are no longer top-level rows
+    // Covers: typing a nested method value or delegated label at the top level
+    // finds the group that owns it, while generic method labels do not match
+    // every group
     // Owner: login group picker
     #[test]
     fn login_group_filter_finds_groups_by_nested_methods() {
@@ -327,10 +338,20 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for (filter, expected) in [
-            ("cursor", ["xai"]),
-            ("antigravity", ["google"]),
-            ("claude-code", ["anthropic"]),
-            ("kimi-oauth", ["moonshot"]),
+            ("cursor", vec!["xai"]),
+            ("antigravity", vec!["google"]),
+            ("claude-code", vec!["anthropic"]),
+            ("kimi-oauth", vec!["moonshot"]),
+            ("delegation", vec!["anthropic", "google", "xai"]),
+            // Only rows whose own detail says "API key"; no group matches
+            // through its nested "API Key" method label.
+            (
+                "API Key",
+                vec![
+                    super::super::custom_provider_login::NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE,
+                    super::super::custom_provider_login::NEW_CUSTOM_RESPONSES_HOST_VALUE,
+                ],
+            ),
         ] {
             pretty_assertions::assert_eq!(groups_for(filter), expected, "{filter:?}");
         }

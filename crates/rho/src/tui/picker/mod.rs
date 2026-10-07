@@ -878,7 +878,9 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
     matches.into_iter().map(|(index, _)| index).collect()
 }
 
-/// Best fuzzy score across the fields a user can see and reasonably type.
+/// Best fuzzy score across the fields a user can see and reasonably type,
+/// plus the row's hidden search terms, which stand in for nested choices the
+/// user expects to reach from this row.
 ///
 /// Long free text (detail, preview) stays out: subsequence matching over a
 /// paragraph matches almost any filter and would drown the ranking.
