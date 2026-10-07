@@ -58,7 +58,7 @@ Built-in skills that ship with the binary include `rho-config`, `rho-agent-creat
 
 `todo` replaces the whole checklist with `{"todos":[{"content":"Implement the change","status":"in_progress"}]}`. Each item has non-empty content and a status of `pending`, `in_progress`, or `completed`. Lists accept at most 50 items and at most one item in progress; an empty list clears the checklist. Use it for work with three or more steps rather than trivial single-step tasks.
 
-The interactive card shows ☑ completed, ◐ in progress, and ☐ pending items. Collapsed cards follow the normal tool-output row budget; press Ctrl+O to expand and see every item. Calls stay in the session transcript and their cards are rebuilt when you resume. The tool is available by default, including delegated roles and Plan mode: it writes no files and needs no permission approval. Agent tool allowlists can include `todo` explicitly.
+The interactive card uses the theme’s amber header accent and shows ✓ completed, ▸ in progress, and ○ pending items. Collapsed cards follow the normal tool-output row budget; press Ctrl+O to expand and see every item. Calls stay in the session transcript and their cards are rebuilt when you resume. The tool is available by default, including delegated roles and Plan mode: it writes no files and needs no permission approval. Agent tool allowlists can include `todo` explicitly.
 
 ## Security and workspace boundaries
 
