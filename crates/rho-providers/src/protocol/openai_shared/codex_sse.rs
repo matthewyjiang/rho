@@ -294,7 +294,11 @@ impl CodexSseState {
             "missing response content in SSE ({})",
             self.empty_content_diagnostic()
         );
-        if self.completed {
+        if self.completed && !self.steered {
+            ModelError::empty_assistant_because(message)
+        } else {
+            ModelError::InvalidResponse(message)
+        }
             ModelError::empty_assistant_because(message)
         } else {
             ModelError::InvalidResponse(message)
