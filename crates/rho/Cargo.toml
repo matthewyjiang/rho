@@ -58,8 +58,6 @@ sha2 = "0.11"
 hex = "0.4"
 digest-io = "0.1"
 starlark = "=0.14.2"
-# Derives `Allocative` for codemode Starlark value types; starlark requires it.
-allocative = "0.3"
 schemars = "1"
 base64 = "0.23"
 url = "2"

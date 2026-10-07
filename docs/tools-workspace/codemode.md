@@ -66,24 +66,18 @@ There is no `while`, `try`, `import`, or exception handling.
 
 | Function | Returns |
 | --- | --- |
-| `call_tool(name, args=None)` | One result envelope |
-| `tools.<name>(args=None, **kwargs)` | One result envelope; same as `call_tool` |
-| `call_tools([(name, args), ...])` | Result envelopes in input order |
+| `call_tool(name, args=None)` | One result dictionary |
+| `call_tools([(name, args), ...])` | Result dictionaries in input order |
 | `search_tools(query, limit=10)` | `[{name, description}]` rows |
 | `list_tools(limit=50)` | `[{name, description}]` rows |
 | `describe_tool(name)` | Full catalog entry, including the `parameters` and `returns` schemas |
 | `print(...)` | Captures a line of output |
 
-`tools.<name>` takes an optional dict of arguments, keyword arguments, or
-both; keywords override dict keys. Tool names that are not identifiers use `_`
-for other characters, so `get-docs` is `tools.get_docs`.
-An exact name such as `get_docs` takes precedence over normalized aliases. If
-multiple tools normalize to the same alias (for example, `get-docs` and
-`get.docs`), calling that alias fails before any tool starts. Use
-`call_tool("get-docs", args)` or `call_tool("get.docs", args)` to select the
-exact tool instead.
+Pass the exact tool name and an argument dictionary to `call_tool`, or batch
+independent calls with `call_tools`. There is no `tools.<name>` namespace.
 
-Each result envelope is `{is_error, content, data}`:
+Each result is a native Starlark dictionary with three string keys. Use bracket
+indexing, not dot access:
 
 - `is_error`: `True` for a completed tool failure, such as a shell command that
   exited nonzero or an MCP `isError` response, and for invocation errors returned
@@ -107,20 +101,20 @@ Check every returned envelope before using its data, including batch results.
 A non-error envelope can still have `data: None` for text-only or oversized
 results.
 
-Read envelope fields as attributes or keys: `r.content` and `r["content"]`
-are the same. The envelope itself is not a dict: it has exactly these three
-fields, supports `in`, and equals only another envelope with equal fields.
-Everything inside `data`, like discovery entries from `list_tools`,
-`search_tools`, and `describe_tool`, is a plain Starlark dict or list, so
-index it (`r.data["next_cursor"]`) and use dict operations on it as usual.
+Result dictionaries support normal dictionary operations such as `dict()`,
+`get`, `update`, and equality. JSON objects in `data` and discovery entries
+are also native dictionaries; JSON arrays are lists.
 
 Assign `result = ...` to return a JSON value. On success, the model receives the
 printed lines followed by `result`. A value that cannot be represented as JSON
-fails the script instead of becoming `null`.
+fails the script instead of becoming `null`. Other variable names, such as
+`hits` below, are chosen by the script; only `result` is the output convention.
 
 ```python
-hits = tools.grep(pattern="TODO", path="src")
-files = [] if hits.is_error else [f["path"] for f in hits.data["files"]]
+hits = call_tool("grep", {"pattern": "TODO", "path": "src"})
+files = []
+if not hits["is_error"] and hits["data"] != None:
+    files = [entry["path"] for entry in hits["data"]["files"]]
 print(f"{len(files)} files with TODOs")
 result = files[:20]
 ```
@@ -128,20 +122,21 @@ result = files[:20]
 ## Waiting for a process
 
 Scripts do not receive process-exit notifications. To wait within a script,
-check each `process` result envelope, then poll with `data.process_id` and
-`cursor: data.next_cursor` while `data.state` is `"starting"` or `"running"`.
+check each `process` result dictionary, then read its `"data"` dictionary and
+poll with `data["process_id"]` and `cursor: data["next_cursor"]` while
+`data["state"]` is `"starting"` or `"running"`.
 Use `wait_seconds` to wait for output or completion rather than busy-polling.
-If you also need all output, continue polling while `data.output_pending` is
+If you also need all output, continue polling while `data["output_pending"]` is
 true, even after the state becomes terminal.
 
-Oversized structured snapshots return a smaller page of `data.chunks` while
-keeping their control fields. `data.next_cursor` points to the first deferred
+Oversized structured snapshots return a smaller page of `data["chunks"]` while
+keeping their control fields. `data["next_cursor"]` points to the first deferred
 chunk; the next poll retrieves it while it remains retained. An optional
-`data.output_budget` notice reports `max_output_bytes`, the original
+`data["output_budget"]` notice reports `max_output_bytes`, the original
 `received_bytes`, and counts of `deferred_chunks` and `omitted_chunks`. A chunk
 that cannot fit by itself is omitted and its cursor consumed, matching the
 process poll budget policy; model-facing text is unchanged by this JSON paging
-step. Ordinary retention loss still appears as `data.truncated`. If even the
+step. Ordinary retention loss still appears as `data["truncated"]`. If even the
 control fields exceed the limit, the existing truncation notice appears in
 `content` and `data` is `None`; stop and report that result rather than polling
 without a cursor.
