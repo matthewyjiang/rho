@@ -42,7 +42,18 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Run workspace tests
+        # Linux leg of the native PTY suite (tui_pty_native); the platform job
+        # covers macOS and Windows.
+        env:
+          RHO_PTY_ARTIFACTS: ${{ runner.temp }}/rho-pty-native-artifacts
         run: cargo test --workspace --locked
+      - name: Upload native PTY failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-pty-ubuntu-latest-artifacts
+          path: ${{ runner.temp }}/rho-pty-native-artifacts/
+          if-no-files-found: ignore
       - name: Check docs TUI proof plate
         run: bash scripts/check_docs_ui_demo.sh --check
       - name: Run documentation tests
@@ -154,7 +165,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux runs the workspace tests in the quality job; a Linux leg here
+        # repeated that suite on the same OS.
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust

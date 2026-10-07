@@ -123,16 +123,18 @@ jobs:
           if [[ -n "$PROVIDERS_TAG" ]]; then
             verify_tag "$PROVIDERS_TAG" "rho-providers-v$providers_version"
           fi
-          echo "releases_created=true" >> "$GITHUB_OUTPUT"
-          echo "release_created=$([[ -n "$APP_TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "sdk_release_created=$([[ -n "$SDK_TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "tools_release_created=$([[ -n "$TOOLS_TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "providers_release_created=$([[ -n "$PROVIDERS_TAG" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
-          echo "tag_name=$APP_TAG" >> "$GITHUB_OUTPUT"
-          echo "sdk_tag_name=$SDK_TAG" >> "$GITHUB_OUTPUT"
-          echo "tools_tag_name=$TOOLS_TAG" >> "$GITHUB_OUTPUT"
-          echo "providers_tag_name=$PROVIDERS_TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "releases_created=true"
+            echo "release_created=$([[ -n "$APP_TAG" ]] && echo true || echo false)"
+            echo "sdk_release_created=$([[ -n "$SDK_TAG" ]] && echo true || echo false)"
+            echo "tools_release_created=$([[ -n "$TOOLS_TAG" ]] && echo true || echo false)"
+            echo "providers_release_created=$([[ -n "$PROVIDERS_TAG" ]] && echo true || echo false)"
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "tag_name=$APP_TAG"
+            echo "sdk_tag_name=$SDK_TAG"
+            echo "tools_tag_name=$TOOLS_TAG"
+            echo "providers_tag_name=$PROVIDERS_TAG"
+          } >> "$GITHUB_OUTPUT"
       # The downstream fixture is a deliberately separate workspace, so the
       # cargo-workspace plugin cannot update its lockfile when rho-sdk changes.
       - name: Check out release pull request
@@ -151,7 +153,9 @@ jobs:
           if git diff --quiet -- 'crates/*/Cargo.toml'; then
             exit 0
           fi
-          if [[ -n "$(git diff --name-only | grep -vE '^crates/[^/]+/Cargo\.toml$')" ]]; then
+          # Process substitution, not a pipe: grep -q exiting early can SIGPIPE
+          # git diff, which pipefail would turn into a false "no match".
+          if grep -qvE '^crates/[^/]+/Cargo\.toml$' < <(git diff --name-only); then
             echo "internal dependency sync changed unexpected files" >&2
             git diff --name-only >&2
             exit 1
