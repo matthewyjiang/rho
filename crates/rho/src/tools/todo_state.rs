@@ -238,6 +238,12 @@ impl TodoCheckpoint {
 /// the exact list durable and readable in /todo, but suspend its full projection
 /// so a provider turn can reach the todo tool to shorten or clear it.
 fn projected_messages(state: &State) -> Vec<Message> {
+    // Resume and model/config refresh clear preparation. A known capacity is
+    // not unlimited while idle: the request or compaction boundary must size
+    // the projection against actual history before it can be emitted.
+    if state.context_window.is_some() && state.budget.is_none() {
+        return Vec::new();
+    }
     let Some(list) = state.list.as_ref() else {
         return Vec::new();
     };

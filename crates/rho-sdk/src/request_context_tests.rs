@@ -70,6 +70,22 @@ async fn preparation_tracks_actual_request_boundaries_and_calibration() {
         }
     }
 
+    impl crate::Compactor for PreparingContext {
+        fn compact<'a>(&'a self, request: crate::CompactionRequest) -> crate::CompactionFuture<'a> {
+            Box::pin(async move {
+                let prepared = self.calls.lock().unwrap().last().cloned().unwrap();
+                assert_eq!(prepared.history, request.messages());
+                let mut projected = request.messages().to_vec();
+                projected.extend(self.messages(request.session_id().unwrap()));
+                assert_eq!(
+                    request.context_estimate().unwrap().estimated_tokens(),
+                    estimate_context_tokens(&projected, request.tool_specs().unwrap()),
+                );
+                crate::CompactionOutput::new(request.messages().to_vec())
+            })
+        }
+    }
+
     let source = PreparingContext {
         source: LiveContext(Arc::new(Mutex::new(Vec::new()))),
         calls: Arc::new(Mutex::new(Vec::new())),
@@ -107,6 +123,7 @@ async fn preparation_tracks_actual_request_boundaries_and_calibration() {
             ScriptedToolOutcome::Success(ToolOutput::text("tool result")),
         ))
         .request_context(source.clone())
+        .compactor(source.clone())
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::new()).await.unwrap();
@@ -145,7 +162,7 @@ async fn preparation_tracks_actual_request_boundaries_and_calibration() {
 
     let requests = provider.recorded_requests();
     assert_eq!(requests.len(), 4);
-    let calls = source.calls.lock().unwrap();
+    let calls = source.calls.lock().unwrap().clone();
     let first = &calls[0];
     assert_eq!(
         (&first.history, &first.tools, first.estimate),
@@ -183,6 +200,15 @@ async fn preparation_tracks_actual_request_boundaries_and_calibration() {
             )
         );
     }
+    // Resume/model changes can invalidate prepared context while idle. Manual
+    // compaction must prepare before both estimating and calling the compactor.
+    session
+        .append_message(Message::user_text("idle context change"))
+        .unwrap();
+    source.calls.lock().unwrap().clear();
+    source.source.0.lock().unwrap().clear();
+    session.compact().await.unwrap();
+    assert_eq!(source.calls.lock().unwrap().len(), 1);
 }
 
 // Covers: request-only context must not pollute history, move the prompt prefix,

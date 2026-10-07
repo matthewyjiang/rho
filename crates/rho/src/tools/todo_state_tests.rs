@@ -38,6 +38,13 @@ fn oversized_checklists_are_rejected_or_suspended_without_losing_state() {
         estimate_messages_tokens(&[Message::model_context("recovery notice ".repeat(100))]);
     let overhead = estimate_context_tokens(&prompt, &[]);
     let limit = overhead + recovery_tokens;
+    state.set_context_window(Some(limit));
+    let writer = TodoState::default();
+    writer.replace(Some(oversized.clone()));
+    state.restore(&writer.decorate(snapshot(prompt.clone())));
+    // A known model with an unprepared budget is not unlimited after restore
+    // or a config refresh. The next request/compaction boundary prepares it.
+    assert_eq!(state.messages(&SessionId::new()), Vec::<Message>::new());
     let context = ContextEstimate::from_estimated_tokens(overhead);
     state.set_context_budget(Some(limit), context, &prompt, &[]);
     state.try_replace(original.clone()).unwrap();
@@ -46,8 +53,6 @@ fn oversized_checklists_are_rejected_or_suspended_without_losing_state() {
     assert_eq!((error.kind(), error.message()), (ToolErrorKind::InvalidArguments, format!("todo mandatory context budget exceeded: limit {limit} estimated tokens, asked {asked}; shorten or clear the checklist").as_str()));
     assert_eq!(state.list(), Some(original));
 
-    let writer = TodoState::default();
-    writer.replace(Some(oversized.clone()));
     state.restore(&writer.decorate(snapshot(prompt.clone())));
     assert_eq!(state.list(), Some(oversized.clone()));
     let projection = state.messages(&SessionId::new());

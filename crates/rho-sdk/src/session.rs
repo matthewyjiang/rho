@@ -696,9 +696,10 @@ impl Session {
             .register(run_id.clone(), cancellation.clone())?;
         let history = self.history();
         let previous = HistoryMetrics::from_history(&history);
-        let estimate = self
-            .core
-            .estimate_context(&history, &runtime.advertised_tool_specs());
+        let tools = runtime.advertised_tool_specs();
+        // Manual and idle compaction have no preceding provider boundary.
+        // Prepare live context before sizing or checkpointing the replacement.
+        let estimate = self.core.advance_context(&history, &tools);
         let request = crate::CompactionRequest::new(history, cancellation)
             .with_context_estimate(estimate)
             .with_request_context(
@@ -711,11 +712,7 @@ impl Session {
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
             )
-            .with_session_turn(
-                runtime.service_tier,
-                runtime.advertised_tool_specs(),
-                self.core.prompt_cache_key(),
-            );
+            .with_session_turn(runtime.service_tier, tools, self.core.prompt_cache_key());
         let output = compactor.compact(request).await?;
         let (replacement, usage, metadata) = output.into_parts();
         let outcome = self

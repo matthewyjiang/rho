@@ -25,7 +25,7 @@ pub trait RequestContext: Send + Sync {
     /// Hosts may use this data to size their next [`Self::messages`] projection;
     /// the SDK does not choose host context policy.
     ///
-    /// Called before automatic compaction evaluation and before provider request
+    /// Called before automatic compaction evaluation, manual compaction, and provider request
     /// projection, including overflow recovery retries and history updated by
     /// late boundary input or staged steering. It may run more than once for the
     /// same boundary, so implementations should be idempotent. Read-only idle
