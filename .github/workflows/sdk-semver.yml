@@ -65,6 +65,8 @@ jobs:
         if: failure() && steps.semver_check.outcome == 'failure'
         shell: bash
         run: |
+          # Single quotes are intentional: this prints literal Markdown backticks.
+          # shellcheck disable=SC2016
           {
             echo '## Semver wall (minor-incompatible public API)'
             echo
