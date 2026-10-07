@@ -13,7 +13,8 @@ Use Conventional Commits for commit messages and PR titles:
 - Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 - Scope is optional but preferred when useful.
 - Use a concise, imperative, lowercase description unless it contains a proper noun; do not end it with a period.
-- For breaking changes, add `!` after the type or scope and a `BREAKING CHANGE:` footer.
+- `!` after the type or scope and a `BREAKING CHANGE:` footer mean "publish a new major". Release Please bumps the major of every affected crate when it parses either one in a squash message, including a footer copied from an intermediate commit. Use them only when the maintainer has approved a major release. Changed defaults, renamed config keys that still accept the old name, and other behavior changes ship as minors, so describe them in the PR body without the marker.
+- If a stray marker reaches `main` from a squash-merged PR, fix it before the release PR merges: put the full corrected Conventional Commit, without the marker, between `BEGIN_COMMIT_OVERRIDE` and `END_COMMIT_OVERRIDE` in the merged PR body, then run `release-please` with `candidate-sha` empty. A version that already shipped cannot be demoted.
 
 Examples:
 
@@ -22,6 +23,11 @@ feat(auth): add token refresh
 fix(api): handle empty responses
 docs: update setup instructions
 chore: bump dependencies
+```
+
+Only a maintainer-approved major release uses the marker:
+
+```text
 feat(config)!: require explicit config path
 
 BREAKING CHANGE: the default config discovery behavior was removed.
@@ -30,7 +36,7 @@ BREAKING CHANGE: the default config discovery behavior was removed.
 For PRs:
 
 - Prefer the most user-visible type, usually `feat`, `fix`, `docs`, or `refactor`.
-- Clearly summarize what changed and why, list validation, and call out breaking changes with a `BREAKING CHANGE:` section.
+- Clearly summarize what changed and why, list validation, and call out behavior changes in the summary. Fill the template's major-release section only for an approved major.
 - Update documentation for important user-visible changes.
 - When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
 - When the diff ships a minor-only API compromise, follow the `rho-next-major-debt` skill, leave a `NEXT_MAJOR(...)` marker, and fill the next-major debt section in the pull request template (or delete it if none).

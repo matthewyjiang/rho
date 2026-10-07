@@ -194,7 +194,7 @@ git diff --cached --check
 
 Verify only intended files changed, tests cover behavior rather than trivia, APIs and state transitions are intentional, important user-visible changes are documented, and generated files such as `CHANGELOG.md` were not manually edited.
 
-If committing, use the repository's Conventional Commit format. Keep the description imperative and lowercase, with no final period. Mark breaking changes with `!` and a `BREAKING CHANGE:` footer.
+If committing, use the repository's Conventional Commit format. Keep the description imperative and lowercase, with no final period. Use `!` and a `BREAKING CHANGE:` footer only for an approved major release; see `AGENTS.md`.
 
 Validation is complete when required checks pass and no known in-scope defect
 remains. Stop adding checks once that condition is met. If an unrelated or

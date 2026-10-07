@@ -20,6 +20,7 @@ Local workflow, the PTY harness, and MSRV details live in the
 
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for the PR title and commits: `type(scope): description`. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Description is imperative and lowercase, with no trailing period.
 - You must follow the pull request template. Delete sections that do not apply.
+- `!` and `BREAKING CHANGE:` publish a new major. Use them only after the maintainer approves a major release. Describe behavior changes that ship in a minor without them.
 - If an AI made the change, end the body with one factual line naming the model and harness. If several models were used, name each one and what it did.
 - Before a code PR, run `python3 scripts/validate.py full`. Title or body-only updates do not need a rebuild.
 - Update docs for user-visible behavior.
