@@ -35,7 +35,8 @@ adds the parameter and return schemas.
 - Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
 or exceptions. At most 64 nested calls per script.
 - Nested calls follow the session's permissions and pause for approvals. Scripts get no process \
-exit notifications: poll using data[\"next_cursor\"] until data[\"state\"] is no longer running or starting.";
+exit notifications: for a process result named `response`, poll using \
+`response[\"data\"][\"next_cursor\"]` until `response[\"data\"][\"state\"]` is no longer running or starting.";
 
 #[derive(Deserialize)]
 struct Args {
