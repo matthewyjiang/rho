@@ -89,7 +89,8 @@ impl ModelProvider for AutomationFixtureProvider {
                     ProviderErrorKind::Other,
                     "deterministic provider failure",
                     Retryability::Permanent,
-                )),
+                )
+                .with_diagnostic("fixture provider diagnostic")),
                 Mode::AuthFailure => Err(ProviderError::new(
                     ProviderErrorKind::Authentication,
                     "deterministic authentication failure",

@@ -282,13 +282,24 @@ impl CodexSseState {
 
     /// Build a debug-friendly empty-content error from the stream summary.
     ///
+    /// A completed response with no text, images, or tool calls is an empty
+    /// assistant turn (models do this when told to end their turn and wait),
+    /// so it is retryable like every other protocol's empty turn. A steered
+    /// `response.incomplete` stays permanent because a retry would replay the
+    /// pre-steer request, as does a stream with no terminal event.
+    ///
     /// Includes only structural fields (ids, statuses, item/event types). Does
     /// not attach raw SSE payloads or item bodies, which may carry user data.
     fn missing_response_content_error(&self) -> ModelError {
-        ModelError::InvalidResponse(format!(
+        let message = format!(
             "missing response content in SSE ({})",
             self.empty_content_diagnostic()
-        ))
+        );
+        if self.completed && !self.steered {
+            ModelError::empty_assistant_because(message)
+        } else {
+            ModelError::InvalidResponse(message)
+        }
     }
 
     fn empty_content_diagnostic(&self) -> String {

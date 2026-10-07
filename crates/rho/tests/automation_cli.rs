@@ -226,6 +226,7 @@ fn provider_and_tool_failures_stay_off_stdout() {
     assert_eq!(provider_failure.status.code(), Some(1));
     assert!(provider_failure.stdout.is_empty());
     assert!(stderr(&provider_failure).contains("deterministic provider failure"));
+    assert!(stderr(&provider_failure).contains("provider diagnostic: fixture provider diagnostic"));
 
     let mut command = command(&root, "tool-failure");
     command
@@ -347,6 +348,9 @@ fn jsonl_reports_provider_failure_as_the_only_terminal_event() {
     assert_eq!(terminals[0]["type"], "run.failed");
     assert_eq!(terminals[0]["reason"], "provider_error");
     assert_eq!(events.last().unwrap(), terminals[0]);
+    // Diagnostics are for the person at the terminal, not JSONL consumers.
+    assert!(!stdout(&output).contains("fixture provider diagnostic"));
+    assert!(stderr(&output).contains("provider diagnostic: fixture provider diagnostic"));
 }
 
 #[test]
