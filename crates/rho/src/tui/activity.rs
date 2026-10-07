@@ -258,11 +258,25 @@ impl ProviderRetryHint {
 pub(super) struct BackgroundCounts {
     pub(super) subagent_count: usize,
     pub(super) job_count: usize,
+    pub(super) workflow_count: usize,
 }
 
 impl BackgroundCounts {
     fn is_empty(self) -> bool {
-        self.subagent_count == 0 && self.job_count == 0
+        self.subagent_count == 0 && self.job_count == 0 && self.workflow_count == 0
+    }
+
+    fn nonzero(self) -> impl Iterator<Item = usize> {
+        [self.subagent_count, self.job_count, self.workflow_count]
+            .into_iter()
+            .filter(|count| *count > 0)
+    }
+
+    fn compact(self) -> String {
+        self.nonzero()
+            .map(|count| count.to_string())
+            .collect::<Vec<_>>()
+            .join("+")
     }
 }
 
@@ -332,33 +346,22 @@ fn parent_background_rungs(spinner: &str, label: &str, counts: BackgroundCounts)
         return vec![format!("{spinner} {label}"), spinner.into()];
     }
     let wide = background_wide(counts);
-    if counts.subagent_count > 0 && counts.job_count > 0 {
-        vec![
-            format!("{spinner} {label}  ·  {wide}"),
-            format!(
-                "{spinner} {label} · {}+{}",
-                counts.subagent_count, counts.job_count
-            ),
-            format!("{spinner} {}+{}", counts.subagent_count, counts.job_count),
-            spinner.into(),
-        ]
-    } else {
-        let n = counts.subagent_count.max(counts.job_count);
-        vec![
-            format!("{spinner} {label}  ·  {wide}"),
-            format!("{spinner} {label} · {n}"),
-            format!("{spinner} {n}"),
-            spinner.into(),
-        ]
-    }
+    let compact = counts.compact();
+    vec![
+        format!("{spinner} {label}  ·  {wide}"),
+        format!("{spinner} {label} · {compact}"),
+        format!("{spinner} {compact}"),
+        spinner.into(),
+    ]
 }
 
 fn background_only_rungs(spinner: &str, counts: BackgroundCounts) -> Vec<String> {
     let wide = background_wide(counts);
-    if counts.subagent_count > 0 && counts.job_count > 0 {
+    let compact = counts.compact();
+    if counts.nonzero().count() > 1 {
         vec![
             format!("{spinner} {wide}"),
-            format!("{spinner} {}+{}", counts.subagent_count, counts.job_count),
+            format!("{spinner} {compact}"),
             spinner.into(),
         ]
     } else if counts.subagent_count > 0 {
@@ -372,23 +375,23 @@ fn background_only_rungs(spinner: &str, counts: BackgroundCounts) -> Vec<String>
         vec![
             format!("{spinner} {wide} running"),
             format!("{spinner} {wide}"),
-            format!("{spinner} {}", counts.job_count),
+            format!("{spinner} {compact}"),
             spinner.into(),
         ]
     }
 }
 
 fn background_wide(counts: BackgroundCounts) -> String {
-    match (counts.subagent_count > 0, counts.job_count > 0) {
-        (true, true) => format!(
-            "{} · {}",
-            counted_noun(counts.subagent_count, "agent", "agents"),
-            counted_noun(counts.job_count, "job", "jobs")
-        ),
-        (true, false) => counted_noun(counts.subagent_count, "agent", "agents"),
-        (false, true) => counted_noun(counts.job_count, "job", "jobs"),
-        (false, false) => String::new(),
-    }
+    [
+        (counts.subagent_count, "agent", "agents"),
+        (counts.job_count, "job", "jobs"),
+        (counts.workflow_count, "workflow", "workflows"),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, singular, plural)| counted_noun(count, singular, plural))
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// Status ladder first, then a trailing timer on the widest label.

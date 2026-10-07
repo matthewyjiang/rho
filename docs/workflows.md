@@ -92,7 +92,8 @@ flowchart TD
 
 Background workflows appear in the activity rail with their name, lifecycle,
 completed/total task count, active task, and elapsed time. Click a workflow row
-to open its watch screen; `/workflow` provides the keyboard path. Finished rows
+to open its watch screen while chat is idle; `/workflow` provides the keyboard
+path. Rail clicks do not interrupt a turn or dismiss an open form. Finished rows
 leave the rail when their result is delivered. Tool cards summarize the action,
 state, and progress; expand a card for IDs and node details.
 

@@ -91,8 +91,8 @@ impl WorkflowPanel {
         }
     }
 
-    /// Pointer routing is synchronous. The idle loop opens the existing watch
-    /// screen once it can safely await it, without interrupting an active turn.
+    /// Pointer routing is synchronous. Only idle input clicks may arm this;
+    /// the idle loop rechecks eligibility and drops stale requests.
     pub(super) fn request_watch(&mut self, run_id: String) {
         self.pending_watch = Some(run_id);
     }
@@ -208,6 +208,14 @@ impl WorkflowPanel {
             );
         }
         lines
+    }
+}
+
+impl super::App {
+    /// Watching suspends the terminal and replaces the composer. Never defer a
+    /// busy-turn click or drop a form/picker to honor an earlier pointer event.
+    pub(super) fn can_open_workflow_watch_from_rail(&self) -> bool {
+        !self.is_ui_busy() && matches!(self.input_ui.composer(), super::ComposerMode::Input)
     }
 }
 

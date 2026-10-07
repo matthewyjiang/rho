@@ -568,6 +568,7 @@ impl App {
             .or_else(|| {
                 self.workflow_panel
                     .watch_target_at(workflows, column, row)
+                    .filter(|_| self.can_open_workflow_watch_from_rail())
                     .map(SessionRailPointer::Workflow)
             })
     }

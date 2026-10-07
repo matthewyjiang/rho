@@ -116,21 +116,38 @@ fn workflow_background(harness: &mut PtyHarness) -> Result<()> {
     );
     harness.set_phase("live_workflow_survives_turn_end");
     assert_live_rail(harness)?;
+    harness.wait_for_text("1 workflow running", STREAM)?;
     harness.resize(DEFAULT_SIZE.rows, 40)?;
     harness.wait_for_text("running · 1/3", STREAM)?;
     harness.resize(DEFAULT_SIZE.rows, DEFAULT_SIZE.cols)?;
     assert_live_rail(harness)?;
 
+    harness.set_phase("busy_rail_click_is_not_replayed_after_turn");
+    harness.submit_text("fixture gated reply")?;
+    harness.wait_for_text("reply waiting for release", STREAM)?;
+    click_live_workflow(harness)?;
+    fs::write(
+        harness
+            .working_directory()
+            .context("workflow workspace")?
+            .join(".rho-fixture-release-reply"),
+        b"release",
+    )?;
+    harness.wait_for_text("reply completed after release", STREAM)?;
+    wait_for_turn_completion_after(harness, "reply completed after release")?;
+
+    harness.set_phase("workflow_click_preserves_questionnaire");
+    harness.submit_text("fixture questionnaire")?;
+    harness.wait_for_text("Choose one color", STREAM)?;
+    click_live_workflow(harness)?;
+    harness.inject_key(&Key::Down)?;
+    harness.inject_key(&Key::Enter)?;
+    let answered = "questionnaire response observed exactly 1 time";
+    harness.wait_for_text(answered, STREAM)?;
+    wait_for_turn_completion_after(harness, answered)?;
+
     harness.set_phase("rail_click_opens_watch_without_stopping_run");
-    let row = harness
-        .screen()
-        .rows_text()
-        .iter()
-        .position(|row| row.contains("workflow pty-background") && row.contains(LIVE_PROGRESS))
-        .context("live workflow rail row")? as u16
-        + 1;
-    harness.mouse(MouseButton::Left, 5, row, true)?;
-    harness.mouse(MouseButton::Left, 5, row, false)?;
+    click_live_workflow(harness)?;
     harness.wait_for_text("Graph", STREAM)?;
     harness.wait_for_text("q leave", STREAM)?;
     harness.inject_key(&Key::Char('q'))?;
@@ -180,6 +197,19 @@ fn workflow_background(harness: &mut PtyHarness) -> Result<()> {
         "source Start must retain the explicitly frozen plan without adding a launch plan; plans={plans:?} runs={runs:?}"
     );
     Ok(())
+}
+
+fn click_live_workflow(harness: &mut PtyHarness) -> Result<()> {
+    assert_live_rail(harness)?;
+    let row = harness
+        .screen()
+        .rows_text()
+        .iter()
+        .position(|row| row.contains("workflow pty-background") && row.contains(LIVE_PROGRESS))
+        .context("live workflow rail row")? as u16
+        + 1;
+    harness.mouse(MouseButton::Left, 5, row, true)?;
+    harness.mouse(MouseButton::Left, 5, row, false)
 }
 
 fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {

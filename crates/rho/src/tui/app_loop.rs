@@ -67,7 +67,11 @@ impl App {
         let mut needs_redraw = true;
         let mut first_frame = true;
         while !self.should_quit {
-            if let Some(run_id) = self.workflow_panel.take_watch_request() {
+            if let Some(run_id) = self
+                .workflow_panel
+                .take_watch_request()
+                .filter(|_| self.can_open_workflow_watch_from_rail())
+            {
                 let result = async {
                     let Some(run) = self.load_run_for_watch(run_id.parse()?)? else {
                         return Ok(());
@@ -529,7 +533,8 @@ impl App {
             self.loading_active().then_some((phase, retry)),
             BackgroundCounts {
                 subagent_count: self.subagent_panel.count(),
-                job_count: self.process_panel.live_count() + self.workflow_panel.live_count(),
+                job_count: self.process_panel.live_count(),
+                workflow_count: self.workflow_panel.live_count(),
             },
             self.subagent_panel.is_active()
                 || self.process_panel.is_active()
