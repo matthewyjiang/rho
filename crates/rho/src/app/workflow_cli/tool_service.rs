@@ -8,8 +8,8 @@ use std::{
 
 use rho_sdk::{
     tool::{ToolContext, ToolError, ToolErrorKind},
-    CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest, HostQuestion, PathScope,
-    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, SelectionMode,
+    CapabilityRequest, CapabilitySource, PathScope, ProcessEnvironment, ProcessExecution,
+    ProcessInvocation, ProcessOutputLimits,
 };
 
 use crate::{
@@ -275,16 +275,22 @@ impl AppWorkflowToolService {
                 let plan = ops
                     .prepare_run_id(plan_id)
                     .map_err(model_workflow_tool_error)?;
-                confirm_exact_plan(context, "Run", &plan.manifest.program_digest.0).await?;
+                // Tool authorization is the launch boundary. The frozen digest
+                // is still recorded, and every node authorizes its own work.
                 let run = ops
                     .create_confirmed_run(&plan)
                     .map_err(model_workflow_tool_error)?;
-                self.tracker.register_start(
+                if !self.tracker.register_start(
                     run.manifest.run_id.to_string(),
                     run.graph.program.name.as_str(),
                     run.manifest.program_digest.0.clone(),
                     None,
-                );
+                ) {
+                    return Err(ToolError::new(
+                        ToolErrorKind::Execution,
+                        "workflow is already running",
+                    ));
+                }
                 let started = runtime::spawn_background_run(
                     run,
                     RecoveryDecision::NormalResume,
@@ -349,13 +355,17 @@ impl AppWorkflowToolService {
                             model_workflow_tool_error(error)
                         }
                     })?;
-                confirm_exact_plan(context, "Resume", &run.manifest.program_digest.0).await?;
-                self.tracker.register_start(
+                if !self.tracker.register_start(
                     run.manifest.run_id.to_string(),
                     run.graph.program.name.as_str(),
                     run.manifest.program_digest.0.clone(),
                     None,
-                );
+                ) {
+                    return Err(ToolError::new(
+                        ToolErrorKind::Execution,
+                        "workflow is already running",
+                    ));
+                }
                 let started = runtime::spawn_background_run(
                     run,
                     recovery,
@@ -518,40 +528,6 @@ fn durable_id_path(root: &Path, id: impl std::fmt::Display) -> PathBuf {
 #[path = "tool_service_tests.rs"]
 mod tests;
 
-async fn confirm_exact_plan(
-    context: &ToolContext,
-    action: &str,
-    digest: &str,
-) -> Result<(), ToolError> {
-    let question = HostQuestion::new(
-        "confirm",
-        format!("{action} workflow plan {digest}?"),
-        vec![
-            HostChoice::new("yes", format!("{action} {digest}")),
-            HostChoice::new("no", "Do not continue"),
-        ],
-        SelectionMode::One,
-    )
-    .map_err(host_input_error)?;
-    let request = HostInputRequest::questionnaire(
-        format!("Confirm exact workflow plan {digest}"),
-        vec![question],
-    )
-    .map_err(host_input_error)?;
-    let response = context
-        .request_host_input(request)
-        .await
-        .map_err(host_input_error)?;
-    let confirmed = response
-        .answers()
-        .get("confirm")
-        .is_some_and(|answers| answers.iter().any(|answer| answer == "yes"));
-    if !confirmed {
-        return Err(ToolError::cancelled());
-    }
-    Ok(())
-}
-
 fn observe_if_terminal(tracker: &WorkflowRunTracker, run: &StoredRun) {
     if matches!(
         run.state.state.lifecycle,
@@ -623,8 +599,4 @@ fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagno
 fn model_workflow_tool_error(error: anyhow::Error) -> ToolError {
     let diagnostic = diagnostic_for_model_error(&error);
     ToolError::new(ToolErrorKind::Execution, diagnostic.message)
-}
-
-fn host_input_error(error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(ToolErrorKind::Execution, error.to_string())
 }

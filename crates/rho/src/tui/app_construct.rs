@@ -14,6 +14,7 @@ use super::{
     process_panel::ProcessPanel,
     statusline::StatusLine,
     subagent_panel::SubagentPanel,
+    workflow_panel::WorkflowPanel,
     App, StatusSource, StreamUi, TuiBootstrap, UsageUi,
 };
 
@@ -88,6 +89,7 @@ impl App {
             statusline,
             subagent_panel: SubagentPanel::default(),
             process_panel: ProcessPanel::default(),
+            workflow_panel: WorkflowPanel::default(),
             subagent_inbox: crate::tui::subagent_inbox::SubagentInbox::default(),
             agent_concurrency: None,
             pending_subagent_questionnaire: None,

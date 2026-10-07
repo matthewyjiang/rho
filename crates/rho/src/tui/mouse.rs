@@ -37,6 +37,7 @@ impl App {
 enum SessionRailPointer {
     Subagent(super::subagent_panel::SubagentPointerTarget),
     Process(super::process_panel::ProcessPeekTarget),
+    Workflow(String),
 }
 
 impl SessionRailPointer {
@@ -44,6 +45,7 @@ impl SessionRailPointer {
         match self {
             Self::Subagent(target) => target.pointer_id(),
             Self::Process(target) => target.process_id.as_str(),
+            Self::Workflow(run_id) => run_id,
         }
     }
 }
@@ -224,8 +226,13 @@ impl App {
                 let composer_copy = self.composer_copy_text_at(screen, column, row);
                 self.input_ui
                     .set_hovered_composer_copy(composer_copy.is_some());
-                let rail_target =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                let rail_target = self.session_rail_pointer(
+                    layout.subagents,
+                    layout.processes,
+                    layout.workflows,
+                    column,
+                    row,
+                );
                 if let Some(target) = rail_target {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
@@ -380,15 +387,22 @@ impl App {
                     .subagent_panel
                     .pressed_run_id()
                     .or_else(|| self.process_panel.pressed_process_id())
+                    .or_else(|| self.workflow_panel.pressed_run_id())
                     .map(str::to_owned);
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
                 let composer_selecting = self.input_ui.selection_dragging();
                 self.history.set_scrollbar_drag(None);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                let released_rail =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                let released_rail = self.session_rail_pointer(
+                    layout.subagents,
+                    layout.processes,
+                    layout.workflows,
+                    column,
+                    row,
+                );
                 self.subagent_panel.set_pressed(None);
                 self.process_panel.set_pressed(None);
+                self.workflow_panel.set_pressed(None);
                 self.set_rail_hover(released_rail.as_ref());
                 let activate_rail = released_rail
                     .filter(|target| pressed_rail_id.as_deref() == Some(target.pointer_id()));
@@ -421,6 +435,9 @@ impl App {
                         }
                         SessionRailPointer::Process(target) => {
                             self.activate_process_row(&target);
+                        }
+                        SessionRailPointer::Workflow(run_id) => {
+                            self.workflow_panel.request_watch(run_id);
                         }
                     }
                 } else if was_scrollbar_drag {
@@ -505,8 +522,13 @@ impl App {
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
                 self.set_hovered_composer_copy_at(screen, column, row);
-                let rail_hover =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                let rail_hover = self.session_rail_pointer(
+                    layout.subagents,
+                    layout.processes,
+                    layout.workflows,
+                    column,
+                    row,
+                );
                 self.set_rail_hover(rail_hover.as_ref());
             }
             MouseEventKind::Down(MouseButton::Right) => {
@@ -530,6 +552,7 @@ impl App {
         &self,
         subagents: Rect,
         processes: Rect,
+        workflows: Rect,
         column: u16,
         row: u16,
     ) -> Option<SessionRailPointer> {
@@ -542,19 +565,31 @@ impl App {
         self.process_panel
             .peek_target_at(processes, column, row)
             .map(SessionRailPointer::Process)
+            .or_else(|| {
+                self.workflow_panel
+                    .watch_target_at(workflows, column, row)
+                    .filter(|_| self.can_open_workflow_watch_from_rail())
+                    .map(SessionRailPointer::Workflow)
+            })
     }
 
     pub(super) fn clear_rail_pointer_state(&mut self) {
         self.subagent_panel.clear_pointer_state();
         self.process_panel.clear_pointer_state();
+        self.workflow_panel.clear_pointer_state();
     }
 
     fn clear_rail_pressed(&mut self) {
         self.subagent_panel.clear_pressed();
         self.process_panel.clear_pressed();
+        self.workflow_panel.clear_pressed();
     }
 
     fn set_rail_hover(&mut self, target: Option<&SessionRailPointer>) {
+        self.workflow_panel.set_hovered(match target {
+            Some(SessionRailPointer::Workflow(run_id)) => Some(run_id),
+            Some(SessionRailPointer::Subagent(_) | SessionRailPointer::Process(_)) | None => None,
+        });
         match target {
             Some(SessionRailPointer::Subagent(target)) => {
                 self.subagent_panel.set_hovered(Some(target.pointer_id()));
@@ -565,7 +600,7 @@ impl App {
                     .set_hovered(Some(target.process_id.as_str()));
                 self.subagent_panel.set_hovered(None);
             }
-            None => {
+            Some(SessionRailPointer::Workflow(_)) | None => {
                 self.subagent_panel.set_hovered(None);
                 self.process_panel.set_hovered(None);
             }
@@ -573,6 +608,10 @@ impl App {
     }
 
     fn set_rail_pressed(&mut self, target: Option<&SessionRailPointer>) {
+        self.workflow_panel.set_pressed(match target {
+            Some(SessionRailPointer::Workflow(run_id)) => Some(run_id),
+            Some(SessionRailPointer::Subagent(_) | SessionRailPointer::Process(_)) | None => None,
+        });
         match target {
             Some(SessionRailPointer::Subagent(target)) => {
                 self.subagent_panel.set_pressed(Some(target.pointer_id()));
@@ -583,7 +622,7 @@ impl App {
                     .set_pressed(Some(target.process_id.as_str()));
                 self.subagent_panel.set_pressed(None);
             }
-            None => {
+            Some(SessionRailPointer::Workflow(_)) | None => {
                 self.subagent_panel.set_pressed(None);
                 self.process_panel.set_pressed(None);
             }

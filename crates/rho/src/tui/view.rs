@@ -268,6 +268,10 @@ impl App {
                 self.process_panel
                     .lines(width, height, layout.rail_continues_below(band))
             }
+            StackedBand::Workflows => {
+                self.workflow_panel
+                    .lines(width, height, layout.rail_continues_below(band))
+            }
             StackedBand::PendingInput => self
                 .pending_input_lines(width)
                 .into_iter()
@@ -285,6 +289,7 @@ impl App {
         match band {
             StackedBand::Subagents => self.subagent_panel.highlighted_row(height),
             StackedBand::Processes => self.process_panel.highlighted_row(height),
+            StackedBand::Workflows => self.workflow_panel.highlighted_row(height),
             StackedBand::PendingInput => None,
         }
     }

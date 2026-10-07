@@ -10,7 +10,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STARTUP, STREAM};
+use super::{assert_helpers::wait_for_turn_completion_after, SETTLE, STARTUP, STREAM};
 
 fn setup_workspace_rewind_off(home: &IsolatedHome) -> Result<()> {
     let mut config = fs::read_to_string(&home.config_path)?;
@@ -46,10 +46,9 @@ pub(super) const WORKSPACE_REWIND_OFF_SCENARIO: Scenario = Scenario::new(
             timeout: STARTUP,
         },
         Step::SubmitText("fixture tool"),
-        Step::WaitText {
-            text: "tool lifecycle complete with one result",
-            timeout: STREAM,
-        },
+        Step::Custom(|harness| {
+            wait_for_turn_completion_after(harness, "tool lifecycle complete with one result")
+        }),
         Step::SubmitText("/rewind"),
         Step::WaitText {
             text: "workspace rewind is off",
@@ -113,10 +112,10 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
     },
     Step::Phase("capture_native_write"),
     Step::SubmitText("fixture tool"),
-    Step::WaitText {
-        text: "tool lifecycle complete with one result",
-        timeout: STREAM,
-    },
+    // Final response text can arrive before the turn returns to idle.
+    Step::Custom(|harness| {
+        wait_for_turn_completion_after(harness, "tool lifecycle complete with one result")
+    }),
     Step::Phase("preview_and_cancel"),
     Step::SubmitText("/rewind"),
     Step::WaitText {

@@ -52,6 +52,7 @@ pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
         | ToolKind::ExitPlanMode
         | ToolKind::Sessions
         | ToolKind::ToolSearch
+        | ToolKind::Workflow
         | ToolKind::Mcp
         | ToolKind::Other => ToolBodySyntax::Plain,
     }
@@ -269,6 +270,7 @@ pub(super) fn preview_card(
             kind_card(status, kind, ToolHeader::call(name, None))
         }
         ToolKind::Sessions => sessions_format::preview_card(arguments, status),
+        ToolKind::Workflow => crate::presentation::workflow::preview_card(arguments, cwd, status),
         ToolKind::ToolSearch => tool_search_format::preview_card(arguments, status),
         ToolKind::Codemode => {
             codemode_format::preview_card(arguments, status, /*primary*/ None)
@@ -510,6 +512,9 @@ pub(super) fn finished_card(
         }
         ToolKind::Codemode => codemode_format::finished_card(&view.arguments, content, ok, data),
         ToolKind::ToolSearch => tool_search_format::finished_card(&view.arguments, content, ok),
+        ToolKind::Workflow => {
+            crate::presentation::workflow::finished_card(&view.arguments, content, ok, cwd)
+        }
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
     }
@@ -620,6 +625,11 @@ pub(super) fn interrupted_card(
         ToolKind::Codemode => {
             codemode_format::preview_card(&view.arguments, ToolStatus::Interrupted, None)
         }
+        ToolKind::Workflow => crate::presentation::workflow::preview_card(
+            &view.arguments,
+            cwd,
+            ToolStatus::Interrupted,
+        ),
         ToolKind::Edit(format) => {
             edit_preview_card(format, &view.arguments, cwd, ToolStatus::Interrupted)
         }
@@ -655,9 +665,11 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
             ToolFamily::Web
         }
         ToolKind::Questionnaire | ToolKind::ExitPlanMode | ToolKind::Todo => ToolFamily::Form,
-        ToolKind::Mcp | ToolKind::Sessions | ToolKind::Codemode | ToolKind::ToolSearch => {
-            ToolFamily::Default
-        }
+        ToolKind::Mcp
+        | ToolKind::Sessions
+        | ToolKind::Codemode
+        | ToolKind::ToolSearch
+        | ToolKind::Workflow => ToolFamily::Default,
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),

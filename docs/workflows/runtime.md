@@ -130,9 +130,12 @@ remain available there.
 
 ## Permissions, approval, and trust
 
-Plan confirmation and capability approval are separate.
+Starting a frozen plan and approving its capabilities are separate. The CLI
+uses an explicit plan confirmation (or `--yes`). In chat, selecting Start or
+authorizing the model's `workflow` tool invocation starts the plan without a
+second questionnaire. Each run still records its exact frozen program digest.
 
-Plan confirmation:
+Starting a plan:
 
 - names the exact program digest
 - applies to one new run
@@ -284,7 +287,7 @@ An agent with the `workflow` capability uses the same service and store as the C
 
 `run` and `resume` start in the background and return a run id. Completions arrive at the next turn boundary. Use `status` after delivery, and `cancel` to stop. Do not poll.
 
-Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume ask the host to confirm the exact program digest and fail closed if host input is not available. Node capabilities are authorized separately. Plan and run tool summaries report `program_digest`.
+Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume use normal tool permissions, without a separate plan-confirmation questionnaire. Node capabilities are authorized separately; removing the extra form does not bypass policy, hooks, or required approvals. Background execution still fails closed when a required approval has no responder. Plan and run tool summaries report `program_digest`.
 
 Cancel returns the same `request_id` and `cancellation_state` as the CLI.
 

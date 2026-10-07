@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod checklist;
+pub(crate) mod workflow;
 
 /// A host transcript row has exactly one presentation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -6,7 +6,7 @@ use crate::workflow::{
     WorkflowEventRecord, WorkflowStore, ATTEMPT_VERSION, EVENT_VERSION,
 };
 
-use super::{runner::send_event, RuntimeError, RuntimeEvent};
+use super::{runner::send_event, RuntimeError, RuntimeEvent, WorkflowActivitySnapshot};
 
 /// The single writer for a run. The journal is authoritative; snapshots may lag
 /// append-only events or any append interrupted before its snapshot write.
@@ -68,10 +68,24 @@ impl RunJournal {
     }
 
     pub(super) fn notify(&self, sender: &Option<tokio::sync::mpsc::UnboundedSender<RuntimeEvent>>) {
+        if sender.is_none() {
+            return;
+        }
         send_event(
             sender,
             RuntimeEvent::StateChanged {
                 revision: self.run.state.state.revision,
+                activity: WorkflowActivitySnapshot {
+                    lifecycle: self.run.state.state.lifecycle,
+                    outcome: self.run.state.state.outcome(),
+                    tasks: self
+                        .run
+                        .state
+                        .state
+                        .tasks()
+                        .map(|(id, state)| (id.to_string(), state.clone()))
+                        .collect(),
+                },
             },
         );
     }

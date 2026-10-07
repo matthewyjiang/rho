@@ -24,8 +24,12 @@ use crate::{
 const SOURCE_PREFIX: &str = "source:";
 const PLAN_PREFIX: &str = "plan:";
 const RUN_PREFIX: &str = "run:";
+const RETRY_RUN_PREFIX: &str = "retry-run:";
 const READ_ONLY_PLAN_PREFIX: &str = "read-only-plan:";
 const READ_ONLY_RUN_PREFIX: &str = "read-only-run:";
+
+#[path = "workflow_plans.rs"]
+mod plans;
 
 const MAX_FINISHED_RUNS: usize = 8;
 
@@ -189,40 +193,32 @@ pub(super) fn hub_picker(
             Some("close"),
         ));
     } else {
-        items.extend(active.into_iter().chain(finished).map(run_item));
-    }
-
-    if plans.is_empty() {
-        // Keep the list focused; empty plans stay hidden.
-    } else {
-        for plan in plans {
-            let id = plan.plan_id.to_string();
-            let short = short_id(&id);
-            let name = plan.name.as_str();
-            let steps = plan.step_count;
-            match plan.access {
-                RecordAccess::ReadOnly => {
-                    items.push(item(
-                        Some("SAVED PLANS"), format!("Legacy plan  ·  {short}"),
-                        format!("{name}\n{steps} steps already frozen.\nRead-only legacy plan. Create a new plan from source to run it. Press d to delete.\nPlan id {short}"),
-                        format!("{READ_ONLY_PLAN_PREFIX}{id}"),
-                        Some(("read-only".into(), PickerBadgeTone::Internal)), Some("close"),
-                    ));
-                }
-                RecordAccess::Executable => {
-                    items.push(item(
-                Some("SAVED PLANS"),
-                format!("Run plan  ·  {short}"),
-                format!(
-                    "{name}\n{steps} steps already frozen.\nEnter starts a new run. Press d to delete this plan.\nPlan id {short}\nRuns that already used this plan keep their own copy."
-                ),
-                format!("{PLAN_PREFIX}{id}"),
-                Some(("saved".into(), PickerBadgeTone::Internal)),
-                Some("run"),
-            ));
-                }
+        for run in active.into_iter().chain(finished) {
+            items.push(run_item(run));
+            if run.access == RecordAccess::Executable && run.lifecycle == RunLifecycle::Planned {
+                let id = run.run_id.to_string();
+                let short = short_id(&id);
+                items.push(item(
+                    Some("RUNS"),
+                    format!("Retry start  ·  {short}"),
+                    format!("{}\nRetry launching this ready run in the background using its existing frozen graph and run id. Watch only inspects it.\nRun id {short}", run.name),
+                    format!("{RETRY_RUN_PREFIX}{id}"),
+                    None,
+                    Some("retry"),
+                ));
             }
         }
+    }
+
+    if !plans.is_empty() {
+        items.push(item(
+            Some("PLANS"),
+            format!("Saved plans · {}", plans.len()),
+            "Browse frozen plans to reuse or delete. Starting from source uses the current workflow instead.",
+            "browse:plans",
+            None,
+            Some("browse"),
+        ));
     }
 
     UiPicker::workflow("Workflows", items)
@@ -323,6 +319,7 @@ impl App {
         }
         if let Some(run_id) = value
             .strip_prefix(RUN_PREFIX)
+            .or_else(|| value.strip_prefix(RETRY_RUN_PREFIX))
             .or_else(|| value.strip_prefix(READ_ONLY_RUN_PREFIX))
         {
             let short = short_id(run_id);
@@ -368,7 +365,7 @@ impl App {
         plan_id: &str,
     ) -> anyhow::Result<()> {
         if value != "delete" {
-            return self.open_workflow_hub();
+            return self.open_workflow_plans();
         }
         let short = short_id(plan_id);
         let parsed = PlanId::from_str(plan_id)?;
@@ -379,7 +376,7 @@ impl App {
                 "delete failed".into()
             }
         };
-        self.open_workflow_hub()?;
+        self.open_workflow_plans()?;
         self.set_status(status);
         Ok(())
     }
@@ -425,6 +422,8 @@ impl App {
             return Ok(());
         }
         match value {
+            "browse:plans" => self.open_workflow_plans(),
+            "browse:workflows" => self.open_workflow_hub(),
             value if value.starts_with(READ_ONLY_PLAN_PREFIX) => {
                 let id = value
                     .strip_prefix(READ_ONLY_PLAN_PREFIX)
@@ -472,6 +471,24 @@ impl App {
                     .strip_prefix(PLAN_PREFIX)
                     .expect("prefix checked above");
                 self.run_workflow_plan(id, terminal, agent).await
+            }
+            // Retry is explicit; watching a ready run must never start a driver.
+            value if value.starts_with(RETRY_RUN_PREFIX) => {
+                let id = value
+                    .strip_prefix(RETRY_RUN_PREFIX)
+                    .expect("prefix checked above");
+                let Some(run) = self.load_run_for_watch(id.parse()?)? else {
+                    return Ok(());
+                };
+                // Inventory can be stale if another process started the run.
+                // Normal resume retains the tracker and durable driver guards.
+                if run.state.state.lifecycle != RunLifecycle::Planned {
+                    self.open_workflow_hub()?;
+                    self.set_status("run is no longer ready; refreshed workflows");
+                    return Ok(());
+                }
+                self.resume_workflow_run(id, /*recover_uncertain*/ false, terminal, agent)
+                    .await
             }
             // Enter on a run opens the live screen or finished status.
             value if value.starts_with(RUN_PREFIX) => {
@@ -524,7 +541,10 @@ impl App {
 
     /// Loads an executable watch target by exact ID, reporting unreadable or
     /// replaced records in the transcript instead of leaving the TUI.
-    fn load_run_for_watch(&mut self, run_id: RunId) -> anyhow::Result<Option<StoredRun>> {
+    pub(super) fn load_run_for_watch(
+        &mut self,
+        run_id: RunId,
+    ) -> anyhow::Result<Option<StoredRun>> {
         match self.workflow_ops()?.load_run_record_id(run_id) {
             Ok(crate::workflow::RunRecord::Current(run)) => Ok(Some(*run)),
             Ok(crate::workflow::RunRecord::Legacy(_)) => {
@@ -542,7 +562,7 @@ impl App {
         }
     }
 
-    async fn open_workflow_watch(
+    pub(super) async fn open_workflow_watch(
         &mut self,
         run: StoredRun,
         terminal: &mut DefaultTerminal,
@@ -624,15 +644,10 @@ impl App {
                 return Ok(());
             }
         };
-        let plan = match ops.prepare_run_id(plan.manifest.plan_id) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not prepare run: {error:#}")));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let run = match ops.create_confirmed_run(&plan) {
+        let created = ops
+            .recheck_plan(&plan)
+            .and_then(|()| ops.create_confirmed_run(&plan));
+        let run = match created {
             Ok(run) => run,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
@@ -640,6 +655,13 @@ impl App {
                 return Ok(());
             }
         };
+        // Remove this launch-only plan only after the run owns its frozen graph.
+        // Failed launches retain the plan for retry; explicitly saved plans stay reusable.
+        if let Err(error) = ops.delete_workspace_plan(plan.manifest.plan_id) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not remove launch plan: {error:#}"
+            )));
+        }
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
@@ -744,12 +766,18 @@ impl App {
         let config_path = self.info.services.config_repository.configured_path().ok();
         // Background runs keep the chat TUI, so workflow approvals are headless.
         let tracker = agent.workflow_tracker().clone();
-        tracker.register_start(
+        if !tracker.register_start(
             run_id.to_string(),
             workflow_name.clone(),
             program_digest.clone(),
             Some(agent.session_id().to_string()),
-        );
+        ) {
+            self.insert_entry(&Entry::Error(
+                "could not start workflow: already running".into(),
+            ));
+            self.set_status("workflow already running");
+            return Ok(());
+        }
         match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
             Ok(_) => {
                 let (model, display) = crate::tools::workflow_tracker::start_context_prompts(

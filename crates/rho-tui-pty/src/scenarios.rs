@@ -92,6 +92,9 @@ mod turn_notifications;
 mod type_during_stream;
 mod web_search;
 mod workflow;
+// Real command workflows require the verified-handle process adapter, not just a PTY.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod workflow_background;
 mod workflow_hub_legacy;
 mod workspace_rewind;
 mod write_stream;
@@ -453,6 +456,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
         &[],
         true,
     ),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_background::WORKFLOW_BACKGROUND_SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_background::WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     questionnaire_timeout::TIMEOUT,

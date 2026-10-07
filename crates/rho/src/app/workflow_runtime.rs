@@ -42,8 +42,8 @@ pub(crate) use recovery::{preview_recovery, AttemptRecovery, ResetReason};
 pub(crate) use runner::{RecoveryDecision, WorkflowRunner};
 pub(crate) use types::{
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,
-    NodeProgressUpdate, RuntimeError, RuntimeEvent, RuntimeSecurity, WorkflowExecutionFuture,
-    WorkflowNodeExecutor,
+    NodeProgressUpdate, RuntimeError, RuntimeEvent, RuntimeSecurity, WorkflowActivitySnapshot,
+    WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
 
 #[cfg(test)]

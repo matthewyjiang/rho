@@ -1,11 +1,12 @@
-use std::{future::Future, path::PathBuf, pin::Pin};
+use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin};
 
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::workflow::{
     AttemptArtifacts, AttemptNumber, CancellationResumeState, CommandExit, Digest, NodeCompletion,
-    NodeId, NodeTerminalState, RunId, TaskInstanceId, ValidatedOutputRef,
+    NodeId, NodeState, NodeTerminalState, RunId, RunLifecycle, TaskInstanceId, ValidatedOutputRef,
+    WorkflowOutcome,
 };
 
 pub(crate) type WorkflowExecutionFuture<'a> =
@@ -168,11 +169,23 @@ pub(crate) struct RuntimeSecurity {
     pub(crate) permission_mode: crate::permission::PermissionMode,
 }
 
+/// Lightweight projection of authoritative journal state for in-process observers.
+/// No artifact bodies, journal replay, or filesystem validation are needed to paint it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkflowActivitySnapshot {
+    pub(crate) lifecycle: RunLifecycle,
+    pub(crate) outcome: Option<WorkflowOutcome>,
+    pub(crate) tasks: BTreeMap<String, NodeState>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum RuntimeEvent {
     StateChanged {
         revision: u64,
+        /// Internal activity projection; the CLI event wire format is unchanged.
+        #[serde(skip)]
+        activity: WorkflowActivitySnapshot,
     },
     NodeStarted {
         node: TaskInstanceId,
@@ -204,7 +217,7 @@ impl RuntimeEvent {
     /// Canonical human-readable progress text for tools and CLI text output.
     pub(crate) fn message(&self) -> String {
         match self {
-            Self::StateChanged { revision } => format!("workflow state revision {revision}"),
+            Self::StateChanged { revision, .. } => format!("workflow state revision {revision}"),
             Self::NodeStarted { node, attempt } => {
                 format!("workflow node {node} started attempt {attempt}")
             }

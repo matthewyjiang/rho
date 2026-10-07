@@ -5,12 +5,15 @@
 //! unobserved terminals at the next turn boundary.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
     time::Instant,
 };
 
-use crate::workflow::{StoredRun, WorkflowOutcome, WorkflowValue};
+use crate::{
+    app::workflow_runtime::RuntimeEvent,
+    workflow::{NodeState, RunLifecycle, StoredRun, WorkflowOutcome, WorkflowValue},
+};
 
 const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 const RESULT_EXCERPT_BYTES: usize = 4 * 1024;
@@ -42,6 +45,38 @@ pub(crate) struct WorkflowNotification {
     pub(crate) finished: WorkflowFinishedSnapshot,
 }
 
+/// In-memory activity snapshot; drawing never reads the durable workflow store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkflowRailSummary {
+    pub(crate) run_id: String,
+    pub(crate) workflow_name: String,
+    pub(crate) lifecycle: RunLifecycle,
+    pub(crate) outcome: Option<WorkflowOutcome>,
+    pub(crate) failed: bool,
+    pub(crate) completed_tasks: usize,
+    pub(crate) total_tasks: usize,
+    pub(crate) active_task: Option<String>,
+    pub(crate) elapsed_seconds: u64,
+}
+
+impl WorkflowRailSummary {
+    pub(crate) fn is_live(&self) -> bool {
+        !self.failed
+            && matches!(
+                self.lifecycle,
+                RunLifecycle::Planned | RunLifecycle::Running | RunLifecycle::Cancelling
+            )
+    }
+
+    pub(crate) fn is_failure(&self) -> bool {
+        self.failed
+            || self.lifecycle == RunLifecycle::NeedsRecovery
+            || self
+                .outcome
+                .is_some_and(|outcome| outcome != WorkflowOutcome::Success)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct WorkflowEntry {
     run_id: String,
@@ -49,6 +84,10 @@ struct WorkflowEntry {
     program_digest: String,
     session_id: Option<String>,
     started: Instant,
+    finished_at: Option<Instant>,
+    lifecycle: RunLifecycle,
+    outcome: Option<WorkflowOutcome>,
+    tasks: BTreeMap<String, NodeState>,
     finished: Option<WorkflowFinishedSnapshot>,
     observed: bool,
     explicitly_observed: bool,
@@ -86,17 +125,25 @@ impl WorkflowRunTracker {
             .clone()
     }
 
-    /// Records a newly started background run for later completion delivery.
+    /// Records a start, returning false if this tracker already owns its driver.
+    /// A duplicate launch must not replace the original driver's delivery state.
     pub fn register_start(
         &self,
         run_id: impl Into<String>,
         workflow_name: impl Into<String>,
         program_digest: impl Into<String>,
         session_id: Option<String>,
-    ) {
+    ) -> bool {
         let run_id = run_id.into();
         let session_id = session_id.or_else(|| self.parent_session_id());
         let mut inner = self.inner.lock().expect("workflow tracker lock");
+        if inner
+            .runs
+            .get(&run_id)
+            .is_some_and(|entry| entry.finished.is_none())
+        {
+            return false;
+        }
         inner.runs.insert(
             run_id.clone(),
             WorkflowEntry {
@@ -105,11 +152,116 @@ impl WorkflowRunTracker {
                 program_digest: program_digest.into(),
                 session_id,
                 started: Instant::now(),
+                finished_at: None,
+                lifecycle: RunLifecycle::Planned,
+                outcome: None,
+                tasks: BTreeMap::new(),
                 finished: None,
                 observed: false,
                 explicitly_observed: false,
             },
         );
+        true
+    }
+
+    /// Seed starts/resumes and refresh task states/lifecycle at runtime
+    /// state-change events, including tasks completed before a resume.
+    pub(crate) fn update_from_stored(&self, run: &StoredRun) {
+        let mut inner = self.inner.lock().expect("workflow tracker lock");
+        let Some(entry) = inner.runs.get_mut(&run.manifest.run_id.to_string()) else {
+            return;
+        };
+        if entry.finished.is_some() {
+            return;
+        }
+        entry.lifecycle = run.state.state.lifecycle;
+        entry.outcome = run.state.state.outcome();
+        entry.tasks = run
+            .state
+            .state
+            .tasks()
+            .map(|(id, state)| (id.to_string(), state.clone()))
+            .collect();
+    }
+
+    /// Apply transient node activity without filesystem reads. Late events from
+    /// a drained driver cannot revive an already terminal notification.
+    pub(crate) fn record_event(&self, run_id: &str, event: &RuntimeEvent) {
+        let mut inner = self.inner.lock().expect("workflow tracker lock");
+        let Some(entry) = inner.runs.get_mut(run_id) else {
+            return;
+        };
+        if entry.finished.is_some() {
+            return;
+        }
+        match event {
+            RuntimeEvent::StateChanged { activity, .. } => {
+                entry.lifecycle = activity.lifecycle;
+                entry.outcome = activity.outcome;
+                entry.tasks.clone_from(&activity.tasks);
+            }
+            RuntimeEvent::NodeProgress { .. } => {}
+            RuntimeEvent::NodeStarted { node, attempt } => {
+                if entry.lifecycle == RunLifecycle::Planned {
+                    entry.lifecycle = RunLifecycle::Running;
+                }
+                entry
+                    .tasks
+                    .insert(node.to_string(), NodeState::Running { attempt: *attempt });
+            }
+            RuntimeEvent::NodeFinished { node, outcome } => {
+                entry
+                    .tasks
+                    .insert(node.to_string(), NodeState::Terminal { outcome: *outcome });
+            }
+            RuntimeEvent::NeedsRecovery { .. } => entry.lifecycle = RunLifecycle::NeedsRecovery,
+            RuntimeEvent::Completed => entry.lifecycle = RunLifecycle::Completed,
+        }
+    }
+
+    /// Active and finished-undelivered rows belonging to this parent session.
+    pub(crate) fn rail_summaries(&self, session_id: &str) -> Vec<WorkflowRailSummary> {
+        let inner = self.inner.lock().expect("workflow tracker lock");
+        let mut entries = inner
+            .runs
+            .values()
+            .filter(|entry| {
+                entry.session_id.as_deref() == Some(session_id)
+                    && (entry.finished.is_none() || !entry.observed)
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|a, b| {
+            a.started
+                .cmp(&b.started)
+                .then_with(|| a.run_id.cmp(&b.run_id))
+        });
+        entries
+            .into_iter()
+            .map(|entry| WorkflowRailSummary {
+                run_id: entry.run_id.clone(),
+                workflow_name: entry.workflow_name.clone(),
+                lifecycle: entry.lifecycle,
+                outcome: entry.outcome,
+                failed: entry
+                    .finished
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.error.is_some()),
+                completed_tasks: entry
+                    .tasks
+                    .values()
+                    .filter(|state| state.terminal().is_some())
+                    .count(),
+                total_tasks: entry.tasks.len(),
+                active_task: entry.tasks.iter().find_map(|(id, state)| {
+                    matches!(state, NodeState::Running { .. }).then(|| id.clone())
+                }),
+                elapsed_seconds: entry
+                    .finished_at
+                    .unwrap_or_else(Instant::now)
+                    .duration_since(entry.started)
+                    .as_secs(),
+            })
+            .collect()
     }
 
     /// Stores the terminal snapshot. No-op when the run was never registered.
@@ -119,10 +271,28 @@ impl WorkflowRunTracker {
         let Some(entry) = inner.runs.get_mut(run_id) else {
             return;
         };
+        entry.finished_at.get_or_insert_with(Instant::now);
+        entry.lifecycle = match finished.lifecycle.as_str() {
+            "planned" => RunLifecycle::Planned,
+            "running" => RunLifecycle::Running,
+            "cancelling" => RunLifecycle::Cancelling,
+            "needs_recovery" => RunLifecycle::NeedsRecovery,
+            "completed" => RunLifecycle::Completed,
+            _ => entry.lifecycle,
+        };
+        entry.outcome = match finished.outcome.as_deref() {
+            Some("success") => Some(WorkflowOutcome::Success),
+            Some("failure") => Some(WorkflowOutcome::Failure),
+            Some("denial") => Some(WorkflowOutcome::Denial),
+            Some("cancellation") => Some(WorkflowOutcome::Cancellation),
+            Some("blocked") => Some(WorkflowOutcome::Blocked),
+            _ => entry.outcome,
+        };
         entry.finished = Some(finished);
     }
 
     pub fn mark_finished_from_stored(&self, run: &StoredRun) {
+        self.update_from_stored(run);
         self.mark_finished(&run.manifest.run_id.to_string(), snapshot_from_stored(run));
     }
 

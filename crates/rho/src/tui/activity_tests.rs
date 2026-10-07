@@ -180,6 +180,7 @@ fn counts(subagent_count: usize, job_count: usize) -> BackgroundCounts {
     BackgroundCounts {
         subagent_count,
         job_count,
+        workflow_count: 0,
     }
 }
 
@@ -238,6 +239,17 @@ fn from_parent_and_background_selects_variant() {
         (None, counts(1, 0), ActivityStatus::Background(counts(1, 0))),
         (None, counts(0, 3), ActivityStatus::Background(counts(0, 3))),
         (None, counts(2, 1), ActivityStatus::Background(counts(2, 1))),
+        (
+            None,
+            BackgroundCounts {
+                workflow_count: 1,
+                ..Default::default()
+            },
+            ActivityStatus::Background(BackgroundCounts {
+                workflow_count: 1,
+                ..Default::default()
+            }),
+        ),
     ];
     for (parent, background, expected) in cases {
         assert_eq!(
@@ -308,6 +320,20 @@ fn activity_status_labels_shrink_to_bare_spinner() {
         (ActivityStatus::Background(counts(1, 0)), 4),
         (ActivityStatus::Background(counts(0, 1)), 4),
         (ActivityStatus::Background(counts(2, 1)), 3),
+        (
+            ActivityStatus::Background(BackgroundCounts {
+                workflow_count: 1,
+                ..Default::default()
+            }),
+            4,
+        ),
+        (
+            ActivityStatus::Background(BackgroundCounts {
+                workflow_count: 1,
+                ..counts(2, 1)
+            }),
+            3,
+        ),
     ];
     for (status, rungs) in cases {
         let labels = activity_status_labels(status);
