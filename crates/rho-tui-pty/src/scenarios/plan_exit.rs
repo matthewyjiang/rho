@@ -2,7 +2,9 @@
 
 use anyhow::{ensure, Context, Result};
 
-use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
+use super::{
+    assert_helpers::wait_for_turn_completion_after, DEFAULT_SIZE, SETTLE, STARTUP, STREAM,
+};
 use crate::{
     env::IsolatedHome,
     keys::Key,
@@ -114,6 +116,10 @@ fn submit_migration_feedback(harness: &mut PtyHarness) -> Result<()> {
 
 fn submit_bypass_feedback(harness: &mut PtyHarness) -> Result<()> {
     submit_typed_feedback(harness, "bypass")
+}
+
+fn wait_for_dispatch_turn(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "fixture plan background dispatched")
 }
 
 fn release_plan_child(harness: &mut PtyHarness) -> Result<()> {
@@ -231,12 +237,10 @@ pub(super) const IDLE_COMPLETION_SCENARIO: Scenario = Scenario::new(
             text: "fixture plan background dispatched",
             timeout: STREAM,
         },
-        // The held child keeps animating the rail, so screen quiet cannot
-        // establish parent completion. Its worked-for receipt can.
-        Step::WaitText {
-            text: "Worked for",
-            timeout: STREAM,
-        },
+        // /permissions is idle-only. Screen silence is not idleness here: the
+        // background rail keeps redrawing, at 100ms or 500ms depending on
+        // other pending UI work, so wait for this turn's own receipt instead.
+        Step::Custom(wait_for_dispatch_turn),
         // Confirm the idle command path before releasing the child. During-
         // turn /permissions is unavailable, so an in-turn delivery cannot pass.
         Step::SubmitText("/permissions"),
