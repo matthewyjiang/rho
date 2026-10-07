@@ -6,7 +6,9 @@ mod engine;
 mod exposure;
 pub(crate) mod script_output;
 mod tool;
+mod tool_result;
 mod tool_search;
+mod tools_namespace;
 
 pub(crate) use bridge::CODEMODE_TOOL_NAME;
 pub(crate) use exposure::{CodeModeSurface, ToolCatalogEntry};

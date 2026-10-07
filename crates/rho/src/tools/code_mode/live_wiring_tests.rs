@@ -99,7 +99,7 @@ impl Tool for StubTool {
     }
 }
 
-fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
+pub(super) fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
     let surface = Arc::new(CodeModeSurface::default());
     surface.sync(&tools);
     surface
@@ -115,7 +115,7 @@ fn host(probe: StubTool) -> ToolHost {
 
 /// The script's `result`, or its failure text. A raising script is a
 /// completed failure that keeps partial output, not a host error.
-async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
+pub(super) async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
     let output = host
         .invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
