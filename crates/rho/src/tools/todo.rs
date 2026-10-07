@@ -62,7 +62,7 @@ impl Tool for TodoTool {
             let list = TodoList::parse(invocation.into_arguments())?;
             let output = ToolOutput::text(list.summary())
                 .metadata(ToolMetadata::new().operation(OperationKind::Other("todo".into())));
-            self.state.replace(Some(list));
+            self.state.try_replace(list)?;
             Ok(output)
         })
     }

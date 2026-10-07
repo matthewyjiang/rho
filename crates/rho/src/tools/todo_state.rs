@@ -9,7 +9,11 @@ use std::{
 };
 
 use rho_sdk::{
-    model::{ContentBlock, Message},
+    model::{
+        context::{estimate_context_tokens, estimate_messages_tokens},
+        ContentBlock, Message, ToolSpec,
+    },
+    tool::{ToolError, ToolErrorKind},
     CompactionOutput, SessionSnapshot,
 };
 
@@ -18,21 +22,83 @@ use super::TodoList;
 const METADATA_KEY: &str = "rho.todo.v1";
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct TodoState(Arc<Mutex<Option<TodoList>>>);
+pub(crate) struct TodoState(Arc<Mutex<State>>);
+
+#[derive(Debug, Default)]
+struct State {
+    list: Option<TodoList>,
+    budget: Option<ContextBudget>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ContextBudget {
+    limit: u64,
+    request_tokens: u64,
+    history_tokens: u64,
+}
+
+impl ContextBudget {
+    fn asked(self, messages: &[Message]) -> u64 {
+        self.request_tokens
+            .saturating_add(self.history_tokens)
+            .saturating_add(estimate_messages_tokens(messages))
+    }
+}
 
 impl TodoState {
     pub(crate) fn list(&self) -> Option<TodoList> {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .list
             .clone()
     }
 
     pub(crate) fn replace(&self, list: Option<TodoList>) {
-        *self
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .list = list;
+    }
+
+    /// Reserve the actual history and advertised schemas, not a guessed tail
+    /// allowance. Compaction refreshes this against its concrete replacement;
+    /// turn/model refreshes must also account for history so suspension sticks.
+    pub(crate) fn set_context_budget(
+        &self,
+        window: Option<u64>,
+        history: &[Message],
+        tools: &[ToolSpec],
+    ) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .budget = window.map(|limit| ContextBudget {
+            limit,
+            request_tokens: estimate_context_tokens(&[], tools),
+            history_tokens: estimate_messages_tokens(history),
+        });
+    }
+
+    /// Validate and commit under the same lock so a nested update cannot race
+    /// another replacement or a host budget refresh.
+    pub(crate) fn try_replace(&self, list: TodoList) -> Result<(), ToolError> {
+        let messages = context_messages(Some(&list));
+        let mut state = self
             .0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = list;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(budget) = state.budget {
+            let asked = budget.asked(&messages);
+            if asked > budget.limit {
+                return Err(ToolError::new(ToolErrorKind::InvalidArguments, format!(
+                    "todo mandatory context budget exceeded: limit {} estimated tokens, asked {asked}; shorten or clear the checklist",
+                    budget.limit,
+                )));
+            }
+        }
+        state.list = Some(list);
+        Ok(())
     }
 
     pub(crate) fn restore(&self, snapshot: &SessionSnapshot) {
@@ -48,7 +114,14 @@ impl TodoState {
         } else {
             successful_native_list(snapshot.history())
         };
-        self.replace(list);
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(budget) = state.budget.as_mut() {
+            budget.history_tokens = estimate_messages_tokens(snapshot.history());
+        }
+        state.list = list;
     }
 
     pub(crate) fn decorate(&self, snapshot: SessionSnapshot) -> SessionSnapshot {
@@ -69,17 +142,25 @@ impl TodoState {
     /// Capture once before compaction awaits a provider. The SDK commits this
     /// metadata with its replacement, even if a later tool update races with it.
     pub(crate) fn checkpoint(&self) -> TodoCheckpoint {
-        let list = self.list();
+        let state = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         TodoCheckpoint {
-            messages: context_messages(list.as_ref()),
-            metadata: serde_json::to_string(&list).expect("todo lists serialize"),
+            messages: projected_messages(&state),
+            metadata: serde_json::to_string(&state.list).expect("todo lists serialize"),
         }
     }
 }
 
 impl rho_sdk::RequestContext for TodoState {
     fn messages(&self, _session_id: &rho_sdk::SessionId) -> Vec<Message> {
-        context_messages(self.list().as_ref())
+        projected_messages(
+            &self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
 }
 
@@ -96,6 +177,37 @@ impl TodoCheckpoint {
     pub(crate) fn retain(self, output: CompactionOutput) -> CompactionOutput {
         output.with_metadata(METADATA_KEY, self.metadata)
     }
+}
+
+/// Older snapshots, growing history, or a smaller model can exceed the budget. Keep
+/// the exact list durable and readable in /todo, but suspend its full projection
+/// so a provider turn can reach the todo tool to shorten or clear it.
+fn projected_messages(state: &State) -> Vec<Message> {
+    let Some(list) = state.list.as_ref() else {
+        return Vec::new();
+    };
+    let messages = context_messages(Some(list));
+    if let Some(budget) = state.budget {
+        let asked = budget.asked(&messages);
+        if asked > budget.limit {
+            let recovery = vec![Message::model_context(format!(
+                "The saved task checklist is too large to project: mandatory context budget limit {} estimated tokens, asked {asked}. The exact list is preserved in /todo and session storage. Use todo to replace it with a short checklist or clear it, or select a larger-context model.",
+                budget.limit,
+            ))];
+            tracing::warn!(
+                limit = budget.limit,
+                asked,
+                "suspending oversized todo request context"
+            );
+            // Even the recovery notice must not exceed the mandatory budget.
+            return if budget.asked(&recovery) <= budget.limit {
+                recovery
+            } else {
+                Vec::new()
+            };
+        }
+    }
+    messages
 }
 
 fn context_messages(list: Option<&TodoList>) -> Vec<Message> {

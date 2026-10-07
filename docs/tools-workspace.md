@@ -62,6 +62,8 @@ The interactive card uses the theme’s amber header accent and shows ✓ comple
 
 Successful updates replace the session's checklist, including updates made inside `codemode`. The exact checklist survives compaction and session resume. Rho supplies the latest checklist as model context on subsequent requests, independently of the generated summary; old checklist projections do not accumulate in conversation history. Starting a new session clears it. The checklist records agent-reported progress, not independent verification that a task is done.
 
+When the active model's context window is known, replacements must fit its estimated mandatory context budget alongside actual conversation history (including the system prompt) and tool schemas. An oversized replacement returns a tool error with the limit and requested footprint, leaving the previous checklist unchanged. If a restored checklist, growing history, or a switch to a smaller model exceeds that budget, Rho preserves the exact list in `/todo` and storage but suspends its full model projection. Compaction rechecks against its actual replacement history; a checklist capacity conflict suspends projection rather than failing compaction. When space permits, the model receives a recovery notice with the limit and requested footprint. A subsequent model turn can shorten or clear the list with `todo`, or you can compact history or select a larger-context model. Token estimates are not tokenizer guarantees; unknown model windows cannot be preflighted.
+
 The tool is available by default, including delegated roles and Plan mode. It changes session state rather than workspace files and needs no permission approval. Agent tool allowlists can include `todo` explicitly.
 
 ## Security and workspace boundaries

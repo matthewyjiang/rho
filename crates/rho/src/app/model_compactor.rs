@@ -101,12 +101,41 @@ impl Compactor for ModelCompactor {
             let mut trace = Trace::default();
             let todo = self.todo.as_ref().map(|todo| todo.checkpoint());
             let retained_context = todo.as_ref().map_or(&[][..], |todo| todo.messages());
+            let retained_tokens =
+                rho_sdk::model::context::estimate_messages_tokens(retained_context);
+            let tools = self.tool_specs(&request);
+            let context = request.context_estimate().unwrap_or_else(|| {
+                ContextEstimate::from_estimated_tokens(
+                    estimate_context_tokens(request.messages(), tools)
+                        .saturating_add(retained_tokens),
+                )
+            });
+            let context_window = match (self.context_window, context.reported_context_window()) {
+                (Some(configured), Some(reported)) => Some(configured.min(reported)),
+                (configured, reported) => configured.or(reported),
+            };
+            let capacity = context_window.map(|window| context.estimated_budget(window));
             let result = self
-                .compact_tiers(&request, retained_context, &mut trace)
+                .compact_tiers(
+                    &request,
+                    retained_tokens,
+                    context,
+                    context_window,
+                    &mut trace,
+                )
                 .await
-                .map(|output| match todo {
-                    Some(todo) => todo.retain(output),
-                    None => output,
+                .map(|output| {
+                    // A real replacement may crowd out a previously admitted
+                    // checklist. Preserve its exact captured metadata, but
+                    // bound the live projection against the measured history
+                    // so the next provider turn can shorten or clear it.
+                    if let Some(state) = &self.todo {
+                        state.set_context_budget(capacity, output.messages(), tools);
+                    }
+                    match todo {
+                        Some(todo) => todo.retain(output),
+                        None => output,
+                    }
                 });
             let removed = match &result {
                 Ok(output) => removed_tool_calls(request.messages(), output.messages()),
@@ -219,36 +248,24 @@ impl ModelCompactor {
     async fn compact_tiers(
         &self,
         request: &CompactionRequest,
-        retained_context: &[Message],
+        retained_tokens: u64,
+        context: ContextEstimate,
+        context_window: Option<u64>,
         trace: &mut Trace,
     ) -> Result<CompactionOutput, Error> {
         let cancellation = request.cancellation().clone();
         let mut next_attempt_index = 1usize;
         let tools = self.tool_specs(request);
-        let retained_tokens = rho_sdk::model::context::estimate_messages_tokens(retained_context);
-        let context = request.context_estimate().unwrap_or_else(|| {
-            ContextEstimate::from_estimated_tokens(
-                estimate_context_tokens(request.messages(), tools).saturating_add(retained_tokens),
-            )
-        });
         trace.context_tokens = context.tokens();
-        let context_window = match (self.context_window, context.reported_context_window()) {
-            (Some(configured), Some(reported)) => Some(configured.min(reported)),
-            (configured, reported) => configured.or(reported),
-        };
         let total_target =
             self.config
                 .target_tokens_for_context(context_window, request.trigger(), context);
-        // Mandatory live context cannot be summarized away. Reserve its exact
-        // estimator footprint before selecting a tier or retaining a tail.
-        let minimum = estimate_context_tokens(&[], tools).saturating_add(retained_tokens);
-        if retained_tokens > 0 && minimum > total_target {
-            return Err(Error::InvalidConfiguration {
-                message: format!(
-                    "mandatory task context exceeds compaction context budget: limit {total_target} estimated tokens, asked {minimum}"
-                ),
-            });
-        }
+        // Retention is a soft goal: a fixed prompt or the newest message group
+        // can exceed it. Only the actual model window is a capacity limit.
+        let capacity = context_window.map(|window| context.estimated_budget(window));
+        // Prefer retaining the exact live projection. If irreducible history
+        // still crowds it out, the final budget refresh suspends projection
+        // rather than making compaction itself an unrecoverable failure.
         let target_tokens = total_target.saturating_sub(retained_tokens);
         let (elided, elided_tool_results) = match self.elide(request, target_tokens) {
             Some(elision) => (Some(elision.messages), elision.originals.len()),
@@ -278,7 +295,11 @@ impl ModelCompactor {
         {
             NativeCompactionResult::Success(output) => {
                 if retained_tokens == 0
-                    || estimate_context_tokens(output.messages(), tools) <= target_tokens
+                    || capacity.is_none_or(|limit| {
+                        estimate_context_tokens(output.messages(), tools)
+                            .saturating_add(retained_tokens)
+                            <= limit
+                    })
                 {
                     trace.tier = Some(CompactionTier::Native);
                     return Ok(output);
@@ -301,13 +322,7 @@ impl ModelCompactor {
                 Some(_) => CompactionTier::Elision,
                 None => CompactionTier::Unchanged,
             });
-            return checked_output(
-                messages.to_vec(),
-                rejected_native_usage,
-                tools,
-                target_tokens,
-                retained_tokens,
-            );
+            return CompactionOutput::with_usage(messages.to_vec(), rejected_native_usage);
         };
         trace.tier = Some(CompactionTier::TextSummary);
         let summary = self
@@ -325,12 +340,9 @@ impl ModelCompactor {
         if !summary.from_elided {
             trace.elided_tool_results = 0;
         }
-        checked_output(
+        CompactionOutput::with_usage(
             summary.replacement,
             summary.usage.saturating_add(&rejected_native_usage),
-            tools,
-            target_tokens,
-            retained_tokens,
         )
     }
 
@@ -588,26 +600,6 @@ impl ModelCompactor {
             Err(_) => NativeCompactionResult::Failed,
         }
     }
-}
-
-/// Validate the replacement plus mandatory request-only state before committing.
-fn checked_output(
-    messages: Vec<Message>,
-    usage: ModelUsage,
-    tools: &[ToolSpec],
-    history_budget: u64,
-    retained_tokens: u64,
-) -> Result<CompactionOutput, Error> {
-    let asked = estimate_context_tokens(&messages, tools).saturating_add(retained_tokens);
-    let limit = history_budget.saturating_add(retained_tokens);
-    if retained_tokens > 0 && asked > limit {
-        return Err(Error::InvalidHostResponse {
-            message: format!(
-                "compaction replacement plus mandatory task context exceeds compaction context budget: limit {limit} estimated tokens, asked {asked}"
-            ),
-        });
-    }
-    CompactionOutput::with_usage(messages, usage)
 }
 
 /// Usage attribution for compaction requests sent by `identity`.

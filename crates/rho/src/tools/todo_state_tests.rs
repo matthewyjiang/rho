@@ -21,6 +21,53 @@ fn snapshot(history: Vec<Message>) -> SessionSnapshot {
     )
 }
 
+// Covers: real history counts in admission; rejection preserves the exact list;
+// oversized restores and smaller models yield bounded recoverable context.
+// Owner: host checklist budget and projection policy.
+#[test]
+fn oversized_checklists_are_rejected_or_suspended_without_losing_state() {
+    use rho_sdk::RequestContext;
+    let state = TodoState::default();
+    let original = list("original");
+    let oversized = list(&"long task ".repeat(10_000));
+    let prompt = vec![
+        Message::System("system prompt".into()),
+        Message::user_text("actual user instruction must also fit"),
+    ];
+    let recovery_tokens =
+        estimate_messages_tokens(&[Message::model_context("recovery notice ".repeat(100))]);
+    let overhead = estimate_context_tokens(&prompt, &[]);
+    let limit = overhead + recovery_tokens;
+    state.set_context_budget(Some(limit), &prompt, &[]);
+    state.try_replace(original.clone()).unwrap();
+    let asked = overhead + estimate_messages_tokens(&context_messages(Some(&oversized)));
+    let error = state.try_replace(oversized.clone()).unwrap_err();
+    assert_eq!((error.kind(), error.message()), (ToolErrorKind::InvalidArguments, format!("todo mandatory context budget exceeded: limit {limit} estimated tokens, asked {asked}; shorten or clear the checklist").as_str()));
+    assert_eq!(state.list(), Some(original));
+
+    let writer = TodoState::default();
+    writer.replace(Some(oversized.clone()));
+    state.restore(&writer.decorate(snapshot(prompt.clone())));
+    assert_eq!(state.list(), Some(oversized.clone()));
+    let projection = state.messages(&SessionId::new());
+    assert_eq!(projection.len(), 1);
+    assert!(estimate_context_tokens(&prompt, &[]) + estimate_messages_tokens(&projection) <= limit);
+    assert_ne!(projection, context_messages(Some(&oversized)));
+    let reader = TodoState::default();
+    reader.restore(&state.decorate(snapshot(prompt.clone())));
+    assert_eq!(reader.list(), Some(oversized.clone()));
+
+    // Switching back to a larger window re-enables the exact projection.
+    state.set_context_budget(Some(asked), &prompt, &[]);
+    assert_eq!(
+        state.messages(&SessionId::new()),
+        context_messages(Some(&oversized))
+    );
+    state.set_context_budget(Some(limit), &prompt, &[]);
+    state.try_replace(TodoList { todos: Vec::new() }).unwrap();
+    assert_eq!(state.list(), Some(TodoList { todos: Vec::new() }));
+}
+
 // Covers: legacy replay must ignore unsuccessful and unmatched proposals, while
 // snapshot metadata (including null and clear) outranks historical tool calls.
 // Owner: host checklist restore compatibility.
@@ -158,6 +205,15 @@ async fn buffered_compaction_checkpoint_does_not_capture_newer_live_todos() {
         2
     );
     state.replace(Some(list("newer live checklist")));
+    // A host budget refresh after compaction must not authorize recapturing the
+    // current live list into the already-produced compaction checkpoint.
+    let live = state.list();
+    state.set_context_budget(
+        Some(estimate_context_tokens(checkpoint.history(), &[])),
+        checkpoint.history(),
+        &[],
+    );
+    assert_eq!(state.list(), live);
     let restored = TodoState::default();
     restored.restore(&checkpoint);
     assert_eq!(restored.list(), Some(old));

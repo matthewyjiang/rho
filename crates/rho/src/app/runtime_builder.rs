@@ -75,6 +75,11 @@ where
         diagnostics,
         recall,
     } = options;
+    let prompt_messages = match &system_prompt {
+        SystemPrompt::Custom(text) => vec![rho_sdk::model::Message::System(text.clone())],
+        SystemPrompt::None => Vec::new(),
+        _ => Vec::new(),
+    };
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
         tool_specs: tools.specs(),
@@ -125,7 +130,11 @@ where
     if let Some(hooks) = hooks {
         builder = hooks.attach(builder);
     }
-    builder.build()
+    let runtime = builder.build()?;
+    tools
+        .todo_state()
+        .set_context_budget(context_window, &prompt_messages, &tools.specs());
+    Ok(runtime)
 }
 
 /// Inputs for the host compactor and its automatic policy. Every runtime build
@@ -183,8 +192,15 @@ pub(crate) fn refresh_session_compaction(
     session: &rho_sdk::Session,
     setup: CompactionSetup,
 ) -> Result<(), Error> {
+    let todo = setup.todo.clone();
+    let context_window = setup.context_window;
+    let tool_specs = setup.tool_specs.clone();
     let (compactor, policy) = build_compaction(setup);
-    session.set_compaction(Some(Arc::new(compactor)), policy)
+    session.set_compaction(Some(Arc::new(compactor)), policy)?;
+    if let Some(todo) = todo {
+        todo.set_context_budget(context_window, &session.history(), &tool_specs);
+    }
+    Ok(())
 }
 
 pub(crate) fn automatic_compaction_policy(

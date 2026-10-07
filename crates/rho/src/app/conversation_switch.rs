@@ -163,6 +163,11 @@ pub(crate) fn apply_conversation_switch(
             switch.auth,
         );
     }
+    switch.tools.todo_state().set_context_budget(
+        switch.context_window,
+        &switch.session.history(),
+        &switch.tools.specs(),
+    );
     Ok(report)
 }
 
