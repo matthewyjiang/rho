@@ -30,18 +30,11 @@ fn advisor_reasoning_picker(levels: &[ReasoningLevel], current: ReasoningLevel) 
     let items = levels
         .iter()
         .map(|level| PickerItem {
-            section: None,
-            label: level.to_string(),
-            detail: None,
-            preview: None,
             badge: (*level == current).then(|| PickerBadge {
                 text: "selected".into(),
                 tone: PickerBadgeTone::Selected,
             }),
-            value: level.to_string(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(level.to_string(), level.to_string())
         })
         .collect();
     let mut picker =

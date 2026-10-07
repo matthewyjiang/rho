@@ -46,14 +46,10 @@ fn item(
 ) -> PickerItem {
     PickerItem {
         section: section.map(str::to_owned),
-        label: label.into(),
         detail: Some(super::picker::PickerDetail::Text(detail.into())),
-        preview: None,
         badge: badge_text.map(|(text, tone)| badge(text, tone)),
-        value: value.into(),
         selection_verb,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(label.into(), value.into())
     }
 }
 

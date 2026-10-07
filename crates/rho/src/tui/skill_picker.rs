@@ -5,15 +5,8 @@ pub(super) fn skill_picker(skills: Vec<Skill>) -> UiPicker {
     let items = skills
         .into_iter()
         .map(|skill| PickerItem {
-            section: None,
-            label: skill.name.clone(),
             detail: Some(skill.description.into()),
-            preview: None,
-            badge: None,
-            value: skill.name,
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(skill.name.clone(), skill.name)
         })
         .collect::<Vec<_>>();
 

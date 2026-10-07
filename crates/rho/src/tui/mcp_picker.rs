@@ -98,9 +98,7 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
     };
     PickerItem {
         section: Some("STATUS".into()),
-        label: "Session".into(),
         detail: Some(detail.into()),
-        preview: None,
         badge: Some(PickerBadge {
             text: status,
             tone: if healthy {
@@ -109,10 +107,7 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
                 PickerBadgeTone::Warning
             },
         }),
-        value: "session".into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new("Session".into(), "session".into())
     }
 }
 
@@ -152,9 +147,7 @@ fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
     }
     PickerItem {
         section: Some("SERVERS".into()),
-        label: server.identity.clone(),
         detail: Some(detail.into()),
-        preview: None,
         badge: Some(PickerBadge {
             text: server.status().as_str().into(),
             tone: if server.status().is_healthy() {
@@ -167,9 +160,6 @@ fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
                 PickerBadgeTone::Warning
             },
         }),
-        value: server.identity.clone(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(server.identity.clone(), server.identity.clone())
     }
 }

@@ -36,31 +36,20 @@ pub(super) fn cursor_model_picker(models: &[CursorModel], current: &str) -> UiPi
 fn model_item(model: &CursorModel) -> PickerItem {
     PickerItem {
         section: Some(model.display_family()),
-        label: model.id.clone(),
         detail: Some(model.display_name.clone().into()),
-        preview: None,
         badge: model_badge(model),
-        value: model.id.clone(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(model.id.clone(), model.id.clone())
     }
 }
 
 fn other_item() -> PickerItem {
     PickerItem {
-        section: None,
-        label: "Other… (type a model id)".into(),
         detail: Some(
             "Type a Cursor model id or a bracket override such as name[effort=high,fast=false]."
                 .into(),
         ),
-        preview: None,
-        badge: None,
-        value: CURSOR_MODEL_OTHER.into(),
-        selection_verb: None,
         allow_filter_completion: false,
-        search_terms: Vec::new(),
+        ..PickerItem::new("Other… (type a model id)".into(), CURSOR_MODEL_OTHER.into())
     }
 }
 

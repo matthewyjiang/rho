@@ -17,17 +17,7 @@ const AREA: Rect = Rect::new(0, 0, 80, 24);
 
 fn overlay_picker(count: usize) -> UiPicker {
     let items = (0..count)
-        .map(|index| PickerItem {
-            section: None,
-            label: format!("model {index:02}"),
-            detail: None,
-            preview: None,
-            badge: None,
-            value: format!("value {index:02}"),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
-        })
+        .map(|index| PickerItem::new(format!("model {index:02}"), format!("value {index:02}")))
         .collect();
     UiPicker::new("models", items, PickerAction::Config).with_layout(PickerLayout::Overlay)
 }

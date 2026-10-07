@@ -213,14 +213,10 @@ fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerI
     let access = AgentAccess::of(entry.metadata.origin);
     PickerItem {
         section: Some(agent_section(entry.metadata.origin).1.into()),
-        label: definition.id.to_string(),
         detail: Some(agent_detail(entry, access, models).into()),
-        preview: None,
         badge: Some(access.marker()),
-        value: definition.id.to_string(),
         selection_verb: Some(access.selection_verb()),
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(definition.id.to_string(), definition.id.to_string())
     }
 }
 

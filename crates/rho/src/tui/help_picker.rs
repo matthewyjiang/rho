@@ -187,18 +187,12 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
 fn entry(keys: impl Into<String>, summary: &str, detail: impl Into<String>) -> PickerItem {
     let keys = keys.into();
     PickerItem {
-        section: None,
-        label: keys.clone(),
         detail: Some(super::picker::PickerDetail::Text(detail.into())),
-        preview: None,
         badge: Some(PickerBadge {
             text: summary.into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value: keys,
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(keys.clone(), keys)
     }
 }
 

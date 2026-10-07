@@ -74,8 +74,6 @@ impl App {
                     .cloned()
                     .unwrap_or_else(|| format!("turn {short_id}"));
                 PickerItem {
-                    section: None,
-                    label: preview,
                     detail: Some(
                         format!(
                             "checkpoint time: {}\ntracked files: {}\noutcome: {:?}",
@@ -83,15 +81,11 @@ impl App {
                         )
                         .into(),
                     ),
-                    preview: None,
                     badge: (!checkpoint.limitations.is_empty()).then_some(PickerBadge {
                         text: "limited".into(),
                         tone: PickerBadgeTone::Warning,
                     }),
-                    value: id,
-                    selection_verb: None,
-                    allow_filter_completion: true,
-                    search_terms: Vec::new(),
+                    ..PickerItem::new(preview, id)
                 }
             })
             .collect();
@@ -131,22 +125,19 @@ impl App {
             )
         });
         let item = PickerItem {
-            section: None,
-            label: if blocked {
-                "Confirm safe paths; conflicts stay unchanged".into()
-            } else {
-                "Confirm workspace rewind".into()
-            },
             detail: Some(detail.into()),
-            preview: None,
             badge: blocked.then_some(PickerBadge {
                 text: "partial".into(),
                 tone: PickerBadgeTone::Warning,
             }),
-            value: value.to_string(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(
+                if blocked {
+                    "Confirm safe paths; conflicts stay unchanged".into()
+                } else {
+                    "Confirm workspace rewind".into()
+                },
+                value.to_string(),
+            )
         };
         let picker = UiPicker::confirm_rewind("Confirm workspace rewind", vec![item])
             .with_layout(PickerLayout::Overlay)

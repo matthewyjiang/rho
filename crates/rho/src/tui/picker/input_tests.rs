@@ -25,17 +25,7 @@ fn key(code: KeyCode) -> KeyEvent {
 }
 
 fn item(label: &str) -> PickerItem {
-    PickerItem {
-        section: None,
-        label: label.into(),
-        detail: None,
-        preview: None,
-        badge: None,
-        value: label.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
-    }
+    PickerItem::new(label.into(), label.into())
 }
 
 // Covers: shifted letters must reach the filter; crossterm reports uppercase

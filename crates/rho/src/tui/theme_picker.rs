@@ -36,15 +36,10 @@ pub(super) fn theme_picker(current_id: &str) -> UiPicker {
                 })
             };
             PickerItem {
-                section: None,
-                label: entry.name().to_string(),
                 detail: Some(entry.detail().into()),
-                preview: None,
                 badge,
-                value: entry.id().to_string(),
                 selection_verb: Some("apply"),
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(entry.name().to_string(), entry.id().to_string())
             }
         })
         .collect::<Vec<_>>();

@@ -263,14 +263,7 @@ async fn approval_clicks_wait_for_the_prompt_to_be_painted() {
 fn sectioned_item(section: &str, label: String) -> crate::tui::PickerItem {
     crate::tui::PickerItem {
         section: Some(section.into()),
-        value: label.clone(),
-        label,
-        detail: None,
-        preview: None,
-        badge: None,
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..crate::tui::PickerItem::new(label.clone(), label)
     }
 }
 

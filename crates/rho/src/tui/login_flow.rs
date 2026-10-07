@@ -39,15 +39,8 @@ fn login_flow_picker(target: LoginFlowTarget, preferred: InteractiveLoginMode) -
     ]
     .into_iter()
     .map(|(value, label, detail)| PickerItem {
-        label: label.into(),
-        section: None,
         detail: Some(detail.into()),
-        preview: None,
-        badge: None,
-        value: value.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(label.into(), value.into())
     })
     .collect();
     let mut picker = UiPicker::login_flow(

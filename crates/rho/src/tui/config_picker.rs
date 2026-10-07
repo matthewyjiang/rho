@@ -80,14 +80,9 @@ fn sectioned_item(
 ) -> PickerItem {
     PickerItem {
         section: section.map(str::to_string),
-        label: label.into(),
         detail: Some(super::picker::PickerDetail::Text(detail.into())),
-        preview: None,
         badge: badge_text.map(badge),
-        value: value.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(label.into(), value.into())
     }
 }
 
@@ -627,18 +622,15 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
         PermissionMode::ALL
             .into_iter()
             .map(|candidate| PickerItem {
-                section: None,
-                label: candidate.label().into(),
                 detail: Some(permission_mode_description(candidate).into()),
-                preview: None,
                 badge: (candidate == mode).then_some(PickerBadge {
                     text: "selected".into(),
                     tone: PickerBadgeTone::Selected,
                 }),
-                value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(
+                    candidate.label().into(),
+                    format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
+                )
             })
             .collect(),
     )
@@ -668,18 +660,12 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
         super::inline_shell::available_shells(&config.inline_shell)
             .into_iter()
             .map(|shell| PickerItem {
-                section: None,
-                label: shell.clone(),
                 detail: Some("Use this shell for inline ! and !! commands.".into()),
-                preview: None,
                 badge: (shell == config.inline_shell).then_some(PickerBadge {
                     text: "selected".into(),
                     tone: PickerBadgeTone::Selected,
                 }),
-                value: format!("{INLINE_SHELL_PREFIX}{shell}"),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(shell.clone(), format!("{INLINE_SHELL_PREFIX}{shell}"))
             })
             .collect(),
     )
@@ -691,18 +677,15 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
         EditTool::all()
             .into_iter()
             .map(|edit_tool| PickerItem {
-                section: None,
-                label: edit_tool.label().into(),
                 detail: Some(edit_tool.detail().into()),
-                preview: None,
                 badge: (edit_tool == selected).then_some(PickerBadge {
                     text: "selected".into(),
                     tone: PickerBadgeTone::Selected,
                 }),
-                value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(
+                    edit_tool.label().into(),
+                    format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
+                )
             })
             .collect(),
     )
