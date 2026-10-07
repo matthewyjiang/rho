@@ -91,6 +91,8 @@ mod turn_notifications;
 mod type_during_stream;
 mod web_search;
 mod workflow;
+#[cfg(unix)]
+mod workflow_background;
 mod workflow_hub_legacy;
 mod workspace_rewind;
 mod write_stream;
@@ -452,6 +454,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         &[],
         true,
     ),
+    #[cfg(unix)]
+    workflow_background::WORKFLOW_BACKGROUND_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     questionnaire_timeout::TIMEOUT,

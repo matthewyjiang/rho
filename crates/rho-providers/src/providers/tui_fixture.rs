@@ -23,6 +23,7 @@ mod sessions;
 mod stream_scenarios;
 mod streaming_controls;
 mod todo;
+mod workflow;
 mod write_stream;
 
 #[cfg(test)]
@@ -243,6 +244,9 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return response;
     }
     let prompt = last_user_text(request).unwrap_or_default();
+    if let Some(response) = workflow::intercept(&prompt, request) {
+        return response;
+    }
     if let Some(response) = plan_exit::intercept(&prompt, request) {
         return response;
     }

@@ -141,10 +141,10 @@ pub(crate) enum WorkflowToolResult {
 
 /// App service used by both the CLI adapter and this model-facing adapter.
 ///
-/// The service owns source collection, planning, persistence, confirmation,
+/// The service owns source collection, planning, persistence,
 /// running, cancellation, and resume. It must authorize each collected source
-/// read through `context`. Run and resume must request host input for the exact
-/// program digest and fail closed when no responder exists.
+/// read through `context`. Run and resume use normal tool authorization and
+/// record the frozen program digest; each node authorizes its own capabilities.
 pub(crate) trait WorkflowToolService: Send + Sync {
     fn prepare(
         &self,

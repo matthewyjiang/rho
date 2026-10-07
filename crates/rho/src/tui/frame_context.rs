@@ -33,6 +33,7 @@ impl App {
     /// live history, and theme can all change between them. Pointer hover is
     /// not part of the snapshot; paint applies it on top.
     pub(super) fn frame_context(&mut self, area: Rect) -> FrameContext {
+        self.workflow_panel.refresh();
         let width = area.width as usize;
         let height = area.height as usize;
         let composer = self.composer_frame(width, height);
@@ -45,8 +46,11 @@ impl App {
             desired_pending: self.pending_input_height(),
             desired_subagents: self.subagent_panel.desired_height(),
             desired_processes: self.process_panel.desired_height(),
+            desired_workflows: self.workflow_panel.desired_height(),
             activity_floor: usize::from(
-                self.subagent_panel.is_active() || self.process_panel.is_active(),
+                self.subagent_panel.is_active()
+                    || self.process_panel.is_active()
+                    || self.workflow_panel.is_active(),
             ),
         });
         let content_height = self.history_content_height(chrome.history_height());

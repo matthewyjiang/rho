@@ -241,6 +241,7 @@ mod view_composer;
 mod view_scroll;
 mod workflow_discover;
 mod workflow_hub;
+mod workflow_panel;
 // Separate full-screen mode for an active workflow run. The chat hub hands off
 // through terminal suspend when starting or resuming a run.
 pub(crate) mod workflow;
@@ -297,6 +298,7 @@ use terminal_session::TerminalSession;
 use text_selection::{highlight_selection, render_copy_notice, TextSelection};
 use theme::Theme;
 use turn_prompt::TurnPrompt;
+use workflow_panel::WorkflowPanel;
 
 #[cfg(test)]
 use rho_providers::model::{ImageContent, ModelUsage};
@@ -528,6 +530,7 @@ struct App {
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
     process_panel: ProcessPanel,
+    workflow_panel: WorkflowPanel,
     subagent_inbox: subagent_inbox::SubagentInbox,
     /// Live delegated-agent cap, shared with the executor so `/config` can resize it.
     agent_concurrency: Option<crate::app::agent_concurrency::AgentConcurrency>,

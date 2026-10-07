@@ -29,7 +29,7 @@ terminal outcome. Cancel and recovery only reopen the same frozen run.
 stateDiagram
     [*] --> source
     source --> plan: validate and freeze
-    plan --> run: confirm digest
+    plan --> run: start frozen plan
     run --> complete
     run --> cancelled
     run --> recovery: needs_recovery
@@ -47,7 +47,8 @@ stateDiagram
    in `<workflow_dir>/agents/*.md`.
 2. Validate the source and inputs.
 3. Create a frozen plan and inspect its program digest and authority list.
-4. Confirm that exact digest and start a run by plan ID.
+4. Start a run by plan ID. The CLI asks for confirmation (or `--yes`); the model
+   tool uses normal tool permissions without an extra questionnaire.
 5. Read status and artifact references by run ID.
 6. Cancel or resume the same frozen run when needed.
 
@@ -64,16 +65,17 @@ flowchart LR
 
 ## Interactive hub
 
-In the chat TUI, run `/workflow` to open one list with three sections.
+In the chat TUI, run `/workflow` to start workflows and inspect runs. Saved
+plans live in a separate browser so old planning receipts do not crowd the list.
 
 ```mermaid
 flowchart TD
     hub["/workflow hub"] --> startSec[START]
     hub --> runsSec[RUNS]
-    hub --> plansSec[SAVED PLANS]
+    hub --> plansSec[Saved plans browser]
     startSec --> startRun["Start name: background run"]
     runsSec --> watch["Watch state · id: DAG watch"]
-    plansSec --> runPlan["Run plan · id: background from plan"]
+    plansSec --> runPlan["name · id: background from plan"]
     startRun --> chat[Back to chat with run id]
     runPlan --> chat
     watch --> leave["q leaves watch"]
@@ -85,7 +87,14 @@ flowchart TD
 1. **START** - `Start <name>` starts a new run in the background, appends the
    run id to chat context, and returns to chat without starting a model turn.
 2. **RUNS** - `Watch <state> · <id>` opens the DAG watch screen (live or finished).
-3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan in the background.
+3. **PLANS** - `Saved plans` opens the reusable frozen-plan list. Select a plan
+   by name and ID to start it, or press `d` to delete it.
+
+Background workflows appear in the activity rail with their name, lifecycle,
+completed/total task count, active task, and elapsed time. Click a workflow row
+to open its watch screen; `/workflow` provides the keyboard path. Finished rows
+leave the rail when their result is delivered. Tool cards summarize the action,
+state, and progress; expand a card for IDs and node details.
 
 ### DAG watch screen
 
@@ -116,8 +125,12 @@ pan; horizontal scrolling pans sideways.
 
 ### Cleanup
 
-Press `d` on a **RUNS** or **SAVED PLANS** row to delete it after confirmation.
+Press `d` on a run or on a plan inside **Saved plans** to delete it after confirmation.
 Local `.star` source files are not deleted from disk.
+
+Starting from source removes its launch-only plan after the run has its own
+frozen graph. Explicit `plan` operations still save reusable plans. Existing
+saved plans are preserved; there is no automatic deletion of older plans.
 
 When the run finishes, Rho delivers a completion message to the parent session.
 The model `workflow` tool uses the same background contract. See

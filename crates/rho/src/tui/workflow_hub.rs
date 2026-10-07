@@ -27,6 +27,9 @@ const RUN_PREFIX: &str = "run:";
 const READ_ONLY_PLAN_PREFIX: &str = "read-only-plan:";
 const READ_ONLY_RUN_PREFIX: &str = "read-only-run:";
 
+#[path = "workflow_plans.rs"]
+mod plans;
+
 const MAX_FINISHED_RUNS: usize = 8;
 
 fn badge(text: impl Into<String>, tone: PickerBadgeTone) -> PickerBadge {
@@ -192,37 +195,15 @@ pub(super) fn hub_picker(
         items.extend(active.into_iter().chain(finished).map(run_item));
     }
 
-    if plans.is_empty() {
-        // Keep the list focused; empty plans stay hidden.
-    } else {
-        for plan in plans {
-            let id = plan.plan_id.to_string();
-            let short = short_id(&id);
-            let name = plan.name.as_str();
-            let steps = plan.step_count;
-            match plan.access {
-                RecordAccess::ReadOnly => {
-                    items.push(item(
-                        Some("SAVED PLANS"), format!("Legacy plan  ·  {short}"),
-                        format!("{name}\n{steps} steps already frozen.\nRead-only legacy plan. Create a new plan from source to run it. Press d to delete.\nPlan id {short}"),
-                        format!("{READ_ONLY_PLAN_PREFIX}{id}"),
-                        Some(("read-only".into(), PickerBadgeTone::Internal)), Some("close"),
-                    ));
-                }
-                RecordAccess::Executable => {
-                    items.push(item(
-                Some("SAVED PLANS"),
-                format!("Run plan  ·  {short}"),
-                format!(
-                    "{name}\n{steps} steps already frozen.\nEnter starts a new run. Press d to delete this plan.\nPlan id {short}\nRuns that already used this plan keep their own copy."
-                ),
-                format!("{PLAN_PREFIX}{id}"),
-                Some(("saved".into(), PickerBadgeTone::Internal)),
-                Some("run"),
-            ));
-                }
-            }
-        }
+    if !plans.is_empty() {
+        items.push(item(
+            Some("PLANS"),
+            format!("Saved plans · {}", plans.len()),
+            "Browse frozen plans to reuse or delete. Starting from source uses the current workflow instead.",
+            "browse:plans",
+            None,
+            Some("browse"),
+        ));
     }
 
     UiPicker::workflow("Workflows", items)
@@ -368,7 +349,7 @@ impl App {
         plan_id: &str,
     ) -> anyhow::Result<()> {
         if value != "delete" {
-            return self.open_workflow_hub();
+            return self.open_workflow_plans();
         }
         let short = short_id(plan_id);
         let parsed = PlanId::from_str(plan_id)?;
@@ -379,7 +360,7 @@ impl App {
                 "delete failed".into()
             }
         };
-        self.open_workflow_hub()?;
+        self.open_workflow_plans()?;
         self.set_status(status);
         Ok(())
     }
@@ -425,6 +406,8 @@ impl App {
             return Ok(());
         }
         match value {
+            "browse:plans" => self.open_workflow_plans(),
+            "browse:workflows" => self.open_workflow_hub(),
             value if value.starts_with(READ_ONLY_PLAN_PREFIX) => {
                 let id = value
                     .strip_prefix(READ_ONLY_PLAN_PREFIX)
@@ -524,7 +507,10 @@ impl App {
 
     /// Loads an executable watch target by exact ID, reporting unreadable or
     /// replaced records in the transcript instead of leaving the TUI.
-    fn load_run_for_watch(&mut self, run_id: RunId) -> anyhow::Result<Option<StoredRun>> {
+    pub(super) fn load_run_for_watch(
+        &mut self,
+        run_id: RunId,
+    ) -> anyhow::Result<Option<StoredRun>> {
         match self.workflow_ops()?.load_run_record_id(run_id) {
             Ok(crate::workflow::RunRecord::Current(run)) => Ok(Some(*run)),
             Ok(crate::workflow::RunRecord::Legacy(_)) => {
@@ -542,7 +528,7 @@ impl App {
         }
     }
 
-    async fn open_workflow_watch(
+    pub(super) async fn open_workflow_watch(
         &mut self,
         run: StoredRun,
         terminal: &mut DefaultTerminal,
@@ -624,15 +610,17 @@ impl App {
                 return Ok(());
             }
         };
-        let plan = match ops.prepare_run_id(plan.manifest.plan_id) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not prepare run: {error:#}")));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let run = match ops.create_confirmed_run(&plan) {
+        let created = ops
+            .recheck_plan(&plan)
+            .and_then(|()| ops.create_confirmed_run(&plan));
+        // This plan belongs only to this launch. Runs keep their own frozen
+        // graph, while explicitly saved plans remain reusable in the hub.
+        if let Err(error) = ops.delete_workspace_plan(plan.manifest.plan_id) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not remove launch plan: {error:#}"
+            )));
+        }
+        let run = match created {
             Ok(run) => run,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
@@ -744,12 +732,17 @@ impl App {
         let config_path = self.info.services.config_repository.configured_path().ok();
         // Background runs keep the chat TUI, so workflow approvals are headless.
         let tracker = agent.workflow_tracker().clone();
-        tracker.register_start(
+        if !tracker.register_start(
             run_id.to_string(),
             workflow_name.clone(),
             program_digest.clone(),
             Some(agent.session_id().to_string()),
-        );
+        ) {
+            self.insert_entry(&Entry::Error(
+                "could not start workflow: already running".into(),
+            ));
+            return Ok(());
+        }
         match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
             Ok(_) => {
                 let (model, display) = crate::tools::workflow_tracker::start_context_prompts(

@@ -70,6 +70,7 @@ struct InteractiveSplit {
     pending_input: usize,
     subagents: usize,
     processes: usize,
+    workflows: usize,
     composer: usize,
     history: usize,
 }
@@ -82,6 +83,7 @@ struct InteractiveBudget {
     desired_pending: usize,
     desired_subagents: usize,
     desired_processes: usize,
+    desired_workflows: usize,
     activity_floor: usize,
 }
 
@@ -95,6 +97,7 @@ pub(super) struct ChromeRails {
     pub(super) desired_pending: usize,
     pub(super) desired_subagents: usize,
     pub(super) desired_processes: usize,
+    pub(super) desired_workflows: usize,
     pub(super) activity_floor: usize,
 }
 
@@ -131,6 +134,7 @@ pub(super) fn interactive_chrome(rails: ChromeRails) -> InteractiveChrome {
         desired_pending: rails.desired_pending,
         desired_subagents: rails.desired_subagents,
         desired_processes: rails.desired_processes,
+        desired_workflows: rails.desired_workflows,
         activity_floor: rails.activity_floor,
     });
     InteractiveChrome {
@@ -149,7 +153,7 @@ pub(super) fn interactive_chrome(rails: ChromeRails) -> InteractiveChrome {
 /// feed. Do not "fix" the mismatch by aligning the two.
 ///
 /// First pass (floors held for composer + a one-row activity history):
-/// pending reserve (capped at 2), subagents, processes, then composer.
+/// pending reserve (capped at 2), subagents, processes, workflows, then composer.
 /// Second pass: pending may grow into leftover history up to its full desired
 /// height. Remainder is history.
 fn split_interactive_budget(input: InteractiveBudget) -> InteractiveSplit {
@@ -160,6 +164,7 @@ fn split_interactive_budget(input: InteractiveBudget) -> InteractiveSplit {
     let pending_reserve = claim_rows(&mut remaining, input.desired_pending.min(2), keep);
     let subagents = claim_rows(&mut remaining, input.desired_subagents, keep);
     let processes = claim_rows(&mut remaining, input.desired_processes, keep);
+    let workflows = claim_rows(&mut remaining, input.desired_workflows, keep);
     let composer = claim_rows(&mut remaining, input.composer_lines, input.activity_floor);
 
     remaining = remaining.saturating_add(pending_reserve);
@@ -168,6 +173,7 @@ fn split_interactive_budget(input: InteractiveBudget) -> InteractiveSplit {
         pending_input,
         subagents,
         processes,
+        workflows,
         composer,
         history: remaining,
     }
@@ -206,19 +212,25 @@ pub(super) fn visible_composer_start(
 pub(super) enum StackedBand {
     Subagents,
     Processes,
+    Workflows,
     PendingInput,
 }
 
 impl StackedBand {
     /// Top-to-bottom paint order. See the type docs before reordering.
-    pub(super) const ORDER: [Self; 3] = [Self::Subagents, Self::Processes, Self::PendingInput];
+    pub(super) const ORDER: [Self; 4] = [
+        Self::Subagents,
+        Self::Processes,
+        Self::Workflows,
+        Self::PendingInput,
+    ];
 
     /// Whether this band is part of the activity tree drawn with `├`/`└`
     /// connectors. Pending input is a separate band: it is queued user text,
     /// not active work, so the tree terminates at the last rail above it.
     fn is_rail(self) -> bool {
         match self {
-            Self::Subagents | Self::Processes => true,
+            Self::Subagents | Self::Processes | Self::Workflows => true,
             Self::PendingInput => false,
         }
     }
@@ -237,6 +249,7 @@ impl StackedBand {
         match self {
             Self::Subagents => split.subagents,
             Self::Processes => split.processes,
+            Self::Workflows => split.workflows,
             Self::PendingInput => split.pending_input,
         }
     }
@@ -255,6 +268,7 @@ pub(super) struct ScreenLayout {
     pub(super) jump_to_bottom: Option<Rect>,
     pub(super) subagents: Rect,
     pub(super) processes: Rect,
+    pub(super) workflows: Rect,
     pub(super) pending_input: Rect,
     pub(super) top_divider: Rect,
     pub(super) composer: Rect,
@@ -271,6 +285,7 @@ impl ScreenLayout {
         match band {
             StackedBand::Subagents => self.subagents,
             StackedBand::Processes => self.processes,
+            StackedBand::Workflows => self.workflows,
             StackedBand::PendingInput => self.pending_input,
         }
     }
@@ -371,13 +386,15 @@ impl App {
         // in agreement, and makes the bands contiguous by construction. Reorder
         // the stack by editing ORDER, never by moving these assignments.
         let empty = Rect::new(area.x, y, area.width, 0);
-        let (mut subagents, mut processes, mut pending_input) = (empty, empty, empty);
+        let (mut subagents, mut processes, mut workflows, mut pending_input) =
+            (empty, empty, empty, empty);
         for band in StackedBand::ORDER {
             let rect = Rect::new(area.x, y, area.width, band.height(split) as u16);
             y = y.saturating_add(rect.height);
             match band {
                 StackedBand::Subagents => subagents = rect,
                 StackedBand::Processes => processes = rect,
+                StackedBand::Workflows => workflows = rect,
                 StackedBand::PendingInput => pending_input = rect,
             }
         }
@@ -409,6 +426,7 @@ impl App {
             jump_to_bottom,
             subagents,
             processes,
+            workflows,
             pending_input,
             top_divider,
             composer,

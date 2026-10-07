@@ -303,59 +303,46 @@ pub(crate) async fn spawn_background_run(
     tracker: Option<crate::tools::workflow_tracker::WorkflowRunTracker>,
 ) -> anyhow::Result<StoredRun> {
     let run_id = run.manifest.run_id;
-    let runtime = WorkflowRuntime::build(
+    if let Some(tracker) = &tracker {
+        tracker.update_from_stored(&run);
+    }
+    let runtime = match WorkflowRuntime::build(
         &run,
         config_path,
         WorkflowApprovalMode::non_interactive(crate::usage::default_recording().await),
-    )?;
+    ) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            if let Some(tracker) = &tracker {
+                tracker.mark_failed(&run_id.to_string(), error.to_string());
+            }
+            return Err(error);
+        }
+    };
     let runner = Arc::clone(&runtime.runner);
     let custom_providers = runtime.custom_providers.clone();
     tokio::spawn(async move {
         rho_providers::provider::scope_custom_openai_compatible_providers(
             custom_providers,
             async move {
-                let result = runner.drive(run_id, recovery, None).await;
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+                let forward_events = async {
+                    while let Some(event) = event_rx.recv().await {
+                        if let Some(tracker) = &tracker {
+                            tracker.record_event(&run_id.to_string(), &event);
+                        }
+                    }
+                };
+                let (result, ()) = tokio::join!(
+                    runner.drive(run_id, recovery, Some(event_tx)),
+                    forward_events,
+                );
                 drop(runner);
                 runtime.shutdown().await;
                 if let Some(tracker) = tracker {
-                    match crate::paths::rho_dir() {
-                        Ok(home) => match crate::workflow::WorkflowStore::new(&home) {
-                            Ok(store) => match store.load_run(run_id) {
-                                Ok(final_run) => tracker.mark_finished_from_stored(&final_run),
-                                Err(error) => match &result {
-                                    Ok(_) => tracker.mark_failed(
-                                        &run_id.to_string(),
-                                        format!(
-                                            "workflow finished but status could not be loaded: {error}"
-                                        ),
-                                    ),
-                                    Err(drive_error) => tracker.mark_failed(
-                                        &run_id.to_string(),
-                                        format!("{drive_error}; status load failed: {error}"),
-                                    ),
-                                },
-                            },
-                            Err(error) => match &result {
-                                Ok(_) => tracker.mark_failed(
-                                    &run_id.to_string(),
-                                    format!("workflow finished but store could not be opened: {error}"),
-                                ),
-                                Err(drive_error) => tracker.mark_failed(
-                                    &run_id.to_string(),
-                                    format!("{drive_error}; store open failed: {error}"),
-                                ),
-                            },
-                        },
-                        Err(error) => match &result {
-                            Ok(_) => tracker.mark_failed(
-                                &run_id.to_string(),
-                                format!("workflow finished but rho home is unavailable: {error}"),
-                            ),
-                            Err(drive_error) => tracker.mark_failed(
-                                &run_id.to_string(),
-                                format!("{drive_error}; rho home unavailable: {error}"),
-                            ),
-                        },
+                    match &result {
+                        Ok(final_run) => tracker.mark_finished_from_stored(final_run),
+                        Err(error) => tracker.mark_failed(&run_id.to_string(), error.to_string()),
                     }
                 }
                 match result {

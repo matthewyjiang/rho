@@ -20,6 +20,7 @@ fn layout_with_band_heights(subagents: u16, processes: u16, pending: u16) -> Scr
     };
     let subagents = place(subagents);
     let processes = place(processes);
+    let workflows = place(0);
     let pending_input = place(pending);
     let top_divider = place(1);
     ScreenLayout {
@@ -31,6 +32,7 @@ fn layout_with_band_heights(subagents: u16, processes: u16, pending: u16) -> Scr
         jump_to_bottom: None,
         subagents,
         processes,
+        workflows,
         pending_input,
         top_divider,
         composer: place(1),
@@ -177,6 +179,7 @@ fn interactive_split_follows_claim_priority() {
         desired_pending: 5,
         desired_subagents: 2,
         desired_processes: 2,
+        desired_workflows: 0,
         activity_floor: 1,
     });
     assert_eq!(split.composer, 1);
@@ -191,6 +194,7 @@ fn interactive_split_follows_claim_priority() {
         desired_pending: 5,
         desired_subagents: 2,
         desired_processes: 2,
+        desired_workflows: 0,
         activity_floor: 1,
     });
     assert_eq!(grown.composer, 1);
@@ -205,6 +209,7 @@ fn interactive_split_follows_claim_priority() {
         desired_pending: 3,
         desired_subagents: 2,
         desired_processes: 2,
+        desired_workflows: 0,
         activity_floor: 1,
     });
     assert_eq!(starved.composer, 1);
@@ -225,6 +230,7 @@ fn pending_input_paints_below_the_activity_rails() {
         [
             StackedBand::Subagents,
             StackedBand::Processes,
+            StackedBand::Workflows,
             StackedBand::PendingInput,
         ]
     );

@@ -67,6 +67,21 @@ impl App {
         let mut needs_redraw = true;
         let mut first_frame = true;
         while !self.should_quit {
+            if let Some(run_id) = self.workflow_panel.take_watch_request() {
+                let result = async {
+                    let Some(run) = self.load_run_for_watch(run_id.parse()?)? else {
+                        return Ok(());
+                    };
+                    self.open_workflow_watch(run, terminal).await
+                }
+                .await;
+                if let Err(error) = result {
+                    self.insert_entry(&super::Entry::Error(format!(
+                        "could not watch workflow: {error:#}"
+                    )));
+                }
+                needs_redraw = true;
+            }
             let background_ready = self.tasks.has_finished()
                 || self.prompt_history.load_finished()
                 || agent.startup_hydrate_ready();
@@ -243,6 +258,7 @@ impl App {
                     self.clear_selections();
                     self.subagent_panel.clear_pointer_state();
                     self.process_panel.clear_pointer_state();
+                    self.workflow_panel.clear_pointer_state();
                     self.handle_key(key, terminal, agent).await?;
                 }
                 Event::Paste(text) => {
@@ -271,6 +287,7 @@ impl App {
                     self.settle_side_composer_pointer();
                     self.subagent_panel.clear_pointer_state();
                     self.process_panel.clear_pointer_state();
+                    self.workflow_panel.clear_pointer_state();
                 }
                 Event::Key(_) => {}
             },
@@ -313,6 +330,7 @@ impl App {
             || self.exclusive_should_redraw(now)
             || self.subagent_panel.is_active()
             || self.process_panel.is_active()
+            || self.workflow_panel.is_active()
             || self
                 .history
                 .copy_notice()
@@ -511,9 +529,11 @@ impl App {
             self.loading_active().then_some((phase, retry)),
             BackgroundCounts {
                 subagent_count: self.subagent_panel.count(),
-                job_count: self.process_panel.live_count(),
+                job_count: self.process_panel.live_count() + self.workflow_panel.live_count(),
             },
-            self.subagent_panel.is_active() || self.process_panel.is_active(),
+            self.subagent_panel.is_active()
+                || self.process_panel.is_active()
+                || self.workflow_panel.is_active(),
         )
     }
 
@@ -528,6 +548,7 @@ impl App {
         self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();
         self.process_panel.clear_pointer_state();
+        self.workflow_panel.clear_pointer_state();
         self.hide_history_scrollbar();
         self.clamp_history_scroll_for_terminal(terminal)
     }
@@ -547,6 +568,9 @@ impl App {
         }
         changed |= panel_changed;
         changed |= self.process_panel.update(agent.processes());
+        changed |= self
+            .workflow_panel
+            .update(agent.workflow_tracker(), agent.session_id().as_str());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

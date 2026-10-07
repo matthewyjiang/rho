@@ -31,7 +31,9 @@ author a workflow, but it is not a security boundary.
    enforce read-only work.
 9. Validate the source.
 10. Create and inspect a frozen plan.
-11. Confirm and run that plan ID.
+11. Run that plan ID. The workflow tool uses normal permissions; do not ask a
+    separate questionnaire just to reconfirm a workflow the user asked to run.
+    Ask only for missing inputs or decisions that materially affect the task.
 12. Inspect status and artifact references. Cancel or resume by run ID.
 
 ## Project layout
@@ -104,7 +106,7 @@ inspect = agent(
 ```
 
 Starlark runs during `validate` and `plan`. It does not run during `run` or
-`resume`. Run and resume use the frozen graph only. Plan approval accepts one
+`resume`. Run and resume use the frozen graph only. Starting a plan records one
 graph digest for one run. It does not grant any node capability. Each node still
 uses current policy, hooks, and approval rules.
 

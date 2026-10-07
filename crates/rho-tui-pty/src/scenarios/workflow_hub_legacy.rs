@@ -137,6 +137,12 @@ pub(super) const WORKFLOW_HUB_LEGACY_RUN_STEPS: &[Step] = &[
     },
     Step::Key(Key::Down),
     Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Back to workflows",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
     Step::WaitText {
         text: "Read-only legacy plan",
         timeout: SETTLE,

@@ -19,7 +19,18 @@ fn runtime_event_json_matches_wire_shape() {
     let attempt = AttemptNumber::new(2).unwrap();
 
     assert_eq!(
-        runtime_event_json(1, run_id, &RuntimeEvent::StateChanged { revision: 7 }),
+        runtime_event_json(
+            1,
+            run_id,
+            &RuntimeEvent::StateChanged {
+                revision: 7,
+                activity: crate::app::workflow_runtime::WorkflowActivitySnapshot {
+                    lifecycle: crate::workflow::RunLifecycle::Running,
+                    outcome: None,
+                    tasks: Default::default(),
+                },
+            }
+        ),
         json!({
             "type": "state_changed",
             "revision": 7,
