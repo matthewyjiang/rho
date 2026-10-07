@@ -307,6 +307,7 @@ impl EvalSetup {
             usage_recording: ProviderRequestUsageRecording::default(),
             diagnostics: diagnostics.clone(),
             recall: Some(recall),
+            todo: None,
         });
         let request = CompactionRequest::new(point.messages.clone(), CancellationToken::new())
             .with_trigger(CompactionTrigger::Automatic)

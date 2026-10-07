@@ -192,6 +192,7 @@ mod spend_view;
 mod stacked_rail;
 mod syntax;
 mod syntax_warmup;
+mod todo_overlay;
 pub(crate) use syntax_warmup::spawn_syntax_warmup;
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
@@ -608,6 +609,8 @@ struct App {
     pending_session_title: Option<PendingSessionTitle>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
+    /// Latest native checklist, mirrored for commands while a turn is running.
+    todo_list: Option<crate::tools::todo::TodoList>,
     clipboard: Box<dyn Clipboard + Send>,
     media_attach_tasks: Vec<media_attach::MediaAttachTask>,
     /// Shared composer attachment layout for the current frame/width.

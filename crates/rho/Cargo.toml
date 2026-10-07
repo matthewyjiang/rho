@@ -22,7 +22,7 @@ name = "rho"
 path = "src/main.rs"
 
 [dependencies]
-rho-sdk = { version = "5.8.0", path = "../rho-sdk" }
+rho-sdk = { version = "5.9.0", path = "../rho-sdk" }
 rho-providers = { version = "2.15.0", path = "../rho-providers", default-features = false }
 rho-tools = { version = "1.8.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
@@ -58,8 +58,6 @@ sha2 = "0.11"
 hex = "0.4"
 digest-io = "0.1"
 starlark = "=0.14.2"
-# Derives `Allocative` for codemode Starlark value types; starlark requires it.
-allocative = "0.3"
 schemars = "1"
 base64 = "0.23"
 url = "2"

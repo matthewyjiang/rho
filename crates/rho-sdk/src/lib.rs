@@ -152,6 +152,7 @@ mod persistence;
 pub mod provider;
 mod provider_steering;
 mod reasoning;
+mod request_context;
 mod run;
 mod secret;
 mod session;
@@ -194,6 +195,7 @@ pub use persistence::{
     MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SESSION_SNAPSHOT_SCHEMA_VERSION,
 };
 pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
+pub use request_context::RequestContext;
 pub use run::{Run, SteeringHandle};
 pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};

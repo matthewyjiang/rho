@@ -163,6 +163,10 @@ pub(crate) fn apply_conversation_switch(
             switch.auth,
         );
     }
+    switch
+        .tools
+        .todo_state()
+        .set_context_window(switch.context_window);
     Ok(report)
 }
 
@@ -205,6 +209,7 @@ fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Err
         usage_recording: switch.usage_recording.clone(),
         diagnostics: switch.diagnostics.clone(),
         recall: switch.tools.recall_store(),
+        todo: Some(switch.tools.todo_state()),
     });
     switch
         .session
@@ -244,6 +249,7 @@ fn restore_after_failed_step(
             usage_recording: switch.usage_recording.clone(),
             diagnostics: switch.diagnostics.clone(),
             recall: switch.tools.recall_store(),
+            todo: Some(switch.tools.todo_state()),
         });
         if let Err(refresh_error) = session.set_compaction(Some(Arc::new(compactor)), policy) {
             return Error::InvalidConfiguration {

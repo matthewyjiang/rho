@@ -216,7 +216,8 @@ pub(super) async fn initialize(
             tools.web_access().clone(),
             tools.recall_store(),
             tools.advisor().cloned(),
-        ),
+        )
+        .with_todo_state(tools.todo_state()),
         provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
         tools,
         mcp_sampling,

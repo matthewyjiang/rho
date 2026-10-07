@@ -23,6 +23,7 @@ use crate::CancellationToken;
 mod compaction_summary;
 pub mod context;
 pub mod handoff;
+mod model_context;
 mod semantic;
 mod tool_image_supplement;
 

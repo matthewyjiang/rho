@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     future::Future,
     num::{NonZeroU64, NonZeroUsize},
@@ -340,6 +341,7 @@ impl CompactionRequest {
 pub struct CompactionOutput {
     messages: Vec<Message>,
     usage: ModelUsage,
+    metadata: BTreeMap<String, String>,
 }
 
 impl CompactionOutput {
@@ -354,7 +356,19 @@ impl CompactionOutput {
                 message: "compaction replacement history must not be empty".into(),
             });
         }
-        Ok(Self { messages, usage })
+        Ok(Self {
+            messages,
+            usage,
+            metadata: BTreeMap::new(),
+        })
+    }
+
+    /// Attaches host-owned snapshot metadata committed atomically with the
+    /// replacement. Model-generated text must never be used to authorize it.
+    /// Keys replace the session's existing values; unrelated keys are retained.
+    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
     }
 
     pub fn messages(&self) -> &[Message] {
@@ -369,8 +383,8 @@ impl CompactionOutput {
         self.messages
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<Message>, ModelUsage) {
-        (self.messages, self.usage)
+    pub(crate) fn into_parts(self) -> (Vec<Message>, ModelUsage, BTreeMap<String, String>) {
+        (self.messages, self.usage, self.metadata)
     }
 }
 

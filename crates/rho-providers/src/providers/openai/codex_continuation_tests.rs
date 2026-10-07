@@ -354,3 +354,75 @@ fn continuation_matches_function_call_when_server_item_is_async() {
         json!([{"type":"function_call_output","call_id":"call_1","output":"done"}])
     );
 }
+
+// Covers: ephemeral suffix handling must not relax matching of durable history
+// or locally replayed server output, including context-like data in the middle.
+// Owner: openai Codex continuation
+#[test]
+fn continuation_with_context_fails_closed_on_history_rewrites() {
+    use pretty_assertions::assert_eq;
+
+    let context = codex_input_items(&[Message::model_context("live")], &mut Vec::new()).unwrap();
+    let historical_context =
+        codex_input_items(&[Message::model_context("historical")], &mut Vec::new()).unwrap();
+    let original = json!({"role":"user","content":[{"type":"input_text","text":"one"}]});
+    let assistant = json!({"role":"assistant","content":"two"});
+    let next_user = json!({"role":"user","content":[{"type":"input_text","text":"three"}]});
+    let first = candidate(vec![
+        original.clone(),
+        historical_context[0].clone(),
+        original.clone(),
+        context[0].clone(),
+    ]);
+    let baseline = vec![
+        original,
+        historical_context[0].clone(),
+        json!({"role":"user","content":[{"type":"input_text","text":"one"}]}),
+        assistant,
+        next_user,
+        context[0].clone(),
+    ];
+    let response = CodexContinuationResponse::from_response(
+        &text_response("two"),
+        Some("resp_1".into()),
+        vec![
+            json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]}),
+        ],
+    );
+    let mut state = CodexContinuationState::default();
+    state.record_success(first.clone(), response.clone());
+    let delta = state
+        .continuation_delta(&candidate(baseline.clone()))
+        .expect("unchanged durable history extends");
+    assert_eq!(delta["input"], json!(baseline[4..]));
+    for (name, index, replacement) in [
+        (
+            "rewritten user",
+            0,
+            json!({"role":"user","content":"rewritten"}),
+        ),
+        ("rewritten historical context", 1, context[0].clone()),
+        (
+            "rewritten server output",
+            3,
+            json!({"role":"assistant","content":"rewritten"}),
+        ),
+    ] {
+        let mut rewritten = baseline.clone();
+        rewritten[index] = replacement;
+        let mut state = CodexContinuationState::default();
+        state.record_success(first.clone(), response.clone());
+        assert_eq!(
+            state.continuation_delta(&candidate(rewritten)),
+            None,
+            "{name}"
+        );
+        // A mismatch must clear the snapshot, not allow a later request to
+        // accidentally revive the earlier server context.
+        assert_eq!(
+            state.continuation_delta(&candidate(baseline.clone())),
+            None,
+            "{name}"
+        );
+    }
+}

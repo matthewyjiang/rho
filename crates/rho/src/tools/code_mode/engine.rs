@@ -2,8 +2,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::tool_result::alloc_tool_result;
-use super::tools_namespace::tools_namespace;
 use super::{bridge::ToolHostBridge, script_output};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -153,7 +151,6 @@ pub(super) fn evaluate_code_mode(
     let print_handler = StatePrint(Mutex::default());
     let mut builder = GlobalsBuilder::extended_by(&[LibraryExtension::Print]);
     code_mode_api(&mut builder);
-    tools_namespace(&mut builder, state.bridge.tool_names());
     let globals = builder.build();
     let result =
         AstModule::parse("codemode.star", source.to_owned(), &CODEMODE_DIALECT).and_then(|ast| {
@@ -203,22 +200,6 @@ fn summaries<'v>(
     Ok(eval.heap().alloc(JsonValue::Array(hits)))
 }
 
-/// One nested call, shared by `call_tool` and `tools.<name>(...)`.
-pub(super) fn call_one<'v>(
-    name: &str,
-    arguments: JsonValue,
-    eval: &mut Evaluator<'v, '_, '_>,
-) -> anyhow::Result<Value<'v>> {
-    let state = guest(eval)?;
-    let output = state
-        .runtime
-        .block_on(state.bridge.call_tool(name, arguments))?;
-    Ok(alloc_tool_result(
-        eval.heap(),
-        &script_output::value(&output),
-    ))
-}
-
 /// Accepts `name`, `(name,)`, or `(name, args)` per batch item.
 fn batch_item(item: JsonValue) -> anyhow::Result<(String, JsonValue)> {
     let invalid = || anyhow::anyhow!("call_tools items must be a name or a (name, args) pair");
@@ -254,7 +235,11 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         } else {
             starlark_to_json(args).map_err(starlark::Error::into_anyhow)?
         };
-        call_one(name, arguments, eval)
+        let state = guest(eval)?;
+        let output = state
+            .runtime
+            .block_on(state.bridge.call_tool(name, arguments))?;
+        Ok(eval.heap().alloc(script_output::value(&output)))
     }
 
     /// Runs independent calls concurrently. A call that cannot complete
@@ -273,18 +258,14 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let state = guest(eval)?;
         let results = state.runtime.block_on(state.bridge.call_tools(calls))?;
-        let heap = eval.heap();
-        let values: Vec<_> = results
+        let values = results
             .into_iter()
-            .map(|result| {
-                let envelope = match result {
-                    Ok(output) => script_output::value(&output),
-                    Err(error) => script_output::error_value(&error.to_string()),
-                };
-                alloc_tool_result(heap, &envelope)
+            .map(|result| match result {
+                Ok(output) => script_output::value(&output),
+                Err(error) => script_output::error_value(&error.to_string()),
             })
             .collect();
-        Ok(heap.alloc(values))
+        Ok(eval.heap().alloc(JsonValue::Array(values)))
     }
 
     fn search_tools<'v>(
@@ -314,7 +295,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
     }
 }
 
-pub(super) fn starlark_to_json(value: Value<'_>) -> starlark::Result<JsonValue> {
+fn starlark_to_json(value: Value<'_>) -> starlark::Result<JsonValue> {
     value.to_json_value().map_err(starlark::Error::new_value)
 }
 

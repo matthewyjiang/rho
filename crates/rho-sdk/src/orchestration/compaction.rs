@@ -192,11 +192,11 @@ async fn run_compaction(
             }
         }
     };
-    let (mut replacement, usage) = output.into_parts();
+    let (mut replacement, usage, metadata) = output.into_parts();
     // Do not lose accepted input if the compactor fails or gets cancelled.
     replacement.extend_from_slice(&history[compact_end..]);
     let outcome = core
-        .commit_compaction(previous, replacement.clone(), usage)?
+        .commit_compaction(previous, replacement.clone(), usage, metadata)?
         .with_committed_snapshot(core.persistence_snapshot());
     *history = replacement;
     // Once committed, deliver the checkpoint even if cancellation races with backpressure.

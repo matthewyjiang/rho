@@ -22,6 +22,7 @@ pub(crate) struct InteractiveSessionController {
     /// Present when the agent can recall; see [`RecallStore`].
     recall: Option<RecallStore>,
     advisor: Option<AdvisorSessionStore>,
+    todo: crate::tools::todo::TodoState,
     pub(super) prompt: super::active_prompt::ActivePrompt,
 }
 
@@ -43,11 +44,18 @@ impl InteractiveSessionController {
             web_access,
             recall,
             advisor,
+            todo: crate::tools::todo::TodoState::default(),
             prompt: super::active_prompt::ActivePrompt::default(),
         };
         controller.sync_storage_sidecars();
         controller.sync_advisor_session();
         controller
+    }
+
+    pub(crate) fn with_todo_state(mut self, todo: crate::tools::todo::TodoState) -> Self {
+        todo.restore(&self.session.snapshot());
+        self.todo = todo;
+        self
     }
 
     /// Points session sidecars (web blobs, recall originals) at the current
@@ -92,10 +100,11 @@ impl InteractiveSessionController {
                 super::interactive_runtime::startup::prompt_cache_key(id.as_str()),
             );
         }
-        self.prompt.decorate(snapshot)
+        self.todo.decorate(self.prompt.decorate(snapshot))
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
+        self.todo.restore(&session.snapshot());
         self.session = session;
         self.pending_session_id = None;
         self.persisted_turn_display = 0;
@@ -162,6 +171,7 @@ impl InteractiveSessionController {
 
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {
         self.session.reset()?;
+        self.todo.replace(None);
         self.storage = None;
         self.sync_storage_sidecars();
         self.persisted_turn_display = 0;
@@ -213,6 +223,8 @@ impl InteractiveSessionController {
             let display_tail = display.get(persisted..).ok_or_else(|| {
                 anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", persisted, display.len())
             })?;
+            // The SDK committed host compactor metadata at this exact boundary.
+            // A buffered event must not be redecorated with newer live state.
             let snapshot = self.prompt.decorate(snapshot.clone());
             storage.save_compaction_snapshot(&snapshot, display_tail, outcome)?;
             self.persisted_turn_display = display.len();

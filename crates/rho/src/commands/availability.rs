@@ -48,6 +48,7 @@ impl CommandContext {
             | CommandId::Workflow
             | CommandId::Side
             | CommandId::Spend
+            | CommandId::Todo
             | CommandId::Exit => true,
         }
     }

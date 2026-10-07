@@ -219,6 +219,7 @@ pub(super) enum PanelOverlay {
     TextView(Box<super::text_view_overlay::TextViewOverlay>),
     Info(Box<super::info_overlay::InfoOverlay>),
     Spend(Box<super::spend_overlay::SpendOverlay>),
+    Todo(super::todo_overlay::TodoOverlay),
 }
 
 impl ComposerMode {

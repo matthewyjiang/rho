@@ -1,14 +1,16 @@
 use std::{collections::hash_map::DefaultHasher, hash::Hasher, io::Write};
 
 use crate::model::{
-    context::estimate_context_tokens, Message, ModelIdentity, ModelUsage, ToolSpec,
+    context::{estimate_context_tokens, estimate_messages_tokens},
+    Message, ModelIdentity, ModelUsage, ToolSpec,
 };
 
 /// Current context size, calibrated against a successful provider request when available.
 ///
 /// Calibration is session-local and is not persisted. It applies only while the
-/// measured request remains an unchanged prefix with the same provider and tools.
-/// Subsequent messages contribute their local estimate, not cumulative run usage.
+/// measured conversation remains an unchanged prefix with the same provider,
+/// tools, and request-only context. Subsequent messages contribute their local
+/// estimate, not cumulative run usage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ContextEstimate {
     estimated_tokens: u64,
@@ -84,8 +86,9 @@ impl ContextEstimate {
     }
 }
 
-/// A request anchor contains no conversation copy. Fingerprints validate exact
-/// prefix content, including replay metadata and tool schemas, at history boundaries.
+/// A request anchor contains no conversation copy. Fingerprints validate the raw
+/// prefix, including replay metadata and tool schemas, after history replacements.
+/// The separately cached source must also match for calibration to apply.
 #[derive(Clone, Debug)]
 struct Baseline {
     identity: ModelIdentity,
@@ -97,6 +100,9 @@ struct Baseline {
 #[derive(Clone, Debug)]
 pub(crate) struct ContextAccounting {
     baseline: Option<Baseline>,
+    /// The immutable source associated with current accounting and its baseline.
+    /// Source changes invalidate calibration independently of the raw prefix.
+    source: Vec<Message>,
     current: ContextEstimate,
     current_messages: Option<usize>,
     tools_fingerprint: u64,
@@ -107,6 +113,7 @@ impl ContextAccounting {
     pub(crate) fn new(history: &[Message], tools: &[ToolSpec]) -> Self {
         Self {
             baseline: None,
+            source: Vec::new(),
             current: ContextEstimate::from_estimated_tokens(estimate_context_tokens(
                 history, tools,
             )),
@@ -151,12 +158,19 @@ impl ContextAccounting {
     /// its measured prefix and count only new messages. Host-proposed histories
     /// must use `estimate` instead; equal length does not prove equal content.
     /// Shorter or rewritten working histories must use `replace`.
+    /// Counts refer to raw history; unchanged request-only context is already
+    /// included in the cached total and is not counted again on append.
     pub(crate) fn advance(
         &mut self,
         history: &[Message],
+        source: &[Message],
         tools: &[ToolSpec],
         identity: &ModelIdentity,
     ) -> ContextEstimate {
+        if source != self.source {
+            self.replace(history, source, tools, identity);
+            return self.current;
+        }
         self.current(tools, identity);
         match self.current_messages {
             Some(count) => {
@@ -165,7 +179,7 @@ impl ContextAccounting {
                 }
             }
             None => {
-                self.publish(self.estimate(history, tools, identity));
+                self.publish(self.estimate(history, source, tools, identity));
                 self.current_messages = Some(history.len());
             }
         }
@@ -176,10 +190,14 @@ impl ContextAccounting {
     pub(crate) fn replace(
         &mut self,
         history: &[Message],
+        source: &[Message],
         tools: &[ToolSpec],
         identity: &ModelIdentity,
     ) {
-        self.publish(self.estimate(history, tools, identity));
+        self.publish(self.estimate(history, source, tools, identity));
+        if source != self.source {
+            self.source = source.to_vec();
+        }
         self.current_messages = Some(history.len());
         self.tools_fingerprint = fingerprint(&[], tools);
         self.request_overhead_tokens = estimate_context_tokens(&[], tools);
@@ -188,13 +206,17 @@ impl ContextAccounting {
     pub(crate) fn estimate(
         &self,
         history: &[Message],
+        source: &[Message],
         tools: &[ToolSpec],
         identity: &ModelIdentity,
     ) -> ContextEstimate {
-        let mut estimate =
-            ContextEstimate::from_estimated_tokens(estimate_context_tokens(history, tools));
+        let mut estimate = ContextEstimate::from_estimated_tokens(
+            estimate_context_tokens(history, tools)
+                .saturating_add(estimate_messages_tokens(source)),
+        );
         if let Some(baseline) = &self.baseline {
-            if baseline.identity == *identity
+            if source == self.source
+                && baseline.identity == *identity
                 && history.len() >= baseline.message_count
                 && fingerprint(&history[..baseline.message_count], tools) == baseline.fingerprint
             {
@@ -218,6 +240,7 @@ impl ContextAccounting {
     pub(crate) fn record(
         &mut self,
         history: &[Message],
+        source: &[Message],
         tools: &[ToolSpec],
         identity: ModelIdentity,
         usage: &ModelUsage,
@@ -238,6 +261,9 @@ impl ContextAccounting {
             fingerprint: fingerprint(history, tools),
             estimate,
         });
+        if source != self.source {
+            self.source = source.to_vec();
+        }
         self.current = estimate;
         self.current_messages = Some(history.len());
         self.tools_fingerprint = fingerprint(&[], tools);

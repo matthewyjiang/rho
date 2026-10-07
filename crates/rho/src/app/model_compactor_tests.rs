@@ -70,6 +70,7 @@ pub(super) fn compactor(
         usage_recording: ProviderRequestUsageRecording::new(usage),
         diagnostics: seeded_diagnostics(),
         recall: None,
+        todo: None,
     })
     .0
 }
@@ -404,6 +405,7 @@ fn tiered_compactor(
         usage_recording: ProviderRequestUsageRecording::new(usage),
         diagnostics: diagnostics.clone(),
         recall,
+        todo: None,
     })
     .0;
     (compactor, diagnostics)

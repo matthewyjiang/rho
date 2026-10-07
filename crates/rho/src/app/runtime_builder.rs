@@ -84,9 +84,11 @@ where
         usage_recording: usage_recording.clone(),
         diagnostics,
         recall,
+        todo: Some(tools.todo_state()),
     });
     let mut builder = Rho::builder()
         .provider_shared(provider)
+        .request_context(tools.todo_state())
         .system_prompt(system_prompt)
         .workspace(workspace)
         .workspace_policy(workspace_policy)
@@ -123,7 +125,9 @@ where
     if let Some(hooks) = hooks {
         builder = hooks.attach(builder);
     }
-    builder.build()
+    let runtime = builder.build()?;
+    tools.todo_state().set_context_window(context_window);
+    Ok(runtime)
 }
 
 /// Inputs for the host compactor and its automatic policy. Every runtime build
@@ -141,6 +145,8 @@ pub(crate) struct CompactionSetup {
     /// Where elided originals are saved. `None` turns elision off, because the
     /// agent could not recall them.
     pub(crate) recall: Option<RecallStore>,
+    /// Host-owned exact checklist, shared with nested tool execution.
+    pub(crate) todo: Option<crate::tools::todo::TodoState>,
 }
 
 pub(crate) fn build_compaction(
@@ -155,6 +161,7 @@ pub(crate) fn build_compaction(
         usage_recording,
         diagnostics,
         recall,
+        todo,
     } = setup;
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
@@ -167,6 +174,7 @@ pub(crate) fn build_compaction(
         context_window,
         diagnostics,
         recall,
+        todo,
     };
     (compactor, policy)
 }
@@ -177,8 +185,14 @@ pub(crate) fn refresh_session_compaction(
     session: &rho_sdk::Session,
     setup: CompactionSetup,
 ) -> Result<(), Error> {
+    let todo = setup.todo.clone();
+    let context_window = setup.context_window;
     let (compactor, policy) = build_compaction(setup);
-    session.set_compaction(Some(Arc::new(compactor)), policy)
+    session.set_compaction(Some(Arc::new(compactor)), policy)?;
+    if let Some(todo) = todo {
+        todo.set_context_window(context_window);
+    }
+    Ok(())
 }
 
 pub(crate) fn automatic_compaction_policy(

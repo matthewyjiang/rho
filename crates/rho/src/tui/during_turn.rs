@@ -349,6 +349,7 @@ impl App {
                 Ok(())
             }
             CommandId::Spend => self.execute_spend_command(),
+            CommandId::Todo => self.execute_todo_command(terminal),
             CommandId::Side => self.execute_side_command(invocation).await,
             CommandId::CreateAgent => {
                 self.set_status("agent creation is unavailable while a model turn is running");
