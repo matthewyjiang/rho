@@ -39,34 +39,22 @@ fn on_badge() -> PickerBadge {
 
 fn tool_row(name: &str, detail: impl Into<String>, on: bool, value: String) -> PickerItem {
     PickerItem {
-        section: None,
-        label: name.into(),
         detail: Some(super::picker::PickerDetail::Text(detail.into())),
-        preview: None,
         badge: on.then(on_badge),
-        value,
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(name.into(), value)
     }
 }
 
 fn rho_items(tools: &ToolPolicy) -> Vec<PickerItem> {
     let all = matches!(tools, ToolPolicy::All);
     let mut items = vec![PickerItem {
-        section: None,
-        label: "all".into(),
-        detail: Some(
+detail: Some(
             "Every host tool, including ones added later. Toggle off to return to the explicit list it replaced."
                 .into(),
         ),
-        preview: None,
-        badge: all.then(on_badge),
-        value: AGENT_TOOL_ALL.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
-    }];
+badge: all.then(on_badge),
+..PickerItem::new("all".into(), AGENT_TOOL_ALL.into())
+}];
     items.extend(BUILTIN_TOOL_CAPABILITIES.iter().map(|capability| {
         let on = match tools {
             ToolPolicy::All => true,
@@ -110,17 +98,12 @@ fn claude_items(current: &[String]) -> Vec<PickerItem> {
             }),
     );
     items.push(PickerItem {
-        section: None,
-        label: "Other…".into(),
         detail: Some(
             "Edit the list as text for specifiers such as Bash(git *) or MCP tool names.".into(),
         ),
-        preview: None,
-        badge: None,
-        value: AGENT_TOOL_OTHER.into(),
         selection_verb: Some("edit"),
         allow_filter_completion: false,
-        search_terms: Vec::new(),
+        ..PickerItem::new("Other…".into(), AGENT_TOOL_OTHER.into())
     });
     items
 }

@@ -429,17 +429,7 @@ fn composer_input_lines_highlight_survives_word_wrap() {
 #[test]
 fn picker_lists_more_items_on_a_taller_viewport() {
     let items = (0..40)
-        .map(|index| PickerItem {
-            section: None,
-            label: format!("model-{index}"),
-            detail: None,
-            preview: None,
-            badge: None,
-            value: format!("model-{index}"),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
-        })
+        .map(|index| PickerItem::new(format!("model-{index}"), format!("model-{index}")))
         .collect();
     let picker = UiPicker::models("models", items);
 
@@ -466,17 +456,7 @@ fn picker_reserves_wrapped_footer_rows() {
     use crate::tui::PickerKeyHints;
 
     let items = (0..20)
-        .map(|index| PickerItem {
-            section: None,
-            label: format!("model-{index}"),
-            detail: None,
-            preview: None,
-            badge: None,
-            value: format!("model-{index}"),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
-        })
+        .map(|index| PickerItem::new(format!("model-{index}"), format!("model-{index}")))
         .collect();
     let picker = UiPicker::models("select model", items).with_key_hints(PickerKeyHints {
         pin_toggle: Some("Ctrl+P".into()),

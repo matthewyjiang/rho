@@ -3,17 +3,7 @@ use pretty_assertions::assert_eq;
 use super::{PickerAction, PickerItem, PickerKeyHints, UiPicker};
 
 fn item(label: &str) -> PickerItem {
-    PickerItem {
-        section: None,
-        label: label.into(),
-        detail: None,
-        preview: None,
-        badge: None,
-        value: label.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
-    }
+    PickerItem::new(label.into(), label.into())
 }
 
 // Covers: structured key hints must appear in footer parts so d-delete and
@@ -117,15 +107,8 @@ fn complete_filter_skips_rows_that_opt_out() {
         "select model for explorer",
         vec![
             PickerItem {
-                section: None,
-                label: "Use conversation model".into(),
-                detail: None,
-                preview: None,
-                badge: None,
-                value: "use-conversation".into(),
-                selection_verb: None,
                 allow_filter_completion: false,
-                search_terms: Vec::new(),
+                ..PickerItem::new("Use conversation model".into(), "use-conversation".into())
             },
             item("openai/gpt-5.5"),
         ],

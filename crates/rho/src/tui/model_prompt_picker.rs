@@ -44,15 +44,8 @@ pub(crate) async fn select(
         .map(|entry| {
             let reference = provider::model_reference(&entry.provider, &entry.model);
             PickerItem {
-                label: reference.clone(),
-                section: None,
-                detail: None,
-                preview: None,
-                badge: None,
-                value: reference,
                 selection_verb: Some("edit"),
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(reference.clone(), reference)
             }
         })
         .collect();

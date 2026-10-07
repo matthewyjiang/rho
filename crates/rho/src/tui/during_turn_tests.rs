@@ -35,17 +35,7 @@ fn pending_approval() -> rho_sdk::PendingApproval {
 fn model_picker() -> UiPicker {
     UiPicker::models(
         "select model",
-        vec![PickerItem {
-            section: None,
-            label: "model-a".into(),
-            detail: None,
-            preview: None,
-            badge: None,
-            value: "model-a".into(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
-        }],
+        vec![PickerItem::new("model-a".into(), "model-a".into())],
     )
 }
 

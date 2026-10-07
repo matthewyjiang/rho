@@ -26,16 +26,11 @@ impl App {
                     previous_output = Some(items.len());
                     items.push(PickerItem {
                         section: prompt.clone(),
-                        label: format!("└─ {preview}"),
                         detail: Some(assistant.text.clone().into()),
-                        preview: None,
-                        badge: None,
-                        // Snapshot the payload so incoming stream updates cannot change
-                        // which text Enter copies while the picker is open.
-                        value: assistant.text.clone(),
-                        selection_verb: None,
                         allow_filter_completion: false,
-                        search_terms: Vec::new(),
+                        // Snapshot the payload as the value so incoming stream updates cannot
+                        // change which text Enter copies while the picker is open.
+                        ..PickerItem::new(format!("└─ {preview}"), assistant.text.clone())
                     });
                 }
                 Entry::Assistant(_)

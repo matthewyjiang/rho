@@ -4,15 +4,8 @@ use pretty_assertions::assert_eq;
 
 fn item(label: &str, section: Option<&str>) -> PickerItem {
     PickerItem {
-        label: label.into(),
         section: section.map(Into::into),
-        detail: None,
-        preview: None,
-        badge: None,
-        value: label.to_ascii_lowercase(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(label.into(), label.to_ascii_lowercase())
     }
 }
 

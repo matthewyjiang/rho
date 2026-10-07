@@ -25,18 +25,11 @@ pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
 fn tree_item(item: SessionTreeItem) -> PickerItem {
     let preview = tree_preview(&item);
     PickerItem {
-        section: None,
-        label: tree_label(&item, &preview),
-        detail: None,
-        preview: None,
         badge: item.active.then_some(PickerBadge {
             text: "active".into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value: item.id.to_string(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(tree_label(&item, &preview), item.id.to_string())
     }
 }
 

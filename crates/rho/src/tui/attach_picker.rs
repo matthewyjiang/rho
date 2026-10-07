@@ -191,14 +191,13 @@ pub(super) fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter)
 fn candidate_item(candidate: &AttachCandidate) -> PickerItem {
     PickerItem {
         section: Some(candidate.agent_id.clone()),
-        label: candidate_title(candidate).to_owned(),
         detail: Some(candidate_detail(candidate, subagent::unix_now_secs()).into()),
-        preview: None,
         badge: Some(nav_badge(candidate)),
-        value: candidate.run_id.clone(),
         selection_verb: Some("attach"),
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(
+            candidate_title(candidate).to_owned(),
+            candidate.run_id.clone(),
+        )
     }
 }
 

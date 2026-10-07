@@ -106,14 +106,9 @@ fn sectioned_item(
 ) -> PickerItem {
     PickerItem {
         section: section.map(str::to_string),
-        label: label.into(),
         detail: Some(super::picker::PickerDetail::Text(detail.into())),
-        preview: None,
         badge: badge_text.map(badge),
-        value: value.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(label.into(), value.into())
     }
 }
 

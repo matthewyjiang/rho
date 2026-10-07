@@ -18,15 +18,11 @@ fn prompt_history_items(history: &[String]) -> Vec<PickerItem> {
         .rev()
         .filter(|prompt| seen.insert(prompt.as_str()))
         .map(|prompt| PickerItem {
-            section: None,
-            label: prompt.split_whitespace().collect::<Vec<_>>().join(" "),
-            detail: None,
-            preview: None,
-            badge: None,
-            value: prompt.clone(),
-            selection_verb: None,
             allow_filter_completion: false,
-            search_terms: Vec::new(),
+            ..PickerItem::new(
+                prompt.split_whitespace().collect::<Vec<_>>().join(" "),
+                prompt.clone(),
+            )
         })
         .collect()
 }

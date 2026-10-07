@@ -64,26 +64,18 @@ pub(super) fn parse_custom_host_api(value: &str) -> Option<OpenAiCompatibleApi> 
 pub(super) fn login_group_items() -> [PickerItem; 2] {
     [
         PickerItem {
-            section: None,
-            label: CUSTOM_CHAT_COMPLETIONS_LOGIN_LABEL.into(),
             detail: Some(CUSTOM_CHAT_COMPLETIONS_LOGIN_DETAIL.into()),
-            preview: None,
-            badge: None,
-            value: NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE.into(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(
+                CUSTOM_CHAT_COMPLETIONS_LOGIN_LABEL.into(),
+                NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE.into(),
+            )
         },
         PickerItem {
-            section: None,
-            label: CUSTOM_RESPONSES_LOGIN_LABEL.into(),
             detail: Some(CUSTOM_RESPONSES_LOGIN_DETAIL.into()),
-            preview: None,
-            badge: None,
-            value: NEW_CUSTOM_RESPONSES_HOST_VALUE.into(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(
+                CUSTOM_RESPONSES_LOGIN_LABEL.into(),
+                NEW_CUSTOM_RESPONSES_HOST_VALUE.into(),
+            )
         },
     ]
 }

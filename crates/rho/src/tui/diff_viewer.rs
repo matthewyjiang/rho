@@ -214,17 +214,13 @@ fn diff_picker(status: &WorktreeStatus) -> UiPicker {
 
 fn file_item(file: &ChangedFile) -> PickerItem {
     PickerItem {
-        label: file.path.clone(),
         section: Some(section_label(file.section).into()),
         detail: Some(PickerDetail::Text("loading diff…".into())),
-        preview: None,
         badge: Some(file_badge(file, file.stats)),
+        allow_filter_completion: false,
         // The filter also matches `value`; keep it the path so typing only
         // ever matches what the row shows.
-        value: file.path.clone(),
-        selection_verb: None,
-        allow_filter_completion: false,
-        search_terms: Vec::new(),
+        ..PickerItem::new(file.path.clone(), file.path.clone())
     }
 }
 

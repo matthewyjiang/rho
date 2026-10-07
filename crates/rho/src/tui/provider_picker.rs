@@ -20,15 +20,8 @@ pub(super) fn login_group_picker() -> UiPicker {
     let mut items = catalog::login_groups()
         .into_iter()
         .map(|group| PickerItem {
-            section: None,
-            detail: None,
-            preview: None,
-            badge: None,
-            selection_verb: None,
-            allow_filter_completion: true,
             search_terms: login_group_search_terms(&group),
-            label: group.prompt,
-            value: group.id,
+            ..PickerItem::new(group.prompt, group.id)
         })
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
@@ -75,15 +68,8 @@ pub(super) fn logout_method_picker(group: catalog::LoginGroup) -> UiPicker {
         .methods
         .into_iter()
         .map(|method| PickerItem {
-            section: None,
-            label: method.prompt,
             detail: Some(method.target.label.into()),
-            preview: None,
-            badge: None,
-            value: method.target.auth,
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(method.prompt, method.target.auth)
         })
         .collect();
     UiPicker::logout_provider(title, items).with_key_hints(super::PickerKeyHints {
@@ -121,17 +107,7 @@ fn login_method_items(group: catalog::LoginGroup) -> Vec<PickerItem> {
     let mut items = group
         .methods
         .into_iter()
-        .map(|method| PickerItem {
-            section: None,
-            label: method.prompt,
-            detail: None,
-            preview: None,
-            badge: None,
-            value: method.target.auth,
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
-        })
+        .map(|method| PickerItem::new(method.prompt, method.target.auth))
         .collect::<Vec<_>>();
     items.extend(delegated_methods(&group_id).map(external_login_picker_item));
     items
@@ -166,20 +142,14 @@ pub(super) fn auth_mode_picker(
             Err(error @ CredentialError::StoreUnavailable(_)) => return Err(error),
         }
         items.push(PickerItem {
-            section: None,
-            label: mode.login_label.into(),
             detail: Some(
                 format!("Use {} for {}.", mode.login_label, descriptor.display_name).into(),
             ),
-            preview: None,
             badge: (mode.id == active_auth).then(|| PickerBadge {
                 text: "active".into(),
                 tone: PickerBadgeTone::Selected,
             }),
-            value: mode.id.into(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(mode.login_label.into(), mode.id.into())
         });
     }
     sort_items_by_ascii_label(&mut items);
@@ -193,15 +163,11 @@ pub(super) fn auth_mode_picker(
 
 pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker {
     let mut items = vec![PickerItem {
-        section: None,
-        label: "All configured providers".into(),
         detail: Some("Refresh every available provider with model discovery support.".into()),
-        preview: None,
-        badge: None,
-        value: ALL_REFRESHABLE_PROVIDERS.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(
+            "All configured providers".into(),
+            ALL_REFRESHABLE_PROVIDERS.into(),
+        )
     }];
     let mut providers = provider::providers()
         .iter()
@@ -215,15 +181,8 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
                 .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
         })
         .map(|descriptor| PickerItem {
-            section: None,
-            label: descriptor.display_name.into(),
             detail: Some(format!("Refresh cached {} models.", descriptor.display_name).into()),
-            preview: None,
-            badge: None,
-            value: descriptor.name.into(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(descriptor.display_name.into(), descriptor.name.into())
         })
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut providers);
@@ -247,15 +206,11 @@ pub(super) fn logout_provider_picker(
     // global effect without probing here.
     if claude_signed_in {
         picker.items.push(PickerItem {
-            section: None,
-            label: super::claude_login::CLAUDE_CODE_TARGET.into(),
             detail: Some("Sign out of Claude Code everywhere the claude binary is used.".into()),
-            preview: None,
-            badge: None,
-            value: super::claude_login::CLAUDE_CODE_TARGET.into(),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(
+                super::claude_login::CLAUDE_CODE_TARGET.into(),
+                super::claude_login::CLAUDE_CODE_TARGET.into(),
+            )
         });
         sort_items_by_ascii_label(&mut picker.items);
     }
@@ -264,15 +219,8 @@ pub(super) fn logout_provider_picker(
 
 fn external_login_picker_item(method: super::login_target::ExternalLoginMethod) -> PickerItem {
     PickerItem {
-        section: None,
-        label: method.label(),
         detail: Some(method.detail.into()),
-        preview: None,
-        badge: None,
-        value: method.value.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(method.label(), method.value.into())
     }
 }
 
@@ -296,15 +244,8 @@ fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -
                 target.provider.clone()
             };
             PickerItem {
-                section: None,
-                label,
                 detail: Some(target.label.into()),
-                preview: None,
-                badge: None,
-                value: target.auth,
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(label, target.auth)
             }
         })
         .collect::<Vec<_>>();

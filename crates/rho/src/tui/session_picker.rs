@@ -48,15 +48,9 @@ fn session_item(session: SessionSummary, now: u64) -> PickerItem {
         Some(_) | None => format!("updated {updated} · id {short_id}"),
     };
     PickerItem {
-        section: None,
-        label: title,
         detail: Some(detail.into()),
         preview,
-        badge: None,
-        value: session.id,
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(title, session.id)
     }
 }
 

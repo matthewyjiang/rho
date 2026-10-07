@@ -607,28 +607,11 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
     let mut picker = UiPicker::models(
         "select model",
         vec![
-            PickerItem {
-                section: None,
-                label: "openai/gpt-5.5".into(),
-                detail: None,
-                preview: None,
-                badge: None,
-                value: "openai/gpt-5.5".into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
-            },
-            PickerItem {
-                section: None,
-                label: "openai-codex/gpt-5.4-mini".into(),
-                detail: None,
-                preview: None,
-                badge: None,
-                value: "openai-codex/gpt-5.4-mini".into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
-            },
+            PickerItem::new("openai/gpt-5.5".into(), "openai/gpt-5.5".into()),
+            PickerItem::new(
+                "openai-codex/gpt-5.4-mini".into(),
+                "openai-codex/gpt-5.4-mini".into(),
+            ),
         ],
     );
 
@@ -650,28 +633,8 @@ fn picker_selection_wraps() {
     let mut picker = UiPicker::models(
         "select model",
         vec![
-            PickerItem {
-                section: None,
-                label: "model-a".into(),
-                detail: None,
-                preview: None,
-                badge: None,
-                value: "model-a".into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
-            },
-            PickerItem {
-                section: None,
-                label: "model-b".into(),
-                detail: None,
-                preview: None,
-                badge: None,
-                value: "model-b".into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
-            },
+            PickerItem::new("model-a".into(), "model-a".into()),
+            PickerItem::new("model-b".into(), "model-b".into()),
         ],
     );
 
@@ -691,17 +654,10 @@ fn favorite_save_failure_keeps_model_picker_open() {
     app.input_ui
         .set_composer(ComposerMode::Picker(UiPicker::models(
             "select model",
-            vec![PickerItem {
-                section: None,
-                label: selected_value.into(),
-                detail: None,
-                preview: None,
-                badge: None,
-                value: selected_value.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
-            }],
+            vec![PickerItem::new(
+                selected_value.into(),
+                selected_value.into(),
+            )],
         )));
     app.toggle_selected_model_favorite().unwrap();
 

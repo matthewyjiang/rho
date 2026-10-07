@@ -12,29 +12,16 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
         "Loaded agents",
         vec![
             PickerItem {
-                section: None,
-                label: "explorer".into(),
                 detail: Some(detail_a.into()),
-                preview: None,
                 badge: Some(PickerBadge {
                     text: "internal".into(),
                     tone: PickerBadgeTone::Internal,
                 }),
-                value: "explorer".into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new("explorer".into(), "explorer".into())
             },
             PickerItem {
-                section: None,
-                label: "worker".into(),
                 detail: Some(detail_b.into()),
-                preview: None,
-                badge: None,
-                value: "worker".into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new("worker".into(), "worker".into())
             },
         ],
         PickerAction::ViewAgent,
@@ -192,15 +179,8 @@ fn overlay_empty_match_state_is_visible() {
 fn overflowing_panes_render_scrollbars() {
     let items = (0..50)
         .map(|index| PickerItem {
-            section: None,
-            label: format!("agent-{index:02}"),
             detail: Some(long_detail().into()),
-            preview: None,
-            badge: None,
-            value: format!("agent-{index:02}"),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(format!("agent-{index:02}"), format!("agent-{index:02}"))
         })
         .collect();
     let picker =

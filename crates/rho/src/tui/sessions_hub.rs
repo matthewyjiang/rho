@@ -127,17 +127,13 @@ fn directory_row(
     let updated = session_picker::format_updated_ago(newest, now);
     PickerItem {
         section: Some(section.to_owned()),
-        label: format!("{label} · {}", group.sessions.len()),
-        detail: None,
         preview: Some(format!("newest {updated}")),
         badge: is_current.then(|| PickerBadge {
             text: "current dir".into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value,
         selection_verb: Some("browse"),
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(format!("{label} · {}", group.sessions.len()), value)
     }
 }
 
@@ -171,14 +167,11 @@ fn session_row(
     };
     PickerItem {
         section: section.map(str::to_owned),
-        label: title,
-        detail: None,
         preview: Some(preview),
         badge: is_current.then(|| PickerBadge {
             text: "current".into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value,
         selection_verb: Some(if is_current {
             "close"
         } else if is_cross_project(&session.cwd, current_cwd) {
@@ -186,8 +179,7 @@ fn session_row(
         } else {
             "resume"
         }),
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(title, value)
     }
 }
 
@@ -196,17 +188,13 @@ fn cleanup_missing_workspaces_row(missing: &[DirectoryGroup], value: String) -> 
     let directory_count = missing.len();
     PickerItem {
         section: Some("CLEAN UP".into()),
-        label: "Delete sessions for missing directories".into(),
-        detail: None,
         preview: Some(directory_count_label(directory_count)),
         badge: Some(PickerBadge {
             text: plural(session_count, "session"),
             tone: PickerBadgeTone::Warning,
         }),
-        value,
         selection_verb: Some("clean up"),
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new("Delete sessions for missing directories".into(), value)
     }
 }
 

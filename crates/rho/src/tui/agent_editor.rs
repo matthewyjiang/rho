@@ -247,15 +247,9 @@ fn field_item(
     value: &'static str,
 ) -> PickerItem {
     PickerItem {
-        section: None,
-        label: label.into(),
         detail: Some(super::picker::PickerDetail::Text(detail.into())),
-        preview: None,
         badge: badge_text.map(badge),
-        value: value.into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(label.into(), value.into())
     }
 }
 
@@ -475,42 +469,27 @@ fn claude_model_badge(draft: &AgentDefinition) -> String {
 fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<PickerItem> {
     let current = draft.model_text();
     let mut items = vec![PickerItem {
-        section: None,
-        label: claude_models::CLAUDE_DEFAULT_MODEL_LABEL.into(),
         detail: Some(claude_models::CLAUDE_DEFAULT_MODEL_DETAIL.into()),
-        preview: None,
         badge: current.is_empty().then(|| badge("selected")),
-        value: prefix.to_string(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(
+            claude_models::CLAUDE_DEFAULT_MODEL_LABEL.into(),
+            prefix.to_string(),
+        )
     }];
     items.extend(
         claude_models::CLAUDE_MODEL_ALIASES
             .iter()
             .map(|alias| PickerItem {
-                section: None,
-                label: alias.name.into(),
                 detail: Some(alias.detail.into()),
-                preview: None,
                 badge: (current == alias.name).then(|| badge("selected")),
-                value: format!("{prefix}{}", alias.name),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(alias.name.into(), format!("{prefix}{}", alias.name))
             }),
     );
     if !current.is_empty() && !claude_models::is_offered_alias(&current) {
         items.push(PickerItem {
-            section: None,
-            label: current.clone(),
             detail: Some("Set in the agent file. Passed through as --model unchanged.".into()),
-            preview: None,
             badge: Some(badge("selected")),
-            value: format!("{prefix}{current}"),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(current.clone(), format!("{prefix}{current}"))
         });
     }
     items
@@ -611,21 +590,13 @@ fn agent_choice_picker(
             let current = draft.reasoning();
             let levels = selectable_agent_reasoning_levels(draft, conversation);
             let mut items = vec![PickerItem {
-                section: None,
-                label: "inherit".into(),
                 detail: Some("Omit reasoning; inherit the conversation setting.".into()),
-                preview: None,
                 badge: current.is_none().then(|| badge("selected")),
-                value: format!("{prefix}inherit"),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new("inherit".into(), format!("{prefix}inherit"))
             }];
             items.extend(levels.into_iter().map(|level| {
                 let selected = current == Some(level);
                 PickerItem {
-                    section: None,
-                    label: level.to_string(),
                     detail: Some(
                         match draft.runtime.runtime() {
                             AgentRuntime::ClaudeCli => "Claude --effort level.",
@@ -635,12 +606,8 @@ fn agent_choice_picker(
                         }
                         .into(),
                     ),
-                    preview: None,
                     badge: selected.then(|| badge("selected")),
-                    value: format!("{prefix}{level}"),
-                    selection_verb: None,
-                    allow_filter_completion: true,
-                    search_terms: Vec::new(),
+                    ..PickerItem::new(level.to_string(), format!("{prefix}{level}"))
                 }
             }));
             ("reasoning", items)
@@ -685,18 +652,12 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
     let current = draft.auth_text();
     let provider = draft.provider_text();
     let mut items = vec![PickerItem {
-        section: None,
-        label: "host".into(),
         detail: Some(
             "Do not pin auth. Keep the conversation login when it fits the provider.".into(),
         ),
-        preview: None,
         badge: current.is_empty().then(|| badge("selected")),
         // Empty id means unset pin (display label remains "host").
-        value: prefix.to_string(),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new("host".into(), prefix.to_string())
     }];
     let mut modes: Vec<(String, String)> = available_auths
         .iter()
@@ -721,15 +682,9 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
     items.extend(modes.into_iter().map(|(id, label)| {
         let selected = id == current;
         PickerItem {
-            section: None,
-            label,
             detail: Some(format!("Pin auth profile {id}.").into()),
-            preview: None,
             badge: selected.then(|| badge("selected")),
-            value: format!("{prefix}{id}"),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(label, format!("{prefix}{id}"))
         }
     }));
     UiPicker::edit_agent("auth", items).with_confirm_verb("set")
@@ -741,15 +696,9 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
         .map(|(label, detail)| {
             let selected = *label == current;
             PickerItem {
-                section: None,
-                label: (*label).into(),
                 detail: Some((*detail).into()),
-                preview: None,
                 badge: selected.then(|| badge("selected")),
-                value: format!("{value_prefix}{label}"),
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new((*label).into(), format!("{value_prefix}{label}"))
             }
         })
         .collect()

@@ -372,22 +372,17 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
         })
     };
     let mut leading = vec![PickerItem {
-        section: None,
-        label: "Same as classifier".into(),
-        detail: Some(
+detail: Some(
             match &classifier {
                 Some(classifier) => format!("The classifier model, {classifier}, answers the screen at low reasoning and shares its prompt cache with the review."),
                 None => "The classifier model answers the screen at low reasoning and shares its prompt cache with the review.".into(),
             }
             .into(),
         ),
-        preview: None,
-        badge: selected_badge(current == ScreenSelection::Classifier),
-        value: USE_CONVERSATION_MODEL.into(),
-        selection_verb: None,
-        allow_filter_completion: false,
-        search_terms: Vec::new(),
-    }];
+badge: selected_badge(current == ScreenSelection::Classifier),
+allow_filter_completion: false,
+..PickerItem::new("Same as classifier".into(), USE_CONVERSATION_MODEL.into())
+}];
     leading.extend(decision_models.iter().map(|(provider, model)| {
         let selected = matches!(
             &current,
@@ -395,17 +390,15 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
         );
         PickerItem {
             section: Some("Decision models".into()),
-            label: rho_providers::provider::model_reference(provider, model),
             detail: Some(
                 "Answers with a probability over the System One API, without writing a review."
                     .into(),
             ),
-            preview: None,
             badge: selected_badge(selected),
-            value: decision_row_value(provider, model),
-            selection_verb: None,
-            allow_filter_completion: true,
-            search_terms: Vec::new(),
+            ..PickerItem::new(
+                rho_providers::provider::model_reference(provider, model),
+                decision_row_value(provider, model),
+            )
         }
     }));
     catalog.items.splice(0..0, leading);
@@ -438,14 +431,9 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
                 index,
                 PickerItem {
                     section: Some(section.into()),
-                    label,
                     detail: Some("Configured, but not listed by its provider now.".into()),
-                    preview: None,
                     badge: selected_badge(true),
-                    value: wanted,
-                    selection_verb: None,
-                    allow_filter_completion: true,
-                    search_terms: Vec::new(),
+                    ..PickerItem::new(label, wanted)
                 },
             );
             index
@@ -457,18 +445,13 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
 
 fn conversation_model_row(selected: bool) -> PickerItem {
     PickerItem {
-        section: None,
-        label: USE_CONVERSATION_MODEL.into(),
         detail: Some("Follow the active conversation provider, model, and auth.".into()),
-        preview: None,
         badge: selected.then_some(PickerBadge {
             text: "selected".into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value: USE_CONVERSATION_MODEL.into(),
-        selection_verb: None,
         allow_filter_completion: false,
-        search_terms: Vec::new(),
+        ..PickerItem::new(USE_CONVERSATION_MODEL.into(), USE_CONVERSATION_MODEL.into())
     }
 }
 
@@ -483,21 +466,18 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
         InternalAgentSelection::RhoModel { .. } | InternalAgentSelection::Unset => None,
     };
     let row = |model: Option<&str>, detail: String| PickerItem {
-        section: None,
-        label: rho_providers::provider::model_reference(
-            claude_models::CLAUDE_CODE_SOURCE_LABEL,
-            model.unwrap_or(claude_models::CLAUDE_DEFAULT_MODEL_BADGE),
-        ),
         detail: Some(detail.into()),
-        preview: None,
         badge: (selected_model == Some(model)).then_some(PickerBadge {
             text: "selected".into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value: claude_code_row_value(model),
-        selection_verb: None,
-        allow_filter_completion: true,
-        search_terms: Vec::new(),
+        ..PickerItem::new(
+            rho_providers::provider::model_reference(
+                claude_models::CLAUDE_CODE_SOURCE_LABEL,
+                model.unwrap_or(claude_models::CLAUDE_DEFAULT_MODEL_BADGE),
+            ),
+            claude_code_row_value(model),
+        )
     };
     let mut rows = vec![row(
         None,
@@ -603,8 +583,6 @@ fn model_catalog(
                 (false, false) => None,
             };
             PickerItem {
-                section: None,
-                label: value.clone(),
                 detail: Some(
                     if pinned {
                         format!("Press {pin_key} to unpin this model.")
@@ -613,12 +591,8 @@ fn model_catalog(
                     }
                     .into(),
                 ),
-                preview: None,
                 badge,
-                value,
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms: Vec::new(),
+                ..PickerItem::new(value.clone(), value)
             }
         })
         .collect::<Vec<_>>();
