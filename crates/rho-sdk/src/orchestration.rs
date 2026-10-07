@@ -304,6 +304,9 @@ async fn execute_turn_loop(
         }
         let mut overflow_recovered = false;
         let (response, mut capture, request_context, request_estimate) = loop {
+            // Late boundary input, staged steering, and overflow recovery may
+            // have changed history since the automatic compaction policy check.
+            core.prepare_request_context(&history, &tool_specs);
             let messages = runtime.request_messages(core.id(), &history);
             let estimate = core.advance_request_context(&history, &messages.context, &tool_specs);
             let error = match request_valid_response(

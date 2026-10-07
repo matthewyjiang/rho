@@ -90,12 +90,27 @@ impl SessionCore {
             .estimate(history, &source, tools, &identity)
     }
 
-    /// Advances and publishes accounting for the append-only working history.
+    /// Prepares host-owned context using current boundary accounting. Sampling
+    /// and accounting finish before the host callback, with no session lock held.
+    /// Callers must sample the source again afterward to use the prepared context.
+    pub(crate) fn prepare_request_context(&self, history: &[Message], tools: &[ToolSpec]) {
+        let runtime = self.runtime();
+        let Some(source) = &runtime.request_context else {
+            return;
+        };
+        let context = source.messages(self.id());
+        let estimate = self.advance_request_context(history, &context, tools);
+        source.prepare(self.id(), history, tools, estimate);
+    }
+
+    /// Prepares request-only context, then publishes accounting for the
+    /// append-only working history before automatic compaction evaluation.
     pub(crate) fn advance_context(
         &self,
         history: &[Message],
         tools: &[ToolSpec],
     ) -> ContextEstimate {
+        self.prepare_request_context(history, tools);
         let runtime = self.runtime();
         let source = runtime.context_messages(self.id());
         self.advance_request_context(history, &source, tools)

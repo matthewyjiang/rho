@@ -75,11 +75,6 @@ where
         diagnostics,
         recall,
     } = options;
-    let prompt_messages = match &system_prompt {
-        SystemPrompt::Custom(text) => vec![rho_sdk::model::Message::System(text.clone())],
-        SystemPrompt::None => Vec::new(),
-        _ => Vec::new(),
-    };
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
         tool_specs: tools.specs(),
@@ -131,9 +126,7 @@ where
         builder = hooks.attach(builder);
     }
     let runtime = builder.build()?;
-    tools
-        .todo_state()
-        .set_context_budget(context_window, &prompt_messages, &tools.specs());
+    tools.todo_state().set_context_window(context_window);
     Ok(runtime)
 }
 
@@ -194,11 +187,10 @@ pub(crate) fn refresh_session_compaction(
 ) -> Result<(), Error> {
     let todo = setup.todo.clone();
     let context_window = setup.context_window;
-    let tool_specs = setup.tool_specs.clone();
     let (compactor, policy) = build_compaction(setup);
     session.set_compaction(Some(Arc::new(compactor)), policy)?;
     if let Some(todo) = todo {
-        todo.set_context_budget(context_window, &session.history(), &tool_specs);
+        todo.set_context_window(context_window);
     }
     Ok(())
 }

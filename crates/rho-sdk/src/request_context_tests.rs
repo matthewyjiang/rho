@@ -3,12 +3,14 @@ use std::sync::{Arc, Mutex};
 use pretty_assertions::assert_eq;
 
 use crate::{
+    boundary_input_channel,
     model::{
         context::estimate_context_tokens, ContentBlock, Message, ModelEvent, ModelIdentity,
-        ModelResponse, ModelUsage,
+        ModelResponse, ModelUsage, ToolCall, ToolSpec,
     },
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    ContextEstimate, RequestContext, Rho, SessionId, SessionOptions,
+    tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
+    ContextEstimate, InputBoundary, RequestContext, Rho, SessionId, SessionOptions, UserInput,
 };
 
 #[derive(Clone)]
@@ -24,6 +26,163 @@ fn reply() -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
         "done".into(),
     )]))
+}
+
+// Covers: host preparation sees pending input, tool results, live advertised
+// schemas, and calibrated continuation estimates, including late boundary input,
+// before policy and projection.
+// Owner: SDK request lifecycle. Existing tests only exercise already-updated sources.
+#[tokio::test]
+async fn preparation_tracks_actual_request_boundaries_and_calibration() {
+    #[derive(Clone, Debug)]
+    struct Preparation {
+        session_id: SessionId,
+        history: Vec<Message>,
+        tools: Vec<ToolSpec>,
+        estimate: ContextEstimate,
+    }
+
+    #[derive(Clone)]
+    struct PreparingContext {
+        source: LiveContext,
+        calls: Arc<Mutex<Vec<Preparation>>>,
+    }
+
+    impl RequestContext for PreparingContext {
+        fn prepare(
+            &self,
+            session_id: &SessionId,
+            history: &[Message],
+            tools: &[ToolSpec],
+            estimate: ContextEstimate,
+        ) {
+            self.calls.lock().unwrap().push(Preparation {
+                session_id: session_id.clone(),
+                history: history.to_vec(),
+                tools: tools.to_vec(),
+                estimate,
+            });
+            *self.source.0.lock().unwrap() = vec![Message::model_context("prepared context")];
+        }
+
+        fn messages(&self, session_id: &SessionId) -> Vec<Message> {
+            self.source.messages(session_id)
+        }
+    }
+
+    let source = PreparingContext {
+        source: LiveContext(Arc::new(Mutex::new(Vec::new()))),
+        calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let spec = ToolSpec {
+        name: "echo".into(),
+        description: "returns its result".into(),
+        input_schema: serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
+    };
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            ScriptedTurn::streaming(
+                vec![ModelEvent::Usage(ModelUsage {
+                    input_tokens: Some(1_000),
+                    ..ModelUsage::default()
+                })],
+                ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+            ),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "echo-call".into(),
+                    name: spec.name.clone(),
+                    arguments: serde_json::json!({"text": "tool input"}),
+                },
+            )])),
+            reply(),
+            reply(),
+        ],
+    );
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .tool(ScriptedTool::new(
+            spec.clone(),
+            ScriptedToolOutcome::Success(ToolOutput::text("tool result")),
+        ))
+        .request_context(source.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::new()).await.unwrap();
+    session.context_estimate();
+    session.estimate_context(&[Message::user_text("proposed input")]);
+    assert_eq!(source.calls.lock().unwrap().len(), 0);
+
+    session.complete("first input").await.unwrap();
+    let requests = provider.recorded_requests();
+    assert_eq!(
+        session.last_compaction_decision().unwrap().estimate(),
+        ContextEstimate::from_estimated_tokens(estimate_context_tokens(
+            &requests[0].messages,
+            &requests[0].tools,
+        ))
+    );
+    session.complete("subsequent input").await.unwrap();
+    let (boundary_source, mut boundary_requests) = boundary_input_channel();
+    session.set_boundary_inputs(Some(boundary_source)).unwrap();
+    let mut run = session.continue_history().await.unwrap();
+    let service_boundaries = async {
+        for (boundary, input) in [
+            (
+                InputBoundary::BeforeProvider,
+                Some(UserInput::text("late input")),
+            ),
+            (InputBoundary::BeforeCompletion, None),
+        ] {
+            let request = boundary_requests.recv().await.unwrap();
+            assert_eq!(request.boundary(), boundary);
+            assert!(request.respond(input).await);
+        }
+    };
+    let (outcome, ()) = tokio::join!(run.outcome(), service_boundaries);
+    outcome.unwrap();
+
+    let requests = provider.recorded_requests();
+    assert_eq!(requests.len(), 4);
+    let calls = source.calls.lock().unwrap();
+    let first = &calls[0];
+    assert_eq!(
+        (&first.history, &first.tools, first.estimate),
+        (
+            &vec![Message::user_text("first input")],
+            &vec![spec],
+            ContextEstimate::from_estimated_tokens(estimate_context_tokens(
+                &requests[0].messages[..1],
+                &requests[0].tools,
+            )),
+        )
+    );
+    let anchor_tokens = estimate_context_tokens(&requests[0].messages, &requests[0].tools);
+    for (index, request) in requests.iter().enumerate() {
+        let history = &request.messages[..request.messages.len() - 1];
+        let prepared = calls
+            .iter()
+            .rev()
+            .find(|call| call.history == history)
+            .unwrap();
+        assert_eq!(
+            (
+                &prepared.session_id,
+                &prepared.tools,
+                prepared.estimate.estimated_tokens(),
+                prepared.estimate.provider_reported_tokens(),
+                prepared.estimate.provider_request_estimated_tokens(),
+            ),
+            (
+                session.id(),
+                &request.tools,
+                estimate_context_tokens(&request.messages, &request.tools),
+                (index > 0).then_some(1_000),
+                (index > 0).then_some(anchor_tokens),
+            )
+        );
+    }
 }
 
 // Covers: request-only context must not pollute history, move the prompt prefix,

@@ -187,6 +187,82 @@ async fn oversized_nested_todo_keeps_the_previous_list_and_provider_reachable() 
     interactive.shutdown().await;
 }
 
+// Covers: request admission includes incoming input and refreshes on headless
+// turns as well as interactive turns; startup history is not a request budget.
+// Owner: host checklist policy at the shared SDK request boundary.
+#[tokio::test]
+async fn todo_budget_includes_incoming_input_on_interactive_and_headless_turns() {
+    use rho_sdk::{
+        model::context::{estimate_context_tokens, estimate_messages_tokens},
+        RequestContext,
+    };
+
+    for interactive_host in [true, false] {
+        let generated = checklist(&"x".repeat(4_096));
+        let (mut interactive, provider) = todo_runtime(
+            vec![
+                text("seed history"),
+                call("proposal", "codemode", json!({"script":
+                    "call_tool(\"todo\", {\"todos\": [{\"content\": \"x\" * 4096, \"status\": \"in_progress\"}]})"
+                })),
+                text("replacement rejected"),
+            ],
+            None,
+        ).await;
+        interactive
+            .sessions
+            .session()
+            .complete("seed")
+            .await
+            .unwrap();
+        let measured = crate::tools::todo::TodoState::default();
+        measured.replace(Some(generated));
+        let projection = measured.messages(interactive.sessions.session().id());
+        // Fits the previous turn exactly, but not the incoming paste. The
+        // capacity comes from the actual serialized history and projection.
+        let capacity = estimate_context_tokens(&interactive.history(), &interactive.tools.specs())
+            + estimate_messages_tokens(&projection);
+        interactive.set_context_window(Some(capacity)).unwrap();
+        let incoming = "new input ".repeat(200);
+        if interactive_host {
+            interactive
+                .start(UserInput::text(incoming), None)
+                .await
+                .unwrap();
+            interactive.finish_run().await.unwrap();
+        } else {
+            // ACP and automation use the same SDK session entry directly.
+            interactive
+                .sessions
+                .session()
+                .complete(incoming)
+                .await
+                .unwrap();
+        }
+        assert_eq!(interactive.todo_list(), None);
+        let requests = provider.recorded_requests();
+        let result = requests
+            .last()
+            .unwrap()
+            .messages
+            .iter()
+            .find_map(|message| match message {
+                Message::ToolResult(result) if result.id == "proposal" => Some(result),
+                _ => None,
+            })
+            .unwrap();
+        assert!(!result.ok);
+        assert!(
+            result
+                .content
+                .contains("todo mandatory context budget exceeded"),
+            "{}",
+            result.content
+        );
+        interactive.shutdown().await;
+    }
+}
+
 // Covers: a generated list that fits the prompt/schema budget but crowds out
 // real history must not strand compaction or reactivate on the next turn.
 // Owner: host runtime compaction and checklist recovery, not TUI rendering.
@@ -213,9 +289,10 @@ async fn boundary_nested_todo_compaction_preserves_state_and_provider_recovery()
     let measured = crate::tools::todo::TodoState::default();
     measured.replace(Some(generated.clone()));
     let full = measured.messages(interactive.sessions.session().id());
-    // Exactly fits the initial mandatory overhead: no invented reserve. The
-    // generated checklist arguments never appear in the outer tool history.
+    // Exactly fits the initial request, including accepted input: no invented
+    // reserve. Later tool results and output crowd out the admitted projection.
     let capacity = estimate_context_tokens(&interactive.history(), &interactive.tools.specs())
+        + estimate_messages_tokens(&[Message::user_text("track tasks")])
         + estimate_messages_tokens(&full);
     interactive.set_context_window(Some(capacity)).unwrap();
     interactive
@@ -252,7 +329,8 @@ async fn boundary_nested_todo_compaction_preserves_state_and_provider_recovery()
         .unwrap();
     interactive.finish_run().await.unwrap();
     let requests = provider.recorded_requests();
-    assert_eq!(requests[3].messages.last(), recovery.last());
+    assert_ne!(requests[3].messages.last(), full.last());
+    assert!(estimate_context_tokens(&requests[3].messages, &requests[3].tools) <= capacity);
     assert_eq!(
         interactive.todo_list(),
         Some(TodoList { todos: Vec::new() })

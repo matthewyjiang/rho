@@ -38,7 +38,8 @@ fn oversized_checklists_are_rejected_or_suspended_without_losing_state() {
         estimate_messages_tokens(&[Message::model_context("recovery notice ".repeat(100))]);
     let overhead = estimate_context_tokens(&prompt, &[]);
     let limit = overhead + recovery_tokens;
-    state.set_context_budget(Some(limit), &prompt, &[]);
+    let context = ContextEstimate::from_estimated_tokens(overhead);
+    state.set_context_budget(Some(limit), context, &prompt, &[]);
     state.try_replace(original.clone()).unwrap();
     let asked = overhead + estimate_messages_tokens(&context_messages(Some(&oversized)));
     let error = state.try_replace(oversized.clone()).unwrap_err();
@@ -58,14 +59,74 @@ fn oversized_checklists_are_rejected_or_suspended_without_losing_state() {
     assert_eq!(reader.list(), Some(oversized.clone()));
 
     // Switching back to a larger window re-enables the exact projection.
-    state.set_context_budget(Some(asked), &prompt, &[]);
+    state.set_context_budget(Some(asked), context, &prompt, &[]);
     assert_eq!(
         state.messages(&SessionId::new()),
         context_messages(Some(&oversized))
     );
-    state.set_context_budget(Some(limit), &prompt, &[]);
+    state.set_context_budget(Some(limit), context, &prompt, &[]);
     state.try_replace(TodoList { todos: Vec::new() }).unwrap();
     assert_eq!(state.list(), Some(TodoList { todos: Vec::new() }));
+}
+
+// Covers: provider-token capacity must be converted to local estimator units;
+// source invalidation after suspension must not re-enable an oversized list.
+// Owner: host projection/admission budget policy.
+#[tokio::test]
+async fn todo_budget_retains_calibrated_capacity_until_model_reset() {
+    use rho_sdk::{
+        model::{ModelEvent, ModelResponse, ModelUsage},
+        provider::{ScriptedProvider, ScriptedTurn},
+        RequestContext, Rho, SessionOptions, SystemPrompt,
+    };
+    let input = Message::user_text("measure");
+    let measured_tokens = estimate_context_tokens(&[input], &[]) * 2;
+    let runtime = Rho::builder()
+        .system_prompt(SystemPrompt::None)
+        .provider(ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "test"),
+            [ScriptedTurn::streaming(
+                vec![ModelEvent::Usage(ModelUsage {
+                    input_tokens: Some(measured_tokens),
+                    ..ModelUsage::default()
+                })],
+                ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+            )],
+        ))
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::new()).await.unwrap();
+    session.complete("measure").await.unwrap();
+    let history = session.history();
+    let context = session.context_estimate();
+    assert_eq!(context.provider_reported_tokens(), Some(measured_tokens));
+    let state = TodoState::default();
+    let saved = list(&"x".repeat(2_048));
+    let full = context_messages(Some(&saved));
+    let asked = estimate_context_tokens(&history, &[]) + estimate_messages_tokens(&full);
+    let window = asked * 2 - 1;
+    state.set_context_window(Some(window));
+    state.replace(Some(saved.clone()));
+    state.prepare(session.id(), &history, &[], context);
+    let limit = context.estimated_budget(window);
+    assert!(limit < asked && asked <= window);
+    assert_eq!(
+        state.try_replace(saved.clone()).unwrap_err().kind(),
+        ToolErrorKind::InvalidArguments
+    );
+    let recovery = state.messages(session.id());
+    assert_ne!(recovery, full);
+    assert!(estimate_context_tokens(&history, &[]) + estimate_messages_tokens(&recovery) <= limit);
+
+    let uncalibrated = ContextEstimate::from_estimated_tokens(
+        estimate_context_tokens(&history, &[]) + estimate_messages_tokens(&recovery),
+    );
+    state.prepare(session.id(), &history, &[], uncalibrated);
+    assert_eq!(state.messages(session.id()), recovery);
+    state.set_context_window(Some(window));
+    state.prepare(session.id(), &history, &[], uncalibrated);
+    state.try_replace(saved).unwrap();
+    assert_eq!(state.messages(session.id()), full);
 }
 
 // Covers: legacy replay must ignore unsuccessful and unmatched proposals, while
@@ -210,6 +271,7 @@ async fn buffered_compaction_checkpoint_does_not_capture_newer_live_todos() {
     let live = state.list();
     state.set_context_budget(
         Some(estimate_context_tokens(checkpoint.history(), &[])),
+        ContextEstimate::from_estimated_tokens(estimate_context_tokens(checkpoint.history(), &[])),
         checkpoint.history(),
         &[],
     );

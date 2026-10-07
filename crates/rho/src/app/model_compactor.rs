@@ -114,7 +114,6 @@ impl Compactor for ModelCompactor {
                 (Some(configured), Some(reported)) => Some(configured.min(reported)),
                 (configured, reported) => configured.or(reported),
             };
-            let capacity = context_window.map(|window| context.estimated_budget(window));
             let result = self
                 .compact_tiers(
                     &request,
@@ -130,7 +129,12 @@ impl Compactor for ModelCompactor {
                     // bound the live projection against the measured history
                     // so the next provider turn can shorten or clear it.
                     if let Some(state) = &self.todo {
-                        state.set_context_budget(capacity, output.messages(), tools);
+                        state.set_context_budget(
+                            self.context_window,
+                            context,
+                            output.messages(),
+                            tools,
+                        );
                     }
                     match todo {
                         Some(todo) => todo.retain(output),

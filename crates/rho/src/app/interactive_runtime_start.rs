@@ -80,19 +80,6 @@ impl InteractiveRuntime {
             .set_boundary_inputs(boundary_inputs)?;
         let model_user = Message::User(input.blocks().to_vec());
         let mut request_history = self.sessions.history();
-        // Startup hydration and live tool refresh can change mandatory overhead
-        // without rebuilding the runtime. Preflight todo against the actual
-        // history and advertised schemas before this run's tools execute.
-        let context = self.sessions.session().context_estimate();
-        let window = match (self.context_window, context.reported_context_window()) {
-            (Some(configured), Some(reported)) => Some(configured.min(reported)),
-            (configured, reported) => configured.or(reported),
-        };
-        self.tools.todo_state().set_context_budget(
-            window.map(|window| context.estimated_budget(window)),
-            &request_history,
-            &self.tools.specs(),
-        );
         let pending_turn = PendingTurn::new(model_user, display_user, request_history.len());
         request_history.push(Message::User(input.blocks().to_vec()));
         let estimate = self.sessions.session().estimate_context(&request_history);

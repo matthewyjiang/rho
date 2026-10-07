@@ -14,7 +14,7 @@ use rho_sdk::{
         ContentBlock, Message, ToolSpec,
     },
     tool::{ToolError, ToolErrorKind},
-    CompactionOutput, SessionSnapshot,
+    CompactionOutput, ContextEstimate, SessionSnapshot,
 };
 
 use super::TodoList;
@@ -27,6 +27,8 @@ pub(crate) struct TodoState(Arc<Mutex<State>>);
 #[derive(Debug, Default)]
 struct State {
     list: Option<TodoList>,
+    context_window: Option<u64>,
+    calibration: Option<ContextEstimate>,
     budget: Option<ContextBudget>,
 }
 
@@ -42,6 +44,32 @@ impl ContextBudget {
         self.request_tokens
             .saturating_add(self.history_tokens)
             .saturating_add(estimate_messages_tokens(messages))
+    }
+}
+
+impl State {
+    fn refresh_budget(
+        &mut self,
+        context: ContextEstimate,
+        history: &[Message],
+        tools: &[ToolSpec],
+    ) {
+        if context.provider_reported_tokens().is_some() {
+            self.calibration = Some(context);
+        }
+        // Suspending a projection invalidates SDK source calibration. Keep its
+        // last measured sizing ratio until new usage or a model/session reset,
+        // rather than oscillating back to the larger uncalibrated budget.
+        let context = self.calibration.unwrap_or(context);
+        let window = match (self.context_window, context.reported_context_window()) {
+            (Some(configured), Some(reported)) => Some(configured.min(reported)),
+            (configured, reported) => configured.or(reported),
+        };
+        self.budget = window.map(|window| ContextBudget {
+            limit: context.estimated_budget(window),
+            request_tokens: estimate_context_tokens(&[], tools),
+            history_tokens: estimate_messages_tokens(history),
+        });
     }
 }
 
@@ -61,23 +89,36 @@ impl TodoState {
             .list = list;
     }
 
-    /// Reserve the actual history and advertised schemas, not a guessed tail
-    /// allowance. Compaction refreshes this against its concrete replacement;
-    /// turn/model refreshes must also account for history so suspension sticks.
+    /// Configure model-token capacity. The SDK request boundary supplies the
+    /// actual history, schemas, and calibrated conversion before execution.
+    pub(crate) fn set_context_window(&self, window: Option<u64>) {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.context_window = window;
+        state.calibration = None;
+        state.budget = None;
+    }
+
+    /// Refresh after compaction using its concrete replacement and measured
+    /// estimate. The raw model window is never compared to local token counts.
     pub(crate) fn set_context_budget(
         &self,
         window: Option<u64>,
+        context: ContextEstimate,
         history: &[Message],
         tools: &[ToolSpec],
     ) {
-        self.0
+        let mut state = self
+            .0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .budget = window.map(|limit| ContextBudget {
-            limit,
-            request_tokens: estimate_context_tokens(&[], tools),
-            history_tokens: estimate_messages_tokens(history),
-        });
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.context_window != window {
+            state.calibration = None;
+        }
+        state.context_window = window;
+        state.refresh_budget(context, history, tools);
     }
 
     /// Validate and commit under the same lock so a nested update cannot race
@@ -121,6 +162,7 @@ impl TodoState {
         if let Some(budget) = state.budget.as_mut() {
             budget.history_tokens = estimate_messages_tokens(snapshot.history());
         }
+        state.calibration = None;
         state.list = list;
     }
 
@@ -154,6 +196,19 @@ impl TodoState {
 }
 
 impl rho_sdk::RequestContext for TodoState {
+    fn prepare(
+        &self,
+        _session_id: &rho_sdk::SessionId,
+        history: &[Message],
+        tools: &[ToolSpec],
+        estimate: ContextEstimate,
+    ) {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .refresh_budget(estimate, history, tools);
+    }
+
     fn messages(&self, _session_id: &rho_sdk::SessionId) -> Vec<Message> {
         projected_messages(
             &self

@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use crate::{model::Message, Rho, SessionId};
+use crate::{
+    model::{Message, ToolSpec},
+    ContextEstimate, Rho, SessionId,
+};
 
 /// Host-owned context projected into model requests, not conversation history.
 ///
@@ -14,6 +17,33 @@ use crate::{model::Message, Rho, SessionId};
 /// Compactors receive raw conversation history; hosts must reserve the context
 /// footprint when sizing replacements, since this mandatory data is not summarized.
 pub trait RequestContext: Send + Sync {
+    /// Refreshes host-owned request context for an upcoming history boundary.
+    ///
+    /// The SDK supplies the actual conversation history (including pending user
+    /// input), advertised tool schemas, and its current estimate, including any
+    /// applicable provider calibration and the currently sampled request context.
+    /// Hosts may use this data to size their next [`Self::messages`] projection;
+    /// the SDK does not choose host context policy.
+    ///
+    /// Called before automatic compaction evaluation and before provider request
+    /// projection, including overflow recovery retries and history updated by
+    /// late boundary input or staged steering. It may run more than once for the
+    /// same boundary, so implementations should be idempotent. Read-only idle
+    /// accounting APIs do not invoke it.
+    ///
+    /// This callback must be synchronous and cheap, and must not call back into
+    /// SDK sessions or acquire their locks. The SDK releases its session locks
+    /// before invoking it, then samples [`Self::messages`] again for projection.
+    #[allow(unused_variables)]
+    fn prepare(
+        &self,
+        session_id: &SessionId,
+        history: &[Message],
+        tools: &[ToolSpec],
+        estimate: ContextEstimate,
+    ) {
+    }
+
     fn messages(&self, session_id: &SessionId) -> Vec<Message>;
 }
 

@@ -54,6 +54,8 @@ Construct data messages with `Message::model_context(text)`. Providers and other
 
 Request context participates in token estimates and provider calibration. Compactors receive raw history and must reserve the mandatory context's footprint when sizing replacement history; the context source itself is not summarized.
 
+Sources that need request-aware sizing can implement the optional `RequestContext::prepare` callback. Before automatic compaction evaluation and provider projection, it receives the actual history (including incoming user input and tool-loop results), advertised schemas, and current `ContextEstimate`. Convert a model-token capacity with `ContextEstimate::estimated_budget` before comparing it to local token estimates. Preparation is synchronous, may repeat for a boundary, and runs outside SDK session locks; do not call back into SDK sessions. Idle accounting reads do not prepare or mutate the source. This shared boundary applies equally to interactive, ACP, and automation hosts.
+
 ### Shared context accounting
 
 `Session::context_estimate()` returns the committed estimate while idle and the latest published history-boundary estimate during a run. It is a small snapshot, not a copy of live history. `ContextEstimate::tokens()` uses the last applicable successful request's inclusive prompt usage plus locally estimated appended messages. It never uses accumulated multi-request billing usage. `estimated_tokens()` exposes the uncalibrated estimate; the provider baseline and its corresponding local estimate are available separately.
