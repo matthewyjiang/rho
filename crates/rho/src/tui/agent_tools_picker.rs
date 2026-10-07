@@ -48,13 +48,13 @@ fn tool_row(name: &str, detail: impl Into<String>, on: bool, value: String) -> P
 fn rho_items(tools: &ToolPolicy) -> Vec<PickerItem> {
     let all = matches!(tools, ToolPolicy::All);
     let mut items = vec![PickerItem {
-detail: Some(
+        detail: Some(
             "Every host tool, including ones added later. Toggle off to return to the explicit list it replaced."
                 .into(),
         ),
-badge: all.then(on_badge),
-..PickerItem::new("all".into(), AGENT_TOOL_ALL.into())
-}];
+        badge: all.then(on_badge),
+        ..PickerItem::new("all".into(), AGENT_TOOL_ALL.into())
+    }];
     items.extend(BUILTIN_TOOL_CAPABILITIES.iter().map(|capability| {
         let on = match tools {
             ToolPolicy::All => true,

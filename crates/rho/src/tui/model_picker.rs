@@ -372,17 +372,17 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
         })
     };
     let mut leading = vec![PickerItem {
-detail: Some(
+        detail: Some(
             match &classifier {
                 Some(classifier) => format!("The classifier model, {classifier}, answers the screen at low reasoning and shares its prompt cache with the review."),
                 None => "The classifier model answers the screen at low reasoning and shares its prompt cache with the review.".into(),
             }
             .into(),
         ),
-badge: selected_badge(current == ScreenSelection::Classifier),
-allow_filter_completion: false,
-..PickerItem::new("Same as classifier".into(), USE_CONVERSATION_MODEL.into())
-}];
+        badge: selected_badge(current == ScreenSelection::Classifier),
+        allow_filter_completion: false,
+        ..PickerItem::new("Same as classifier".into(), USE_CONVERSATION_MODEL.into())
+    }];
     leading.extend(decision_models.iter().map(|(provider, model)| {
         let selected = matches!(
             &current,
