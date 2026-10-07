@@ -122,6 +122,45 @@ def deduplicate(paths: list[str]) -> list[str]:
     return list(dict.fromkeys(paths))
 
 
+# PR text can be long; the intent only needs the summary near the top.
+MAX_PR_BODY_CHARS = 8_000
+
+
+def pr_intent() -> str | None:
+    """Title and body of the branch's open PR, or None when there is none.
+
+    `gh` is optional here: without it, or without a PR, commit messages alone
+    carry the intent.
+    """
+    try:
+        result = run(["gh", "pr", "view", "--json", "title,body"])
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    pr = json.loads(result.stdout)
+    body = (pr.get("body") or "").strip()
+    if len(body) > MAX_PR_BODY_CHARS:
+        body = body[:MAX_PR_BODY_CHARS] + "\n\n... [PR body truncated] ..."
+    return f"### {pr.get('title', '').strip()}\n\n{body}".rstrip()
+
+
+def intent_section(pr_text: str | None, commit_log: str) -> list[str]:
+    """Context-pack lines stating what the change is for.
+
+    Reviewers and the fix stage must keep this goal intact; a finding that can
+    only be fixed by undoing it is a conflict to report, not a fix to apply.
+    """
+    lines = ["## Intent", ""]
+    if pr_text:
+        lines.extend(["PR description:", "", pr_text, ""])
+    if commit_log.strip():
+        lines.extend(["Commit messages:", "", "```", commit_log.rstrip(), "```", ""])
+    if len(lines) == 2:
+        lines.extend(["(no PR description or commit messages; infer intent from the diff)", ""])
+    return lines
+
+
 def main() -> int:
     require_git()
 
@@ -170,6 +209,12 @@ def main() -> int:
         diff_uncommitted = git_output(["diff", "--find-renames", "HEAD"])
         untracked_list = untracked_paths
 
+    commit_log = (
+        git_output(["log", "--format=%s%n%n%b", f"{base_commit}..HEAD"])
+        if scope != "uncommitted"
+        else ""
+    )
+
     shortstat_committed = git_output(
         ["diff", "--shortstat", f"{base_commit}...HEAD"]
     ).strip()
@@ -202,6 +247,7 @@ def main() -> int:
         f"- committed_shortstat: {shortstat_committed or '(none)'}",
         f"- uncommitted_shortstat: {shortstat_uncommitted or '(none)'}",
         "",
+        *intent_section(pr_intent(), commit_log),
         "## Changed files",
         "",
     ]

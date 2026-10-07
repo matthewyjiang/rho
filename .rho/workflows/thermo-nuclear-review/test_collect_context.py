@@ -57,5 +57,32 @@ class NameStatusTests(unittest.TestCase):
         )
 
 
+class IntentSectionTests(unittest.TestCase):
+    def test_section_lists_pr_text_then_commits_or_says_none(self) -> None:
+        cases = [
+            (
+                "### feat: x\n\nwhy",
+                "feat: x\n\nbody\n",
+                [
+                    "## Intent", "",
+                    "PR description:", "", "### feat: x\n\nwhy", "",
+                    "Commit messages:", "", "```", "feat: x\n\nbody", "```", "",
+                ],
+            ),
+            (
+                None,
+                "",
+                [
+                    "## Intent", "",
+                    "(no PR description or commit messages; infer intent from the diff)", "",
+                ],
+            ),
+        ]
+        for pr_text, commit_log, expected in cases:
+            self.assertEqual(
+                collect_context.intent_section(pr_text, commit_log), expected
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

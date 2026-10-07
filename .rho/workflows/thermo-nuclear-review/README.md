@@ -8,12 +8,18 @@ until it is merge ready.
 
 0. `ship_preflight` - fails fast when `gh` auth, `bunx`/`npx`, or `timeout`
    is missing, before any review agent runs
-1. `collect_context` - writes a git context pack to `target/thermo-nuclear-review/context.md`
+1. `collect_context` - writes a git context pack to `target/thermo-nuclear-review/context.md`.
+   It opens with an Intent section: the branch PR's title and body (when `gh`
+   finds one) and the commit messages since the base.
 2. Parallel review lanes (only if there are in-scope changes):
    - `structure_judo` - standards 0 and 3 (code judo / design cleaning)
    - `spaghetti_flow` - standards 1, 2, 4, and 7 (file size, spaghetti, magic, orchestration)
    - `boundaries_contracts` - standards 5 and 6 plus correctness, security, performance, and tests
-3. `apply_fixes` - worker applies blocker/major findings from all three lanes
+3. `apply_fixes` - worker applies blocker/major findings from all three lanes.
+   The change's intent comes first: a finding that can only be fixed by
+   removing or gating the behavior the change adds is skipped as
+   `conflicts with intent`, and the stage reports `partial` instead of
+   `fixed`, so the shepherd lists it as an open item.
 4. `no_changes` - cheap no-op path when the change set is empty
 5. Babysit the PR with the `pr-shepherd` agent, on whichever path ran:
    - `ship_and_babysit` (after `apply_fixes`, including `partial` and
