@@ -109,10 +109,10 @@ review of the current branch. It collects one bounded Git context pack, runs
 three read-only review lanes in parallel, then sends their structured findings
 to one worker that applies safe fixes. A final shepherd agent validates,
 commits, and pushes the fixes, opens the PR if none exists, and babysits it
-until it is approved with green CI. It never merges, and it only acts on
-review requests from trusted repository members or verified review bots. If
-the selected scope has no changes, the workflow skips the review and fix
-agents and goes straight to babysitting the branch PR.
+until it is approved with green CI and no unresolved review thread. It never
+merges, and it only acts on review requests from trusted repository members or
+verified review bots. If the selected scope has no changes, the workflow skips
+the review and fix agents and goes straight to babysitting the branch PR.
 
 ```bash
 rho workflow validate .rho/workflows/thermo-nuclear-review/workflow.star
