@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::model::{ContentBlock, Message, ModelError};
 use crate::protocol::openai_responses::lower_codex_history_message;
 
-use super::codex_continuation::CodexContinuationCandidate;
+use super::codex_continuation::{split_request_context, CodexContinuationCandidate};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SteerMode {
@@ -33,27 +33,25 @@ impl PendingSteer {
         if candidate.request_properties != self.request_properties {
             return SteerMatch::FullReplay;
         }
-        if !starts_with_items(&candidate.input, &self.request_input) {
+        let (input, context) = split_request_context(&candidate.input);
+        let (request_input, request_context) = split_request_context(&self.request_input);
+        // Auto-continuation is already running with the original context. A
+        // changed projection cannot be silently dropped: unlike response.create
+        // reuse sends no input frame to deliver it. Replay in that case.
+        if context != request_context {
             return SteerMatch::FullReplay;
         }
-        if !ends_with_items(&candidate.input, &self.steer_items) {
+        let Some(middle) = input
+            .strip_prefix(request_input)
+            .and_then(|remaining| remaining.strip_suffix(self.steer_items.as_slice()))
+        else {
             return SteerMatch::FullReplay;
-        }
-        let middle_end = candidate.input.len() - self.steer_items.len();
-        let middle = &candidate.input[self.request_input.len()..middle_end];
+        };
         if middle.iter().any(blocks_auto_continuation) {
             return SteerMatch::FullReplay;
         }
         SteerMatch::Reuse
     }
-}
-
-fn starts_with_items(input: &[Value], prefix: &[Value]) -> bool {
-    input.len() >= prefix.len() && input[..prefix.len()] == *prefix
-}
-
-fn ends_with_items(input: &[Value], suffix: &[Value]) -> bool {
-    input.len() >= suffix.len() && input[input.len() - suffix.len()..] == *suffix
 }
 
 fn blocks_auto_continuation(item: &Value) -> bool {

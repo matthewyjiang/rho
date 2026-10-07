@@ -48,6 +48,8 @@ A compactor must preserve valid conversation structure and all information the h
 
 The SDK appends this context to provider requests without adding it to conversation history or snapshots. The host owns its persistence and must restore the source before continuing a saved session. Rho uses this for the latest task checklist, including updates made inside `codemode`: summaries need not reproduce it, and stale copies do not accumulate in history.
 
+The Codex adapter tracks the durable conversation prefix separately from trailing model context. Incremental requests send new conversation items plus the current context, so checklist updates do not force a full replay. Earlier context can remain in the server-side response chain, but the fresh projection supplies the latest state. Pending steering auto-continuations are reused only when the context is unchanged; a changed projection requires replay because the server has already begun generating with the old context. Rewritten conversation history still invalidates continuation. Context accounting calibration is independent of transport continuation reuse.
+
 Construct data messages with `Message::model_context(text)`. Providers and other request readers can recognize them with `Message::as_model_context()`; this is attribution, not authentication. The text is data, not a new user request or a grant of authority.
 
 Request context participates in token estimates and provider calibration. Compactors receive raw history and must reserve the mandatory context's footprint when sizing replacement history; the context source itself is not summarized.

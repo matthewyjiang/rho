@@ -2,14 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
-use crate::model::{Message, ModelError, ModelResponse};
+use crate::model::{ContentBlock, Message, ModelError, ModelResponse};
 
 use crate::protocol::openai_responses::codex_input_items;
 
 /// Holds the canonical boundary between a completed Responses request and the
 /// next one. A continuation is valid only when the next locally generated
-/// request starts with the original input plus the locally represented form of
-/// the server response retained here.
+/// durable history starts with the original durable input plus the locally
+/// represented form of the server response retained here. Request-only context
+/// remains on the server but is not part of that local history boundary.
 #[derive(Debug, Default)]
 pub(super) struct CodexContinuationState {
     snapshot: Option<CodexContinuationSnapshot>,
@@ -38,6 +39,10 @@ struct CodexContinuationSnapshot {
 }
 
 impl CodexContinuationCandidate {
+    pub(super) fn history_input(&self) -> &[Value] {
+        split_request_context(&self.input).0
+    }
+
     pub(super) fn from_responses_body(body: &Value) -> Result<Self, ModelError> {
         let input = body
             .get("input")
@@ -67,6 +72,49 @@ impl CodexContinuationCandidate {
         body["previous_response_id"] = Value::String(previous_response_id.into());
         body
     }
+}
+
+/// Only the contiguous trailing SDK-attributed context is ephemeral. Never
+/// remove matching items from the middle of history: rewrites there must still
+/// invalidate continuation. This is attribution, not snapshot authority.
+pub(super) fn split_request_context(input: &[Value]) -> (&[Value], &[Value]) {
+    let history_len = input
+        .iter()
+        .rposition(|item| !is_request_context_item(item))
+        .map_or(0, |index| index + 1);
+    input.split_at(history_len)
+}
+
+fn is_request_context_item(item: &Value) -> bool {
+    let Some(message) = item.as_object().filter(|message| message.len() == 2) else {
+        return false;
+    };
+    if message.get("role").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    let Some(content) = message.get("content").and_then(Value::as_array) else {
+        return false;
+    };
+    fn text(block: &Value) -> Option<&str> {
+        let block = block.as_object().filter(|block| block.len() == 2)?;
+        (block.get("type")?.as_str()? == "input_text")
+            .then(|| block.get("text")?.as_str())
+            .flatten()
+    }
+    let [header, data] = content.as_slice() else {
+        return false;
+    };
+    let (Some(header), Some(_)) = (text(header), text(data)) else {
+        return false;
+    };
+    // Recognition depends on the SDK attribution header, not the payload. Do
+    // not duplicate its literal or copy potentially large checklist data.
+    Message::User(vec![
+        ContentBlock::Text(header.to_owned()),
+        ContentBlock::Text(String::new()),
+    ])
+    .as_model_context()
+    .is_some()
 }
 
 impl CodexContinuationResponse {
@@ -208,15 +256,19 @@ impl CodexContinuationState {
 
         let local_output_items = snapshot.local_output_items.as_deref()?;
         let prefix_length = snapshot.request_input.len() + local_output_items.len();
+        let history_input = candidate.history_input();
         if candidate.input.len() <= prefix_length
-            || !candidate.input.starts_with(&snapshot.request_input)
-            || !candidate.input[snapshot.request_input.len()..].starts_with(local_output_items)
+            || !history_input.starts_with(&snapshot.request_input)
+            || !history_input[snapshot.request_input.len()..].starts_with(local_output_items)
         {
             return None;
         }
 
         Some(candidate.continuation_body(
             &snapshot.response_id,
+            // The server still retains earlier request context. Append the
+            // fresh context after new history rather than resending old context
+            // or treating it as an item that the local transcript must replay.
             candidate.input[prefix_length..].to_vec(),
         ))
     }
@@ -230,10 +282,12 @@ impl CodexContinuationState {
             self.reset();
             return;
         };
+        let mut request_input = candidate.input;
+        request_input.truncate(split_request_context(&request_input).0.len());
         self.snapshot = Some(CodexContinuationSnapshot {
             response_id,
             request_properties: candidate.request_properties,
-            request_input: candidate.input,
+            request_input,
             server_output_items: response.server_output_items,
             local_output_items: response.local_output_items,
         });

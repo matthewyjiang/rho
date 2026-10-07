@@ -1,8 +1,8 @@
 use super::codex_ws_test_support::{
-    body, immediate, read_request_frame, send_completion, tokens, ws_server,
+    body, immediate, read_request_frame, request_body, send_completion, tokens, ws_server,
 };
 use super::*;
-use crate::model::{ContentBlock, ModelResponse};
+use crate::model::{ContentBlock, Message as ModelMessage, ModelResponse};
 use serde_json::json;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::TcpListener;
@@ -82,7 +82,8 @@ fn steer_receiver(
 }
 
 // Covers: a steered completion proves consumption even when its explicit ack
-// is delayed, so the next request reuses the continuation without response.create.
+// is delayed, so the next request reuses the continuation without response.create,
+// even when the SDK projects identical request-only context after the steer.
 // Owner: openai websocket steering
 #[tokio::test]
 async fn steer_reuses_auto_continuation_when_completion_precedes_ack() {
@@ -100,7 +101,10 @@ async fn steer_reuses_auto_continuation_when_completion_precedes_ack() {
         });
     let mut steer_outcomes = None;
     let first_turn = {
-        let body = body(vec![json!({"role":"user","content":"one"})]);
+        let body = request_body(&[
+            ModelMessage::user_text("one"),
+            ModelMessage::model_context("checklist"),
+        ]);
         let tokens = tokens();
         let turn =
             transport.send_responses_turn_steerable(body, &tokens, &mut on_event, &mut steering);
@@ -145,10 +149,11 @@ async fn steer_reuses_auto_continuation_when_completion_precedes_ack() {
     let mut on_event = None;
     let mut steering = None;
     let continuation = immediate(transport.send_responses_turn_steerable(
-        body(vec![
-            json!({"role":"user","content":"one"}),
-            json!({"role":"assistant","content":"partial"}),
-            json!({"role":"user","content":[{"type":"input_text","text":"S1"}]}),
+        request_body(&[
+            ModelMessage::user_text("one"),
+            ModelMessage::Assistant(vec![ContentBlock::Text("partial".into())]),
+            ModelMessage::user_text("S1"),
+            ModelMessage::model_context("checklist"),
         ]),
         &tokens(),
         &mut on_event,
