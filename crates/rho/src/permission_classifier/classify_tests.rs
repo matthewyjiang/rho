@@ -565,7 +565,7 @@ async fn unusable_screen_config_is_reported() {
                 None,
             )),
             Err(format!(
-                "[internal_agents.{DECISION_SCREEN_ID}] kind `decision` needs a model on provider ollama or typesafe, got anthropic/claude-haiku-4-5"
+                "[internal_agents.{DECISION_SCREEN_ID}] kind `decision` needs a model on provider ollama, typesafe, or openai, got anthropic/claude-haiku-4-5"
             )),
         ),
         (

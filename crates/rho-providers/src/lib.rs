@@ -37,9 +37,13 @@ pub(crate) fn rho_user_agent() -> String {
 
 pub mod auth;
 pub mod credentials;
+mod decision_http;
+#[cfg(test)]
+mod decision_test_server;
 pub mod file_lock;
 pub mod model;
 pub(crate) mod openai_compatible_dialect;
+pub mod openai_decisions;
 pub mod paths;
 pub mod protocol;
 pub mod provider;

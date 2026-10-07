@@ -97,12 +97,14 @@ fn api_key_prefers_a_nonblank_env_var_then_the_store() {
 // listed: a decision entry on a model the host did not list, or a text entry
 // on a listed decision model that is not also listed as a chat model, or a
 // decision entry off a decision host. An untagged Ollama name matches its
-// `:latest` tag, and a host that listed nothing gives no basis to warn.
+// `:latest` tag, a host that listed nothing gives no basis to warn, and an
+// untagged OpenAI entry stays text, judged against OpenAI's fixed list, whose
+// models also serve chat.
 // Owner: decision-model config resolution.
 #[test]
 fn kind_mismatch_judges_entries_by_discovered_decision_models() {
     // (name, provider, model, kind, warns)
-    let cases: [(&str, &str, &str, Option<ModelKind>, bool); 9] = [
+    let cases: [(&str, &str, &str, Option<ModelKind>, bool); 12] = [
         ("untagged listed", "ollama", "clef", None, false),
         (
             "tagged listed",
@@ -133,11 +135,32 @@ fn kind_mismatch_judges_entries_by_discovered_decision_models() {
             true,
         ),
         ("host never listed", "typesafe", "jev-latest", None, false),
-        ("text host", "openai", "gpt-5", None, false),
+        ("untagged openai chat model", "openai", "gpt-5", None, false),
         (
-            "decision kind on a text host",
+            "decision kind on an openai chat model",
             "openai",
             "gpt-5",
+            Some(ModelKind::Decision),
+            true,
+        ),
+        (
+            "decision on openai's decision model",
+            "openai",
+            "gpt-6-luna",
+            Some(ModelKind::Decision),
+            false,
+        ),
+        (
+            "text on openai's decision model",
+            "openai",
+            "gpt-6-luna",
+            Some(ModelKind::Text),
+            false,
+        ),
+        (
+            "decision kind on a text host",
+            "anthropic",
+            "claude-haiku-4-5",
             Some(ModelKind::Decision),
             true,
         ),

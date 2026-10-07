@@ -9,7 +9,8 @@ use rho_sdk::{
 use serde_json::json;
 use url::Url;
 
-use super::{test_server::serve_once as server, SystemOneLimits, SystemOneModel};
+use super::{SystemOneLimits, SystemOneModel};
+use crate::decision_test_server::serve_once as server;
 
 const VERDICT: Question<'static> = Question::choice(
     "verdict",

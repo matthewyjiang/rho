@@ -3,30 +3,49 @@
 //! A feature that can use a decision model names it in its own
 //! `[internal_agents.<entry>]` table: a provider, a model, an auth mode, and a
 //! `kind`. A `decision` model must be on one of [`HOSTS`], the providers whose
-//! servers speak the System One API. A `text` model is any chat model, asked
-//! through the text adapter. Without `kind`, a model on a host is a decision
-//! model and any other is text, which is how entries written before `kind`
-//! existed read.
+//! servers speak the System One API or OpenAI's Decisions API. A `text` model
+//! is any chat model, asked through the text adapter. Without `kind`, a model
+//! on a System One host is a decision model and any other is text, which is
+//! how entries written before `kind` existed read.
 
 use anyhow::Context;
 use rho_providers::{
     credentials::auth_has_stored_credentials,
-    model::{decision_models::cached_decision_models, provider_models::cached_provider_models},
+    model::{
+        decision_models::{cached_decision_models, lists_decision_models},
+        provider_models::cached_provider_models,
+    },
+    openai_decisions::{OpenAiDecisionsModel, OPENAI_API_BASE},
     provider::{provider_descriptor, ProviderAuthKind, ProviderDescriptor},
     system_one::{SystemOneLimits, SystemOneModel},
     CredentialStore,
 };
 use rho_sdk::{decision::DecisionModel, SecretString};
+use url::Url;
 
 use crate::{
     config::{Config, ModelKind, RhoInternalAgentModel},
     credential_store::AppCredentialStore,
 };
 
-/// A provider whose server speaks the System One API, with what it accepts.
+/// A provider whose server serves decision models.
 struct Host {
     provider: &'static str,
-    limits: SystemOneLimits,
+    protocol: Protocol,
+    /// The kind of an entry without `kind`. Entries written before `kind`
+    /// existed named a System One host only for a decision model; OpenAI
+    /// became a host later, so its untyped entries stay the chat models they
+    /// always named.
+    untyped_kind: ModelKind,
+}
+
+/// The API a host serves decision models over.
+#[derive(Clone, Copy)]
+enum Protocol {
+    /// `{api_base}/systemone`, with what the server accepts.
+    SystemOne(SystemOneLimits),
+    /// `{api_base}/decisions`, at [`OPENAI_API_BASE`] unless configured.
+    OpenAiDecisions,
 }
 
 /// Cloudflare Workers AI also serves Clef, but truncates every state to its
@@ -35,16 +54,23 @@ struct Host {
 const HOSTS: &[Host] = &[
     Host {
         provider: "ollama",
-        limits: SystemOneLimits::OLLAMA,
+        protocol: Protocol::SystemOne(SystemOneLimits::OLLAMA),
+        untyped_kind: ModelKind::Decision,
     },
     Host {
         provider: "typesafe",
-        limits: SystemOneLimits::TYPESAFE,
+        protocol: Protocol::SystemOne(SystemOneLimits::TYPESAFE),
+        untyped_kind: ModelKind::Decision,
+    },
+    Host {
+        provider: "openai",
+        protocol: Protocol::OpenAiDecisions,
+        untyped_kind: ModelKind::Text,
     },
 ];
 
 /// The host providers, for messages.
-const HOST_NAMES: &str = "ollama or typesafe";
+const HOST_NAMES: &str = "ollama, typesafe, or openai";
 
 /// An unusable decision-model entry. Messages name only configured values,
 /// never secrets, so a feature can show them to the user.
@@ -109,20 +135,20 @@ pub(crate) enum EntryModel<'a> {
 }
 
 /// Whether `selection` is asked as a decision model or as text: its `kind`,
-/// else decision on a host and text elsewhere.
+/// else its host's untyped kind, else text.
 pub(crate) fn entry_kind(selection: &RhoInternalAgentModel) -> ModelKind {
     selection.kind.unwrap_or_else(|| {
-        if is_decision_host(&selection.provider) {
-            ModelKind::Decision
-        } else {
-            ModelKind::Text
-        }
+        host(&selection.provider).map_or(ModelKind::Text, |host| host.untyped_kind)
     })
+}
+
+fn host(provider: &str) -> Option<&'static Host> {
+    HOSTS.iter().find(|host| host.provider == provider)
 }
 
 /// Whether `provider` serves decision models.
 fn is_decision_host(provider: &str) -> bool {
-    HOSTS.iter().any(|host| host.provider == provider)
+    host(provider).is_some()
 }
 
 /// The discovered decision model on `provider` that `model` names, if any.
@@ -141,7 +167,8 @@ fn names_listed_model(model: &str, listed: &str) -> bool {
 /// Why `selection` likely names the wrong kind, judged by its provider and
 /// the models discovered there. `None` when it matches, or when nothing was
 /// discovered to judge by. A model listed both as a decision model and as a
-/// chat model suits either kind.
+/// chat model suits either kind, as does one on a fixed list (OpenAI's
+/// decision models also serve chat).
 pub(crate) fn kind_mismatch(selection: &RhoInternalAgentModel) -> Option<String> {
     let RhoInternalAgentModel {
         provider, model, ..
@@ -157,7 +184,7 @@ pub(crate) fn kind_mismatch(selection: &RhoInternalAgentModel) -> Option<String>
             let chat = cached_provider_models(provider)
                 .iter()
                 .any(|listed| names_listed_model(model, &listed.model));
-            (discovered && !chat)
+            (discovered && !chat && lists_decision_models(provider))
                 .then(|| format!("{model} on {provider} is a decision model, not a text model"))
         }
     }
@@ -203,13 +230,12 @@ pub(crate) fn resolve<'a>(
             }
             return Ok(Some(EntryModel::Text(selection)));
         }
-        ModelKind::Decision => HOSTS
-            .iter()
-            .find(|host| host.provider == selection.provider)
-            .ok_or_else(|| ConfigError::NotOnDecisionHost {
+        ModelKind::Decision => {
+            host(&selection.provider).ok_or_else(|| ConfigError::NotOnDecisionHost {
                 entry,
                 configured: configured.display_reference(),
-            })?,
+            })?
+        }
     };
     let api_key = api_key(
         entry,
@@ -218,12 +244,29 @@ pub(crate) fn resolve<'a>(
         &|name| std::env::var(name).ok(),
         &AppCredentialStore,
     )?;
-    let api_base = config
-        .resolved_provider_endpoint(host.provider)
-        .with_context(|| format!("{} has no API base URL", host.provider))?;
-    let model =
-        SystemOneModel::new(&api_base, selection.model.clone(), api_key)?.with_limits(host.limits);
-    Ok(Some(EntryModel::Decision(Box::new(model))))
+    let api_base = config.resolved_provider_endpoint(host.provider);
+    let model: Box<dyn DecisionModel> = match host.protocol {
+        Protocol::SystemOne(limits) => {
+            let api_base =
+                api_base.with_context(|| format!("{} has no API base URL", host.provider))?;
+            Box::new(
+                SystemOneModel::new(&api_base, selection.model.clone(), api_key)?
+                    .with_limits(limits),
+            )
+        }
+        Protocol::OpenAiDecisions => {
+            let api_base = match api_base {
+                Some(api_base) => api_base,
+                None => Url::parse(OPENAI_API_BASE)?,
+            };
+            Box::new(OpenAiDecisionsModel::new(
+                &api_base,
+                selection.model.clone(),
+                api_key,
+            )?)
+        }
+    };
+    Ok(Some(EntryModel::Decision(model)))
 }
 
 /// Whether `auth`, one of `descriptor`'s modes, has a credential: a

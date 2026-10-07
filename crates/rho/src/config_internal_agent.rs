@@ -9,7 +9,8 @@ use {crate::model_aliases::ModelAliases, rho_providers::reasoning::ReasoningLeve
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelKind {
-    /// Over the System One API, on a decision-model host.
+    /// Over a decision API (System One or OpenAI's Decisions), on a host
+    /// that serves decision models.
     Decision,
     /// As a chat model, through the text adapter.
     Text,

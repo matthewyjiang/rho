@@ -43,6 +43,9 @@ The runtime registry includes:
 - `typesafe`, a decision-model host: it serves the System One API through
   `system_one::SystemOneModel`, not chat
 
+`openai_decisions::OpenAiDecisionsModel` asks OpenAI's Decisions API
+(`POST /v1/decisions`) with the `openai` provider's API key.
+
 ## Usage
 
 This example builds an OpenAI provider from an explicit OS credential store,
