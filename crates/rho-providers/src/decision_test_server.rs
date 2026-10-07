@@ -1,4 +1,4 @@
-//! A one-request System One server for tests.
+//! A one-request decision server for tests of the decision-model clients.
 
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ use tokio::{
 use url::Url;
 
 /// The request a [`serve_once`] server received.
-pub(super) struct Received {
+pub(crate) struct Received {
     pub request_line: String,
     pub authorization: Option<String>,
     pub body: Value,
@@ -20,7 +20,7 @@ pub(super) struct Received {
 
 /// Serves one HTTP request with `status` and `body` under the returned base,
 /// `http://127.0.0.1:PORT/v1`.
-pub(super) async fn serve_once(
+pub(crate) async fn serve_once(
     status: u16,
     body: String,
 ) -> (Url, tokio::task::JoinHandle<Received>) {
@@ -67,7 +67,7 @@ pub(super) async fn serve_once(
             }
         })
         .await
-        .expect("mock System One request timed out")
+        .expect("mock decision request timed out")
     });
     (base, task)
 }

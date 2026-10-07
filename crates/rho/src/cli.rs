@@ -340,7 +340,8 @@ pub struct ClassifierEvalArgs {
     #[arg(long, value_name = "MODEL")]
     pub model: Option<String>,
     /// Model that answers the screen, as `provider/model`: a decision model on
-    /// ollama or typesafe, a text model on any other chat provider. Default:
+    /// ollama or typesafe, a text model on any other chat provider (an openai
+    /// model is text unless `kind = "decision"` is set in config). Default:
     /// `[internal_agents.permission-classifier-screen]`, or the classifier
     /// model when that is unset.
     #[arg(long, value_name = "MODEL")]

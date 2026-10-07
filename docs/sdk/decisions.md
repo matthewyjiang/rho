@@ -1,6 +1,6 @@
 # Decisions
 
-The `decision` module asks typed questions about a state and returns one typed answer per question. A decision model answers them over the System One API (`POST /v1/systemone`): TypeSafe's Jev, Cloudflare's Clef, and the decision models Ollama serves locally. A text model answers the same questions through `decision::text::TextDecisionModel`, so a feature written against `DecisionModel` runs on either.
+The `decision` module asks typed questions about a state and returns one typed answer per question. A decision model answers them over the System One API (`POST /v1/systemone`): TypeSafe's Jev, Cloudflare's Clef, and the decision models Ollama serves locally; or over OpenAI's Decisions API (`POST /v1/decisions`): `gpt-6-luna`. A text model answers the same questions through `decision::text::TextDecisionModel`, so a feature written against `DecisionModel` runs on either.
 
 ## Questions
 
@@ -62,6 +62,8 @@ Each question becomes a pick-one over answer IDs: option IDs for a choice, `true
 ## Decision-model clients
 
 The core crate has no network client. `rho-providers` has `system_one::SystemOneModel`, a System One client that takes an API base such as `http://localhost:11434/v1` or `https://api.typesafe.ai/v1`, a model name, and an optional API key sent as a bearer token. `SystemOneLimits` makes a request over a server's body limit or a model's state budget fail before it is sent, naming the limit and the asked size; `SystemOneLimits::OLLAMA` holds Ollama's.
+
+`openai_decisions::OpenAiDecisionsModel` is an OpenAI Decisions API client with the same arguments, for an API base such as `https://api.openai.com/v1` (`OPENAI_API_BASE`). A noul question is sent as a `predicate`, with its criteria appended to its instructions; a score level is sent with its zero-based index as its label. Its state budget is `gpt-6-luna`'s 922,000 input tokens with headroom.
 
 `DecisionModel::state_budget` reports the largest state a model accepts, in `model::context::estimate_text_tokens`. A caller with a longer state shortens it first.
 

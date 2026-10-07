@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use rho_providers::{
-    model::decision_models::{cached_decision_models, lists_decision_models},
+    model::decision_models::{cached_decision_models, serves_decision_models},
     provider,
 };
 
@@ -318,7 +318,7 @@ fn screen_selection(info: &RuntimeModelView) -> ScreenSelection {
 fn discovered_decision_models(available_auths: &[String]) -> Vec<(String, String)> {
     provider::providers()
         .iter()
-        .filter(|descriptor| lists_decision_models(descriptor.name))
+        .filter(|descriptor| serves_decision_models(descriptor.name))
         .filter(|descriptor| {
             descriptor
                 .auth_modes()

@@ -146,7 +146,7 @@ pub(super) enum InternalAgentModelRow {
     ClaudeCode { model: Option<String> },
     /// A Rho `provider/model` reference to resolve against the catalog.
     RhoModel(String),
-    /// A decision model, asked over the System One API.
+    /// A decision model, asked over its host's decision API.
     Decision { provider: String, model: String },
 }
 
@@ -391,8 +391,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
         PickerItem {
             section: Some("Decision models".into()),
             detail: Some(
-                "Answers with a probability over the System One API, without writing a review."
-                    .into(),
+                "Answers with a probability for each option, without writing a review.".into(),
             ),
             badge: selected_badge(selected),
             ..PickerItem::new(

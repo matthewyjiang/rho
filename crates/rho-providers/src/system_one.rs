@@ -98,10 +98,7 @@ impl SystemOneModel {
             .map_err(|()| SystemOneSetupError::BaseUrl)?
             .pop_if_empty()
             .push("systemone");
-        let client = crate::tls::reqwest_client_builder()
-            .timeout(TIMEOUT)
-            .build()
-            .map_err(|error| SystemOneSetupError::Client(error.without_url()))?;
+        let client = crate::decision_http::client(TIMEOUT).map_err(SystemOneSetupError::Client)?;
         Ok(Self {
             client,
             url,
@@ -134,31 +131,14 @@ impl SystemOneModel {
             }
         }
         let body = request_body(&self.model, request, self.limits.max_body_bytes)?;
-        let response = async {
-            let mut post = self
-                .client
-                .post(self.url.clone())
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body);
-            if let Some(api_key) = &self.api_key {
-                post = post.bearer_auth(api_key.expose_secret());
-            }
-            let response = post.send().await?;
-            let status = response.status();
-            let text = response.text().await?;
-            reqwest::Result::Ok((status, text))
-        };
-        let (status, text) = tokio::select! {
-            () = cancellation.cancelled() => return Err(DecisionError::Cancelled),
-            // Without the URL, which may carry credentials of its own.
-            response = response => response
-                .map_err(|error| DecisionError::Model(Box::new(error.without_url())))?,
-        };
-        if !status.is_success() {
-            return Err(DecisionError::Status {
-                status: status.as_u16(),
-            });
-        }
+        let text = crate::decision_http::post_json(
+            &self.client,
+            &self.url,
+            self.api_key.as_ref(),
+            body,
+            cancellation,
+        )
+        .await?;
         // A parse error quotes the response, so it is replaced, not kept as
         // the source.
         let response: ResponseBody = serde_json::from_str(&text)
@@ -416,10 +396,6 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for UniqueMap<V> {
         deserializer.deserialize_map(Visitor(std::marker::PhantomData))
     }
 }
-
-#[cfg(test)]
-#[path = "system_one/test_server.rs"]
-mod test_server;
 
 #[cfg(test)]
 #[path = "system_one_tests.rs"]

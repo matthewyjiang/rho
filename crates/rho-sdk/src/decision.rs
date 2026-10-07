@@ -17,8 +17,8 @@
 //! A text model reports none, and its answers say so instead of inventing
 //! certainty.
 //!
-//! The core crate has no network client. Rho's System One client lives in
-//! `rho-providers`.
+//! The core crate has no network client. Rho's System One and OpenAI
+//! Decisions API clients live in `rho-providers`.
 //!
 //! ```
 //! use rho_sdk::decision::{ChoiceOption, DecisionRequest, Question};
@@ -510,8 +510,8 @@ fn valid_distribution(probabilities: &[f64]) -> bool {
 pub type DecisionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<Answer>, DecisionError>> + Send + 'a>>;
 
-/// Answers [`DecisionRequest`]s: a decision model over the System One API,
-/// or a text model through [`text::TextDecisionModel`].
+/// Answers [`DecisionRequest`]s: a decision model over a decision API (System
+/// One, OpenAI's Decisions), or a text model through [`text::TextDecisionModel`].
 ///
 /// Implementors return one answer per question, in question order and of
 /// the question's kind, or an error; never a default answer, so a caller can

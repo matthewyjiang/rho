@@ -52,6 +52,20 @@ rho --provider openai --auth api-key --model gpt-5.6-sol run "hello"
 
 Provide `OPENAI_API_KEY` in the automation environment or log in once through the TUI so Rho can read the stored key.
 
+## Decision models
+
+OpenAI also serves decision models over the [Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`), which answer typed questions with a probability for each option. Rho can use `gpt-6-luna` there as the [permission screen](/configuration/permissions#decision-models). Pick it under **Decision models** in the screen-model picker, or set it in config:
+
+```toml
+[internal_agents.permission-classifier-screen]
+provider = "openai"
+model = "gpt-6-luna"
+auth = "api-key"
+kind = "decision"
+```
+
+`kind = "decision"` is required: an OpenAI entry without it is asked as a text model. The Decisions API bills input tokens only.
+
 ## Notes
 
 - OpenAI API-key requests use the Chat Completions API and do not currently send a [reasoning](/configuration#reasoning-options) configuration.

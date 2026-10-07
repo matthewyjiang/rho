@@ -1,9 +1,11 @@
-//! Discover and cache models that answer typed questions over the System One API.
+//! Discover and cache models that answer typed questions: over the System One
+//! API, or over OpenAI's Decisions API.
 //!
 //! Ollama advertises decision models through native `/api/tags` capabilities;
 //! every model returned by TypeSafe's `/models` is a decision model. These lists
 //! are separate from chat discovery but share its HTTP authentication, timeout,
 //! and SQLite cache location. Only successful refreshes replace cached rows.
+//! OpenAI's `/models` marks no model as a decision model, so its list is fixed.
 
 use reqwest::Url;
 use rusqlite::{params, Connection};
@@ -19,9 +21,15 @@ use super::provider_models::{
     authorized_models_get, ollama::native_root, open_provider_models_cache, provider_models_client,
 };
 
-/// Decision models last discovered on `provider`, sorted and deduplicated.
-/// Empty when the provider was never refreshed or serves none.
+/// Decision models last discovered on `provider`, sorted and deduplicated,
+/// or its fixed list. Empty when the provider was never refreshed or serves
+/// none.
 pub fn cached_decision_models(provider: &str) -> Vec<String> {
+    if let Some(models) = provider::provider_descriptor(provider)
+        .and_then(|descriptor| fixed_decision_models(descriptor.id))
+    {
+        return models.iter().map(|&model| model.to_owned()).collect();
+    }
     let Ok(connection) = open_cache() else {
         return Vec::new();
     };
@@ -114,11 +122,47 @@ pub async fn refresh_decision_models_with_store(
     Ok(models)
 }
 
-/// Whether `provider` can list decision models (ollama, typesafe).
+/// Whether `provider` can list decision models from its server (ollama,
+/// typesafe), so a model refresh refreshes them too.
 pub fn lists_decision_models(provider: &str) -> bool {
     provider::provider_descriptor(provider)
         .and_then(|descriptor| discovery_host(descriptor.id))
         .is_some()
+}
+
+/// Whether [`cached_decision_models`] can name models on `provider`: it lists
+/// them, or has a fixed list (openai).
+pub fn serves_decision_models(provider: &str) -> bool {
+    provider::provider_descriptor(provider).is_some_and(|descriptor| {
+        discovery_host(descriptor.id).is_some() || fixed_decision_models(descriptor.id).is_some()
+    })
+}
+
+/// OpenAI's decision models, from its Decisions guide: "gpt-6-luna is the
+/// only model currently available".
+const OPENAI_DECISION_MODELS: &[&str] = &["gpt-6-luna"];
+
+fn fixed_decision_models(id: ProviderId) -> Option<&'static [&'static str]> {
+    match id {
+        ProviderId::OpenAi => Some(OPENAI_DECISION_MODELS),
+        ProviderId::Ollama
+        | ProviderId::TypeSafe
+        | ProviderId::OllamaCloud
+        | ProviderId::OpenAiCodex
+        | ProviderId::Anthropic
+        | ProviderId::Google
+        | ProviderId::GithubCopilot
+        | ProviderId::Xai
+        | ProviderId::Moonshot
+        | ProviderId::Poolside
+        | ProviderId::OpenRouter
+        | ProviderId::KimiCode
+        | ProviderId::QwenTokenPlan
+        | ProviderId::Meta
+        | ProviderId::OpenCodeGo
+        | ProviderId::MiniMax
+        | ProviderId::OpenAiCompatible => None,
+    }
 }
 
 /// Replaces `provider`'s cached decision models through the production write path.

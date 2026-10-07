@@ -95,7 +95,7 @@
 //! which cannot request capabilities beyond their prepared declaration.
 //!
 //! A [`DecisionModel`](crate::decision::DecisionModel) answers typed questions
-//! about a state, either from a decision model over the System One API or from
+//! about a state, either from a decision model over a decision API or from
 //! any `ModelProvider` through
 //! [`TextDecisionModel`](crate::decision::text::TextDecisionModel).
 //!
