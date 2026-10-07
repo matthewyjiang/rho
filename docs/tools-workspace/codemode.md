@@ -79,26 +79,28 @@ independent calls with `call_tools`. There is no `tools.<name>` namespace.
 Each result is a native Starlark dictionary with three string keys. Use bracket
 indexing, not dot access:
 
-- `is_error`: `True` for a completed tool failure, such as a shell command that
+- `"is_error"`: `True` for a completed tool failure, such as a shell command that
   exited nonzero or an MCP `isError` response, and for invocation errors returned
   by `call_tools`, such as denial or invalid arguments.
-- `content`: the text the model would have seen from a direct call.
-- `data`: the tool's structured result, or `None` when the tool returns text only
+- `"content"`: the text the model would have seen from a direct call.
+- `"data"`: the tool's structured result, or `None` when the tool returns text only
   or the value exceeds the tool output limit. See
   [Structured output](/sdk/tools#structured-output) for built-in result shapes.
 
 `call_tool` returns completed failures as values, so the script can branch on
-`is_error`. Invocation errors, including denial, invalid arguments, and errors
-that prevent a completed output, raise a script error instead.
+`response["is_error"]` when the result is named `response`. Invocation errors,
+including denial, invalid arguments, and errors that prevent a completed output,
+raise a script error instead.
 
 `call_tools` runs independent calls concurrently, up to 4 at once. That is the
 same limit Rho applies to a parallel tool batch from the model. A script must
 make dependent calls in order itself. Invocation errors in a batch become
-per-item `{is_error: True, content, data: None}` envelopes; sibling calls keep
-going and results stay in input order. Parent cancellation and rejection of
+per-item dictionaries with `"is_error": True`, error text in `"content"`, and
+`"data": None`; sibling calls keep going and results stay in input order.
+Parent cancellation and rejection of
 the whole batch for exceeding the nested-call budget fail the script instead.
-Check every returned envelope before using its data, including batch results.
-A non-error envelope can still have `data: None` for text-only or oversized
+Check every returned dictionary before using its data, including batch results.
+A non-error result can still have `"data": None` for text-only or oversized
 results.
 
 Result dictionaries support normal dictionary operations such as `dict()`,
