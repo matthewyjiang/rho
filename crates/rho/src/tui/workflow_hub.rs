@@ -613,13 +613,6 @@ impl App {
         let created = ops
             .recheck_plan(&plan)
             .and_then(|()| ops.create_confirmed_run(&plan));
-        // This plan belongs only to this launch. Runs keep their own frozen
-        // graph, while explicitly saved plans remain reusable in the hub.
-        if let Err(error) = ops.delete_workspace_plan(plan.manifest.plan_id) {
-            self.insert_entry(&Entry::Error(format!(
-                "could not remove launch plan: {error:#}"
-            )));
-        }
         let run = match created {
             Ok(run) => run,
             Err(error) => {
@@ -628,6 +621,13 @@ impl App {
                 return Ok(());
             }
         };
+        // Remove this launch-only plan only after the run owns its frozen graph.
+        // Failed launches retain the plan for retry; explicitly saved plans stay reusable.
+        if let Err(error) = ops.delete_workspace_plan(plan.manifest.plan_id) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not remove launch plan: {error:#}"
+            )));
+        }
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
