@@ -81,8 +81,10 @@ impl ClaudeTool {
             Self::WebSearch | Self::WebFetch => ToolFamily::Web,
             Self::Skill => ToolFamily::Skill,
             Self::Task => ToolFamily::Agent,
-            Self::AskUserQuestion | Self::ExitPlanMode | Self::EnterPlanMode => ToolFamily::Form,
-            Self::TodoWrite | Self::Mcp | Self::Other => ToolFamily::Default,
+            Self::AskUserQuestion | Self::ExitPlanMode | Self::EnterPlanMode | Self::TodoWrite => {
+                ToolFamily::Form
+            }
+            Self::Mcp | Self::Other => ToolFamily::Default,
         }
     }
 }

@@ -20,9 +20,9 @@ pub(crate) fn push_checklist_facts<'a>(
             continue;
         }
         let marker = match status {
-            ChecklistStatus::Completed => "☑",
-            ChecklistStatus::InProgress => "◐",
-            ChecklistStatus::Pending => "☐",
+            ChecklistStatus::Completed => "✓",
+            ChecklistStatus::InProgress => "▸",
+            ChecklistStatus::Pending => "○",
         };
         card.push_fact(ToolFact::Text {
             text: format!("{marker} {text}"),

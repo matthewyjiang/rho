@@ -654,12 +654,10 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
         }
-        ToolKind::Questionnaire | ToolKind::ExitPlanMode => ToolFamily::Form,
-        ToolKind::Mcp
-        | ToolKind::Sessions
-        | ToolKind::Codemode
-        | ToolKind::ToolSearch
-        | ToolKind::Todo => ToolFamily::Default,
+        ToolKind::Questionnaire | ToolKind::ExitPlanMode | ToolKind::Todo => ToolFamily::Form,
+        ToolKind::Mcp | ToolKind::Sessions | ToolKind::Codemode | ToolKind::ToolSearch => {
+            ToolFamily::Default
+        }
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),
