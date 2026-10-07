@@ -107,8 +107,14 @@ would.
 The repository includes `.rho/workflows/thermo-nuclear-review/` for a deep
 review of the current branch. It collects one bounded Git context pack, runs
 three read-only review lanes in parallel, then sends their structured findings
-to one worker that applies safe fixes. If the selected scope has no changes,
-the workflow takes a no-op path instead of starting review agents.
+to one worker that applies safe fixes locally. Publishing is opt-in: with
+`ship=true`, a preflight checks shipping prerequisites and requires a clean
+index and working tree before review. A final shepherd validates and commits
+verified fix-stage edits, pushes, opens the PR if needed, and babysits it
+until approval, green required checks, and no unresolved threads. It only
+acts on review requests from trusted repository members/collaborators or
+verified review bots, and never merges. If the selected scope has no changes,
+the workflow takes a cheap terminal no-op path even with shipping enabled.
 
 ```bash
 rho workflow validate .rho/workflows/thermo-nuclear-review/workflow.star
