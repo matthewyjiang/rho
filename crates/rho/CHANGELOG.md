@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.19.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.18.0...rho-coding-agent-v2.19.0) (2026-10-07)
+
+
+### Features
+
+* **agents:** teach the agent creator antigravity and cursor, drop save_agent from every request ([#1422](https://github.com/matthewyjiang/rho/issues/1422)) ([7cda74b](https://github.com/matthewyjiang/rho/commit/7cda74bbf57c74393e5cff77c4dc9d93e0303cc3))
+* **antigravity:** delegate subagents to google antigravity over acp ([#1419](https://github.com/matthewyjiang/rho/issues/1419)) ([8e9c866](https://github.com/matthewyjiang/rho/commit/8e9c86610f756931bb210b96eabf6d859a3339a0))
+* **antigravity:** install the acp server from /login antigravity ([#1423](https://github.com/matthewyjiang/rho/issues/1423)) ([e378524](https://github.com/matthewyjiang/rho/commit/e378524e67596f9360f3dae533d493a9c41a3643))
+* **antigravity:** show antigravity install and sign-in in doctor and info ([#1421](https://github.com/matthewyjiang/rho/issues/1421)) ([002f710](https://github.com/matthewyjiang/rho/commit/002f710115ab6e2bfa78d8fdb10571eaf04ad3e9))
+* **cursor:** fence and steer cursor subagents over acp ([#1414](https://github.com/matthewyjiang/rho/issues/1414)) ([fc006ac](https://github.com/matthewyjiang/rho/commit/fc006ac14718fe2f941c4daafcfe7c0b3b82a0ba))
+* **hooks:** give after_tool_use hooks the real exit code and output of shell calls ([#1395](https://github.com/matthewyjiang/rho/issues/1395)) ([fad8ab5](https://github.com/matthewyjiang/rho/commit/fad8ab5aeb99891ff09bb294fb3d2f808c4c6866))
+* **permissions:** hand off from plan mode with exit_plan_mode ([#1412](https://github.com/matthewyjiang/rho/issues/1412)) ([582ecae](https://github.com/matthewyjiang/rho/commit/582ecae623646d364bbfe30ce2ccf6ecf7754755))
+* **providers:** add OpenAI's Decisions API as a decision-model host for the permission screen ([#1433](https://github.com/matthewyjiang/rho/issues/1433)) ([14688fe](https://github.com/matthewyjiang/rho/commit/14688fe1cb20a93c4869a4053500549e51b622b5))
+* **rewind:** turn workspace rewind on by default ([#1410](https://github.com/matthewyjiang/rho/issues/1410)) ([45fc9da](https://github.com/matthewyjiang/rho/commit/45fc9dae1cf28ff74d77dfd901af54c2403a2210))
+* **tools:** add a todo checklist tool ([#1411](https://github.com/matthewyjiang/rho/issues/1411)) ([293ceaa](https://github.com/matthewyjiang/rho/commit/293ceaae516ead32bc690beeb1d9f580a6d70647))
+* **tui:** add /init to create or update project AGENTS.md ([#1409](https://github.com/matthewyjiang/rho/issues/1409)) ([929ffa6](https://github.com/matthewyjiang/rho/commit/929ffa615efba9dc4f371ee05ac3b41ec509ffdd))
+* **tui:** add /remember to append standing instructions to AGENTS.md ([#1406](https://github.com/matthewyjiang/rho/issues/1406)) ([a9df3b3](https://github.com/matthewyjiang/rho/commit/a9df3b3291bcdba500addf68b6cd7b56508cd4d5))
+* **tui:** ctrl+r searches prompt history instead of nuking the session ([#1405](https://github.com/matthewyjiang/rho/issues/1405)) ([4d6d354](https://github.com/matthewyjiang/rho/commit/4d6d354ff7c380867dea63870ad5fea802516e3d))
+* **tui:** cycle permission modes with Alt+M ([#1413](https://github.com/matthewyjiang/rho/issues/1413)) ([fd3a8c8](https://github.com/matthewyjiang/rho/commit/fd3a8c8c34af7cf193b8b65488e593b268e77d1c))
+* **tui:** make workflow json outputs readable instead of a wrapped blob ([#1432](https://github.com/matthewyjiang/rho/issues/1432)) ([5e435d6](https://github.com/matthewyjiang/rho/commit/5e435d634aec1ebc0653af1948c5e9d581fa5046))
+* **tui:** nest delegated runtimes under their vendor in /login ([#1428](https://github.com/matthewyjiang/rho/issues/1428)) ([8cd019f](https://github.com/matthewyjiang/rho/commit/8cd019fa1bb261b905437b1f2a1f71af8136d305))
+* **tui:** notify when a turn finishes or needs you while the terminal is unfocused ([#1404](https://github.com/matthewyjiang/rho/issues/1404)) ([24fb55a](https://github.com/matthewyjiang/rho/commit/24fb55ab19c6178c6431f3a9fe54925f62bc336e))
+* **tui:** show prompt history search as a single-pane list ([#1420](https://github.com/matthewyjiang/rho/issues/1420)) ([e7abf34](https://github.com/matthewyjiang/rho/commit/e7abf34448c8b5331c60588d408938eb7399b741))
+* **tui:** show tool_search results as a compact card instead of raw schemas ([#1399](https://github.com/matthewyjiang/rho/issues/1399)) ([04fd828](https://github.com/matthewyjiang/rho/commit/04fd82820adb27aedf6159d471d8ac5a092324b4))
+* **tui:** side chat prompt now edits exactly like the main composer ([#1396](https://github.com/matthewyjiang/rho/issues/1396)) ([ab254e0](https://github.com/matthewyjiang/rho/commit/ab254e02f383f9844753b5d594166fe7301946da))
+
+
+### Bug Fixes
+
+* **prompt:** release the model prompt catalog lock explicitly ([#1416](https://github.com/matthewyjiang/rho/issues/1416)) ([df00067](https://github.com/matthewyjiang/rho/commit/df00067a347d659251210dafa867034d026977de))
+* **providers:** codex parents no longer die when they end a turn empty ([#1426](https://github.com/matthewyjiang/rho/issues/1426)) ([e97ac1e](https://github.com/matthewyjiang/rho/commit/e97ac1e72175d14432c9a0eef41f981056ced7ca))
+* **session:** keep the system prompt after /new ([#1408](https://github.com/matthewyjiang/rho/issues/1408)) ([e904053](https://github.com/matthewyjiang/rho/commit/e90405365ca84b59f6ad48c89ab18d0d5f757d49))
+* **session:** release session leases explicitly ([#1417](https://github.com/matthewyjiang/rho/issues/1417)) ([dce3ba3](https://github.com/matthewyjiang/rho/commit/dce3ba3294e340bd634f754bf0ee952dbf73041b))
+* **tui:** stop drag-copy from pasting stray spaces at line starts ([#1418](https://github.com/matthewyjiang/rho/issues/1418)) ([382f4c1](https://github.com/matthewyjiang/rho/commit/382f4c10c9c491eb661bd6cb6bce863d6aa7d35e))
+* **tui:** stop the cursor flickering and jumping during redraws ([#1398](https://github.com/matthewyjiang/rho/issues/1398)) ([cc18d0d](https://github.com/matthewyjiang/rho/commit/cc18d0dc5744bf628ddbb0de63507b5cf885980c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.14.0 to 2.15.0
+
 ## [2.18.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.17.1...rho-coding-agent-v2.18.0) (2026-10-04)
 
 

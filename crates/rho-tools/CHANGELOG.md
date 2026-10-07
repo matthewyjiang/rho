@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.7.0...rho-agent-tools-v1.8.0) (2026-10-07)
+
+
+### Features
+
+* **hooks:** give after_tool_use hooks the real exit code and output of shell calls ([#1395](https://github.com/matthewyjiang/rho/issues/1395)) ([fad8ab5](https://github.com/matthewyjiang/rho/commit/fad8ab5aeb99891ff09bb294fb3d2f808c4c6866))
+
 ## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.6.0...rho-agent-tools-v1.7.0) (2026-10-04)
 
 
