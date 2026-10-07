@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.8.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.7.0...rho-sdk-v5.8.0) (2026-10-07)
+
+
+### Features
+
+* **hooks:** give after_tool_use hooks the real exit code and output of shell calls ([#1395](https://github.com/matthewyjiang/rho/issues/1395)) ([fad8ab5](https://github.com/matthewyjiang/rho/commit/fad8ab5aeb99891ff09bb294fb3d2f808c4c6866))
+* **providers:** add OpenAI's Decisions API as a decision-model host for the permission screen ([#1433](https://github.com/matthewyjiang/rho/issues/1433)) ([14688fe](https://github.com/matthewyjiang/rho/commit/14688fe1cb20a93c4869a4053500549e51b622b5))
+
 ## [5.7.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.6.0...rho-sdk-v5.7.0) (2026-10-04)
 
 

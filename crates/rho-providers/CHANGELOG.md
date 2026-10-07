@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.15.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.14.0...rho-providers-v2.15.0) (2026-10-07)
+
+
+### Features
+
+* **antigravity:** delegate subagents to google antigravity over acp ([#1419](https://github.com/matthewyjiang/rho/issues/1419)) ([8e9c866](https://github.com/matthewyjiang/rho/commit/8e9c86610f756931bb210b96eabf6d859a3339a0))
+* **cursor:** fence and steer cursor subagents over acp ([#1414](https://github.com/matthewyjiang/rho/issues/1414)) ([fc006ac](https://github.com/matthewyjiang/rho/commit/fc006ac14718fe2f941c4daafcfe7c0b3b82a0ba))
+* **hooks:** give after_tool_use hooks the real exit code and output of shell calls ([#1395](https://github.com/matthewyjiang/rho/issues/1395)) ([fad8ab5](https://github.com/matthewyjiang/rho/commit/fad8ab5aeb99891ff09bb294fb3d2f808c4c6866))
+* **permissions:** hand off from plan mode with exit_plan_mode ([#1412](https://github.com/matthewyjiang/rho/issues/1412)) ([582ecae](https://github.com/matthewyjiang/rho/commit/582ecae623646d364bbfe30ce2ccf6ecf7754755))
+* **providers:** add OpenAI's Decisions API as a decision-model host for the permission screen ([#1433](https://github.com/matthewyjiang/rho/issues/1433)) ([14688fe](https://github.com/matthewyjiang/rho/commit/14688fe1cb20a93c4869a4053500549e51b622b5))
+* **tools:** add a todo checklist tool ([#1411](https://github.com/matthewyjiang/rho/issues/1411)) ([293ceaa](https://github.com/matthewyjiang/rho/commit/293ceaae516ead32bc690beeb1d9f580a6d70647))
+* **tui:** add /init to create or update project AGENTS.md ([#1409](https://github.com/matthewyjiang/rho/issues/1409)) ([929ffa6](https://github.com/matthewyjiang/rho/commit/929ffa615efba9dc4f371ee05ac3b41ec509ffdd))
+* **tui:** add /remember to append standing instructions to AGENTS.md ([#1406](https://github.com/matthewyjiang/rho/issues/1406)) ([a9df3b3](https://github.com/matthewyjiang/rho/commit/a9df3b3291bcdba500addf68b6cd7b56508cd4d5))
+* **tui:** nest delegated runtimes under their vendor in /login ([#1428](https://github.com/matthewyjiang/rho/issues/1428)) ([8cd019f](https://github.com/matthewyjiang/rho/commit/8cd019fa1bb261b905437b1f2a1f71af8136d305))
+
+
+### Bug Fixes
+
+* **providers:** codex parents no longer die when they end a turn empty ([#1426](https://github.com/matthewyjiang/rho/issues/1426)) ([e97ac1e](https://github.com/matthewyjiang/rho/commit/e97ac1e72175d14432c9a0eef41f981056ced7ca))
+* **session:** keep the system prompt after /new ([#1408](https://github.com/matthewyjiang/rho/issues/1408)) ([e904053](https://github.com/matthewyjiang/rho/commit/e90405365ca84b59f6ad48c89ab18d0d5f757d49))
+
 ## [2.14.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.13.1...rho-providers-v2.14.0) (2026-10-04)
 
 
