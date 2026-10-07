@@ -13,8 +13,8 @@ Use Conventional Commits for commit messages and PR titles:
 - Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 - Scope is optional but preferred when useful.
 - Use a concise, imperative, lowercase description unless it contains a proper noun; do not end it with a period.
-- `!` after the type or scope and a `BREAKING CHANGE:` footer mean "publish a new major". Release Please bumps the major of every affected crate when either appears anywhere in the squash message, including footers in intermediate commits. Use them only when the maintainer has approved a major release. Changed defaults, renamed config keys that still accept the old name, and other behavior changes ship as minors, so describe them in the PR body without the marker.
-- If a stray marker reaches `main`, add a `BEGIN_COMMIT_OVERRIDE` / `END_COMMIT_OVERRIDE` block with the corrected message to the merged PR body, then rerun the `release-please` workflow.
+- `!` after the type or scope and a `BREAKING CHANGE:` footer mean "publish a new major". Release Please bumps the major of every affected crate when it parses either one in a squash message, including a footer copied from an intermediate commit. Use them only when the maintainer has approved a major release. Changed defaults, renamed config keys that still accept the old name, and other behavior changes ship as minors, so describe them in the PR body without the marker.
+- If a stray marker reaches `main` from a squash-merged PR, fix it before the release PR merges: put the full corrected Conventional Commit, without the marker, between `BEGIN_COMMIT_OVERRIDE` and `END_COMMIT_OVERRIDE` in the merged PR body, then run `release-please` with `candidate-sha` empty. A version that already shipped cannot be demoted.
 
 Examples:
 
@@ -23,6 +23,11 @@ feat(auth): add token refresh
 fix(api): handle empty responses
 docs: update setup instructions
 chore: bump dependencies
+```
+
+Only a maintainer-approved major release uses the marker:
+
+```text
 feat(config)!: require explicit config path
 
 BREAKING CHANGE: the default config discovery behavior was removed.
