@@ -30,7 +30,9 @@ use rho_tui_pty::{
 
 fn runner() -> ScenarioRunner {
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let artifacts = std::env::temp_dir().join("rho-pty-test-artifacts");
+    let artifacts = std::env::var_os("RHO_PTY_ARTIFACTS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("rho-pty-test-artifacts"));
     ScenarioRunner::new(binary).with_artifacts(artifacts)
 }
 
@@ -460,6 +462,8 @@ fn workflow_cancel_then_resume_preserves_completed_nodes() {
 
 // Covers: retrying a failed hub launch reuses the ready run; watch never starts it.
 // Owner: interactive workflow hub recovery.
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[test]
 fn workflow_hub_retries_planned_run() {
     assert_pass("workflow_hub_planned_retry");
