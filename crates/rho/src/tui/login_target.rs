@@ -17,6 +17,7 @@ pub(super) fn external_login_methods() -> [ExternalLoginMethod; 3] {
         ExternalLoginMethod {
             group_id: "anthropic",
             value: CLAUDE_CODE_TARGET,
+            aliases: &[],
             name: "Claude Code",
             detail: "Uses the claude CLI, not Anthropic API billing. \
 Claude Code manages credentials, not Rho.",
@@ -24,6 +25,7 @@ Claude Code manages credentials, not Rho.",
         ExternalLoginMethod {
             group_id: "google",
             value: AgentRuntime::Antigravity.as_str(),
+            aliases: &[],
             name: "Antigravity",
             detail: "Uses agy_acp_server, not Gemini API billing. \
 Antigravity manages credentials, not Rho.",
@@ -31,6 +33,7 @@ Antigravity manages credentials, not Rho.",
         ExternalLoginMethod {
             group_id: "xai",
             value: AgentRuntime::Cursor.as_str(),
+            aliases: &[CURSOR_AGENT_ALIAS],
             name: "Cursor",
             detail: "Uses the cursor-agent CLI, not SpaceXAI API billing. \
 Cursor manages credentials, not Rho.",
@@ -44,6 +47,8 @@ pub(super) struct ExternalLoginMethod {
     pub(super) group_id: &'static str,
     /// Picker value, which is also the `/login` argument.
     pub(super) value: &'static str,
+    /// Other `/login` arguments that reach the same runtime.
+    pub(super) aliases: &'static [&'static str],
     /// Runtime name; the picker label adds the shared delegation marker.
     pub(super) name: &'static str,
     pub(super) detail: &'static str,

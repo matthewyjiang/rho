@@ -19,32 +19,16 @@ pub(super) enum LoginGroupNext {
 pub(super) fn login_group_picker() -> UiPicker {
     let mut items = catalog::login_groups()
         .into_iter()
-        .map(|group| {
-            let label = group.prompt.clone();
-            let value = group.id.clone();
-            // Nested method values stay searchable from the top level, so
-            // `cursor` or `kimi` still finds the group that owns it. Generic
-            // method labels ("API Key", "OAuth") would match nearly every
-            // group, so only delegated labels join, keeping `delegation` useful.
-            let search_terms = delegated_methods(&value)
-                .map(|method| method.label())
-                .chain(
-                    login_method_items(group)
-                        .into_iter()
-                        .map(|method| method.value),
-                )
-                .collect();
-            PickerItem {
-                section: None,
-                label,
-                detail: None,
-                preview: None,
-                badge: None,
-                value,
-                selection_verb: None,
-                allow_filter_completion: true,
-                search_terms,
-            }
+        .map(|group| PickerItem {
+            section: None,
+            detail: None,
+            preview: None,
+            badge: None,
+            selection_verb: None,
+            allow_filter_completion: true,
+            search_terms: login_group_search_terms(&group),
+            label: group.prompt,
+            value: group.id,
         })
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
@@ -53,6 +37,35 @@ pub(super) fn login_group_picker() -> UiPicker {
         tab: super::TabKey::CompleteFilter,
         ..Default::default()
     })
+}
+
+/// What a user might type to reach a group through a method nested under it.
+///
+/// A catalog method contributes the distinctive words of its login label: the
+/// label minus its generic auth prompt, so "Gemini API key" under "API Key"
+/// yields `gemini`. A delegated runtime contributes its label, value, and
+/// aliases. Auth ids stay out, since their `api-key` and `oauth` stems would
+/// match nearly every group.
+fn login_group_search_terms(group: &catalog::LoginGroup) -> Vec<String> {
+    let mut terms = Vec::new();
+    for method in &group.methods {
+        let generic = method.prompt.to_lowercase();
+        let generic = generic.split_whitespace().collect::<Vec<_>>();
+        terms.extend(
+            method
+                .target
+                .label
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .filter(|word| !generic.contains(&word.as_str())),
+        );
+    }
+    for method in delegated_methods(&group.id) {
+        terms.push(method.label());
+        terms.push(method.value.into());
+        terms.extend(method.aliases.iter().map(|alias| alias.to_string()));
+    }
+    terms
 }
 
 /// One row per auth mode. The value is the auth id, so confirm deletes that mode only.
@@ -322,9 +335,9 @@ mod tests {
         pretty_assertions::assert_eq!(values, ["meta-api-key", "meta-muse"]);
     }
 
-    // Covers: typing a nested method value or delegated label at the top level
-    // finds the group that owns it, while generic method labels do not match
-    // every group
+    // Covers: typing a nested method's distinctive name or a delegated runtime
+    // at the top level finds the group that owns it, while generic auth words
+    // and auth-id stems match no group
     // Owner: login group picker
     #[test]
     fn login_group_filter_finds_groups_by_nested_methods() {
@@ -337,21 +350,25 @@ mod tests {
                 .map(|&index| picker.items[index].value.clone())
                 .collect::<Vec<_>>()
         };
+        // Only rows whose own visible text says "API" or "key" (custom host
+        // details, "Meta Model API"); no group may match through a generic
+        // auth word or auth-id stem it nests.
+        let custom_hosts = vec![
+            super::super::custom_provider_login::NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE,
+            super::super::custom_provider_login::NEW_CUSTOM_RESPONSES_HOST_VALUE,
+        ];
         for (filter, expected) in [
             ("cursor", vec!["xai"]),
+            ("cursor-agent", vec!["xai"]),
             ("antigravity", vec!["google"]),
+            ("gemini", vec!["google"]),
             ("claude-code", vec!["anthropic"]),
-            ("kimi-oauth", vec!["moonshot"]),
+            ("kimi", vec!["moonshot"]),
+            ("muse", vec!["meta"]),
             ("delegation", vec!["anthropic", "google", "xai"]),
-            // Only rows whose own detail says "API key"; no group matches
-            // through its nested "API Key" method label.
-            (
-                "API Key",
-                vec![
-                    super::super::custom_provider_login::NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE,
-                    super::super::custom_provider_login::NEW_CUSTOM_RESPONSES_HOST_VALUE,
-                ],
-            ),
+            ("api", [custom_hosts.as_slice(), &["meta"]].concat()),
+            ("key", custom_hosts.clone()),
+            ("oauth", vec![]),
         ] {
             pretty_assertions::assert_eq!(groups_for(filter), expected, "{filter:?}");
         }
