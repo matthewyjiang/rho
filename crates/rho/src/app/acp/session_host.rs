@@ -520,7 +520,11 @@ impl SessionHost {
             display_tail.push(Message::assistant_text(text));
         }
         self.stored.save_snapshot(
-            &self.built.prompt.decorate(self.built.session.snapshot()),
+            &self
+                .built
+                .tools
+                .todo_state()
+                .decorate(self.built.prompt.decorate(self.built.session.snapshot())),
             &display_tail,
         )
     }

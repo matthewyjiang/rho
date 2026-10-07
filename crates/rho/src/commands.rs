@@ -43,6 +43,7 @@ pub enum CommandId {
     Workflow,
     Side,
     Spend,
+    Todo,
     Exit,
 }
 
@@ -498,6 +499,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "spend",
         usage: "/spend",
         description: "show AI spend and usage history across this machine",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Todo,
+        name: "todo",
+        usage: "/todo",
+        description: "show the current task checklist",
         argument_choices: &[],
     },
     CommandSpec {

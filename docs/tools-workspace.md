@@ -43,7 +43,7 @@ Additional tools:
 | `workflow` | Validate, freeze, run, inspect, cancel, or resume a durable workflow |
 | `skill` | Load a skill into the session |
 | `rho` | Read-only harness diagnostics, including an agent definition check (`agents`) |
-| `todo` | Replace the task checklist shown in the transcript |
+| `todo` | Replace the session task checklist shown in the transcript and `/todo` |
 | `sessions` | Search and read prior session evidence without resuming it |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 | `exit_plan_mode` | Present a markdown plan for approval and [hand off to execution](/configuration/permissions#plan--execute-handoff) in interactive Plan mode |
@@ -58,7 +58,11 @@ Built-in skills that ship with the binary include `rho-config`, `rho-agent-creat
 
 `todo` replaces the whole checklist with `{"todos":[{"content":"Implement the change","status":"in_progress"}]}`. Each item has non-empty content and a status of `pending`, `in_progress`, or `completed`. Lists accept at most 50 items and at most one item in progress; an empty list clears the checklist. Use it for work with three or more steps rather than trivial single-step tasks.
 
-The interactive card uses the theme’s amber header accent and shows ✓ completed, ▸ in progress, and ○ pending items. Collapsed cards follow the normal tool-output row budget; press Ctrl+O to expand and see every item. Calls stay in the session transcript and their cards are rebuilt when you resume. The tool is available by default, including delegated roles and Plan mode: it writes no files and needs no permission approval. Agent tool allowlists can include `todo` explicitly.
+The interactive card uses the theme’s amber header accent and shows ✓ completed, ▸ in progress, and ○ pending items. Collapsed cards follow the normal tool-output row budget; press Ctrl+O to expand and see every item. Open `/todo` to see the latest checklist without finding its card in the transcript. The overlay updates while the agent works, highlights the current item, and scrolls independently of the conversation.
+
+Successful updates replace the session's checklist, including updates made inside `codemode`. The exact checklist survives compaction and session resume. Rho supplies the latest checklist as model context on subsequent requests, independently of the generated summary; old checklist projections do not accumulate in conversation history. Starting a new session clears it. The checklist records agent-reported progress, not independent verification that a task is done.
+
+The tool is available by default, including delegated roles and Plan mode. It changes session state rather than workspace files and needs no permission approval. Agent tool allowlists can include `todo` explicitly.
 
 ## Security and workspace boundaries
 

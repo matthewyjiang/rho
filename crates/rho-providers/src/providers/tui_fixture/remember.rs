@@ -14,10 +14,10 @@ pub(super) fn intercept(
     if prompt != "fixture remembered context" {
         return None;
     }
-    let last_user = request
-        .messages
-        .iter()
-        .rposition(|message| matches!(message.semantic(), SemanticMessage::User(_)))?;
+    let last_user = request.messages.iter().rposition(|message| {
+        message.as_model_context().is_none()
+            && matches!(message.semantic(), SemanticMessage::User(_))
+    })?;
     let present = request.messages[..last_user].iter().any(|message| {
         let SemanticMessage::User(content) = message.semantic() else {
             return false;

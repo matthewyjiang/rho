@@ -1,4 +1,4 @@
-//! Stateless full-list task checklists; session call arguments own persistence.
+//! Full-list task checklists backed by host-owned session state.
 
 use std::sync::Arc;
 
@@ -6,17 +6,23 @@ use rho_sdk::tool::{
     OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
     ToolMetadata, ToolOutput, ToolSecurity,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[path = "todo_state.rs"]
+mod state;
+pub(crate) use state::TodoState;
 
 // Product tripwire: five times the default ten-row collapsed card budget, not a
 // storage allocation. Larger projects should keep this list at milestone level.
 const MAX_TODOS: usize = 50;
 
-pub(super) fn sdk_bundle() -> super::sdk_registry::StaticToolBundle {
-    super::sdk_registry::StaticToolBundle::new(vec![Arc::new(TodoTool)])
+pub(super) fn sdk_bundle(state: TodoState) -> super::sdk_registry::StaticToolBundle {
+    super::sdk_registry::StaticToolBundle::new(vec![Arc::new(TodoTool { state })])
 }
 
-pub(super) struct TodoTool;
+pub(super) struct TodoTool {
+    state: TodoState,
+}
 
 impl Tool for TodoTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
@@ -54,26 +60,28 @@ impl Tool for TodoTool {
     fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let list = TodoList::parse(invocation.into_arguments())?;
-            Ok(ToolOutput::text(list.summary())
-                .metadata(ToolMetadata::new().operation(OperationKind::Other("todo".into()))))
+            let output = ToolOutput::text(list.summary())
+                .metadata(ToolMetadata::new().operation(OperationKind::Other("todo".into())));
+            self.state.replace(Some(list));
+            Ok(output)
         })
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TodoList {
     pub(crate) todos: Vec<TodoItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TodoItem {
     pub(crate) content: String,
     pub(crate) status: TodoStatus,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TodoStatus {
     Pending,

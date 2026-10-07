@@ -281,6 +281,7 @@ impl SessionCore {
         let runtime = self.runtime();
         let tools = runtime.advertised_tool_specs();
         let identity = runtime.provider.identity();
+        let source = runtime.context_messages(self.id());
         let mut data = self
             .data
             .lock()
@@ -291,7 +292,7 @@ impl SessionCore {
             .ok_or_else(|| Error::Persistence {
                 message: "session revision is exhausted".into(),
             })?;
-        context::commit_context(&mut data, &history, &tools, &identity);
+        context::commit_context(&mut data, &history, &source, &tools, &identity);
         data.history = history;
         data.revision = revision;
         Ok(revision)
@@ -302,10 +303,12 @@ impl SessionCore {
         previous: HistoryMetrics,
         history: Vec<Message>,
         usage: crate::model::ModelUsage,
+        metadata: std::collections::BTreeMap<String, String>,
     ) -> Result<crate::CompactionOutcome, Error> {
         let runtime = self.runtime();
         let tools = runtime.advertised_tool_specs();
         let identity = runtime.provider.identity();
+        let source = runtime.context_messages(self.id());
         let mut data = self
             .data
             .lock()
@@ -331,8 +334,9 @@ impl SessionCore {
         // Validate the measured prefix against the replacement.
         // An unchanged compactor output must not discard a valid provider count;
         // rewriting the measured prefix invalidates it through that same check.
-        context::commit_replacement(&mut data, &history, &tools, &identity);
+        context::commit_replacement(&mut data, &history, &source, &tools, &identity);
         data.history = history;
+        data.metadata.extend(metadata);
         data.revision = revision;
         Ok(crate::CompactionOutcome::new(
             previous.message_count,
@@ -692,8 +696,11 @@ impl Session {
             .register(run_id.clone(), cancellation.clone())?;
         let history = self.history();
         let previous = HistoryMetrics::from_history(&history);
+        let estimate = self
+            .core
+            .estimate_context(&history, &runtime.advertised_tool_specs());
         let request = crate::CompactionRequest::new(history, cancellation)
-            .with_context_estimate(self.context_estimate())
+            .with_context_estimate(estimate)
             .with_request_context(
                 self.core.id().clone(),
                 runtime.usage_parent_session_id.clone(),
@@ -710,8 +717,10 @@ impl Session {
                 self.core.prompt_cache_key(),
             );
         let output = compactor.compact(request).await?;
-        let (replacement, usage) = output.into_parts();
-        let outcome = self.core.commit_compaction(previous, replacement, usage)?;
+        let (replacement, usage, metadata) = output.into_parts();
+        let outcome = self
+            .core
+            .commit_compaction(previous, replacement, usage, metadata)?;
         self.core.set_state(SessionState::Completed);
         Ok(outcome)
     }

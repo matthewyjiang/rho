@@ -31,6 +31,7 @@ Compaction transport and policy are host supplied:
 
 - `Compactor` accepts owned provider-neutral history and cancellation, then returns complete replacement history.
 - Host compactors may attach optional `ModelUsage`, including `cost_usd_micros`, when the summary step itself was charged.
+- `CompactionOutput::with_metadata` attaches host-owned snapshot metadata. Its keys are committed atomically with replacement history, replacing matching keys while preserving unrelated metadata. Buffered completion events therefore carry the state of that checkpoint, not a later live value. Do not derive authoritative metadata from model-written summaries or recognizable user text.
 - `CompactionPolicy::after_messages` triggers at or above a nonzero message count.
 - `CompactionPolicy::at_context_tokens` triggers when the session's calibrated context estimate reaches a nonzero token threshold. Before a successful provider usage report, it falls back to the local estimate of message and tool-schema context.
 - A builder with automatic policy but no compactor is invalid.
@@ -41,11 +42,21 @@ Compaction transport and policy are host supplied:
 
 A compactor must preserve valid conversation structure and all information the host requires for continuation. The SDK does not prescribe a summarization model. Repeated compaction must remain bounded and should be tested with the host's actual policy.
 
+### Live request context
+
+`RhoBuilder::request_context(source)` installs a host-owned `RequestContext`. Its synchronous `messages(&SessionId)` method returns current provider-neutral context. Implementations must be cheap and must not read or mutate SDK sessions. Use the session ID to isolate state if a runtime serves multiple sessions.
+
+The SDK appends this context to provider requests without adding it to conversation history or snapshots. The host owns its persistence and must restore the source before continuing a saved session. Rho uses this for the latest task checklist, including updates made inside `codemode`: summaries need not reproduce it, and stale copies do not accumulate in history.
+
+Construct data messages with `Message::model_context(text)`. Providers and other request readers can recognize them with `Message::as_model_context()`; this is attribution, not authentication. The text is data, not a new user request or a grant of authority.
+
+Request context participates in token estimates and provider calibration. Compactors receive raw history and must reserve the mandatory context's footprint when sizing replacement history; the context source itself is not summarized.
+
 ### Shared context accounting
 
 `Session::context_estimate()` returns the committed estimate while idle and the latest published history-boundary estimate during a run. It is a small snapshot, not a copy of live history. `ContextEstimate::tokens()` uses the last applicable successful request's inclusive prompt usage plus locally estimated appended messages. It never uses accumulated multi-request billing usage. `estimated_tokens()` exposes the uncalibrated estimate; the provider baseline and its corresponding local estimate are available separately.
 
-Calibration applies only when that request is an unchanged prefix with the same provider identity and tool schemas. Reset and explicit history replacement invalidate it. Compaction also invalidates it when the replacement rewrites the measured prefix; unchanged compactor output preserves the baseline. Completed-operation counters retain their existing meaning even when an operation does not reduce history. Failed or cancelled provider attempts do not establish a new baseline; delivered steering invalidates calibration when the exact request cannot be reconstructed. Baselines are not serialized, so resume starts uncalibrated until a fresh successful report. `Session::estimate_context(messages)` lets hosts size proposed history, such as a pending user prompt, against the same accounting without mutating the session.
+Calibration applies only when conversation history preserves the measured prefix, request-only context is unchanged, and provider identity and tool schemas still match. Reset and explicit history replacement invalidate it. Compaction also invalidates it when the replacement rewrites the measured prefix; unchanged compactor output preserves the baseline. Completed-operation counters retain their existing meaning even when an operation does not reduce history. Failed or cancelled provider attempts do not establish a new baseline; delivered steering invalidates calibration when the exact request cannot be reconstructed. Baselines are not serialized, so resume starts uncalibrated until a fresh successful report. `Session::estimate_context(messages)` lets hosts size proposed history, such as a pending user prompt, against the same accounting without mutating the session.
 
 `CompactionRequest::context_estimate()` supplies optional accounting for the history being compacted. Host compactors that partition history with the local estimator can use `ContextEstimate::estimated_budget(target_tokens)` to convert a model-token target into a conservative local budget. This conversion is approximate and never enlarges the target. Manually constructed requests may omit accounting. When fresh boundary input must remain verbatim, the request's estimate describes only the compactable prefix, while the trigger still checks the full context.
 
