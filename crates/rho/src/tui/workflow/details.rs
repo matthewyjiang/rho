@@ -13,7 +13,7 @@ use crate::workflow::TaskInstanceId;
 
 use super::super::{
     drag_selection::{DragSelection, SelectionBody},
-    render::{display_width, truncate_keep_end},
+    render::{display_width, truncate_keep_end, truncate_one_line},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     theme::Theme,
     HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
@@ -299,6 +299,11 @@ impl DetailPane {
 /// The path keeps its file name when the pane is too narrow for all of it.
 fn section_rule(body: &NodeOutputBody, width: usize) -> Line<'static> {
     let label = body.kind.label();
+    if 3 + display_width(label) + 1 > width {
+        // Too narrow for the decorated rule; keep one row that fits.
+        let text = truncate_one_line(&format!("── {label}"), width);
+        return Line::styled(text, Theme::dim());
+    }
     // "── " + label + " · " + path + " " + at least one rule glyph.
     let fixed = 3 + display_width(label) + 3 + 2;
     let path = truncate_keep_end(&body.relative_path, width.saturating_sub(fixed));

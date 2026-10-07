@@ -104,9 +104,15 @@ pub(super) fn render_body_lines(body: &NodeOutputBody, width: usize) -> Vec<Line
         return lines;
     }
 
-    // Schema agents answer in raw JSON; outline any JSON document so it is
-    // readable instead of one wrapped blob.
-    if let Some(document) = json_document(&body.text) {
+    // Schema agents answer in raw JSON; outline JSON documents so they are
+    // readable instead of one wrapped blob. Process streams stay verbatim.
+    let outlines_json = match body.kind {
+        ArtifactKind::AgentAnswer
+        | ArtifactKind::StructuredOutput
+        | ArtifactKind::CommandOutcome => true,
+        ArtifactKind::Stdout | ArtifactKind::Stderr => false,
+    };
+    if let Some(document) = outlines_json.then(|| json_document(&body.text)).flatten() {
         lines.extend(json_outline::outline_lines(&document, width));
         return lines;
     }

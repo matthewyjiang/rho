@@ -118,3 +118,25 @@ fn drag_over_body_queues_scrolled_copy_once() {
     assert!(pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
     assert!(!pane.selection().is_active());
 }
+
+// Covers: the artifact rule stays one row at any pane width, so the cached
+// line count that drives scrolling and selection matches what is drawn.
+// Owner: workflow details pane.
+#[test]
+fn section_rule_fits_every_width() {
+    let body = crate::tui::workflow::output::NodeOutputBody {
+        node_id: crate::workflow::TaskInstanceId::root(NodeId::new("review").unwrap()),
+        digest: Digest("sha256:dd".into()),
+        kind: ArtifactKind::StructuredOutput,
+        relative_path: "nodes/review/attempts/1/output.json".into(),
+        text: String::new(),
+        notice: None,
+    };
+    for width in 1..=80 {
+        let rule = super::section_rule(&body, width).to_string();
+        assert!(
+            crate::tui::render::display_width(&rule) <= width,
+            "width {width}: {rule:?}"
+        );
+    }
+}
