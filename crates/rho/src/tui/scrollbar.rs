@@ -134,16 +134,34 @@ impl HistoryScrollChrome {
         };
     }
 
+    /// Hold `top_line` even when it is the last screenful: unlike
+    /// [`Self::set_top_line`], appended rows do not scroll it away. Used to
+    /// keep a focused search hit or a shifted reading position in place.
+    pub(super) fn hold_top_line(
+        &mut self,
+        content_len: usize,
+        viewport_len: usize,
+        top_line: usize,
+    ) {
+        let max_start = content_len.saturating_sub(viewport_len);
+        self.scroll = HistoryScroll::Manual {
+            top_line: top_line.min(max_start),
+        };
+        self.drag = None;
+    }
+
+    /// Follow the bottom once a pinned top line no longer exists because the
+    /// content shrank under it. A pin on exactly the last screenful is a held
+    /// position (see [`Self::hold_top_line`]) and stays manual.
     pub(super) fn clamp(&mut self, content_len: usize, viewport_len: usize) {
         if matches!(self.scroll, HistoryScroll::Bottom) {
             self.drag = None;
             return;
         }
-        if let HistoryScroll::Manual { top_line } = self.scroll {
-            self.scroll = scroll_state_for_top_line(content_len, viewport_len, top_line);
-            if matches!(self.scroll, HistoryScroll::Bottom) {
-                self.hide();
-            }
+        let max_start = content_len.saturating_sub(viewport_len);
+        if matches!(self.scroll, HistoryScroll::Manual { top_line } if top_line > max_start) {
+            self.scroll = HistoryScroll::Bottom;
+            self.hide();
         }
     }
 

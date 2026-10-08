@@ -5,8 +5,9 @@
 //! entries, and live rows, case-insensitively within one rendered row.
 //! Collapsed tool output and text hidden by display settings are not searched.
 //! Key handlers only edit the query or request a step; every frame while
-//! search is open recollects matches against the painted document, so
+//! search is open brings matches up to date with the painted document, so
 //! streaming text and live tool rows stay current, then applies the step.
+//! Live rows are rescanned every frame; measured rows only when they change.
 
 use std::{
     ops::Range,
@@ -32,13 +33,25 @@ use super::{
 /// one 60 Hz frame, so keys typed meanwhile still land within a frame or so.
 /// One entry can overrun it; the slowest measured on a real 957-entry resume
 /// took 14 ms (release).
-const INDEX_SLICE: Duration = Duration::from_millis(16);
+pub(super) const INDEX_SLICE: Duration = Duration::from_millis(16);
 
 /// One hit: an absolute history row and the display columns it covers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct TranscriptMatch {
     pub(super) line: usize,
     pub(super) columns: Range<usize>,
+}
+
+/// The measured document that stored matches were collected against. While
+/// it is unchanged only live rows can differ, so spinner frames during a turn
+/// skip the whole-transcript scan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SearchedRows {
+    width: usize,
+    /// [`HistoryLineCache`](super::history_cache::HistoryLineCache) revision.
+    revision: u64,
+    /// Session header and measured rows; live rows start here.
+    static_len: usize,
 }
 
 /// Which match the next frame should focus.
@@ -64,8 +77,7 @@ pub(super) struct TranscriptSearch {
     /// Hits in document order.
     matches: Vec<TranscriptMatch>,
     focus: Option<usize>,
-    /// Width and row count the matches were last collected against.
-    collected_for: Option<(usize, usize)>,
+    searched: Option<SearchedRows>,
     pending: Option<SearchStep>,
     /// First measured transcript entry that the row numbers above count
     /// from. Measuring older entries inserts rows above it, so every stored
@@ -83,7 +95,7 @@ impl TranscriptSearch {
             anchor_line,
             matches: Vec::new(),
             focus: None,
-            collected_for: None,
+            searched: None,
             pending: None,
             measured_from,
             indexing: measured_from > 0,
@@ -113,8 +125,8 @@ impl TranscriptSearch {
         if let HistoryScroll::Manual { top_line } = &mut self.origin {
             *top_line = top_line.saturating_add(rows);
         }
-        if let Some((_, len)) = &mut self.collected_for {
-            *len = len.saturating_add(rows);
+        if let Some(searched) = &mut self.searched {
+            searched.static_len = searched.static_len.saturating_add(rows);
         }
         for hit in &mut self.matches {
             hit.line = hit.line.saturating_add(rows);
@@ -445,30 +457,40 @@ impl App {
         self.set_status_quiet("");
     }
 
-    /// Recollect matches against this frame's document, keep the focus on the
-    /// same hit, and apply a pending step. Returns true when the matches or
-    /// scroll position changed, so the caller must rebuild the frame context
-    /// before painting.
+    /// Bring matches up to date with this frame's document, keep the focus on
+    /// the same hit, and apply a pending step. Returns true when the matches
+    /// or scroll position changed, so the caller must rebuild the frame
+    /// context before painting.
     ///
-    /// A document at rest (no turn, no live rows, same width and row count)
-    /// cannot have changed text, so its matches are reused. Otherwise rows can
-    /// change in place, such as a streaming line, and every frame rescans.
+    /// Measured rows are rescanned only when they changed (see
+    /// [`SearchedRows`]), such as a streaming line growing in place. Live rows
+    /// are few and rescanned every frame.
     fn sync_transcript_search(&mut self, ctx: &FrameContext) -> bool {
-        let shape = (ctx.width, ctx.history_len);
-        let at_rest = !self.loading_active() && ctx.live_history.lines.is_empty();
-        let needle = match self.input_ui.composer() {
-            ComposerMode::TranscriptSearch(search)
-                if search.pending.is_some() || search.collected_for != Some(shape) || !at_rest =>
-            {
-                needle(&search.editor.value)
-            }
-            _ => return false,
+        let live = &ctx.live_history.lines;
+        let rows = SearchedRows {
+            width: ctx.width,
+            revision: self.history.rows_revision(),
+            static_len: ctx.history_len.saturating_sub(live.len()),
         };
-        let matches = self.collect_transcript_matches(ctx, &needle, usize::MAX);
+        let ComposerMode::TranscriptSearch(search) = self.input_ui.composer() else {
+            return false;
+        };
+        let needle = needle(&search.editor.value);
+        let matches = if search.pending.is_none() && search.searched == Some(rows) {
+            let kept = search
+                .matches
+                .partition_point(|hit| hit.line < rows.static_len);
+            let mut matches = search.matches[..kept].to_vec();
+            let mut buffers = ScanBuffers::default();
+            collect_matches(&mut matches, &mut buffers, live, rows.static_len, &needle);
+            matches
+        } else {
+            self.collect_transcript_matches(ctx, &needle, usize::MAX)
+        };
         let ComposerMode::TranscriptSearch(search) = self.input_ui.composer_mut() else {
             return false;
         };
-        search.collected_for = Some(shape);
+        search.searched = Some(rows);
         let previous = search
             .focus
             .and_then(|index| search.matches.get(index).cloned());
@@ -491,19 +513,21 @@ impl App {
         true
     }
 
-    /// Scroll so `line` is on screen with some context above it. Leaves the
-    /// viewport alone when the row is already visible.
+    /// Scroll so `line` is on screen with some context above it, or keep the
+    /// viewport when the row is already visible. Either way hold that
+    /// position, even on the last screenful, so appended rows do not scroll
+    /// the focused hit away. Paging and the jump binding still move it.
     fn reveal_history_line(&mut self, ctx: &FrameContext, line: usize) {
         let height = ctx.layout.history_content.height as usize;
         let start = self.visible_history_start(ctx.history_len, height);
-        if (start..start.saturating_add(height)).contains(&line) {
-            return;
-        }
-        self.history.scroll_chrome_mut().set_top_line(
-            ctx.history_len,
-            height,
-            line.saturating_sub(height / 3),
-        );
+        let top_line = if (start..start.saturating_add(height)).contains(&line) {
+            start
+        } else {
+            line.saturating_sub(height / 3)
+        };
+        self.history
+            .scroll_chrome_mut()
+            .hold_top_line(ctx.history_len, height, top_line);
     }
 
     /// Hits in the first `limit` rows of the session header, measured

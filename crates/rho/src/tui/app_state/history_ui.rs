@@ -78,6 +78,10 @@ impl HistoryUi {
         self.lines.measured_from()
     }
 
+    pub(in crate::tui) fn rows_revision(&self) -> u64 {
+        self.lines.revision()
+    }
+
     /// Borrow lines mutably with entries and images for cache updates.
     pub(in crate::tui) fn with_lines_and_images_mut<R>(
         &mut self,

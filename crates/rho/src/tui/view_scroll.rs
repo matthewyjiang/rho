@@ -116,9 +116,11 @@ impl App {
             }
         }
         // The session header joins the document once no prefix is unmeasured.
+        // Rows only grew above the viewport, so a manual position holds even
+        // when it is the last screenful, such as a focused search hit.
         let shift = prepended.saturating_add(self.visible_session_header_len(settings.width));
         if matches!(self.history.scroll(), HistoryScroll::Manual { .. }) {
-            self.history.scroll_chrome_mut().set_top_line(
+            self.history.scroll_chrome_mut().hold_top_line(
                 layout.history_len.saturating_add(shift),
                 content_height,
                 start.saturating_add(shift),
