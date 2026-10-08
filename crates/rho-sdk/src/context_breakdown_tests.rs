@@ -8,7 +8,7 @@ use crate::{
     },
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
-    RequestContext, Rho, SessionId, SessionOptions, SystemPrompt,
+    CompactionTrigger, RequestContext, Rho, SessionId, SessionOptions, SystemPrompt,
 };
 
 struct FixedContext;
@@ -21,7 +21,8 @@ impl RequestContext for FixedContext {
 
 // Covers: breakdown parts drifting from the estimator (sum no longer equals the
 // session estimate, or calibration lost), and tool output misattributed when
-// results are matched to calls by id, including an orphaned result.
+// results are matched to calls by id, including an orphaned result, or a
+// compaction summary counted as user input.
 // Owner: SDK context accounting; hosts only aggregate these parts.
 #[tokio::test]
 async fn breakdown_parts_sum_to_session_estimate_and_attribute_tool_results() {
@@ -75,13 +76,16 @@ async fn breakdown_parts_sum_to_session_estimate_and_attribute_tool_results() {
         calibrated.estimated_tokens()
     );
 
-    session
-        .append_message(Message::ToolResult(ToolResult {
+    for message in [
+        Message::ToolResult(ToolResult {
             id: "unknown-call".into(),
             ok: true,
             content: "orphan".into(),
-        }))
-        .unwrap();
+        }),
+        Message::compaction_summary(CompactionTrigger::Manual, "earlier work"),
+    ] {
+        session.append_message(message).unwrap();
+    }
     let breakdown = session.context_breakdown();
     assert_eq!(
         breakdown
@@ -102,6 +106,7 @@ async fn breakdown_parts_sum_to_session_estimate_and_attribute_tool_results() {
             },
             ContextItem::Assistant,
             ContextItem::ToolResult { tool: None },
+            ContextItem::CompactionSummary,
             ContextItem::RequestContext,
         ]
     );

@@ -55,11 +55,14 @@ struct Buckets {
     /// MCP server identity -> (tokens, schema count).
     tools_mcp: BTreeMap<String, (u64, usize)>,
     user: u64,
+    compaction_summary: u64,
     assistant: u64,
     system_notices: u64,
     /// Tool name, `None` for results whose call is not in history.
     tool_results: HashMap<Option<String>, u64>,
     request_context: u64,
+    /// Items from a newer SDK without their own row yet.
+    other: u64,
 }
 
 impl ContextReport {
@@ -87,14 +90,15 @@ impl ContextReport {
                 ContextItem::SystemPrompt => buckets.system_prompt += tokens,
                 ContextItem::System => buckets.system_notices += tokens,
                 ContextItem::User => buckets.user += tokens,
+                ContextItem::CompactionSummary => buckets.compaction_summary += tokens,
                 ContextItem::Assistant => buckets.assistant += tokens,
                 ContextItem::ToolResult { tool } => {
                     *buckets.tool_results.entry(tool.clone()).or_default() += tokens;
                 }
                 ContextItem::RequestContext => buckets.request_context += tokens,
                 // A new SDK item is still part of the request; count it rather
-                // than silently dropping it from the breakdown.
-                _ => buckets.request_context += tokens,
+                // than silently dropping it or mislabeling it.
+                _ => buckets.other += tokens,
             }
         }
 
@@ -103,10 +107,11 @@ impl ContextReport {
             total: estimate.tokens(),
             local: estimate.estimated_tokens(),
         };
+        let messages = messages_group(&buckets);
         let groups = [
             system_prompt_group(buckets.system_prompt, prompt_sources),
             tools_group(buckets.tools_builtin, buckets.tools_mcp),
-            messages_group(buckets.user, buckets.assistant, buckets.system_notices),
+            messages,
             tool_results_group(buckets.tool_results),
             group(
                 "Request context",
@@ -255,13 +260,15 @@ fn tools_group(builtin: (u64, usize), mcp: BTreeMap<String, (u64, usize)>) -> Op
     group("Tool schemas", sorted_descending(rows))
 }
 
-fn messages_group(user: u64, assistant: u64, system: u64) -> Option<ContextGroup> {
+fn messages_group(buckets: &Buckets) -> Option<ContextGroup> {
     group(
         "Messages",
         sorted_descending(vec![
-            row("Assistant (text, reasoning, tool calls)", assistant),
-            row("User and host notes", user),
-            row("System notices", system),
+            row("Assistant (text, reasoning, tool calls)", buckets.assistant),
+            row("User and host notes", buckets.user),
+            row("Compaction summary", buckets.compaction_summary),
+            row("System notices", buckets.system_notices),
+            row("Other", buckets.other),
         ]),
     )
 }

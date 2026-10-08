@@ -22,9 +22,11 @@ pub enum ContextItem {
     SystemPrompt,
     /// A later system message in history.
     System,
-    /// A user-role message that is not a tool image supplement. This includes
-    /// host-written context the host appended as a user message.
+    /// A user-role message that is neither a compaction summary nor a tool
+    /// image supplement. This includes context the host appended as a user message.
     User,
+    /// A compaction summary that replaced earlier history.
+    CompactionSummary,
     /// Assistant output, including reasoning replay and tool call arguments.
     Assistant,
     /// A tool result or its image supplement. `tool` is `None` when no earlier
@@ -90,6 +92,9 @@ impl ContextBreakdown {
             let item = match message.semantic() {
                 SemanticMessage::System(_) if index == 0 => ContextItem::SystemPrompt,
                 SemanticMessage::System(_) => ContextItem::System,
+                SemanticMessage::User(_) if message.as_compaction_summary().is_some() => {
+                    ContextItem::CompactionSummary
+                }
                 SemanticMessage::User(_) => ContextItem::User,
                 SemanticMessage::Assistant(content) => {
                     record_calls(&mut call_names, content);
