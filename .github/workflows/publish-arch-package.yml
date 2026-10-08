@@ -104,7 +104,7 @@ jobs:
             size=$(stat -c %s "$pkg")
             echo "$pkg: $size bytes (Cloudflare Pages file limit: $limit)"
             if ((size > limit)); then
-              echo "::error::$pkg is $size bytes, over the Cloudflare Pages 25 MiB ($limit byte) file limit" >&2
+              echo "::error::$pkg is $size bytes, over the Cloudflare Pages 25 MiB ($limit byte) file limit"
               status=1
             fi
           done
