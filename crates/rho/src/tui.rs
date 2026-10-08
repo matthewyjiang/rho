@@ -52,6 +52,7 @@ mod config_input;
 mod config_picker;
 mod config_row;
 mod context_handoff;
+mod context_overlay;
 mod copy_interaction;
 mod diff_pane;
 mod diff_viewer;

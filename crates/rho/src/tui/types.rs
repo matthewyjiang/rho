@@ -220,6 +220,7 @@ pub(super) enum PanelOverlay {
     Hooks(super::hooks_overlay::HooksOverlay),
     TextView(Box<super::text_view_overlay::TextViewOverlay>),
     Info(Box<super::info_overlay::InfoOverlay>),
+    Context(Box<super::context_overlay::ContextOverlay>),
     Spend(Box<super::spend_overlay::SpendOverlay>),
     Todo(super::todo_overlay::TodoOverlay),
 }

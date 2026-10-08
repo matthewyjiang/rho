@@ -122,7 +122,7 @@ fn path_basename(path: &str) -> &str {
 ///
 /// Keeps a root marker when it still fits (`~/…/api-gateway`, `/…/api-gateway`),
 /// otherwise falls back to `…/api-gateway`, then end-truncates the last segment.
-pub(super) fn shorten_path_display(path: &str, width: usize) -> String {
+pub(in crate::tui) fn shorten_path_display(path: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }

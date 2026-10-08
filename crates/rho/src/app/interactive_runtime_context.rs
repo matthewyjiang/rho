@@ -1,8 +1,10 @@
 //! Host presentation and diagnostics use the SDK's session-owned accounting.
+use std::collections::HashMap;
+
 use rho_sdk::{model::ContextUsage, ContextEstimate};
 
 use super::InteractiveRuntime;
-use crate::diagnostics::CompactionContext;
+use crate::{app::context_report::ContextReport, diagnostics::CompactionContext};
 
 impl InteractiveRuntime {
     pub(super) fn context_usage(&self, estimate: ContextEstimate) -> ContextUsage {
@@ -32,5 +34,31 @@ impl InteractiveRuntime {
         let estimate = self.sessions.session().context_estimate();
         self.runs.note_context_usage(self.context_usage(estimate));
         self.record_context_estimate(estimate);
+    }
+
+    /// `/context` attribution of the next request. Scans committed history,
+    /// so hosts call it on demand while idle, not per frame.
+    pub(crate) fn context_report(&self) -> ContextReport {
+        let breakdown = self.sessions.session().context_breakdown();
+        let mcp_tools: HashMap<String, String> = self
+            .mcp_report
+            .servers
+            .iter()
+            .flat_map(|server| {
+                server
+                    .tools()
+                    .iter()
+                    .map(|tool| (tool.exported_name.clone(), server.identity.clone()))
+            })
+            .collect();
+        let window = self
+            .context_window
+            .or(breakdown.estimate().reported_context_window());
+        ContextReport::new(
+            &breakdown,
+            &self.diagnostics.prompt_sources(),
+            &mcp_tools,
+            window,
+        )
     }
 }

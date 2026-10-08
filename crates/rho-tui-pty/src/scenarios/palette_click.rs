@@ -67,7 +67,7 @@ fn assert_composer_reads(harness: &PtyHarness, composer: &str) -> Result<()> {
 // (never submitting like Enter).
 // Owner: interactive UX (PTY).
 fn click_wheel_then_double_click_command_row(harness: &mut PtyHarness) -> Result<()> {
-    // `/co` lists /compact, /computer, /config, /copy; /compact starts highlighted.
+    // `/co` shows /codemode, /compact, /computer, /config, /context first.
     let config = click_cell(harness, "/config")?;
     click(harness, config)?;
     harness.wait_for_text("> /config", CLICK)?;
@@ -75,7 +75,7 @@ fn click_wheel_then_double_click_command_row(harness: &mut PtyHarness) -> Result
 
     let (column, row) = config;
     harness.mouse(MouseButton::WheelDown, column, row, true)?;
-    harness.wait_for_text("> /copy", CLICK)?;
+    harness.wait_for_text("> /context", CLICK)?;
     harness.mouse(MouseButton::WheelUp, column, row, true)?;
     harness.mouse(MouseButton::WheelUp, column, row, true)?;
     harness.wait_for_text("> /computer", CLICK)?;
@@ -99,7 +99,7 @@ const SLASH_PALETTE_CLICK_STEPS: &[Step] = &[
     Step::Phase("open_palette"),
     Step::TypeText("/co"),
     Step::WaitText {
-        text: "/copy",
+        text: "/context",
         timeout: SETTLE,
     },
     // `/` and `/c` both list /changelog; its absence means `/co` is painted,

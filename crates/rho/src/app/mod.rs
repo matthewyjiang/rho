@@ -13,6 +13,7 @@ mod cli_config;
 mod compaction_eval;
 mod computer_cli;
 pub(crate) mod config_repository;
+pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
 mod doctor_cli;
 mod headless_delegation;

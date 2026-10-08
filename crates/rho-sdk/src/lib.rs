@@ -138,6 +138,7 @@ mod cancellation;
 mod client;
 mod compaction;
 mod compaction_decision;
+mod context_breakdown;
 mod context_estimate;
 pub mod decision;
 mod diagnostics;
@@ -174,6 +175,7 @@ pub use compaction::{
     ScriptedCompactor,
 };
 pub use compaction_decision::{CompactionDecision, CompactionExtent, CompactionSkipReason};
+pub use context_breakdown::{ContextBreakdown, ContextItem, ContextPart};
 pub use context_estimate::ContextEstimate;
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{

@@ -32,6 +32,7 @@ impl PanelOverlay {
             Self::Hooks(overlay) => overlay,
             Self::TextView(overlay) => overlay.as_ref(),
             Self::Info(overlay) => overlay.as_ref(),
+            Self::Context(overlay) => overlay.as_ref(),
             Self::Spend(overlay) => overlay.as_ref(),
             Self::Todo(overlay) => overlay,
         }
@@ -45,6 +46,7 @@ impl PanelOverlay {
             Self::Hooks(overlay) => overlay,
             Self::TextView(overlay) => overlay.as_mut(),
             Self::Info(overlay) => overlay.as_mut(),
+            Self::Context(overlay) => overlay.as_mut(),
             Self::Spend(overlay) => overlay.as_mut(),
             Self::Todo(overlay) => overlay,
         }
@@ -59,6 +61,7 @@ impl PanelOverlay {
             Self::Hooks(overlay) => Box::new(overlay),
             Self::TextView(overlay) => overlay,
             Self::Info(overlay) => overlay,
+            Self::Context(overlay) => overlay,
             Self::Spend(overlay) => overlay,
             Self::Todo(overlay) => Box::new(overlay),
         }

@@ -1,6 +1,6 @@
 use crate::{
     model::{Message, ModelIdentity, ModelUsage, ToolSpec},
-    CompactionDecision, ContextEstimate,
+    CompactionDecision, ContextBreakdown, ContextEstimate,
 };
 
 use super::{Session, SessionCore, SessionData};
@@ -58,6 +58,30 @@ impl Session {
         let runtime = self.core.runtime();
         let tools = runtime.advertised_tool_specs();
         self.core.estimate_context(messages, &tools)
+    }
+
+    /// Committed history and the next request's other inputs, itemized by source.
+    ///
+    /// Samples request-only context and advertised tool schemas like
+    /// [`Self::context_estimate`], and estimates them with the same heuristic, so
+    /// the parts sum to the returned estimate's local token count. While a run is
+    /// in flight this describes committed history only, calibrated against the
+    /// committed baseline rather than the run's working one. Scans history under
+    /// the session lock without copying it; intended for on-demand host diagnostics.
+    pub fn context_breakdown(&self) -> ContextBreakdown {
+        let runtime = self.core.runtime();
+        let tools = runtime.advertised_tool_specs();
+        let source = runtime.context_messages(self.id());
+        let identity = runtime.provider.identity();
+        let data = self
+            .core
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let estimate = data
+            .context
+            .estimate(&data.history, &source, &tools, &identity);
+        ContextBreakdown::new(estimate, &data.history, &source, &tools)
     }
 
     /// Latest automatic policy check, including skipped checks. Not persisted.

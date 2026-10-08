@@ -101,6 +101,7 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Permissions => self.execute_permissions_command(invocation, agent).await,
             CommandId::Info => self.execute_info_command(),
+            CommandId::Context => self.execute_context_command(agent),
             CommandId::Init => {
                 self.execute_init_command(turn, media, paste_segments, terminal, agent)
                     .await
