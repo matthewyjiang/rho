@@ -17,6 +17,7 @@ pub enum CommandId {
     Sessions,
     Tree,
     Config,
+    Context,
     Permissions,
     Info,
     Init,
@@ -311,6 +312,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "open configuration picker",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Context,
+        name: "context",
+        usage: "/context",
+        description: "show what fills the context window, by source",
         argument_choices: &[],
     },
     CommandSpec {

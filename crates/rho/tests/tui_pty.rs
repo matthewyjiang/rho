@@ -608,6 +608,15 @@ fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }
 
+// Covers: /context must attribute a tool turn's output to that tool, keep its
+// right-aligned columns inside the panel, report free space against the window,
+// stay readable after a narrow resize, and dismiss without a transcript block.
+// Owner: interactive TUI
+#[test]
+fn context_overlay_attributes_sources_and_dismisses() {
+    assert_pass("context_overlay");
+}
+
 // Covers: /limits must open a single-pane overlay and Esc must return to the session.
 // Owner: interactive TUI
 #[test]

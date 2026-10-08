@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::{ContentBlock, Message, ProviderContextBlock, ToolSpec};
 
-const REQUEST_OVERHEAD_TOKENS: u64 = 3;
+pub(crate) const REQUEST_OVERHEAD_TOKENS: u64 = 3;
 const MESSAGE_OVERHEAD_TOKENS: u64 = 4;
 const CONTENT_BLOCK_OVERHEAD_TOKENS: u64 = 1;
 const TOOL_CALL_OVERHEAD_TOKENS: u64 = 8;
@@ -72,7 +72,7 @@ fn content_block_tokens(block: &ContentBlock) -> u64 {
     })
 }
 
-fn tool_spec_tokens(spec: &ToolSpec) -> u64 {
+pub(crate) fn tool_spec_tokens(spec: &ToolSpec) -> u64 {
     TOOL_SCHEMA_OVERHEAD_TOKENS.saturating_add(json_tokens(spec))
 }
 

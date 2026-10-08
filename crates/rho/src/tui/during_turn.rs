@@ -357,6 +357,7 @@ impl App {
             }
             CommandId::Advisor
             | CommandId::Codemode
+            | CommandId::Context
             | CommandId::Permissions
             | CommandId::Hooks
             | CommandId::New

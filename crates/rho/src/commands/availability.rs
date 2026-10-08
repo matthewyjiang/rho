@@ -23,6 +23,7 @@ impl CommandContext {
             | CommandId::Sessions
             | CommandId::Tree
             | CommandId::Config
+            | CommandId::Context
             | CommandId::Permissions
             | CommandId::Info
             | CommandId::Init

@@ -411,7 +411,6 @@ impl RuntimeDiagnostics {
         self.write().prompt_sources = sources;
     }
 
-    #[cfg(test)]
     pub(crate) fn prompt_sources(&self) -> Vec<crate::prompt::PromptSource> {
         self.read().prompt_sources.clone()
     }

@@ -25,6 +25,7 @@ mod computer_setup;
 #[cfg(unix)]
 mod computer_update;
 mod config;
+mod context_overlay;
 mod conversation_tree;
 mod copy_output;
 mod diff_viewer;
@@ -572,6 +573,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     LIMITS_OVERLAY_SCENARIO,
     DOCTOR_OVERLAY_SCENARIO,
     spend::SPEND_OVERLAY_SCENARIO,
+    context_overlay::CONTEXT_OVERLAY_SCENARIO,
     SIDE_OVERLAY_SCENARIO,
     SIDE_TOGGLE_SCENARIO,
     SIDE_BTW_SCENARIO,
