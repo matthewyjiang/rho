@@ -717,7 +717,8 @@ impl Session {
         // Manual and idle compaction have no preceding provider boundary.
         // Prepare live context before sizing or checkpointing the replacement.
         let estimate = self.core.advance_context(&history, &tools);
-        let mut request = crate::CompactionRequest::new(history, cancellation)
+        let request = crate::CompactionRequest::new(history, cancellation)
+            .with_instructions_opt(instructions)
             .with_context_estimate(estimate)
             .with_request_context(
                 self.core.id().clone(),
@@ -730,9 +731,6 @@ impl Session {
                     .map(|workspace| workspace.root().to_path_buf()),
             )
             .with_session_turn(runtime.service_tier, tools, self.core.prompt_cache_key());
-        if let Some(instructions) = instructions {
-            request = request.with_instructions(instructions);
-        }
         let output = compactor.compact(request).await?;
         let (replacement, usage, metadata) = output.into_parts();
         let outcome = self

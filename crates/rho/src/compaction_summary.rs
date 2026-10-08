@@ -78,10 +78,7 @@ the summary and keep its details exact, while still filling every section.";
 
 /// The user's `/compact` guidance, wrapped so it reads as data, not as a new task.
 fn focus_section(instructions: &str) -> String {
-    format!(
-        "{FOCUS_INSTRUCTION}\n\n<focus>\n{}\n</focus>",
-        instructions.trim()
-    )
+    format!("{FOCUS_INSTRUCTION}\n\n<focus>\n{instructions}\n</focus>")
 }
 
 /// Summary request that resends `history`, the session's request history,

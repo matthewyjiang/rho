@@ -74,7 +74,8 @@ fn compaction_state_tracks_token_and_cost_accounting() {
 // Covers: a compactor cannot reproduce the session's cached request prefix
 // because manual or automatic requests lose the prompt cache key or the tool
 // specs the session's provider turns advertise, or a manual request drops the
-// caller's instructions (or automatic compaction invents some).
+// caller's instructions, fails to normalize them, or automatic compaction
+// invents some.
 // Owner: SDK compaction contract
 #[tokio::test]
 async fn compaction_requests_carry_session_cache_key_tool_specs_and_instructions() {
@@ -130,10 +131,22 @@ async fn compaction_requests_carry_session_cache_key_tool_specs_and_instructions
         .await
         .unwrap();
 
-    session
-        .compact_with_instructions("keep the plan")
-        .await
-        .unwrap();
+    let guidance = [
+        ("keep the plan", Some("keep the plan")),
+        (" \nkeep the plan\t ", Some("keep the plan")),
+        ("", None),
+        (" \n\t ", None),
+    ];
+    for (instructions, expected) in guidance {
+        let request = CompactionRequest::new(Vec::new(), crate::CancellationToken::new())
+            .with_instructions(instructions);
+        assert_eq!(request.instructions(), expected, "{instructions:?}");
+        session
+            .compact_with_instructions(instructions)
+            .await
+            .unwrap();
+    }
+    session.compact().await.unwrap();
     session.complete("next").await.unwrap();
 
     let requests = compactor.0.lock().unwrap();
@@ -148,20 +161,26 @@ async fn compaction_requests_carry_session_cache_key_tool_specs_and_instructions
             )
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        carried,
-        [
+    let expected = guidance
+        .into_iter()
+        .map(|(_, instructions)| {
             (
                 crate::CompactionTrigger::Manual,
-                Some("keep the plan".to_owned())
-            ),
-            (crate::CompactionTrigger::Automatic, None)
-        ]
-        .map(|(trigger, instructions)| (
-            trigger,
-            Some("rho:session".to_owned()),
-            Some(vec![spec.clone()]),
-            instructions,
-        ))
-    );
+                instructions.map(str::to_owned),
+            )
+        })
+        .chain([
+            (crate::CompactionTrigger::Manual, None),
+            (crate::CompactionTrigger::Automatic, None),
+        ])
+        .map(|(trigger, instructions)| {
+            (
+                trigger,
+                Some("rho:session".to_owned()),
+                Some(vec![spec.clone()]),
+                instructions,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(carried, expected);
 }

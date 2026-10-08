@@ -263,13 +263,23 @@ impl CompactionRequest {
     /// Compactors that write a summary should pass this to the summarizer
     /// alongside their own prompt. Compactors that cannot honor it, such as
     /// opaque provider-native compaction, should prefer a path that can.
-    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
-        self.instructions = Some(instructions.into());
+    /// Leading and trailing whitespace is trimmed; empty guidance is treated
+    /// as absent.
+    pub fn with_instructions(self, instructions: impl Into<String>) -> Self {
+        self.with_instructions_opt(Some(instructions.into()))
+    }
+
+    pub(crate) fn with_instructions_opt(mut self, instructions: Option<String>) -> Self {
+        self.instructions = instructions.and_then(|text| {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        });
         self
     }
 
     /// Caller guidance set by [`Self::with_instructions`], or `None` when the
-    /// caller gave none. Automatic compaction never sets it.
+    /// caller gave none or only whitespace. Guidance has no leading or trailing
+    /// whitespace. Automatic compaction never sets it.
     pub fn instructions(&self) -> Option<&str> {
         self.instructions.as_deref()
     }

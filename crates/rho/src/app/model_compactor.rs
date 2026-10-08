@@ -202,6 +202,7 @@ enum NativeCompactionResult {
     Success(CompactionOutput),
     Failed,
     Unavailable,
+    SkippedForInstructions,
     Cancelled,
 }
 
@@ -291,7 +292,10 @@ impl ModelCompactor {
         // Native compaction is opaque and takes no guidance, so a request with
         // instructions goes straight to the text summary that can honor them.
         let native = match request.instructions() {
-            Some(_) => NativeCompactionResult::Unavailable,
+            Some(_) => {
+                tracing::debug!("skipping native compaction to honor preservation instructions");
+                NativeCompactionResult::SkippedForInstructions
+            }
             None => {
                 self.try_native_compaction(
                     messages,
@@ -325,7 +329,9 @@ impl ModelCompactor {
                 return Err(Error::Cancelled);
             }
             // Explicit fallback to portable text-summary compaction.
-            NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
+            NativeCompactionResult::Unavailable
+            | NativeCompactionResult::Failed
+            | NativeCompactionResult::SkippedForInstructions => {}
         }
 
         let Some(partition) = partition_messages_for_compaction(messages, tools, target_tokens)
