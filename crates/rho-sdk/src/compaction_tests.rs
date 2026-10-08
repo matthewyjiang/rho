@@ -73,10 +73,11 @@ fn compaction_state_tracks_token_and_cost_accounting() {
 
 // Covers: a compactor cannot reproduce the session's cached request prefix
 // because manual or automatic requests lose the prompt cache key or the tool
-// specs the session's provider turns advertise.
+// specs the session's provider turns advertise, or a manual request drops the
+// caller's instructions (or automatic compaction invents some).
 // Owner: SDK compaction contract
 #[tokio::test]
-async fn compaction_requests_carry_session_cache_key_and_tool_specs() {
+async fn compaction_requests_carry_session_cache_key_tool_specs_and_instructions() {
     use std::sync::{Arc, Mutex};
 
     use serde_json::json;
@@ -129,7 +130,10 @@ async fn compaction_requests_carry_session_cache_key_and_tool_specs() {
         .await
         .unwrap();
 
-    session.compact().await.unwrap();
+    session
+        .compact_with_instructions("keep the plan")
+        .await
+        .unwrap();
     session.complete("next").await.unwrap();
 
     let requests = compactor.0.lock().unwrap();
@@ -140,19 +144,24 @@ async fn compaction_requests_carry_session_cache_key_and_tool_specs() {
                 request.trigger(),
                 request.prompt_cache_key().map(str::to_owned),
                 request.tool_specs().map(<[ToolSpec]>::to_vec),
+                request.instructions().map(str::to_owned),
             )
         })
         .collect::<Vec<_>>();
     assert_eq!(
         carried,
         [
-            crate::CompactionTrigger::Manual,
-            crate::CompactionTrigger::Automatic
+            (
+                crate::CompactionTrigger::Manual,
+                Some("keep the plan".to_owned())
+            ),
+            (crate::CompactionTrigger::Automatic, None)
         ]
-        .map(|trigger| (
+        .map(|(trigger, instructions)| (
             trigger,
             Some("rho:session".to_owned()),
-            Some(vec![spec.clone()])
+            Some(vec![spec.clone()]),
+            instructions,
         ))
     );
 }

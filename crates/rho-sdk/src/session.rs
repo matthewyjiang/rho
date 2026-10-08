@@ -674,6 +674,23 @@ impl Session {
     }
 
     pub async fn compact(&self) -> Result<crate::CompactionOutcome, Error> {
+        self.compact_inner(None).await
+    }
+
+    /// Like [`Self::compact`], and passes `instructions` to the compactor as
+    /// guidance on what the replacement must preserve. See
+    /// [`crate::CompactionRequest::instructions`].
+    pub async fn compact_with_instructions(
+        &self,
+        instructions: impl Into<String>,
+    ) -> Result<crate::CompactionOutcome, Error> {
+        self.compact_inner(Some(instructions.into())).await
+    }
+
+    async fn compact_inner(
+        &self,
+        instructions: Option<String>,
+    ) -> Result<crate::CompactionOutcome, Error> {
         let runtime = self.core.runtime();
         let compactor =
             runtime
@@ -700,7 +717,7 @@ impl Session {
         // Manual and idle compaction have no preceding provider boundary.
         // Prepare live context before sizing or checkpointing the replacement.
         let estimate = self.core.advance_context(&history, &tools);
-        let request = crate::CompactionRequest::new(history, cancellation)
+        let mut request = crate::CompactionRequest::new(history, cancellation)
             .with_context_estimate(estimate)
             .with_request_context(
                 self.core.id().clone(),
@@ -713,6 +730,9 @@ impl Session {
                     .map(|workspace| workspace.root().to_path_buf()),
             )
             .with_session_turn(runtime.service_tier, tools, self.core.prompt_cache_key());
+        if let Some(instructions) = instructions {
+            request = request.with_instructions(instructions);
+        }
         let output = compactor.compact(request).await?;
         let (replacement, usage, metadata) = output.into_parts();
         let outcome = self

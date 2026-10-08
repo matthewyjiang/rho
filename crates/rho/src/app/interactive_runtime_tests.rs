@@ -555,7 +555,9 @@ async fn permission_mode_switch_rejects_an_active_run_without_mutation() {
 #[tokio::test]
 async fn session_changes_are_rejected_while_compaction_is_in_flight() {
     let mut interactive = pending_compaction_runtime("done").await;
-    interactive.begin_compact_task().unwrap();
+    interactive
+        .begin_compact_task(/*instructions*/ None)
+        .unwrap();
     assert!(interactive.is_compacting());
 
     let permission_error = interactive

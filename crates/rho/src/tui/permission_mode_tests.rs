@@ -177,7 +177,7 @@ async fn permissions_command_rejects_compaction_without_failing() {
     let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
     let previous_agent = agent.permission_mode();
     let previous_ui = app.info.runtime.permission_mode;
-    agent.begin_compact_task().unwrap();
+    agent.begin_compact_task(/*instructions*/ None).unwrap();
 
     let invocation = parse_command("/permissions plan").unwrap().unwrap();
     app.execute_permissions_command(invocation, &mut agent)

@@ -188,6 +188,7 @@ pub struct CompactionRequest {
     service_tier: Option<crate::model::ServiceTier>,
     prompt_cache_key: Option<String>,
     tool_specs: Option<Vec<crate::model::ToolSpec>>,
+    instructions: Option<String>,
 }
 
 impl CompactionRequest {
@@ -207,6 +208,7 @@ impl CompactionRequest {
             service_tier: None,
             prompt_cache_key: None,
             tool_specs: None,
+            instructions: None,
         }
     }
 
@@ -253,6 +255,23 @@ impl CompactionRequest {
 
     pub fn service_tier(&self) -> Option<crate::model::ServiceTier> {
         self.service_tier
+    }
+
+    /// Carries caller guidance on what the replacement must preserve, such as
+    /// a current plan, specific file paths, or an unresolved error.
+    ///
+    /// Compactors that write a summary should pass this to the summarizer
+    /// alongside their own prompt. Compactors that cannot honor it, such as
+    /// opaque provider-native compaction, should prefer a path that can.
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Caller guidance set by [`Self::with_instructions`], or `None` when the
+    /// caller gave none. Automatic compaction never sets it.
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
     }
 
     pub fn with_trigger(mut self, trigger: CompactionTrigger) -> Self {

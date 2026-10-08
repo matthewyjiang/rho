@@ -1,5 +1,7 @@
 //! Host compactor. Tiers, cheapest first: elide old tool results, then
-//! provider-native compaction, then a text summary.
+//! provider-native compaction, then a text summary. Requests with
+//! instructions (`/compact <focus>`) skip the native tier, which cannot take
+//! them, and pass them to the summarizer.
 //!
 //! A text summary normally comes from the session model and resends the
 //! session's own history, tool specs, and prompt cache key, so the provider
@@ -286,17 +288,23 @@ impl ModelCompactor {
         let messages = elided.as_deref().unwrap_or(request.messages());
         let mut rejected_native_usage = ModelUsage::default();
 
-        match self
-            .try_native_compaction(
-                messages,
-                request.service_tier(),
-                cancellation.clone(),
-                usage_context(request, self.provider.identity()),
-                &mut next_attempt_index,
-                trace,
-            )
-            .await
-        {
+        // Native compaction is opaque and takes no guidance, so a request with
+        // instructions goes straight to the text summary that can honor them.
+        let native = match request.instructions() {
+            Some(_) => NativeCompactionResult::Unavailable,
+            None => {
+                self.try_native_compaction(
+                    messages,
+                    request.service_tier(),
+                    cancellation.clone(),
+                    usage_context(request, self.provider.identity()),
+                    &mut next_attempt_index,
+                    trace,
+                )
+                .await
+            }
+        };
+        match native {
             NativeCompactionResult::Success(output) => {
                 if retained_tokens == 0
                     || capacity.is_none_or(|limit| {
@@ -397,7 +405,7 @@ impl ModelCompactor {
             plans.push(SummaryPlan {
                 path: SummaryRequestPath::Summarizer,
                 provider: None,
-                messages: build_summary_request_messages(partition),
+                messages: build_summary_request_messages(partition, request.instructions()),
                 partition: partition.clone(),
                 tools: &[],
                 reasoning: summarizer.model.reasoning,
@@ -412,7 +420,7 @@ impl ModelCompactor {
         plans.push(SummaryPlan {
             path: SummaryRequestPath::Transcript,
             provider: Some(self.provider.as_ref()),
-            messages: build_summary_request_messages(partition),
+            messages: build_summary_request_messages(partition, request.instructions()),
             partition: partition.clone(),
             tools: &[],
             reasoning: self.reasoning,
@@ -517,7 +525,8 @@ impl ModelCompactor {
         let tools = self.tool_specs(request);
         let partition =
             partition_messages_for_compaction(request.messages(), tools, budget.target_tokens)?;
-        let messages = build_session_summary_request(request.messages(), &partition);
+        let messages =
+            build_session_summary_request(request.messages(), &partition, request.instructions());
         let fits = self.context_window.is_none_or(|window| {
             let tokens =
                 calibrated_tokens(estimate_context_tokens(&messages, tools), budget.context);

@@ -56,7 +56,8 @@ fn strip_analysis_removes_scratchpads() {
 fn session_summary_request_names_the_deleted_span() {
     let history = history(None);
     let deleted = "did step one ".repeat(400);
-    let request = build_session_summary_request(&history, &partition(&history));
+    let request =
+        build_session_summary_request(&history, &partition(&history), /*instructions*/ None);
 
     assert_eq!(&request[..history.len()], history.as_slice());
     let Message::User(blocks) = &request[history.len()] else {
@@ -105,7 +106,8 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
             }),
         ])),
     ];
-    let request = build_session_summary_request(&history, &partition(&history));
+    let request =
+        build_session_summary_request(&history, &partition(&history), /*instructions*/ None);
     let Message::User(blocks) = request.last().expect("trailing instruction") else {
         panic!("expected a trailing user instruction");
     };
@@ -138,8 +140,11 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
             arguments: json!({"command": "true"}),
         })]),
     ];
-    let result_request =
-        build_session_summary_request(&result_history, &partition(&result_history));
+    let result_request = build_session_summary_request(
+        &result_history,
+        &partition(&result_history),
+        /*instructions*/ None,
+    );
     let Message::User(blocks) = result_request.last().expect("trailing instruction") else {
         panic!("expected a trailing user instruction");
     };
@@ -165,7 +170,8 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
 fn summary_request_updates_previous_summary_instead_of_resummarizing() {
     for previous in [None, Some("## Open tasks\nship it")] {
         let history = history(previous);
-        let request = build_summary_request_messages(&partition(&history));
+        let request =
+            build_summary_request_messages(&partition(&history), /*instructions*/ None);
 
         let [Message::System(_), Message::User(blocks)] = request.as_slice() else {
             panic!("unexpected request shape: {request:?}");

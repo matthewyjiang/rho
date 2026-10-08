@@ -14,13 +14,17 @@ pub(crate) enum CompactTaskPoll {
 /// Session-owned compact work that can run off the TUI input loop.
 struct CompactTask {
     session: rho_sdk::Session,
+    /// User guidance from `/compact <instructions>`.
+    instructions: Option<String>,
 }
 
 impl CompactTask {
     async fn run(self) -> CompactTaskResult {
-        CompactTaskResult {
-            outcome: self.session.compact().await,
-        }
+        let outcome = match self.instructions {
+            Some(instructions) => self.session.compact_with_instructions(instructions).await,
+            None => self.session.compact().await,
+        };
+        CompactTaskResult { outcome }
     }
 }
 
@@ -99,12 +103,18 @@ impl InteractiveRuntime {
             .is_some()
     }
 
-    pub(crate) fn begin_compact_task(&mut self) -> anyhow::Result<()> {
+    /// Starts compaction off the input loop. `instructions` tells the
+    /// summarizer what to preserve; `None` is a plain compact.
+    pub(crate) fn begin_compact_task(
+        &mut self,
+        instructions: Option<String>,
+    ) -> anyhow::Result<()> {
         if self.is_session_busy() {
             anyhow::bail!("session is busy");
         }
         let task = CompactTask {
             session: self.sessions.session().clone(),
+            instructions,
         };
         self.pending_compact = Some(tokio::spawn(task.run()));
         Ok(())

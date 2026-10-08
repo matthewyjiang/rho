@@ -222,6 +222,59 @@ async fn native_compaction_failure_falls_back_to_summary_path() {
     assert!(provider.recorded_requests()[0].prompt_cache_key.is_none());
 }
 
+// Covers: `/compact <instructions>` is silently ignored because native
+// compaction, which cannot take guidance, wins, or because the text summary
+// request never shows the instructions to the summarizer.
+// Owner: ModelCompactor runtime.
+#[tokio::test]
+async fn instructions_skip_native_compaction_and_reach_the_summarizer() {
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("openai", "openai-responses", "gpt-test"),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("summary text".into()),
+        ]))],
+    )
+    .with_native_compactions([Ok(rho_sdk::CompactionOutput::new(vec![
+        Message::user_text("native"),
+    ])
+    .unwrap())]);
+    let compactor = compactor(provider.clone(), RecordingUsage::default(), Some(1_000));
+    let history = vec![
+        Message::System("system".into()),
+        Message::user_text("x".repeat(8_000)),
+        Message::assistant_text("y".repeat(8_000)),
+        Message::user_text("recent"),
+    ];
+
+    let output = compactor
+        .compact(
+            CompactionRequest::new(history, Default::default())
+                .with_instructions("keep the deploy plan"),
+        )
+        .await
+        .unwrap();
+
+    let summarized = output.messages().iter().any(|message| {
+        matches!(message, Message::User(blocks) if blocks.iter().any(|block| matches!(
+            block,
+            ContentBlock::Text(text) if text.contains("summary text")
+        )))
+    });
+    assert!(summarized, "{:?}", output.messages());
+    let requests = provider.recorded_requests();
+    assert_eq!(requests.len(), 1, "native compaction must not run");
+    let Some(Message::User(blocks)) = requests[0].messages.last() else {
+        panic!("expected a trailing user instruction");
+    };
+    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+        panic!("expected one text block, got {blocks:?}");
+    };
+    assert!(
+        instruction.contains("keep the deploy plan"),
+        "{instruction}"
+    );
+}
+
 // Covers: auth refresh attempts retain their outcomes and monotonic indexes
 // Owner: ModelCompactor runtime.
 #[tokio::test]

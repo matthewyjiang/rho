@@ -296,8 +296,8 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Compact,
         name: "compact",
-        usage: "/compact",
-        description: "compact older conversation context",
+        usage: "/compact [instructions]",
+        description: "compact older conversation context, optionally saying what to keep",
         argument_choices: &[],
     },
     CommandSpec {

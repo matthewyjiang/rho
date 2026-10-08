@@ -108,7 +108,13 @@ impl App {
             }
             CommandId::Help => self.execute_help_command(),
             CommandId::Compact => {
-                self.start_compact(agent, super::compact_work::CompactFollowUp::None)
+                // Expanded model text, so pasted guidance arrives in full.
+                let instructions = slash_command_args(&turn.model).trim();
+                self.start_compact(
+                    agent,
+                    super::compact_work::CompactFollowUp::None,
+                    (!instructions.is_empty()).then(|| instructions.to_owned()),
+                )
             }
             CommandId::Copy => self.execute_copy_command(),
             CommandId::Goal => {

@@ -404,9 +404,11 @@ impl App {
             {
                 Ok(HandoffExec::Done) => {}
                 Ok(HandoffExec::StartCompact { had_source }) => {
-                    if let Err(err) =
-                        self.start_compact(agent, super::compact_work::CompactFollowUp::None)
-                    {
+                    if let Err(err) = self.start_compact(
+                        agent,
+                        super::compact_work::CompactFollowUp::None,
+                        /*instructions*/ None,
+                    ) {
                         self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
                         self.set_status("model handoff failed");
                     } else {

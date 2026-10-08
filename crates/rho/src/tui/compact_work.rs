@@ -65,10 +65,13 @@ pub(super) fn keep_armed_follow_up_while_busy(ready: &ReadyFollowUp) -> bool {
 }
 
 impl App {
+    /// Starts the compact job. `instructions` is the user's `/compact`
+    /// guidance for the summarizer; automatic callers pass `None`.
     pub(super) fn start_compact(
         &mut self,
         agent: &mut InteractiveRuntime,
         follow_up: CompactFollowUp,
+        instructions: Option<String>,
     ) -> anyhow::Result<()> {
         if agent.is_compacting() {
             if !matches!(follow_up, CompactFollowUp::None) {
@@ -77,7 +80,7 @@ impl App {
             self.notify_status("already compacting context");
             return Ok(());
         }
-        agent.begin_compact_task()?;
+        agent.begin_compact_task(instructions)?;
         self.begin_started_compact(follow_up);
         Ok(())
     }
@@ -92,7 +95,7 @@ impl App {
         if agent.is_compacting() {
             return Err((anyhow::anyhow!("already compacting context"), submission));
         }
-        if let Err(error) = agent.begin_compact_task() {
+        if let Err(error) = agent.begin_compact_task(/*instructions*/ None) {
             return Err((error, submission));
         }
         self.begin_started_compact(CompactFollowUp::Send(submission));
