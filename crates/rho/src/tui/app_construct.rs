@@ -160,6 +160,10 @@ impl App {
             side_chat: None,
             herdr_sync: Default::default(),
             notifier,
+            // `tui::run` replaces this once the startup probe has answered.
+            program_status: super::program_status::ProgramStatusReporter::new(
+                super::program_status::ProgramStatusSupport::Unsupported,
+            ),
         };
         if let Some(status) = initial_status {
             app.set_status(status);

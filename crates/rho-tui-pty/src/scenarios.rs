@@ -59,6 +59,7 @@ mod permission_cycle;
 mod pickers;
 mod plan_exit;
 mod process_rail;
+mod program_status;
 mod prompt_history_search;
 mod questionnaire;
 mod questionnaire_timeout;
@@ -170,6 +171,7 @@ use pickers::{
 use process_rail::{
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO, PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO,
 };
+use program_status::PROGRAM_STATUS_SCENARIO;
 use prompt_history_search::PROMPT_HISTORY_SEARCH_SCENARIO;
 use reasoning_output::REASONING_OUTPUT_RETROACTIVE_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
@@ -389,6 +391,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ZEN_TOOL_RUN_SUMMARY_SCENARIO,
     HEADER_HINTS_SCENARIO,
     TURN_NOTIFICATIONS_SCENARIO,
+    PROGRAM_STATUS_SCENARIO,
     PROMPT_HISTORY_SEARCH_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
     AGENT_PROMPT_SCENARIO,

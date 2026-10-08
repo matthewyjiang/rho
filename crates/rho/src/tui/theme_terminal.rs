@@ -1,8 +1,14 @@
-//! Host-terminal palette sampling for the interactive TUI.
+//! Startup host-terminal probe for the interactive TUI: palette sampling plus
+//! the OSC 7501 program status support query.
 
 use std::collections::HashMap;
 
+use super::program_status::{self, ProgramStatusSupport};
 use super::theme_scheme::Rgb;
+
+/// Primary device attributes. Every terminal answers it, and replies arrive in
+/// query order, so its reply means every earlier query was answered or ignored.
+const DEVICE_ATTRIBUTES_QUERY: &[u8] = b"\x1b[c";
 
 /// Chromatic colors plus white. Required before a queried palette is accepted.
 pub(super) const REQUIRED_ANSI_COLORS: [AnsiColor; 7] = [
@@ -31,6 +37,20 @@ const SAMPLED_ANSI_COLORS: [AnsiColor; 8] = [
 pub(super) struct TerminalPalette {
     pub background: Rgb,
     pub ansi: HashMap<AnsiColor, Rgb>,
+}
+
+/// What the startup probe learned about the host terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TerminalProbe {
+    pub palette: Option<TerminalPalette>,
+    pub program_status: ProgramStatusSupport,
+}
+
+impl TerminalProbe {
+    const UNANSWERED: Self = Self {
+        palette: None,
+        program_status: ProgramStatusSupport::Unsupported,
+    };
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -80,11 +100,16 @@ impl AnsiColor {
     }
 }
 
-pub(super) fn query_terminal_palette() -> Option<TerminalPalette> {
+/// Queries the terminal before any event reader owns stdin. Waits until the
+/// device attributes reply or a complete palette arrives, or 80 ms pass.
+pub(super) fn probe_terminal() -> TerminalProbe {
     if std::env::var_os("RHO_TUI_MATRIX_PALETTE").is_some_and(|value| value == "github-dark") {
-        return Some(matrix_fixture_palette());
+        return TerminalProbe {
+            palette: Some(matrix_fixture_palette()),
+            program_status: ProgramStatusSupport::Unsupported,
+        };
     }
-    query_terminal_palette_impl().ok().flatten()
+    probe_terminal_impl().unwrap_or(TerminalProbe::UNANSWERED)
 }
 
 /// GitHub-dark well used by the docs PTY proof plate (`SvgPalette::github_dark`).
@@ -103,45 +128,51 @@ pub(super) fn matrix_fixture_palette() -> TerminalPalette {
     }
 }
 
-fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
+fn write_probe_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
+    // Before the palette queries, so a complete palette implies its reply arrived.
+    output.write_all(program_status::QUERY)?;
     // White (7) for panel blends; bright black (8) for dim text. Never use 7 as dim.
     output.write_all(b"\x1b]11;?\x1b\\")?;
     for color in SAMPLED_ANSI_COLORS {
         write!(output, "\x1b]4;{};?\x1b\\", color.index())?;
     }
+    output.write_all(DEVICE_ATTRIBUTES_QUERY)?;
     output.flush()
 }
 
 #[cfg(unix)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+fn probe_terminal_impl() -> std::io::Result<TerminalProbe> {
     use std::io::Read;
     use std::os::fd::AsRawFd;
     use std::time::{Duration, Instant};
 
     let mut stdout = std::io::stdout();
-    write_palette_queries(&mut stdout)?;
+    write_probe_queries(&mut stdout)?;
 
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 {
-        return Ok(None);
+        return Ok(TerminalProbe::UNANSWERED);
     }
     if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Ok(None);
+        return Ok(TerminalProbe::UNANSWERED);
     }
 
     let mut bytes = Vec::new();
-    let mut palette = None;
+    let mut probe = TerminalProbe::UNANSWERED;
     let deadline = Instant::now() + Duration::from_millis(80);
     let mut handle = stdin.lock();
-    while Instant::now() < deadline && palette.is_none() {
+    let mut complete = false;
+    while Instant::now() < deadline && !complete {
         let mut buffer = [0u8; 1024];
         match handle.read(&mut buffer) {
             Ok(0) => std::thread::sleep(Duration::from_millis(2)),
             Ok(count) => {
                 bytes.extend_from_slice(&buffer[..count]);
-                palette = parse_palette_response(&String::from_utf8_lossy(&bytes));
+                let response = String::from_utf8_lossy(&bytes);
+                probe = parse_probe_response(&response);
+                complete = probe.palette.is_some() || has_device_attributes_reply(&response);
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(2));
@@ -154,7 +185,7 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     }
 
     let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-    Ok(palette)
+    Ok(probe)
 }
 
 #[cfg(windows)]
@@ -163,11 +194,14 @@ fn is_native_wezterm() -> bool {
 }
 
 #[cfg(windows)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+fn probe_terminal_impl() -> std::io::Result<TerminalProbe> {
     if is_native_wezterm() {
         // WezTerm's bundled ConPTY does not pass terminal query responses back
         // to native Windows applications. Use the console palette directly.
-        return query_windows_console_palette();
+        return Ok(TerminalProbe {
+            palette: query_windows_console_palette()?,
+            program_status: ProgramStatusSupport::Unsupported,
+        });
     }
 
     use std::io::stdout;
@@ -193,15 +227,15 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
 
     let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
     if input.is_null() || input == -1isize as _ {
-        return Ok(None);
+        return Ok(TerminalProbe::UNANSWERED);
     }
 
     let mut original_mode = 0;
     if unsafe { GetConsoleMode(input, &mut original_mode) } == 0 {
-        return Ok(None);
+        return Ok(TerminalProbe::UNANSWERED);
     }
     if unsafe { SetConsoleMode(input, original_mode | ENABLE_VIRTUAL_TERMINAL_INPUT) } == 0 {
-        return Ok(None);
+        return Ok(TerminalProbe::UNANSWERED);
     }
     let _mode_guard = ConsoleModeGuard {
         handle: input,
@@ -209,9 +243,10 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     };
 
     let mut output = stdout();
-    write_palette_queries(&mut output)?;
+    write_probe_queries(&mut output)?;
 
     let mut bytes = Vec::new();
+    let mut probe = TerminalProbe::UNANSWERED;
     let deadline = Instant::now() + Duration::from_millis(80);
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -277,12 +312,17 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
             return Err(std::io::Error::last_os_error());
         }
         bytes.extend_from_slice(&buffer[..count as usize]);
-        if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
-            return Ok(Some(palette));
+        let response = String::from_utf8_lossy(&bytes);
+        probe = parse_probe_response(&response);
+        if probe.palette.is_some() || has_device_attributes_reply(&response) {
+            break;
         }
     }
 
-    query_windows_console_palette()
+    if probe.palette.is_none() {
+        probe.palette = query_windows_console_palette()?;
+    }
+    Ok(probe)
 }
 
 #[cfg(windows)]
@@ -341,8 +381,30 @@ fn rgb_from_colorref(color: u32) -> Rgb {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    Ok(None)
+fn probe_terminal_impl() -> std::io::Result<TerminalProbe> {
+    Ok(TerminalProbe::UNANSWERED)
+}
+
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
+pub(super) fn parse_probe_response(response: &str) -> TerminalProbe {
+    let program_status = osc_sequences(response)
+        .into_iter()
+        .find_map(ProgramStatusSupport::from_reply)
+        .unwrap_or(ProgramStatusSupport::Unsupported);
+    TerminalProbe {
+        palette: parse_palette_response(response),
+        program_status,
+    }
+}
+
+/// Whether `response` holds a primary device attributes reply (`CSI ? Ps c`).
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
+pub(super) fn has_device_attributes_reply(response: &str) -> bool {
+    response.match_indices("\x1b[?").any(|(start, intro)| {
+        response[start + intro.len()..]
+            .trim_start_matches(|ch: char| ch.is_ascii_digit() || ch == ';')
+            .starts_with('c')
+    })
 }
 
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]

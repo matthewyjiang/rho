@@ -1,3 +1,4 @@
+use super::program_status::SettledTurn;
 use super::subagent_delivery::TurnBoundaryDelivery;
 use super::*;
 use crate::app::interactive_runtime::DisplayCommit;
@@ -333,7 +334,7 @@ impl App {
         self.set_status("running");
         self.begin_provider_turn_ui();
         self.turn.set_activity_phase(ActivityPhase::Starting);
-        self.report_herdr_working().await;
+        self.report_working().await;
         self.turn.start_loading();
         if let Err(error) = self.clamp_history_scroll_for_terminal(terminal) {
             self.abandon_provider_turn_start(agent, &mut pending_boundary);
@@ -418,7 +419,7 @@ impl App {
                     ).await {
                         Ok(StreamControl::Interrupt) => agent.cancel(),
                         Ok(StreamControl::ApprovalResolved) => {
-                            self.report_herdr_working().await;
+                            self.report_working().await;
                         }
                         Ok(StreamControl::Continue | StreamControl::Resize) => {}
                         Err(error) => {
@@ -454,7 +455,7 @@ impl App {
                     };
                     match reply {
                         QuestionnaireReply::Answer(response) => {
-                            self.report_herdr_working().await;
+                            self.report_working().await;
                             if let Err(error) = agent
                                 .respond(request_id, response)
                                 .await
@@ -738,6 +739,14 @@ impl App {
         if completed {
             agent.mark_live_context_warm();
         }
+        match outcome.kind() {
+            TurnOutcomeKind::Completed => self.program_status.turn_settled(SettledTurn::Completed),
+            TurnOutcomeKind::Interrupted | TurnOutcomeKind::Cancelled => {
+                self.program_status.turn_settled(SettledTurn::Idle);
+            }
+            // `finalize_failed_turn` recorded the error message.
+            TurnOutcomeKind::Failed => {}
+        }
         self.insert_cache_miss_notices(completed);
         self.insert_runtime_notices(agent);
         if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
@@ -801,8 +810,10 @@ impl App {
         self.turn.set_current_turn_start(None);
         self.end_busy_ui();
         self.turn.stop_loading();
-        self.insert_entry(&Entry::Error(message));
+        self.insert_entry(&Entry::Error(message.clone()));
         self.set_status("error");
+        self.program_status
+            .turn_settled(SettledTurn::Failed { message });
         TurnOutcome::Failed(Box::new(failed_turn))
     }
 

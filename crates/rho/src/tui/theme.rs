@@ -12,7 +12,7 @@ use super::{
         self, is_terminal_theme_id, normalize_theme_id, resolve_fixed_scheme, ColorScheme, Rgb,
         TERMINAL_THEME_ID,
     },
-    theme_terminal::{query_terminal_palette, AnsiColor, TerminalPalette},
+    theme_terminal::{probe_terminal, AnsiColor, TerminalPalette, TerminalProbe},
 };
 
 #[path = "theme_diff.rs"]
@@ -403,7 +403,9 @@ pub(super) enum SyntaxRole {
 pub(super) struct Theme;
 
 impl Theme {
-    /// Sample the terminal palette before any terminal event reader starts.
+    /// Probe the terminal before any terminal event reader starts, keep its
+    /// palette, and return the whole probe for callers that need its other
+    /// answers.
     ///
     /// The query reads stdin directly, so it must run before crossterm owns
     /// that descriptor, or the two race for the same bytes and user keys go
@@ -412,10 +414,11 @@ impl Theme {
     ///
     /// This is the one startup tail still on the first-frame path. A terminal
     /// that answers costs a few milliseconds; one that never answers costs the
-    /// 80 ms read deadline in [`query_terminal_palette`].
-    pub(super) fn initialize_from_terminal() {
-        if let Some(palette) = query_terminal_palette() {
-            let _ = TERMINAL_SAMPLE.set(palette);
+    /// 80 ms read deadline in [`probe_terminal`].
+    pub(super) fn initialize_from_terminal() -> TerminalProbe {
+        let probe = probe_terminal();
+        if let Some(palette) = &probe.palette {
+            let _ = TERMINAL_SAMPLE.set(palette.clone());
             // The sample feeds the terminal-mode palette; drop any derived
             // palette computed before the sample landed.
             THEME_STATE
@@ -423,6 +426,7 @@ impl Theme {
                 .unwrap_or_else(|error| error.into_inner())
                 .palette = None;
         }
+        probe
     }
 
     /// Retain fixed schemes from the open theme picker so preview uses them

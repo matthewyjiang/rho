@@ -340,7 +340,7 @@ impl App {
             }
             ParentActivity::Working(status) => {
                 self.set_status(status);
-                self.report_herdr_working().await;
+                self.report_working().await;
             }
         }
     }

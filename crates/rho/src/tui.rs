@@ -161,6 +161,7 @@ mod plan_exit;
 mod pointer_actions;
 mod process_panel;
 mod process_peek;
+mod program_status;
 mod prompt_history;
 mod prompt_history_search;
 mod prompt_turn;
@@ -485,7 +486,7 @@ pub(crate) async fn run(
     info: TuiBootstrap,
 ) -> anyhow::Result<Option<ExitReceipt>> {
     let mut terminal = synced_backend::init();
-    Theme::initialize_from_terminal();
+    let probe = Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
     let result = {
@@ -498,6 +499,11 @@ pub(crate) async fn run(
                     agent.mcp_report().clone(),
                     agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
+                );
+                app.program_status = program_status::ProgramStatusReporter::new(
+                    probe
+                        .program_status
+                        .with_override(std::env::var("RHO_PROGRAM_STATUS").ok().as_deref()),
                 );
                 app.spawn_initial_herdr_report();
                 app.terminal_session = Some(TerminalSession::acquire());
@@ -643,6 +649,8 @@ struct App {
     /// What Herdr last heard about the session, so idle changes are re-sent.
     herdr_sync: herdr_resume::HerdrSync,
     notifier: notifications::TerminalNotifier,
+    /// OSC 7501 reports; see `program_status`.
+    program_status: program_status::ProgramStatusReporter,
 }
 
 struct PendingSubagentQuestionnaire {
