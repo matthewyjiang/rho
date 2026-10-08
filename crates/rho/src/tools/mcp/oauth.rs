@@ -91,7 +91,7 @@ impl McpAuthorizationMode {
 
 /// The HTTP client a Streamable HTTP session should run on.
 pub(super) enum McpHttpClient {
-    /// rmcp's own client. Configured headers alone carry any credential.
+    /// No OAuth. Configured headers alone carry any credential.
     Default,
     /// An OAuth-bearing client that attaches the access token and refreshes it
     /// when it expires.
@@ -267,8 +267,9 @@ fn authorized_client(manager: AuthorizationManager) -> anyhow::Result<McpHttpCli
 
 /// Match the transport client rmcp builds for itself: no automatic redirects,
 /// so headers and bearer tokens cannot be replayed to a redirect target, and
-/// no idle pooling, which stalls on Linux delayed ACK.
-fn transport_http_client() -> anyhow::Result<reqwest::Client> {
+/// no idle pooling, which stalls on Linux delayed ACK. Plain and OAuth
+/// sessions both send requests through it.
+pub(super) fn transport_http_client() -> anyhow::Result<reqwest::Client> {
     crate::reqwest_client_builder()
         .pool_max_idle_per_host(0)
         .redirect(reqwest::redirect::Policy::none())

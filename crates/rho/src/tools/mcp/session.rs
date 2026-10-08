@@ -30,6 +30,7 @@ use super::{
     config::{McpServerConfig, McpTransport},
     definition::McpToolDefinition,
     elicitation::{McpElicitationService, McpElicitationSupport},
+    http_client::McpTransportClient,
     inflight::McpInFlightCalls,
     oauth::{self, McpAuthorizationMode, McpHttpClient},
     progress::McpProgressRouter,
@@ -346,18 +347,11 @@ async fn establish_session(
             // rule.
             let config =
                 StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers);
-            match http_client {
-                McpHttpClient::Default => {
-                    // rmcp builds its own reqwest client; install the TLS provider first.
-                    rho_providers::ensure_rustls_ring_provider();
-                    let transport = StreamableHttpClientTransport::from_config(config);
-                    Ok(handler.serve(transport).await?)
-                }
-                McpHttpClient::Authorized(client) => {
-                    let transport = StreamableHttpClientTransport::with_client(*client, config);
-                    Ok(handler.serve(transport).await?)
-                }
-            }
+            let transport = StreamableHttpClientTransport::with_client(
+                McpTransportClient::new(http_client)?,
+                config,
+            );
+            Ok(handler.serve(transport).await?)
         }
     }
 }

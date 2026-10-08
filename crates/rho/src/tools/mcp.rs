@@ -24,6 +24,7 @@ pub(crate) mod display;
 pub(crate) mod elicitation;
 pub(crate) mod elicitation_form;
 pub(crate) mod exported_name;
+mod http_client;
 pub(crate) mod inflight;
 pub(crate) mod oauth;
 pub(crate) mod progress;

@@ -24,15 +24,23 @@ rustls = { version = "0.23", default-features = false, features = [
     "tls12",
 ] }
 
-# Thin LTO + one codegen unit shrink the release binary 90.7 MB -> 56.6 MB and
-# steady TUI RSS ~48.7 MB -> ~44 MB (measured 2026-08-15, linux x86_64) at the
-# cost of link time. Symbols are stripped for size; panic messages still carry
-# their location. Do not add `panic = "abort"`: the TUI recovers from renderer
-# panics with `catch_unwind` (tui/markdown/math.rs, mermaid.rs).
+# Size-tuned: opt-level "s" + fat LTO + one codegen unit. Measured 2026-10-08
+# (linux x86_64, 2.19.0): the stripped binary drops 69.7 MB -> 45.6 MB versus
+# opt-level 3 + thin LTO, a 6-8% slowdown on a CPU-bound 17.6 MB session HTML
+# export, 15% faster startup, and release builds about as fast (433 s vs 453 s).
+# opt-level "z" saved 4 MB more but ran 35% slower; keeping hot crates
+# (serde_json, syntect, regex, pulldown-cmark) at opt-level 3 bought nothing
+# because fat LTO compiles their generics inside rho at "s" anyway.
+# The Arch package must stay under Cloudflare Pages' 25 MiB file limit
+# (.github/workflows/publish-arch-package.yml). Symbols are stripped for size;
+# panic messages still carry their location. Do not add `panic = "abort"`: the
+# TUI recovers from renderer panics with `catch_unwind`
+# (tui/markdown/math.rs, mermaid.rs).
 # Keep this table in sync with crates/rho/Cargo.toml so `cargo install
 # rho-coding-agent` (published crate as root) gets the same profile.
 [profile.release]
-lto = "thin"
+opt-level = "s"
+lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
