@@ -153,7 +153,19 @@ Inline config overrides a file with the same name:
 review = "Review this code for correctness, security, and maintainability."
 ```
 
-`/prompt:review src/config.rs` expands to the template text plus `src/config.rs`. Tab in the command palette expands without sending. Enter expands and sends. Names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
+`/prompt:review src/config.rs` expands to the template text plus `src/config.rs`. Tab in the command palette expands without sending. Enter expands and sends. Names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names.
+
+Placeholders put arguments inside the template instead of after it:
+
+- `$ARGUMENTS` is all text after the command.
+- `$1`, `$2`, … are the whitespace-separated arguments. Double quotes group words with spaces: `/prompt:fix "login bug" src/auth.rs` makes `$1` = `login bug`. Single quotes stay literal, so apostrophes are safe.
+- A missing argument expands to nothing.
+
+```text
+Compare $1 with $2. Focus on: $ARGUMENTS
+```
+
+A template with any placeholder no longer gets the text appended. Its palette entry lists the arguments it takes, such as `/prompt:compare [$1] [$2] [arguments]`, and Tab completes the command so you can type them first. Template files reload while Rho runs: palette discovery is cached for 2 seconds, while submitting `/prompt:<name>` refreshes the files immediately. Inline `[prompt_templates]` changes apply after a restart.
 
 ## Model aliases
 

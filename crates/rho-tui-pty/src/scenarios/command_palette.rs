@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::{
     env::IsolatedHome,
@@ -12,7 +12,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STARTUP};
+use super::{SETTLE, STARTUP, STREAM};
 
 const SIZE: PtySize = PtySize {
     rows: 28,
@@ -163,6 +163,88 @@ pub(super) const TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO: Scenario = Scenario::
     "Tab completion leaves Enter running the bare slash command",
     SIZE,
     TAB_COMPLETE_ENTER_BARE_COMMAND_STEPS,
+    /* smoke */ false,
+);
+
+// Covers: a template file written after startup expands on submit without a
+// restart, with positional arguments (one double-quoted) in its placeholders.
+// Owner: interactive TUI
+const PROMPT_TEMPLATE_HOT_RELOAD_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("write_template_after_startup"),
+    Step::Custom(write_review_template),
+    Step::SubmitText("/prompt:review alpha \"beta gamma\""),
+    Step::WaitText {
+        text: "fixture response: Review beta gamma then alpha.",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+pub(super) const PROMPT_TEMPLATE_HOT_RELOAD_SCENARIO: Scenario = Scenario::new(
+    "prompt_template_hot_reload",
+    "Expand a prompt template added after startup with positional arguments",
+    SIZE,
+    PROMPT_TEMPLATE_HOT_RELOAD_STEPS,
+    /* smoke */ false,
+);
+
+fn write_review_template(harness: &mut PtyHarness) -> Result<()> {
+    let prompts = harness
+        .working_directory()
+        .and_then(std::path::Path::parent)
+        .context("matrix workspace has no isolated home parent")?
+        .join("home/.rho/prompts");
+    std::fs::create_dir_all(&prompts)?;
+    std::fs::write(prompts.join("review.md"), "Review $2 then $1.\n")?;
+    Ok(())
+}
+
+// Covers: Tab defers a placeholder template, then Enter with arguments resolves
+// it as steering rather than rejecting the command while a turn is running.
+// Owner: interactive TUI
+const PROMPT_TEMPLATE_DURING_TURN_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Custom(write_review_template),
+    Step::SubmitText("fixture gated reply"),
+    Step::WaitText {
+        text: "reply waiting for release",
+        timeout: STREAM,
+    },
+    Step::Phase("complete_template_during_turn"),
+    Step::TypeText("/prompt:rev"),
+    Step::WaitText {
+        text: "/prompt:review",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Tab),
+    Step::SubmitText("alpha \"beta gamma\""),
+    Step::WaitText {
+        text: "Review beta gamma then alpha.",
+        timeout: STREAM,
+    },
+    Step::Custom(|harness| {
+        super::fixture_release::release_fixture(harness, ".rho-fixture-release-reply")
+    }),
+    Step::WaitText {
+        text: "fixture response: Review beta gamma then alpha.",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+pub(super) const PROMPT_TEMPLATE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
+    "prompt_template_during_turn",
+    "Complete a placeholder template and submit its arguments as steering",
+    SIZE,
+    PROMPT_TEMPLATE_DURING_TURN_STEPS,
     /* smoke */ false,
 );
 

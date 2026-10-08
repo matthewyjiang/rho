@@ -194,11 +194,18 @@ impl App {
                 self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
-                self.clear_submitted_input();
-                self.insert_entry(&Entry::Error(format!(
-                    "unknown or unavailable command '/{name}' while a model turn is running"
-                )));
-                self.set_status("command unavailable while running");
+                if let Some(expanded) = self.resolve_prompt_template(
+                    &name,
+                    super::command_palette::slash_command_args(&prompt),
+                ) {
+                    self.queue_steering_prompt(expanded.clone(), expanded, Vec::new())?;
+                } else {
+                    self.clear_submitted_input();
+                    self.insert_entry(&Entry::Error(format!(
+                        "unknown or unavailable command '/{name}' while a model turn is running"
+                    )));
+                    self.set_status("command unavailable while running");
+                }
             }
         }
         Ok(())

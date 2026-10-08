@@ -68,7 +68,8 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             favorite_models: Vec::new(),
             max_tool_output_lines: 10,
             keybindings: Keybindings::default(),
-            prompt_templates: Default::default(),
+            config_prompt_templates: Default::default(),
+            prompt_template_home: None,
         },
         session: SessionBootstrap {
             no_save: false,
