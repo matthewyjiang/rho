@@ -125,25 +125,14 @@ fn message_line(text: &str) -> Option<String> {
     Some(line)
 }
 
-/// How the last turn settled, reported while nothing waits on the user.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) enum SettledTurn {
-    /// No turn yet, or the user interrupted or cancelled it.
-    #[default]
-    Idle,
-    Completed,
-    Failed {
-        message: String,
-    },
-}
-
-/// Owned by the TUI app: holds the last settled turn and skips repeated
-/// reports. Returns bytes instead of writing so callers choose when to write.
+/// Support gating and repeat suppression for terminal reports. Returns bytes
+/// instead of writing so callers choose when to write.
 #[derive(Debug)]
 pub(super) struct ProgramStatusReporter {
     support: ProgramStatusSupport,
     sent: Option<ProgramStatus>,
-    settled: SettledTurn,
+    /// Retained across invalidation so teardown still clears our record.
+    reported: bool,
 }
 
 impl ProgramStatusReporter {
@@ -151,7 +140,7 @@ impl ProgramStatusReporter {
         Self {
             support,
             sent: None,
-            settled: SettledTurn::default(),
+            reported: false,
         }
     }
 
@@ -163,28 +152,20 @@ impl ProgramStatusReporter {
         }
         let bytes = status.encode();
         self.sent = Some(status);
+        self.reported = true;
         Some(bytes)
     }
 
-    pub(super) fn turn_settled(&mut self, turn: SettledTurn) {
-        self.settled = turn;
-    }
-
-    /// Status for a resting session that waits on nothing.
-    pub(super) fn settled_status(&self) -> ProgramStatus {
-        match &self.settled {
-            SettledTurn::Idle => ProgramStatus::Idle,
-            SettledTurn::Completed => ProgramStatus::Done,
-            SettledTurn::Failed { message } => ProgramStatus::Error {
-                message: message.clone(),
-            },
-        }
+    /// A suspended child may replace or clear the terminal's root record.
+    pub(super) fn invalidate(&mut self) {
+        self.sent = None;
     }
 
     /// Bytes that remove Rho's record on exit, so a `done` the user already
     /// saw does not outlive the session. `None` when nothing was reported.
     pub(super) fn clear(&mut self) -> Option<Vec<u8>> {
-        self.sent.take().map(|_| CLEAR.to_vec())
+        self.sent = None;
+        std::mem::take(&mut self.reported).then(|| CLEAR.to_vec())
     }
 }
 

@@ -13,6 +13,7 @@ fn terminal_lifecycle_errors_bypass_sdk_failure_handling() {
 
 fn failed_turn() -> FailedTurn {
     FailedTurn {
+        message: String::new(),
         input: rho_sdk::UserInput::text("continue the existing goal turn"),
         display_user: vec![Message::user_text("continuing active goal")],
         display_commit: DisplayCommit::Unsaved,

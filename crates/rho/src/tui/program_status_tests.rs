@@ -1,10 +1,8 @@
 use base64::Engine as _;
 use pretty_assertions::assert_eq;
 
-use super::{
-    BlockedKind, ProgramStatus, ProgramStatusReporter, ProgramStatusSupport, SettledTurn, CLEAR,
-};
-use crate::tui::theme_terminal::{has_device_attributes_reply, parse_probe_response};
+use super::{BlockedKind, ProgramStatus, ProgramStatusReporter, ProgramStatusSupport, CLEAR};
+use crate::tui::terminal_probe::{has_device_attributes_reply, parse_probe_response};
 
 fn b64(text: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(text)
@@ -94,6 +92,11 @@ fn detects_support_from_probe_replies() {
             Unsupported,
         ),
         (
+            "reply after DA1",
+            format!("{PALETTE}{DA1}\x1b]7501;?\x1b\\"),
+            Unsupported,
+        ),
+        (
             "other OSC 7501 body",
             format!("\x1b]7501;state=idle\x1b\\{DA1}"),
             Unsupported,
@@ -125,7 +128,8 @@ fn detects_support_from_probe_replies() {
 }
 
 // Covers: repeated statuses are not re-sent, unsupported terminals get
-// nothing, and exit clears only a record Rho created.
+// nothing, resuming a child refreshes the record, and exit clears only a
+// record Rho created, even if it was invalidated before an error exit.
 // Owner: program status reporter.
 #[test]
 fn reporter_skips_repeats_and_clears_once() {
@@ -140,17 +144,12 @@ fn reporter_skips_repeats_and_clears_once() {
         Some(report("state=working:app=rho"))
     );
     assert_eq!(reporter.report(ProgramStatus::Working), None);
-    reporter.turn_settled(SettledTurn::Failed {
-        message: "boom".into(),
-    });
-    let settled = reporter.settled_status();
+    reporter.invalidate();
     assert_eq!(
-        settled,
-        ProgramStatus::Error {
-            message: "boom".into()
-        }
+        reporter.report(ProgramStatus::Working),
+        Some(report("state=working:app=rho"))
     );
-    assert!(reporter.report(settled).is_some());
+    reporter.invalidate();
     assert_eq!(reporter.clear(), Some(CLEAR.to_vec()));
     assert_eq!(reporter.clear(), None);
 }

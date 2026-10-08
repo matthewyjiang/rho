@@ -27,6 +27,7 @@ impl App {
         mcp_report: crate::tools::mcp::McpSessionReport,
         mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
+        program_status_support: super::program_status::ProgramStatusSupport,
     ) -> Self {
         // Matrix mode is debug-only (matrix_enabled is always false in release).
         #[cfg(debug_assertions)]
@@ -38,6 +39,7 @@ impl App {
                 mcp_report,
                 mcp_catalog,
                 plugins_report,
+                program_status_support,
             );
         }
         Self::new_with_credentials(
@@ -46,6 +48,7 @@ impl App {
             mcp_report,
             mcp_catalog,
             plugins_report,
+            program_status_support,
         )
     }
 
@@ -55,6 +58,7 @@ impl App {
         mcp_report: crate::tools::mcp::McpSessionReport,
         mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
+        program_status_support: super::program_status::ProgramStatusSupport,
     ) -> Self {
         // Pickers call `refresh_available_auths()` on open. Sweeping the
         // keyring here would stall the first frame on D-Bus.
@@ -160,10 +164,10 @@ impl App {
             side_chat: None,
             herdr_sync: Default::default(),
             notifier,
-            // `tui::run` replaces this once the startup probe has answered.
             program_status: super::program_status::ProgramStatusReporter::new(
-                super::program_status::ProgramStatusSupport::Unsupported,
+                program_status_support,
             ),
+            settled_program_status: super::program_status::ProgramStatus::Idle,
         };
         if let Some(status) = initial_status {
             app.set_status(status);

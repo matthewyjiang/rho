@@ -133,6 +133,7 @@ pub(super) fn test_app() -> App {
         crate::tools::mcp::McpSessionReport::default(),
         crate::tools::mcp::McpCatalog::default(),
         crate::plugins::PluginLoadReport::default(),
+        super::program_status::ProgramStatusSupport::Unsupported,
     )
 }
 

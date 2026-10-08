@@ -111,11 +111,11 @@ impl TerminalNotifier {
     }
 }
 
-/// Writes notification bytes straight to the terminal. OSC 9 and BEL do not
-/// move the cursor, so this is safe between frames.
+/// Writes cursor-neutral terminal reports straight to the terminal. OSC 9,
+/// OSC 7501, and BEL do not move the cursor, so this is safe between frames.
 pub(super) fn write_to_terminal(bytes: &[u8]) {
     let mut stdout = io::stdout().lock();
-    // Best effort: a lost notification is not worth failing the turn over.
+    // Best effort: a lost report is not worth failing the turn over.
     let _ = stdout.write_all(bytes).and_then(|()| stdout.flush());
 }
 

@@ -173,6 +173,7 @@ impl App {
             })
             .await;
         self.terminal_session = Some(terminal_session);
+        self.program_status.invalidate();
 
         match resolve_login_after_suspend(
             suspended_run.resume_result,
