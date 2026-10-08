@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::{
     env::IsolatedHome,
@@ -12,7 +12,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STARTUP};
+use super::{SETTLE, STARTUP, STREAM};
 
 const SIZE: PtySize = PtySize {
     rows: 28,
@@ -165,6 +165,44 @@ pub(super) const TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO: Scenario = Scenario::
     TAB_COMPLETE_ENTER_BARE_COMMAND_STEPS,
     /* smoke */ false,
 );
+
+// Covers: a template file written after startup expands on submit without a
+// restart, with positional arguments (one double-quoted) in its placeholders.
+// Owner: interactive TUI
+const PROMPT_TEMPLATE_HOT_RELOAD_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("write_template_after_startup"),
+    Step::Custom(write_review_template),
+    Step::SubmitText("/prompt:review alpha \"beta gamma\""),
+    Step::WaitText {
+        text: "fixture response: Review beta gamma then alpha.",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+pub(super) const PROMPT_TEMPLATE_HOT_RELOAD_SCENARIO: Scenario = Scenario::new(
+    "prompt_template_hot_reload",
+    "Expand a prompt template added after startup with positional arguments",
+    SIZE,
+    PROMPT_TEMPLATE_HOT_RELOAD_STEPS,
+    /* smoke */ false,
+);
+
+fn write_review_template(harness: &mut PtyHarness) -> Result<()> {
+    let prompts = harness
+        .working_directory()
+        .and_then(std::path::Path::parent)
+        .context("matrix workspace has no isolated home parent")?
+        .join("home/.rho/prompts");
+    std::fs::create_dir_all(&prompts)?;
+    std::fs::write(prompts.join("review.md"), "Review $2 then $1.\n")?;
+    Ok(())
+}
 
 fn assert_slash_palette_filtered_to_model(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();

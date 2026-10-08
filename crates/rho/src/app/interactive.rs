@@ -86,8 +86,6 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         None => (None, Vec::new(), None),
     };
     let pending_syntax_warmup = Some(tui::spawn_syntax_warmup(&recovered_messages));
-    let mut prompt_templates = crate::prompt_templates::discover(&cwd);
-    crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
     let theme = config.theme.clone();
     let resume_launch = tui::ResumeLaunchOptions {
         config: cli.config.is_some().then(|| config_path.clone()),
@@ -146,7 +144,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
                 favorite_models: config.favorite_models,
                 max_tool_output_lines: config.max_tool_output_lines,
                 keybindings: config.keybindings,
-                prompt_templates,
+                config_prompt_templates: config.prompt_templates,
             },
             session: SessionBootstrap {
                 no_save: cli.no_save,

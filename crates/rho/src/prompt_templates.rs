@@ -129,13 +129,102 @@ pub fn find<'a>(templates: &'a PromptTemplates, name: &str) -> Option<&'a str> {
         .map(|(_, template)| template.as_str())
 }
 
+/// Expands a template with the text typed after its command.
+///
+/// `$ARGUMENTS` takes all of that text and `$1`..`$n` take its
+/// whitespace-separated arguments; double quotes group words with spaces.
+/// A missing positional argument expands to nothing. A template without
+/// placeholders gets the text appended instead.
 pub fn expand(template: &str, trailing_text: &str) -> String {
     let trailing_text = trailing_text.trim();
-    if trailing_text.is_empty() {
-        template.to_string()
-    } else {
-        format!("{template} {trailing_text}")
+    if !takes_arguments(template) {
+        return if trailing_text.is_empty() {
+            template.to_string()
+        } else {
+            format!("{template} {trailing_text}")
+        };
     }
+    let arguments = split_arguments(trailing_text);
+    let mut expanded = String::with_capacity(template.len() + trailing_text.len());
+    let mut rest = template;
+    while let Some(index) = rest.find('$') {
+        expanded.push_str(&rest[..index]);
+        let after = &rest[index + 1..];
+        match placeholder(after) {
+            Some((Placeholder::All, len)) => {
+                expanded.push_str(trailing_text);
+                rest = &after[len..];
+            }
+            Some((Placeholder::Position(position), len)) => {
+                if let Some(argument) = arguments.get(position - 1) {
+                    expanded.push_str(argument);
+                }
+                rest = &after[len..];
+            }
+            None => {
+                expanded.push('$');
+                rest = after;
+            }
+        }
+    }
+    expanded.push_str(rest);
+    expanded
+}
+
+/// Whether the template places its arguments itself instead of having them
+/// appended.
+pub fn takes_arguments(template: &str) -> bool {
+    template
+        .match_indices('$')
+        .any(|(index, _)| placeholder(&template[index + 1..]).is_some())
+}
+
+enum Placeholder {
+    /// `$ARGUMENTS`: all trailing text.
+    All,
+    /// `$1`..`$n`: one argument, counting from 1.
+    Position(usize),
+}
+
+/// The placeholder right after a `$`, with its byte length (excluding `$`).
+fn placeholder(after_dollar: &str) -> Option<(Placeholder, usize)> {
+    const ALL: &str = "ARGUMENTS";
+    if after_dollar.starts_with(ALL) {
+        return Some((Placeholder::All, ALL.len()));
+    }
+    let digits = after_dollar.bytes().take_while(u8::is_ascii_digit).count();
+    match after_dollar[..digits].parse::<usize>() {
+        Ok(position) if position > 0 => Some((Placeholder::Position(position), digits)),
+        _ => None,
+    }
+}
+
+/// Splits arguments on whitespace. Double quotes group a value with spaces and
+/// are removed; single quotes stay literal so apostrophes in prose survive. An
+/// unclosed quote runs to the end of the text.
+fn split_arguments(text: &str) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    let mut in_argument = false;
+    let mut quoted = false;
+    for ch in text.chars() {
+        if ch == '"' {
+            quoted = !quoted;
+            in_argument = true;
+        } else if ch.is_whitespace() && !quoted {
+            if in_argument {
+                arguments.push(std::mem::take(&mut current));
+                in_argument = false;
+            }
+        } else {
+            current.push(ch);
+            in_argument = true;
+        }
+    }
+    if in_argument {
+        arguments.push(current);
+    }
+    arguments
 }
 
 #[cfg(test)]

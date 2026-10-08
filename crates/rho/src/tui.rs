@@ -367,7 +367,9 @@ pub struct RuntimeModelView {
     pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
-    pub prompt_templates: crate::prompt_templates::PromptTemplates,
+    /// Inline `[prompt_templates]` from config. Template files are discovered
+    /// live on top of these; see `App::prompt_templates`.
+    pub config_prompt_templates: crate::prompt_templates::PromptTemplates,
 }
 
 /// How reasoning appears in the transcript for the current display settings.

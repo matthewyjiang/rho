@@ -27,11 +27,26 @@ struct FileMatchCache {
     refreshed_at: Instant,
 }
 
-/// Discovered skills reused across command palette queries, so typing a slash
-/// command does not re-walk skill directories on every keystroke.
-struct SkillMatchCache {
-    skills: std::sync::Arc<Vec<crate::skills::Skill>>,
+/// One discovery pass reused across command palette queries, so typing a
+/// slash command does not re-walk discovery directories on every keystroke,
+/// while edits on disk still show up once the pass goes stale.
+struct DiscoveryCache<T> {
+    value: std::sync::Arc<T>,
     refreshed_at: Instant,
+}
+
+impl<T> DiscoveryCache<T> {
+    fn new(value: std::sync::Arc<T>) -> Self {
+        Self {
+            value,
+            refreshed_at: Instant::now(),
+        }
+    }
+
+    fn fresh(cache: Option<&Self>, ttl: Duration) -> Option<std::sync::Arc<T>> {
+        let cache = cache?;
+        (cache.refreshed_at.elapsed() < ttl).then(|| std::sync::Arc::clone(&cache.value))
+    }
 }
 
 /// Session palette caches. Whichever path asks first — a keystroke or a render
@@ -41,7 +56,9 @@ pub(super) struct PaletteCaches {
     /// Matches for the active `@` query.
     file: Option<FileMatchCache>,
     /// Discovered skills for `/` palette matching.
-    skills: Option<SkillMatchCache>,
+    skills: Option<DiscoveryCache<Vec<crate::skills::Skill>>>,
+    /// File and inline prompt templates for `/` matching and expansion.
+    prompt_templates: Option<DiscoveryCache<crate::prompt_templates::PromptTemplates>>,
     /// Workspace walk shared by different `@` queries against the same root.
     workspace: WorkspacePathCache,
 }
@@ -88,15 +105,31 @@ impl PaletteCaches {
         &self,
         ttl: Duration,
     ) -> Option<std::sync::Arc<Vec<crate::skills::Skill>>> {
-        let cache = self.skills.as_ref()?;
-        (cache.refreshed_at.elapsed() < ttl).then(|| std::sync::Arc::clone(&cache.skills))
+        DiscoveryCache::fresh(self.skills.as_ref(), ttl)
     }
 
     pub(super) fn store_skills(&mut self, skills: std::sync::Arc<Vec<crate::skills::Skill>>) {
-        self.skills = Some(SkillMatchCache {
-            skills,
-            refreshed_at: Instant::now(),
-        });
+        self.skills = Some(DiscoveryCache::new(skills));
+    }
+
+    /// Fresh prompt templates, or `None` when discovery must run again.
+    pub(super) fn fresh_prompt_templates(
+        &self,
+        ttl: Duration,
+    ) -> Option<std::sync::Arc<crate::prompt_templates::PromptTemplates>> {
+        DiscoveryCache::fresh(self.prompt_templates.as_ref(), ttl)
+    }
+
+    pub(super) fn store_prompt_templates(
+        &mut self,
+        templates: std::sync::Arc<crate::prompt_templates::PromptTemplates>,
+    ) {
+        self.prompt_templates = Some(DiscoveryCache::new(templates));
+    }
+
+    #[cfg(test)]
+    pub(super) fn expire_prompt_templates(&mut self) {
+        self.prompt_templates = None;
     }
 
     #[cfg(test)]

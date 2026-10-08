@@ -1,4 +1,4 @@
-use super::{matches_search, merge, validate, PromptTemplates};
+use super::{expand, matches_search, merge, validate, PromptTemplates};
 
 #[test]
 fn validates_names_and_builtin_conflicts() {
@@ -85,4 +85,32 @@ fn matches_search_by_prompt_prefix_or_bare_name() {
     assert!(matches_search("review-code", "prompt:rev"));
     assert!(matches_search("review-code", "rev"));
     assert!(!matches_search("review-code", "explain"));
+}
+
+#[test]
+fn expands_arguments_into_placeholders_or_appends_them() {
+    let cases = [
+        // (template, trailing text, expanded)
+        ("Review this.", "  src/a.rs ", "Review this. src/a.rs"),
+        ("Review this.", "", "Review this."),
+        ("Review $ARGUMENTS now.", "a b", "Review a b now."),
+        ("Compare $2 with $1.", "old new", "Compare new with old."),
+        (
+            "Fix $1 in $2.",
+            "\"the login bug\" src/auth.rs",
+            "Fix the login bug in src/auth.rs.",
+        ),
+        ("Explain $1 and $3.", "only-one", "Explain only-one and ."),
+        ("Fix $1.", "it's broken", "Fix it's."),
+        ("$1: costs $0 and $x", "a", "a: costs $0 and $x"),
+        ("Use $10.", "1 2 3 4 5 6 7 8 9 ten", "Use ten."),
+    ];
+
+    for (template, trailing, expected) in cases {
+        assert_eq!(
+            expand(template, trailing),
+            expected,
+            "{template:?} {trailing:?}"
+        );
+    }
 }

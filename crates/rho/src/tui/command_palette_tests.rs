@@ -53,7 +53,7 @@ fn exact_template_match_precedes_builtin_prefix_match() {
     let mut app = test_app();
     app.info
         .runtime
-        .prompt_templates
+        .config_prompt_templates
         .insert("mod".into(), "custom template".into());
     app.input_ui.set_text("/mod argument".to_string());
     app.input_ui.set_cursor(4);
@@ -69,7 +69,7 @@ fn template_completion_expands_pasted_arguments_and_clears_segments() {
     let mut app = test_app();
     app.info
         .runtime
-        .prompt_templates
+        .config_prompt_templates
         .insert("review".into(), "Review this:".into());
     app.insert_input_text("/review ");
     app.insert_pasted_input_text("alpha\nbeta");
@@ -87,7 +87,7 @@ fn template_completion_marks_slash_prefixed_contents_as_prompt() {
     let mut app = test_app();
     app.info
         .runtime
-        .prompt_templates
+        .config_prompt_templates
         .insert("review".into(), "/diff literally".into());
     app.input_ui.set_text("/review".to_string());
     app.input_ui.set_cursor(app.input_char_len());
@@ -97,6 +97,70 @@ fn template_completion_marks_slash_prefixed_contents_as_prompt() {
 
     assert_eq!(app.input_ui.text(), "/diff literally ");
     assert_eq!(app.input_ui.submission_mode(), InputSubmissionMode::Prompt);
+}
+
+// Covers: Tab on a placeholder template with nothing typed yet must keep the
+// command so arguments can fill it, not expand empty placeholders.
+// Owner: command palette template completion
+#[test]
+fn template_with_placeholders_completes_command_until_arguments_are_typed() {
+    let mut app = test_app();
+    app.info
+        .runtime
+        .config_prompt_templates
+        .insert("review".into(), "Review $1 for $2.".into());
+    app.input_ui.set_text("/rev".to_string());
+    app.input_ui.set_cursor(app.input_char_len());
+    let choice = app.selected_command().unwrap();
+
+    app.complete_command_choice(&choice);
+
+    assert_eq!(app.input_ui.text(), "/prompt:review ");
+    assert_eq!(
+        app.input_ui.submission_mode(),
+        InputSubmissionMode::ParseCommands
+    );
+
+    app.insert_input_text("src/lib.rs \"error handling\"");
+    app.input_ui.set_cursor("/prompt:review".chars().count());
+    let choice = app.selected_command().unwrap();
+    app.complete_command_choice(&choice);
+
+    assert_eq!(
+        app.input_ui.text(),
+        "Review src/lib.rs for error handling. "
+    );
+}
+
+// Covers: template files edited during a session reach the palette once the
+// discovery cache goes stale, with no restart.
+// Owner: command palette template discovery cache
+#[test]
+fn edited_template_files_reload_without_restart() {
+    let project = tempfile::tempdir().unwrap();
+    let prompts = project.path().join(".rho/prompts");
+    std::fs::create_dir_all(project.path().join(".git")).unwrap();
+    std::fs::create_dir_all(&prompts).unwrap();
+    let mut app = test_app();
+    app.info.runtime.cwd = project.path().to_path_buf();
+    let descriptions = |app: &mut crate::tui::App| {
+        app.command_matches()
+            .into_iter()
+            .filter(|choice| choice.name == "prompt:zz-reload")
+            .map(|choice| choice.description)
+            .collect::<Vec<_>>()
+    };
+    app.input_ui.set_text("/prompt:zz".to_string());
+    app.input_ui.set_cursor(app.input_char_len());
+    assert_eq!(descriptions(&mut app), Vec::<String>::new());
+
+    std::fs::write(prompts.join("zz-reload.md"), "first draft").unwrap();
+    app.palette_caches.expire_prompt_templates();
+    assert_eq!(descriptions(&mut app), vec!["first draft".to_string()]);
+
+    std::fs::write(prompts.join("zz-reload.md"), "second draft").unwrap();
+    app.palette_caches.expire_prompt_templates();
+    assert_eq!(descriptions(&mut app), vec!["second draft".to_string()]);
 }
 
 // Covers: recalling a slash command must not steal Up/Down for palette

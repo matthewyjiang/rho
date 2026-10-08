@@ -237,15 +237,13 @@ impl App {
             Err(commands::CommandParseError::Unknown(name)) => {
                 let trailing_prompt = slash_command_args(&turn.model).trim().to_string();
                 self.clear_submitted_input();
+                let templates = self.prompt_templates();
                 let template = name
                     .get(.."prompt:".len())
                     .filter(|prefix| prefix.eq_ignore_ascii_case("prompt:"))
                     .and_then(|_| name.get("prompt:".len()..))
                     .and_then(|template_name| {
-                        crate::prompt_templates::find(
-                            &self.info.runtime.prompt_templates,
-                            template_name,
-                        )
+                        crate::prompt_templates::find(&templates, template_name)
                     });
                 if let Some(template) = template {
                     let prompt = crate::prompt_templates::expand(template, &trailing_prompt);
