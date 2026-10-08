@@ -74,6 +74,7 @@ impl App {
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             ComposerMode::Panel(_) => Ok(self.handle_panel_overlay_key(key, terminal)),
             ComposerMode::Side => Ok(self.handle_side_chat_key(key, terminal)),
+            ComposerMode::TranscriptSearch(_) => Ok(self.handle_transcript_search_key(key)),
             // Approvals are handled on the during-turn path, not idle input.
             ComposerMode::Approval(_) => Ok(false),
         }

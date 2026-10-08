@@ -133,6 +133,11 @@ pub(super) struct HistoryLineCache {
     projected_code_blocks: Option<Vec<CachedCodeBlock>>,
     /// When set, the last entry is still being streamed and must not own a trailing blank.
     open_stream_tail: bool,
+    /// Bumped whenever measured rows change, except when [`Self::grow_prefix`]
+    /// prepends older entries: that shifts row numbers but leaves the text of
+    /// existing rows alone. Transcript search reuses its matches while this
+    /// holds still.
+    revision: u64,
     /// Test-only: counts entry renders so soft settings updates can prove they
     /// skipped work on text-only transcripts.
     #[cfg(test)]
@@ -151,6 +156,17 @@ impl HistoryLineCache {
     /// Earlier transcript entries exist but have no wrapped rows yet.
     pub(super) fn has_unmeasured_prefix(&self) -> bool {
         self.measured_from > 0
+    }
+
+    /// First transcript entry with wrapped rows; entries before it are unmeasured.
+    pub(super) fn measured_from(&self) -> usize {
+        self.measured_from
+    }
+
+    /// Changes whenever measured rows change other than by prepending older
+    /// entries; see the `revision` field.
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(super) fn invalidate_from(&mut self, index: usize) {
@@ -356,6 +372,18 @@ impl HistoryLineCache {
         self.entry_ranges.get(cache_index).cloned()
     }
 
+    /// Every measured transcript row in paint order, after bringing the cache
+    /// current. Rows before an unmeasured prefix are not included.
+    pub(super) fn measured_lines(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        image_resolver: EntryImageResolver<'_>,
+    ) -> impl Iterator<Item = &Line<'static>> {
+        self.ensure_current(entries, settings, image_resolver);
+        self.entries.iter().flat_map(|entry| entry.lines.iter())
+    }
+
     #[cfg(test)]
     pub(super) fn entry_render_count(&self) -> u64 {
         self.entry_renders
@@ -461,12 +489,14 @@ impl HistoryLineCache {
         self.appended_entry = None;
         self.resplice.clear();
         self.projected_code_blocks = None;
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn truncate_entries_to(&mut self, rebuild_from: usize) {
         self.entries.truncate(rebuild_from);
         self.entry_ranges.truncate(rebuild_from);
         self.projected_code_blocks = None;
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Rebuild absolute ranges from per-entry line lengths (source of truth).
@@ -700,6 +730,7 @@ impl HistoryLineCache {
         }
 
         self.recompute_ranges();
+        self.revision = self.revision.wrapping_add(1);
         true
     }
 
@@ -715,6 +746,7 @@ impl HistoryLineCache {
             self.entry_renders = self.entry_renders.saturating_add(1);
         }
         self.projected_code_blocks = None;
+        self.revision = self.revision.wrapping_add(1);
         let range_start = self.total_lines();
         let cached = render_cache_entry(
             entries,
@@ -787,6 +819,7 @@ impl HistoryLineCache {
                 .start
                 .saturating_add(self.entries[cache_index].lines.len());
             self.projected_code_blocks = None;
+            self.revision = self.revision.wrapping_add(1);
             return true;
         }
         false

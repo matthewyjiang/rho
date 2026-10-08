@@ -3,9 +3,10 @@
 Parent: [Interactive TUI](/interactive-tui).
 
 The interactive TUI owns the transcript viewport while it is open. Scroll with
-the built-in controls, not the terminal's scrollback. When you exit, your
-previous shell view returns. If a session exists, Rho prints only a short
-saved-session summary.
+the built-in controls, not the terminal's scrollback, and use
+[in-app find](#find-in-the-transcript) instead of the terminal's search. When
+you exit, your previous shell view returns. If a session exists, Rho prints
+only a short saved-session summary.
 
 ```mermaid
 flowchart TD
@@ -43,6 +44,33 @@ It must differ from `open_editor`. Restart Rho after keybinding changes.
   when the parent turn is idle but background agents or jobs remain.
 
 Press the jump binding or click the button to resume following live output.
+
+## Find in the transcript
+
+Press `ctrl-f` to search the transcript. A `find` prompt replaces the composer
+until you close it; your draft is kept.
+
+| Key | Action |
+| --- | --- |
+| Type | Highlight every match and scroll to the nearest one above where you were reading |
+| `up` / `down` | Move to the previous (older) or next (newer) match, wrapping at either end |
+| `pageup` / `pagedown`, `ctrl-end` | Scroll as usual while the prompt stays open |
+| `enter` | Close search and keep the current position |
+| `esc` | Close search and return to where you started |
+
+The prompt shows the focused match number and the total, such as `3/17`. When
+nothing matches, or you clear the query, the view returns to where you started.
+
+Matching ignores case and finds text as it is drawn: a match cannot span a
+wrapped row, and text hidden by collapsed tool output, hidden reasoning, or
+zen mode is not searched. Expand a tool card first to search its full output.
+
+A resumed session lays out its older rows only when you scroll to them. Search
+opens right away and lays out the rest in the background; the prompt shows
+`indexing` until every row is searchable, and matches in older rows appear as
+they are reached.
+
+The binding is `keybindings.search_transcript` in config (default `ctrl+f`).
 
 ## Markdown and structure
 

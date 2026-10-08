@@ -12,6 +12,8 @@ pub struct Keybindings {
     pub reset_conversation: Option<KeyBinding>,
     /// Opens a searchable picker over prompt history, like a shell's Ctrl+R.
     pub search_prompt_history: KeyBinding,
+    /// Opens incremental find over the rendered transcript.
+    pub search_transcript: KeyBinding,
     pub open_editor: KeyBinding,
     pub jump_to_bottom: KeyBinding,
     pub toggle_tool_output: KeyBinding,
@@ -41,6 +43,7 @@ impl Default for Keybindings {
         Self {
             reset_conversation: None,
             search_prompt_history: KeyBinding::control('r'),
+            search_transcript: KeyBinding::control('f'),
             open_editor: KeyBinding::control('g'),
             jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
@@ -87,6 +90,7 @@ impl Keybindings {
 struct PartialKeybindings {
     reset_conversation: Option<KeyBinding>,
     search_prompt_history: Option<KeyBinding>,
+    search_transcript: Option<KeyBinding>,
     open_editor: Option<KeyBinding>,
     jump_to_bottom: Option<KeyBinding>,
     toggle_tool_output: Option<KeyBinding>,
@@ -123,6 +127,9 @@ impl<'de> Deserialize<'de> for Keybindings {
             search_prompt_history: partial
                 .search_prompt_history
                 .unwrap_or(defaults.search_prompt_history),
+            search_transcript: partial
+                .search_transcript
+                .unwrap_or(defaults.search_transcript),
             open_editor: partial.open_editor.unwrap_or(defaults.open_editor),
             jump_to_bottom: if migrate_legacy_jump {
                 defaults.jump_to_bottom
@@ -173,6 +180,7 @@ impl<'de> Deserialize<'de> for Keybindings {
                 "search_prompt_history",
                 Some(&keybindings.search_prompt_history),
             ),
+            ("search_transcript", Some(&keybindings.search_transcript)),
             ("open_editor", Some(&keybindings.open_editor)),
             ("jump_to_bottom", Some(&keybindings.jump_to_bottom)),
             ("toggle_tool_output", Some(&keybindings.toggle_tool_output)),

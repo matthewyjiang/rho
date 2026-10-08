@@ -231,6 +231,7 @@ impl App {
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
             | ComposerMode::Panel(_)
+            | ComposerMode::TranscriptSearch(_)
             | ComposerMode::Side => None,
         }
         .filter(|cursor| cursor.x < origin.width && cursor.y < origin.height);

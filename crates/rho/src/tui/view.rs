@@ -125,7 +125,7 @@ impl App {
 
     fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
         self.settle_turn_finished_attention();
-        let ctx = self.frame_context(area);
+        let ctx = self.search_frame_context(area);
         let (history_start, history_count) = self
             .visible_history_window(ctx.history_len, ctx.layout.history_content.height as usize);
         let surface = DrawSurface {
@@ -216,6 +216,11 @@ impl App {
                 selection,
             );
         }
+        self.paint_transcript_search_hits(
+            frame.buffer_mut(),
+            layout.history_content,
+            history_start,
+        );
         if let Some(hovered_line) = self
             .history
             .hovered_code_block_copy()

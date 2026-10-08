@@ -167,3 +167,25 @@ fn overlay_track_style_drops_tool_card_row_styles() {
         assert!(!dirty.modifier.contains(Modifier::REVERSED), "row={row}");
     }
 }
+
+// Covers: a focused search hit on the last screenful must not follow rows
+// appended below it, nor resume following when the viewport grows (leaving
+// bottom-follow drops the activity inset), yet content that shrinks under the
+// pin still returns to the bottom.
+// Owner: history scroll state
+#[test]
+fn held_last_screenful_survives_clamp_until_content_shrinks_under_it() {
+    let mut chrome = HistoryScrollChrome::default();
+    chrome.hold_top_line(100, 10, 95);
+    assert_eq!(chrome.scroll(), HistoryScroll::Manual { top_line: 90 });
+
+    chrome.clamp(100, 10);
+    chrome.clamp(130, 10);
+    assert_eq!(chrome.scroll(), HistoryScroll::Manual { top_line: 90 });
+
+    chrome.clamp(130, 45);
+    assert_eq!(chrome.scroll(), HistoryScroll::Manual { top_line: 85 });
+
+    chrome.clamp(100, 45);
+    assert_eq!(chrome.scroll(), HistoryScroll::Bottom);
+}

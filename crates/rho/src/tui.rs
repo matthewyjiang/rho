@@ -196,6 +196,7 @@ mod todo_overlay;
 pub(crate) use syntax_warmup::spawn_syntax_warmup;
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
+mod transcript_search;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
 mod app_loop;
 mod idle_input;

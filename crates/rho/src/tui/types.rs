@@ -204,6 +204,8 @@ pub(super) enum ComposerMode {
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
     Panel(PanelOverlay),
+    /// Incremental find over the rendered transcript.
+    TranscriptSearch(super::transcript_search::TranscriptSearch),
     Side,
 }
 
@@ -239,6 +241,7 @@ impl ComposerMode {
             | Self::Questionnaire(_)
             | Self::Approval(_)
             | Self::Panel(_)
+            | Self::TranscriptSearch(_)
             | Self::Side => true,
         }
     }
@@ -263,6 +266,7 @@ impl ComposerMode {
             | Self::Questionnaire(_)
             | Self::Approval(_)
             | Self::Panel(_)
+            | Self::TranscriptSearch(_)
             | Self::Side => false,
         }
     }

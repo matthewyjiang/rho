@@ -20,6 +20,9 @@ pub(super) struct HistoryScrollChrome {
     drag: Option<HistoryScrollbarDrag>,
     visible_until: Option<Instant>,
     hovered: bool,
+    /// Content length at the last [`Self::clamp`], so a manual position past
+    /// the end can tell content that shrank from a viewport that grew.
+    clamped_content_len: usize,
 }
 
 impl HistoryScrollChrome {
@@ -74,6 +77,18 @@ impl HistoryScrollChrome {
         self.hide();
     }
 
+    /// Return to a position saved earlier, such as when transcript search is
+    /// cancelled. Rendering clamps a stale top line to the current content.
+    pub(super) fn restore(&mut self, scroll: HistoryScroll) {
+        match scroll {
+            HistoryScroll::Bottom => self.scroll_to_bottom(),
+            HistoryScroll::Manual { .. } => {
+                self.scroll = scroll;
+                self.drag = None;
+            }
+        }
+    }
+
     pub(super) fn scroll_by(&mut self, content_len: usize, viewport_len: usize, delta: isize) {
         let max_start = content_len.saturating_sub(viewport_len);
         let next = self
@@ -122,16 +137,43 @@ impl HistoryScrollChrome {
         };
     }
 
+    /// Hold `top_line` even when it is the last screenful: unlike
+    /// [`Self::set_top_line`], appended rows do not scroll it away. Used to
+    /// keep a focused search hit or a shifted reading position in place.
+    pub(super) fn hold_top_line(
+        &mut self,
+        content_len: usize,
+        viewport_len: usize,
+        top_line: usize,
+    ) {
+        let max_start = content_len.saturating_sub(viewport_len);
+        self.scroll = HistoryScroll::Manual {
+            top_line: top_line.min(max_start),
+        };
+        self.drag = None;
+    }
+
+    /// Keep a manual position legal. When content shrank under the pinned top
+    /// line, follow the bottom again. When only the viewport grew, such as the
+    /// bottom-follow activity inset or a pending band going away, stay manual
+    /// at the new last screenful so a held position (see
+    /// [`Self::hold_top_line`]) does not resume following.
     pub(super) fn clamp(&mut self, content_len: usize, viewport_len: usize) {
-        if matches!(self.scroll, HistoryScroll::Bottom) {
-            self.drag = None;
-            return;
-        }
-        if let HistoryScroll::Manual { top_line } = self.scroll {
-            self.scroll = scroll_state_for_top_line(content_len, viewport_len, top_line);
-            if matches!(self.scroll, HistoryScroll::Bottom) {
+        let shrank = content_len < self.clamped_content_len;
+        self.clamped_content_len = content_len;
+        let max_start = content_len.saturating_sub(viewport_len);
+        match self.scroll {
+            HistoryScroll::Bottom => self.drag = None,
+            HistoryScroll::Manual { top_line } if top_line > max_start && shrank => {
+                self.scroll = HistoryScroll::Bottom;
                 self.hide();
             }
+            HistoryScroll::Manual { top_line } if top_line > max_start => {
+                self.scroll = HistoryScroll::Manual {
+                    top_line: max_start,
+                };
+            }
+            HistoryScroll::Manual { .. } => {}
         }
     }
 

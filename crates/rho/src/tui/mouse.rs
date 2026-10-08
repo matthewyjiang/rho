@@ -104,6 +104,7 @@ impl App {
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
+            | ComposerMode::TranscriptSearch(_)
             | ComposerMode::InteractivePending(_) => false,
         };
         // One layout snapshot serves both the choice hit test and the screen

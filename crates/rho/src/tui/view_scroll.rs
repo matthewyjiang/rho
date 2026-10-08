@@ -92,6 +92,42 @@ impl App {
             .scroll_by(history_len, content_height, delta);
     }
 
+    /// Measure unmeasured prefix entries, one pane at a time, until
+    /// `deadline` passes or the transcript starts. Always measures at least
+    /// one entry, so repeated calls finish. A manual viewport keeps showing
+    /// the same rows; following the bottom stays at the bottom.
+    pub(super) fn measure_history_prefix_until(
+        &mut self,
+        layout: &ScreenLayout,
+        settings: HistoryRenderSettings,
+        deadline: Instant,
+    ) {
+        if !self.history.has_unmeasured_prefix() {
+            return;
+        }
+        let content_height = layout.history_content.height as usize;
+        let start = self.visible_history_start(layout.history_len, content_height);
+        let mut prepended = 0usize;
+        loop {
+            prepended = prepended
+                .saturating_add(self.grow_measured_history_prefix(settings, content_height.max(1)));
+            if !self.history.has_unmeasured_prefix() || Instant::now() >= deadline {
+                break;
+            }
+        }
+        // The session header joins the document once no prefix is unmeasured.
+        // Rows only grew above the viewport, so a manual position holds even
+        // when it is the last screenful, such as a focused search hit.
+        let shift = prepended.saturating_add(self.visible_session_header_len(settings.width));
+        if matches!(self.history.scroll(), HistoryScroll::Manual { .. }) {
+            self.history.scroll_chrome_mut().hold_top_line(
+                layout.history_len.saturating_add(shift),
+                content_height,
+                start.saturating_add(shift),
+            );
+        }
+    }
+
     /// Dragging the bar to the measured top wraps one more pane of prefix.
     ///
     /// Same bound as page-up so a long resume does not wrap the whole

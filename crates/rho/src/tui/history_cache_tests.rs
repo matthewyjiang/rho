@@ -1168,3 +1168,34 @@ fn grow_prefix_renders_earlier_entries_and_shifts_line_zero() {
         Some(13)
     );
 }
+
+// Covers: transcript search reuses its matches only while measured rows hold
+// still, so spinner frames skip the scan but a growing stream does not.
+// Owner: history line cache
+#[test]
+fn revision_moves_only_when_measured_rows_change() {
+    let mut cache = HistoryLineCache::default();
+    let mut entries = (0..20)
+        .map(|index| Entry::User(format!("message {index}")))
+        .collect::<Vec<_>>();
+    cache.mark_unmeasured(entries.len());
+    cache.ensure_suffix(&entries, settings(80), 9, &no_images);
+    let measured = cache.revision();
+
+    cache.line_count(&entries, settings(80), &no_images);
+    cache.grow_prefix(&entries, settings(80), 4, &no_images);
+    assert_eq!(cache.revision(), measured, "idle frame or prepended rows");
+
+    entries.push(Entry::Assistant("streamed".into()));
+    cache.line_count(&entries, settings(80), &no_images);
+    let appended = cache.revision();
+    assert_ne!(appended, measured, "appended entry");
+
+    let Some(Entry::Assistant(text)) = entries.last_mut() else {
+        unreachable!();
+    };
+    text.push_str(" text");
+    cache.entry_appended(entries.len() - 1);
+    cache.line_count(&entries, settings(80), &no_images);
+    assert_ne!(cache.revision(), appended, "stream growing in place");
+}

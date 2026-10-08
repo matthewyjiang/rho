@@ -85,6 +85,9 @@ impl App {
         if self.handle_history_key(key, terminal)? {
             return Ok(());
         }
+        if self.handle_transcript_search_key(key) {
+            return Ok(());
+        }
 
         if self.handle_questionnaire_transcript_key(key, terminal)? {
             return Ok(());
@@ -407,6 +410,13 @@ impl App {
         &self,
         deferred_frame_deadline: Option<Instant>,
     ) -> tokio::time::Instant {
+        // Index one slice per frame, but leave a slice between frames: the
+        // turn loop polls this sleep before runtime events, so an always-ready
+        // deadline would stall the model stream and approvals until indexing
+        // finished. Keys are polled first either way.
+        if self.transcript_search_indexing() {
+            return tokio::time::Instant::now() + super::transcript_search::INDEX_SLICE;
+        }
         let spinner_deadline = Instant::now() + LoadingSpinner::FRAME_INTERVAL;
         let deadline = deferred_frame_deadline.map_or(spinner_deadline, |deferred_deadline| {
             deferred_deadline.min(spinner_deadline)

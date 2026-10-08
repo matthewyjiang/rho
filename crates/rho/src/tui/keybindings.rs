@@ -59,7 +59,12 @@ impl App {
         {
             self.open_prompt_history_search();
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
+            // Before search_transcript: configs that already bound the new
+            // default chord to insert_newline keep inserting newlines.
             self.insert_input_char('\n');
+        } else if self.info.runtime.keybindings.search_transcript.matches(key) {
+            self.open_transcript_search(terminal)
+                .map_err(|error| anyhow::anyhow!("could not read terminal size: {error}"))?;
         } else {
             return Ok(false);
         }
@@ -126,7 +131,10 @@ impl App {
         {
             self.open_prompt_history_search();
         } else if self.info.runtime.keybindings.insert_newline.matches(key) {
+            // Before search_transcript; see handle_configurable_running_key.
             self.insert_input_char('\n');
+        } else if self.info.runtime.keybindings.search_transcript.matches(key) {
+            self.open_transcript_search(terminal)?;
         } else {
             return Ok(false);
         }
@@ -193,5 +201,27 @@ mod tests {
             .unwrap());
         assert_eq!(app.pending.queued_prompts().len(), 3);
         assert!(app.input_ui.text().is_empty());
+    }
+
+    // Covers: a config that already bound the new Ctrl+F search default to
+    // `insert_newline` keeps inserting newlines instead of opening search.
+    // Owner: tui keybinding dispatch
+    #[test]
+    fn insert_newline_wins_a_chord_shared_with_search_transcript() {
+        let mut app = test_app();
+        app.info.runtime.keybindings.insert_newline = "ctrl+f".parse().unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+
+        assert!(app
+            .handle_configurable_running_key(
+                key(KeyCode::Char('f'), KeyModifiers::CONTROL),
+                &mut terminal,
+            )
+            .unwrap());
+        assert_eq!(app.input_ui.text(), "\n");
+        assert!(matches!(
+            app.input_ui.composer(),
+            super::super::ComposerMode::Input
+        ));
     }
 }
