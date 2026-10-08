@@ -167,6 +167,12 @@ fn edited_template_files_reload_without_restart() {
     );
     assert_eq!(descriptions(&mut app), vec!["second draft".to_string()]);
     assert_eq!(app.resolve_prompt_template("prompt:missing", ""), None);
+
+    // Tab expands the file as it is now, not the row the palette listed.
+    let listed = app.selected_command().unwrap();
+    std::fs::write(prompts.join("zz-reload.md"), "third draft").unwrap();
+    app.complete_command_choice(&listed);
+    assert_eq!(app.input_ui.text(), "third draft ");
 }
 
 // Covers: recalling a slash command must not steal Up/Down for palette

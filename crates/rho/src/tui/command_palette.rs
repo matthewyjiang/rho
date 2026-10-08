@@ -202,10 +202,16 @@ impl App {
     /// Resolve a template on submit in either composer, refreshing the shared
     /// cache so edits made since the last palette query are included.
     pub(super) fn resolve_prompt_template(&mut self, name: &str, trailing: &str) -> Option<String> {
+        self.current_prompt_template(name)
+            .map(|template| crate::prompt_templates::expand(&template, trailing))
+    }
+
+    /// The template behind a `prompt:<name>` command as it is on disk now,
+    /// not as the palette last read it.
+    fn current_prompt_template(&mut self, name: &str) -> Option<String> {
         let template_name = crate::prompt_templates::command_template_name(name)?;
         let templates = self.prompt_templates_with_ttl(/*ttl*/ Duration::ZERO);
-        crate::prompt_templates::find(&templates, template_name)
-            .map(|template| crate::prompt_templates::expand(template, trailing))
+        crate::prompt_templates::find(&templates, template_name).map(str::to_owned)
     }
 
     #[cfg(test)]
@@ -314,32 +320,36 @@ impl App {
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 commands::complete_argument_choice(choice)
             }
-            // Placeholders need arguments first; share slash-token completion
-            // with the other commands whose expansion belongs to submit.
-            CommandChoiceKind::PromptTemplate(template)
-                if slash_command_args(&self.expanded_input()).is_empty()
-                    && crate::prompt_templates::takes_arguments(template) =>
-            {
-                self.input_ui
-                    .set_submission_mode(super::InputSubmissionMode::ParseCommands);
-                let (mut input, cursor) = complete_slash_command(
-                    self.input_ui.text(),
-                    self.input_ui.cursor(),
-                    &choice.name,
-                );
-                input.push(' ');
-                (input, cursor + 1)
-            }
-            CommandChoiceKind::PromptTemplate(template) => {
+            CommandChoiceKind::PromptTemplate(listed) => {
+                // The palette row may predate an edit; fall back to it only
+                // when the file vanished since.
+                let template = self
+                    .current_prompt_template(&choice.name)
+                    .unwrap_or_else(|| listed.clone());
                 let expanded_input = self.expanded_input();
-                let mut input =
-                    crate::prompt_templates::expand(template, slash_command_args(&expanded_input));
-                input.push(' ');
-                let cursor = input.chars().count();
-                self.input_ui.clear_paste_segments();
-                self.input_ui
-                    .set_submission_mode(super::InputSubmissionMode::Prompt);
-                (input, cursor)
+                let args = slash_command_args(&expanded_input);
+                if args.is_empty() && crate::prompt_templates::takes_arguments(&template) {
+                    // Placeholders need arguments first; share slash-token
+                    // completion with the other commands whose expansion
+                    // belongs to submit.
+                    self.input_ui
+                        .set_submission_mode(super::InputSubmissionMode::ParseCommands);
+                    let (mut input, cursor) = complete_slash_command(
+                        self.input_ui.text(),
+                        self.input_ui.cursor(),
+                        &choice.name,
+                    );
+                    input.push(' ');
+                    (input, cursor + 1)
+                } else {
+                    let mut input = crate::prompt_templates::expand(&template, args);
+                    input.push(' ');
+                    let cursor = input.chars().count();
+                    self.input_ui.clear_paste_segments();
+                    self.input_ui
+                        .set_submission_mode(super::InputSubmissionMode::Prompt);
+                    (input, cursor)
+                }
             }
             // Both complete to a slash token and expand on submit: a skill
             // needs a tool call, and an MCP prompt needs a `prompts/get`
