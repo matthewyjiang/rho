@@ -674,7 +674,7 @@ impl Session {
     }
 
     pub async fn compact(&self) -> Result<crate::CompactionOutcome, Error> {
-        self.compact_inner(None).await
+        self.compact_inner(/*instructions*/ None).await
     }
 
     /// Like [`Self::compact`], and passes `instructions` to the compactor as
