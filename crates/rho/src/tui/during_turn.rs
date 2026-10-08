@@ -492,6 +492,9 @@ impl App {
                             self.open_composer_in_editor(terminal)
                                 .await
                                 .map_err(RunningTerminalError::Terminal)?;
+                            // The editor may have replaced the terminal's
+                            // status record; restore the active turn's state.
+                            self.report_working().await;
                             control = StreamControl::Resize;
                             break 'event;
                         }
