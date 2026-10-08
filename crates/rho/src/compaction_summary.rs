@@ -72,6 +72,15 @@ below and return one complete summary in the same sections. Keep details that \
 still matter, revise ones the newer turns changed, and drop ones that no \
 longer matter.";
 
+const FOCUS_INSTRUCTION: &str = "\
+The user asked this compaction to preserve the following. Give it priority in \
+the summary and keep its details exact, while still filling every section.";
+
+/// The user's `/compact` guidance, wrapped so it reads as data, not as a new task.
+fn focus_section(instructions: &str) -> String {
+    format!("{FOCUS_INSTRUCTION}\n\n<focus>\n{instructions}\n</focus>")
+}
+
 /// Summary request that resends `history`, the session's request history,
 /// unchanged and appends the instruction as a final user message.
 ///
@@ -79,9 +88,11 @@ longer matter.";
 /// request is billed mostly as cache reads. The caller must send it with the
 /// session model, reasoning level, tool specs, and prompt cache key; changing
 /// any of them misses the cache. `partition` must split `history`.
+/// `instructions` is the caller's preservation guidance, if any.
 pub(crate) fn build_session_summary_request(
     history: &[Message],
     partition: &CompactionPartition<'_>,
+    instructions: Option<&str>,
 ) -> Vec<Message> {
     let mut sections = vec![
         SUMMARY_SYSTEM_PROMPT.to_string(),
@@ -94,6 +105,7 @@ pub(crate) fn build_session_summary_request(
         sections.push(SESSION_PREVIOUS_SUMMARY_INSTRUCTION.to_string());
     }
     sections.push(deleted_span_instruction(partition));
+    sections.extend(instructions.map(focus_section));
     let mut messages = history.to_vec();
     messages.push(Message::user_text(sections.join("\n\n")));
     messages
@@ -202,8 +214,11 @@ fn tool_result_marker(result: &ToolResult) -> String {
 
 /// Summary request that renders the history as one transcript under its own
 /// system prompt. Works on any model, but shares no cached prefix with the
-/// session.
-pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>) -> Vec<Message> {
+/// session. `instructions` is the caller's preservation guidance, if any.
+pub(crate) fn build_summary_request_messages(
+    partition: &CompactionPartition<'_>,
+    instructions: Option<&str>,
+) -> Vec<Message> {
     let mut sections = Vec::new();
     if !partition.first_turn().is_empty() {
         sections.push(format!(
@@ -221,6 +236,7 @@ pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>
         "<conversation>\n{}\n</conversation>",
         render_messages_for_summary(partition.summarized())
     ));
+    sections.extend(instructions.map(focus_section));
     vec![
         Message::System(SUMMARY_SYSTEM_PROMPT.into()),
         Message::user_text(sections.join("\n\n")),

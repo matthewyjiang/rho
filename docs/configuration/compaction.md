@@ -115,6 +115,8 @@ SpaceXAI has its own server-side compact path. See [SpaceXAI](/providers/xai).
 
 ## Manual compact
 
+`/compact <instructions>` passes the instructions to the summarizer as preservation guidance alongside the summary prompt. Because server-side compaction cannot take guidance, a request with instructions skips it and goes straight to text-summary compaction. If tool-result elision alone reaches the target, nothing is summarized and the instructions go unused.
+
 `/compact` ignores `compact_target_percent` when that target would keep everything. The retained tail is capped at half the current estimated context, so an explicit request can remove history even on a large-window model that has not hit the auto threshold. Interactive pre-prompt auto-compaction uses this same task and cap. Automatic compaction between SDK provider steps uses the configured window target. An unchanged compactor result preserves a still-valid provider baseline instead of dropping the count back to the local estimate.
 
 Auto compaction changes only future model context. Session files stay append-only. They keep the original transcript, then append a replacement-history entry used for resume. It is not a privacy or deletion feature. See [Sessions](/sessions#compaction-and-transcript-history).

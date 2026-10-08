@@ -545,7 +545,11 @@ impl App {
         }
         self.apply_pending_compaction_config(agent)?;
         if agent.should_auto_compact() {
-            self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
+            self.start_compact(
+                agent,
+                super::compact_work::CompactFollowUp::None,
+                /*instructions*/ None,
+            )?;
             return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
         self.run_turn_sequence_without_auto_compact(turn, media, authorization, terminal, agent)

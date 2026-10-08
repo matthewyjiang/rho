@@ -188,6 +188,7 @@ pub struct CompactionRequest {
     service_tier: Option<crate::model::ServiceTier>,
     prompt_cache_key: Option<String>,
     tool_specs: Option<Vec<crate::model::ToolSpec>>,
+    instructions: Option<String>,
 }
 
 impl CompactionRequest {
@@ -207,6 +208,7 @@ impl CompactionRequest {
             service_tier: None,
             prompt_cache_key: None,
             tool_specs: None,
+            instructions: None,
         }
     }
 
@@ -253,6 +255,33 @@ impl CompactionRequest {
 
     pub fn service_tier(&self) -> Option<crate::model::ServiceTier> {
         self.service_tier
+    }
+
+    /// Carries caller guidance on what the replacement must preserve, such as
+    /// a current plan, specific file paths, or an unresolved error.
+    ///
+    /// Compactors that write a summary should pass this to the summarizer
+    /// alongside their own prompt. Compactors that cannot honor it, such as
+    /// opaque provider-native compaction, should prefer a path that can.
+    /// Leading and trailing whitespace is trimmed; empty guidance is treated
+    /// as absent.
+    pub fn with_instructions(self, instructions: impl Into<String>) -> Self {
+        self.with_instructions_opt(Some(instructions.into()))
+    }
+
+    pub(crate) fn with_instructions_opt(mut self, instructions: Option<String>) -> Self {
+        self.instructions = instructions.and_then(|text| {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        });
+        self
+    }
+
+    /// Caller guidance set by [`Self::with_instructions`], or `None` when the
+    /// caller gave none or only whitespace. Guidance has no leading or trailing
+    /// whitespace. Automatic compaction never sets it.
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
     }
 
     pub fn with_trigger(mut self, trigger: CompactionTrigger) -> Self {
