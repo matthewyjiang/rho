@@ -20,6 +20,9 @@ pub(super) struct HistoryScrollChrome {
     drag: Option<HistoryScrollbarDrag>,
     visible_until: Option<Instant>,
     hovered: bool,
+    /// Content length at the last [`Self::clamp`], so a manual position past
+    /// the end can tell content that shrank from a viewport that grew.
+    clamped_content_len: usize,
 }
 
 impl HistoryScrollChrome {
@@ -150,18 +153,27 @@ impl HistoryScrollChrome {
         self.drag = None;
     }
 
-    /// Follow the bottom once a pinned top line no longer exists because the
-    /// content shrank under it. A pin on exactly the last screenful is a held
-    /// position (see [`Self::hold_top_line`]) and stays manual.
+    /// Keep a manual position legal. When content shrank under the pinned top
+    /// line, follow the bottom again. When only the viewport grew, such as the
+    /// bottom-follow activity inset or a pending band going away, stay manual
+    /// at the new last screenful so a held position (see
+    /// [`Self::hold_top_line`]) does not resume following.
     pub(super) fn clamp(&mut self, content_len: usize, viewport_len: usize) {
-        if matches!(self.scroll, HistoryScroll::Bottom) {
-            self.drag = None;
-            return;
-        }
+        let shrank = content_len < self.clamped_content_len;
+        self.clamped_content_len = content_len;
         let max_start = content_len.saturating_sub(viewport_len);
-        if matches!(self.scroll, HistoryScroll::Manual { top_line } if top_line > max_start) {
-            self.scroll = HistoryScroll::Bottom;
-            self.hide();
+        match self.scroll {
+            HistoryScroll::Bottom => self.drag = None,
+            HistoryScroll::Manual { top_line } if top_line > max_start && shrank => {
+                self.scroll = HistoryScroll::Bottom;
+                self.hide();
+            }
+            HistoryScroll::Manual { top_line } if top_line > max_start => {
+                self.scroll = HistoryScroll::Manual {
+                    top_line: max_start,
+                };
+            }
+            HistoryScroll::Manual { .. } => {}
         }
     }
 
