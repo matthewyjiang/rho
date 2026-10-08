@@ -255,6 +255,7 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
         crate::tools::mcp::McpSessionReport::default(),
         crate::tools::mcp::McpCatalog::default(),
         crate::plugins::PluginLoadReport::default(),
+        crate::tui::program_status::ProgramStatusSupport::Unsupported,
     );
     app.info
         .services
@@ -292,6 +293,7 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
         crate::tools::mcp::McpSessionReport::default(),
         crate::tools::mcp::McpCatalog::default(),
         crate::plugins::PluginLoadReport::default(),
+        crate::tui::program_status::ProgramStatusSupport::Unsupported,
     );
     app.info
         .services
@@ -396,6 +398,7 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
             crate::tools::mcp::McpSessionReport::default(),
             crate::tools::mcp::McpCatalog::default(),
             crate::plugins::PluginLoadReport::default(),
+            crate::tui::program_status::ProgramStatusSupport::Unsupported,
         );
         app.info
             .services

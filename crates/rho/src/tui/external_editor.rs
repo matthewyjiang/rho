@@ -83,6 +83,7 @@ pub(super) async fn edit_buffer_in_external_editor(
         })
         .await;
     app.terminal_session = Some(terminal_session);
+    app.program_status.invalidate();
 
     if let Err(resume_error) = suspended_run.resume_result {
         let recovery_text = suspended_run

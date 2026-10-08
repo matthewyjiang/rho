@@ -1,7 +1,8 @@
-//! Host-terminal palette sampling for the interactive TUI.
+//! Host-terminal palette queries, parsing, and platform fallback.
 
 use std::collections::HashMap;
 
+use super::terminal_probe::osc_sequences;
 use super::theme_scheme::Rgb;
 
 /// Chromatic colors plus white. Required before a queried palette is accepted.
@@ -80,13 +81,6 @@ impl AnsiColor {
     }
 }
 
-pub(super) fn query_terminal_palette() -> Option<TerminalPalette> {
-    if std::env::var_os("RHO_TUI_MATRIX_PALETTE").is_some_and(|value| value == "github-dark") {
-        return Some(matrix_fixture_palette());
-    }
-    query_terminal_palette_impl().ok().flatten()
-}
-
 /// GitHub-dark well used by the docs PTY proof plate (`SvgPalette::github_dark`).
 ///
 /// Matrix PTYs do not answer OSC palette queries. The proof-plate launcher
@@ -103,190 +97,17 @@ pub(super) fn matrix_fixture_palette() -> TerminalPalette {
     }
 }
 
-fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
+pub(super) fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
     // White (7) for panel blends; bright black (8) for dim text. Never use 7 as dim.
     output.write_all(b"\x1b]11;?\x1b\\")?;
     for color in SAMPLED_ANSI_COLORS {
         write!(output, "\x1b]4;{};?\x1b\\", color.index())?;
     }
-    output.flush()
-}
-
-#[cfg(unix)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    use std::io::Read;
-    use std::os::fd::AsRawFd;
-    use std::time::{Duration, Instant};
-
-    let mut stdout = std::io::stdout();
-    write_palette_queries(&mut stdout)?;
-
-    let stdin = std::io::stdin();
-    let fd = stdin.as_raw_fd();
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Ok(None);
-    }
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Ok(None);
-    }
-
-    let mut bytes = Vec::new();
-    let mut palette = None;
-    let deadline = Instant::now() + Duration::from_millis(80);
-    let mut handle = stdin.lock();
-    while Instant::now() < deadline && palette.is_none() {
-        let mut buffer = [0u8; 1024];
-        match handle.read(&mut buffer) {
-            Ok(0) => std::thread::sleep(Duration::from_millis(2)),
-            Ok(count) => {
-                bytes.extend_from_slice(&buffer[..count]);
-                palette = parse_palette_response(&String::from_utf8_lossy(&bytes));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(error) => {
-                let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-                return Err(error);
-            }
-        }
-    }
-
-    let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-    Ok(palette)
+    Ok(())
 }
 
 #[cfg(windows)]
-fn is_native_wezterm() -> bool {
-    std::env::var_os("WEZTERM_PANE").is_some()
-}
-
-#[cfg(windows)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    if is_native_wezterm() {
-        // WezTerm's bundled ConPTY does not pass terminal query responses back
-        // to native Windows applications. Use the console palette directly.
-        return query_windows_console_palette();
-    }
-
-    use std::io::stdout;
-    use std::time::{Duration, Instant};
-    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
-    use windows_sys::Win32::Storage::FileSystem::ReadFile;
-    use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode,
-        ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
-    };
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
-
-    struct ConsoleModeGuard {
-        handle: *mut std::ffi::c_void,
-        mode: u32,
-    }
-
-    impl Drop for ConsoleModeGuard {
-        fn drop(&mut self) {
-            unsafe { SetConsoleMode(self.handle, self.mode) };
-        }
-    }
-
-    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-    if input.is_null() || input == -1isize as _ {
-        return Ok(None);
-    }
-
-    let mut original_mode = 0;
-    if unsafe { GetConsoleMode(input, &mut original_mode) } == 0 {
-        return Ok(None);
-    }
-    if unsafe { SetConsoleMode(input, original_mode | ENABLE_VIRTUAL_TERMINAL_INPUT) } == 0 {
-        return Ok(None);
-    }
-    let _mode_guard = ConsoleModeGuard {
-        handle: input,
-        mode: original_mode,
-    };
-
-    let mut output = stdout();
-    write_palette_queries(&mut output)?;
-
-    let mut bytes = Vec::new();
-    let deadline = Instant::now() + Duration::from_millis(80);
-    while Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let timeout_ms = remaining.as_millis().max(1).min(u128::from(u32::MAX)) as u32;
-        if unsafe { WaitForSingleObject(input, timeout_ms) } != WAIT_OBJECT_0 {
-            break;
-        }
-
-        let mut records = [INPUT_RECORD::default(); 128];
-        let mut record_count = 0;
-        if unsafe {
-            PeekConsoleInputW(
-                input,
-                records.as_mut_ptr(),
-                records.len() as u32,
-                &mut record_count,
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        let leading_non_keys = records[..record_count as usize]
-            .iter()
-            .position(|record| {
-                if u32::from(record.EventType) != KEY_EVENT {
-                    return false;
-                }
-                let key = unsafe { record.Event.KeyEvent };
-                key.bKeyDown != 0 && unsafe { key.uChar.UnicodeChar } != 0
-            })
-            .unwrap_or(record_count as usize);
-        if leading_non_keys > 0 {
-            let mut discarded = 0;
-            if unsafe {
-                ReadConsoleInputW(
-                    input,
-                    records.as_mut_ptr(),
-                    leading_non_keys as u32,
-                    &mut discarded,
-                )
-            } == 0
-            {
-                return Err(std::io::Error::last_os_error());
-            }
-            continue;
-        }
-        if record_count == 0 {
-            continue;
-        }
-
-        let mut buffer = [0u8; 1024];
-        let mut count = 0;
-        if unsafe {
-            ReadFile(
-                input,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                &mut count,
-                std::ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        bytes.extend_from_slice(&buffer[..count as usize]);
-        if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
-            return Ok(Some(palette));
-        }
-    }
-
-    query_windows_console_palette()
-}
-
-#[cfg(windows)]
-fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
+pub(super) fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
     use windows_sys::Win32::System::Console::{
         GetConsoleScreenBufferInfoEx, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFOEX, STD_OUTPUT_HANDLE,
     };
@@ -340,11 +161,6 @@ fn rgb_from_colorref(color: u32) -> Rgb {
     Rgb::new(color as u8, (color >> 8) as u8, (color >> 16) as u8)
 }
 
-#[cfg(not(any(unix, windows)))]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    Ok(None)
-}
-
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 pub(super) fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
     let mut background = None;
@@ -378,33 +194,6 @@ pub(super) fn parse_palette_response(response: &str) -> Option<TerminalPalette> 
             .into_iter()
             .all(|color| palette.ansi.contains_key(&color))
     })
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn osc_sequences(response: &str) -> Vec<&str> {
-    let mut sequences = Vec::new();
-    let mut rest = response;
-    while let Some(start) = rest.find("\x1b]") {
-        rest = &rest[start + 2..];
-        let bel_end = rest.find('\x07');
-        let st_end = rest.find("\x1b\\");
-        let Some(end) = earliest_end(bel_end, st_end) else {
-            break;
-        };
-        sequences.push(&rest[..end]);
-        rest = &rest[end..];
-    }
-    sequences
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> {
-    match (bel_end, st_end) {
-        (Some(bel), Some(st)) => Some(bel.min(st)),
-        (Some(bel), None) => Some(bel),
-        (None, Some(st)) => Some(st),
-        (None, None) => None,
-    }
 }
 
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]

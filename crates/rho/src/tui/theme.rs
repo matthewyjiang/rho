@@ -12,7 +12,7 @@ use super::{
         self, is_terminal_theme_id, normalize_theme_id, resolve_fixed_scheme, ColorScheme, Rgb,
         TERMINAL_THEME_ID,
     },
-    theme_terminal::{query_terminal_palette, AnsiColor, TerminalPalette},
+    theme_terminal::{AnsiColor, TerminalPalette},
 };
 
 #[path = "theme_diff.rs"]
@@ -403,7 +403,7 @@ pub(super) enum SyntaxRole {
 pub(super) struct Theme;
 
 impl Theme {
-    /// Sample the terminal palette before any terminal event reader starts.
+    /// Probe and install the palette before any terminal event reader starts.
     ///
     /// The query reads stdin directly, so it must run before crossterm owns
     /// that descriptor, or the two race for the same bytes and user keys go
@@ -412,9 +412,14 @@ impl Theme {
     ///
     /// This is the one startup tail still on the first-frame path. A terminal
     /// that answers costs a few milliseconds; one that never answers costs the
-    /// 80 ms read deadline in [`query_terminal_palette`].
+    /// 80 ms read deadline in [`super::terminal_probe::probe_terminal`].
     pub(super) fn initialize_from_terminal() {
-        if let Some(palette) = query_terminal_palette() {
+        Self::initialize_palette(super::terminal_probe::probe_terminal().palette);
+    }
+
+    /// Install the palette sampled by shared startup terminal detection.
+    pub(super) fn initialize_palette(palette: Option<TerminalPalette>) {
+        if let Some(palette) = palette {
             let _ = TERMINAL_SAMPLE.set(palette);
             // The sample feeds the terminal-mode palette; drop any derived
             // palette computed before the sample landed.

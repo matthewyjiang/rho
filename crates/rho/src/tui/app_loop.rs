@@ -6,11 +6,51 @@ use crossterm::event::{Event, KeyEventKind};
 use crate::herdr::{HerdrDelivery, HerdrSession};
 
 use super::herdr_resume::HerdrSyncStep;
+use super::program_status::{BlockedKind, ProgramStatus, ProgramStatusReporter};
 use super::{
     media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
     ComposerMode, ExitReceipt, HerdrState, InteractiveRuntime, PanelOverlay, UserWait,
     ViewModelEvent,
 };
+
+/// What blocks the session on the user, while resting or during a turn.
+enum UserBlock<'a> {
+    /// An approval or questionnaire prompt is open.
+    Prompt(UserWait),
+    /// No provider is usable until the user signs in.
+    Auth(&'a str),
+    /// The goal stopped with this reason.
+    Goal(&'a str),
+}
+
+impl<'a> UserBlock<'a> {
+    fn message(&self) -> &'a str {
+        match self {
+            Self::Prompt(wait) => wait.message(),
+            Self::Auth(message) | Self::Goal(message) => message,
+        }
+    }
+
+    fn program_status(&self) -> ProgramStatus {
+        match self {
+            Self::Prompt(wait) => ProgramStatus::Blocked {
+                kind: Some(match wait {
+                    UserWait::Approval => BlockedKind::Permission,
+                    UserWait::Questionnaire => BlockedKind::Question,
+                }),
+                message: wait.message().to_string(),
+            },
+            Self::Auth(message) => ProgramStatus::Blocked {
+                kind: Some(BlockedKind::Auth),
+                message: (*message).to_string(),
+            },
+            Self::Goal(reason) => ProgramStatus::Blocked {
+                kind: None,
+                message: (*reason).to_string(),
+            },
+        }
+    }
+}
 
 impl App {
     /// Drop task work for overlays that closed without their close path (for
@@ -36,17 +76,24 @@ impl App {
     }
 
     pub(super) fn run<'a>(
-        self,
+        mut self,
         terminal: &'a mut DefaultTerminal,
         agent: &'a mut InteractiveRuntime,
-    ) -> impl std::future::Future<Output = anyhow::Result<Option<ExitReceipt>>> + 'a {
+    ) -> impl std::future::Future<
+        Output = (anyhow::Result<Option<ExitReceipt>>, ProgramStatusReporter),
+    > + 'a {
         // Keep the event-loop future and its construction temporary off the
         // enclosing startup poll frames, which must fit Windows' main stack.
-        Box::pin(self.run_inner(terminal, agent))
+        Box::pin(async move {
+            let result = self.run_inner(terminal, agent).await;
+            // Return the reporter on both success and error for startup's
+            // canonical teardown, without retaining App on its stack frame.
+            (result, self.program_status)
+        })
     }
 
     async fn run_inner(
-        mut self,
+        &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<ExitReceipt>> {
@@ -153,9 +200,12 @@ impl App {
                 Duration::from_secs(3600)
             };
             // About to wait for the user: a turn that finished since the
-            // last wait notifies now, once per batch of turns.
+            // last wait notifies now, once per batch of turns, and the
+            // terminal hears the resting status at the same moment.
             let notification = self.notifier.take_ready();
             self.send_notification(notification);
+            let resting = self.resting_program_status();
+            self.report_program_status(resting);
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
             let media_attach_pending = !self.media_attach_tasks.is_empty();
@@ -465,19 +515,26 @@ impl App {
         self.confirm_herdr_claim(key, session.as_ref(), delivery);
     }
 
-    pub(super) async fn report_herdr_working(&mut self) {
+    /// A turn or tool run is in progress.
+    pub(super) async fn report_working(&mut self) {
+        self.report_program_status(ProgramStatus::Working);
         self.report_herdr_state(HerdrState::Working, None).await;
     }
 
     /// A prompt now blocks the agent on the user: notify an unfocused
-    /// terminal and show the wait in Herdr.
+    /// terminal and show the wait in Herdr and the terminal's program status.
     pub(super) async fn wait_for_user(&mut self, wait: UserWait) {
         let notification = self.notifier.user_wait(wait);
         self.send_notification(notification);
-        self.report_herdr_state(HerdrState::Blocked, Some(wait.message()))
+        let block = UserBlock::Prompt(wait);
+        self.report_program_status(block.program_status());
+        self.report_herdr_state(HerdrState::Blocked, Some(block.message()))
             .await;
     }
 
+    /// Reports the resting state to Herdr. The terminal's program status
+    /// follows once the event loop waits for input, so a goal run or queued
+    /// follow-ups do not flash `done` between turns.
     pub(super) async fn report_resting_herdr_state(&mut self) {
         let (state, message) = self.resting_herdr_state();
         let message = message.map(str::to_string);
@@ -486,7 +543,22 @@ impl App {
 
     /// The state Herdr should show while no turn runs.
     fn resting_herdr_state(&self) -> (HerdrState, Option<&str>) {
-        let user_wait = match self.input_ui.composer() {
+        match self.resting_wait() {
+            Some(wait) => (HerdrState::Blocked, Some(wait.message())),
+            None => (HerdrState::Idle, None),
+        }
+    }
+
+    /// The program status while no turn runs.
+    fn resting_program_status(&self) -> ProgramStatus {
+        match self.resting_wait() {
+            Some(wait) => wait.program_status(),
+            None => self.settled_program_status.clone(),
+        }
+    }
+
+    fn resting_wait(&self) -> Option<UserBlock<'_>> {
+        let prompt = match self.input_ui.composer() {
             ComposerMode::Approval(_) => Some(UserWait::Approval),
             ComposerMode::Questionnaire(_) => Some(UserWait::Questionnaire),
             ComposerMode::Input
@@ -500,26 +572,24 @@ impl App {
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => None,
         };
-        if let Some(wait) = user_wait {
-            return (HerdrState::Blocked, Some(wait.message()));
+        if let Some(prompt) = prompt {
+            return Some(UserBlock::Prompt(prompt));
         }
-        let goal_blocked_reason = self
-            .goal
+        if let Some(message) = self.info.services.auth_unavailable.as_deref() {
+            return Some(UserBlock::Auth(message));
+        }
+        self.goal
             .as_ref()
             .filter(|goal| goal.is_blocked())
-            .and_then(|goal| goal.last_reason.as_deref());
-        let message = self
-            .info
-            .services
-            .auth_unavailable
-            .as_deref()
-            .or(goal_blocked_reason);
-        let state = if message.is_some() {
-            HerdrState::Blocked
-        } else {
-            HerdrState::Idle
-        };
-        (state, message)
+            .and_then(|goal| goal.last_reason.as_deref())
+            .map(UserBlock::Goal)
+    }
+
+    /// Writes a program status report the terminal has not heard yet.
+    fn report_program_status(&mut self, status: ProgramStatus) {
+        if let Some(bytes) = self.program_status.report(status) {
+            super::notifications::write_to_terminal(&bytes);
+        }
     }
 
     pub(super) fn activity_status(&self) -> Option<ActivityStatus> {

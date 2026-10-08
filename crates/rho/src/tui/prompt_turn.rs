@@ -1,3 +1,4 @@
+use super::program_status::ProgramStatus;
 use super::subagent_delivery::TurnBoundaryDelivery;
 use super::*;
 use crate::app::interactive_runtime::DisplayCommit;
@@ -7,6 +8,8 @@ mod continuation;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct FailedTurn {
+    /// Failure text belongs to the outcome, not terminal-reporting side effects.
+    message: String,
     input: rho_sdk::UserInput,
     display_user: Vec<Message>,
     display_commit: DisplayCommit,
@@ -40,6 +43,7 @@ impl FailedTurn {
         model_content.extend(media.into_iter().map(ChatMedia::model_block));
 
         Ok(Self {
+            message: String::new(),
             input: rho_sdk::UserInput::content(model_content)?,
             display_user: vec![Message::User(display_content)],
             display_commit: DisplayCommit::Unsaved,
@@ -279,6 +283,7 @@ impl App {
                 }
                 self.sync_herdr_session().await;
                 let failed_turn = FailedTurn {
+                    message: String::new(),
                     input: rho_sdk::UserInput::text(delivery.model.clone()),
                     display_user: vec![delivery.transcript.display_message()],
                     display_commit: DisplayCommit::Unsaved,
@@ -333,7 +338,7 @@ impl App {
         self.set_status("running");
         self.begin_provider_turn_ui();
         self.turn.set_activity_phase(ActivityPhase::Starting);
-        self.report_herdr_working().await;
+        self.report_working().await;
         self.turn.start_loading();
         if let Err(error) = self.clamp_history_scroll_for_terminal(terminal) {
             self.abandon_provider_turn_start(agent, &mut pending_boundary);
@@ -418,7 +423,7 @@ impl App {
                     ).await {
                         Ok(StreamControl::Interrupt) => agent.cancel(),
                         Ok(StreamControl::ApprovalResolved) => {
-                            self.report_herdr_working().await;
+                            self.report_working().await;
                         }
                         Ok(StreamControl::Continue | StreamControl::Resize) => {}
                         Err(error) => {
@@ -454,7 +459,7 @@ impl App {
                     };
                     match reply {
                         QuestionnaireReply::Answer(response) => {
-                            self.report_herdr_working().await;
+                            self.report_working().await;
                             if let Err(error) = agent
                                 .respond(request_id, response)
                                 .await
@@ -749,7 +754,7 @@ impl App {
         self.finish_plan_exit(&outcome, agent).await;
         self.apply_pending_model_selection(agent).await?;
         self.apply_pending_permission_mode(agent).await?;
-        self.notifier.turn_finished();
+        self.settle_turn(&outcome);
         if self.pending_subagent_questionnaire.is_some() {
             self.set_status(UserWait::Questionnaire.message());
         }
@@ -792,7 +797,7 @@ impl App {
     fn finalize_failed_turn(
         &mut self,
         message: String,
-        failed_turn: FailedTurn,
+        mut failed_turn: FailedTurn,
         interrupted_tool_entries: Vec<ToolEntry>,
     ) -> TurnOutcome {
         self.finish_streams();
@@ -801,9 +806,22 @@ impl App {
         self.turn.set_current_turn_start(None);
         self.end_busy_ui();
         self.turn.stop_loading();
-        self.insert_entry(&Entry::Error(message));
+        self.insert_entry(&Entry::Error(message.clone()));
         self.set_status("error");
+        failed_turn.message = message;
         TurnOutcome::Failed(Box::new(failed_turn))
+    }
+
+    /// Both terminal attention channels defer settlement until the next input wait.
+    fn settle_turn(&mut self, outcome: &TurnOutcome) {
+        self.settled_program_status = match outcome {
+            TurnOutcome::Completed => ProgramStatus::Done,
+            TurnOutcome::Interrupted | TurnOutcome::Cancelled => ProgramStatus::Idle,
+            TurnOutcome::Failed(turn) => ProgramStatus::Error {
+                message: turn.message.clone(),
+            },
+        };
+        self.notifier.turn_finished();
     }
 
     /// Clears start-time busy chrome and returns drained turn-boundary work
@@ -821,6 +839,7 @@ impl App {
         self.turn.set_current_turn_start(None);
         self.turn.set_activity_phase(ActivityPhase::default());
         self.set_status("ready");
+        self.settled_program_status = ProgramStatus::Idle;
         if let Some(boundary) = pending_boundary.take() {
             self.restore_turn_boundary_batch(agent, boundary.batch);
         }

@@ -161,6 +161,7 @@ mod plan_exit;
 mod pointer_actions;
 mod process_panel;
 mod process_peek;
+mod program_status;
 mod prompt_history;
 mod prompt_history_search;
 mod prompt_turn;
@@ -221,6 +222,7 @@ mod subagent_delivery;
 mod subagent_panel;
 mod synced_backend;
 mod terminal_events;
+mod terminal_probe;
 mod terminal_session;
 mod text_selection;
 mod theme;
@@ -486,7 +488,8 @@ pub(crate) async fn run(
     info: TuiBootstrap,
 ) -> anyhow::Result<Option<ExitReceipt>> {
     let mut terminal = synced_backend::init();
-    Theme::initialize_from_terminal();
+    let probe = terminal_probe::probe_terminal();
+    Theme::initialize_palette(probe.palette);
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
     let result = {
@@ -499,6 +502,9 @@ pub(crate) async fn run(
                     agent.mcp_report().clone(),
                     agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
+                    probe
+                        .program_status
+                        .with_override(std::env::var("RHO_PROGRAM_STATUS").ok().as_deref()),
                 );
                 app.spawn_initial_herdr_report();
                 app.terminal_session = Some(TerminalSession::acquire());
@@ -511,7 +517,12 @@ pub(crate) async fn run(
                         .update_agent_concurrency(pool.total_limit());
                     app.agent_concurrency = Some(pool);
                 }
-                let result = app.run(&mut terminal, agent).await;
+                let (result, mut program_status) = app.run(&mut terminal, agent).await;
+                // Teardown must clear the terminal record even when the loop
+                // exits through an error rather than its clean-return path.
+                if let Some(bytes) = program_status.clear() {
+                    notifications::write_to_terminal(&bytes);
+                }
                 if let Some(manager) = agent.subagents() {
                     manager.unbind_host_input();
                     manager.unbind_notices();
@@ -644,6 +655,10 @@ struct App {
     /// What Herdr last heard about the session, so idle changes are re-sent.
     herdr_sync: herdr_resume::HerdrSync,
     notifier: notifications::TerminalNotifier,
+    /// OSC 7501 reports; see `program_status`.
+    program_status: program_status::ProgramStatusReporter,
+    /// Last turn outcome, deferred until the event loop rests on input.
+    settled_program_status: program_status::ProgramStatus,
 }
 
 struct PendingSubagentQuestionnaire {

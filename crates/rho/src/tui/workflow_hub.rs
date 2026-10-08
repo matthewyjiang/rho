@@ -585,6 +585,7 @@ impl App {
             })
             .await;
         self.terminal_session = Some(terminal_session);
+        self.program_status.invalidate();
 
         if let Err(resume_error) = suspended.resume_result {
             self.insert_entry(&Entry::Error(format!(
