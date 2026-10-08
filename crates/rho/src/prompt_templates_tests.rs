@@ -1,4 +1,4 @@
-use super::{expand, matches_search, merge, validate, PromptTemplates};
+use super::{expand, matches_search, merge, usage, validate, PromptTemplates};
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -137,5 +137,24 @@ fn expands_arguments_into_placeholders_or_appends_them() {
             expected,
             "{template:?} {trailing:?}"
         );
+    }
+}
+
+#[test]
+fn usage_names_the_arguments_a_template_places() {
+    let cases = [
+        // (template, usage)
+        ("Review this.", "/prompt:t [text]"),
+        ("Costs $0 and $x.", "/prompt:t [text]"),
+        ("Fix $1.", "/prompt:t [$1]"),
+        ("Compare $2 with $1, again $2.", "/prompt:t [$1] [$2]"),
+        ("Only $3.", "/prompt:t [$1] [$2] [$3]"),
+        ("Focus: $ARGUMENTS", "/prompt:t [arguments]"),
+        ("Fix $1. Notes: $ARGUMENTS", "/prompt:t [$1] [arguments]"),
+        ("Typo $100.", "/prompt:t [$1] … [$100]"),
+    ];
+
+    for (template, expected) in cases {
+        assert_eq!(usage("prompt:t", template), expected, "{template:?}");
     }
 }

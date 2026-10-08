@@ -104,7 +104,7 @@ impl App {
             .map(|(name, template)| {
                 let command_name = format!("prompt:{name}");
                 CommandChoice {
-                    usage: format!("/{command_name} [text]"),
+                    usage: crate::prompt_templates::usage(&command_name, template),
                     name: command_name,
                     description: crate::prompt_templates::description(template),
                     kind: CommandChoiceKind::PromptTemplate(template.clone()),

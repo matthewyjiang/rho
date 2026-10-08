@@ -179,9 +179,48 @@ pub fn expand(template: &str, trailing_text: &str) -> String {
 /// Whether the template places its arguments itself instead of having them
 /// appended.
 pub fn takes_arguments(template: &str) -> bool {
+    placeholders(template).next().is_some()
+}
+
+/// Palette usage hint naming the arguments the template places.
+///
+/// Positions are listed up to the highest one used, since a gap still
+/// consumes an argument. Past three they collapse to `[$1] … [$n]` so a
+/// stray `$100` cannot flood the row. All are optional because a missing
+/// argument expands to nothing.
+pub fn usage(command_name: &str, template: &str) -> String {
+    const LISTED_POSITIONS: usize = 3;
+    let mut highest = 0;
+    let mut all = false;
+    for placeholder in placeholders(template) {
+        match placeholder {
+            Placeholder::All => all = true,
+            Placeholder::Position(position) => highest = highest.max(position),
+        }
+    }
+    let mut usage = format!("/{command_name}");
+    if highest == 0 && !all {
+        usage.push_str(" [text]");
+        return usage;
+    }
+    if highest <= LISTED_POSITIONS {
+        for position in 1..=highest {
+            usage.push_str(&format!(" [${position}]"));
+        }
+    } else {
+        usage.push_str(&format!(" [$1] … [${highest}]"));
+    }
+    if all {
+        usage.push_str(" [arguments]");
+    }
+    usage
+}
+
+fn placeholders(template: &str) -> impl Iterator<Item = Placeholder> + '_ {
     template
         .match_indices('$')
-        .any(|(index, _)| placeholder(&template[index + 1..]).is_some())
+        .filter_map(|(index, _)| placeholder(&template[index + 1..]))
+        .map(|(placeholder, _)| placeholder)
 }
 
 enum Placeholder {

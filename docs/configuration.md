@@ -165,7 +165,7 @@ Placeholders put arguments inside the template instead of after it:
 Compare $1 with $2. Focus on: $ARGUMENTS
 ```
 
-A template with any placeholder no longer gets the text appended, and Tab on it completes the command so you can type arguments first. Template files reload while Rho runs: palette discovery is cached for 2 seconds, while submitting `/prompt:<name>` refreshes the files immediately. Inline `[prompt_templates]` changes apply after a restart.
+A template with any placeholder no longer gets the text appended. Its palette entry lists the arguments it takes, such as `/prompt:compare [$1] [$2] [arguments]`, and Tab completes the command so you can type them first. Template files reload while Rho runs: palette discovery is cached for 2 seconds, while submitting `/prompt:<name>` refreshes the files immediately. Inline `[prompt_templates]` changes apply after a restart.
 
 ## Model aliases
 
