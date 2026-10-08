@@ -84,9 +84,31 @@ jobs:
 
           useradd --create-home builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
+          # makepkg's default zstd level left 2.19.0 at 26.8 MB, over the
+          # size budget below; --ultra -20 packs the same tarball to 20.1 MB.
+          # Appended last so it overrides the stock COMPRESSZST.
+          echo "COMPRESSZST=(zstd -c -T0 --ultra -20 -)" >> /etc/makepkg.conf
           # CI already ran the full test suite. Skip makepkg check() so packaging
           # does not recompile the workspace under the test profile.
           runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm --nocheck"
+
+      # mjiang-extras is served by Cloudflare Pages, which rejects files over
+      # 25 MiB. An oversized package still pushes to git but the site deploy
+      # fails silently and keeps serving the previous release, so fail here.
+      - name: Check package size budget
+        run: |
+          set -euo pipefail
+          limit=$((25 * 1024 * 1024))
+          status=0
+          for pkg in ./*.pkg.tar.zst; do
+            size=$(stat -c %s "$pkg")
+            echo "$pkg: $size bytes (Cloudflare Pages file limit: $limit)"
+            if ((size > limit)); then
+              echo "::error::$pkg is $size bytes, over the Cloudflare Pages 25 MiB ($limit byte) file limit" >&2
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7
