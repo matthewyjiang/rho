@@ -145,6 +145,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
                 max_tool_output_lines: config.max_tool_output_lines,
                 keybindings: config.keybindings,
                 config_prompt_templates: config.prompt_templates,
+                prompt_template_home: crate::paths::home_dir(),
             },
             session: SessionBootstrap {
                 no_save: cli.no_save,

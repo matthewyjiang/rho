@@ -1,4 +1,5 @@
 use super::{expand, matches_search, merge, validate, PromptTemplates};
+use pretty_assertions::assert_eq;
 
 #[test]
 fn validates_names_and_builtin_conflicts() {
@@ -87,12 +88,36 @@ fn matches_search_by_prompt_prefix_or_bare_name() {
     assert!(!matches_search("review-code", "explain"));
 }
 
+// Covers: only namespaced commands resolve templates, regardless of prefix case;
+// short or non-ASCII command names must not panic on byte boundaries.
+// Owner: prompt template command parsing
+#[test]
+fn template_command_prefix_is_case_insensitive_and_utf8_safe() {
+    for (command, expected) in [
+        ("prompt:review", Some("review")),
+        ("PrOmPt:Review", Some("Review")),
+        ("prompt:", Some("")),
+        ("review", None),
+        ("prompt", None),
+        ("prompted:review", None),
+        ("skill:review", None),
+        ("💡💡", None),
+    ] {
+        assert_eq!(super::command_template_name(command), expected, "{command}");
+    }
+}
+
 #[test]
 fn expands_arguments_into_placeholders_or_appends_them() {
     let cases = [
         // (template, trailing text, expanded)
         ("Review this.", "  src/a.rs ", "Review this. src/a.rs"),
         ("Review this.", "", "Review this."),
+        (
+            "Literal $0, $x, and $.",
+            "text",
+            "Literal $0, $x, and $. text",
+        ),
         ("Review $ARGUMENTS now.", "a b", "Review a b now."),
         ("Compare $2 with $1.", "old new", "Compare new with old."),
         (

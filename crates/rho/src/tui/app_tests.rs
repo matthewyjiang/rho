@@ -69,6 +69,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             max_tool_output_lines: 10,
             keybindings: Keybindings::default(),
             config_prompt_templates: Default::default(),
+            prompt_template_home: None,
         },
         session: SessionBootstrap {
             no_save: false,

@@ -171,7 +171,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/help` | Show keyboard shortcuts and composer controls in a searchable overlay. |
 | `/exit` | Quit the TUI. |
 
-Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending. A template with argument placeholders completes to its command instead, so you can type the arguments first.
+Custom prompt templates loaded from prompt files or [`[prompt_templates]`](/configuration#prompt-templates) also appear in the command palette. Completing one inserts its prompt into the composer so you can add or edit text before sending. A template with argument placeholders completes to its command instead, so you can type the arguments first. Submitting a template during a running turn queues its expanded text as steering, just like a regular prompt.
 
 ### Pickers
 

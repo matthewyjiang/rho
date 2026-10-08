@@ -5,11 +5,7 @@ use std::{
 
 pub type PromptTemplates = BTreeMap<String, String>;
 
-pub fn discover(cwd: &Path) -> PromptTemplates {
-    discover_with_home(cwd, crate::paths::home_dir().as_deref())
-}
-
-fn discover_with_home(cwd: &Path, home: Option<&Path>) -> PromptTemplates {
+pub(crate) fn discover_with_home(cwd: &Path, home: Option<&Path>) -> PromptTemplates {
     let mut roots = Vec::new();
     if let Some(home) = home {
         roots.push(home.join(".rho").join("prompts"));
@@ -129,6 +125,15 @@ pub fn find<'a>(templates: &'a PromptTemplates, name: &str) -> Option<&'a str> {
         .map(|(_, template)| template.as_str())
 }
 
+/// The template name in a namespaced command, with a case-insensitive prefix.
+pub(crate) fn command_template_name(command: &str) -> Option<&str> {
+    const PREFIX: &str = "prompt:";
+    command
+        .get(..PREFIX.len())
+        .filter(|prefix| prefix.eq_ignore_ascii_case(PREFIX))
+        .map(|_| &command[PREFIX.len()..])
+}
+
 /// Expands a template with the text typed after its command.
 ///
 /// `$ARGUMENTS` takes all of that text and `$1`..`$n` take its
@@ -137,25 +142,21 @@ pub fn find<'a>(templates: &'a PromptTemplates, name: &str) -> Option<&'a str> {
 /// placeholders gets the text appended instead.
 pub fn expand(template: &str, trailing_text: &str) -> String {
     let trailing_text = trailing_text.trim();
-    if !takes_arguments(template) {
-        return if trailing_text.is_empty() {
-            template.to_string()
-        } else {
-            format!("{template} {trailing_text}")
-        };
-    }
     let arguments = split_arguments(trailing_text);
     let mut expanded = String::with_capacity(template.len() + trailing_text.len());
     let mut rest = template;
+    let mut substituted = false;
     while let Some(index) = rest.find('$') {
         expanded.push_str(&rest[..index]);
         let after = &rest[index + 1..];
         match placeholder(after) {
             Some((Placeholder::All, len)) => {
+                substituted = true;
                 expanded.push_str(trailing_text);
                 rest = &after[len..];
             }
             Some((Placeholder::Position(position), len)) => {
+                substituted = true;
                 if let Some(argument) = arguments.get(position - 1) {
                     expanded.push_str(argument);
                 }
@@ -168,6 +169,10 @@ pub fn expand(template: &str, trailing_text: &str) -> String {
         }
     }
     expanded.push_str(rest);
+    if !substituted && !trailing_text.is_empty() {
+        expanded.push(' ');
+        expanded.push_str(trailing_text);
+    }
     expanded
 }
 

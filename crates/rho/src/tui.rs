@@ -367,9 +367,11 @@ pub struct RuntimeModelView {
     pub favorite_models: Vec<String>,
     pub max_tool_output_lines: usize,
     pub keybindings: Keybindings,
-    /// Inline `[prompt_templates]` from config. Template files are discovered
-    /// live on top of these; see `App::prompt_templates`.
+    /// Inline `[prompt_templates]` from config, overriding live-discovered files
+    /// with the same name; see `App::prompt_templates`.
     pub config_prompt_templates: crate::prompt_templates::PromptTemplates,
+    /// Home root for template discovery, injected so tests never read user files.
+    pub prompt_template_home: Option<PathBuf>,
 }
 
 /// How reasoning appears in the transcript for the current display settings.

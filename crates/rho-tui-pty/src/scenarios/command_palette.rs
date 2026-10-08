@@ -204,6 +204,50 @@ fn write_review_template(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+// Covers: Tab defers a placeholder template, then Enter with arguments resolves
+// it as steering rather than rejecting the command while a turn is running.
+// Owner: interactive TUI
+const PROMPT_TEMPLATE_DURING_TURN_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Custom(write_review_template),
+    Step::SubmitText("fixture gated reply"),
+    Step::WaitText {
+        text: "reply waiting for release",
+        timeout: STREAM,
+    },
+    Step::Phase("complete_template_during_turn"),
+    Step::TypeText("/prompt:rev"),
+    Step::WaitText {
+        text: "/prompt:review",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Tab),
+    Step::SubmitText("alpha \"beta gamma\""),
+    Step::WaitText {
+        text: "Review beta gamma then alpha.",
+        timeout: STREAM,
+    },
+    Step::Custom(|harness| {
+        super::fixture_release::release_fixture(harness, ".rho-fixture-release-reply")
+    }),
+    Step::WaitText {
+        text: "fixture response: Review beta gamma then alpha.",
+        timeout: STREAM,
+    },
+    Step::ExitCommand,
+];
+
+pub(super) const PROMPT_TEMPLATE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
+    "prompt_template_during_turn",
+    "Complete a placeholder template and submit its arguments as steering",
+    SIZE,
+    PROMPT_TEMPLATE_DURING_TURN_STEPS,
+    /* smoke */ false,
+);
+
 fn assert_slash_palette_filtered_to_model(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if !screen.contains("/model") {

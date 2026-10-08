@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    palette::{ActivePalette, PALETTE_CACHE_TTL},
+    palette::{ActivePalette, DiscoveryCache, PALETTE_CACHE_TTL},
     App, CommandChoice, CommandChoiceKind,
 };
 use crate::commands;
@@ -166,36 +167,45 @@ impl App {
     /// Get-or-discover: whichever path asks first — a keystroke or a render
     /// frame — walks skill directories once and shares the result.
     fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
-        if let Some(skills) = self.palette_caches.fresh_skills(PALETTE_CACHE_TTL) {
-            return skills;
-        }
-        let skills = Arc::new(crate::skills::discover(&self.info.runtime.cwd));
-        self.palette_caches.store_skills(Arc::clone(&skills));
-        skills
+        DiscoveryCache::get_or_refresh(&mut self.palette_caches.skills, PALETTE_CACHE_TTL, || {
+            crate::skills::discover(&self.info.runtime.cwd)
+        })
     }
 
-    /// Prompt templates for palette matching and submit, served from the
+    /// Prompt templates for palette matching, served from the
     /// timed cache when fresh.
     ///
     /// Template files are re-read once the cache goes stale, so adding or
     /// editing one applies without a restart. Inline config templates win
     /// over files with the same name.
     pub(super) fn prompt_templates(&mut self) -> Arc<crate::prompt_templates::PromptTemplates> {
-        if let Some(templates) = self
-            .palette_caches
-            .fresh_prompt_templates(PALETTE_CACHE_TTL)
-        {
-            return templates;
-        }
-        let mut templates = crate::prompt_templates::discover(&self.info.runtime.cwd);
-        crate::prompt_templates::merge(
-            &mut templates,
-            self.info.runtime.config_prompt_templates.clone(),
-        );
-        let templates = Arc::new(templates);
-        self.palette_caches
-            .store_prompt_templates(Arc::clone(&templates));
-        templates
+        self.prompt_templates_with_ttl(PALETTE_CACHE_TTL)
+    }
+
+    fn prompt_templates_with_ttl(
+        &mut self,
+        ttl: Duration,
+    ) -> Arc<crate::prompt_templates::PromptTemplates> {
+        DiscoveryCache::get_or_refresh(&mut self.palette_caches.prompt_templates, ttl, || {
+            let mut templates = crate::prompt_templates::discover_with_home(
+                &self.info.runtime.cwd,
+                self.info.runtime.prompt_template_home.as_deref(),
+            );
+            crate::prompt_templates::merge(
+                &mut templates,
+                self.info.runtime.config_prompt_templates.clone(),
+            );
+            templates
+        })
+    }
+
+    /// Resolve a template on submit in either composer, refreshing the shared
+    /// cache so edits made since the last palette query are included.
+    pub(super) fn resolve_prompt_template(&mut self, name: &str, trailing: &str) -> Option<String> {
+        let template_name = crate::prompt_templates::command_template_name(name)?;
+        let templates = self.prompt_templates_with_ttl(/*ttl*/ Duration::ZERO);
+        crate::prompt_templates::find(&templates, template_name)
+            .map(|template| crate::prompt_templates::expand(template, trailing))
     }
 
     #[cfg(test)]
@@ -304,27 +314,32 @@ impl App {
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 commands::complete_argument_choice(choice)
             }
+            // Placeholders need arguments first; share slash-token completion
+            // with the other commands whose expansion belongs to submit.
+            CommandChoiceKind::PromptTemplate(template)
+                if slash_command_args(&self.expanded_input()).is_empty()
+                    && crate::prompt_templates::takes_arguments(template) =>
+            {
+                self.input_ui
+                    .set_submission_mode(super::InputSubmissionMode::ParseCommands);
+                let (mut input, cursor) = complete_slash_command(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                    &choice.name,
+                );
+                input.push(' ');
+                (input, cursor + 1)
+            }
             CommandChoiceKind::PromptTemplate(template) => {
                 let expanded_input = self.expanded_input();
-                let args = slash_command_args(&expanded_input);
-                if args.is_empty() && crate::prompt_templates::takes_arguments(template) {
-                    // Placeholders need arguments first, so complete the
-                    // command and expand on submit instead.
-                    self.input_ui
-                        .set_submission_mode(super::InputSubmissionMode::ParseCommands);
-                    let mut input = format!("/{}", choice.name);
-                    input.push(' ');
-                    let cursor = input.chars().count();
-                    (input, cursor)
-                } else {
-                    let mut input = crate::prompt_templates::expand(template, args);
-                    input.push(' ');
-                    let cursor = input.chars().count();
-                    self.input_ui.clear_paste_segments();
-                    self.input_ui
-                        .set_submission_mode(super::InputSubmissionMode::Prompt);
-                    (input, cursor)
-                }
+                let mut input =
+                    crate::prompt_templates::expand(template, slash_command_args(&expanded_input));
+                input.push(' ');
+                let cursor = input.chars().count();
+                self.input_ui.clear_paste_segments();
+                self.input_ui
+                    .set_submission_mode(super::InputSubmissionMode::Prompt);
+                (input, cursor)
             }
             // Both complete to a slash token and expand on submit: a skill
             // needs a tool call, and an MCP prompt needs a `prompts/get`

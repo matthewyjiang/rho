@@ -1,5 +1,6 @@
 use super::super::{tests::test_app, CommandChoice, CommandChoiceKind, InputSubmissionMode};
 use crate::tui::composer_buffer::ComposerEditKey;
+use pretty_assertions::assert_eq;
 
 #[test]
 fn completing_goal_command_reveals_lifecycle_actions() {
@@ -133,7 +134,8 @@ fn template_with_placeholders_completes_command_until_arguments_are_typed() {
 }
 
 // Covers: template files edited during a session reach the palette once the
-// discovery cache goes stale, with no restart.
+// discovery cache goes stale, with no restart; submit must also refresh a
+// still-fresh cache and share that refreshed snapshot with the palette.
 // Owner: command palette template discovery cache
 #[test]
 fn edited_template_files_reload_without_restart() {
@@ -159,8 +161,12 @@ fn edited_template_files_reload_without_restart() {
     assert_eq!(descriptions(&mut app), vec!["first draft".to_string()]);
 
     std::fs::write(prompts.join("zz-reload.md"), "second draft").unwrap();
-    app.palette_caches.expire_prompt_templates();
+    assert_eq!(
+        app.resolve_prompt_template("PrOmPt:ZZ-RELOAD", "details"),
+        Some("second draft details".to_string())
+    );
     assert_eq!(descriptions(&mut app), vec!["second draft".to_string()]);
+    assert_eq!(app.resolve_prompt_template("prompt:missing", ""), None);
 }
 
 // Covers: recalling a slash command must not steal Up/Down for palette
