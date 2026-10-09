@@ -31,3 +31,91 @@ fn word_keys_edit_multibyte_words() {
         assert_eq!((buffer.text(), buffer.cursor()), (value, cursor));
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+enum Op {
+    Type(&'static str),
+    Backspace,
+    Paste,
+    Undo,
+    Redo,
+}
+
+// Covers: undo steps coalesce typing by word and deletions by run, revert
+// collapsed paste markers with their content, and lose redo on a new edit.
+// Owner: composer undo history (pure buffer logic).
+#[test]
+fn undo_steps_follow_words_runs_and_paste_markers() {
+    let pasted = "1\n2\n3\n4\n5";
+    let marker = crate::tui::paste_burst::collapsed_paste_for(pasted)
+        .expect("collapses")
+        .marker();
+    let cases: [(&str, &[Op], String, String); 6] = [
+        (
+            "typing undoes a word at a time",
+            &[Op::Type("foo bar"), Op::Undo],
+            "foo ".into(),
+            "foo ".into(),
+        ),
+        (
+            "redo reapplies",
+            &[Op::Type("foo bar"), Op::Undo, Op::Undo, Op::Redo],
+            "foo ".into(),
+            "foo ".into(),
+        ),
+        (
+            "a backspace run is one step",
+            &[Op::Type("abc"), Op::Backspace, Op::Backspace, Op::Undo],
+            "abc".into(),
+            "abc".into(),
+        ),
+        (
+            "a new edit drops redo",
+            &[Op::Type("ab"), Op::Undo, Op::Type("x"), Op::Redo],
+            "x".into(),
+            "x".into(),
+        ),
+        (
+            "deleting a marker undoes with its content",
+            &[Op::Type("a"), Op::Paste, Op::Backspace, Op::Undo],
+            format!("a{marker}"),
+            format!("a{pasted}"),
+        ),
+        (
+            "undoing a paste removes the marker",
+            &[Op::Type("a"), Op::Paste, Op::Undo],
+            "a".into(),
+            "a".into(),
+        ),
+    ];
+    for (name, ops, text, expanded) in cases {
+        let mut buffer = ComposerBuffer::default();
+        for op in ops {
+            match *op {
+                Op::Type(text) => {
+                    for ch in text.chars() {
+                        buffer.apply_edit(ComposerEditKey::Char(ch));
+                    }
+                }
+                Op::Backspace => {
+                    buffer.apply_edit(ComposerEditKey::Backspace);
+                }
+                Op::Paste => {
+                    let paste = crate::tui::paste_burst::collapsed_paste_for(pasted).unwrap();
+                    buffer.insert_collapsed_paste(&paste, pasted);
+                }
+                Op::Undo => {
+                    buffer.undo();
+                }
+                Op::Redo => {
+                    buffer.redo();
+                }
+            }
+        }
+        assert_eq!(
+            (buffer.text(), buffer.expanded_text()),
+            (text.as_str(), expanded),
+            "{name}"
+        );
+    }
+}

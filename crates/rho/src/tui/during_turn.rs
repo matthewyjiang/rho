@@ -33,6 +33,8 @@ pub(super) enum RunningEscapeAction {
     CancelInlineShells,
     ExitShellMode,
     Overlay,
+    /// Leave vim insert mode or drop a half-typed vim command.
+    Vim,
     AbortTurn,
 }
 
@@ -119,6 +121,9 @@ impl App {
             }
         }
         if self.handle_file_palette_key(key)? {
+            return Ok(());
+        }
+        if self.handle_vim_key(key) {
             return Ok(());
         }
         // Same order as the idle composer: pin cycle wins when a user binds
@@ -498,6 +503,13 @@ impl App {
                                     let _ = self.exit_shell_mode();
                                     break 'event;
                                 }
+                                Some(RunningEscapeAction::Vim) => {
+                                    // Keep typing still buffered as a possible
+                                    // paste; it lands before the mode switch.
+                                    self.flush_pending_paste_burst();
+                                    self.handle_vim_key(key);
+                                    break 'event;
+                                }
                                 Some(RunningEscapeAction::AbortTurn) => {
                                     return Ok(self.request_running_interrupt(
                                         interrupt_requested,
@@ -583,6 +595,8 @@ impl App {
             Some(RunningEscapeAction::DenyApprovalAndAbort)
         } else if self.running_escape_has_overlay_target() {
             Some(RunningEscapeAction::Overlay)
+        } else if self.vim_captures_esc() {
+            Some(RunningEscapeAction::Vim)
         } else if !self.pending_inline_shells.is_empty() {
             Some(RunningEscapeAction::CancelInlineShells)
         } else if self.input_ui.shell_mode().is_some() {
@@ -606,6 +620,7 @@ impl App {
         matches!(self.input_ui.composer(), ComposerMode::Input)
             && self.input_ui.shell_mode().is_none()
             && !self.pending_input_focused()
+            && !self.vim_captures_esc()
             && self.pending_inline_shells.is_empty()
             && self.turn.session_ui().esc_aborts_operation()
     }

@@ -1,4 +1,4 @@
-use crate::keybindings::Keybindings;
+use crate::keybindings::{EditingMode, Keybindings};
 
 use super::{
     picker::OverlayChrome, App, ComposerMode, PickerBadge, PickerBadgeTone, PickerItem,
@@ -31,6 +31,8 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let manage_pending = keybindings.manage_pending_input.chrome_label();
     let cycle_pinned = keybindings.cycle_pinned_model.chrome_label();
     let cycle_pinned_back = keybindings.cycle_pinned_model_back.chrome_label();
+    let undo = keybindings.undo.chrome_label();
+    let redo = keybindings.redo.chrome_label();
 
     let mut items = vec![
         entry(
@@ -148,6 +150,18 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Open the pending-input panel to inspect, reorder, or remove queued prompts.",
         ),
         entry(
+            undo,
+            "Undo edit",
+            format!(
+                "Undo the last composer edit. Typing undoes a word at a time, and a run of Backspace or Delete undoes together. {redo} redoes."
+            ),
+        ),
+        entry(
+            redo,
+            "Redo edit",
+            "Redo the last undone composer edit, on terminals that report the chord. A new edit clears the redo history.",
+        ),
+        entry(
             "Up/Down",
             "History or nav",
             "In the composer, re-enter previous prompts. In pickers and palettes, move the selection.",
@@ -173,6 +187,13 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Paste clipboard text into the composer.",
         ),
     ];
+    if keybindings.editing_mode == EditingMode::Vim {
+        items.push(entry(
+            "Esc",
+            "Vim normal mode",
+            "Leave insert mode. Normal mode moves with h j k l, w b e, 0 ^ $, f t, gg G; edits with x, d c y plus a motion or iw/aw, dd cc yy, p P, r; and returns to insert with i a I A o O. u undoes. Enter still sends, and Esc again cancels or aborts as usual.",
+        ));
+    }
     if let Some(cycle_permission) = &keybindings.cycle_permission_mode {
         items.push(entry(
             cycle_permission.chrome_label(),

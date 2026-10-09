@@ -52,6 +52,20 @@ impl SideComposer {
         SideEditFollowUp::None
     }
 
+    /// Revert the newest edit, leaving any recalled prompt like an edit does.
+    pub(super) fn undo(&mut self) {
+        if self.buffer.undo() {
+            self.reset_history_navigation();
+        }
+    }
+
+    /// Reapply the newest undone edit.
+    pub(super) fn redo(&mut self) {
+        if self.buffer.redo() {
+            self.reset_history_navigation();
+        }
+    }
+
     /// Insert pasted text, collapsing a large paste into a marker. Returns
     /// the collapsed paste so the caller can confirm it.
     pub(super) fn insert_paste(&mut self, text: &str) -> Option<CollapsedPaste> {

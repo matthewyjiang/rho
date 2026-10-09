@@ -98,10 +98,27 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | right-click | Paste clipboard text into the composer |
 | code block `COPY` | Copy the full code block contents |
 | `ctrl-c` | Clear input, then quit if pressed again |
+| `ctrl-z` | Undo the last composer edit. Typing undoes a word at a time, and a run of `backspace` or `delete` undoes together. Configurable as `undo` |
+| `ctrl-shift-z` | Redo the last undone edit, on terminals that report it. A new edit clears the redo history. Configurable as `redo` |
 
 See [Mouse](#mouse) for clicking pickers, prompts, panels, and the status line.
 
 `ctrl-g` opens the current composer text in a non-empty `$VISUAL`, falling back to `$EDITOR` only when `VISUAL` is unset or empty, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set or non-empty, it warns with `EDITOR is not set`.
+
+### Vim mode
+
+Set `editing_mode = "vim"` under [`[keybindings]`](/configuration/full-example) and restart Rho to edit the main composer with vim-style modes. The composer rule shows `INSERT` or `NORMAL`. Rho starts each draft in insert mode, where keys type as usual. `esc` switches to normal mode instead of cancelling or aborting; press `esc` again in normal mode for the usual cancel or abort.
+
+Normal mode supports:
+
+- Counts before a motion or command, such as `3w` or `2dd`.
+- Motions: `h` `j` `k` `l`, `w` `b` `e` and `W` `B` `E`, `0` `^` `$`, `f` `F` `t` `T`, `gg`, and `G`. A single `j` or `k` at the top or bottom row recalls prompt history, like `up` and `down`.
+- Operators `d`, `c`, and `y` with a motion, the `iw` and `aw` text objects, or doubled for whole lines (`dd`, `cc`, `yy`).
+- `x` `X` `s` `S` `D` `C` `Y`, `r` to replace characters, and `p` `P` to put the last deleted or yanked text.
+- `i` `a` `I` `A` `o` `O` to return to insert mode.
+- `u` to undo. Each normal-mode command undoes as one step, including text typed after `i`, `a`, `o`, `c`, or a similar command, until `esc`. `ctrl-r` stays prompt history search; use the `redo` binding to redo.
+
+`enter` sends from either mode. Visual mode, `.` repeat, and named registers are not supported. The side chat prompt, pickers, and other fields keep the default editing keys.
 
 ## Text streaming
 

@@ -115,6 +115,7 @@ review = "Review this code for correctness, security, and maintainability."
 "explain-tests" = "Explain how these tests cover the expected behavior."
 
 [keybindings]
+# editing_mode = "vim" # vim-style normal/insert editing in the composer; default "default"
 search_prompt_history = "ctrl+r"
 search_transcript = "ctrl+f"
 # reset_conversation = "ctrl+shift+n" # same as /new; unbound by default
@@ -130,11 +131,13 @@ edit_pending_input = "alt+up"
 manage_pending_input = "alt+q"
 cycle_pinned_model = "ctrl+p"
 cycle_pinned_model_back = "ctrl+shift+p"
+undo = "ctrl+z"
+redo = "ctrl+shift+z" # needs a terminal that reports ctrl+shift
 ```
 
 Settings are grouped by purpose so the file is easier to scan and edit by hand. Rho still reads the previous flat format and rewrites it into groups the next time it saves config.
 
-Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. `queue_prompt` queues a follow-up during a model turn (default `alt+enter`); `ctrl+enter` is always accepted as a fallback because some terminals bind `alt+enter` to fullscreen. Keybinding changes take effect when Rho starts.
+Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. `queue_prompt` queues a follow-up during a model turn (default `alt+enter`); `ctrl+enter` is always accepted as a fallback because some terminals bind `alt+enter` to fullscreen. `undo` and `redo` act on the composer and the side chat prompt. `editing_mode = "vim"` turns on [vim mode](/interactive-tui#vim-mode) for the main composer. Keybinding changes take effect when Rho starts.
 
 The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` and `[providers.custom.<name>].base_url` set OpenAI-compatible endpoints used for those hosts' chat, model refresh, and health checks. First-run setup does not write `[providers.ollama]`; `/login ollama` stores the API base and an optional key. `[providers.custom.<name>].catalog` optionally borrows a models.dev provider for context, price, and reasoning. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the configured credential store rather than config.
 

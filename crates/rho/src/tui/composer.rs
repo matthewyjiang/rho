@@ -2,13 +2,14 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::keybindings::ReservedComposerKey;
+use crate::keybindings::{EditingMode, ReservedComposerKey};
 
 use super::{
     commands,
     composer_buffer::{ComposerEditKey, EditOutcome},
     composer_history::{history_step, HistoryStep},
     composer_layout::{content_width, prompt_width},
+    composer_vim::{TextChange, VimMode, VimOutcome},
     paste_burst::{collapsed_paste_for, normalize_paste},
     App, CommandInvocation, ComposerMode, HistoryDirection, InputDraft, InputSubmissionMode,
     PasteBurstEnter, PasteBurstKey, PasteSegment,
@@ -108,7 +109,8 @@ impl App {
 
     fn composer_accepts_paste_burst_char(&self, ch: char) -> bool {
         match self.input_ui.composer() {
-            ComposerMode::Input | ComposerMode::Side => true,
+            ComposerMode::Input => self.composer_vim_mode() != Some(VimMode::Normal),
+            ComposerMode::Side => true,
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.accepts_paste_burst_char(ch)
             }
@@ -255,6 +257,67 @@ impl App {
         self.input_changed();
     }
 
+    /// Revert the newest main-composer edit.
+    pub(super) fn undo_input(&mut self) {
+        if self.input_ui.buffer_mut().undo() {
+            self.input_edited();
+            self.settle_vim_caret();
+        }
+    }
+
+    /// Reapply the newest undone main-composer edit.
+    pub(super) fn redo_input(&mut self) {
+        if self.input_ui.buffer_mut().redo() {
+            self.input_edited();
+            self.settle_vim_caret();
+        }
+    }
+
+    /// Whether the main composer uses vim editing.
+    fn vim_enabled(&self) -> bool {
+        self.info.runtime.keybindings.editing_mode == EditingMode::Vim
+    }
+
+    /// The vim mode to show and obey, when vim editing applies to the
+    /// composer as it is now.
+    pub(super) fn composer_vim_mode(&self) -> Option<VimMode> {
+        (self.vim_enabled() && matches!(self.input_ui.composer(), ComposerMode::Input))
+            .then(|| self.input_ui.vim().mode())
+    }
+
+    /// Whether Esc leaves vim insert mode or drops a half-typed vim command
+    /// instead of cancelling or aborting.
+    pub(super) fn vim_captures_esc(&self) -> bool {
+        self.composer_vim_mode().is_some() && self.input_ui.vim().captures_esc()
+    }
+
+    fn settle_vim_caret(&mut self) {
+        let (vim, buffer) = self.input_ui.vim_and_buffer_mut();
+        vim.settle(buffer);
+    }
+
+    /// Route a main-composer key through vim editing. Runs after palettes,
+    /// which keep their keys, and before configurable chords. Returns true
+    /// when vim consumed the key.
+    pub(super) fn handle_vim_key(&mut self, key: KeyEvent) -> bool {
+        if self.composer_vim_mode().is_none() {
+            return false;
+        }
+        let (vim, buffer) = self.input_ui.vim_and_buffer_mut();
+        match vim.handle_key(key, buffer) {
+            VimOutcome::Unhandled => return false,
+            VimOutcome::Handled(TextChange::Edited) => self.input_edited(),
+            VimOutcome::Handled(TextChange::Unchanged) => {}
+            VimOutcome::Forward(edit) => {
+                self.apply_input_edit_key(edit);
+                self.settle_vim_caret();
+            }
+        }
+        self.input_ui.clear_paste_burst();
+        self.ctrl_c_streak = 0;
+        true
+    }
+
     pub(super) fn insert_input_char(&mut self, ch: char) {
         self.apply_input_edit_key(ComposerEditKey::Char(ch));
     }
@@ -362,11 +425,14 @@ impl App {
                 .contains(ratatui::layout::Position { x: column, y: row })
     }
 
+    /// Load external editor output as one undoable edit.
     pub(super) fn replace_composer_from_editor(&mut self, text: String) {
         self.reset_input_history_navigation();
-        let cursor = text.chars().count();
-        self.input_ui.set_text_and_cursor(text, cursor);
-        self.input_ui.clear_paste_segments();
+        let end = self.input_char_len();
+        self.input_ui.cancel_pointer_click_sequence();
+        self.input_ui
+            .buffer_mut()
+            .replace_range(0, end, &text, /*paste_content*/ None);
         self.input_ui.clear_paste_burst();
         self.input_changed();
     }

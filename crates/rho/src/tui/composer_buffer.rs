@@ -1,13 +1,15 @@
 //! Editable composer text shared by the main composer and the side chat.
 //!
 //! [`ComposerBuffer`] owns text, caret, mouse selection, collapsed paste
-//! markers, and the painted row window. It knows nothing about palettes,
-//! attachments, shell mode, or history; owners apply those around its edits.
-//! [`ComposerEditKey`] is the one key table both composers dispatch through.
+//! markers, undo history, and the painted row window. It knows nothing about
+//! palettes, attachments, shell mode, or history; owners apply those around
+//! its edits. [`ComposerEditKey`] is the one key table both composers
+//! dispatch through.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
+    composer_undo::{Splice, UndoHistory},
     paste_burst::{next_word_boundary, previous_word_boundary, word_range_at, CollapsedPaste},
     render::{
         editable_input_visual_lines, input_char_index_at_position,
@@ -170,8 +172,20 @@ pub(super) enum EditOutcome {
     VerticalEdge(HistoryDirection),
 }
 
+/// A piece of composer text with the collapsed paste markers inside it,
+/// positioned relative to the piece. Moves markers intact between places.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Fragment {
+    pub(super) text: String,
+    pub(super) segments: Vec<PasteSegment>,
+}
+
 /// Composer text with a char-indexed caret, mouse selection, and atomic
 /// collapsed-paste markers. See the module docs for what owners layer on top.
+///
+/// Edits through [`Self::replace_range`] (and everything built on it) are
+/// undoable. Whole-draft loads such as [`Self::set_text`] and
+/// [`Self::replace_all`] start a fresh undo history.
 #[derive(Clone, Debug, Default)]
 pub(super) struct ComposerBuffer {
     text: String,
@@ -183,6 +197,7 @@ pub(super) struct ComposerBuffer {
     /// `None` until the first paint, when rows break only at newlines.
     wrap_width: Option<usize>,
     paste_segments: Vec<PasteSegment>,
+    history: UndoHistory,
 }
 
 impl ComposerBuffer {
@@ -231,6 +246,7 @@ impl ComposerBuffer {
 
     pub(super) fn set_paste_segments(&mut self, segments: Vec<PasteSegment>) {
         self.paste_segments = segments;
+        self.history = UndoHistory::default();
     }
 
     /// Text with collapsed paste markers replaced by their content.
@@ -238,11 +254,57 @@ impl ComposerBuffer {
         super::paste_burst::expand_paste_segments(&self.text, &self.paste_segments)
     }
 
+    /// Display text of chars `range` with the paste markers inside it,
+    /// widened like an edit to whole markers, so it matches what
+    /// [`Self::replace_range`] would remove.
+    pub(super) fn fragment(&self, range: std::ops::Range<usize>) -> Fragment {
+        let range = self.normalize_edit_range(range);
+        let segments = self
+            .paste_segments
+            .iter()
+            .filter(|segment| range.start <= segment.start && segment.end() <= range.end)
+            .map(|segment| PasteSegment {
+                start: segment.start - range.start,
+                ..segment.clone()
+            })
+            .collect();
+        Fragment {
+            text: self.text[self.byte_index(range.start)..self.byte_index(range.end)].to_owned(),
+            segments,
+        }
+    }
+
+    /// Insert `fragment` at char `at` (snapped out of any marker) as one
+    /// undoable edit, leaving the caret after it.
+    pub(super) fn insert_fragment(&mut self, at: usize, fragment: &Fragment) {
+        self.clear_selection();
+        let start = self.caret_index(at.min(self.char_len()));
+        let splice = Splice {
+            start,
+            removed: String::new(),
+            removed_segments: Vec::new(),
+            inserted: fragment.text.clone(),
+            inserted_segments: fragment
+                .segments
+                .iter()
+                .map(|segment| PasteSegment {
+                    start: start + segment.start,
+                    ..segment.clone()
+                })
+                .collect(),
+        };
+        let cursor_before = self.cursor;
+        self.apply_splice(&splice);
+        self.history.record(splice, cursor_before, self.cursor);
+    }
+
     /// Replace the text, keeping the caret and paste segments as they are.
+    /// Starts a fresh undo history.
     pub(super) fn set_text(&mut self, text: String) {
         self.text = text;
         self.selection = ComposerSelectionState::None;
         self.view_start = 0;
+        self.history = UndoHistory::default();
     }
 
     pub(super) fn set_text_and_cursor(&mut self, text: String, cursor: usize) {
@@ -346,6 +408,14 @@ impl ComposerBuffer {
             .iter()
             .find(|segment| segment.start < index && index < segment.end())
             .map_or(index, |segment| segment.start)
+    }
+
+    /// Snap a caret inside an atomic collapsed-paste marker to the marker's end.
+    pub(super) fn caret_index_after(&self, index: usize) -> usize {
+        self.paste_segments
+            .iter()
+            .find(|segment| segment.start < index && index < segment.end())
+            .map_or(index, PasteSegment::end)
     }
 
     /// Expand a drag endpoint to the nearest edge of an atomic paste marker.
@@ -569,7 +639,7 @@ impl ComposerBuffer {
 
     /// Replace chars `start..end` with `text`, widening the range to swallow
     /// any paste marker it touches. `paste_content` turns the inserted text
-    /// into a collapsed marker for that content.
+    /// into a collapsed marker for that content. Recorded for undo.
     pub(super) fn replace_range(
         &mut self,
         start: usize,
@@ -579,20 +649,85 @@ impl ComposerBuffer {
     ) {
         self.clear_selection();
         let range = self.normalize_edit_range(start..end);
-        let inserted_len = text.chars().count();
-        self.adjust_paste_segments_for_edit(range.start, range.len(), inserted_len);
-        let start_byte = self.byte_index(range.start);
-        let end_byte = self.byte_index(range.end);
-        self.text.replace_range(start_byte..end_byte, text);
-        self.cursor = range.start + inserted_len;
-        if let Some(content) = paste_content {
-            self.paste_segments.push(PasteSegment {
+        let removed_segments = self
+            .paste_segments
+            .iter()
+            .filter(|segment| range.start <= segment.start && segment.end() <= range.end)
+            .cloned()
+            .collect();
+        let inserted_segments = paste_content
+            .map(|content| PasteSegment {
                 start: range.start,
-                marker_len: inserted_len,
+                marker_len: text.chars().count(),
                 content,
-            });
-            self.paste_segments.sort_by_key(|segment| segment.start);
+            })
+            .into_iter()
+            .collect();
+        let splice = Splice {
+            start: range.start,
+            removed: self.text[self.byte_index(range.start)..self.byte_index(range.end)].to_owned(),
+            removed_segments,
+            inserted: text.to_owned(),
+            inserted_segments,
+        };
+        let cursor_before = self.cursor;
+        self.apply_splice(&splice);
+        self.history.record(splice, cursor_before, self.cursor);
+    }
+
+    /// Apply `splice` to text and paste markers, leaving the caret after the
+    /// inserted text. Markers inside the removed range go with it.
+    fn apply_splice(&mut self, splice: &Splice) {
+        let removed_len = splice.removed.chars().count();
+        let inserted_len = splice.inserted.chars().count();
+        self.adjust_paste_segments_for_edit(splice.start, removed_len, inserted_len);
+        let start_byte = self.byte_index(splice.start);
+        let end_byte = self.byte_index(splice.start + removed_len);
+        self.text
+            .replace_range(start_byte..end_byte, &splice.inserted);
+        self.paste_segments
+            .extend(splice.inserted_segments.iter().cloned());
+        self.paste_segments.sort_by_key(|segment| segment.start);
+        self.cursor = splice.start + inserted_len;
+    }
+
+    // Undo.
+
+    /// Revert the newest undo step. Returns false when there is none.
+    pub(super) fn undo(&mut self) -> bool {
+        let Some(step) = self.history.pop_undo() else {
+            return false;
+        };
+        self.clear_selection();
+        for splice in step.splices.iter().rev() {
+            self.apply_splice(&splice.inverse());
         }
+        self.cursor = step.cursor_before;
+        self.history.push_redo(step);
+        true
+    }
+
+    /// Reapply the newest undone step. Returns false when there is none.
+    pub(super) fn redo(&mut self) -> bool {
+        let Some(step) = self.history.pop_redo() else {
+            return false;
+        };
+        self.clear_selection();
+        for splice in &step.splices {
+            self.apply_splice(splice);
+        }
+        self.cursor = step.cursor_after;
+        self.history.push_undo(step);
+        true
+    }
+
+    /// Fold every edit until [`Self::end_undo_group`] into one undo step.
+    pub(super) fn begin_undo_group(&mut self) {
+        self.history.begin_group();
+    }
+
+    pub(super) fn end_undo_group(&mut self) {
+        self.history.end_group();
     }
 
     /// Replace a non-empty selection with `text`; false when nothing is selected.

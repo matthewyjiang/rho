@@ -117,16 +117,9 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::InteractivePending(_) => Theme::dim(),
         };
-        let left = (slot == ComposerDividerSlot::Top
-            && matches!(self.input_ui.composer(), ComposerMode::Input))
-        .then(|| self.input_ui.shell_mode())
-        .flatten()
-        .and_then(|mode| {
-            DividerCaption::new(
-                inline_shell::mode_divider_labels(mode).iter().copied(),
-                style,
-            )
-        });
+        let left = (slot == ComposerDividerSlot::Top)
+            .then(|| self.composer_mode_captions())
+            .and_then(|captions| DividerCaption::new(captions, style));
         // Stay on the top rule in every composer mode so overlays do not hide
         // the reviewer. Follow the rule color; warning only when no model.
         let right = (slot == ComposerDividerSlot::Top)
@@ -142,6 +135,26 @@ impl App {
                 )
             });
         labeled_divider_line(left, right, style, width)
+    }
+
+    /// Longest-first left captions for the top rule: the vim mode, the
+    /// shell mode, or both, while the free-text composer is showing.
+    fn composer_mode_captions(&self) -> Vec<String> {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return Vec::new();
+        }
+        let shell = self
+            .input_ui
+            .shell_mode()
+            .map_or(&[][..], inline_shell::mode_divider_labels);
+        match self.composer_vim_mode() {
+            None => shell.iter().map(|label| (*label).to_owned()).collect(),
+            Some(mode) => shell
+                .iter()
+                .map(|label| format!("{} · {label}", mode.label()))
+                .chain(std::iter::once(mode.label().to_owned()))
+                .collect(),
+        }
     }
 
     /// Composer rows and the caret position for one frame, derived together.

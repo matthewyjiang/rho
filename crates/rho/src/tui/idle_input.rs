@@ -140,6 +140,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_vim_key(key) {
+            return Ok(());
+        }
+
         if self
             .handle_configurable_composer_key(key, terminal, agent)
             .await?

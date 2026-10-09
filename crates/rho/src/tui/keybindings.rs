@@ -65,6 +65,12 @@ impl App {
         } else if self.info.runtime.keybindings.search_transcript.matches(key) {
             self.open_transcript_search(terminal)
                 .map_err(|error| anyhow::anyhow!("could not read terminal size: {error}"))?;
+        } else if self.info.runtime.keybindings.undo.matches(key) {
+            // Undo and redo come last so their new defaults never shadow a
+            // chord an existing config already bound.
+            self.undo_input();
+        } else if self.info.runtime.keybindings.redo.matches(key) {
+            self.redo_input();
         } else {
             return Ok(false);
         }
@@ -135,6 +141,11 @@ impl App {
             self.insert_input_char('\n');
         } else if self.info.runtime.keybindings.search_transcript.matches(key) {
             self.open_transcript_search(terminal)?;
+        } else if self.info.runtime.keybindings.undo.matches(key) {
+            // Last; see handle_configurable_running_key.
+            self.undo_input();
+        } else if self.info.runtime.keybindings.redo.matches(key) {
+            self.redo_input();
         } else {
             return Ok(false);
         }

@@ -205,6 +205,13 @@ fn ctrl_r_recalls_prompt_from_history_search() {
     assert_pass("prompt_history_search");
 }
 
+// Covers: vim editing mode, its mode indicator, and composer undo.
+// Owner: interactive TUI composer.
+#[test]
+fn vim_mode_edits_and_undoes_in_the_composer() {
+    assert_pass("composer_vim");
+}
+
 // Covers: project and global memories append locally, preserve prior instructions,
 // and do not start a model turn; an ordinary prompt still works afterwards.
 // Owner: interactive TUI command lifecycle and filesystem effects.

@@ -117,7 +117,7 @@ fn composer_is_empty(harness: &mut PtyHarness) -> Result<()> {
 
 /// Waits until the cursor's row, the composer line, shows `text`. The
 /// transcript repeats submitted prompts, so screen-wide text is ambiguous.
-fn wait_for_composer(harness: &mut PtyHarness, text: &str) -> Result<()> {
+pub(super) fn wait_for_composer(harness: &mut PtyHarness, text: &str) -> Result<()> {
     const COMPOSER: WaitTimeout = WaitTimeout::secs(5, "composer text");
     let deadline = Instant::now() + COMPOSER.duration;
     loop {

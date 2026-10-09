@@ -16,6 +16,7 @@ mod codemode_stream;
 mod command_palette;
 mod compact;
 mod composer_unicode;
+mod composer_vim;
 #[cfg(unix)]
 mod computer;
 #[cfg(unix)]
@@ -471,6 +472,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     workflow_background::WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
+    composer_vim::COMPOSER_VIM_SCENARIO,
     questionnaire_timeout::TIMEOUT,
     questionnaire_timeout::PAUSE,
     DOCUMENT_ATTACHMENT_SCENARIO,

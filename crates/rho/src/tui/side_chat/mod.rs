@@ -248,6 +248,15 @@ impl App {
             }
             return true;
         }
+        // After the newline chords so new undo defaults never shadow them.
+        if keybindings.undo.matches(key) {
+            side.overlay.composer.undo();
+            return true;
+        }
+        if keybindings.redo.matches(key) {
+            side.overlay.composer.redo();
+            return true;
+        }
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Esc) => {
                 self.close_side_chat();

@@ -192,6 +192,25 @@ async fn running_escape_action_picks_one_owner() {
             expected: Some(RunningEscapeAction::Overlay),
         },
         Case {
+            name: "vim insert mode intercepts before shells",
+            setup: |app| {
+                app.begin_provider_turn_ui();
+                app.info.runtime.keybindings.editing_mode = crate::keybindings::EditingMode::Vim;
+                app.pending_inline_shells
+                    .push(PendingShellTask::test_task("hello"));
+            },
+            expected: Some(RunningEscapeAction::Vim),
+        },
+        Case {
+            name: "vim normal mode aborts",
+            setup: |app| {
+                app.begin_provider_turn_ui();
+                app.info.runtime.keybindings.editing_mode = crate::keybindings::EditingMode::Vim;
+                assert!(app.handle_vim_key(KeyEvent::from(KeyCode::Esc)));
+            },
+            expected: Some(RunningEscapeAction::AbortTurn),
+        },
+        Case {
             name: "shell mode + focused pending-input panel",
             setup: |app| {
                 app.begin_provider_turn_ui();
