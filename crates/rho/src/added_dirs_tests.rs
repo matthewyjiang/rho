@@ -90,7 +90,10 @@ fn snapshot_metadata_round_trips_and_reports_missing_directories() {
     let removed_path = canonical(removed.path());
     drop(removed);
 
-    let restored = AddedDirs::from_snapshot(&saved, root.path());
+    let restored = AddedDirs::from_metadata(
+        saved.metadata().get(METADATA_KEY).map(String::as_str),
+        root.path(),
+    );
 
     let mut expected = AddedDirs::default();
     expected.insert(root.path(), canonical(kept.path()));
@@ -102,7 +105,7 @@ fn snapshot_metadata_round_trips_and_reports_missing_directories() {
         }
     );
     assert_eq!(
-        AddedDirs::from_snapshot(&snapshot(), root.path()),
+        AddedDirs::from_metadata(None, root.path()),
         RestoredDirs::default()
     );
 }

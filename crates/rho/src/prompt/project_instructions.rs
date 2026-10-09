@@ -75,7 +75,7 @@ impl ProjectInstructions {
         text.push_str(if self.added_dirs.is_empty() {
             "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n"
         } else {
-            "\nAdditional instructions from AGENTS.md files follow. Each file applies to its own directory and everything below it. Where files conflict, the file in the deeper directory takes precedence; files in unrelated directories do not override each other:\n"
+            "\nAdditional instructions from AGENTS.md files follow. The user's global file applies everywhere. Each project file applies to its own directory and everything below it. Where files conflict, the file in the deeper directory takes precedence; files in unrelated directories do not override each other:\n"
         });
         sources[0].bytes += text.len() - start;
         for (path, contents) in &self.files {

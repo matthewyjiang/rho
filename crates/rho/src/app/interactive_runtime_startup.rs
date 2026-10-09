@@ -64,9 +64,9 @@ pub(super) async fn initialize(
     let resumed_snapshot =
         load_resumed_snapshot(&provider, session_id.as_deref(), storage.as_ref())?;
     let workspace_root = std::fs::canonicalize(&cwd)?;
-    let restored = resumed_snapshot
+    let restored = storage
         .as_ref()
-        .map(|snapshot| AddedDirs::from_snapshot(snapshot, &workspace_root))
+        .map(|storage| AddedDirs::from_storage(storage, &workspace_root))
         .unwrap_or_default();
     let added_dirs = launch_added_dirs.union(&workspace_root, &restored.dirs);
     let workspace = sdk_options.workspace.build_workspace(&added_dirs)?;

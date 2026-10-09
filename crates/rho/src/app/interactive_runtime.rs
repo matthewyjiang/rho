@@ -544,7 +544,7 @@ impl InteractiveRuntime {
             self.provider.provider().identity(),
             prompt_cache_key(storage.id()),
         )?;
-        let (added_dirs, missing_dirs) = self.starting_added_dirs(Some(&snapshot));
+        let (added_dirs, missing_dirs) = self.starting_added_dirs(&storage);
         let workspace = self.workspace_with(&added_dirs)?;
         let prepared_prompt =
             self.prepare_session_prompt(self.prompt_session(storage.id()), &added_dirs)?;

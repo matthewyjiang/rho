@@ -72,10 +72,24 @@ impl AddedDirs {
             .try_fold(workspace, |workspace, dir| workspace.with_granted_root(dir))
     }
 
-    /// Reads the set saved by [`Self::decorate`]. Unreadable metadata restores
-    /// nothing rather than failing the resume.
-    pub(crate) fn from_snapshot(snapshot: &SessionSnapshot, workspace_root: &Path) -> RestoredDirs {
-        let Some(encoded) = snapshot.metadata().get(METADATA_KEY) else {
+    /// Reads the set last saved by [`Self::decorate`] anywhere in `storage`,
+    /// not from the active leaf, which may predate `/add-dir`. Unreadable
+    /// metadata restores nothing rather than failing the resume.
+    pub(crate) fn from_storage(
+        storage: &crate::session::Session,
+        workspace_root: &Path,
+    ) -> RestoredDirs {
+        match storage.session_metadata(METADATA_KEY) {
+            Ok(encoded) => Self::from_metadata(encoded.as_deref(), workspace_root),
+            Err(error) => {
+                tracing::warn!(%error, "could not read saved added directories");
+                RestoredDirs::default()
+            }
+        }
+    }
+
+    fn from_metadata(encoded: Option<&str>, workspace_root: &Path) -> RestoredDirs {
+        let Some(encoded) = encoded else {
             return RestoredDirs::default();
         };
         let saved: Vec<PathBuf> = match serde_json::from_str(encoded) {

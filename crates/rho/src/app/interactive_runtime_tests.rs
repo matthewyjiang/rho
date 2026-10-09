@@ -689,7 +689,8 @@ async fn tree_navigation_keeps_same_session_write_authority() {
 
 // Covers: an added directory becomes granted workspace scope, is saved with
 // its session, is dropped by /new, and comes back when that session resumes
-// or is entered through a tree node saved before the directory was added.
+// or is entered through a tree node saved before the directory was added,
+// including a resume after that older node became the active leaf.
 // Owner: interactive runtime added-directory lifecycle
 #[tokio::test]
 async fn added_dirs_follow_their_session_across_new_and_resume() {
@@ -750,9 +751,18 @@ async fn added_dirs_follow_their_session_across_new_and_resume() {
 
     interactive.reset().await.unwrap();
     interactive
-        .select_tree_node(storage, &root_id)
+        .select_tree_node(storage.clone(), &root_id)
         .await
         .unwrap();
+    assert_eq!(
+        interactive.added_dirs().as_slice(),
+        std::slice::from_ref(&sibling_dir)
+    );
+    assert_eq!(scope(&interactive), granted);
+
+    // The older node is now the active leaf; resume must still restore.
+    interactive.reset().await.unwrap();
+    interactive.resume(storage).await.unwrap();
     assert_eq!(interactive.added_dirs().as_slice(), [sibling_dir]);
     assert_eq!(scope(&interactive), granted);
 }

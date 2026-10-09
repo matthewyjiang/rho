@@ -72,16 +72,14 @@ impl InteractiveRuntime {
         Ok(())
     }
 
-    /// The directories a session starts with: launch directories plus any the
-    /// saved `snapshot` restores. Missing saved directories are reported.
+    /// The directories a session starts with: launch directories plus any
+    /// `storage` saved. Missing saved directories are reported.
     pub(super) fn starting_added_dirs(
         &self,
-        snapshot: Option<&rho_sdk::SessionSnapshot>,
+        storage: &crate::session::Session,
     ) -> (AddedDirs, Vec<PathBuf>) {
         let root = self.workspace.root();
-        let restored = snapshot
-            .map(|snapshot| AddedDirs::from_snapshot(snapshot, root))
-            .unwrap_or_default();
+        let restored = AddedDirs::from_storage(storage, root);
         (
             self.launch_added_dirs.union(root, &restored.dirs),
             restored.missing,

@@ -298,6 +298,12 @@ impl Session {
         Ok(record)
     }
 
+    /// Session-scoped metadata: `key` as last saved, independent of the
+    /// active leaf. See [`SessionTree::newest_node_metadata`].
+    pub(crate) fn session_metadata(&self, key: &str) -> anyhow::Result<Option<String>> {
+        self.with_session_tree(|tree| Ok(tree.newest_node_metadata(key).map(str::to_owned)))
+    }
+
     pub(crate) fn snapshot_for_resume(
         &self,
         provider: ModelIdentity,
