@@ -4,7 +4,7 @@ use crate::{
     cli::Cli,
     config::Config,
     herdr::HerdrReporter,
-    session::Session,
+    session::{Session, SessionTarget},
     tui::{self, ApplicationServices, RuntimeModelView, SessionBootstrap, TuiBootstrap},
 };
 
@@ -42,6 +42,31 @@ fn validate_resume_agent(
     session.validate_agent_definition_identity(agent.definition())
 }
 
+/// Session an interactive launch starts in, chosen from `--resume` / `--continue`.
+enum StartupSession<'a> {
+    Fresh,
+    Picker,
+    /// `--resume <ID>`: local-then-global id prefix resolution.
+    ById(&'a str),
+    /// `--continue`: the newest session in the current workspace.
+    Latest(SessionTarget),
+}
+
+impl<'a> StartupSession<'a> {
+    fn from_cli(cli: &'a Cli, cwd: &std::path::Path) -> anyhow::Result<Self> {
+        if cli.continue_latest {
+            // An empty workspace starts fresh so `rho -c` is always safe to run.
+            let latest = Session::list(cwd)?.into_iter().next();
+            return Ok(latest.map_or(Self::Fresh, |summary| Self::Latest(summary.target())));
+        }
+        Ok(match &cli.resume {
+            Some(Some(id)) => Self::ById(id),
+            Some(None) => Self::Picker,
+            None => Self::Fresh,
+        })
+    }
+}
+
 pub(super) fn run(
     startup: Startup<'_>,
 ) -> impl std::future::Future<Output = anyhow::Result<()>> + '_ {
@@ -71,20 +96,21 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         reasoning_source,
         added_dirs,
     } = startup;
-    let mut open_resume_picker = false;
+    let startup_session = StartupSession::from_cli(cli, &cwd)?;
+    let open_resume_picker = matches!(startup_session, StartupSession::Picker);
     let mut recovered_messages = Vec::new();
-    let (session_id, history, storage) = match &cli.resume {
-        Some(Some(id)) => {
-            let (session, histories) = Session::open_by_id_with_histories(&cwd, id)?;
+    let opened = match startup_session {
+        StartupSession::ById(id) => Some(Session::open_by_id_with_histories(&cwd, id)?),
+        StartupSession::Latest(target) => Some(Session::open_target_with_histories(&target)?),
+        StartupSession::Picker | StartupSession::Fresh => None,
+    };
+    let (session_id, history, storage) = match opened {
+        Some((session, histories)) => {
             validate_resume_agent(&session, &agent)?;
             cwd = session.cwd().to_path_buf();
             let session_id = Some(session.id().to_string());
             recovered_messages = histories.display;
             (session_id, histories.model, Some(session))
-        }
-        Some(None) => {
-            open_resume_picker = true;
-            (None, Vec::new(), None)
         }
         None => (None, Vec::new(), None),
     };

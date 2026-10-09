@@ -80,34 +80,47 @@ fn test_cli() -> Cli {
         save: false,
         no_save: false,
         resume: None,
+        continue_latest: false,
         prompt: None,
         command: None,
     }
 }
 
-// Covers: --resume is rejected for non-interactive commands before prompt work starts
+// Covers: --resume and --continue are rejected for non-interactive commands before prompt work starts
 // Owner: cli config validation
 #[test]
-fn validate_cli_rejects_resume_with_non_interactive_commands() {
-    for command in [
-        Command::Run {
-            stdin: true,
-            output_file: None,
-            output: crate::cli::OutputFormat::Text,
-            max_steps: None,
-            timeout: None,
-            prompt: Vec::new(),
-        },
-        Command::Update,
+fn validate_cli_rejects_session_flags_with_non_interactive_commands() {
+    let resume = || Cli {
+        resume: Some(Some("session-id".into())),
+        ..test_cli()
+    };
+    let continue_latest = || Cli {
+        continue_latest: true,
+        ..test_cli()
+    };
+    for (flags, expected) in [
+        (resume as fn() -> Cli, "--resume is only supported"),
+        (continue_latest, "--continue is only supported"),
     ] {
-        let cli = Cli {
-            resume: Some(Some("session-id".into())),
-            command: Some(command),
-            ..test_cli()
-        };
+        for command in [
+            Command::Run {
+                stdin: true,
+                output_file: None,
+                output: crate::cli::OutputFormat::Text,
+                max_steps: None,
+                timeout: None,
+                prompt: Vec::new(),
+            },
+            Command::Update,
+        ] {
+            let cli = Cli {
+                command: Some(command),
+                ..flags()
+            };
 
-        let err = validate(&cli).unwrap_err();
-        assert!(err.to_string().contains("--resume is only supported"));
+            let err = validate(&cli).unwrap_err();
+            assert!(err.to_string().contains(expected));
+        }
     }
 }
 
