@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 
 mod acp_runtime;
+mod added_dirs;
 mod agent;
 mod antigravity_runtime;
 mod app;

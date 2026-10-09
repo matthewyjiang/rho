@@ -154,6 +154,8 @@ pub(super) struct Startup<'a> {
     pub approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
     pub checkpoint: Option<SessionCheckpoint>,
+    /// Directories added to the workspace scope beyond `cwd`.
+    pub added_dirs: crate::added_dirs::AddedDirs,
 }
 
 /// Step checkpoints for one headless run.
@@ -538,6 +540,7 @@ async fn run_session_with_output(
         usage_purpose: startup.usage_purpose,
         usage_parent_session_id: startup.parent_session_id.clone(),
         hook_host_labels: startup.hook_host_labels.clone(),
+        added_dirs: &startup.added_dirs,
         system_prompt_suffix: startup.system_prompt_suffix,
         extend_tools: |mut tool_set: crate::tools::sdk_registry::AppToolSet| {
             if let Some(poster) = startup.notice_poster.clone() {

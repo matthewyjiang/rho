@@ -33,6 +33,9 @@ pub(crate) struct AgentExecutor {
     notices: SubagentNoticeBridge,
     approval_session: Option<rho_sdk::ApprovalSession>,
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
+    /// The parent session's added workspace directories, inherited by future
+    /// Rho runtime launches.
+    added_dirs: Arc<std::sync::RwLock<crate::added_dirs::AddedDirs>>,
 }
 
 pub(crate) struct AgentLaunchRequest {
@@ -221,6 +224,7 @@ impl AgentExecutor {
             notices,
             approval_session: None,
             approval_classifier: None,
+            added_dirs: Arc::default(),
         }
     }
 
@@ -276,6 +280,12 @@ impl AgentExecutor {
             .write()
             .expect("delegated config lock")
             .web_search = settings.clone();
+    }
+
+    /// Updates the added directories future launches inherit. Already-spawned
+    /// agents keep the scope they started with.
+    pub(crate) fn update_added_dirs(&self, added_dirs: crate::added_dirs::AddedDirs) {
+        *self.added_dirs.write().expect("delegated added dirs lock") = added_dirs;
     }
 
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
@@ -438,6 +448,11 @@ impl AgentExecutor {
         let task_cancellation = cancellation.clone();
         let live_title = std::sync::Arc::new(std::sync::Mutex::new(None));
         let title_config = self.config.read().expect("delegated config lock").clone();
+        let added_dirs = self
+            .added_dirs
+            .read()
+            .expect("delegated added dirs lock")
+            .clone();
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         let host_input = self.host_input.clone();
@@ -553,6 +568,7 @@ impl AgentExecutor {
                         approval_session,
                         approval_classifier,
                         checkpoint,
+                        added_dirs,
                     })
                     .await
                 }
@@ -757,6 +773,7 @@ struct RhoAgentRun {
     approval_session: Option<rho_sdk::ApprovalSession>,
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     checkpoint: Option<automation::SessionCheckpoint>,
+    added_dirs: crate::added_dirs::AddedDirs,
 }
 
 /// Drive a delegated run through Rho's own automation loop.
@@ -782,6 +799,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         approval_session,
         approval_classifier,
         checkpoint,
+        added_dirs,
     } = run;
 
     super::cli_config::prepare_model_metadata(
@@ -850,6 +868,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         approval_classifier,
         hook_host_labels,
         checkpoint,
+        added_dirs,
     };
     let result =
         automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;

@@ -32,6 +32,8 @@ pub(super) struct AcpStartup {
     pub(super) agent: BoundAgent,
     pub(super) diagnostics: RuntimeDiagnostics,
     pub(super) herdr: HerdrReporter,
+    /// `--add-dir` directories granted to every ACP session.
+    pub(super) added_dirs: crate::added_dirs::AddedDirs,
 }
 
 /// Outbound ACP host port used by session hosts and tests.

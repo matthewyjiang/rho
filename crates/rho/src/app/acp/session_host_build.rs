@@ -5,6 +5,7 @@ use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
 
 use super::super::{permission, AcpStartup};
 use crate::{
+    added_dirs::AddedDirs,
     app::{
         automation::ensure_headless_auto_classifier_model,
         interactive_runtime::startup::{
@@ -19,9 +20,12 @@ use crate::{
     permission::PermissionMode,
 };
 
+/// `added_dirs` is the session's set: launch `--add-dir` values, plus any a
+/// loaded session saved.
 pub(super) async fn build_session(
     startup: &AcpStartup,
     workspace: &Path,
+    added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<BuiltSession> {
     ensure_headless_auto_classifier_model(&startup.config)?;
@@ -42,6 +46,7 @@ pub(super) async fn build_session(
         usage_purpose: "agent",
         usage_parent_session_id: None,
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        added_dirs,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,
         approval: |inputs: ApprovalInputs| {

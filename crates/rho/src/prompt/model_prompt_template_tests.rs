@@ -255,3 +255,50 @@ fn cached_render_and_explicit_reload_have_distinct_file_lifetimes() {
         (original.text, original.sources),
     );
 }
+
+// Covers: an added directory loads its own git-root-to-directory AGENTS.md
+// chain, a file shared with another added directory loads once, and setting an
+// unchanged set reports nothing new for the live session.
+// Owner: prompt assembly; runtime tests cover delivering new files mid-session.
+#[test]
+fn added_dirs_load_their_instruction_chains_once() {
+    let project = TempDir::new().unwrap();
+    std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
+    let repo = TempDir::new().unwrap();
+    let repo_root = std::fs::canonicalize(repo.path()).unwrap();
+    std::fs::create_dir(repo_root.join(".git")).unwrap();
+    std::fs::write(repo_root.join("AGENTS.md"), "repo rules").unwrap();
+    for dir in ["a", "b"] {
+        std::fs::create_dir(repo_root.join(dir)).unwrap();
+    }
+    std::fs::write(repo_root.join("a/AGENTS.md"), "a rules").unwrap();
+    let mut added = crate::added_dirs::AddedDirs::default();
+    for dir in ["a", "b"] {
+        added.insert(project.path(), repo_root.join(dir));
+    }
+    let mut template = ModelPromptTemplate::new(None, String::new(), String::new(), Vec::new())
+        .with_project_instructions(project.path());
+
+    let loaded = template.set_added_dirs(&added);
+    assert_eq!(
+        loaded,
+        vec![
+            (repo_root.join("AGENTS.md"), "repo rules".to_string()),
+            (repo_root.join("a/AGENTS.md"), "a rules".to_string()),
+        ]
+    );
+    assert_eq!(template.set_added_dirs(&added), Vec::new());
+
+    let running = PromptModel::Rho {
+        provider: "test".into(),
+        model: "model".into(),
+    };
+    let agents_sources = template
+        .build(&running)
+        .unwrap()
+        .sources
+        .iter()
+        .filter(|source| source.kind == PromptSourceKind::Agents)
+        .count();
+    assert_eq!(agents_sources, 3);
+}

@@ -175,6 +175,7 @@ impl App {
             cwd: self.info.runtime.cwd.clone(),
             parent_session_id: self.side_chat_parent_session_id(),
             snapshot,
+            added_dirs: self.info.runtime.added_dirs.clone(),
         }
     }
 

@@ -158,6 +158,11 @@ impl SubagentManager {
         self.executor.update_permission_mode(mode);
     }
 
+    /// Updates the added workspace directories future launches inherit.
+    pub(crate) fn update_added_dirs(&self, added_dirs: crate::added_dirs::AddedDirs) {
+        self.executor.update_added_dirs(added_dirs);
+    }
+
     /// Updates the internal-agent selections future launches build from,
     /// such as the permission classifier and its screen.
     pub(crate) fn update_internal_agents(

@@ -101,6 +101,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         bound_reasoning_source,
         provider_refresh,
         store,
+        added_dirs,
     } = prepare_startup(cli).await?;
 
     validate_terminal_mode(&cli)?;
@@ -125,6 +126,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             max_steps,
             timeout,
             herdr: headless_herdr(),
+            added_dirs,
         })
         .await;
     }
@@ -136,6 +138,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             cli,
             bound_agent,
             herdr: headless_herdr(),
+            added_dirs,
         })
         .await;
     }
@@ -150,6 +153,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         bound_agent,
         bound_reasoning_source,
         herdr,
+        added_dirs,
     })
     .await
 }
@@ -278,6 +282,7 @@ struct PreparedStartup {
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
     provider_refresh: cli_config::ProviderRefreshStatus,
     store: AppCredentialStore,
+    added_dirs: crate::added_dirs::AddedDirs,
 }
 
 async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
@@ -291,6 +296,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
+    let added_dirs = launch_added_dirs(&cli, &cwd)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
     let (output_file, output, max_steps, timeout) = match &cli.command {
         Some(Command::Run {
@@ -385,7 +391,25 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         bound_reasoning_source,
         provider_refresh,
         store,
+        added_dirs,
     })
+}
+
+/// Resolves `--add-dir` values against the launch directory. A bad path fails
+/// startup instead of silently narrowing the scope the user asked for.
+fn launch_added_dirs(
+    cli: &Cli,
+    cwd: &std::path::Path,
+) -> anyhow::Result<crate::added_dirs::AddedDirs> {
+    let workspace_root = std::fs::canonicalize(cwd)?;
+    let home = crate::paths::home_dir();
+    let mut added = crate::added_dirs::AddedDirs::default();
+    for raw in &cli.add_dirs {
+        let dir = crate::added_dirs::resolve(raw, cwd, home.as_deref())
+            .map_err(|error| anyhow::anyhow!("invalid --add-dir: {error}"))?;
+        added.insert(&workspace_root, dir);
+    }
+    Ok(added)
 }
 
 struct AutomationStartup<'a> {
@@ -400,6 +424,7 @@ struct AutomationStartup<'a> {
     max_steps: Option<NonZeroUsize>,
     timeout: Option<Duration>,
     herdr: HerdrReporter,
+    added_dirs: crate::added_dirs::AddedDirs,
 }
 
 async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Result<()> {
@@ -430,6 +455,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             approval_classifier: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             checkpoint: None,
+            added_dirs: startup.added_dirs,
         },
     )
     .await
@@ -442,6 +468,7 @@ struct AcpCommandStartup {
     cli: Cli,
     bound_agent: super::agent_binding::BoundAgent,
     herdr: HerdrReporter,
+    added_dirs: crate::added_dirs::AddedDirs,
 }
 
 async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
@@ -456,6 +483,7 @@ async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
         agent: startup.bound_agent,
         diagnostics,
         herdr: startup.herdr,
+        added_dirs: startup.added_dirs,
     })
     .await
 }
@@ -471,6 +499,7 @@ struct InteractiveStartup<'a> {
     bound_agent: super::agent_binding::BoundAgent,
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
     herdr: HerdrReporter,
+    added_dirs: crate::added_dirs::AddedDirs,
 }
 
 async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Result<()> {
@@ -554,6 +583,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         herdr: startup.herdr,
         agent: startup.bound_agent,
         reasoning_source: startup.bound_reasoning_source,
+        added_dirs: startup.added_dirs,
     })
     .await
 }

@@ -45,6 +45,9 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) defer_mcp_connect: bool,
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
+    /// Added workspace directories: their AGENTS.md files join instruction
+    /// discovery, and delegated agents inherit them.
+    pub(crate) added_dirs: &'a crate::added_dirs::AddedDirs,
 }
 
 /// Whether this run offers MCP sampling at all.
@@ -209,6 +212,9 @@ pub(crate) async fn assemble_tools_and_prompt(
         }
         AppToolSet::new(options.config, options.diagnostics.clone(), tool_options).with_mcp(mcp)
     };
+    if let Some(manager) = tools.subagents() {
+        manager.update_added_dirs(options.added_dirs.clone());
+    }
     let mcp_report = tools.mcp_report().clone();
     let specs = tools.specs();
     let mut prompt_template = None;
@@ -240,6 +246,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                     plugin_skills,
                 );
                 template.replace_mcp(&mcp_report);
+                template.set_added_dirs(options.added_dirs);
                 let mut retained = String::new();
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut retained);

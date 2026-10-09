@@ -73,6 +73,7 @@ fn test_cli() -> Cli {
         no_system_prompt: false,
         no_tools: false,
         no_subagents: false,
+        add_dirs: Vec::new(),
         agent: None,
         reasoning: None,
         permission_mode: None,

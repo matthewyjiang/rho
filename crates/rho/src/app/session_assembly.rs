@@ -53,6 +53,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub usage_purpose: &'static str,
     pub usage_parent_session_id: Option<rho_sdk::SessionId>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
+    /// Directories added to the workspace scope beyond `cwd`.
+    pub added_dirs: &'a crate::added_dirs::AddedDirs,
     /// Adds caller-owned tools after shared assembly.
     pub extend_tools: ExtendTools,
     /// Host instructions retained across model-specific behavioral replacement.
@@ -148,6 +150,7 @@ where
         usage_purpose,
         usage_parent_session_id,
         hook_host_labels,
+        added_dirs,
         extend_tools,
         system_prompt_suffix,
         approval,
@@ -164,7 +167,7 @@ where
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
     let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
-    let workspace = sdk_options.workspace.build_workspace()?;
+    let workspace = sdk_options.workspace.build_workspace(added_dirs)?;
     let ToolsAndPrompt {
         tools: tool_set,
         mut prompt,
@@ -188,6 +191,7 @@ where
         defer_mcp_connect: false,
         diagnostics,
         agent,
+        added_dirs,
     })
     .await?;
     let tool_set = extend_tools(tool_set);

@@ -125,10 +125,12 @@ impl InteractiveRuntime {
             })
     }
 
-    /// Entering a different session reloads AGENTS.md but retains tools and skills.
+    /// Entering a different session reloads AGENTS.md but retains tools and
+    /// skills. `added_dirs` is the target session's set of added directories.
     pub(super) fn prepare_session_prompt(
         &self,
         session: crate::prompt::PromptSession,
+        added_dirs: &crate::added_dirs::AddedDirs,
     ) -> Result<PreparedSessionPrompt, Error> {
         let running = crate::model_identity::PromptModel::from_sdk_identity(
             &self.provider.provider().identity(),
@@ -136,7 +138,10 @@ impl InteractiveRuntime {
         let mut template = self.prompt_template.clone();
         let prompt = template
             .as_mut()
-            .map(|template| template.build_for_session(&running, session))
+            .map(|template| {
+                template.set_added_dirs(added_dirs);
+                template.build_for_session(&running, session)
+            })
             .transpose()
             .map_err(|error| Error::InvalidConfiguration {
                 message: format!("could not load model prompt: {error:#}"),

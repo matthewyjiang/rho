@@ -84,6 +84,10 @@ impl SnapshotReplay {
 }
 
 impl StoredSnapshotDelta {
+    pub(super) fn metadata(&self) -> &BTreeMap<String, String> {
+        &self.metadata
+    }
+
     pub(super) fn after(base: &SnapshotDeltaBase<'_>, current: &SessionSnapshot) -> Option<Self> {
         if base.session_id != current.session_id()
             || base.revision > current.revision()

@@ -10,6 +10,7 @@ mod model_prompt_template;
 pub(crate) mod model_prompts;
 mod project_instructions;
 pub(crate) use model_prompt_template::{ModelPromptTemplate, PromptSession};
+pub(crate) use project_instructions::added_dir_context;
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -472,17 +473,39 @@ fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
     out.push_str(">\n");
 }
 
-fn agent_instruction_files(cwd: &Path, home: Option<&Path>) -> Vec<(PathBuf, String)> {
+/// Global, project, then added-directory AGENTS.md files, in load order.
+/// Each added directory contributes its own git-root-to-directory chain; a file
+/// already listed (a shared monorepo root, for example) loads once. Precedence
+/// holds only within a chain, so the prompt states it by directory depth.
+fn agent_instruction_files(
+    cwd: &Path,
+    added_dirs: &[PathBuf],
+    home: Option<&Path>,
+) -> Vec<(PathBuf, String)> {
+    read_existing_files(agent_instruction_paths(cwd, added_dirs, home))
+}
+
+/// Candidate AGENTS.md paths for [`agent_instruction_files`], existing or not.
+fn agent_instruction_paths(
+    cwd: &Path,
+    added_dirs: &[PathBuf],
+    home: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(home) = home {
         paths.push(crate::paths::user_agents_md(home));
     }
-    paths.extend(
-        crate::workspace::project_ancestor_dirs(cwd)
+    for dir in std::iter::once(cwd).chain(added_dirs.iter().map(PathBuf::as_path)) {
+        for path in crate::workspace::project_ancestor_dirs(dir)
             .into_iter()
-            .map(|path| path.join("AGENTS.md")),
-    );
-    read_existing_files(paths)
+            .map(|path| path.join("AGENTS.md"))
+        {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
 }
 
 fn read_existing_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {

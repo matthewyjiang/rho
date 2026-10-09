@@ -17,6 +17,10 @@ pub(super) struct PreparedTreeSelection {
     /// Staged template; adopted only when the selection commits.
     template: Option<crate::prompt::ModelPromptTemplate>,
     prompt_notice: Option<String>,
+    /// The target session's added directories and the workspace granting them.
+    added_dirs: crate::added_dirs::AddedDirs,
+    missing_dirs: Vec<std::path::PathBuf>,
+    workspace: Workspace,
 }
 
 impl Drop for PreparedTreeSelection {
@@ -51,8 +55,6 @@ impl InteractiveRuntime {
         }
         let identity = self.provider.provider().identity();
         let id = storage.id().to_string();
-        let prepared = self.prepare_session_prompt(self.prompt_session(storage.id()))?;
-        let prepared_prompt = prepared.prompt;
         let snapshot =
             storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
         let resume_omission = resume_omissions_report(&snapshot, &identity);
@@ -60,6 +62,18 @@ impl InteractiveRuntime {
             .sessions
             .storage()
             .is_some_and(|current| current.id() == storage.id());
+        // Added directories belong to the session, not a node, and the target
+        // node may predate `/add-dir`. Moving within this session keeps the
+        // live set; entering another session reads its last saved set.
+        let (added_dirs, missing_dirs) = if same_session {
+            (self.sessions.added_dirs().clone(), Vec::new())
+        } else {
+            self.starting_added_dirs(&storage)
+        };
+        let workspace = self.workspace_with(&added_dirs)?;
+        let prepared =
+            self.prepare_session_prompt(self.prompt_session(storage.id()), &added_dirs)?;
+        let prepared_prompt = prepared.prompt;
         let permission = self.permission_for_rebuild(if same_session {
             SessionWriteRetention::Keep
         } else {
@@ -68,7 +82,7 @@ impl InteractiveRuntime {
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: &self.tools,
-            workspace: self.workspace.clone(),
+            workspace: workspace.clone(),
             workspace_policy: permission.workspace_policy.clone(),
             approval_session: permission.approval_session.clone(),
             system_prompt: self.active_system_prompt(),
@@ -119,6 +133,9 @@ impl InteractiveRuntime {
             prompt: prepared_prompt,
             template: prepared.template,
             prompt_notice,
+            added_dirs,
+            missing_dirs,
+            workspace,
         })
     }
 
@@ -147,6 +164,10 @@ impl InteractiveRuntime {
         if let Some(notice) = prepared.prompt_notice.take() {
             self.sessions.queue_notice(notice);
         }
+        self.workspace = prepared.workspace.clone();
+        self.adopt_added_dirs(std::mem::take(&mut prepared.added_dirs));
+        let missing_dirs = std::mem::take(&mut prepared.missing_dirs);
+        self.queue_missing_added_dirs_notice(&missing_dirs);
         previous_runtime.shutdown();
         self.invalidate_live_context();
         self.refresh_context_usage();

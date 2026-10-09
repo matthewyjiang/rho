@@ -277,6 +277,18 @@ impl SessionTree {
         self.nodes.get(id)
     }
 
+    /// Metadata `key` from the most recently written node, whichever leaf is
+    /// active. Selecting an older node writes no node, so session-scoped values
+    /// saved with every snapshot survive tree navigation.
+    pub(crate) fn newest_node_metadata(&self, key: &str) -> Option<&str> {
+        let node = self.order.last().and_then(|id| self.nodes.get(id))?;
+        match &node.node.transition {
+            StoredStateTransition::Snapshot { snapshot } => snapshot.metadata().get(key),
+            StoredStateTransition::SnapshotDelta { delta } => delta.metadata().get(key),
+        }
+        .map(String::as_str)
+    }
+
     #[cfg(test)]
     pub(crate) fn children(&self, id: &NodeId) -> &[NodeId] {
         self.children.get(id).map_or(&[], Vec::as_slice)

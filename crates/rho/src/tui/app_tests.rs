@@ -57,6 +57,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             service_tier: None,
             reasoning_source: ReasoningRequestSource::PersistedOrDefault,
             permission_mode: PermissionMode::Auto,
+            added_dirs: Default::default(),
             show_reasoning_output: true,
             zen_mode: false,
             advisor_mode: false,

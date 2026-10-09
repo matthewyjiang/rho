@@ -89,6 +89,13 @@ pub struct Cli {
     /// Override permission mode: bypass, auto, allow_edits, plan, or supervised.
     #[arg(long, value_name = "MODE", value_parser = parse_permission_mode)]
     pub(crate) permission_mode: Option<PermissionMode>,
+    /// Add a directory to the workspace scope. Repeat for more directories.
+    ///
+    /// Checked permission modes treat reads there like workspace reads, and
+    /// its AGENTS.md files load with the project's. Interactive sessions save
+    /// added directories and restore them on resume.
+    #[arg(long = "add-dir", value_name = "PATH", global = true)]
+    pub add_dirs: Vec<PathBuf>,
     /// Persist --provider/--model/--auth/--reasoning overrides to the config file.
     ///
     /// Without this flag, those overrides apply only to the current invocation.

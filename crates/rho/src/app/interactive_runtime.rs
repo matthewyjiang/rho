@@ -15,6 +15,9 @@ use {
     crate::session::Session as StoredSession, crate::tools::sdk_registry::AppToolSet,
 };
 
+#[path = "interactive_runtime_added_dirs.rs"]
+mod added_dirs;
+pub(crate) use added_dirs::AddDirOutcome;
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
 #[path = "interactive_runtime_agent_catalog.rs"]
@@ -92,6 +95,8 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) diagnostics: RuntimeDiagnostics,
     pub(crate) agent: BoundAgent,
     pub(crate) unavailable_error: Option<rho_providers::model::ModelError>,
+    /// `--add-dir` directories granted to every session this process opens.
+    pub(crate) launch_added_dirs: crate::added_dirs::AddedDirs,
 }
 
 pub(crate) struct InteractiveRuntime {
@@ -113,6 +118,8 @@ pub(crate) struct InteractiveRuntime {
     may_rewrite_startup_prompt: bool,
     plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
+    /// `--add-dir` directories; every new or resumed session starts with them.
+    launch_added_dirs: crate::added_dirs::AddedDirs,
     prompt_template: Option<crate::prompt::ModelPromptTemplate>,
     diagnostics: RuntimeDiagnostics,
     compaction: CompactionConfig,
@@ -487,8 +494,10 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }
+        let added_dirs = self.launch_added_dirs.clone();
+        let workspace = self.workspace_with(&added_dirs)?;
         let prepared_prompt =
-            self.prepare_session_prompt(crate::prompt::PromptSession::Different)?;
+            self.prepare_session_prompt(crate::prompt::PromptSession::Different, &added_dirs)?;
         self.revoke_computer_use();
         self.runtime
             .hooks()
@@ -508,6 +517,9 @@ impl InteractiveRuntime {
             self.may_rewrite_startup_prompt = true;
         }
         self.prompt_template = prepared_prompt.template;
+        // The pending replacement builds its runtime from this workspace.
+        self.workspace = workspace;
+        self.adopt_added_dirs(added_dirs);
         bind_subagent_parent(&self.tools, &session_id, None);
         self.session_writes.clear();
         self.invalidate_live_context();
@@ -528,21 +540,32 @@ impl InteractiveRuntime {
             }
             anyhow::bail!("cannot switch sessions while compaction is active");
         }
-        let prepared_prompt = self.prepare_session_prompt(self.prompt_session(storage.id()))?;
         let snapshot = storage.snapshot_for_resume(
             self.provider.provider().identity(),
             prompt_cache_key(storage.id()),
         )?;
-        self.rebuild_session(
-            snapshot,
-            ReplacementLifecycle::Started,
-            SessionWriteRetention::Forget,
-            prepared_prompt
-                .prompt
-                .map_or(PromptTransition::Keep, PromptTransition::Replace),
-        )
-        .await?;
+        let (added_dirs, missing_dirs) = self.starting_added_dirs(&storage);
+        let workspace = self.workspace_with(&added_dirs)?;
+        let prepared_prompt =
+            self.prepare_session_prompt(self.prompt_session(storage.id()), &added_dirs)?;
+        let previous_workspace = std::mem::replace(&mut self.workspace, workspace);
+        if let Err(error) = self
+            .rebuild_session(
+                snapshot,
+                ReplacementLifecycle::Started,
+                SessionWriteRetention::Forget,
+                prepared_prompt
+                    .prompt
+                    .map_or(PromptTransition::Keep, PromptTransition::Replace),
+            )
+            .await
+        {
+            self.workspace = previous_workspace;
+            return Err(error);
+        }
         self.prompt_template = prepared_prompt.template;
+        self.adopt_added_dirs(added_dirs);
+        self.queue_missing_added_dirs_notice(&missing_dirs);
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
         self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)

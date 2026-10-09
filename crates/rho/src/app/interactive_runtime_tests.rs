@@ -17,7 +17,7 @@ use rho_sdk::{
 };
 
 use super::{
-    build_runtime, DisplayCommit, InteractiveRunController, InteractiveRuntime,
+    build_runtime, AddDirOutcome, DisplayCommit, InteractiveRunController, InteractiveRuntime,
     InteractiveSessionController, ProviderController, RuntimeBuildOptions,
 };
 use crate::{
@@ -298,6 +298,7 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         pending_catalog_names: None,
         may_rewrite_startup_prompt: false,
         plugins_report: Default::default(),
+        launch_added_dirs: Default::default(),
         workspace,
         prompt_template: None,
         diagnostics: RuntimeDiagnostics::new(&Config::default()),
@@ -684,6 +685,86 @@ async fn tree_navigation_keeps_same_session_write_authority() {
         interactive.workspace_policy().evaluate(&created_write),
         PolicyDecision::Allow
     );
+}
+
+// Covers: an added directory becomes granted workspace scope, is saved with
+// its session, is dropped by /new, and comes back when that session resumes
+// or is entered through a tree node saved before the directory was added,
+// including a resume after that older node became the active leaf.
+// Owner: interactive runtime added-directory lifecycle
+#[tokio::test]
+async fn added_dirs_follow_their_session_across_new_and_resume() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("workspace");
+    std::fs::create_dir(&cwd).unwrap();
+    let sibling = tempfile::tempdir().unwrap();
+    let sibling_dir = std::fs::canonicalize(sibling.path()).unwrap();
+    let probe = sibling_dir.join("notes.md");
+    std::fs::write(&probe, "notes").unwrap();
+    let granted = rho_sdk::PathScope::GrantedRoot {
+        root: sibling_dir.clone(),
+    };
+    let scope = |interactive: &InteractiveRuntime| {
+        interactive
+            .workspace
+            .clone()
+            .with_unrestricted_file_access()
+            .resolve_for_read(&probe)
+            .unwrap()
+            .scope()
+            .clone()
+    };
+
+    let mut interactive = pending_compaction_runtime("done").await;
+    let (storage, root_id) = stored_session_with_branch(root.path(), &cwd);
+    interactive.resume(storage.clone()).await.unwrap();
+    assert_eq!(
+        interactive.add_dir(sibling_dir.clone()).await.unwrap(),
+        AddDirOutcome::Added
+    );
+    assert_eq!(
+        interactive.add_dir(sibling_dir.join("sub")).await.unwrap(),
+        AddDirOutcome::AlreadyCovered(sibling_dir.clone())
+    );
+    assert_eq!(
+        interactive.added_dirs().as_slice(),
+        std::slice::from_ref(&sibling_dir)
+    );
+    assert_eq!(scope(&interactive), granted);
+
+    interactive.reset().await.unwrap();
+    assert_eq!(
+        interactive.added_dirs().as_slice(),
+        [] as [std::path::PathBuf; 0]
+    );
+    assert_eq!(
+        scope(&interactive),
+        rho_sdk::PathScope::UnrestrictedFilesystem
+    );
+
+    interactive.resume(storage.clone()).await.unwrap();
+    assert_eq!(
+        interactive.added_dirs().as_slice(),
+        std::slice::from_ref(&sibling_dir)
+    );
+    assert_eq!(scope(&interactive), granted);
+
+    interactive.reset().await.unwrap();
+    interactive
+        .select_tree_node(storage.clone(), &root_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        interactive.added_dirs().as_slice(),
+        std::slice::from_ref(&sibling_dir)
+    );
+    assert_eq!(scope(&interactive), granted);
+
+    // The older node is now the active leaf; resume must still restore.
+    interactive.reset().await.unwrap();
+    interactive.resume(storage).await.unwrap();
+    assert_eq!(interactive.added_dirs().as_slice(), [sibling_dir]);
+    assert_eq!(scope(&interactive), granted);
 }
 
 async fn remember_live_write(

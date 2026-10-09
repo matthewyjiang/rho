@@ -31,6 +31,8 @@ pub(super) struct Startup<'a> {
     pub(super) herdr: HerdrReporter,
     pub(super) agent: super::agent_binding::BoundAgent,
     pub(super) reasoning_source: rho_providers::model::ReasoningRequestSource,
+    /// `--add-dir` directories, granted to every session this process opens.
+    pub(super) added_dirs: crate::added_dirs::AddedDirs,
 }
 
 fn validate_resume_agent(
@@ -67,6 +69,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         herdr,
         agent,
         reasoning_source,
+        added_dirs,
     } = startup;
     let mut open_resume_picker = false;
     let mut recovered_messages = Vec::new();
@@ -114,11 +117,13 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         diagnostics: diagnostics.clone(),
         agent,
         unavailable_error: missing_auth_model_error,
+        launch_added_dirs: added_dirs,
     })
     .await?;
     // Background credential reads must stop writing to stderr before the TUI
     // takes ownership of the terminal.
     drop(keyring_notice);
+    let added_dirs = runtime.added_dirs().clone();
     let result = tui::run(
         &mut runtime,
         TuiBootstrap {
@@ -133,6 +138,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
                     .then_some(rho_sdk::model::ServiceTier::Priority),
                 reasoning_source,
                 permission_mode: config.permission_mode,
+                added_dirs,
                 show_reasoning_output: config.show_reasoning_output,
                 zen_mode: config.zen_mode,
                 advisor_mode: config.advisor_mode,

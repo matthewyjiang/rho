@@ -365,7 +365,8 @@ impl App {
                 self.set_status("agent creation is unavailable while a model turn is running");
                 Ok(())
             }
-            CommandId::Advisor
+            CommandId::AddDir
+            | CommandId::Advisor
             | CommandId::Codemode
             | CommandId::Context
             | CommandId::Permissions

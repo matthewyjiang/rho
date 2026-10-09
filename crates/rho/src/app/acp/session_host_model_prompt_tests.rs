@@ -91,6 +91,7 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         SessionId::new(stored.id()),
         built,
         stored,
+        Default::default(),
         config.auth.clone(),
         HerdrReporter::default(),
     );

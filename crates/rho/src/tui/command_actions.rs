@@ -70,6 +70,7 @@ impl App {
             paste_segments,
         } = submission;
         match invocation.id {
+            CommandId::AddDir => self.execute_add_dir_command(&invocation, agent).await,
             CommandId::Advisor => self.execute_advisor_command(invocation, agent).await,
             CommandId::Computer => self.execute_computer_command(invocation, agent).await,
             CommandId::Codemode => self.execute_codemode_command(invocation, agent),
@@ -191,6 +192,7 @@ impl App {
             )));
             return Ok(());
         }
+        self.info.runtime.added_dirs = agent.added_dirs().clone();
         self.held_turns.clear();
         self.clear_mcp_connecting_activity();
         self.start_follow_ups = None;
