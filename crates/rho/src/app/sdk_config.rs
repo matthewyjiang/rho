@@ -136,8 +136,13 @@ pub(crate) struct WorkspaceOptions {
 impl WorkspaceOptions {
     /// Builds Rho's tool workspace with access to paths outside the working
     /// directory. Relative paths still resolve from the working directory.
-    pub(crate) fn build_workspace(&self) -> Result<Workspace, WorkspacePathError> {
-        Ok(Workspace::new(&self.root)?.with_unrestricted_file_access())
+    /// Each added directory becomes a granted root, which checked permission
+    /// modes treat like the workspace.
+    pub(crate) fn build_workspace(
+        &self,
+        added_dirs: &crate::added_dirs::AddedDirs,
+    ) -> Result<Workspace, WorkspacePathError> {
+        added_dirs.apply_to(Workspace::new(&self.root)?.with_unrestricted_file_access())
     }
 }
 

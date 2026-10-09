@@ -13,6 +13,7 @@ use rho_sdk::{
 
 use super::{InteractiveRuntime, InteractiveRuntimeOptions};
 use crate::{
+    added_dirs::AddedDirs,
     app::{
         interactive_run_controller::InteractiveRunController,
         interactive_session_controller::InteractiveSessionController,
@@ -47,6 +48,7 @@ pub(super) async fn initialize(
         diagnostics,
         agent,
         unavailable_error,
+        launch_added_dirs,
     } = options;
     let agent_id = agent.id().to_string();
     let agent_fingerprint = agent.fingerprint().to_string();
@@ -59,7 +61,15 @@ pub(super) async fn initialize(
     // instead of racing it; a no-op for the rest.
     sdk_options.provider.ensure_catalog_for_construction().await;
     let provider = resolve_provider(unavailable_error, &sdk_options)?;
-    let workspace = sdk_options.workspace.build_workspace()?;
+    let resumed_snapshot =
+        load_resumed_snapshot(&provider, session_id.as_deref(), storage.as_ref())?;
+    let workspace_root = std::fs::canonicalize(&cwd)?;
+    let restored = resumed_snapshot
+        .as_ref()
+        .map(|snapshot| AddedDirs::from_snapshot(snapshot, &workspace_root))
+        .unwrap_or_default();
+    let added_dirs = launch_added_dirs.union(&workspace_root, &restored.dirs);
+    let workspace = sdk_options.workspace.build_workspace(&added_dirs)?;
     let ToolsAndPrompt {
         tools,
         prompt,
@@ -92,6 +102,7 @@ pub(super) async fn initialize(
         defer_mcp_connect: true,
         diagnostics: &diagnostics,
         agent: &agent,
+        added_dirs: &added_dirs,
     })
     .await?;
     // Desktop authority belongs to this interactive host, not agent definitions
@@ -156,7 +167,7 @@ pub(super) async fn initialize(
             &provider,
             history,
             session_id.as_deref(),
-            storage.as_ref(),
+            resumed_snapshot,
         ) {
             Ok(options) => options,
             Err(error) => {
@@ -217,7 +228,8 @@ pub(super) async fn initialize(
             tools.recall_store(),
             tools.advisor().cloned(),
         )
-        .with_todo_state(tools.todo_state()),
+        .with_todo_state(tools.todo_state())
+        .with_added_dirs(added_dirs),
         provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
         tools,
         mcp_sampling,
@@ -227,6 +239,7 @@ pub(super) async fn initialize(
         may_rewrite_startup_prompt,
         plugins_report,
         workspace,
+        launch_added_dirs,
         prompt_template,
         compaction,
         diagnostics,
@@ -255,6 +268,7 @@ pub(super) async fn initialize(
     };
     runtime.rehydrate_computer_context();
     runtime.sessions.prompt = prompt;
+    runtime.queue_missing_added_dirs_notice(&restored.missing);
     if runtime.prompt_template.is_some() {
         if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
             &runtime.sessions.session().snapshot(),
@@ -322,23 +336,29 @@ pub(super) fn resolve_provider(
     }
 }
 
+/// Loads the saved snapshot a resumed startup continues from. Read before tool
+/// assembly, because its added directories shape the workspace and prompt.
+pub(super) fn load_resumed_snapshot(
+    provider: &Arc<dyn ModelProvider>,
+    session_id: Option<&str>,
+    storage: Option<&StoredSession>,
+) -> anyhow::Result<Option<rho_sdk::SessionSnapshot>> {
+    storage
+        .map(|storage| {
+            storage.snapshot_for_resume(
+                provider.identity(),
+                session_id.map_or_else(|| prompt_cache_key(storage.id()), prompt_cache_key),
+            )
+        })
+        .transpose()
+}
+
 pub(super) fn resolve_session_options(
     provider: &Arc<dyn ModelProvider>,
     history: Vec<Message>,
     session_id: Option<&str>,
-    storage: Option<&StoredSession>,
+    resumed_snapshot: Option<rho_sdk::SessionSnapshot>,
 ) -> anyhow::Result<SessionOptions> {
-    let cache_key = session_id.map(prompt_cache_key);
-    let resumed_snapshot = storage
-        .map(|storage| {
-            storage.snapshot_for_resume(
-                provider.identity(),
-                cache_key
-                    .clone()
-                    .unwrap_or_else(|| prompt_cache_key(storage.id())),
-            )
-        })
-        .transpose()?;
     if let Some(snapshot) = resumed_snapshot {
         // The TUI has not started yet, so stderr is still safe here.
         if let Some(notice) = resume_omissions_notice(&snapshot, &provider.identity()) {

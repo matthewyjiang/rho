@@ -59,6 +59,8 @@ pub(super) struct RuntimeInfo {
     billing: BillingInfo,
     cost_source: CostSource,
     cwd: PathBuf,
+    /// Directories added to the session's workspace scope.
+    added_dirs: Vec<PathBuf>,
     branch: Option<String>,
     usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
@@ -155,6 +157,7 @@ impl App {
                 self.usage.usage_cost_tracker.cumulative_source()
             },
             cwd: self.info.runtime.cwd.clone(),
+            added_dirs: self.info.runtime.added_dirs.as_slice().to_vec(),
             branch: git_branch(&self.info.runtime.cwd),
             usage: super::usage_cost::display_usage_with_live(
                 self.usage.cumulative_usage.as_ref(),
@@ -287,6 +290,9 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
 
     block.push_section("Workspace");
     block.push_field("Directory", &info.cwd.display().to_string());
+    for dir in &info.added_dirs {
+        block.push_field("Added", &dir.display().to_string());
+    }
     block.push_field(
         "Git branch",
         info.branch.as_deref().unwrap_or("not in a Git worktree"),

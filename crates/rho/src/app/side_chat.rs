@@ -65,6 +65,8 @@ pub(crate) struct SideChatLaunch {
     pub cwd: PathBuf,
     pub parent_session_id: SessionId,
     pub snapshot: String,
+    /// The parent session's added directories, so side-chat reads there stay free.
+    pub added_dirs: crate::added_dirs::AddedDirs,
 }
 
 pub(crate) struct SideChatHandle {
@@ -242,6 +244,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         usage_purpose: USAGE_PURPOSE,
         usage_parent_session_id: Some(launch.parent_session_id.clone()),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        added_dirs: &launch.added_dirs,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,
         approval: |_: ApprovalInputs| {

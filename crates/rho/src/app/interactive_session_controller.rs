@@ -23,6 +23,8 @@ pub(crate) struct InteractiveSessionController {
     recall: Option<RecallStore>,
     advisor: Option<AdvisorSessionStore>,
     todo: crate::tools::todo::TodoState,
+    /// Workspace directories this session added; saved in snapshot metadata.
+    added_dirs: crate::added_dirs::AddedDirs,
     pub(super) prompt: super::active_prompt::ActivePrompt,
 }
 
@@ -45,6 +47,7 @@ impl InteractiveSessionController {
             recall,
             advisor,
             todo: crate::tools::todo::TodoState::default(),
+            added_dirs: crate::added_dirs::AddedDirs::default(),
             prompt: super::active_prompt::ActivePrompt::default(),
         };
         controller.sync_storage_sidecars();
@@ -56,6 +59,20 @@ impl InteractiveSessionController {
         todo.restore(&self.session.snapshot());
         self.todo = todo;
         self
+    }
+
+    pub(crate) fn with_added_dirs(mut self, added_dirs: crate::added_dirs::AddedDirs) -> Self {
+        self.added_dirs = added_dirs;
+        self
+    }
+
+    pub(crate) fn added_dirs(&self) -> &crate::added_dirs::AddedDirs {
+        &self.added_dirs
+    }
+
+    /// Replaces the session's added directories. The next save records them.
+    pub(crate) fn set_added_dirs(&mut self, added_dirs: crate::added_dirs::AddedDirs) {
+        self.added_dirs = added_dirs;
     }
 
     /// Points session sidecars (web blobs, recall originals) at the current
@@ -100,7 +117,8 @@ impl InteractiveSessionController {
                 super::interactive_runtime::startup::prompt_cache_key(id.as_str()),
             );
         }
-        self.todo.decorate(self.prompt.decorate(snapshot))
+        self.added_dirs
+            .decorate(self.todo.decorate(self.prompt.decorate(snapshot)))
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
@@ -225,7 +243,9 @@ impl InteractiveSessionController {
             })?;
             // The SDK committed host compactor metadata at this exact boundary.
             // A buffered event must not be redecorated with newer live state.
-            let snapshot = self.prompt.decorate(snapshot.clone());
+            let snapshot = self
+                .added_dirs
+                .decorate(self.prompt.decorate(snapshot.clone()));
             storage.save_compaction_snapshot(&snapshot, display_tail, outcome)?;
             self.persisted_turn_display = display.len();
         }

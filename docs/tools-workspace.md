@@ -88,6 +88,14 @@ Permission modes are policy checks at Rho's tool-capability boundary, not an ope
 
 For session storage separate from the workspace, see [sessions](/sessions). For output-size settings, see [configuration](/configuration#tool-output-limit).
 
+## Additional workspace directories
+
+Add another directory to the workspace scope with `--add-dir <path>` at launch (repeatable, also works with `rho run`) or `/add-dir <path>` in the [interactive TUI](/interactive-tui#commands). Relative paths resolve against the current directory and `~` expands to home; the path must be an existing directory. A directory already inside the workspace or inside another added directory is reported as already in scope.
+
+In checked [permission modes](/configuration/permissions), reads under an added directory are free in every mode, including `plan`. `auto` and `allow_edits` also allow writes to git-tracked files there, the same as in the main workspace; `supervised` asks before those writes and `plan` denies them. Each added directory also loads its own `AGENTS.md` chain, from its git root down to the directory. `/add-dir` tells the running session about the directory and any new instruction files without rebuilding the system prompt.
+
+Added directories belong to the session. They are saved with it and restored by `/resume` and cross-session tree selection; a saved directory that no longer exists is skipped with a notice. `/new` keeps only the directories passed with `--add-dir`. Delegated agents and side chats inherit the session's added directories. `/info` lists them under **Workspace**.
+
 ## File edits and writes
 
 Rho supports three edit formats and registers only the selected tool:

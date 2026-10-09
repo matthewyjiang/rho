@@ -42,6 +42,7 @@ pub(super) async fn build_session(
         usage_purpose: "agent",
         usage_parent_session_id: None,
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        added_dirs: &startup.added_dirs,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,
         approval: |inputs: ApprovalInputs| {

@@ -487,15 +487,22 @@ fn user_instruction_paths_are_readable_and_writes_stay_gated() {
 
 // Covers: Allow edits and Auto skip the classifier/prompt for in-workspace
 // writes to git-tracked files, but not for new files, out-of-workspace paths,
-// or process execution.
+// or process execution. Added directories (granted roots) get the same
+// tracked-file allowance as the primary workspace.
 // Owner: application permission policy
 #[test]
 fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
-    let (_dir, tracked) = git_workspace_with_tracked_file();
+    let (dir, tracked) = git_workspace_with_tracked_file();
     let untracked = tracked.with_file_name("untracked.txt");
     std::fs::write(&untracked, "new").unwrap();
 
     let tracked_write = write_request(tracked.clone(), PathScope::PrimaryWorkspace);
+    let added_dir_write = write_request(
+        tracked.clone(),
+        PathScope::GrantedRoot {
+            root: dir.path().to_path_buf(),
+        },
+    );
     let untracked_write = write_request(untracked, PathScope::PrimaryWorkspace);
     let outside_write = write_request(tracked, PathScope::UnrestrictedFilesystem);
     let process = process_request("git status");
@@ -505,6 +512,7 @@ fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
             .workspace_policy(SessionWriteLog::default())
             .expect("checked mode has a policy");
         assert_eq!(policy.evaluate(&tracked_write), PolicyDecision::Allow);
+        assert_eq!(policy.evaluate(&added_dir_write), PolicyDecision::Allow);
         assert_eq!(
             policy.evaluate(&untracked_write),
             PolicyDecision::RequireApproval {

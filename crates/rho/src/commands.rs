@@ -5,6 +5,7 @@ pub(crate) use availability::CommandContext;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
+    AddDir,
     Advisor,
     New,
     Login,
@@ -256,6 +257,13 @@ const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentCh
 
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        id: CommandId::AddDir,
+        name: "add-dir",
+        usage: "/add-dir [path]",
+        description: "add a directory to this session's workspace scope",
+        argument_choices: &[],
+    },
     CommandSpec {
         id: CommandId::Advisor,
         name: "advisor",

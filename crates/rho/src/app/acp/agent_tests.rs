@@ -79,6 +79,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
         agent: bound,
         diagnostics: RuntimeDiagnostics::new(&config),
         herdr: HerdrReporter::default(),
+        added_dirs: Default::default(),
     }))
 }
 

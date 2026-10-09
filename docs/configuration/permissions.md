@@ -18,7 +18,7 @@ Allowed values are `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. A 
 
 In Auto, Allow edits, and Supervised, gitignored and untracked paths still ask, as do writes outside the workspace, including writes to global `AGENTS.md`, skill trees, and agent definitions. Plan denies those writes.
 
-These reads are allowed in every checked mode, including Plan: workspace-scoped reads, `~/.rho/AGENTS.md`, skill trees (`~/.rho/skills`, `~/.agents/skills`), and agent definitions (`~/.rho/agents`, `~/.agents/agents`). Auto, Allow edits, and Supervised do not prompt for them. Network access, skills, and instruction discovery do not prompt either. There is no attach-directory command. Switch mode to read any other path outside the workspace.
+These reads are allowed in every checked mode, including Plan: workspace-scoped reads, `~/.rho/AGENTS.md`, skill trees (`~/.rho/skills`, `~/.agents/skills`), and agent definitions (`~/.rho/agents`, `~/.agents/agents`). Auto, Allow edits, and Supervised do not prompt for them. Network access, skills, and instruction discovery do not prompt either. To read another directory without switching mode, add it to the session with [`--add-dir` or `/add-dir`](/tools-workspace#additional-workspace-directories). Added directories count as workspace for reads in every checked mode, and Auto and Allow edits allow writes to git-tracked files there. Supervised still asks before writing to them, and Plan still denies those writes.
 
 The status line shows **Bypass** in warning style. The other modes appear dim.
 

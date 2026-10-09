@@ -234,6 +234,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--no-system-prompt` | Do not send Rho's system prompt, including `AGENTS.md` and skill context. Current invocation only. Place before a subcommand. |
 | `--no-tools` | Do not expose tools to the model. Current invocation only. Place before a subcommand: `rho --no-tools run "..."`. |
 | `--no-subagents` | Do not expose the delegated-agent tools (`agent` / `agents`). Current invocation only. |
+| `--add-dir <PATH>` | Add a directory to the workspace scope for this invocation. Repeatable. Relative paths resolve against the current directory and `~` expands to home. See [additional workspace directories](/tools-workspace#additional-workspace-directories). |
 | `-R`, `--resume [<ID>]` | Resume a session by UUID or UUID prefix. Without an ID, open a picker. Interactive sessions only. |
 | `--no-save` | Keep an interactive conversation in memory without saving its transcript or prompts to shared history. Cannot be combined with `--resume`. Not a privacy mode; see [sessions](/sessions#sessions-without-saving). |
 | `--prompt <PROMPT>` | Open the interactive TUI and immediately submit this prompt. Interactive sessions only. |
@@ -271,5 +272,5 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 
 Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers). For example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
 
-`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` only affect the current invocation and are not written to config. `--no-system-prompt` and `--no-tools` are root options, so they must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` are global and may appear before or after the subcommand. `--resume` and `--prompt` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
+`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` only affect the current invocation and are not written to config. `--no-system-prompt` and `--no-tools` are root options, so they must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents`, `--agent`, and `--add-dir` are global and may appear before or after the subcommand. `--resume` and `--prompt` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
 

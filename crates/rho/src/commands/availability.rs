@@ -11,7 +11,8 @@ impl CommandContext {
     pub(crate) fn is_discoverable(&self, command: CommandId) -> bool {
         match command {
             CommandId::Fast => self.fast_mode_supported,
-            CommandId::Advisor
+            CommandId::AddDir
+            | CommandId::Advisor
             | CommandId::New
             | CommandId::Login
             | CommandId::Logout

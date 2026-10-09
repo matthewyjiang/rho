@@ -68,6 +68,26 @@ impl ModelPromptTemplate {
         self
     }
 
+    /// Sets the added workspace directories whose AGENTS.md files load with
+    /// the project's, reloading instruction files. Returns files that were not
+    /// loaded before so a live session can be told about them.
+    pub(crate) fn set_added_dirs(
+        &mut self,
+        added_dirs: &crate::added_dirs::AddedDirs,
+    ) -> Vec<(PathBuf, String)> {
+        let home = self.home.clone();
+        self.parts
+            .iter_mut()
+            .filter_map(|part| match part {
+                PromptPart::ProjectInstructions(instructions) => Some(instructions),
+                PromptPart::Retained { .. } => None,
+            })
+            .flat_map(|instructions| {
+                instructions.set_added_dirs(added_dirs.as_slice(), home.as_deref())
+            })
+            .collect()
+    }
+
     pub(super) fn append_section(&mut self, text: String, sources: Vec<PromptSource>) {
         self.parts.push(PromptPart::Retained { text, sources });
     }

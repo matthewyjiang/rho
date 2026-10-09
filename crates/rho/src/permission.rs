@@ -191,11 +191,12 @@ impl PermissionMode {
     /// Snapshots user-instruction and host-owned surfaces at construction
     /// (HOME / `RHO_HOME` / `PATH`). Bypass returns `None` before that I/O.
     /// The returned policy starts from [`Self::decision_for`] and, for
-    /// [`Self::Auto`] and [`Self::AllowEdits`], allows primary-workspace writes
-    /// to git-tracked files and to paths already allowed this session. Reads
-    /// stay free for configured workspace roots and for those user instruction
-    /// surfaces; unrestricted filesystem paths follow the mode's remaining
-    /// gate unless the built-in `workflow` tool requested a host-owned path.
+    /// [`Self::Auto`] and [`Self::AllowEdits`], allows workspace and
+    /// added-directory writes to git-tracked files and to paths already
+    /// allowed this session. Reads stay free for configured workspace roots
+    /// and for those user instruction surfaces; unrestricted filesystem paths
+    /// follow the mode's remaining gate unless the built-in `workflow` tool
+    /// requested a host-owned path.
     /// `ScopedWorkspacePolicy` is not used here because it deny-defaults
     /// network destinations behind a per-host allowlist, which would break the
     /// "workspace reads and network are free" contract of the checked modes.
@@ -468,7 +469,7 @@ impl WorkspacePolicy for ModePolicy {
     }
 }
 
-/// Records allowed primary-workspace writes so later edits skip the gate.
+/// Records allowed workspace and added-directory writes so later edits skip the gate.
 pub(crate) fn remember_allowed_workspace_writes(
     inner: Arc<dyn ApprovalHandler>,
     writes: SessionWriteLog,
@@ -518,6 +519,8 @@ fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {
     )
 }
 
+/// Free writes cover the primary workspace and added directories (granted
+/// roots): both are scope the user chose for this session.
 fn is_free_workspace_write(
     request: &CapabilityRequest,
     session_writes: &SessionWriteLog,
@@ -528,7 +531,7 @@ fn is_free_workspace_write(
             if path_is_symlink(path) {
                 return false;
             }
-            matches!(scope, PathScope::PrimaryWorkspace)
+            path_scope_is_workspace_rooted(scope)
                 && (session_writes.git_verdict(path, GitVerdict::Tracked)
                     || (session_writes
                         .granted_by(path)
@@ -544,10 +547,12 @@ fn rememberable_workspace_write(
     session_writes: &SessionWriteLog,
 ) -> Option<PathBuf> {
     match request.operation() {
-        CapabilityOperation::WritePath {
-            path,
-            scope: PathScope::PrimaryWorkspace,
-        } if !session_writes.git_verdict(path, GitVerdict::Ignored) => Some(path.clone()),
+        CapabilityOperation::WritePath { path, scope }
+            if path_scope_is_workspace_rooted(scope)
+                && !session_writes.git_verdict(path, GitVerdict::Ignored) =>
+        {
+            Some(path.clone())
+        }
         _ => None,
     }
 }

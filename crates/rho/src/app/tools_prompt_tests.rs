@@ -83,6 +83,7 @@ async fn assemble_awaiting_catalog(
         defer_mcp_connect: false,
         diagnostics: &diagnostics,
         agent: &agent,
+        added_dirs: &Default::default(),
     })
     .await
     .unwrap();
@@ -153,6 +154,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         defer_mcp_connect: false,
         diagnostics: &diagnostics,
         agent: &agent,
+        added_dirs: &Default::default(),
     })
     .await
     .unwrap();
@@ -271,6 +273,7 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             defer_mcp_connect: true,
             diagnostics: &diagnostics,
             agent: &agent,
+            added_dirs: &Default::default(),
         }),
     )
     .await
@@ -443,6 +446,7 @@ async fn mcp_attach_none_does_not_connect_configured_servers() {
             defer_mcp_connect: false,
             diagnostics: &diagnostics,
             agent: &agent,
+            added_dirs: &Default::default(),
         }),
     )
     .await

@@ -540,6 +540,7 @@ impl App {
 
         self.discard_side_chat();
         agent.resume(session).await?;
+        self.info.runtime.added_dirs = agent.added_dirs().clone();
         // User already confirmed handoff when this path runs after a prompt; drop
         // the structured omission so we do not re-announce it as a string notice.
         let _ = agent.take_pending_omission();

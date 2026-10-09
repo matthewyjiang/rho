@@ -13,6 +13,7 @@ use questionnaire::QuestionnaireCancelReason;
 use synced_backend::DefaultTerminal;
 use tokio::sync::oneshot;
 mod activity;
+mod add_dir_command;
 mod advisor_command;
 mod advisor_reasoning;
 mod advisor_status;
@@ -350,6 +351,9 @@ pub struct RuntimeModelView {
     pub service_tier: Option<rho_sdk::model::ServiceTier>,
     pub reasoning_source: ReasoningRequestSource,
     pub permission_mode: PermissionMode,
+    /// Mirror of the live session's added workspace directories, synced after
+    /// `/add-dir`, `/new`, and `/resume`.
+    pub(crate) added_dirs: crate::added_dirs::AddedDirs,
     pub show_reasoning_output: bool,
     pub zen_mode: bool,
     /// Offer the advisor tool, backed by the `advisor` internal agent's model.

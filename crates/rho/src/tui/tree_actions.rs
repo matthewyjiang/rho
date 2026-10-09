@@ -106,6 +106,7 @@ impl App {
         let histories = storage.histories_for_node(&target_id)?;
         let entries = self.transcript_entries(&histories.display);
         agent.select_tree_node(storage, &target_id).await?;
+        self.info.runtime.added_dirs = agent.added_dirs().clone();
 
         self.present_tree_selection(entries, &target_id, agent);
         Ok(())
