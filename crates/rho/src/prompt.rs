@@ -473,9 +473,10 @@ fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
     out.push_str(">\n");
 }
 
-/// Global, project, then added-directory AGENTS.md files, in precedence order.
+/// Global, project, then added-directory AGENTS.md files, in load order.
 /// Each added directory contributes its own git-root-to-directory chain; a file
-/// already listed (a shared monorepo root, for example) loads once.
+/// already listed (a shared monorepo root, for example) loads once. Precedence
+/// holds only within a chain, so the prompt states it by directory depth.
 fn agent_instruction_files(
     cwd: &Path,
     added_dirs: &[PathBuf],

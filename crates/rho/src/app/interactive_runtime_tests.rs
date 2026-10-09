@@ -688,7 +688,8 @@ async fn tree_navigation_keeps_same_session_write_authority() {
 }
 
 // Covers: an added directory becomes granted workspace scope, is saved with
-// its session, is dropped by /new, and comes back when that session resumes.
+// its session, is dropped by /new, and comes back when that session resumes
+// or is entered through a tree node saved before the directory was added.
 // Owner: interactive runtime added-directory lifecycle
 #[tokio::test]
 async fn added_dirs_follow_their_session_across_new_and_resume() {
@@ -714,7 +715,7 @@ async fn added_dirs_follow_their_session_across_new_and_resume() {
     };
 
     let mut interactive = pending_compaction_runtime("done").await;
-    let storage = StoredSession::create_in_root(root.path(), &cwd).unwrap();
+    let (storage, root_id) = stored_session_with_branch(root.path(), &cwd);
     interactive.resume(storage.clone()).await.unwrap();
     assert_eq!(
         interactive.add_dir(sibling_dir.clone()).await.unwrap(),
@@ -740,7 +741,18 @@ async fn added_dirs_follow_their_session_across_new_and_resume() {
         rho_sdk::PathScope::UnrestrictedFilesystem
     );
 
-    interactive.resume(storage).await.unwrap();
+    interactive.resume(storage.clone()).await.unwrap();
+    assert_eq!(
+        interactive.added_dirs().as_slice(),
+        std::slice::from_ref(&sibling_dir)
+    );
+    assert_eq!(scope(&interactive), granted);
+
+    interactive.reset().await.unwrap();
+    interactive
+        .select_tree_node(storage, &root_id)
+        .await
+        .unwrap();
     assert_eq!(interactive.added_dirs().as_slice(), [sibling_dir]);
     assert_eq!(scope(&interactive), granted);
 }

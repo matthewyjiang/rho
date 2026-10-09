@@ -43,13 +43,11 @@ impl InteractiveRuntime {
             .as_mut()
             .map(|template| template.set_added_dirs(&added))
             .unwrap_or_default();
-        let recorded = if self.prompt_template.is_some() {
-            let (model, display) = crate::prompt::added_dir_context(&dir, &new_files);
-            self.append_user_context_with_display(model, display)
-        } else {
-            self.sessions.save_snapshot(&[])
-        };
-        if let Err(error) = recorded {
+        // Always append context, even without a system prompt: the message
+        // advances the revision, and a metadata-only save at an unchanged
+        // revision is rejected by session-tree restore.
+        let (model, display) = crate::prompt::added_dir_context(&dir, &new_files);
+        if let Err(error) = self.append_user_context_with_display(model, display) {
             if let Some(template) = self.prompt_template.as_mut() {
                 template.set_added_dirs(&previous_dirs);
             }

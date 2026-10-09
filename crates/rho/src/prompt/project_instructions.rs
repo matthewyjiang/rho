@@ -70,9 +70,13 @@ impl ProjectInstructions {
             return;
         }
         let start = text.len();
-        text.push_str(
-            "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n",
-        );
+        // Separate chains are concatenated once directories are added, so
+        // "later wins" would let one tree's root override another's leaf.
+        text.push_str(if self.added_dirs.is_empty() {
+            "\nAdditional instructions from AGENTS.md files follow. More specific files appear later and take precedence:\n"
+        } else {
+            "\nAdditional instructions from AGENTS.md files follow. Each file applies to its own directory and everything below it. Where files conflict, the file in the deeper directory takes precedence; files in unrelated directories do not override each other:\n"
+        });
         sources[0].bytes += text.len() - start;
         for (path, contents) in &self.files {
             let start = text.len();

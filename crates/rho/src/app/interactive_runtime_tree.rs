@@ -62,12 +62,15 @@ impl InteractiveRuntime {
             .sessions
             .storage()
             .is_some_and(|current| current.id() == storage.id());
-        // Added directories belong to the session, not a node: moving within
-        // this session keeps them even when the target node predates one.
+        // Added directories belong to the session, not a node, and the target
+        // node may predate `/add-dir`. Moving within this session keeps the
+        // live set; entering another session reads its active leaf, the same
+        // source `/resume` uses.
         let (added_dirs, missing_dirs) = if same_session {
             (self.sessions.added_dirs().clone(), Vec::new())
         } else {
-            self.starting_added_dirs(Some(&snapshot))
+            let active = storage.snapshot_for_resume(identity.clone(), prompt_cache_key(&id))?;
+            self.starting_added_dirs(Some(&active))
         };
         let workspace = self.workspace_with(&added_dirs)?;
         let prepared =
