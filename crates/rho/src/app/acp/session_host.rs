@@ -62,6 +62,8 @@ pub(super) struct SessionHost {
     acp_session_id: SessionId,
     built: BuiltSession,
     stored: StoredSession,
+    /// Saved with every snapshot so a later load restores them.
+    added_dirs: crate::added_dirs::AddedDirs,
     auth: String,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
@@ -143,8 +145,11 @@ impl SessionHost {
         let cwd = validate_session_cwd(&request.cwd)?;
         ignore_host_mcp_servers(&request.mcp_servers);
         let sdk_id = rho_sdk::SessionId::new();
-        let built =
-            build_session(startup, cwd, |_| Ok(session_options_for_id(sdk_id.clone()))).await?;
+        let added_dirs = startup.added_dirs.clone();
+        let built = build_session(startup, cwd, &added_dirs, |_| {
+            Ok(session_options_for_id(sdk_id.clone()))
+        })
+        .await?;
         let stored = match StoredSession::create_with_id(
             cwd,
             built.session.id().as_str(),
@@ -162,6 +167,7 @@ impl SessionHost {
             acp_session_id.clone(),
             built,
             stored,
+            added_dirs,
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
@@ -183,7 +189,15 @@ impl SessionHost {
         ignore_host_mcp_servers(&request.mcp_servers);
         let (stored, histories) =
             StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref())?;
-        let built = build_session(startup, cwd, |provider| {
+        // ACP has no notice channel at load, so a missing saved directory
+        // is logged and skipped, matching the interactive notice.
+        let root = std::fs::canonicalize(cwd)?;
+        let restored = crate::added_dirs::AddedDirs::from_storage(&stored, &root);
+        for dir in &restored.missing {
+            tracing::warn!(dir = %dir.display(), "could not restore added directory: not found");
+        }
+        let added_dirs = startup.added_dirs.union(&root, &restored.dirs);
+        let built = build_session(startup, cwd, &added_dirs, |provider| {
             let snapshot =
                 stored.snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
             Ok(SessionOptions::from_snapshot(snapshot))
@@ -216,6 +230,7 @@ impl SessionHost {
             request.session_id,
             built,
             stored,
+            added_dirs,
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
@@ -419,6 +434,7 @@ impl SessionHost {
         acp_session_id: SessionId,
         built: BuiltSession,
         stored: StoredSession,
+        added_dirs: crate::added_dirs::AddedDirs,
         auth: String,
         herdr: HerdrReporter,
     ) -> Self {
@@ -427,6 +443,7 @@ impl SessionHost {
             acp_session_id,
             built,
             stored,
+            added_dirs,
             auth,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
@@ -520,11 +537,12 @@ impl SessionHost {
             display_tail.push(Message::assistant_text(text));
         }
         self.stored.save_snapshot(
-            &self
-                .built
-                .tools
-                .todo_state()
-                .decorate(self.built.prompt.decorate(self.built.session.snapshot())),
+            &self.added_dirs.decorate(
+                self.built
+                    .tools
+                    .todo_state()
+                    .decorate(self.built.prompt.decorate(self.built.session.snapshot())),
+            ),
             &display_tail,
         )
     }
