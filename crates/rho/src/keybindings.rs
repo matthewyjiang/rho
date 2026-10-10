@@ -244,8 +244,17 @@ impl<'de> Deserialize<'de> for Keybindings {
                 "cycle_pinned_model_back",
                 Some(&keybindings.cycle_pinned_model_back),
             ),
-            ("undo", Some(&keybindings.undo)),
-            ("redo", Some(&keybindings.redo)),
+            // Undo and redo run after every other chord, so an explicit cycle
+            // key wins over them instead of failing startup. Saved configs
+            // spell out the undo defaults, so explicit undo is no signal.
+            (
+                "undo",
+                (!explicit_permission_cycle).then_some(&keybindings.undo),
+            ),
+            (
+                "redo",
+                (!explicit_permission_cycle).then_some(&keybindings.redo),
+            ),
         ] {
             if binding.is_none() || binding != keybindings.cycle_permission_mode.as_ref() {
                 continue;
