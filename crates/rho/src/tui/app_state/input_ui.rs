@@ -2,11 +2,18 @@
 
 use std::time::Instant;
 
+use crossterm::event::KeyEvent;
+
 use crate::tui::{
-    click_sequence::ClickSequence, composer_attachments::ComposerAttachmentSlot,
-    composer_buffer::ComposerBuffer, feed_image::FeedImage, inline_shell::InlineShellMode,
-    paste_burst::PasteBurst, ChatMedia, ComposerAttachment, ComposerMode, InputDraft,
-    InputSubmissionMode, MediaAttachId, PasteSegment, PendingAttachmentSource,
+    click_sequence::ClickSequence,
+    composer_attachments::ComposerAttachmentSlot,
+    composer_buffer::ComposerBuffer,
+    composer_vim::{VimOutcome, VimState},
+    feed_image::FeedImage,
+    inline_shell::InlineShellMode,
+    paste_burst::PasteBurst,
+    ChatMedia, ComposerAttachment, ComposerMode, InputDraft, InputSubmissionMode, MediaAttachId,
+    PasteSegment, PendingAttachmentSource,
 };
 
 #[derive(Debug)]
@@ -17,6 +24,8 @@ pub(in crate::tui) struct AttachmentsPending;
 pub(in crate::tui) struct InputUi {
     /// Text, caret, selection, paste markers, and the painted row window.
     buffer: ComposerBuffer,
+    /// Vim mode and register; consulted only with `editing_mode = "vim"`.
+    vim: VimState,
     shell_mode: Option<InlineShellMode>,
     /// Char offset of the word Tab opened path completion on, in shell mode.
     /// `None` while completion is closed. The palette itself is derived from
@@ -81,6 +90,7 @@ impl InputUi {
     /// Clear composer text state after a successful submit.
     pub(in crate::tui) fn clear_submitted(&mut self) {
         self.buffer.clear();
+        self.reset_vim();
         self.shell_mode = None;
         self.shell_completion_anchor = None;
         self.pointer.clicks.cancel();
@@ -111,6 +121,20 @@ impl InputUi {
 
     pub(in crate::tui) fn buffer_mut(&mut self) -> &mut ComposerBuffer {
         &mut self.buffer
+    }
+
+    pub(in crate::tui) fn vim(&self) -> &VimState {
+        &self.vim
+    }
+
+    pub(in crate::tui) fn vim_key(&mut self, key: KeyEvent) -> VimOutcome {
+        self.vim.handle_key(key, &mut self.buffer)
+    }
+
+    /// Reset mode and release any insert-session undo group together.
+    pub(in crate::tui) fn reset_vim(&mut self) {
+        self.vim.reset();
+        self.buffer.end_undo_group();
     }
 
     pub(in crate::tui) fn set_text_and_cursor(&mut self, text: String, cursor: usize) {

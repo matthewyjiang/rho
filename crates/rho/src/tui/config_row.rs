@@ -58,6 +58,7 @@ pub(super) enum ConfigRow {
     WebSearch,
     WebSearchAction(WebSearchAction),
     XaiImageGeneration,
+    VimMode,
 }
 
 impl ConfigRow {
@@ -132,6 +133,7 @@ impl ConfigRow {
             config_picker::EDIT_TOOL_VALUE => Self::EditTool,
             config_picker::WEB_SEARCH_VALUE => Self::WebSearch,
             config_picker::XAI_IMAGE_GENERATION_VALUE => Self::XaiImageGeneration,
+            config_picker::VIM_MODE_VALUE => Self::VimMode,
             _ => return None,
         })
     }

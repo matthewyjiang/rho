@@ -3,7 +3,29 @@ use std::time::{Duration, Instant};
 use anyhow::{ensure, Context, Result};
 
 use super::STREAM;
-use crate::harness::PtyHarness;
+use crate::harness::{PtyHarness, WaitTimeout};
+
+/// Waits until the cursor's row, the composer line, shows `text`. The
+/// transcript repeats submitted prompts, so screen-wide text is ambiguous.
+pub(super) fn wait_for_composer(harness: &mut PtyHarness, text: &str) -> Result<()> {
+    const COMPOSER: WaitTimeout = WaitTimeout::secs(5, "composer text");
+    let deadline = Instant::now() + COMPOSER.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        let screen = harness.screen();
+        let (row, _) = screen.cursor();
+        let line = screen.rows_text().get(usize::from(row)).cloned();
+        if line.as_deref().is_some_and(|line| line.contains(text)) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "composer never showed {text:?}; cursor row: {line:?}\n{}",
+                screen.debug_dump()
+            );
+        }
+    }
+}
 
 pub(super) fn assert_inline_shell_cancelled(harness: &mut PtyHarness) -> Result<()> {
     if harness.screen().contains_text("cancel-escaped-output") {

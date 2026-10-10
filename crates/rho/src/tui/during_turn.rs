@@ -32,7 +32,8 @@ pub(super) enum RunningEscapeAction {
     DenyApprovalAndAbort,
     CancelInlineShells,
     ExitShellMode,
-    Overlay,
+    /// The focused composer owns Esc; use the normal key-routing chain.
+    FocusedComposer,
     AbortTurn,
 }
 
@@ -119,6 +120,9 @@ impl App {
             }
         }
         if self.handle_file_palette_key(key)? {
+            return Ok(());
+        }
+        if self.handle_vim_key(key) {
             return Ok(());
         }
         // Same order as the idle composer: pin cycle wins when a user binds
@@ -504,7 +508,7 @@ impl App {
                                         tool_call_active,
                                     ));
                                 }
-                                Some(RunningEscapeAction::Overlay) | None => {}
+                                Some(RunningEscapeAction::FocusedComposer) | None => {}
                             }
                         }
                         if self.external_editor_shortcut_matches(key) {
@@ -581,8 +585,8 @@ impl App {
     pub(super) fn running_escape_action(&mut self) -> Option<RunningEscapeAction> {
         if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
             Some(RunningEscapeAction::DenyApprovalAndAbort)
-        } else if self.running_escape_has_overlay_target() {
-            Some(RunningEscapeAction::Overlay)
+        } else if self.running_escape_has_overlay_target() || self.vim_captures_esc() {
+            Some(RunningEscapeAction::FocusedComposer)
         } else if !self.pending_inline_shells.is_empty() {
             Some(RunningEscapeAction::CancelInlineShells)
         } else if self.input_ui.shell_mode().is_some() {
@@ -606,6 +610,7 @@ impl App {
         matches!(self.input_ui.composer(), ComposerMode::Input)
             && self.input_ui.shell_mode().is_none()
             && !self.pending_input_focused()
+            && !self.vim_captures_esc()
             && self.pending_inline_shells.is_empty()
             && self.turn.session_ui().esc_aborts_operation()
     }

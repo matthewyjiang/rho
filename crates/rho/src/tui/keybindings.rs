@@ -5,6 +5,26 @@ use crate::tui::DefaultTerminal;
 
 use super::{App, InteractiveRuntime};
 
+pub(super) enum UndoDirection {
+    Undo,
+    Redo,
+}
+
+/// Use only as the final configurable-chord fallback, so new undo defaults
+/// never shadow an existing binding. Undo wins when both chords match.
+pub(super) fn undo_direction(
+    keybindings: &crate::keybindings::Keybindings,
+    key: KeyEvent,
+) -> Option<UndoDirection> {
+    if keybindings.undo.matches(key) {
+        Some(UndoDirection::Undo)
+    } else if keybindings.redo.matches(key) {
+        Some(UndoDirection::Redo)
+    } else {
+        None
+    }
+}
+
 impl App {
     pub(super) fn handle_configurable_running_key<B: Backend>(
         &mut self,
@@ -66,7 +86,11 @@ impl App {
             self.open_transcript_search(terminal)
                 .map_err(|error| anyhow::anyhow!("could not read terminal size: {error}"))?;
         } else {
-            return Ok(false);
+            match undo_direction(&self.info.runtime.keybindings, key) {
+                Some(UndoDirection::Undo) => self.undo_input(),
+                Some(UndoDirection::Redo) => self.redo_input(),
+                None => return Ok(false),
+            }
         }
         self.input_ui.clear_paste_burst();
         self.ctrl_c_streak = 0;
@@ -136,7 +160,11 @@ impl App {
         } else if self.info.runtime.keybindings.search_transcript.matches(key) {
             self.open_transcript_search(terminal)?;
         } else {
-            return Ok(false);
+            match undo_direction(&self.info.runtime.keybindings, key) {
+                Some(UndoDirection::Undo) => self.undo_input(),
+                Some(UndoDirection::Redo) => self.redo_input(),
+                None => return Ok(false),
+            }
         }
         self.input_ui.clear_paste_burst();
         self.ctrl_c_streak = 0;

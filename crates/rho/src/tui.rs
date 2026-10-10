@@ -45,6 +45,8 @@ mod composer_buffer;
 mod composer_chrome;
 mod composer_history;
 mod composer_pointer;
+mod composer_undo;
+mod composer_vim;
 mod computer_command;
 mod computer_overlay;
 mod config_actions;

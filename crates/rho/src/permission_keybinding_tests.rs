@@ -5,7 +5,8 @@ use super::{Keybindings, ReservedComposerKey};
 
 // Covers: remapping the cycle key must not silently shadow another shortcut,
 // including modifier-insensitive Tab/scroll handlers, composer text and editing
-// keys, while an omitted cycle key yields Alt+M to an existing binding.
+// keys, while an omitted cycle key yields Alt+M to an existing binding and a
+// remapped cycle key keeps the chord over undo and redo, which run last.
 // Owner: keybinding configuration parsing
 #[test]
 fn permission_cycle_remaps_reject_collisions() {
@@ -46,6 +47,12 @@ fn permission_cycle_remaps_reject_collisions() {
         ("", Ok(Some("alt+m"))),
         ("reset_conversation = \"alt+m\"", Ok(None)),
         ("toggle_tool_output = \"alt+m\"", Ok(None)),
+        ("undo = \"alt+m\"", Ok(None)),
+        ("cycle_permission_mode = \"ctrl+z\"", Ok(Some("ctrl+z"))),
+        (
+            "undo = \"ctrl+z\"\ncycle_permission_mode = \"ctrl+z\"",
+            Ok(Some("ctrl+z")),
+        ),
         (
             "reset_conversation = \"alt+m\"\ncycle_permission_mode = \"alt+m\"",
             Err(()),

@@ -1,22 +1,21 @@
 //! Ctrl+R searches prompt history and recalls the chosen prompt into the
 //! composer, where Up/Down history navigation continues from it.
 
-use std::{
-    fs::OpenOptions,
-    io::Write,
-    time::{Duration, Instant},
-};
+use std::{fs::OpenOptions, io::Write};
 
 use anyhow::Result;
 
 use crate::{
     env::IsolatedHome,
-    harness::{PtyHarness, WaitTimeout},
+    harness::PtyHarness,
     keys::Key,
     scenario::{Scenario, Step},
 };
 
-use super::{assert_helpers::wait_for_turn_completion_after, DEFAULT_SIZE, SETTLE, STARTUP};
+use super::{
+    assert_helpers::{wait_for_composer, wait_for_turn_completion_after},
+    DEFAULT_SIZE, SETTLE, STARTUP,
+};
 
 // Covers: Ctrl+R opens history search instead of resetting the session, the
 // filter finds an older prompt, Enter recalls it into the composer, Down steps
@@ -113,26 +112,4 @@ fn composer_shows_draft(harness: &mut PtyHarness) -> Result<()> {
 
 fn composer_is_empty(harness: &mut PtyHarness) -> Result<()> {
     wait_for_composer(harness, "Type a message")
-}
-
-/// Waits until the cursor's row, the composer line, shows `text`. The
-/// transcript repeats submitted prompts, so screen-wide text is ambiguous.
-fn wait_for_composer(harness: &mut PtyHarness, text: &str) -> Result<()> {
-    const COMPOSER: WaitTimeout = WaitTimeout::secs(5, "composer text");
-    let deadline = Instant::now() + COMPOSER.duration;
-    loop {
-        harness.poll(Duration::from_millis(25));
-        let screen = harness.screen();
-        let (row, _) = screen.cursor();
-        let line = screen.rows_text().get(usize::from(row)).cloned();
-        if line.as_deref().is_some_and(|line| line.contains(text)) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!(
-                "composer never showed {text:?}; cursor row: {line:?}\n{}",
-                screen.debug_dump()
-            );
-        }
-    }
 }

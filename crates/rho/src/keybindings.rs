@@ -6,6 +6,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// Configurable keyboard shortcuts used by the main TUI composer.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Keybindings {
+    /// How plain keys edit the main composer. Vim mode adds a normal mode.
+    #[serde(skip_serializing_if = "EditingMode::is_default")]
+    pub editing_mode: EditingMode,
     /// Starts a new session like `/new`. Unbound by default: a single chord
     /// that drops the conversation is too easy to hit.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,11 +39,43 @@ pub struct Keybindings {
     pub cycle_pinned_model: KeyBinding,
     /// Needs a terminal that reports ctrl+shift (kitty keyboard protocol).
     pub cycle_pinned_model_back: KeyBinding,
+    /// Reverts the newest composer edit.
+    pub undo: KeyBinding,
+    /// Reapplies the newest undone composer edit. The ctrl+shift default
+    /// needs a terminal that reports it (kitty keyboard protocol).
+    pub redo: KeyBinding,
+}
+
+/// Composer editing model, chosen with `[keybindings] editing_mode`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EditingMode {
+    /// Keys type text; editing keys and chords act directly.
+    #[default]
+    Default,
+    /// Vim-style modal editing: insert mode types, normal mode runs
+    /// motions and operators.
+    Vim,
+}
+
+impl EditingMode {
+    pub(crate) fn from_vim_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Vim
+        } else {
+            Self::Default
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::Default
+    }
 }
 
 impl Default for Keybindings {
     fn default() -> Self {
         Self {
+            editing_mode: EditingMode::Default,
             reset_conversation: None,
             search_prompt_history: KeyBinding::control('r'),
             search_transcript: KeyBinding::control('f'),
@@ -56,6 +91,8 @@ impl Default for Keybindings {
             manage_pending_input: KeyBinding::alt(KeyCode::Char('q')),
             cycle_pinned_model: KeyBinding::control('p'),
             cycle_pinned_model_back: KeyBinding::control_shift('p'),
+            undo: KeyBinding::control('z'),
+            redo: KeyBinding::control_shift('z'),
         }
     }
 }
@@ -88,6 +125,7 @@ impl Keybindings {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct PartialKeybindings {
+    editing_mode: Option<EditingMode>,
     reset_conversation: Option<KeyBinding>,
     search_prompt_history: Option<KeyBinding>,
     search_transcript: Option<KeyBinding>,
@@ -103,6 +141,8 @@ struct PartialKeybindings {
     manage_pending_input: Option<KeyBinding>,
     cycle_pinned_model: Option<KeyBinding>,
     cycle_pinned_model_back: Option<KeyBinding>,
+    undo: Option<KeyBinding>,
+    redo: Option<KeyBinding>,
 }
 
 impl<'de> Deserialize<'de> for Keybindings {
@@ -123,6 +163,7 @@ impl<'de> Deserialize<'de> for Keybindings {
         let defaults = Self::default();
         let explicit_permission_cycle = partial.cycle_permission_mode.is_some();
         let mut keybindings = Self {
+            editing_mode: partial.editing_mode.unwrap_or_default(),
             reset_conversation: partial.reset_conversation.filter(|_| !migrate_legacy_reset),
             search_prompt_history: partial
                 .search_prompt_history
@@ -160,6 +201,8 @@ impl<'de> Deserialize<'de> for Keybindings {
             cycle_pinned_model_back: partial
                 .cycle_pinned_model_back
                 .unwrap_or(defaults.cycle_pinned_model_back),
+            undo: partial.undo.unwrap_or(defaults.undo),
+            redo: partial.redo.unwrap_or(defaults.redo),
         };
         if keybindings.open_editor == keybindings.jump_to_bottom {
             return Err(serde::de::Error::custom(
@@ -200,6 +243,17 @@ impl<'de> Deserialize<'de> for Keybindings {
             (
                 "cycle_pinned_model_back",
                 Some(&keybindings.cycle_pinned_model_back),
+            ),
+            // Undo and redo run after every other chord, so an explicit cycle
+            // key wins over them instead of failing startup. Saved configs
+            // spell out the undo defaults, so explicit undo is no signal.
+            (
+                "undo",
+                (!explicit_permission_cycle).then_some(&keybindings.undo),
+            ),
+            (
+                "redo",
+                (!explicit_permission_cycle).then_some(&keybindings.redo),
             ),
         ] {
             if binding.is_none() || binding != keybindings.cycle_permission_mode.as_ref() {

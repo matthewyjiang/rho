@@ -101,7 +101,7 @@ async fn running_escape_action_picks_one_owner() {
                 app.begin_cancellable_wait_ui();
                 app.start_limits_command();
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "command palette intercepts",
@@ -110,7 +110,7 @@ async fn running_escape_action_picks_one_owner() {
                 app.input_ui.set_text("/".into());
                 app.input_ui.set_cursor(1);
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "pending-input panel intercepts",
@@ -118,7 +118,7 @@ async fn running_escape_action_picks_one_owner() {
                 app.begin_provider_turn_ui();
                 focus_pending_input(app);
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "shell mode intercepts",
@@ -146,7 +146,7 @@ async fn running_escape_action_picks_one_owner() {
                     .push(PendingShellTask::test_task("hello"));
                 app.start_limits_command();
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "pending inline shell + picker overlay",
@@ -157,7 +157,7 @@ async fn running_escape_action_picks_one_owner() {
                 app.input_ui
                     .set_composer(ComposerMode::Picker(model_picker()));
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "pending inline shell + questionnaire",
@@ -168,7 +168,7 @@ async fn running_escape_action_picks_one_owner() {
                 app.input_ui
                     .set_composer(ComposerMode::Questionnaire(questionnaire_composer()));
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "pending inline shell + command palette",
@@ -179,7 +179,7 @@ async fn running_escape_action_picks_one_owner() {
                 app.input_ui.set_text("/".into());
                 app.input_ui.set_cursor(1);
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
         Case {
             name: "pending inline shell + focused pending-input panel",
@@ -189,7 +189,26 @@ async fn running_escape_action_picks_one_owner() {
                     .push(PendingShellTask::test_task("hello"));
                 focus_pending_input(app);
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
+        },
+        Case {
+            name: "vim insert mode intercepts before shells",
+            setup: |app| {
+                app.begin_provider_turn_ui();
+                app.info.runtime.keybindings.editing_mode = crate::keybindings::EditingMode::Vim;
+                app.pending_inline_shells
+                    .push(PendingShellTask::test_task("hello"));
+            },
+            expected: Some(RunningEscapeAction::FocusedComposer),
+        },
+        Case {
+            name: "vim normal mode aborts",
+            setup: |app| {
+                app.begin_provider_turn_ui();
+                app.info.runtime.keybindings.editing_mode = crate::keybindings::EditingMode::Vim;
+                assert!(app.handle_vim_key(KeyEvent::from(KeyCode::Esc)));
+            },
+            expected: Some(RunningEscapeAction::AbortTurn),
         },
         Case {
             name: "shell mode + focused pending-input panel",
@@ -199,7 +218,7 @@ async fn running_escape_action_picks_one_owner() {
                     .set_shell_mode(Some(InlineShellMode::IncludeInContext));
                 focus_pending_input(app);
             },
-            expected: Some(RunningEscapeAction::Overlay),
+            expected: Some(RunningEscapeAction::FocusedComposer),
         },
     ];
 

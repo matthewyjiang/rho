@@ -50,6 +50,7 @@ pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
 pub(super) const EDIT_TOOL_VALUE: &str = "edit_tool";
 pub(super) const EDIT_TOOL_PREFIX: &str = "edit_tool:";
 pub(super) const XAI_IMAGE_GENERATION_VALUE: &str = "xai_image_generation";
+pub(super) const VIM_MODE_VALUE: &str = "vim_mode";
 
 fn xai_image_generation_visible(provider: &str) -> bool {
     provider == "xai"
@@ -197,7 +198,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Appearance",
-                "Theme, zen mode, output streaming, reasoning output, cache miss notices, header hints, notifications, and collapsed tool output lines.",
+                "Theme, zen mode, output streaming, reasoning output, cache miss notices, header hints, notifications, collapsed tool output lines, and vim mode.",
                 Some(theme_badge(config)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
@@ -338,6 +339,12 @@ pub(super) fn category_picker(
                     "Maximum collapsed tool output lines shown in the TUI.",
                     Some(config.max_tool_output_lines.to_string()),
                     MAX_TOOL_OUTPUT_LINES_VALUE,
+                ),
+                item(
+                    "Vim mode",
+                    "Edit the composer with vim-style insert and normal modes. Esc enters normal mode. Applies immediately. Space toggles.",
+                    Some(on_off(info.keybindings.editing_mode == crate::keybindings::EditingMode::Vim)),
+                    VIM_MODE_VALUE,
                 ),
             ],
         ),
@@ -584,7 +591,8 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | CACHE_MISS_NOTICES_VALUE
         | SHOW_HEADER_HINTS_VALUE
         | NOTIFICATIONS_VALUE
-        | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
+        | MAX_TOOL_OUTPUT_LINES_VALUE
+        | VIM_MODE_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE
         | PERMISSION_CLASSIFIER_REASONING_VALUE

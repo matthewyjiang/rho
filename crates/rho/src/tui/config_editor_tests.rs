@@ -78,7 +78,7 @@ fn editor_cursor_navigation_is_unicode_safe() {
 #[test]
 fn toggles_persist_for_the_next_session() {
     type ReadFlag = fn(&crate::config::Config) -> bool;
-    let cases: [(&str, ConfigToggle, bool, ReadFlag); 7] = [
+    let cases: [(&str, ConfigToggle, bool, ReadFlag); 8] = [
         (
             "workspace rewind",
             ConfigToggle::WorkspaceRewind,
@@ -118,6 +118,9 @@ fn toggles_persist_for_the_next_session() {
             false,
             |config| config.xai_image_generation,
         ),
+        ("vim mode", ConfigToggle::VimMode, true, |config| {
+            config.keybindings.editing_mode == crate::keybindings::EditingMode::Vim
+        }),
     ];
     for (case, key, expected, persisted) in cases {
         let dir = tempfile::tempdir().unwrap();

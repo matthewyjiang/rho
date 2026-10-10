@@ -237,6 +237,7 @@ impl App {
                 self.handle_web_search_action(action, ctx).await
             }
             (ConfigRow::XaiImageGeneration, _) => self.toggle_xai_image_generation(),
+            (ConfigRow::VimMode, _) => self.toggle_vim_mode(),
         }
     }
 
@@ -659,6 +660,24 @@ impl App {
                 error_noun: "SpaceXAI image generation",
             },
             |_, _| {},
+        )
+    }
+
+    fn toggle_vim_mode(&mut self) -> anyhow::Result<()> {
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::VimMode,
+                picker_value: config_picker::VIM_MODE_VALUE,
+                on_status: "vim mode: on",
+                off_status: "vim mode: off",
+                error_noun: "vim mode",
+            },
+            |app, enabled| {
+                app.info.runtime.keybindings.editing_mode =
+                    crate::keybindings::EditingMode::from_vim_enabled(enabled);
+                // Start the draft in insert mode, as a fresh vim session would.
+                app.input_ui.reset_vim();
+            },
         )
     }
 

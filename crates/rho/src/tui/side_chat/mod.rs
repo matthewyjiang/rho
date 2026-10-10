@@ -248,6 +248,13 @@ impl App {
             }
             return true;
         }
+        if let Some(direction) = super::keybindings::undo_direction(keybindings, key) {
+            match direction {
+                super::keybindings::UndoDirection::Undo => side.overlay.composer.undo(),
+                super::keybindings::UndoDirection::Redo => side.overlay.composer.redo(),
+            }
+            return true;
+        }
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Esc) => {
                 self.close_side_chat();
