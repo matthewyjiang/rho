@@ -647,6 +647,19 @@ impl ComposerBuffer {
         self.splice(range, inserted, Coalesce::Never)
     }
 
+    /// Like [`Self::replace_range`], but always its own undo step, even
+    /// inside an open group such as a vim insert session. Edits after it in
+    /// the same group start a fresh step.
+    pub(super) fn replace_range_as_own_step(
+        &mut self,
+        range: std::ops::Range<usize>,
+        inserted: Fragment,
+    ) {
+        self.history.seal();
+        self.replace_range(range, inserted);
+        self.history.seal();
+    }
+
     fn splice(
         &mut self,
         range: std::ops::Range<usize>,
@@ -722,8 +735,10 @@ impl ComposerBuffer {
         self.history.begin_group();
     }
 
+    /// Close one group level; the outermost close records the live caret as
+    /// the group's redo caret.
     pub(super) fn end_undo_group(&mut self) {
-        self.history.end_group();
+        self.history.end_group(self.cursor);
     }
 
     /// Replace a non-empty selection with `text`; false when nothing is selected.

@@ -166,11 +166,27 @@ impl UndoHistory {
         self.group_depth += 1;
     }
 
-    pub(super) fn end_group(&mut self) {
+    /// Make the next edit start a fresh step, even inside a group.
+    pub(super) fn seal(&mut self) {
+        self.sealed = true;
+    }
+
+    /// Close one group level. Closing the outermost group stores `cursor` as
+    /// the caret after its step, so redo lands where the owner left the caret
+    /// after its last edit (vim's Esc step-back, put, or `r`).
+    pub(super) fn end_group(&mut self, cursor: usize) {
+        let closes_group = self.group_depth == 1;
         self.group_depth = self.group_depth.saturating_sub(1);
-        if self.group_depth == 0 {
-            self.sealed = true;
+        if self.group_depth > 0 {
+            return;
         }
+        // Unsealed at the outermost close means the group recorded the step.
+        if closes_group && !self.sealed {
+            if let Some(step) = self.undo.last_mut() {
+                step.cursor_after = cursor;
+            }
+        }
+        self.sealed = true;
     }
 
     /// Pop the newest step for the caller to revert, then hand it to

@@ -150,7 +150,6 @@ impl VimState {
     }
 
     fn enter_normal(&mut self, buffer: &mut ComposerBuffer) {
-        buffer.end_undo_group();
         self.mode = VimMode::Normal;
         self.pending = Pending::default();
         let chars = chars(buffer);
@@ -160,6 +159,8 @@ impl VimState {
             buffer.set_cursor(buffer.caret_index(cursor - 1));
         }
         clamp_to_char(buffer);
+        // End the insert session after the step-back so redo restores it.
+        buffer.end_undo_group();
     }
 
     fn enter_insert(&mut self) {

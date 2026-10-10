@@ -54,12 +54,24 @@ fn undo_steps_follow_words_runs_and_paste_markers() {
     let marker = crate::tui::paste_burst::collapsed_paste_for(pasted)
         .expect("collapses")
         .marker();
-    let cases: [(&str, &[Op], String, String); 9] = [
+    let cases: [(&str, &[Op], String, String); 10] = [
         (
             "editor output does not absorb subsequent typing",
             &[Op::Editor("editor prompt"), Op::Type("!"), Op::Undo],
             "editor prompt".into(),
             "editor prompt".into(),
+        ),
+        (
+            "editor output inside an insert session is its own step",
+            &[
+                Op::BeginGroup,
+                Op::Type("hi"),
+                Op::Editor("draft"),
+                Op::EndGroup,
+                Op::Undo,
+            ],
+            "hi".into(),
+            "hi".into(),
         ),
         (
             "undo seals a step without closing its insert-session group",
@@ -131,7 +143,7 @@ fn undo_steps_follow_words_runs_and_paste_markers() {
         for op in ops {
             match *op {
                 Op::Editor(text) => {
-                    buffer.replace_range(0..buffer.char_len(), Fragment::plain(text));
+                    buffer.replace_range_as_own_step(0..buffer.char_len(), Fragment::plain(text));
                 }
                 Op::BeginGroup => buffer.begin_undo_group(),
                 Op::EndGroup => buffer.end_undo_group(),

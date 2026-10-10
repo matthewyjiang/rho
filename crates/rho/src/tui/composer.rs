@@ -416,14 +416,15 @@ impl App {
                 .contains(ratatui::layout::Position { x: column, y: row })
     }
 
-    /// Load external editor output as one undoable edit.
+    /// Load external editor output as its own undoable edit, even mid vim
+    /// insert session.
     pub(super) fn replace_composer_from_editor(&mut self, text: String) {
         self.reset_input_history_navigation();
         let end = self.input_char_len();
         self.input_ui.cancel_pointer_click_sequence();
         self.input_ui
             .buffer_mut()
-            .replace_range(0..end, Fragment::plain(text));
+            .replace_range_as_own_step(0..end, Fragment::plain(text));
         self.input_ui.clear_paste_burst();
         self.input_changed();
     }

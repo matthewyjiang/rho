@@ -1,14 +1,21 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 
 use super::{normal_cursor, VimMode, VimOutcome, VimState};
 use crate::tui::composer_buffer::{ComposerBuffer, ComposerEditKey, EditOutcome};
 
-/// `⎋` is Esc, `⌂` is Home; every other char is typed as itself.
+const KEY_REDO: KeyEvent = KeyEvent::new(
+    KeyCode::Char('z'),
+    KeyModifiers::CONTROL.union(KeyModifiers::SHIFT),
+);
+
+/// `⎋` is Esc, `⌂` is Home, `↷` is the redo chord; every other char is
+/// typed as itself.
 fn keys(spec: &str) -> impl Iterator<Item = KeyEvent> + '_ {
     spec.chars().map(|ch| match ch {
         '⎋' => KeyEvent::from(KeyCode::Esc),
         '⌂' => KeyEvent::from(KeyCode::Home),
+        '↷' => KEY_REDO,
         ch => KeyEvent::from(KeyCode::Char(ch)),
     })
 }
@@ -23,6 +30,11 @@ fn run(text: &str, cursor: usize, spec: &str) -> (String, usize, VimMode) {
     for key in keys(spec) {
         let edit = match vim.handle_key(key, &mut buffer) {
             VimOutcome::Handled(_) => continue,
+            // The app checks the redo chord after vim declines a key.
+            VimOutcome::Unhandled if key == KEY_REDO => {
+                buffer.redo();
+                continue;
+            }
             VimOutcome::Unhandled => ComposerEditKey::from_key(key).expect("typed key"),
             VimOutcome::Forward(edit) => edit,
         };
@@ -39,7 +51,7 @@ fn run(text: &str, cursor: usize, spec: &str) -> (String, usize, VimMode) {
 }
 
 // Covers: normal-mode motions, operators, counts, text objects, registers,
-// and undo grouping produce vim's text and caret.
+// undo grouping, and redo produce vim's text and caret.
 // Owner: vim key interpreter (pure buffer logic; PTY covers routing/chrome).
 #[test]
 fn normal_mode_commands_edit_like_vim() {
@@ -159,6 +171,24 @@ fn normal_mode_commands_edit_like_vim() {
             Normal,
         ),
         ("dt with adjacent match", "abc", 1, "⎋dtb", "bc", 0, Normal),
+        (
+            "redo restores the put caret",
+            "ab",
+            0,
+            "⎋ylpu↷",
+            "aab",
+            1,
+            Normal,
+        ),
+        (
+            "redo restores the Esc step-back caret",
+            "abc",
+            3,
+            "⎋iX⎋u↷",
+            "abXc",
+            2,
+            Normal,
+        ),
     ];
     for (name, text, cursor, spec, want_text, want_cursor, want_mode) in cases {
         assert_eq!(
