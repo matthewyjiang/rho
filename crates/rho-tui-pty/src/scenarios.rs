@@ -26,6 +26,7 @@ mod computer_setup;
 mod computer_update;
 mod config;
 mod context_overlay;
+mod continue_latest;
 mod conversation_tree;
 mod copy_output;
 mod diff_viewer;
@@ -671,6 +672,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
     Scenario::new(
         RESUME_SCROLLBACK_ID,
         "Resume a long session and page up to earlier transcript rows",
+        DEFAULT_SIZE,
+        &[],
+        /*smoke*/ false,
+    ),
+    Scenario::new(
+        continue_latest::CONTINUE_LATEST_ID,
+        "Continue the latest workspace session with -c, starting fresh when none exists",
         DEFAULT_SIZE,
         &[],
         /*smoke*/ false,

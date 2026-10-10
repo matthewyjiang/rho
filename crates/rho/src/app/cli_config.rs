@@ -32,6 +32,9 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
     if cli.resume.is_some() && cli.command.is_some() {
         anyhow::bail!("--resume is only supported for interactive sessions");
     }
+    if cli.continue_latest && cli.command.is_some() {
+        anyhow::bail!("--continue is only supported for interactive sessions");
+    }
     if let Some(prompt) = &cli.prompt {
         if cli.command.is_some() {
             anyhow::bail!("--prompt is only supported for interactive sessions");

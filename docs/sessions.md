@@ -61,7 +61,7 @@ running session. The statusline shows `not saved`, and `/new` keeps this mode.
 Exiting or crashing loses the conversation; it won't appear in session history
 and cannot be resumed.
 
-`--no-save` is interactive-only and cannot be combined with `--resume` or `-R`.
+`--no-save` is interactive-only and cannot be combined with `--resume`, `-R`, `--continue`, or `-c`.
 Inside the TUI, `/resume`, `/tree`, `/title`, `/export`, and `/rewind`
 are unavailable.
 Use `/copy` to copy an answer, or start Rho without the flag to resume saved work.
@@ -274,6 +274,16 @@ You can also omit the ID to open an interactive picker for saved sessions in the
 rho --resume
 rho -R
 ```
+
+To pick up where you left off, continue the most recently updated session in the current workspace without a picker:
+
+```bash
+rho --continue
+rho -c
+rho -c --prompt "keep going"
+```
+
+If the workspace has no saved sessions yet, `-c` starts a new session instead of failing, so it is safe to use as a default launch command.
 
 The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume` to open the saved-session picker or `/resume <id>` to switch directly. Both reject sessions owned by another workspace. In the picker, press `d` or `Delete` to remove the selected session after a confirmation prompt; `escape` cancels.
 

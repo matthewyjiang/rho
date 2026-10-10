@@ -161,10 +161,11 @@ fn parses_interactive_prompt_flag() {
     assert!(cli.command.is_none());
 }
 
-// Covers: unsaved startup must not accept either resume form, in either order.
+// Covers: unsaved startup must not accept any resume form, and --continue must
+// not mix with --resume, in either order.
 // Owner: CLI parser.
 #[test]
-fn no_save_conflicts_with_resume() {
+fn saved_session_flags_conflict() {
     for args in [
         vec!["rho", "--no-save", "--resume"],
         vec!["rho", "--resume", "--no-save"],
@@ -174,6 +175,10 @@ fn no_save_conflicts_with_resume() {
         vec!["rho", "-R", "--no-save"],
         vec!["rho", "--no-save", "-R", "abc123"],
         vec!["rho", "-R", "abc123", "--no-save"],
+        vec!["rho", "--no-save", "--continue"],
+        vec!["rho", "-c", "--no-save"],
+        vec!["rho", "-c", "-R"],
+        vec!["rho", "-R", "abc123", "--continue"],
     ] {
         let error = Cli::try_parse_from(&args).unwrap_err();
         assert_eq!(

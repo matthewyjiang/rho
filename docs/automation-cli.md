@@ -236,7 +236,8 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--no-subagents` | Do not expose the delegated-agent tools (`agent` / `agents`). Current invocation only. |
 | `--add-dir <PATH>` | Add a directory to the workspace scope for this invocation. Repeatable. Relative paths resolve against the current directory and `~` expands to home. See [additional workspace directories](/tools-workspace#additional-workspace-directories). |
 | `-R`, `--resume [<ID>]` | Resume a session by UUID or UUID prefix. Without an ID, open a picker. Interactive sessions only. |
-| `--no-save` | Keep an interactive conversation in memory without saving its transcript or prompts to shared history. Cannot be combined with `--resume`. Not a privacy mode; see [sessions](/sessions#sessions-without-saving). |
+| `-c`, `--continue` | Resume the most recent session in the current workspace without a picker. Starts a new session when the workspace has none. Interactive sessions only; cannot be combined with `--resume`. |
+| `--no-save` | Keep an interactive conversation in memory without saving its transcript or prompts to shared history. Cannot be combined with `--resume` or `--continue`. Not a privacy mode; see [sessions](/sessions#sessions-without-saving). |
 | `--prompt <PROMPT>` | Open the interactive TUI and immediately submit this prompt. Interactive sessions only. |
 | `-h`, `--help` | Show help for Rho or a subcommand. |
 

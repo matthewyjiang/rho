@@ -102,11 +102,16 @@ pub struct Cli {
     #[arg(long)]
     pub save: bool,
     /// Keep this interactive session in memory without saving its transcript or prompt history.
-    #[arg(long, conflicts_with = "resume")]
+    #[arg(long, conflicts_with_all = ["resume", "continue_latest"])]
     pub no_save: bool,
     /// Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker.
     #[arg(short = 'R', long, value_name = "ID", num_args = 0..=1)]
     pub resume: Option<Option<String>>,
+    /// Resume the most recent session in the current workspace without a picker.
+    ///
+    /// Starts a new session when the workspace has no saved sessions yet.
+    #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
+    pub continue_latest: bool,
     /// Open the interactive TUI with this prompt already submitted.
     ///
     /// This starts a normal session. Use `rho run` when you want one answer and

@@ -4,7 +4,10 @@ use anyhow::Result;
 
 use crate::scenario::{ScenarioOutcome, ScenarioRunner};
 
-use super::{all_scenarios, calibrated_context, config, resume_scrollback, send_confirm, workflow};
+use super::{
+    all_scenarios, calibrated_context, config, continue_latest, resume_scrollback, send_confirm,
+    workflow,
+};
 
 pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome> {
     let scenario = all_scenarios()
@@ -29,6 +32,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     }
     if resume_scrollback::is_resume_scrollback_scenario(name) {
         return resume_scrollback::run_resume_scrollback(runner);
+    }
+    if continue_latest::is_continue_latest_scenario(name) {
+        return continue_latest::run_continue_latest(runner);
     }
     runner.run(scenario)
 }
