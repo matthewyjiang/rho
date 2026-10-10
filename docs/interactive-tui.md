@@ -107,7 +107,7 @@ See [Mouse](#mouse) for clicking pickers, prompts, panels, and the status line.
 
 ### Vim mode
 
-Set `editing_mode = "vim"` under [`[keybindings]`](/configuration/full-example) and restart Rho to edit the main composer with vim-style modes. The composer rule shows `INSERT` or `NORMAL`. Rho starts each draft in insert mode, where keys type as usual. `esc` switches to normal mode instead of cancelling or aborting; press `esc` again in normal mode for the usual cancel or abort.
+Turn on `/config` → **Appearance** → **Vim mode**, or set `editing_mode = "vim"` under [`[keybindings]`](/configuration/full-example), to edit the main composer with vim-style modes. The menu toggle applies immediately; a config file edit applies at the next start. The composer rule shows `INSERT` or `NORMAL`. Rho starts each draft in insert mode, where keys type as usual. `esc` switches to normal mode instead of cancelling or aborting; press `esc` again in normal mode for the usual cancel or abort.
 
 Normal mode supports:
 

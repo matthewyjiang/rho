@@ -32,9 +32,8 @@ pub(super) enum RunningEscapeAction {
     DenyApprovalAndAbort,
     CancelInlineShells,
     ExitShellMode,
-    Overlay,
-    /// Leave vim insert mode or drop a half-typed vim command.
-    Vim,
+    /// The focused composer owns Esc; use the normal key-routing chain.
+    FocusedComposer,
     AbortTurn,
 }
 
@@ -503,20 +502,13 @@ impl App {
                                     let _ = self.exit_shell_mode();
                                     break 'event;
                                 }
-                                Some(RunningEscapeAction::Vim) => {
-                                    // Keep typing still buffered as a possible
-                                    // paste; it lands before the mode switch.
-                                    self.flush_pending_paste_burst();
-                                    self.handle_vim_key(key);
-                                    break 'event;
-                                }
                                 Some(RunningEscapeAction::AbortTurn) => {
                                     return Ok(self.request_running_interrupt(
                                         interrupt_requested,
                                         tool_call_active,
                                     ));
                                 }
-                                Some(RunningEscapeAction::Overlay) | None => {}
+                                Some(RunningEscapeAction::FocusedComposer) | None => {}
                             }
                         }
                         if self.external_editor_shortcut_matches(key) {
@@ -593,10 +585,8 @@ impl App {
     pub(super) fn running_escape_action(&mut self) -> Option<RunningEscapeAction> {
         if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
             Some(RunningEscapeAction::DenyApprovalAndAbort)
-        } else if self.running_escape_has_overlay_target() {
-            Some(RunningEscapeAction::Overlay)
-        } else if self.vim_captures_esc() {
-            Some(RunningEscapeAction::Vim)
+        } else if self.running_escape_has_overlay_target() || self.vim_captures_esc() {
+            Some(RunningEscapeAction::FocusedComposer)
         } else if !self.pending_inline_shells.is_empty() {
             Some(RunningEscapeAction::CancelInlineShells)
         } else if self.input_ui.shell_mode().is_some() {

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 
-use super::{ComposerBuffer, ComposerEditKey};
+use super::{ComposerBuffer, ComposerEditKey, Fragment};
 
 // Covers: word keys convert char cursors to byte ranges around multibyte text.
 // Owner: composer buffer; PTY scenarios only edit ASCII words.
@@ -35,6 +35,9 @@ fn word_keys_edit_multibyte_words() {
 #[derive(Clone, Copy, Debug)]
 enum Op {
     Type(&'static str),
+    Editor(&'static str),
+    BeginGroup,
+    EndGroup,
     Backspace,
     Paste,
     Undo,
@@ -42,7 +45,8 @@ enum Op {
 }
 
 // Covers: undo steps coalesce typing by word and deletions by run, revert
-// collapsed paste markers with their content, and lose redo on a new edit.
+// collapsed paste markers with their content, isolate editor edits, preserve
+// nested insert-session grouping across undo, and lose redo on a new edit.
 // Owner: composer undo history (pure buffer logic).
 #[test]
 fn undo_steps_follow_words_runs_and_paste_markers() {
@@ -50,7 +54,41 @@ fn undo_steps_follow_words_runs_and_paste_markers() {
     let marker = crate::tui::paste_burst::collapsed_paste_for(pasted)
         .expect("collapses")
         .marker();
-    let cases: [(&str, &[Op], String, String); 6] = [
+    let cases: [(&str, &[Op], String, String); 9] = [
+        (
+            "editor output does not absorb subsequent typing",
+            &[Op::Editor("editor prompt"), Op::Type("!"), Op::Undo],
+            "editor prompt".into(),
+            "editor prompt".into(),
+        ),
+        (
+            "undo seals a step without closing its insert-session group",
+            &[
+                Op::BeginGroup,
+                Op::Type("first"),
+                Op::Undo,
+                Op::Type("two words"),
+                Op::EndGroup,
+                Op::Undo,
+            ],
+            "".into(),
+            "".into(),
+        ),
+        (
+            "nested owner groups stay within the insert session",
+            &[
+                Op::BeginGroup,
+                Op::Type("one"),
+                Op::BeginGroup,
+                Op::Type(" two"),
+                Op::EndGroup,
+                Op::Type(" three"),
+                Op::EndGroup,
+                Op::Undo,
+            ],
+            "".into(),
+            "".into(),
+        ),
         (
             "typing undoes a word at a time",
             &[Op::Type("foo bar"), Op::Undo],
@@ -92,6 +130,11 @@ fn undo_steps_follow_words_runs_and_paste_markers() {
         let mut buffer = ComposerBuffer::default();
         for op in ops {
             match *op {
+                Op::Editor(text) => {
+                    buffer.replace_range(0..buffer.char_len(), Fragment::plain(text));
+                }
+                Op::BeginGroup => buffer.begin_undo_group(),
+                Op::EndGroup => buffer.end_undo_group(),
                 Op::Type(text) => {
                     for ch in text.chars() {
                         buffer.apply_edit(ComposerEditKey::Char(ch));

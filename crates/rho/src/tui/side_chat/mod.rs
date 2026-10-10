@@ -248,13 +248,11 @@ impl App {
             }
             return true;
         }
-        // After the newline chords so new undo defaults never shadow them.
-        if keybindings.undo.matches(key) {
-            side.overlay.composer.undo();
-            return true;
-        }
-        if keybindings.redo.matches(key) {
-            side.overlay.composer.redo();
+        if let Some(direction) = super::keybindings::undo_direction(keybindings, key) {
+            match direction {
+                super::keybindings::UndoDirection::Undo => side.overlay.composer.undo(),
+                super::keybindings::UndoDirection::Redo => side.overlay.composer.redo(),
+            }
             return true;
         }
         match (key.modifiers, key.code) {

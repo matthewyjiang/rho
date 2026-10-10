@@ -115,7 +115,7 @@ review = "Review this code for correctness, security, and maintainability."
 "explain-tests" = "Explain how these tests cover the expected behavior."
 
 [keybindings]
-# editing_mode = "vim" # vim-style normal/insert editing in the composer; default "default"
+# editing_mode = "vim" # vim-style normal/insert editing in the composer; default "default"; /config → Appearance → Vim mode
 search_prompt_history = "ctrl+r"
 search_transcript = "ctrl+f"
 # reset_conversation = "ctrl+shift+n" # same as /new; unbound by default

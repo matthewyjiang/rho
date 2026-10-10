@@ -1,13 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use pretty_assertions::assert_eq;
 
-use super::{VimMode, VimOutcome, VimState};
+use super::{normal_cursor, VimMode, VimOutcome, VimState};
 use crate::tui::composer_buffer::{ComposerBuffer, ComposerEditKey, EditOutcome};
 
-/// `⎋` is Esc; every other char is typed as itself.
+/// `⎋` is Esc, `⌂` is Home; every other char is typed as itself.
 fn keys(spec: &str) -> impl Iterator<Item = KeyEvent> + '_ {
     spec.chars().map(|ch| match ch {
         '⎋' => KeyEvent::from(KeyCode::Esc),
+        '⌂' => KeyEvent::from(KeyCode::Home),
         ch => KeyEvent::from(KeyCode::Char(ch)),
     })
 }
@@ -28,9 +29,13 @@ fn run(text: &str, cursor: usize, spec: &str) -> (String, usize, VimMode) {
         if let EditOutcome::VerticalEdge(direction) = buffer.apply_edit(edit) {
             buffer.move_vertically(direction);
         }
-        vim.settle(&mut buffer);
     }
-    (buffer.text().to_owned(), buffer.cursor(), vim.mode())
+    let cursor = if vim.mode() == VimMode::Normal {
+        normal_cursor(&buffer)
+    } else {
+        buffer.cursor()
+    };
+    (buffer.text().to_owned(), cursor, vim.mode())
 }
 
 // Covers: normal-mode motions, operators, counts, text objects, registers,
@@ -50,6 +55,15 @@ fn normal_mode_commands_edit_like_vim() {
             Normal,
         ),
         ("dw", "hello world", 0, "⎋dw", "world", 0, Normal),
+        (
+            "Home is not a count digit",
+            "hello",
+            5,
+            "⎋2⌂x",
+            "ello",
+            0,
+            Normal,
+        ),
         (
             "dw stops at line break",
             "one two\nthree",
@@ -83,6 +97,24 @@ fn normal_mode_commands_edit_like_vim() {
         ("count dd", "a\nb\nc", 1, "⎋2dd", "c", 0, Normal),
         ("dG", "a\nb\nc", 3, "⎋dG", "a", 0, Normal),
         ("yy p", "a\nb", 1, "⎋yyp", "a\na\nb", 2, Normal),
+        (
+            "dd put supplies trailing separator",
+            "a\nb",
+            1,
+            "⎋ddp",
+            "b\na",
+            2,
+            Normal,
+        ),
+        (
+            "last-line dd put supplies leading separator",
+            "a\nb",
+            3,
+            "⎋ddp",
+            "a\nb",
+            2,
+            Normal,
+        ),
         ("x count then P", "abcd", 1, "⎋2xP", "abcd", 1, Normal),
         ("D", "foo bar", 4, "⎋D", "foo", 2, Normal),
         ("dt", "a(b)c", 1, "⎋dt)", ")c", 0, Normal),

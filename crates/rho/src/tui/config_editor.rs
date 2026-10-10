@@ -2,6 +2,7 @@ use ratatui::text::Line;
 
 use {
     crate::app::config_repository::ConfigRepository,
+    crate::keybindings::EditingMode,
     rho_providers::credentials::{CredentialError, CredentialResult},
 };
 
@@ -43,6 +44,8 @@ pub(super) enum ConfigToggle {
     ShowReasoningOutput,
     ZenMode,
     XaiImageGeneration,
+    /// Flips `[keybindings] editing_mode` between default and vim.
+    VimMode,
 }
 
 pub(super) fn resolve_web_search_editor_value(
@@ -100,6 +103,15 @@ pub(super) fn toggle(
         ConfigToggle::XaiImageGeneration => {
             config.xai_image_generation = !config.xai_image_generation;
             config.xai_image_generation
+        }
+        ConfigToggle::VimMode => {
+            let mode = &mut config.keybindings.editing_mode;
+            let enabled = match *mode {
+                EditingMode::Default => true,
+                EditingMode::Vim => false,
+            };
+            *mode = EditingMode::from_vim_enabled(enabled);
+            enabled
         }
     })
 }

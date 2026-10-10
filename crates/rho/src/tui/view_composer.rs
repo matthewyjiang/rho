@@ -11,6 +11,7 @@ use super::{
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
     composer_pointer::{ComposerChoice, ComposerHit},
+    composer_vim::{normal_cursor, VimMode},
     config_number_input_frame,
     copy_interaction::CopyHit,
     display_width,
@@ -176,7 +177,11 @@ impl App {
                     cursor,
                 } = input_frame(
                     self.input_ui.text(),
-                    self.input_ui.cursor(),
+                    if self.composer_vim_mode() == Some(VimMode::Normal) {
+                        normal_cursor(self.input_ui.buffer())
+                    } else {
+                        self.input_ui.cursor()
+                    },
                     content_width(width),
                     highlighted,
                 );

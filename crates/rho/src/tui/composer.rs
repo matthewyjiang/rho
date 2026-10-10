@@ -6,7 +6,7 @@ use crate::keybindings::{EditingMode, ReservedComposerKey};
 
 use super::{
     commands,
-    composer_buffer::{ComposerEditKey, EditOutcome},
+    composer_buffer::{ComposerEditKey, EditOutcome, Fragment},
     composer_history::{history_step, HistoryStep},
     composer_layout::{content_width, prompt_width},
     composer_vim::{TextChange, VimMode, VimOutcome},
@@ -247,7 +247,7 @@ impl App {
     pub(super) fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
         self.input_ui
             .buffer_mut()
-            .replace_range(start, end, text, /*paste_content*/ None);
+            .replace_range(start..end, Fragment::plain(text));
         self.input_edited();
     }
 
@@ -261,7 +261,6 @@ impl App {
     pub(super) fn undo_input(&mut self) {
         if self.input_ui.buffer_mut().undo() {
             self.input_edited();
-            self.settle_vim_caret();
         }
     }
 
@@ -269,7 +268,6 @@ impl App {
     pub(super) fn redo_input(&mut self) {
         if self.input_ui.buffer_mut().redo() {
             self.input_edited();
-            self.settle_vim_caret();
         }
     }
 
@@ -291,11 +289,6 @@ impl App {
         self.composer_vim_mode().is_some() && self.input_ui.vim().captures_esc()
     }
 
-    fn settle_vim_caret(&mut self) {
-        let (vim, buffer) = self.input_ui.vim_and_buffer_mut();
-        vim.settle(buffer);
-    }
-
     /// Route a main-composer key through vim editing. Runs after palettes,
     /// which keep their keys, and before configurable chords. Returns true
     /// when vim consumed the key.
@@ -303,14 +296,12 @@ impl App {
         if self.composer_vim_mode().is_none() {
             return false;
         }
-        let (vim, buffer) = self.input_ui.vim_and_buffer_mut();
-        match vim.handle_key(key, buffer) {
+        match self.input_ui.vim_key(key) {
             VimOutcome::Unhandled => return false,
             VimOutcome::Handled(TextChange::Edited) => self.input_edited(),
             VimOutcome::Handled(TextChange::Unchanged) => {}
             VimOutcome::Forward(edit) => {
                 self.apply_input_edit_key(edit);
-                self.settle_vim_caret();
             }
         }
         self.input_ui.clear_paste_burst();
@@ -432,7 +423,7 @@ impl App {
         self.input_ui.cancel_pointer_click_sequence();
         self.input_ui
             .buffer_mut()
-            .replace_range(0, end, &text, /*paste_content*/ None);
+            .replace_range(0..end, Fragment::plain(text));
         self.input_ui.clear_paste_burst();
         self.input_changed();
     }

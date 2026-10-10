@@ -59,6 +59,14 @@ pub enum EditingMode {
 }
 
 impl EditingMode {
+    pub(crate) fn from_vim_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Vim
+        } else {
+            Self::Default
+        }
+    }
+
     fn is_default(&self) -> bool {
         *self == Self::Default
     }

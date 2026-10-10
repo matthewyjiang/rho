@@ -5,8 +5,8 @@
 //! Normal mode runs counts, motions, operators, and text objects. The owner
 //! applies palette and history side effects from the returned [`VimOutcome`].
 //!
-//! The caret is a char index. In normal mode it sits on a character, so it
-//! never rests past the last character of a non-empty line.
+//! The caret is a char index. Normal commands and painting project it onto
+//! a character, including after edits made outside vim.
 
 mod motion;
 
@@ -53,7 +53,7 @@ pub(super) enum VimOutcome {
     /// Consumed; run text-change bookkeeping on [`TextChange::Edited`].
     Handled(TextChange),
     /// Apply this shared edit key through the owner's path, which may recall
-    /// prompt history, then call [`VimState::settle`].
+    /// prompt history.
     Forward(ComposerEditKey),
 }
 
@@ -106,6 +106,13 @@ enum Placement {
     After,
 }
 
+/// Preserve the distinction between typed count digits and special-key motions.
+enum NormalInput {
+    Char(char),
+    Motion(Motion),
+    Command(char),
+}
+
 /// Vim mode, any half-typed command, and the unnamed register.
 #[derive(Clone, Debug, Default)]
 pub(super) struct VimState {
@@ -129,14 +136,6 @@ impl VimState {
     pub(super) fn reset(&mut self) {
         self.mode = VimMode::Insert;
         self.pending = Pending::default();
-    }
-
-    /// Keep the normal-mode caret on a character after an edit made outside
-    /// vim, such as undo or a recalled prompt.
-    pub(super) fn settle(&self, buffer: &mut ComposerBuffer) {
-        if self.mode == VimMode::Normal {
-            clamp_to_char(buffer);
-        }
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent, buffer: &mut ComposerBuffer) -> VimOutcome {
@@ -163,11 +162,8 @@ impl VimState {
         clamp_to_char(buffer);
     }
 
-    fn enter_insert(&mut self, buffer: &mut ComposerBuffer) {
+    fn enter_insert(&mut self) {
         self.mode = VimMode::Insert;
-        // Begun before the command's own edit (`o`, `c`) so it and the typed
-        // text undo together.
-        buffer.begin_undo_group();
     }
 
     fn normal_key(&mut self, key: KeyEvent, buffer: &mut ComposerBuffer) -> VimOutcome {
@@ -178,18 +174,18 @@ impl VimState {
         {
             return VimOutcome::Unhandled;
         }
-        let ch = match key.code {
-            KeyCode::Char(ch) => ch,
+        let input = match key.code {
+            KeyCode::Char(ch) => NormalInput::Char(ch),
             KeyCode::Esc if pending != Pending::default() => {
                 return VimOutcome::Handled(TextChange::Unchanged);
             }
-            KeyCode::Left | KeyCode::Backspace => 'h',
-            KeyCode::Right => 'l',
-            KeyCode::Up => 'k',
-            KeyCode::Down => 'j',
-            KeyCode::End => '$',
-            KeyCode::Delete => 'x',
-            KeyCode::Home => '0',
+            KeyCode::Left | KeyCode::Backspace => NormalInput::Motion(Motion::Left),
+            KeyCode::Right => NormalInput::Motion(Motion::Right),
+            KeyCode::Up => NormalInput::Motion(Motion::LineUp),
+            KeyCode::Down => NormalInput::Motion(Motion::LineDown),
+            KeyCode::End => NormalInput::Motion(Motion::LineEnd),
+            KeyCode::Delete => NormalInput::Command('x'),
+            KeyCode::Home => NormalInput::Motion(Motion::LineStart),
             _ => return VimOutcome::Unhandled,
         };
         buffer.clear_selection();
@@ -198,10 +194,11 @@ impl VimState {
         // `x` at a time. A command that enters insert mode keeps its group
         // open until Esc.
         buffer.begin_undo_group();
-        let outcome = if key.code == KeyCode::Home {
-            self.motion(pending, Motion::LineStart, buffer)
-        } else {
-            self.normal_char(ch, pending, buffer)
+        let outcome = match input {
+            NormalInput::Motion(motion) => self.motion(pending, motion, buffer),
+            NormalInput::Char(ch) | NormalInput::Command(ch) => {
+                self.normal_char(ch, pending, buffer)
+            }
         };
         if self.mode == VimMode::Normal {
             buffer.end_undo_group();
@@ -325,17 +322,17 @@ impl VimState {
                     _ => cursor,
                 };
                 buffer.set_cursor(buffer.caret_index(target));
-                self.enter_insert(buffer);
+                self.enter_insert();
                 VimOutcome::Handled(TextChange::Unchanged)
             }
             'o' | 'O' => {
                 let chars = chars(buffer);
                 let (start, end) = line_bounds(&chars, buffer.cursor());
-                self.enter_insert(buffer);
+                self.enter_insert();
                 if ch == 'o' {
-                    buffer.replace_range(end, end, "\n", /*paste_content*/ None);
+                    buffer.replace_range(end..end, Fragment::plain("\n"));
                 } else {
-                    buffer.replace_range(start, start, "\n", /*paste_content*/ None);
+                    buffer.replace_range(start..start, Fragment::plain("\n"));
                     buffer.set_cursor(start);
                 }
                 VimOutcome::Handled(TextChange::Edited)
@@ -437,26 +434,38 @@ impl VimState {
     ) -> VimOutcome {
         let chars = chars(buffer);
         let cursor = buffer.cursor();
-        let (range, register) = match target {
-            Target::Chars(range) => {
-                let register = (!range.is_empty()).then(|| Register {
-                    fragment: buffer.fragment(range.clone()),
-                    linewise: false,
-                });
-                (range, register)
-            }
+        let (range, register_range, linewise) = match target {
+            Target::Chars(range) => (range.clone(), range, false),
             Target::Lines { first, last } => {
                 let (start, end) = line_text_range(&chars, first, last);
-                let register = Register {
-                    fragment: buffer.fragment(start..end),
-                    linewise: true,
-                };
-                (line_range(&chars, operator, first, last), Some(register))
+                (line_range(&chars, operator, first, last), start..end, true)
             }
         };
-        let linewise = register.as_ref().is_some_and(|register| register.linewise);
-        if register.is_some() {
-            self.register = register;
+        if operator == Operator::Yank && (linewise || !range.is_empty()) {
+            self.register = Some(Register {
+                fragment: buffer.fragment(register_range),
+                linewise,
+            });
+        } else if operator != Operator::Yank && !range.is_empty() {
+            let mut fragment = buffer.replace_range(range.clone(), Fragment::default());
+            // Line deletes also consume one separating newline. The register
+            // contains only the lines, so put can supply its own separator.
+            if linewise {
+                if range.start < register_range.start {
+                    fragment.text.remove(0);
+                    for segment in &mut fragment.segments {
+                        segment.start -= 1;
+                    }
+                } else if range.end > register_range.end {
+                    fragment.text.pop();
+                }
+            }
+            self.register = Some(Register { fragment, linewise });
+        } else if linewise {
+            self.register = Some(Register {
+                fragment: Fragment::default(),
+                linewise,
+            });
         }
         match operator {
             Operator::Yank => {
@@ -478,7 +487,6 @@ impl VimState {
                 if range.is_empty() {
                     return VimOutcome::Handled(TextChange::Unchanged);
                 }
-                buffer.replace_range(range.start, range.end, "", /*paste_content*/ None);
                 if linewise {
                     let chars = self::chars(buffer);
                     buffer.set_cursor(first_non_blank(&chars, range.start.min(chars.len())));
@@ -487,12 +495,11 @@ impl VimState {
                 VimOutcome::Handled(TextChange::Edited)
             }
             Operator::Change => {
-                self.enter_insert(buffer);
+                self.enter_insert();
                 if range.is_empty() {
                     buffer.set_cursor(range.start);
                     return VimOutcome::Handled(TextChange::Unchanged);
                 }
-                buffer.replace_range(range.start, range.end, "", /*paste_content*/ None);
                 VimOutcome::Handled(TextChange::Edited)
             }
         }
@@ -508,15 +515,16 @@ impl VimState {
         if register.linewise {
             let line = match placement {
                 Placement::Before => {
-                    buffer.replace_range(start, start, "\n", /*paste_content*/ None);
+                    buffer.replace_range(start..start, Fragment::plain("\n"));
                     start
                 }
                 Placement::After => {
-                    buffer.replace_range(end, end, "\n", /*paste_content*/ None);
+                    buffer.replace_range(end..end, Fragment::plain("\n"));
                     end + 1
                 }
             };
-            buffer.insert_fragment(line, &register.fragment);
+            let at = buffer.caret_index(line);
+            buffer.replace_range(at..at, register.fragment);
             let chars = self::chars(buffer);
             buffer.set_cursor(first_non_blank(&chars, line));
         } else {
@@ -524,7 +532,8 @@ impl VimState {
                 Placement::After if end > start => buffer.caret_index_after((cursor + 1).min(end)),
                 Placement::After | Placement::Before => cursor,
             };
-            buffer.insert_fragment(at, &register.fragment);
+            let at = buffer.caret_index(at);
+            buffer.replace_range(at..at, register.fragment);
             let last = buffer.cursor().saturating_sub(1).max(at);
             buffer.set_cursor(buffer.caret_index(last));
         }
@@ -550,12 +559,7 @@ fn replace_chars(buffer: &mut ComposerBuffer, ch: char, count: usize) -> VimOutc
         return VimOutcome::Handled(TextChange::Unchanged);
     }
     let replacement: String = std::iter::repeat_n(ch, count).collect();
-    buffer.replace_range(
-        cursor,
-        cursor + count,
-        &replacement,
-        /*paste_content*/ None,
-    );
+    buffer.replace_range(cursor..cursor + count, Fragment::plain(replacement));
     buffer.set_cursor(buffer.caret_index(cursor + count - 1));
     clamp_to_char(buffer);
     VimOutcome::Handled(TextChange::Edited)
@@ -567,6 +571,11 @@ fn chars(buffer: &ComposerBuffer) -> Vec<char> {
 
 /// Keep the caret on a character: never past the end of a non-empty line.
 fn clamp_to_char(buffer: &mut ComposerBuffer) {
+    buffer.set_cursor(normal_cursor(buffer));
+}
+
+/// Project an arbitrary caret onto the character normal mode operates on.
+pub(super) fn normal_cursor(buffer: &ComposerBuffer) -> usize {
     let chars = chars(buffer);
     let cursor = buffer.cursor().min(chars.len());
     let (start, end) = line_bounds(&chars, cursor);
@@ -575,7 +584,7 @@ fn clamp_to_char(buffer: &mut ComposerBuffer) {
     } else {
         cursor
     };
-    buffer.set_cursor(buffer.caret_index(cursor));
+    buffer.caret_index(cursor)
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    composer_undo::{Splice, UndoHistory},
+    composer_undo::{Coalesce, Splice, UndoHistory},
     paste_burst::{next_word_boundary, previous_word_boundary, word_range_at, CollapsedPaste},
     render::{
         editable_input_visual_lines, input_char_index_at_position,
@@ -180,6 +180,27 @@ pub(super) struct Fragment {
     pub(super) segments: Vec<PasteSegment>,
 }
 
+impl Fragment {
+    pub(super) fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            segments: Vec::new(),
+        }
+    }
+
+    pub(super) fn collapsed(marker: String, content: String) -> Self {
+        let segment = PasteSegment {
+            start: 0,
+            marker_len: marker.chars().count(),
+            content,
+        };
+        Self {
+            text: marker,
+            segments: vec![segment],
+        }
+    }
+}
+
 /// Composer text with a char-indexed caret, mouse selection, and atomic
 /// collapsed-paste markers. See the module docs for what owners layer on top.
 ///
@@ -272,30 +293,6 @@ impl ComposerBuffer {
             text: self.text[self.byte_index(range.start)..self.byte_index(range.end)].to_owned(),
             segments,
         }
-    }
-
-    /// Insert `fragment` at char `at` (snapped out of any marker) as one
-    /// undoable edit, leaving the caret after it.
-    pub(super) fn insert_fragment(&mut self, at: usize, fragment: &Fragment) {
-        self.clear_selection();
-        let start = self.caret_index(at.min(self.char_len()));
-        let splice = Splice {
-            start,
-            removed: String::new(),
-            removed_segments: Vec::new(),
-            inserted: fragment.text.clone(),
-            inserted_segments: fragment
-                .segments
-                .iter()
-                .map(|segment| PasteSegment {
-                    start: start + segment.start,
-                    ..segment.clone()
-                })
-                .collect(),
-        };
-        let cursor_before = self.cursor;
-        self.apply_splice(&splice);
-        self.history.record(splice, cursor_before, self.cursor);
     }
 
     /// Replace the text, keeping the caret and paste segments as they are.
@@ -540,7 +537,10 @@ impl ComposerBuffer {
                 true
             }
             ComposerEditKey::Char(ch) => {
-                self.insert_text(ch.encode_utf8(&mut [0; 4]));
+                let range = self
+                    .take_selection_range()
+                    .unwrap_or(self.cursor..self.cursor);
+                self.splice(range, Fragment::plain(ch.to_string()), Coalesce::Typing);
                 true
             }
         };
@@ -637,56 +637,52 @@ impl ComposerBuffer {
         }
     }
 
-    /// Replace chars `start..end` with `text`, widening the range to swallow
-    /// any paste marker it touches. `paste_content` turns the inserted text
-    /// into a collapsed marker for that content. Recorded for undo.
+    /// Replace chars in `range`, widening it to whole paste markers, and
+    /// return the removed fragment. Programmatic edits never extend typing runs.
     pub(super) fn replace_range(
         &mut self,
-        start: usize,
-        end: usize,
-        text: &str,
-        paste_content: Option<String>,
-    ) {
+        range: std::ops::Range<usize>,
+        inserted: Fragment,
+    ) -> Fragment {
+        self.splice(range, inserted, Coalesce::Never)
+    }
+
+    fn splice(
+        &mut self,
+        range: std::ops::Range<usize>,
+        inserted: Fragment,
+        coalesce: Coalesce,
+    ) -> Fragment {
         self.clear_selection();
-        let range = self.normalize_edit_range(start..end);
-        let removed_segments = self
-            .paste_segments
-            .iter()
-            .filter(|segment| range.start <= segment.start && segment.end() <= range.end)
-            .cloned()
-            .collect();
-        let inserted_segments = paste_content
-            .map(|content| PasteSegment {
-                start: range.start,
-                marker_len: text.chars().count(),
-                content,
-            })
-            .into_iter()
-            .collect();
+        let range = self.normalize_edit_range(range);
+        let removed = self.fragment(range.clone());
         let splice = Splice {
             start: range.start,
-            removed: self.text[self.byte_index(range.start)..self.byte_index(range.end)].to_owned(),
-            removed_segments,
-            inserted: text.to_owned(),
-            inserted_segments,
+            removed: removed.clone(),
+            inserted,
         };
         let cursor_before = self.cursor;
         self.apply_splice(&splice);
-        self.history.record(splice, cursor_before, self.cursor);
+        self.history
+            .record(splice, cursor_before, self.cursor, coalesce);
+        removed
     }
 
     /// Apply `splice` to text and paste markers, leaving the caret after the
     /// inserted text. Markers inside the removed range go with it.
     fn apply_splice(&mut self, splice: &Splice) {
-        let removed_len = splice.removed.chars().count();
-        let inserted_len = splice.inserted.chars().count();
+        let removed_len = splice.removed.text.chars().count();
+        let inserted_len = splice.inserted.text.chars().count();
         self.adjust_paste_segments_for_edit(splice.start, removed_len, inserted_len);
         let start_byte = self.byte_index(splice.start);
         let end_byte = self.byte_index(splice.start + removed_len);
         self.text
-            .replace_range(start_byte..end_byte, &splice.inserted);
+            .replace_range(start_byte..end_byte, &splice.inserted.text);
         self.paste_segments
-            .extend(splice.inserted_segments.iter().cloned());
+            .extend(splice.inserted.segments.iter().map(|segment| PasteSegment {
+                start: splice.start + segment.start,
+                ..segment.clone()
+            }));
         self.paste_segments.sort_by_key(|segment| segment.start);
         self.cursor = splice.start + inserted_len;
     }
@@ -735,14 +731,14 @@ impl ComposerBuffer {
         let Some(range) = self.take_selection_range() else {
             return false;
         };
-        self.replace_range(range.start, range.end, text, None);
+        self.replace_range(range, Fragment::plain(text));
         true
     }
 
     /// Insert `text` over the selection or at the caret.
     pub(super) fn insert_text(&mut self, text: &str) {
         if !self.replace_selection(text) {
-            self.replace_range(self.cursor, self.cursor, text, None);
+            self.replace_range(self.cursor..self.cursor, Fragment::plain(text));
         }
     }
 
@@ -752,10 +748,8 @@ impl ComposerBuffer {
             .take_selection_range()
             .unwrap_or(self.cursor..self.cursor);
         self.replace_range(
-            range.start,
-            range.end,
-            &paste.marker(),
-            Some(content.to_owned()),
+            range,
+            Fragment::collapsed(paste.marker(), content.to_owned()),
         );
     }
 
@@ -772,13 +766,13 @@ impl ComposerBuffer {
             .find(|segment| segment.start < cursor && cursor <= segment.end())
             .cloned()
         {
-            self.replace_range(segment.start, segment.end(), "", None);
+            self.replace_range(segment.start..segment.end(), Fragment::default());
             return true;
         }
         if cursor == 0 {
             return false;
         }
-        self.replace_range(cursor - 1, cursor, "", None);
+        self.splice(cursor - 1..cursor, Fragment::default(), Coalesce::Deletion);
         true
     }
 
@@ -795,13 +789,13 @@ impl ComposerBuffer {
             .find(|segment| segment.start <= cursor && cursor < segment.end())
             .cloned()
         {
-            self.replace_range(segment.start, segment.end(), "", None);
+            self.replace_range(segment.start..segment.end(), Fragment::default());
             return true;
         }
         if cursor >= self.char_len() {
             return false;
         }
-        self.replace_range(cursor, cursor + 1, "", None);
+        self.splice(cursor..cursor + 1, Fragment::default(), Coalesce::Deletion);
         true
     }
 
@@ -810,7 +804,7 @@ impl ComposerBuffer {
             return;
         }
         let start = previous_word_boundary(&self.text, self.cursor);
-        self.replace_range(start, self.cursor, "", None);
+        self.replace_range(start..self.cursor, Fragment::default());
     }
 
     fn byte_index(&self, char_index: usize) -> usize {

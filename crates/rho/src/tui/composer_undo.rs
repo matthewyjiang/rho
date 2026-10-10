@@ -7,18 +7,14 @@
 //! group (a vim insert session or normal-mode command) folds every splice
 //! into a single step.
 
-use super::PasteSegment;
+use super::composer_buffer::Fragment;
 
-/// One text replacement at char `start`: `removed`, which held
-/// `removed_segments`, became `inserted`, which holds `inserted_segments`.
-/// Segment positions are absolute in the text they belong to.
+/// One text replacement at char `start`; markers are relative to each fragment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Splice {
     pub(super) start: usize,
-    pub(super) removed: String,
-    pub(super) removed_segments: Vec<PasteSegment>,
-    pub(super) inserted: String,
-    pub(super) inserted_segments: Vec<PasteSegment>,
+    pub(super) removed: Fragment,
+    pub(super) inserted: Fragment,
 }
 
 impl Splice {
@@ -27,30 +23,28 @@ impl Splice {
         Self {
             start: self.start,
             removed: self.inserted.clone(),
-            removed_segments: self.inserted_segments.clone(),
             inserted: self.removed.clone(),
-            inserted_segments: self.removed_segments.clone(),
         }
     }
 
     pub(super) fn is_noop(&self) -> bool {
-        self.removed.is_empty() && self.inserted.is_empty()
+        self.removed.text.is_empty() && self.inserted.text.is_empty()
     }
 
     fn is_plain(&self) -> bool {
-        self.removed_segments.is_empty() && self.inserted_segments.is_empty()
+        self.removed.segments.is_empty() && self.inserted.segments.is_empty()
     }
 
     fn single_inserted_char(&self) -> Option<char> {
-        let mut chars = self.inserted.chars();
+        let mut chars = self.inserted.text.chars();
         match (chars.next(), chars.next()) {
-            (Some(ch), None) if self.removed.is_empty() && self.is_plain() => Some(ch),
+            (Some(ch), None) if self.removed.text.is_empty() && self.is_plain() => Some(ch),
             _ => None,
         }
     }
 
     fn is_single_char_deletion(&self) -> bool {
-        self.inserted.is_empty() && self.is_plain() && self.removed.chars().count() == 1
+        self.inserted.text.is_empty() && self.is_plain() && self.removed.text.chars().count() == 1
     }
 
     /// Fold `next`, which happened right after `self`, into `self` when both
@@ -60,30 +54,31 @@ impl Splice {
             return false;
         }
         if let Some(ch) = next.single_inserted_char() {
-            let run_end = self.start + self.inserted.chars().count();
+            let run_end = self.start + self.inserted.text.chars().count();
             // A word starts a new step: typing "foo bar" undoes "bar" first.
             let starts_word = !ch.is_whitespace()
                 && self
                     .inserted
+                    .text
                     .chars()
                     .last()
                     .is_some_and(char::is_whitespace);
-            if self.removed.is_empty() && next.start == run_end && !starts_word {
-                self.inserted.push(ch);
+            if self.removed.text.is_empty() && next.start == run_end && !starts_word {
+                self.inserted.text.push(ch);
                 return true;
             }
             return false;
         }
-        if next.is_single_char_deletion() && self.inserted.is_empty() {
+        if next.is_single_char_deletion() && self.inserted.text.is_empty() {
             if next.start + 1 == self.start {
                 // Backspace: the deleted char precedes the run.
                 self.start = next.start;
-                self.removed.insert_str(0, &next.removed);
+                self.removed.text.insert_str(0, &next.removed.text);
                 return true;
             }
             if next.start == self.start {
                 // Delete: the deleted char follows the run.
-                self.removed.push_str(&next.removed);
+                self.removed.text.push_str(&next.removed.text);
                 return true;
             }
         }
@@ -97,17 +92,15 @@ pub(super) struct UndoStep {
     pub(super) splices: Vec<Splice>,
     pub(super) cursor_before: usize,
     pub(super) cursor_after: usize,
+    coalesce: Coalesce,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Grouping {
-    /// Each splice starts a step unless it extends a typing run.
+pub(super) enum Coalesce {
     #[default]
-    Ungrouped,
-    /// An explicit group is open; its first splice has not landed yet.
-    Pending,
-    /// An explicit group is open and owns the top undo step.
-    Open,
+    Never,
+    Typing,
+    Deletion,
 }
 
 /// Undo and redo stacks. Unbounded: each step holds only the text its edits
@@ -116,63 +109,74 @@ enum Grouping {
 pub(super) struct UndoHistory {
     undo: Vec<UndoStep>,
     redo: Vec<UndoStep>,
-    grouping: Grouping,
-    /// Whether the top undo step may absorb the next typing splice.
-    run_open: bool,
+    group_depth: usize,
+    /// The next edit starts a fresh step, even inside a group.
+    sealed: bool,
 }
 
 impl UndoHistory {
     /// Record an applied splice. Any new edit clears the redo stack.
-    pub(super) fn record(&mut self, splice: Splice, cursor_before: usize, cursor_after: usize) {
+    pub(super) fn record(
+        &mut self,
+        splice: Splice,
+        cursor_before: usize,
+        cursor_after: usize,
+        coalesce: Coalesce,
+    ) {
         if splice.is_noop() {
             return;
         }
         self.redo.clear();
-        match self.grouping {
-            Grouping::Open => {
-                if let Some(step) = self.undo.last_mut() {
-                    step.splices.push(splice);
-                    step.cursor_after = cursor_after;
-                    return;
-                }
+        let open_step = if self.sealed {
+            None
+        } else {
+            self.undo.last_mut()
+        };
+        if let Some(step) = open_step {
+            if self.group_depth > 0 {
+                step.splices.push(splice);
+                step.cursor_after = cursor_after;
+                return;
             }
-            Grouping::Pending => self.grouping = Grouping::Open,
-            Grouping::Ungrouped => {
-                if self.run_open {
-                    if let Some(step) = self.undo.last_mut() {
-                        if let [last] = step.splices.as_mut_slice() {
-                            if last.absorb(&splice) {
-                                step.cursor_after = cursor_after;
-                                return;
-                            }
-                        }
-                    }
+            if coalesce != Coalesce::Never
+                && step.coalesce == coalesce
+                && match step.splices.as_mut_slice() {
+                    [last] => last.absorb(&splice),
+                    _ => false,
                 }
-                self.run_open = true;
+            {
+                step.cursor_after = cursor_after;
+                return;
             }
         }
         self.undo.push(UndoStep {
             splices: vec![splice],
             cursor_before,
             cursor_after,
+            coalesce,
         });
+        self.sealed = false;
     }
 
     /// Fold every splice until [`Self::end_group`] into one undo step.
     pub(super) fn begin_group(&mut self) {
-        self.grouping = Grouping::Pending;
-        self.run_open = false;
+        if self.group_depth == 0 {
+            self.sealed = true;
+        }
+        self.group_depth += 1;
     }
 
     pub(super) fn end_group(&mut self) {
-        self.grouping = Grouping::Ungrouped;
-        self.run_open = false;
+        self.group_depth = self.group_depth.saturating_sub(1);
+        if self.group_depth == 0 {
+            self.sealed = true;
+        }
     }
 
     /// Pop the newest step for the caller to revert, then hand it to
-    /// [`Self::push_redo`]. Closes any open group first.
+    /// [`Self::push_redo`]. Seals the step without ending its owner's group.
     pub(super) fn pop_undo(&mut self) -> Option<UndoStep> {
-        self.end_group();
+        self.sealed = true;
         self.undo.pop()
     }
 
@@ -183,7 +187,7 @@ impl UndoHistory {
     /// Pop the newest undone step for the caller to reapply, then hand it to
     /// [`Self::push_undo`].
     pub(super) fn pop_redo(&mut self) -> Option<UndoStep> {
-        self.end_group();
+        self.sealed = true;
         self.redo.pop()
     }
 

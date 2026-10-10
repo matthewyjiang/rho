@@ -39,7 +39,7 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 | Category | Contains |
 | --- | --- |
 | Models | Conversation model and reasoning level |
-| Appearance | Theme, zen mode, reasoning display, cache miss notices, header hints, notifications, collapsed tool-output lines, output streaming |
+| Appearance | Theme, zen mode, reasoning display, cache miss notices, header hints, notifications, collapsed tool-output lines, output streaming, vim mode |
 | Agent behavior | Permission mode, Auto classifier, advisor mode, delegation, concurrent agents, questionnaire timeout |
 | Context & limits | Auto compaction, max output bytes, prompt history |
 | Tools | Inline shell, edit tool, web search, and SpaceXAI image generation when the conversation provider is SpaceXAI |
