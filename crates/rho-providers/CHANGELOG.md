@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.16.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.15.0...rho-providers-v2.16.0) (2026-10-10)
+
+
+### Features
+
+* **todo:** keep task progress accessible across compaction ([#1441](https://github.com/matthewyjiang/rho/issues/1441)) ([77b31cc](https://github.com/matthewyjiang/rho/commit/77b31cc86882ecee3823661e31ed8197d6517302))
+* **workflows:** show live runs and streamline workflow launches ([#1445](https://github.com/matthewyjiang/rho/issues/1445)) ([1ab4619](https://github.com/matthewyjiang/rho/commit/1ab4619eaf4ff1676b78bb7d6ffc125488cd9ac3))
+
 ## [2.15.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.14.0...rho-providers-v2.15.0) (2026-10-07)
 
 

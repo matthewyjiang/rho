@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.8.0...rho-agent-tools-v1.9.0) (2026-10-10)
+
+
+### Features
+
+* **todo:** keep task progress accessible across compaction ([#1441](https://github.com/matthewyjiang/rho/issues/1441)) ([77b31cc](https://github.com/matthewyjiang/rho/commit/77b31cc86882ecee3823661e31ed8197d6517302))
+
 ## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.7.0...rho-agent-tools-v1.8.0) (2026-10-07)
 
 

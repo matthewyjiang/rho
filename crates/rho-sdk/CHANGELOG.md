@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.9.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.8.0...rho-sdk-v5.9.0) (2026-10-10)
+
+
+### Features
+
+* **todo:** keep task progress accessible across compaction ([#1441](https://github.com/matthewyjiang/rho/issues/1441)) ([77b31cc](https://github.com/matthewyjiang/rho/commit/77b31cc86882ecee3823661e31ed8197d6517302))
+* **tui:** show what fills the context window with /context ([#1455](https://github.com/matthewyjiang/rho/issues/1455)) ([b61af1b](https://github.com/matthewyjiang/rho/commit/b61af1b76e33a1bb4fbe6453c62e4bc7d3ff019d))
+* **tui:** tell /compact what to keep with optional instructions ([#1458](https://github.com/matthewyjiang/rho/issues/1458)) ([a2b9dbf](https://github.com/matthewyjiang/rho/commit/a2b9dbf4ea8acafe516f0693b2c5f710182f52a7))
+
 ## [5.8.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.7.0...rho-sdk-v5.8.0) (2026-10-07)
 
 

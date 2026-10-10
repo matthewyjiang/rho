@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.20.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.19.0...rho-coding-agent-v2.20.0) (2026-10-10)
+
+
+### Features
+
+* add --add-dir and /add-dir for additional workspace directories ([#1460](https://github.com/matthewyjiang/rho/issues/1460)) ([8903e6c](https://github.com/matthewyjiang/rho/commit/8903e6ca67e3b6a8b9fae7a16292240d98f23c9b))
+* **cli:** resume the latest workspace session with -c/--continue ([#1461](https://github.com/matthewyjiang/rho/issues/1461)) ([6b10774](https://github.com/matthewyjiang/rho/commit/6b1077462b322d591920595c479581c5cc267ff3))
+* **codemode:** let gpt models' first script succeed ([#1439](https://github.com/matthewyjiang/rho/issues/1439)) ([8148251](https://github.com/matthewyjiang/rho/commit/814825106ca0d690759598a0406849a18b0d751e))
+* **todo:** keep task progress accessible across compaction ([#1441](https://github.com/matthewyjiang/rho/issues/1441)) ([77b31cc](https://github.com/matthewyjiang/rho/commit/77b31cc86882ecee3823661e31ed8197d6517302))
+* **tui:** fill prompt templates with arguments and reload them live ([#1459](https://github.com/matthewyjiang/rho/issues/1459)) ([fc89afd](https://github.com/matthewyjiang/rho/commit/fc89afd7cd68f83a4ebfa3777b9db6dbed9046b4))
+* **tui:** find text in the transcript with ctrl+f ([#1453](https://github.com/matthewyjiang/rho/issues/1453)) ([2cc503c](https://github.com/matthewyjiang/rho/commit/2cc503c312278f2fcd28a59c45c7a43ea4ff9321))
+* **tui:** make todo cards easier to scan ([#1438](https://github.com/matthewyjiang/rho/issues/1438)) ([3b801ed](https://github.com/matthewyjiang/rho/commit/3b801ed11550388c8cda3a8c03ad5df879fffbd3))
+* **tui:** show rho's working, blocked, and done state in terminal tabs via OSC 7501 ([#1454](https://github.com/matthewyjiang/rho/issues/1454)) ([2e3b27a](https://github.com/matthewyjiang/rho/commit/2e3b27a8d30c8475cedb4426789a88d52da363d2))
+* **tui:** show what fills the context window with /context ([#1455](https://github.com/matthewyjiang/rho/issues/1455)) ([b61af1b](https://github.com/matthewyjiang/rho/commit/b61af1b76e33a1bb4fbe6453c62e4bc7d3ff019d))
+* **tui:** tell /compact what to keep with optional instructions ([#1458](https://github.com/matthewyjiang/rho/issues/1458)) ([a2b9dbf](https://github.com/matthewyjiang/rho/commit/a2b9dbf4ea8acafe516f0693b2c5f710182f52a7))
+* **tui:** undo composer edits and edit prompts in an opt-in vim mode ([#1462](https://github.com/matthewyjiang/rho/issues/1462)) ([dd91b6c](https://github.com/matthewyjiang/rho/commit/dd91b6c3e89e10c7652ddc9a4c6438af0d694503))
+* **workflows:** show live runs and streamline workflow launches ([#1445](https://github.com/matthewyjiang/rho/issues/1445)) ([1ab4619](https://github.com/matthewyjiang/rho/commit/1ab4619eaf4ff1676b78bb7d6ffc125488cd9ac3))
+
+
+### Bug Fixes
+
+* **codemode:** use native dictionaries with explicit script guidance ([#1444](https://github.com/matthewyjiang/rho/issues/1444)) ([8602f65](https://github.com/matthewyjiang/rho/commit/8602f650e59e5b00a0cf60e3840488aa9b38b54c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.15.0 to 2.16.0
+
 ## [2.19.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.18.0...rho-coding-agent-v2.19.0) (2026-10-07)
 
 
