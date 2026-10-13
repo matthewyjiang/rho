@@ -6,11 +6,13 @@
 //! Each stream event is one window (`five_hour`, `seven_day`, …). Stream merges
 //! keep the newest observation per window. A successful `/usage` probe is the
 //! account's current set: windows the panel did not report are dropped, so a
-//! Pro plan does not keep a Fable row it no longer has.
+//! Pro plan does not keep a Fable row it no longer has. A slower probe that
+//! acquires the lock later must not replace that set.
 //!
 //! Per-window ordering is unix-epoch nanoseconds plus a per-process nonce and
 //! monotonic sequence so concurrent Rho processes and equal timestamps cannot
-//! let an older observation win. Compare-and-replace runs under a cross-process
+//! let an older observation win. Probe snapshots order by the same instant,
+//! including subsecond precision. Compare-and-replace runs under a cross-process
 //! lock.
 
 use std::{
@@ -157,9 +159,13 @@ pub(crate) struct RateLimitState {
     #[serde(default = "rate_limit_state_version")]
     pub(crate) version: u32,
     pub(crate) windows: Vec<RateLimitObservation>,
-    /// Last successful `/usage` PTY probe. Stream merges leave this alone.
+    /// Last successful `/usage` PTY probe, whole seconds. Stream merges leave this alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_probe_unix: Option<i64>,
+    /// Same probe instant as unix-epoch nanoseconds. Missing on caches written
+    /// before subsecond probe ordering. Stream merges leave this alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_probe_nanos: Option<u64>,
 }
 
 fn rate_limit_state_version() -> u32 {
@@ -172,6 +178,7 @@ impl Default for RateLimitState {
             version: rate_limit_state_version(),
             windows: Vec::new(),
             last_probe_unix: None,
+            last_probe_nanos: None,
         }
     }
 }
@@ -197,13 +204,22 @@ impl RateLimitState {
         self.windows.push(observation);
     }
 
+    /// Keep the newer observation per window, and the newer probe stamp.
     pub(crate) fn merge_state(&mut self, other: RateLimitState) {
+        let other_stamp = other.probe_stamp();
         for window in other.windows {
             self.merge_window(window);
         }
-        if other.last_probe_unix > self.last_probe_unix {
+        if other_stamp > self.probe_stamp() {
             self.last_probe_unix = other.last_probe_unix;
+            self.last_probe_nanos = other.last_probe_nanos;
         }
+    }
+
+    /// Probe instant used to order snapshots. Unix seconds decide first so a
+    /// legacy stamp without nanoseconds still sorts by the second it recorded.
+    fn probe_stamp(&self) -> (Option<i64>, Option<u64>) {
+        (self.last_probe_unix, self.last_probe_nanos)
     }
 
     /// Age for `/limits` headings: last successful probe, else newest window.
@@ -225,6 +241,7 @@ impl RateLimitState {
         let nanos = now_unix_nanos();
         let unix = nanos_to_seconds(nanos);
         self.last_probe_unix = Some(unix);
+        self.last_probe_nanos = Some(nanos);
         for window in &mut self.windows {
             window.observed_at_unix = unix;
             window.observed_at_nanos = nanos;
@@ -335,7 +352,9 @@ pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Resu
 
 /// Merge a `/usage` probe, then drop windows the panel did not report.
 ///
-/// An empty snapshot is not a panel read and must not wipe the cache.
+/// An empty snapshot is not a panel read and must not wipe the cache. A
+/// snapshot older than the stored probe is ignored: the lock serializes
+/// writers, but a slower earlier probe can still acquire it later.
 pub(crate) fn store_probe_snapshot(
     path: &Path,
     incoming: RateLimitState,
@@ -369,6 +388,14 @@ fn commit_state(
                 state.merge_state(legacy_state);
             }
         }
+    }
+    // Reject before merge or prune. Per-window merge would keep newer readings,
+    // but snapshot retention is last-writer-wins and would delete windows only
+    // the newer probe reported.
+    if matches!(retain, StoredWindows::ProbeSnapshot)
+        && incoming.probe_stamp() < state.probe_stamp()
+    {
+        return Ok(state);
     }
     state.merge_state(incoming);
     if matches!(retain, StoredWindows::ProbeSnapshot) {
