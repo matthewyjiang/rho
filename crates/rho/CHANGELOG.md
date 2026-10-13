@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.20.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.20.0...rho-coding-agent-v2.20.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **limits:** stop showing a Fable week on Claude Pro ([#1465](https://github.com/matthewyjiang/rho/issues/1465)) ([0a20a54](https://github.com/matthewyjiang/rho/commit/0a20a541191be87e17a4171304c2364ae71a90fc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.16.0 to 2.16.1
+
 ## [2.20.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.19.0...rho-coding-agent-v2.20.0) (2026-10-10)
 
 
