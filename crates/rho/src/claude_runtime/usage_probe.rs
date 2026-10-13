@@ -186,13 +186,10 @@ pub(crate) async fn fetch_usage() -> Result<UsageProbeOutcome, UsageProbeError> 
         let mut state = tokio::task::spawn_blocking(move || probe_usage_blocking(&abort))
             .await
             .map_err(|error| UsageProbeError::Spawn(error.to_string()))??;
-        let now = rate_limit::now_unix();
-        state.last_probe_unix = Some(now);
-        // Capture stamps parse time per window. Restamp seconds so `/limits` age
-        // is the probe instant, not a mid-panel parse that crossed a second.
-        for window in &mut state.windows {
-            window.observed_at_unix = now;
-        }
+        // Capture stamps parse time per window. Restamp the probe instant so
+        // `/limits` age is one moment, and so this panel sorts ahead of
+        // observations from before the read.
+        state.stamp_probe_snapshot();
         persist_probe_state(state)
     }
 }
@@ -209,7 +206,7 @@ fn persist_probe_state(state: RateLimitState) -> Result<UsageProbeOutcome, Usage
             return Ok(UsageProbeOutcome::Ready(state));
         }
     };
-    match rate_limit::store_state(&path, state.clone()) {
+    match rate_limit::store_probe_snapshot(&path, state.clone()) {
         Ok(merged) => Ok(UsageProbeOutcome::Ready(merged)),
         Err(error) => {
             tracing::warn!(error = %error, "failed to persist claude rate-limit cache");
