@@ -1,5 +1,8 @@
 use crate::{
-    model::{ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
+    model::{
+        models_dev::{current_reasoning_metadata, ReasoningControl},
+        ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource,
+    },
     protocol::openai_chat::{
         ChatTemplateKwargs, HiddenReasoningRisk, OpenAiReasoning, OpenAiThinking,
     },
@@ -9,12 +12,29 @@ use crate::{
 
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
-#[derive(Default)]
-pub(super) struct ReasoningFields {
+#[cfg(test)]
+#[path = "reasoning_catalog_tests.rs"]
+mod catalog_tests;
+
+/// Wire controls and accounting policy from the same per-request decision.
+pub(super) struct ReasoningDecision {
     pub(super) reasoning: Option<OpenAiReasoning>,
     pub(super) reasoning_effort: Option<String>,
     pub(super) thinking: Option<OpenAiThinking>,
     pub(super) chat_template_kwargs: Option<ChatTemplateKwargs>,
+    pub(super) hidden_reasoning_risk: HiddenReasoningRisk,
+}
+
+impl Default for ReasoningDecision {
+    fn default() -> Self {
+        Self {
+            reasoning: None,
+            reasoning_effort: None,
+            thinking: None,
+            chat_template_kwargs: None,
+            hidden_reasoning_risk: HiddenReasoningRisk::Unlikely,
+        }
+    }
 }
 
 /// Per-dialect reasoning policy, paired with the profile that dialect needs.
@@ -43,11 +63,13 @@ impl DialectReasoning {
             OpenAiCompatibleDialect::Standard
             | OpenAiCompatibleDialect::Custom
             | OpenAiCompatibleDialect::QwenTokenPlan => {
-                Self::Standard(standard_effort_profile(provider, metadata()))
+                let (metadata, control) = current_reasoning_metadata(provider, model);
+                Self::Standard(standard_effort_profile(provider, metadata).with_control(control))
             }
             OpenAiCompatibleDialect::Poolside => Self::Poolside,
             OpenAiCompatibleDialect::OpenRouter => {
-                Self::OpenRouter(EffortProfile::send_when_unknown(metadata()))
+                let (metadata, control) = current_reasoning_metadata(provider, model);
+                Self::OpenRouter(EffortProfile::send_when_unknown(metadata).with_control(control))
             }
             OpenAiCompatibleDialect::Moonshot => {
                 Self::Moonshot(MoonshotReasoningProfile::from_metadata(model, metadata()))
@@ -58,75 +80,60 @@ impl DialectReasoning {
         }
     }
 
-    pub(super) fn fields(&self, model: &str, reasoning: ReasoningLevel) -> ReasoningFields {
+    pub(super) fn resolve(&self, model: &str, reasoning: ReasoningLevel) -> ReasoningDecision {
         match self {
-            Self::Standard(profile) => ReasoningFields {
-                reasoning_effort: profile.effort(reasoning).map(str::to_string),
-                ..Default::default()
-            },
-            Self::Poolside => ReasoningFields {
+            Self::Standard(profile) => {
+                let resolved = profile.resolve(reasoning);
+                ReasoningDecision {
+                    reasoning_effort: resolved.effort().map(str::to_string),
+                    hidden_reasoning_risk: resolved.hidden_reasoning_risk(),
+                    ..Default::default()
+                }
+            }
+            Self::Poolside => ReasoningDecision {
                 chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
                     ChatTemplateKwargs {
                         enable_thinking: false,
                     },
                 ),
+                // Poolside enables thinking by omission for every non-Off request.
+                hidden_reasoning_risk: if reasoning == ReasoningLevel::Off {
+                    HiddenReasoningRisk::Unlikely
+                } else {
+                    HiddenReasoningRisk::Possible
+                },
                 ..Default::default()
             },
-            Self::OpenRouter(profile) => ReasoningFields {
-                reasoning: profile.effort(reasoning).map(|effort| OpenAiReasoning {
-                    effort: effort.to_string(),
-                }),
-                ..Default::default()
-            },
-            Self::Moonshot(profile) => ReasoningFields {
-                reasoning_effort: profile.effort(reasoning).map(str::to_string),
-                ..Default::default()
-            },
-            Self::KimiCode(profile) => kimi_code_reasoning_fields(profile, model, reasoning),
-        }
-    }
-
-    /// Hidden-reasoning risk for one request, derived from the dialect's
-    /// effective reasoning decision rather than reverse-inferred from the
-    /// serialized body.
-    pub(super) fn hidden_reasoning_risk(
-        &self,
-        model: &str,
-        reasoning: ReasoningLevel,
-    ) -> HiddenReasoningRisk {
-        match self {
-            // Poolside enables thinking by omission for every non-Off request,
-            // so a body that serializes no reasoning control still reasons
-            // off-wire. Off serializes `enable_thinking: false` and stays
-            // classified from the fields.
-            Self::Poolside if reasoning != ReasoningLevel::Off => HiddenReasoningRisk::Possible,
-            _ => self.fields(model, reasoning).hidden_reasoning_risk(),
-        }
-    }
-}
-
-impl ReasoningFields {
-    fn hidden_reasoning_risk(&self) -> HiddenReasoningRisk {
-        let effort_requests_reasoning = |effort: &str| effort != "none";
-        let requested = self
-            .thinking
-            .as_ref()
-            .is_some_and(|thinking| thinking.kind == "enabled")
-            || self
-                .reasoning_effort
-                .as_deref()
-                .is_some_and(effort_requests_reasoning)
-            || self
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| effort_requests_reasoning(&reasoning.effort))
-            || self
-                .chat_template_kwargs
-                .is_some_and(|kwargs| kwargs.enable_thinking);
-        if requested {
-            HiddenReasoningRisk::Possible
-        } else {
-            HiddenReasoningRisk::Unlikely
+            Self::OpenRouter(profile) => {
+                let resolved = profile.resolve(reasoning);
+                ReasoningDecision {
+                    reasoning: match resolved {
+                        ResolvedEffort::Omitted => None,
+                        ResolvedEffort::ToggleOn => {
+                            Some(OpenAiReasoning::Enabled { enabled: true })
+                        }
+                        ResolvedEffort::Named(level) => Some(OpenAiReasoning::Effort {
+                            effort: effort_or_none(level).to_string(),
+                        }),
+                    },
+                    hidden_reasoning_risk: resolved.hidden_reasoning_risk(),
+                    ..Default::default()
+                }
+            }
+            Self::Moonshot(profile) => {
+                let effort = profile.effort(reasoning);
+                ReasoningDecision {
+                    reasoning_effort: effort.map(str::to_string),
+                    // Moonshot's profile only returns enabled effort levels.
+                    hidden_reasoning_risk: if effort.is_some() {
+                        HiddenReasoningRisk::Possible
+                    } else {
+                        HiddenReasoningRisk::Unlikely
+                    },
+                    ..Default::default()
+                }
+            }
+            Self::KimiCode(profile) => kimi_code_reasoning_decision(profile, model, reasoning),
         }
     }
 }
@@ -158,6 +165,7 @@ fn standard_effort_profile(
 pub(super) struct EffortProfile {
     capabilities: ReasoningCapabilities,
     when_unknown: UnknownCapabilities,
+    control: ReasoningControl,
 }
 
 /// What to serialize when a model's reasoning capabilities are unknown.
@@ -168,7 +176,36 @@ enum UnknownCapabilities {
     SendRequested,
 }
 
+/// Preserve toggle-on intent even when the dialect enables it without an effort.
+#[derive(Clone, Copy)]
+enum ResolvedEffort {
+    Omitted,
+    ToggleOn,
+    Named(ReasoningLevel),
+}
+
+impl ResolvedEffort {
+    fn effort(self) -> Option<&'static str> {
+        match self {
+            Self::Omitted | Self::ToggleOn => None,
+            Self::Named(level) => Some(effort_or_none(level)),
+        }
+    }
+
+    fn hidden_reasoning_risk(self) -> HiddenReasoningRisk {
+        match self {
+            Self::Omitted | Self::Named(ReasoningLevel::Off) => HiddenReasoningRisk::Unlikely,
+            Self::ToggleOn | Self::Named(_) => HiddenReasoningRisk::Possible,
+        }
+    }
+}
+
 impl EffortProfile {
+    fn with_control(mut self, control: ReasoningControl) -> Self {
+        self.control = control;
+        self
+    }
+
     pub(super) fn omit_when_unknown(metadata: Option<ModelMetadata>) -> Self {
         Self::from_metadata(metadata, UnknownCapabilities::Omit)
     }
@@ -183,6 +220,7 @@ impl EffortProfile {
                 levels.into_iter().collect(),
             )),
             when_unknown: UnknownCapabilities::Omit,
+            control: ReasoningControl::Effort,
         }
     }
 
@@ -192,6 +230,7 @@ impl EffortProfile {
                 .map(|metadata| metadata.reasoning_capabilities())
                 .unwrap_or_default(),
             when_unknown,
+            control: ReasoningControl::Effort,
         }
     }
 
@@ -205,21 +244,35 @@ impl EffortProfile {
         Self {
             capabilities: ReasoningCapabilities::NotConfigurable,
             when_unknown: UnknownCapabilities::Omit,
+            control: ReasoningControl::Effort,
         }
     }
 
-    fn effort(&self, requested: ReasoningLevel) -> Option<&'static str> {
+    fn resolve(&self, requested: ReasoningLevel) -> ResolvedEffort {
+        let Some(effective) = self.effective(requested) else {
+            return ResolvedEffort::Omitted;
+        };
+        match (self.control, effective) {
+            // Toggle-on has no named effort; each dialect enables its default.
+            (ReasoningControl::Toggle, ReasoningLevel::Off) => {
+                ResolvedEffort::Named(ReasoningLevel::Off)
+            }
+            (ReasoningControl::Toggle, _) => ResolvedEffort::ToggleOn,
+            (ReasoningControl::Effort, _) => ResolvedEffort::Named(effective),
+        }
+    }
+
+    fn effective(&self, requested: ReasoningLevel) -> Option<ReasoningLevel> {
         match &self.capabilities {
             ReasoningCapabilities::NotConfigurable => None,
             ReasoningCapabilities::Unknown => match self.when_unknown {
                 UnknownCapabilities::Omit => None,
-                UnknownCapabilities::SendRequested => Some(effort_or_none(requested)),
+                UnknownCapabilities::SendRequested => Some(requested),
             },
             ReasoningCapabilities::Levels(_) => self
                 .capabilities
                 .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
-                .effective()
-                .map(effort_or_none),
+                .effective(),
         }
     }
 }
@@ -290,18 +343,23 @@ impl KimiReasoningProfile {
     }
 }
 
-fn kimi_code_reasoning_fields(
+fn kimi_code_reasoning_decision(
     profile: &KimiReasoningProfile,
     model: &str,
     reasoning: ReasoningLevel,
-) -> ReasoningFields {
+) -> ReasoningDecision {
     if model != "k3" {
         return Default::default();
     }
     let Some(reasoning) = profile.effective(reasoning) else {
         return Default::default();
     };
-    ReasoningFields {
+    ReasoningDecision {
+        hidden_reasoning_risk: if reasoning == ReasoningLevel::Off {
+            HiddenReasoningRisk::Unlikely
+        } else {
+            HiddenReasoningRisk::Possible
+        },
         thinking: Some(match reasoning {
             ReasoningLevel::Off => OpenAiThinking {
                 kind: "disabled",

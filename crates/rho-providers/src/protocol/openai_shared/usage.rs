@@ -19,7 +19,7 @@ use rho_sdk::model::GenerationOutputTokens;
 /// without reasoning-token details when no reasoning deltas streamed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HiddenReasoningRisk {
-    /// No serialized control asked the host to reason; treat aggregate output
+    /// The effective request did not enable reasoning; treat aggregate output
     /// totals as visible-generation tokens.
     Unlikely,
     /// Reasoning was requested (or cannot be ruled out), so an aggregate total

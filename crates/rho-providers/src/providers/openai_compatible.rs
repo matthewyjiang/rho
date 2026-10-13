@@ -13,7 +13,7 @@ use crate::{
     protocol::openai_chat::{
         convert_openai_response, invalid_stream_utf8, response_without_stream_context,
         to_openai_messages_for_target, to_openai_tool, ChatRequest, ChatResponse,
-        ChatStreamAccumulator, ChatStreamOptions,
+        ChatStreamAccumulator, ChatStreamOptions, HiddenReasoningRisk,
     },
     provider_backend::line_stream::collect_line_stream,
     providers::responses_http::post_with_optional_refresh,
@@ -36,6 +36,12 @@ pub(crate) struct OpenAiCompatibleProvider {
     api_base: String,
     reasoning: reasoning::DialectReasoning,
     session_headers: super::opencode_go::SessionHeaders,
+}
+
+/// The request and its accounting policy share one resolved reasoning decision.
+struct PreparedChatRequest {
+    body: ChatRequest,
+    hidden_reasoning_risk: HiddenReasoningRisk,
 }
 
 impl OpenAiCompatibleProvider {
@@ -68,7 +74,7 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.request_body(request, false)?;
+        let PreparedChatRequest { body, .. } = self.request_body(request, false)?;
         let response = self.send(&body, None).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         // `ModelResponse` cannot carry ProviderContext. Reasoning replay for
@@ -97,13 +103,12 @@ impl OpenAiCompatibleProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let reasoning_level = request.reasoning_level;
-        let body = self.request_body(request, true)?;
+        let PreparedChatRequest {
+            body,
+            hidden_reasoning_risk,
+        } = self.request_body(request, true)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        let hidden_reasoning_risk = self
-            .reasoning
-            .hidden_reasoning_risk(&self.model, reasoning_level);
         let mut chat_stream =
             ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy(), hidden_reasoning_risk);
         collect_line_stream(response, invalid_stream_utf8, |line| {
@@ -117,7 +122,7 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
         stream: bool,
-    ) -> Result<ChatRequest, ModelError> {
+    ) -> Result<PreparedChatRequest, ModelError> {
         let target = self.model_identity();
         let messages = to_openai_messages_for_target(request.messages, Some(&target))?;
         let tools = request
@@ -128,11 +133,11 @@ impl OpenAiCompatibleProvider {
             .map(|tool| self.dialect.normalize_tool(tool))
             .collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
-        let reasoning_fields = self.reasoning.fields(&self.model, request.reasoning_level);
+        let decision = self.reasoning.resolve(&self.model, request.reasoning_level);
         let wire_model = crate::provider::provider_descriptor(self.provider)
             .map(|descriptor| descriptor.wire_model_id(&self.model))
             .unwrap_or_else(|| self.model.clone());
-        Ok(ChatRequest {
+        let body = ChatRequest {
             model: wire_model,
             messages,
             tools: has_tools.then_some(tools),
@@ -143,10 +148,14 @@ impl OpenAiCompatibleProvider {
                 include_usage: true,
             }),
             prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
-            reasoning: reasoning_fields.reasoning,
-            reasoning_effort: reasoning_fields.reasoning_effort,
-            thinking: reasoning_fields.thinking,
-            chat_template_kwargs: reasoning_fields.chat_template_kwargs,
+            reasoning: decision.reasoning,
+            reasoning_effort: decision.reasoning_effort,
+            thinking: decision.thinking,
+            chat_template_kwargs: decision.chat_template_kwargs,
+        };
+        Ok(PreparedChatRequest {
+            body,
+            hidden_reasoning_risk: decision.hidden_reasoning_risk,
         })
     }
 

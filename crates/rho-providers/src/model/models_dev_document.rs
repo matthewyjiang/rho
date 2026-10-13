@@ -13,7 +13,9 @@ use serde::Deserialize;
 
 use crate::{provider::CatalogReasoningPolicy, reasoning::ReasoningLevel};
 
-use super::{CachedRow, ImageInput, ModelCost, ModelMetadata, ReasoningOffBehavior};
+use super::{
+    CachedRow, ImageInput, ModelCost, ModelMetadata, ReasoningControl, ReasoningOffBehavior,
+};
 
 /// models.dev root object: provider id -> provider document.
 #[derive(Clone, Debug, Default)]
@@ -188,6 +190,14 @@ pub(super) fn cached_row_from_catalog(
     Some(CachedRow {
         metadata,
         image_input: model.modalities.image_input(),
+        reasoning_control: if model.reasoning == Some(true)
+            && effort_values(model).is_none()
+            && toggle_is_complete_binary_control(model, reasoning_policy)
+        {
+            ReasoningControl::Toggle
+        } else {
+            ReasoningControl::Effort
+        },
     })
 }
 

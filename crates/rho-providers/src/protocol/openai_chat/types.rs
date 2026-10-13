@@ -37,8 +37,10 @@ pub(crate) struct ChatTemplateKwargs {
 }
 
 #[derive(Serialize)]
-pub(crate) struct OpenAiReasoning {
-    pub(crate) effort: String,
+#[serde(untagged)]
+pub(crate) enum OpenAiReasoning {
+    Effort { effort: String },
+    Enabled { enabled: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

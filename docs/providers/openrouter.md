@@ -40,6 +40,10 @@ Legacy `openrouter-oauth/...` model references still load and normalize to `open
 
 Rho fetches the model list from OpenRouter's `/models` endpoint after login. Choose **Refresh model lists** in `/config` when models change. Rho sends turns to `/chat/completions`.
 
+## Reasoning controls
+
+For models whose catalog advertises a reasoning toggle without named effort values, `max` sends `reasoning: {"enabled": true}` so OpenRouter enables its default reasoning budget without an invented effort value. `off` sends `reasoning: {"effort": "none"}`. Models with explicit effort values, provider-advertised levels, or a `supported_reasoning_levels` override in `models.toml` still send named efforts.
+
 ## Automation
 
 You can complete browser OAuth from the command line:

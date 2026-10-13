@@ -32,7 +32,7 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
 fn row(metadata: ModelMetadata) -> CachedRow {
     CachedRow {
         metadata,
-        image_input: ImageInput::Unknown,
+        ..CachedRow::default()
     }
 }
 
