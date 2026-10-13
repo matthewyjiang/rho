@@ -15,6 +15,13 @@ pub(super) fn apply_builtin_overrides(
     model: &str,
     metadata: ModelMetadata,
 ) -> ModelMetadata {
+    match builtin_override_table(provider, model) {
+        Some(table) => merge_toml_override(metadata, table),
+        None => metadata,
+    }
+}
+
+pub(super) fn builtin_override_table(provider: &str, model: &str) -> Option<&'static toml::Table> {
     // Parse as a document (`Table`): in toml 1.x, `Value::from_str` parses a single value.
     static OVERRIDES: OnceLock<toml::Table> = OnceLock::new();
     let overrides = OVERRIDES.get_or_init(|| {
@@ -23,15 +30,10 @@ pub(super) fn apply_builtin_overrides(
             .expect("built-in model overrides must be valid TOML")
     });
     let key = format!("{provider}/{model}");
-    let Some(table) = overrides
+    overrides
         .get("models")
         .and_then(|models| models.get(&key))
         .and_then(toml::Value::as_table)
-    else {
-        return metadata;
-    };
-
-    merge_toml_override(metadata, table)
 }
 
 pub(super) fn apply_local_overrides(
@@ -155,7 +157,7 @@ pub(super) fn local_image_input(table: &toml::map::Map<String, toml::Value>) -> 
     })
 }
 
-fn toml_reasoning_levels(
+pub(super) fn toml_reasoning_levels(
     table: &toml::map::Map<String, toml::Value>,
     key: &str,
 ) -> Option<Vec<ReasoningLevel>> {

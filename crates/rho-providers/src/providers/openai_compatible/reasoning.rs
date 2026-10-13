@@ -1,5 +1,8 @@
 use crate::{
-    model::{ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
+    model::{
+        models_dev::{current_reasoning_metadata, ReasoningControl},
+        ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource,
+    },
     protocol::openai_chat::{
         ChatTemplateKwargs, HiddenReasoningRisk, OpenAiReasoning, OpenAiThinking,
     },
@@ -8,6 +11,10 @@ use crate::{
 };
 
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
+
+#[cfg(test)]
+#[path = "reasoning_catalog_tests.rs"]
+mod catalog_tests;
 
 #[derive(Default)]
 pub(super) struct ReasoningFields {
@@ -43,11 +50,13 @@ impl DialectReasoning {
             OpenAiCompatibleDialect::Standard
             | OpenAiCompatibleDialect::Custom
             | OpenAiCompatibleDialect::QwenTokenPlan => {
-                Self::Standard(standard_effort_profile(provider, metadata()))
+                let (metadata, control) = current_reasoning_metadata(provider, model);
+                Self::Standard(standard_effort_profile(provider, metadata).with_control(control))
             }
             OpenAiCompatibleDialect::Poolside => Self::Poolside,
             OpenAiCompatibleDialect::OpenRouter => {
-                Self::OpenRouter(EffortProfile::send_when_unknown(metadata()))
+                let (metadata, control) = current_reasoning_metadata(provider, model);
+                Self::OpenRouter(EffortProfile::send_when_unknown(metadata).with_control(control))
             }
             OpenAiCompatibleDialect::Moonshot => {
                 Self::Moonshot(MoonshotReasoningProfile::from_metadata(model, metadata()))
@@ -100,6 +109,16 @@ impl DialectReasoning {
             // off-wire. Off serializes `enable_thinking: false` and stays
             // classified from the fields.
             Self::Poolside if reasoning != ReasoningLevel::Off => HiddenReasoningRisk::Possible,
+            // Toggle-on reasons by omission, so serialized fields alone cannot
+            // classify aggregate output-token accounting safely.
+            Self::Standard(profile) | Self::OpenRouter(profile)
+                if profile.control == ReasoningControl::Toggle
+                    && profile
+                        .effective(reasoning)
+                        .is_some_and(|level| level != ReasoningLevel::Off) =>
+            {
+                HiddenReasoningRisk::Possible
+            }
             _ => self.fields(model, reasoning).hidden_reasoning_risk(),
         }
     }
@@ -158,6 +177,7 @@ fn standard_effort_profile(
 pub(super) struct EffortProfile {
     capabilities: ReasoningCapabilities,
     when_unknown: UnknownCapabilities,
+    control: ReasoningControl,
 }
 
 /// What to serialize when a model's reasoning capabilities are unknown.
@@ -169,6 +189,11 @@ enum UnknownCapabilities {
 }
 
 impl EffortProfile {
+    fn with_control(mut self, control: ReasoningControl) -> Self {
+        self.control = control;
+        self
+    }
+
     pub(super) fn omit_when_unknown(metadata: Option<ModelMetadata>) -> Self {
         Self::from_metadata(metadata, UnknownCapabilities::Omit)
     }
@@ -183,6 +208,7 @@ impl EffortProfile {
                 levels.into_iter().collect(),
             )),
             when_unknown: UnknownCapabilities::Omit,
+            control: ReasoningControl::Effort,
         }
     }
 
@@ -192,6 +218,7 @@ impl EffortProfile {
                 .map(|metadata| metadata.reasoning_capabilities())
                 .unwrap_or_default(),
             when_unknown,
+            control: ReasoningControl::Effort,
         }
     }
 
@@ -205,21 +232,32 @@ impl EffortProfile {
         Self {
             capabilities: ReasoningCapabilities::NotConfigurable,
             when_unknown: UnknownCapabilities::Omit,
+            control: ReasoningControl::Effort,
         }
     }
 
     fn effort(&self, requested: ReasoningLevel) -> Option<&'static str> {
+        let effective = self.effective(requested)?;
+        match (self.control, effective) {
+            // A toggle advertises no named on-effort. Let the backend reason by
+            // default rather than inventing "max" from the binary UI level.
+            (ReasoningControl::Toggle, ReasoningLevel::Off) => Some("none"),
+            (ReasoningControl::Toggle, _) => None,
+            (ReasoningControl::Effort, _) => Some(effort_or_none(effective)),
+        }
+    }
+
+    fn effective(&self, requested: ReasoningLevel) -> Option<ReasoningLevel> {
         match &self.capabilities {
             ReasoningCapabilities::NotConfigurable => None,
             ReasoningCapabilities::Unknown => match self.when_unknown {
                 UnknownCapabilities::Omit => None,
-                UnknownCapabilities::SendRequested => Some(effort_or_none(requested)),
+                UnknownCapabilities::SendRequested => Some(requested),
             },
             ReasoningCapabilities::Levels(_) => self
                 .capabilities
                 .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
-                .effective()
-                .map(effort_or_none),
+                .effective(),
         }
     }
 }

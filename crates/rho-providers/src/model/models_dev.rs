@@ -11,8 +11,12 @@ use crate::{
     reasoning::ReasoningLevel,
 };
 
+#[path = "models_dev_controls.rs"]
+mod controls;
 #[path = "models_dev_document.rs"]
 mod document;
+use controls::CachedRow;
+pub(crate) use controls::{current_reasoning_metadata, ReasoningControl};
 #[path = "models_dev_hydrate.rs"]
 mod hydrate;
 #[path = "models_dev_overrides.rs"]
@@ -417,7 +421,7 @@ fn load_cached_row(provider: &str, model: &str, freshness: CacheFreshness) -> Op
         // The source name belongs to grok-4.7. Keep the fast id unlabeled
         // until this id's own local table sets one.
         row.metadata.display_name = None;
-        return Some(row.with_local_overrides(local.as_ref()));
+        return Some(row.with_toml_overrides(local.as_ref()));
     }
     row_from_catalog_source(provider, model, local.as_ref(), freshness)
 }
@@ -435,10 +439,14 @@ fn row_from_catalog_source(
     let mut row = cached_upstream_row(&cache_provider, &cache_model, freshness)?;
     let (override_provider, override_model) =
         builtin_override_identity(&cache_provider, &cache_model);
-    row.metadata =
-        overrides::apply_builtin_overrides(&override_provider, &override_model, row.metadata);
-    row.metadata = apply_provider_capabilities(provider, model, row.metadata);
-    Some(row.with_local_overrides(local))
+    row = row.with_toml_overrides(overrides::builtin_override_table(
+        &override_provider,
+        &override_model,
+    ));
+    Some(
+        row.with_provider_capabilities(provider, model)
+            .with_toml_overrides(local),
+    )
 }
 
 fn upstream_row_from_api(
@@ -464,37 +472,14 @@ fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> Mode
 fn apply_provider_capabilities(
     provider: &str,
     model: &str,
-    mut metadata: ModelMetadata,
+    metadata: ModelMetadata,
 ) -> ModelMetadata {
-    let provider_model = super::provider_models::cached_provider_model(provider, model);
-    let context_window = provider_model
-        .as_ref()
-        .and_then(|model| model.context_window)
-        .or_else(|| {
-            crate::provider::provider_descriptor(provider)
-                .and_then(|descriptor| descriptor.effective_context_fallback(model))
-        });
-    if let Some(context_window) = context_window {
-        metadata.effective_context_window = Some(context_window);
+    CachedRow {
+        metadata,
+        ..CachedRow::default()
     }
-    if let Some(provider_model) = provider_model.filter(|_| {
-        !super::provider_models::provider_model_capabilities_need_refresh(provider, model)
-    }) {
-        match provider_model.reasoning_capabilities {
-            ReasoningCapabilities::Unknown => {}
-            ReasoningCapabilities::NotConfigurable => {
-                metadata.supported_reasoning_levels = None;
-                metadata.reasoning_capabilities_known = true;
-                metadata.reasoning_metadata_complete = true;
-            }
-            ReasoningCapabilities::Levels(levels) => {
-                metadata.supported_reasoning_levels = Some(levels.into_levels());
-                metadata.reasoning_capabilities_known = true;
-                metadata.reasoning_metadata_complete = true;
-            }
-        }
-    }
-    metadata
+    .with_provider_capabilities(provider, model)
+    .metadata
 }
 
 fn override_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -531,30 +516,6 @@ pub fn image_input(provider: &str, model: &str) -> ImageInput {
         .as_ref()
         .and_then(overrides::local_image_input)
         .unwrap_or_default()
-}
-
-// NEXT_MAJOR(rho-providers): add `image_input: ImageInput` to ModelMetadata and remove the separate models_dev::image_input lookup and its sidecar cache key.
-/// One `model_metadata` cache row: the public metadata plus fields it cannot
-/// carry until the next major, flattened into the same JSON object.
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub(super) struct CachedRow {
-    #[serde(flatten)]
-    pub(super) metadata: ModelMetadata,
-    #[serde(default)]
-    pub(super) image_input: ImageInput,
-}
-
-impl CachedRow {
-    /// Applies one `models.toml` model table; `None` leaves the row unchanged.
-    fn with_local_overrides(self, local: Option<&toml::map::Map<String, toml::Value>>) -> Self {
-        let Some(table) = local else {
-            return self;
-        };
-        Self {
-            image_input: overrides::local_image_input(table).unwrap_or(self.image_input),
-            metadata: overrides::merge_toml_override(self.metadata, table),
-        }
-    }
 }
 
 pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
@@ -621,7 +582,10 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// v12: the `rho` binary parses numbers with serde_json `arbitrary_precision`,
 /// which the price parser rejected, so older rows dropped fractional prices
 /// (`glm-5` output `3.2`, every `gpt-5.6-luna` rate). Refetch to restore them.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 12;
+///
+/// v13: retain toggle-only reasoning provenance so Chat Completions does not
+/// serialize the binary UI's Max level as an unadvertised effort value.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 13;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheFreshness {
@@ -660,7 +624,7 @@ fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) 
 }
 
 /// Writes a batch of model metadata rows in a single SQLite transaction with a prepared statement.
-pub(super) fn write_cached_upstream_model_metadata_batch<'a, I>(entries: I) -> usize
+fn write_cached_upstream_model_metadata_batch<'a, I>(entries: I) -> usize
 where
     I: IntoIterator<Item = (&'a str, &'a str, &'a CachedRow)>,
 {
@@ -833,7 +797,7 @@ pub fn write_cached_model_metadata_for_tests(
 ) {
     let row = CachedRow {
         metadata: metadata.clone(),
-        image_input: ImageInput::Unknown,
+        ..CachedRow::default()
     };
     write_cached_upstream_model_metadata_batch([(provider, model, &row)]);
     super::display_name::forget_provider_display_names(provider);
@@ -888,6 +852,11 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
         policy,
     )
     .map(|row| row.metadata)
+}
+
+#[cfg(test)]
+pub(crate) fn cache_catalog_for_tests(api: &Value) {
+    hydrate::hydrate_catalog_from_api(&document::ModelsDevCatalog::from_json_value(api));
 }
 
 #[cfg(test)]
