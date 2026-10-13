@@ -7,7 +7,8 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 // Covers: toggle-only catalog controls must not invent an unsupported max effort,
-// while explicit effort values still reach the backend and omission still counts as reasoning.
+// while OpenRouter explicitly enables its default budget, explicit efforts still
+// reach the backend, and toggle-on still counts as possible hidden reasoning.
 // Owner: catalog-to-chat-completions wire contract
 #[test]
 fn catalog_toggle_and_explicit_effort_shape_chat_requests() {
@@ -23,9 +24,14 @@ fn catalog_toggle_and_explicit_effort_shape_chat_requests() {
             } else {
                 provider
             };
-            models_dev::cache_catalog_for_tests(&json!({
+            let toggle_model = if dialect == OpenAiCompatibleDialect::OpenRouter {
+                "anthropic/claude-toggle-test"
+            } else {
+                "qwen3.7-max"
+            };
+            let mut catalog = json!({
                 slug: {"npm": "@ai-sdk/openai-compatible", "models": {
-                    "qwen3.7-max": {"reasoning": true, "reasoning_options": [
+                    toggle_model: {"reasoning": true, "reasoning_options": [
                         {"type": "toggle"}, {"type": "budget_tokens"}
                     ]},
                     "explicit-max": {"reasoning": true, "reasoning_options": [
@@ -35,22 +41,31 @@ fn catalog_toggle_and_explicit_effort_shape_chat_requests() {
                         {"type": "effort", "values": ["max"]}
                     ]}
                 }}
-            }));
+            });
+            if dialect == OpenAiCompatibleDialect::OpenRouter {
+                // Aggregator ids hydrate reasoning from the upstream owner's document.
+                catalog["anthropic"] = json!({
+                    "npm": "@ai-sdk/anthropic", "models": {
+                        "claude-toggle-test": catalog[slug]["models"][toggle_model].clone()
+                    }
+                });
+            }
+            models_dev::cache_catalog_for_tests(&catalog);
             for (model, level, effort, risk) in [
                 (
-                    "qwen3.7-max",
+                    toggle_model,
                     ReasoningLevel::Max,
                     None,
                     HiddenReasoningRisk::Possible,
                 ),
                 (
-                    "qwen3.7-max",
+                    toggle_model,
                     ReasoningLevel::High,
                     None,
                     HiddenReasoningRisk::Possible,
                 ),
                 (
-                    "qwen3.7-max",
+                    toggle_model,
                     ReasoningLevel::Off,
                     Some("none"),
                     HiddenReasoningRisk::Unlikely,
@@ -60,6 +75,12 @@ fn catalog_toggle_and_explicit_effort_shape_chat_requests() {
                     ReasoningLevel::Max,
                     Some("max"),
                     HiddenReasoningRisk::Possible,
+                ),
+                (
+                    "explicit-max",
+                    ReasoningLevel::Off,
+                    Some("none"),
+                    HiddenReasoningRisk::Unlikely,
                 ),
                 (
                     "explicit-max-only",
@@ -77,21 +98,19 @@ fn catalog_toggle_and_explicit_effort_shape_chat_requests() {
                     "http://localhost/v1".into(),
                 );
                 let messages = [Message::user_text("reply with just: ok")];
-                let body = serde_json::to_value(
-                    client
-                        .request_body(
-                            ModelRequest {
-                                messages: &messages,
-                                tools: &[],
-                                cancellation: Default::default(),
-                                reasoning_level: level,
-                                prompt_cache_key: None,
-                            },
-                            /*stream*/ true,
-                        )
-                        .unwrap(),
-                )
-                .unwrap();
+                let prepared = client
+                    .request_body(
+                        ModelRequest {
+                            messages: &messages,
+                            tools: &[],
+                            cancellation: Default::default(),
+                            reasoning_level: level,
+                            prompt_cache_key: None,
+                        },
+                        /*stream*/ true,
+                    )
+                    .unwrap();
+                let body = serde_json::to_value(prepared.body).unwrap();
                 let mut expected = json!({
                     "model": model, "messages": [{"role": "user", "content": [
                         {"type": "text", "text": "reply with just: ok"}
@@ -103,9 +122,11 @@ fn catalog_toggle_and_explicit_effort_shape_chat_requests() {
                     } else {
                         expected["reasoning_effort"] = json!(effort);
                     }
+                } else if dialect == OpenAiCompatibleDialect::OpenRouter {
+                    expected["reasoning"] = json!({"enabled": true});
                 }
                 assert_eq!(body, expected, "{provider}/{model} {level:?}");
-                assert_eq!(client.reasoning.hidden_reasoning_risk(model, level), risk);
+                assert_eq!(prepared.hidden_reasoning_risk, risk);
             }
         }
     });

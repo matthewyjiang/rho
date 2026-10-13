@@ -181,7 +181,8 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
                 },
                 /*stream*/ false,
             )
-            .unwrap();
+            .unwrap()
+            .body;
         assert_eq!(
             serde_json::to_value(request).unwrap(),
             json!({
@@ -222,7 +223,8 @@ fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
             },
             /*stream*/ false,
         )
-        .unwrap();
+        .unwrap()
+        .body;
 
     assert_eq!(
         serde_json::to_value(request).unwrap(),
@@ -265,7 +267,8 @@ fn chat_completions_forwards_prompt_cache_key_when_present() {
                 },
                 /*stream*/ false,
             )
-            .unwrap(),
+            .unwrap()
+            .body,
     )
     .unwrap();
     assert_eq!(with_key["prompt_cache_key"], "rho:session-1");
@@ -282,7 +285,8 @@ fn chat_completions_forwards_prompt_cache_key_when_present() {
                 },
                 /*stream*/ false,
             )
-            .unwrap(),
+            .unwrap()
+            .body,
     )
     .unwrap();
     assert!(without_key.get("prompt_cache_key").is_none());
@@ -388,9 +392,9 @@ fn moonshot_exact_metadata_drives_top_level_reasoning_effort() {
 fn openrouter_omits_reasoning_for_non_configurable_models() {
     let profile =
         reasoning::DialectReasoning::OpenRouter(reasoning::EffortProfile::not_configurable());
-    let fields = profile.fields("fixed-model", crate::reasoning::ReasoningLevel::High);
+    let decision = profile.resolve("fixed-model", crate::reasoning::ReasoningLevel::High);
 
-    assert!(fields.reasoning.is_none());
+    assert!(decision.reasoning.is_none());
 }
 
 #[test]
@@ -421,7 +425,8 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
                 },
                 /*stream*/ false,
             )
-            .unwrap(),
+            .unwrap()
+            .body,
     )
     .unwrap();
     assert_eq!(
@@ -449,7 +454,8 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
                 },
                 /*stream*/ false,
             )
-            .unwrap(),
+            .unwrap()
+            .body,
     )
     .unwrap();
     assert_eq!(off["reasoning_effort"], "none");
@@ -567,7 +573,8 @@ fn standard_request_reasoning_effort(
                 },
                 /*stream*/ false,
             )
-            .unwrap(),
+            .unwrap()
+            .body,
     )
     .unwrap();
     body.get("reasoning_effort")
@@ -626,7 +633,8 @@ fn request_body(
             },
             /*stream*/ false,
         )
-        .unwrap();
+        .unwrap()
+        .body;
     serde_json::to_value(request).unwrap()
 }
 
@@ -652,7 +660,8 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
             },
             /*stream*/ false,
         )
-        .unwrap();
+        .unwrap()
+        .body;
 
     assert_eq!(provider.model_identity().model, "laguna-m.1");
     assert_eq!(body.model, "poolside/laguna-m.1");
@@ -669,7 +678,8 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
             },
             /*stream*/ false,
         )
-        .unwrap();
+        .unwrap()
+        .body;
     assert_eq!(
         body.chat_template_kwargs,
         Some(crate::protocol::openai_chat::ChatTemplateKwargs {
