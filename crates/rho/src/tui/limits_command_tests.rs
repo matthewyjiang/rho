@@ -282,10 +282,11 @@ fn claude_section_surfaces_utilization_without_allowed_status() {
     assert_eq!(section.windows[1].remaining_percent, Some(60.0));
 }
 
-// Covers: Live keeps cache-only windows but labels them with observed age.
+// Covers: a fresh /usage probe is the account's limit set. An older Fable row
+// must not stay on /limits when the panel no longer reports one (Pro).
 // Owner: pure unit
 #[test]
-fn fresh_probe_state_shows_live_including_disk_fable() {
+fn fresh_probe_omits_windows_the_panel_did_not_report() {
     let mut disk = sample_claude_state(1_100);
     disk.windows[0].info.utilization = Some(0.0);
     let mut weekly = disk.windows[0].clone();
@@ -316,10 +317,9 @@ fn fresh_probe_state_shows_live_including_disk_fable() {
         .iter()
         .map(|window| window.label.as_str())
         .collect();
-    assert_eq!(labels, vec!["5-hour", "Weekly", "Fable"]);
+    assert_eq!(labels, vec!["5-hour", "Weekly"]);
     assert_eq!(section.windows[0].note, None);
     assert_eq!(section.windows[1].note, None);
-    assert_eq!(section.windows[2].note.as_deref(), Some("observed 1m ago"));
 }
 
 // Covers: a live Claude probe must occupy /limits before any disk cache exists.

@@ -233,9 +233,14 @@ fn claude_windows_from_state(
     now_unix: i64,
     age_note: AgeNote,
 ) -> Vec<UsageLimitWindow> {
+    // A successful probe restamps every window it saw. Anything older was not
+    // on that panel. Pro has no Fable week; do not keep a row from an earlier
+    // plan or promotion.
+    let probed_at = state.last_probe_unix;
     state
         .sorted_windows()
         .into_iter()
+        .filter(|window| probed_at.is_none_or(|at| window.observed_at_unix >= at))
         .map(|window| {
             let mut note_parts = Vec::new();
             if let Some(status) = crate::claude_runtime::stream::notable_rate_limit_status(

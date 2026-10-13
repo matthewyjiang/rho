@@ -3,8 +3,11 @@
 //! This is not a credential path. Rho never stores Claude tokens. Live `/limits`
 //! reads `/usage` through a PTY; this cache also remembers stream observations.
 //!
-//! Each stream event is one window (`five_hour`, `seven_day`, …). State keeps
-//! the newest observation per window so `/limits` can show every known bucket.
+//! Each stream event is one window (`five_hour`, `seven_day`, …). Stream merges
+//! keep the newest observation per window. A successful `/usage` probe is the
+//! account's current set: windows the panel did not report are dropped, so a
+//! Pro plan does not keep a Fable row it no longer has.
+//!
 //! Per-window ordering is unix-epoch nanoseconds plus a per-process nonce and
 //! monotonic sequence so concurrent Rho processes and equal timestamps cannot
 //! let an older observation win. Compare-and-replace runs under a cross-process
@@ -213,6 +216,21 @@ impl RateLimitState {
         })
     }
 
+    /// Mark this state as a just-finished `/usage` read.
+    ///
+    /// Every reported window shares the probe instant. That keeps `/limits` age
+    /// on one moment, and it sorts the snapshot ahead of observations taken
+    /// before the panel was read.
+    pub(crate) fn stamp_probe_snapshot(&mut self) {
+        let nanos = now_unix_nanos();
+        let unix = nanos_to_seconds(nanos);
+        self.last_probe_unix = Some(unix);
+        for window in &mut self.windows {
+            window.observed_at_unix = unix;
+            window.observed_at_nanos = nanos;
+        }
+    }
+
     /// Stable display order: five hour, seven day variants, then the rest.
     pub(crate) fn sorted_windows(&self) -> Vec<&RateLimitObservation> {
         let mut windows: Vec<&RateLimitObservation> = self.windows.iter().collect();
@@ -302,11 +320,42 @@ fn set_private_path_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// How a write treats windows already on disk.
+enum StoredWindows {
+    /// Stream observations add or update keys and leave the rest.
+    Merge,
+    /// `incoming` is a complete `/usage` panel. Drop every other key.
+    ProbeSnapshot,
+}
+
 /// Merge `incoming` windows into disk state under the cross-process lock.
 pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Result<RateLimitState> {
+    commit_state(path, incoming, StoredWindows::Merge)
+}
+
+/// Merge a `/usage` probe, then drop windows the panel did not report.
+///
+/// An empty snapshot is not a panel read and must not wipe the cache.
+pub(crate) fn store_probe_snapshot(
+    path: &Path,
+    incoming: RateLimitState,
+) -> anyhow::Result<RateLimitState> {
+    commit_state(path, incoming, StoredWindows::ProbeSnapshot)
+}
+
+fn commit_state(
+    path: &Path,
+    incoming: RateLimitState,
+    retain: StoredWindows,
+) -> anyhow::Result<RateLimitState> {
     if incoming.is_empty() {
         return Ok(incoming);
     }
+    let reported_keys: Vec<String> = incoming
+        .windows
+        .iter()
+        .map(|window| window.window_key().to_owned())
+        .collect();
     let _guard = acquire_state_lock(path)?;
     let mut state = load_at(path).unwrap_or_default();
     let writing_default = default_state_path()
@@ -322,6 +371,11 @@ pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Resu
         }
     }
     state.merge_state(incoming);
+    if matches!(retain, StoredWindows::ProbeSnapshot) {
+        state
+            .windows
+            .retain(|window| reported_keys.iter().any(|key| key == window.window_key()));
+    }
     let contents = serde_json::to_vec_pretty(&state)?;
     crate::config_writer::write_bytes_atomically(path, &contents)?;
     if writing_default {

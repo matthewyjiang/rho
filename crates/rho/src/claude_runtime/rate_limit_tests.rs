@@ -531,6 +531,67 @@ fn cross_process_out_of_order_writes_keep_newer() {
     assert_eq!(only(&loaded).observed_at_nanos, secs(7_000) + 500);
 }
 
+// Covers: a /usage snapshot drops windows the panel did not report, while a
+// newer reading of a reported window still wins.
+// Owner: pure unit
+#[test]
+fn probe_snapshot_drops_windows_absent_from_the_panel() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rate-limits.json");
+    store_ordered(
+        &path,
+        sample_info_window("stale-fable", "seven_day_fable"),
+        secs(1_000),
+        1,
+        "old",
+    )
+    .unwrap();
+    store_ordered(
+        &path,
+        sample_info_window("stream", "five_hour"),
+        secs(3_000),
+        1,
+        "stream",
+    )
+    .unwrap();
+
+    let mut probe = RateLimitState {
+        last_probe_unix: Some(2_000),
+        ..RateLimitState::default()
+    };
+    probe.merge_window(RateLimitObservation::with_order(
+        sample_info_window("probe", "five_hour"),
+        secs(2_000),
+        1,
+        "probe",
+    ));
+    probe.merge_window(RateLimitObservation::with_order(
+        sample_info_window("probe", "seven_day"),
+        secs(2_000),
+        1,
+        "probe",
+    ));
+    let stored = store_probe_snapshot(&path, probe).unwrap();
+    let keys: Vec<_> = stored
+        .sorted_windows()
+        .into_iter()
+        .map(|window| window.info.window_key().to_owned())
+        .collect();
+    assert_eq!(keys, vec!["five_hour".to_string(), "seven_day".to_string()]);
+    let five = stored
+        .windows
+        .iter()
+        .find(|window| window.info.window_key() == "five_hour")
+        .unwrap();
+    assert_eq!(five.info.status.as_deref(), Some("stream"));
+    let loaded = load_at(&path).unwrap();
+    assert_eq!(loaded.windows.len(), 2);
+    assert!(loaded
+        .windows
+        .iter()
+        .all(|window| window.info.window_key() != "seven_day_fable"));
+}
+
 // Covers: stream window merges must not wipe a successful /usage probe stamp.
 // Owner: pure unit
 #[test]
