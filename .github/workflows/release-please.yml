@@ -201,10 +201,20 @@ jobs:
   # crates.io versions cannot be overwritten. Keep GitHub releases as drafts
   # until the exact validated SHA has published every selected crate. Public
   # release publication happens only after crates succeed.
+  #
+  # crates.io Trusted Publishing reads the OIDC workflow_ref claim, which is
+  # this top-level file. A called reusable workflow only appears in
+  # job_workflow_ref, which crates.io ignores, so the publish steps stay in
+  # this job. Register release-please.yml (no environment) on each crate.
   publish-crates:
     needs: [release, sdk-release-evidence]
     if: ${{ needs.release.outputs.releases_created == 'true' && needs.sdk-release-evidence.result == 'success' }}
     runs-on: ubuntu-latest
+    # Job permissions replace the workflow permissions. contents: write stays
+    # so this job can undraft GitHub releases after crates.io succeeds.
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -213,9 +223,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
+      - name: Authenticate to crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
       - name: Publish workspace crates for exact candidate SHA
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
           CANDIDATE_SHA: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
           PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
           PUBLISH_TOOLS: ${{ needs.release.outputs.tools_release_created }}

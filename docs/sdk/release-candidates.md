@@ -199,6 +199,11 @@ than transactionally atomic across registries:
    binary asset uploads; Arch publication stays asynchronous and does not
    block that flip
 
+`release-please.yml` and the manual `publish-crates.yml` recovery workflow
+authenticate with crates.io Trusted Publishing. Each exchanges a GitHub OIDC
+token for a short-lived publish token. `cargo yank` does not accept that token,
+so `.github/workflows/yank-crate.yml` still uses `CARGO_REGISTRY_TOKEN`.
+
 If an RC or final candidate is defective:
 
 - stop dependent publication if it has not started

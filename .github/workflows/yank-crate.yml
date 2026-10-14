@@ -1,5 +1,10 @@
 name: yank crate version
 
+# Trusted Publishing tokens are publish-only. crates.io accepts the short-lived
+# cio_tp_ token on the publish endpoint for crates that already exist, and
+# rejects it for yank. cargo yank still needs a regular API token with the
+# yank scope, so this workflow keeps CARGO_REGISTRY_TOKEN.
+
 on:
   workflow_dispatch:
     inputs:
