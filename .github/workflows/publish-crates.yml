@@ -3,6 +3,11 @@ name: publish crates.io
 # Coordinated publication is owned by release-please after draft releases and
 # exact-SHA evidence succeed. This workflow remains for manual recovery only so
 # a published GitHub release cannot start a second independent crates.io path.
+#
+# crates.io Trusted Publishing binds each crate to this top-level filename
+# (publish-crates.yml). workflow_ref is the workflow that started the run, so
+# calling this file from release-please would still authenticate as
+# release-please.yml. Keep this dispatch path separate and register it too.
 on:
   workflow_dispatch:
     inputs:
@@ -68,6 +73,9 @@ jobs:
   publish:
     needs: [candidate, sdk-release-evidence]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -76,9 +84,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
+      - name: Authenticate to crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
       - name: Publish selected crate for exact candidate SHA
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
           CANDIDATE_SHA: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
           PACKAGE: ${{ needs.candidate.outputs.package }}
         run: |
