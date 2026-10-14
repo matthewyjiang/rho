@@ -4838,7 +4838,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "2.20.0"
+version = "2.20.1"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -4909,7 +4909,7 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "2.16.0"
+version = "2.16.1"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.16.0...rho-providers-v2.16.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **providers:** avoid unsupported effort for toggle-only reasoning ([#1471](https://github.com/matthewyjiang/rho/issues/1471)) ([df2e463](https://github.com/matthewyjiang/rho/commit/df2e463e70206ab5f1f8dbb37d23d344c1b68c53))
+
 ## [2.16.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.15.0...rho-providers-v2.16.0) (2026-10-10)
 
 
