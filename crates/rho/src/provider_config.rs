@@ -24,6 +24,11 @@ pub(crate) struct ProviderEndpointConfig {
     pub(crate) api: rho_providers::provider::OpenAiCompatibleApi,
     /// Edit format selected when the global preference is `auto`.
     pub(crate) edit_tool: Option<rho_tools::EditFormat>,
+    /// Prompt cache lifetime this host applies to cache writes. `None` means
+    /// unknown; keep-warm and cache-miss attribution fall back to the provider
+    /// default. Usage on Responses-shaped hosts does not report the TTL, so
+    /// it cannot be learned from responses.
+    pub(crate) prompt_cache_ttl: Option<std::time::Duration>,
 }
 
 impl ProviderEndpointConfig {
@@ -62,12 +67,19 @@ impl ProviderEndpointConfig {
             .transpose()?
             .unwrap_or_default();
 
+        let ttl_field = format!("providers.custom.{provider}.prompt_cache_ttl");
+        let prompt_cache_ttl = endpoint
+            .prompt_cache_ttl
+            .map(|ttl| parse_prompt_cache_ttl(&ttl_field, &ttl))
+            .transpose()?;
+
         Ok(Self {
             base_url,
             catalog,
             catalog_lookup,
             api,
             edit_tool: endpoint.edit_tool,
+            prompt_cache_ttl,
         })
     }
 }
@@ -91,6 +103,7 @@ impl ProviderConfigs {
                 catalog_lookup: rho_providers::provider::CatalogLookupMode::Slug,
                 api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
                 edit_tool: None,
+                prompt_cache_ttl: None,
             });
             return Ok(());
         }
@@ -126,6 +139,7 @@ impl ProviderConfigs {
                     catalog_lookup: rho_providers::provider::CatalogLookupMode::default(),
                     api,
                     edit_tool: None,
+                    prompt_cache_ttl: None,
                 });
             }
         };
@@ -145,6 +159,9 @@ impl ProviderConfigs {
             }
             if endpoint.edit_tool.is_some() {
                 anyhow::bail!("providers.ollama does not accept edit_tool");
+            }
+            if endpoint.prompt_cache_ttl.is_some() {
+                anyhow::bail!("providers.ollama does not accept prompt_cache_ttl");
             }
             if let Some(base_url) = endpoint.base_url {
                 self.set_endpoint("ollama", &base_url)?;
@@ -195,6 +212,25 @@ impl ProviderConfigs {
             .get(provider)
             .and_then(|endpoint| endpoint.edit_tool)
     }
+
+    /// Configured prompt cache TTL for a custom host, if any.
+    pub(crate) fn prompt_cache_ttl(&self, provider: &str) -> Option<std::time::Duration> {
+        self.custom
+            .get(provider)
+            .and_then(|endpoint| endpoint.prompt_cache_ttl)
+    }
+}
+
+/// Parses a humantime duration such as `"5m"` or `"1h"`. Zero is rejected:
+/// a host that does not cache should leave the key unset.
+fn parse_prompt_cache_ttl(field: &str, ttl: &str) -> anyhow::Result<std::time::Duration> {
+    let parsed = humantime::parse_duration(ttl).map_err(|error| {
+        anyhow::anyhow!("{field} must be a duration like \"5m\" or \"1h\": {error}")
+    })?;
+    if parsed.is_zero() {
+        anyhow::bail!("{field} must be greater than zero");
+    }
+    Ok(parsed)
 }
 
 fn parse_provider_catalog(field: &str, catalog: &str) -> anyhow::Result<String> {
@@ -405,6 +441,8 @@ struct PersistedEndpointConfig<'a> {
     api: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     edit_tool: Option<rho_tools::EditFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_cache_ttl: Option<String>,
 }
 
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
@@ -419,6 +457,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                     catalog_mode: None,
                     api: None,
                     edit_tool: None,
+                    prompt_cache_ttl: None,
                 }),
             custom: config
                 .custom
@@ -432,6 +471,9 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                             catalog_mode: persisted_catalog_mode(endpoint.catalog_lookup),
                             api: endpoint.api.persisted_custom_host_value(),
                             edit_tool: endpoint.edit_tool,
+                            prompt_cache_ttl: endpoint
+                                .prompt_cache_ttl
+                                .map(|ttl| humantime::format_duration(ttl).to_string()),
                         },
                     )
                 })
@@ -464,6 +506,7 @@ pub(super) struct PartialEndpointConfig {
     pub(super) catalog_mode: Option<String>,
     pub(super) api: Option<String>,
     pub(super) edit_tool: Option<rho_tools::EditFormat>,
+    pub(super) prompt_cache_ttl: Option<String>,
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ use rho_sdk::{ModelCallMetrics, ModelCallProfile, ReasoningLevel};
 
 use super::{
     CacheMissCause, CacheRebilled, CacheStatsTracker, CACHE_MISS_NOISE_FLOOR_TOKENS,
-    PROVIDER_CACHE_TTL_HINT, SIGNIFICANT_MISS_TOKENS,
+    DEFAULT_PROMPT_CACHE_TTL, SIGNIFICANT_MISS_TOKENS,
 };
 
 /// One completed model call, as the tracker observes it.
@@ -245,7 +245,7 @@ fn tracker_counts_only_real_misses() {
             requests: vec![
                 Request::warm(0, SIGNIFICANT_MISS_TOKENS),
                 Request::next(
-                    PROVIDER_CACHE_TTL_HINT.as_secs() + 61,
+                    DEFAULT_PROMPT_CACHE_TTL.as_secs() + 61,
                     SIGNIFICANT_MISS_TOKENS,
                     0,
                 ),
@@ -258,9 +258,10 @@ fn tracker_counts_only_real_misses() {
                 unpriced_miss_count: 1,
             },
             notices: 1,
-            last_cause: Some(CacheMissCause::Idle(Duration::from_secs(
-                PROVIDER_CACHE_TTL_HINT.as_secs() + 60,
-            ))),
+            last_cause: Some(CacheMissCause::Idle {
+                gap: Duration::from_secs(DEFAULT_PROMPT_CACHE_TTL.as_secs() + 60),
+                ttl: DEFAULT_PROMPT_CACHE_TTL,
+            }),
         },
         Case {
             name: "a shrunken prompt only re-bills what it actually sent",

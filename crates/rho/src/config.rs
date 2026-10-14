@@ -177,6 +177,9 @@ pub struct Config {
     pub advisor_mode: bool,
     /// Enables native-tool workspace checkpoints and `/rewind` (on by default).
     pub workspace_rewind: bool,
+    /// Offer `keep_warm` on `process start`, letting the model keep the
+    /// provider prompt cache warm while it waits on a long background command.
+    pub keep_cache_warm: bool,
     pub permission_mode: PermissionMode,
     /// Explicit credential backend. `None` means unset; runtime defaults to OS.
     pub credential_store: Option<CredentialStoreBackend>,
@@ -242,6 +245,7 @@ impl Default for Config {
             agent_concurrency: DEFAULT_AGENT_CONCURRENCY,
             advisor_mode: false,
             workspace_rewind: true,
+            keep_cache_warm: true,
             permission_mode: PermissionMode::Bypass,
             credential_store: None,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),

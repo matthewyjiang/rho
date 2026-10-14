@@ -292,3 +292,36 @@ fn empty_turn_retries_only_when_completed_without_steer() {
         assert_eq!(retryable_type.as_deref(), expected_retryable_type, "{name}");
     }
 }
+
+// Covers: a response cut off by `max_output_tokens` was still billed, so its
+// usage (including the cache read) is reported before the terminal error.
+// Owner: providers stream parse
+#[test]
+fn response_incomplete_reports_usage_before_failing() {
+    let mut state = CodexSseState::default();
+    let mut events = Vec::new();
+    let error = handle_codex_sse_line(
+        r#"data: {"type":"response.incomplete","response":{"id":"resp_capped","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":22400,"output_tokens":1,"total_tokens":22401,"input_tokens_details":{"cached_tokens":22357}}}}"#,
+        &mut state,
+        &mut Some(&mut |event| {
+            events.push(event);
+            Ok(())
+        }),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ModelError::ProviderReported { error_type, .. } if error_type == "response_incomplete"
+    ));
+    assert_eq!(
+        events,
+        vec![ModelEvent::Usage(crate::model::ModelUsage {
+            input_tokens: Some(43),
+            output_tokens: Some(1),
+            cache_read_tokens: Some(22_357),
+            total_tokens: Some(22_401),
+            ..crate::model::ModelUsage::default()
+        })]
+    );
+}

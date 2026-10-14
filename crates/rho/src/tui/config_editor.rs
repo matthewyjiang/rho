@@ -37,6 +37,7 @@ pub(super) enum ConfigToggle {
     CheckForUpdates,
     EnableSubagents,
     WorkspaceRewind,
+    KeepCacheWarm,
     AutoCompact,
     CacheMissNotices,
     ShowHeaderHints,
@@ -75,6 +76,10 @@ pub(super) fn toggle(
         ConfigToggle::WorkspaceRewind => {
             config.workspace_rewind = !config.workspace_rewind;
             config.workspace_rewind
+        }
+        ConfigToggle::KeepCacheWarm => {
+            config.keep_cache_warm = !config.keep_cache_warm;
+            config.keep_cache_warm
         }
         ConfigToggle::AutoCompact => {
             config.auto_compact = !config.auto_compact;

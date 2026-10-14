@@ -25,6 +25,7 @@ pub(super) const THEME_VALUE: &str = "theme";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const WORKSPACE_REWIND_VALUE: &str = "workspace_rewind";
+pub(super) const KEEP_CACHE_WARM_VALUE: &str = "keep_cache_warm";
 pub(super) const AGENT_CONCURRENCY_VALUE: &str = "agent_concurrency";
 pub(super) const QUESTIONNAIRE_TIMEOUT_VALUE: &str = "questionnaire_timeout";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
@@ -445,6 +446,13 @@ pub(super) fn category_picker(
                 Some(on_off(config.workspace_rewind)),
                 WORKSPACE_REWIND_VALUE,
             ));
+            items.push(sectioned_item(
+                Some("Workspace"),
+                "Keep cache warm",
+                "Let the model keep the prompt cache warm while it waits on a long background process. Each warm-up re-reads the cached prompt at the provider's cache-read price. Off stops warming now; the tool option changes next session. Space toggles.",
+                Some(on_off(config.keep_cache_warm)),
+                KEEP_CACHE_WARM_VALUE,
+            ));
             ("Config / Agent behavior", items)
         }
         CONTEXT_CATEGORY_VALUE => (
@@ -600,6 +608,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | SCREEN_ALLOW_THRESHOLD_VALUE
         | ENABLE_SUBAGENTS_VALUE
         | WORKSPACE_REWIND_VALUE
+        | KEEP_CACHE_WARM_VALUE
         | AGENT_CONCURRENCY_VALUE
         | QUESTIONNAIRE_TIMEOUT_VALUE
         | ADVISOR_MODE_VALUE

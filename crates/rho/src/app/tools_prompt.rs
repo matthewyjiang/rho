@@ -48,6 +48,9 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Added workspace directories: their AGENTS.md files join instruction
     /// discovery, and delegated agents inherit them.
     pub(crate) added_dirs: &'a crate::added_dirs::AddedDirs,
+    /// Whether `process start` advertises `keep_warm`. Only the interactive
+    /// host runs the cache warmer that honors it.
+    pub(crate) process_keep_warm: crate::tools::process::KeepWarmOffer,
 }
 
 /// Whether this run offers MCP sampling at all.
@@ -184,7 +187,8 @@ pub(crate) async fn assemble_tools_and_prompt(
     let tools = if options.no_tools {
         AppToolSet::disabled().with_mcp(mcp)
     } else {
-        let mut tool_options = ToolSetOptions::new(capabilities);
+        let mut tool_options =
+            ToolSetOptions::new(capabilities).process_keep_warm(options.process_keep_warm);
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {

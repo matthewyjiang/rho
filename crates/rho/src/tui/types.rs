@@ -164,6 +164,8 @@ pub(super) struct UsageUi {
     // Cumulative cost from finished advisor calls, claimed via
     // AdvisorSessionStore::claim_cost_usd_micros during the same poll path.
     pub(in crate::tui) advisor_total_cost_usd_micros: u64,
+    /// Keep-warm ping scheduler; also owns the ping spend for this conversation.
+    pub(in crate::tui) cache_warm: super::cache_warm::CacheWarmer,
 }
 
 impl UsageUi {
@@ -171,6 +173,7 @@ impl UsageUi {
     pub(in crate::tui) fn extra_cost_usd_micros(&self) -> u64 {
         self.subagent_total_cost_usd_micros
             .saturating_add(self.advisor_total_cost_usd_micros)
+            .saturating_add(self.cache_warm.cost_usd_micros())
     }
 }
 
@@ -182,6 +185,8 @@ pub(super) enum StatusSource {
     #[default]
     Other,
     McpConnecting,
+    /// The keep-warm ping counter; cleared when warming stops.
+    CacheWarm,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

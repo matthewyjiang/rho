@@ -40,6 +40,8 @@ pub(super) struct Record {
     pub(super) notify: Arc<Notify>,
     pub(super) observed: bool,
     pub(super) explicitly_observed: bool,
+    /// Holds the prompt cache warm while this record is live.
+    pub(super) keep_warm: super::tools::KeepWarm,
 }
 
 impl Record {
@@ -98,11 +100,25 @@ impl ProcessManager {
         }
     }
 
+    /// Starts a shell command with no keep-warm hold.
     pub async fn start(
         &self,
         command: String,
         cwd: &Path,
         timeout: Option<Duration>,
+    ) -> Result<Snapshot, String> {
+        self.start_with_keep_warm(command, cwd, timeout, super::tools::KeepWarm::Off)
+            .await
+    }
+
+    /// Starts a shell command; `keep_warm` decides whether it holds the
+    /// prompt cache warm while live.
+    pub(super) async fn start_with_keep_warm(
+        &self,
+        command: String,
+        cwd: &Path,
+        timeout: Option<Duration>,
+        keep_warm: super::tools::KeepWarm,
     ) -> Result<Snapshot, String> {
         let label = command.clone();
         let execution = ProcessExecution::new(
@@ -113,19 +129,33 @@ impl ProcessManager {
         );
         // Keep the user-facing command, not the platform wrapper PowerShell
         // injects for UTF-8 and exit codes.
-        self.spawn_execution(execution, label).await
+        self.spawn_execution(execution, label, keep_warm).await
     }
 
     /// Starts a process from an already authorized execution plan.
-    pub async fn start_execution(&self, execution: ProcessExecution) -> Result<Snapshot, String> {
+    pub async fn start_execution(
+        &self,
+        execution: ProcessExecution,
+        keep_warm: super::tools::KeepWarm,
+    ) -> Result<Snapshot, String> {
         let command = record_command(execution.invocation())?;
-        self.spawn_execution(execution, command).await
+        self.spawn_execution(execution, command, keep_warm).await
+    }
+
+    /// True while any live process asked to keep the prompt cache warm. The
+    /// hold ends with the process (exit, stop, timeout, or failed start).
+    pub(crate) fn has_keep_warm_hold(&self) -> bool {
+        self.inner.lock().unwrap().records.values().any(|record| {
+            let record = record.lock().unwrap();
+            record.state.is_live() && record.keep_warm == super::tools::KeepWarm::On
+        })
     }
 
     async fn spawn_execution(
         &self,
         execution: ProcessExecution,
         command: String,
+        keep_warm: super::tools::KeepWarm,
     ) -> Result<Snapshot, String> {
         self.prune();
         // Build the spawn plan before registering a live record so setup failures
@@ -159,6 +189,7 @@ impl ProcessManager {
             notify,
             observed: false,
             explicitly_observed: false,
+            keep_warm,
         }));
         {
             let mut inner = self.inner.lock().unwrap();

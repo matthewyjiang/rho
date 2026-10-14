@@ -20,6 +20,7 @@ pub use manager::ProcessManager;
 pub(crate) use notify::{notification_prompt, ProcessNotification};
 pub(crate) use output::decode_header_value;
 pub(crate) use platform::{prepare_child_command, ProcessTree};
+pub(crate) use tools::KeepWarmOffer;
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
@@ -50,6 +51,7 @@ pub(super) fn sdk_bundle(
     max_output_bytes: usize,
     environment: rho_sdk::ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+    keep_warm: KeepWarmOffer,
 ) -> SdkProcessBundle {
     let manager = ProcessManager::with_environment(
         ProcessLimits {
@@ -59,7 +61,7 @@ pub(super) fn sdk_bundle(
         environment.clone(),
     );
     let tools = vec![sdk_process::tool(
-        Process::new(manager.clone()),
+        Process::new(manager.clone()).with_keep_warm(keep_warm),
         max_output_bytes,
         environment,
         mutation_observer,

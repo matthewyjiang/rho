@@ -225,6 +225,7 @@ struct BehaviorConfig<'a> {
     agent_concurrency: usize,
     advisor_mode: bool,
     workspace_rewind: bool,
+    keep_cache_warm: bool,
     edit_tool: EditTool,
     permission_mode: PermissionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -307,6 +308,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 agent_concurrency: config.agent_concurrency,
                 advisor_mode: config.advisor_mode,
                 workspace_rewind: config.workspace_rewind,
+                keep_cache_warm: config.keep_cache_warm,
                 edit_tool: config.edit_tool,
                 permission_mode: config.permission_mode,
                 credential_store: config.credential_store.map(CredentialStoreBackend::as_str),

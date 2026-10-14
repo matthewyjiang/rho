@@ -192,6 +192,8 @@ where
         diagnostics,
         agent,
         added_dirs,
+        // Automation, ACP, side chats, and subagents run no cache warmer.
+        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
     })
     .await?;
     let tool_set = extend_tools(tool_set);

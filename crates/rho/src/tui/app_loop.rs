@@ -199,6 +199,15 @@ impl App {
             } else {
                 Duration::from_secs(3600)
             };
+            // Wake for a due keep-warm ping even when nothing else is active.
+            let idle_timeout = self
+                .usage
+                .cache_warm
+                .next_wake()
+                .map_or(idle_timeout, |wake| {
+                    wake.saturating_duration_since(Instant::now())
+                        .min(idle_timeout)
+                });
             // About to wait for the user: a turn that finished since the
             // last wait notifies now, once per batch of turns, and the
             // terminal hears the resting status at the same moment.
@@ -273,6 +282,7 @@ impl App {
             needs_redraw |= self.apply_pending_permission_mode(agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
+            needs_redraw |= self.poll_cache_warm(agent);
             if !first_frame {
                 needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
             }
@@ -714,6 +724,7 @@ impl App {
         self.usage.latest_usage = None;
         self.usage.model_performance.clear();
         self.usage.cache_stats.reset();
+        self.reset_cache_warm();
     }
 
     fn exit_receipt(&self) -> Option<ExitReceipt> {

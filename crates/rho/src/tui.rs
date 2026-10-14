@@ -30,6 +30,7 @@ pub(crate) mod attachment;
 mod background_polls;
 mod background_tasks;
 mod cache_stats;
+mod cache_warm;
 mod click_sequence;
 mod clipboard;
 mod codemode_command;
@@ -362,6 +363,9 @@ pub struct RuntimeModelView {
     pub advisor_mode: bool,
     /// Show a transcript notice after a turn that re-billed a large uncached prompt.
     pub cache_miss_notices: bool,
+    /// Live mirror of `behavior.keep_cache_warm`. Turning it off stops any
+    /// active warming at once; the `keep_warm` tool parameter follows on restart.
+    pub keep_cache_warm: bool,
     /// Show the keyboard hint block in the session header.
     pub show_header_hints: bool,
     /// Notify through the terminal when a turn finishes or needs the user

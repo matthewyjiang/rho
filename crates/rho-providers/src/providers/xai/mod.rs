@@ -101,6 +101,11 @@ impl XaiProvider {
         }
     }
 
+    /// Unverified on xAI hosts, so the per-request output cap is not sent.
+    pub(crate) fn applies_max_output_tokens(&self) -> bool {
+        false
+    }
+
     fn stamped_create_body(
         &self,
         request: crate::model::ModelRequest<'_>,

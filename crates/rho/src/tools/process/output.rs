@@ -70,6 +70,21 @@ pub(super) fn render_snapshot(snapshot: Snapshot) -> rho_tools::Rendered<Process
     .failed_if(failed)
 }
 
+/// Start result; names an accepted keep-warm hold so the model knows it is on.
+pub(super) fn render_start(
+    snapshot: Snapshot,
+    keep_warm: super::tools::KeepWarm,
+) -> rho_tools::Rendered<ProcessOutput> {
+    // A process that exited or failed before the result was built holds nothing.
+    let holds = keep_warm == super::tools::KeepWarm::On && snapshot.state.is_live();
+    let rendered = render_snapshot(snapshot);
+    if holds {
+        rendered.map_text(|text| format!("{text}\n{}", super::tools::KEEP_WARM_ON_LINE))
+    } else {
+        rendered
+    }
+}
+
 /// Page script data without changing model text. Poll cursors are stateless, so
 /// a later poll can retrieve deferred chunks while they remain retained.
 pub(super) fn limit_process_data(

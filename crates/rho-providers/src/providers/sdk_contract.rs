@@ -426,7 +426,9 @@ where
 ///
 /// Pass `request_options` when the transport also exposes an inherent
 /// `stream_turn_with_options` method with [`rho_sdk::provider::ModelRequestOptions`]
-/// before the event callbacks.
+/// before the event callbacks, plus an inherent
+/// `applies_max_output_tokens(&self) -> bool` that reports whether that path
+/// sends [`rho_sdk::provider::ModelRequestOptions::max_output_tokens`].
 ///
 /// Pass `native_compact_options` instead of `native_compact` when
 /// `native_compact_turn` also takes [`rho_sdk::provider::ModelRequestOptions`].
@@ -544,6 +546,10 @@ macro_rules! impl_sdk_model_provider {
     };
     (@request_options_methods) => {};
     (@request_options_methods @request_options) => {
+        fn honors_max_output_tokens(&self) -> bool {
+            self.applies_max_output_tokens()
+        }
+
         fn send_turn_stream_with_options<'a>(
             &'a self,
             request: ::rho_sdk::model::ModelRequest<'a>,

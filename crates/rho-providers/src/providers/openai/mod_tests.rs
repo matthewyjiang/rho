@@ -976,3 +976,32 @@ fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
         })]
     );
 }
+
+// Covers: a capped request (cache warm ping) sends `max_output_tokens`; an
+// uncapped one leaves the host default.
+// Owner: OpenAI provider request policy
+#[test]
+fn api_responses_body_sends_output_cap_only_when_requested() {
+    let provider = OpenAiProvider::new_with_auth("gpt-5.6".into(), Auth::ApiKey("test-key".into()));
+    let messages = [Message::user_text("hello")];
+    let request = || ModelRequest {
+        messages: &messages,
+        tools: &[],
+        cancellation: Default::default(),
+        reasoning_level: ReasoningLevel::Low,
+        prompt_cache_key: None,
+    };
+    let capped = provider
+        .create_body(
+            request(),
+            ModelRequestOptions::default().with_max_output_tokens(std::num::NonZeroU32::MIN),
+        )
+        .unwrap();
+    let uncapped = provider
+        .create_body(request(), ModelRequestOptions::default())
+        .unwrap();
+
+    assert!(provider.applies_max_output_tokens());
+    assert_eq!(capped.body["max_output_tokens"], json!(1));
+    assert!(uncapped.body.get("max_output_tokens").is_none());
+}

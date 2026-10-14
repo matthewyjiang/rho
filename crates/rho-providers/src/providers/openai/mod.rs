@@ -186,14 +186,29 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
         options: ModelRequestOptions,
     ) -> Result<ResponsesCreateBody, ModelError> {
-        build_responses_create_body(
+        let mut created = build_responses_create_body(
             &self.profile,
             &self.reasoning,
             request,
             options.service_tier(),
             self.hosted_web_search,
             &self.async_tools,
-        )
+        )?;
+        if let Some(tokens) = options
+            .max_output_tokens()
+            .filter(|_| self.applies_max_output_tokens())
+        {
+            created.body["max_output_tokens"] = serde_json::json!(tokens.get());
+        }
+        Ok(created)
+    }
+
+    /// Plain HTTP Responses hosts take `max_output_tokens` per request. The
+    /// Codex WebSocket transport is excluded: it chains each request onto the
+    /// previous response, so a capped side request would become the base the
+    /// next real turn continues from.
+    pub(crate) fn applies_max_output_tokens(&self) -> bool {
+        !self.profile.contract().uses_codex_websocket()
     }
 
     #[cfg(test)]

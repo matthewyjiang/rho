@@ -78,6 +78,7 @@ pub struct ToolSetOptions {
     delegation: Option<DelegationConfig>,
     workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
+    process_keep_warm: super::process::KeepWarmOffer,
 }
 
 impl Default for ToolSetOptions {
@@ -94,7 +95,15 @@ impl ToolSetOptions {
             delegation: None,
             workflow: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
+            process_keep_warm: super::process::KeepWarmOffer::Hidden,
         }
+    }
+
+    /// Advertises `keep_warm` on `process start`. Only a host that runs a
+    /// cache warmer (the interactive TUI) may offer it.
+    pub(crate) fn process_keep_warm(mut self, offer: super::process::KeepWarmOffer) -> Self {
+        self.process_keep_warm = offer;
+        self
     }
 
     /// Supplies the session store the `advisor` tool reads. Without it the
@@ -237,6 +246,7 @@ impl AppToolSet {
             delegation,
             workflow,
             workflow_tracker,
+            process_keep_warm,
         } = options;
         let mut tool_set = Self::disabled();
         tool_set.workflow_tracker = workflow_tracker;
@@ -265,6 +275,7 @@ impl AppToolSet {
                 config.max_output_bytes,
                 process_environment.clone(),
                 tool_set.checkpoint_tracker.clone(),
+                process_keep_warm,
             );
             tool_set.processes = Some(bundle.manager_handle());
             tool_set.add_bundle(bundle);

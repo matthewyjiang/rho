@@ -62,6 +62,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             zen_mode: false,
             advisor_mode: false,
             cache_miss_notices: false,
+            keep_cache_warm: true,
             show_header_hints: true,
             notifications: true,
             auth: "api-key".into(),

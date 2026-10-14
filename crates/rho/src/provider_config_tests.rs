@@ -355,6 +355,7 @@ fn endpoint_updates_preserve_unrelated_custom_options() {
         catalog_lookup: rho_providers::provider::CatalogLookupMode::Slug,
         api: rho_providers::provider::OpenAiCompatibleApi::Responses,
         edit_tool: Some(rho_tools::EditFormat::ApplyPatch),
+        prompt_cache_ttl: Some(std::time::Duration::from_secs(3600)),
     };
     providers
         .custom
@@ -607,4 +608,45 @@ fn custom_api_rejects_unknown_and_ollama_values() {
         format!("{ollama_error:#}").contains("providers.ollama does not accept api"),
         "{ollama_error:#}"
     );
+}
+
+// Covers: prompt_cache_ttl loads as a duration, round-trips, and rejects zero
+// Owner: provider config
+#[test]
+fn custom_prompt_cache_ttl_loads_persists_and_rejects_zero() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nprompt_cache_ttl = \"1h\"\n",
+    )
+    .unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    assert_eq!(
+        config.providers.prompt_cache_ttl("cliproxy"),
+        Some(std::time::Duration::from_secs(3600))
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(
+        reloaded.providers.prompt_cache_ttl("cliproxy"),
+        Some(std::time::Duration::from_secs(3600))
+    );
+
+    let zero = dir.path().join("zero.toml");
+    std::fs::write(
+        &zero,
+        "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nprompt_cache_ttl = \"0s\"\n",
+    )
+    .unwrap();
+    let error = Config::load_with_store(zero, &store).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("providers.custom.cliproxy.prompt_cache_ttl"),
+        "{error:#}"
+    );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }

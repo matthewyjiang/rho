@@ -38,11 +38,12 @@ pub(super) const SIGNIFICANT_MISS_TOKENS: u64 = 20_000;
 /// USD micros to match [`ModelUsage::cost_usd_micros`].
 pub(super) const SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS: u64 = 100_000;
 
-/// Idle gap that is worth naming as a likely TTL expiry.
+/// Prompt-cache TTL assumed when the provider config names none.
 ///
-/// Receipt: Anthropic's default prompt-cache TTL is 5 minutes. Used only to
-/// attribute a cause, never to suppress a miss.
-pub(super) const PROVIDER_CACHE_TTL_HINT: Duration = Duration::from_secs(300);
+/// Receipt: Anthropic's default prompt-cache TTL is 5 minutes. Hosts that keep
+/// prefixes longer (cliproxy writes 1h entries) set `prompt_cache_ttl` on their
+/// custom provider. Miss attribution only names a cause, never suppresses one.
+pub(super) const DEFAULT_PROMPT_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Session-level tokens and dollars re-billed by counted cache misses.
 ///
@@ -62,7 +63,11 @@ pub(super) struct CacheRebilled {
 pub(super) enum CacheMissCause {
     ModelSwitch,
     ToolListChanged,
-    Idle(Duration),
+    /// Idle `gap` reached the provider's prompt-cache `ttl`.
+    Idle {
+        gap: Duration,
+        ttl: Duration,
+    },
     Unattributed,
 }
 
@@ -120,12 +125,20 @@ pub(super) struct CacheStatsTracker {
     /// Sticky until the next sampled request. A mid-session tool-list change
     /// busts the cached prefix even when the system prompt stays put.
     tool_list_changed: bool,
+    /// Configured prompt-cache TTL for the current provider; `None` means
+    /// [`DEFAULT_PROMPT_CACHE_TTL`].
+    ttl: Option<Duration>,
 }
 
 impl CacheStatsTracker {
     /// Hold the latest per-step usage delta for the in-flight request.
     pub(super) fn usage_updated(&mut self, step_delta: &ModelUsage) {
         self.reported_usage = Some(step_delta.clone());
+    }
+
+    /// The provider's prompt-cache TTL, used to attribute idle misses.
+    pub(super) fn set_ttl(&mut self, ttl: Option<Duration>) {
+        self.ttl = ttl;
     }
 
     /// Sample one completed model call against the previous one.
@@ -183,7 +196,10 @@ impl CacheStatsTracker {
 
     /// Clear everything. Matches `/clear`, tree checkout, and new session.
     pub(super) fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            ttl: self.ttl,
+            ..Self::default()
+        };
     }
 
     pub(super) fn take_turn_notices(&mut self) -> Vec<CacheMissNotice> {
@@ -232,7 +248,13 @@ impl CacheStatsTracker {
             self.turn_notices.push(CacheMissNotice {
                 missed_tokens: missed,
                 extra_cost_usd_micros: extra_cost,
-                cause: miss_cause(model, started_at, previous, tool_list_changed),
+                cause: miss_cause(
+                    model,
+                    started_at,
+                    previous,
+                    tool_list_changed,
+                    self.ttl.unwrap_or(DEFAULT_PROMPT_CACHE_TTL),
+                ),
             });
         }
     }
@@ -253,6 +275,7 @@ fn miss_cause(
     started_at: Instant,
     previous: &CompletedRequest,
     tool_list_changed: bool,
+    ttl: Duration,
 ) -> CacheMissCause {
     if model != &previous.model {
         return CacheMissCause::ModelSwitch;
@@ -261,8 +284,8 @@ fn miss_cause(
         return CacheMissCause::ToolListChanged;
     }
     let gap = started_at.saturating_duration_since(previous.completed_at);
-    if gap >= PROVIDER_CACHE_TTL_HINT {
-        CacheMissCause::Idle(gap)
+    if gap >= ttl {
+        CacheMissCause::Idle { gap, ttl }
     } else {
         CacheMissCause::Unattributed
     }
@@ -298,10 +321,10 @@ pub(super) fn notice_text(notice: &CacheMissNotice) -> String {
     let mut text = match notice.cause {
         CacheMissCause::ModelSwitch => "cache miss after model switch".to_string(),
         CacheMissCause::ToolListChanged => "cache miss after tool list change".to_string(),
-        CacheMissCause::Idle(gap) => format!(
+        CacheMissCause::Idle { gap, ttl } => format!(
             "cache miss after {}m idle (cache TTL is about {}m)",
             whole_minutes(gap),
-            whole_minutes(PROVIDER_CACHE_TTL_HINT),
+            whole_minutes(ttl),
         ),
         CacheMissCause::Unattributed => "cache miss".to_string(),
     };

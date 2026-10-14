@@ -883,3 +883,68 @@ async fn leader_exit_terminates_surviving_descendants() {
 
 #[path = "host_rail_tests.rs"]
 mod host_rail;
+
+#[tokio::test]
+async fn keep_warm_holds_only_while_an_offered_start_is_live() {
+    struct Case {
+        name: &'static str,
+        offer: super::tools::KeepWarmOffer,
+        requested: bool,
+        holds: bool,
+    }
+    let cases = [
+        Case {
+            name: "offered and requested",
+            offer: super::tools::KeepWarmOffer::Offered,
+            requested: true,
+            holds: true,
+        },
+        Case {
+            name: "offered but not requested",
+            offer: super::tools::KeepWarmOffer::Offered,
+            requested: false,
+            holds: false,
+        },
+        Case {
+            name: "hidden ignores a stray flag",
+            offer: super::tools::KeepWarmOffer::Hidden,
+            requested: true,
+            holds: false,
+        },
+    ];
+    for case in cases {
+        let manager = ProcessManager::new(ProcessLimits::default());
+        let tool = Process::new(manager.clone()).with_keep_warm(case.offer);
+        assert_eq!(
+            tool.spec().input_schema["properties"]
+                .get("keep_warm")
+                .is_some(),
+            matches!(case.offer, super::tools::KeepWarmOffer::Offered),
+            "{}: schema",
+            case.name
+        );
+        let started = tool
+            .call(
+                json!({
+                    "action": "start",
+                    "command": LONG_RUNNING_COMMAND,
+                    "keep_warm": case.requested,
+                }),
+                tool_context(),
+                "start-call".into(),
+            )
+            .await
+            .unwrap();
+        let process_id = header_field(&started.content, "process_id");
+        assert_eq!(
+            manager.has_keep_warm_hold(),
+            case.holds,
+            "{}: live",
+            case.name
+        );
+
+        manager.stop(&process_id, Duration::ZERO).await.unwrap();
+        eventually(&manager, &process_id).await;
+        assert!(!manager.has_keep_warm_hold(), "{}: after stop", case.name);
+    }
+}
