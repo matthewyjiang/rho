@@ -427,11 +427,17 @@ fn apply_model_override(
             // provider's credentials only, so the store is not queried for
             // every provider. An explicit `--auth` is applied afterward and
             // still takes precedence.
+            //
+            // The configured auth also counts: when the target provider offers
+            // it, it is the user's explicit choice and must survive even
+            // without a stored secret, or a keyed custom host would drop to
+            // `none` (and `--save` would persist that demotion).
             let available = provider::resolve_provider_reference(provider)
                 .into_iter()
                 .flat_map(|profile| profile.provider.auth_modes())
                 .filter(|mode| credentials::auth_has_credentials(store, mode.id).unwrap_or(false))
                 .map(|mode| mode.id.to_string())
+                .chain(std::iter::once(config.auth.clone()))
                 .collect::<Vec<_>>();
             catalog::resolve_model_selection_for_provider(
                 provider,

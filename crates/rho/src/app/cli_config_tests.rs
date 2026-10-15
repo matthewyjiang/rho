@@ -776,6 +776,18 @@ fn cli_custom_host_selection_without_auth_prefers_stored_key() {
                 );
             }
         }
+
+        // A keyed auth already configured for the host survives a `--model`
+        // switch even with no stored secret; it must not drop to `none`.
+        let mut cfg = Config {
+            provider: "keyedhost".into(),
+            model: "vendor/model-a".into(),
+            auth: "keyedhost-api-key".into(),
+            ..base.clone()
+        };
+        let cli = Cli::try_parse_from(["rho", "--model", "keyedhost/vendor/model-a"]).unwrap();
+        apply_overrides(&mut cfg, &cli, &keyless).unwrap();
+        assert_eq!(cfg.auth, "keyedhost-api-key");
     });
 }
 
