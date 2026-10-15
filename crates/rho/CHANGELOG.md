@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.22.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.21.0...rho-coding-agent-v2.22.0) (2026-10-15)
+
+
+### Features
+
+* **acp:** add per-session fast mode toggle as a config option ([#1485](https://github.com/matthewyjiang/rho/issues/1485)) ([321b96a](https://github.com/matthewyjiang/rho/commit/321b96a9c73dfd868f6b7850ce03b465e31f2af9))
+* **acp:** advertise and run skills, /compact, /init, and prompt commands ([#1481](https://github.com/matthewyjiang/rho/issues/1481)) ([556138e](https://github.com/matthewyjiang/rho/commit/556138e9a3979c8181728364c3091b38e3074d84))
+* **acp:** show context usage and todo checklist in t3 code, stop duplicating history on resume ([#1482](https://github.com/matthewyjiang/rho/issues/1482)) ([ec2c8df](https://github.com/matthewyjiang/rho/commit/ec2c8df30706c38d422b3e2fd607706ea3456b15))
+
+
+### Bug Fixes
+
+* **acp:** connect host mcp servers and support session/set_mode for t3 code ([#1480](https://github.com/matthewyjiang/rho/issues/1480)) ([b657114](https://github.com/matthewyjiang/rho/commit/b657114a23b1acf33997dcdb08dca56587ab0ab8))
+* **acp:** show the permission mode picker in config-option hosts like zed ([#1487](https://github.com/matthewyjiang/rho/issues/1487)) ([187daf2](https://github.com/matthewyjiang/rho/commit/187daf2b707459aef00c9b818516bd4f303b029c))
+* **acp:** wake the model when background processes and workflows finish ([#1484](https://github.com/matthewyjiang/rho/issues/1484)) ([9a6fa2f](https://github.com/matthewyjiang/rho/commit/9a6fa2fdfde12877a027ef029b2ce802faff8a4a))
+
 ## [2.21.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.20.1...rho-coding-agent-v2.21.0) (2026-10-15)
 
 
