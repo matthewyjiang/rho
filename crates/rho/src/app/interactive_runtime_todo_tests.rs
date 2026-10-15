@@ -9,7 +9,10 @@ use serde_json::json;
 use super::*;
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
-    tools::{sdk_registry::ToolSetOptions, todo::TodoList},
+    tools::{
+        sdk_registry::ToolSetOptions,
+        todo::{is_restatement, TodoList},
+    },
 };
 
 fn checklist(content: &str) -> TodoList {
@@ -76,7 +79,8 @@ async fn todo_runtime(
 }
 
 // Covers: rejected replacements, unprinted codemode calls, and a script failure
-// after a successful nested todo must not lose or misreport the accepted list.
+// after a successful nested todo must not lose or misreport the accepted list;
+// requests stay prefix-stable for provider prompt caching.
 // Owner: interactive host tool execution and checklist state.
 #[tokio::test]
 async fn todo_tracks_successful_direct_and_nested_replacements_only() {
@@ -119,227 +123,18 @@ async fn todo_tracks_successful_direct_and_nested_replacements_only() {
             .unwrap();
         interactive.finish_run().await.unwrap();
         assert_eq!(interactive.todo_list(), Some(expected));
-        let requests = provider.recorded_requests();
-        let request = requests.last().unwrap();
-        assert_eq!(
-            request.messages.last(),
-            rho_sdk::RequestContext::messages(
-                &interactive.tools.todo_state(),
-                interactive.sessions.session().id()
-            )
-            .last(),
-        );
     }
-    interactive.shutdown().await;
-}
-
-// Covers: generated nested todo updates must be rejected before committing
-// uncompactable mandatory state, and the provider must remain reachable.
-// Owner: host checklist capacity at the shared direct/nested execution seam.
-#[tokio::test]
-async fn oversized_nested_todo_keeps_the_previous_list_and_provider_reachable() {
-    let accepted = checklist("keep this task");
-    let (mut interactive, provider) = todo_runtime(
-        vec![
-            call("initial", "todo", serde_json::to_value(&accepted).unwrap()),
-            text("accepted"),
-            call("oversized", "codemode", json!({"script":
-                "print(call_tool(\"todo\", {\"todos\": [{\"content\": \"x\" * 1000000, \"status\": \"pending\"}]}))"
-            })),
-            text("still reachable"),
-            text("normal next turn"),
-        ],
-        None,
-    ).await;
-    let capacity = rho_sdk::model::context::estimate_context_tokens(
-        &interactive.history(),
-        &interactive.tools.specs(),
-    ) * 2;
-    interactive.set_context_window(Some(capacity)).unwrap();
-    for _ in 0..3 {
-        interactive
-            .start(UserInput::text("continue"), None)
-            .await
-            .unwrap();
-        interactive.finish_run().await.unwrap();
-        assert_eq!(interactive.todo_list(), Some(accepted.clone()));
-    }
+    // Prompt caching marks the request tail, so each request must extend the
+    // previous one rather than end with per-request checklist context.
     let requests = provider.recorded_requests();
-    assert_eq!(requests.len(), 5);
-    let nested = requests[3]
-        .messages
-        .iter()
-        .find_map(|message| match message {
-            Message::ToolResult(result) if result.id == "oversized" => Some(result),
-            _ => None,
-        })
-        .unwrap();
-    assert!(!nested.ok);
-    // The nested ToolError is serialized inside the codemode traceback. Check
-    // that wire diagnostic, not generic failure (which could hide a script cap).
-    assert!(
-        nested.content.contains(&format!(
-            "todo mandatory context budget exceeded: limit {capacity} estimated tokens, asked "
-        )),
-        "{}",
-        nested.content
-    );
-    interactive.shutdown().await;
-}
-
-// Covers: request admission includes incoming input and refreshes on headless
-// turns as well as interactive turns; startup history is not a request budget.
-// Owner: host checklist policy at the shared SDK request boundary.
-#[tokio::test]
-async fn todo_budget_includes_incoming_input_on_interactive_and_headless_turns() {
-    use rho_sdk::{
-        model::context::{estimate_context_tokens, estimate_messages_tokens},
-        RequestContext,
-    };
-
-    for interactive_host in [true, false] {
-        let generated = checklist(&"x".repeat(4_096));
-        let (mut interactive, provider) = todo_runtime(
-            vec![
-                text("seed history"),
-                call("proposal", "codemode", json!({"script":
-                    "call_tool(\"todo\", {\"todos\": [{\"content\": \"x\" * 4096, \"status\": \"in_progress\"}]})"
-                })),
-                text("replacement rejected"),
-            ],
-            None,
-        ).await;
-        interactive
-            .sessions
-            .session()
-            .complete("seed")
-            .await
-            .unwrap();
-        let measured = crate::tools::todo::TodoState::default();
-        measured.replace(Some(generated));
-        let projection = measured.messages(interactive.sessions.session().id());
-        // Fits the previous turn exactly, but not the incoming paste. The
-        // capacity comes from the actual serialized history and projection.
-        let capacity = estimate_context_tokens(&interactive.history(), &interactive.tools.specs())
-            + estimate_messages_tokens(&projection);
-        interactive.set_context_window(Some(capacity)).unwrap();
-        let incoming = "new input ".repeat(200);
-        if interactive_host {
-            interactive
-                .start(UserInput::text(incoming), None)
-                .await
-                .unwrap();
-            interactive.finish_run().await.unwrap();
-        } else {
-            // ACP and automation use the same SDK session entry directly.
-            interactive
-                .sessions
-                .session()
-                .complete(incoming)
-                .await
-                .unwrap();
-        }
-        assert_eq!(interactive.todo_list(), None);
-        let requests = provider.recorded_requests();
-        let result = requests
-            .last()
-            .unwrap()
-            .messages
-            .iter()
-            .find_map(|message| match message {
-                Message::ToolResult(result) if result.id == "proposal" => Some(result),
-                _ => None,
-            })
-            .unwrap();
-        assert!(!result.ok);
-        assert!(
-            result
-                .content
-                .contains("todo mandatory context budget exceeded"),
-            "{}",
-            result.content
-        );
-        interactive.shutdown().await;
+    for pair in requests.windows(2) {
+        assert!(pair[1].messages.starts_with(&pair[0].messages));
     }
-}
-
-// Covers: a generated list that fits the prompt/schema budget but crowds out
-// real history must not strand compaction or reactivate on the next turn.
-// Owner: host runtime compaction and checklist recovery, not TUI rendering.
-#[tokio::test]
-async fn boundary_nested_todo_compaction_preserves_state_and_provider_recovery() {
-    use rho_sdk::{
-        model::context::{estimate_context_tokens, estimate_messages_tokens},
-        RequestContext,
-    };
-
-    let generated = checklist(&"x".repeat(4_096));
-    let (mut interactive, provider) = todo_runtime(
-        vec![
-            call("boundary", "codemode", json!({"script":
-                "call_tool(\"todo\", {\"todos\": [{\"content\": \"x\" * 4096, \"status\": \"in_progress\"}]})"
-            })),
-            text("accepted"),
-            text("brief summary"),
-            call("clear", "todo", json!({"todos": []})),
-            text("recovered"),
-        ],
-        None,
-    ).await;
-    let measured = crate::tools::todo::TodoState::default();
-    measured.replace(Some(generated.clone()));
-    let full = measured.messages(interactive.sessions.session().id());
-    // Exactly fits the initial request, including accepted input: no invented
-    // reserve. Later tool results and output crowd out the admitted projection.
-    let capacity = estimate_context_tokens(&interactive.history(), &interactive.tools.specs())
-        + estimate_messages_tokens(&[Message::user_text("track tasks")])
-        + estimate_messages_tokens(&full);
-    interactive.set_context_window(Some(capacity)).unwrap();
-    interactive
-        .start(UserInput::text("track tasks"), None)
-        .await
-        .unwrap();
-    interactive.finish_run().await.unwrap();
-    assert_eq!(interactive.todo_list(), Some(generated.clone()));
-
-    // Even after summarizing the old tool group, the actual replacement needs
-    // space beyond the prompt/schema-only admission budget.
-    interactive.compact().await.unwrap();
-    assert_eq!(provider.recorded_requests().len(), 3);
-    assert_eq!(interactive.todo_list(), Some(generated.clone()));
-    let snapshot = interactive.sessions.session().snapshot();
-    let reader = crate::tools::todo::TodoState::default();
-    reader.restore(&snapshot);
-    assert_eq!(reader.list(), Some(generated));
-    let recovery = interactive
-        .tools
-        .todo_state()
-        .messages(snapshot.session_id());
-    assert_ne!(recovery, full);
-    assert_eq!(recovery.len(), 1);
-    assert!(
-        estimate_context_tokens(snapshot.history(), &interactive.tools.specs())
-            + estimate_messages_tokens(&recovery)
-            <= capacity
-    );
-
-    interactive
-        .start(UserInput::text("clear tasks"), None)
-        .await
-        .unwrap();
-    interactive.finish_run().await.unwrap();
-    let requests = provider.recorded_requests();
-    assert_ne!(requests[3].messages.last(), full.last());
-    assert!(estimate_context_tokens(&requests[3].messages, &requests[3].tools) <= capacity);
-    assert_eq!(
-        interactive.todo_list(),
-        Some(TodoList { todos: Vec::new() })
-    );
     interactive.shutdown().await;
 }
 
 // Covers: exact nested state survives real SDK compaction and disk reopen;
-// repeated compactions keep request context outside history, clear is durable, and
+// repeated compactions restate it exactly once, clear is durable, and
 // selecting a different session or older tree leaf never leaks newer state.
 // Owner: interactive host snapshot/compaction and branch lifecycle.
 #[tokio::test]
@@ -350,7 +145,7 @@ async fn todo_survives_compaction_resume_clear_and_tree_selection() {
     let storage = StoredSession::create_in_root(root.path(), &cwd).unwrap();
     let expected = checklist("keep exact order, punctuation, and whitespace\n  second line  ");
     let updated = checklist("unprinted replacement after compaction");
-    let (mut interactive, provider) = todo_runtime(
+    let (mut interactive, _) = todo_runtime(
         vec![
             call(
                 "nested",
@@ -402,14 +197,17 @@ async fn todo_survives_compaction_resume_clear_and_tree_selection() {
             .unwrap();
         assert!(interactive.compact().await.unwrap().is_some());
         assert_eq!(interactive.todo_list(), Some(expected.clone()));
+        // The nested update left no native call, so each compaction restates
+        // the list once, last, replacing the previous restatement.
+        let history = interactive.history();
         assert_eq!(
-            interactive
-                .history()
+            history
                 .iter()
-                .filter(|message| message.as_model_context().is_some())
+                .filter(|message| is_restatement(message))
                 .count(),
-            0
+            1
         );
+        assert!(history.last().is_some_and(is_restatement));
     }
     let compacted_leaf = crate::session::tree::SessionTree::load(storage.path())
         .unwrap()
@@ -431,14 +229,6 @@ async fn todo_survives_compaction_resume_clear_and_tree_selection() {
         .await
         .unwrap();
     interactive.finish_run().await.unwrap();
-    assert_eq!(
-        provider.recorded_requests().last().unwrap().messages.last(),
-        rho_sdk::RequestContext::messages(
-            &interactive.tools.todo_state(),
-            interactive.sessions.session().id()
-        )
-        .last(),
-    );
 
     interactive
         .start(UserInput::text("clear the checklist"), None)
@@ -459,14 +249,6 @@ async fn todo_survives_compaction_resume_clear_and_tree_selection() {
         .await
         .unwrap();
     interactive.finish_run().await.unwrap();
-    assert_eq!(
-        provider.recorded_requests().last().unwrap().messages.last(),
-        rho_sdk::RequestContext::messages(
-            &interactive.tools.todo_state(),
-            interactive.sessions.session().id()
-        )
-        .last(),
-    );
     interactive
         .select_tree_node(reopened.clone(), &compacted_leaf)
         .await

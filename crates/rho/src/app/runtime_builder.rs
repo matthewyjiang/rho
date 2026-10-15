@@ -88,7 +88,6 @@ where
     });
     let mut builder = Rho::builder()
         .provider_shared(provider)
-        .request_context(tools.todo_state())
         .system_prompt(system_prompt)
         .workspace(workspace)
         .workspace_policy(workspace_policy)
@@ -125,9 +124,7 @@ where
     if let Some(hooks) = hooks {
         builder = hooks.attach(builder);
     }
-    let runtime = builder.build()?;
-    tools.todo_state().set_context_window(context_window);
-    Ok(runtime)
+    builder.build()
 }
 
 /// Inputs for the host compactor and its automatic policy. Every runtime build
@@ -185,14 +182,8 @@ pub(crate) fn refresh_session_compaction(
     session: &rho_sdk::Session,
     setup: CompactionSetup,
 ) -> Result<(), Error> {
-    let todo = setup.todo.clone();
-    let context_window = setup.context_window;
     let (compactor, policy) = build_compaction(setup);
-    session.set_compaction(Some(Arc::new(compactor)), policy)?;
-    if let Some(todo) = todo {
-        todo.set_context_window(context_window);
-    }
-    Ok(())
+    session.set_compaction(Some(Arc::new(compactor)), policy)
 }
 
 pub(crate) fn automatic_compaction_policy(
