@@ -115,6 +115,10 @@ impl PingResult {
 pub(super) struct CacheWarmer {
     pings: u32,
     in_flight: bool,
+    /// Bumped whenever an in-flight ping stops describing the current hold
+    /// or route. A finished ping from an older generation still counts its
+    /// spend but cannot change scheduling.
+    generation: u64,
     halt: Option<WarmHalt>,
     wake: Option<Instant>,
     gate: WarmGate,
@@ -136,9 +140,23 @@ impl CacheWarmer {
         }
     }
 
-    /// New conversation: drop scheduler state.
+    /// New conversation or new route: drop scheduler state and orphan any
+    /// in-flight ping.
     pub(super) fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            generation: self.generation.wrapping_add(1),
+            ..Self::default()
+        };
+    }
+
+    /// Generation a ping started now belongs to.
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Whether a ping from `generation` still describes the current hold.
+    pub(super) fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
     }
 
     pub(super) fn step(
@@ -152,9 +170,12 @@ impl CacheWarmer {
         self.gate = gate;
         match gate {
             WarmGate::Released => {
-                // The app stops observing any in-flight ping on release, so
-                // its result cannot leak into a later hold.
-                self.in_flight = false;
+                // An in-flight ping belongs to the ended hold: orphan it so
+                // its result cannot halt or block a later hold.
+                if self.in_flight {
+                    self.in_flight = false;
+                    self.generation = self.generation.wrapping_add(1);
+                }
                 self.pings = 0;
                 self.halt = None;
                 return WarmStep::Rest;
@@ -257,11 +278,6 @@ impl App {
         } else {
             WarmGate::Holding
         };
-        if gate == WarmGate::Released {
-            // Stop observing a ping whose hold ended; it still finishes and
-            // reaches the ledger, but cannot halt a later hold.
-            self.tasks.abort(|id| matches!(id, TaskId::CacheWarm));
-        }
         let changed = match self.usage.cache_warm.step(
             Instant::now(),
             gate,
@@ -291,24 +307,35 @@ impl App {
     }
 
     /// Tracks a ping as run-to-completion. The provider bills the prefix read
-    /// once it accepts the request, so a reset only stops observing the ping;
-    /// the send still records that usage in the ledger under the old session.
+    /// once it accepts the request, so a reset never cancels the send; it
+    /// still records that usage in the ledger.
     fn spawn_cache_warm_ping(
         &mut self,
         ping: impl std::future::Future<Output = CacheWarmOutcome> + Send + 'static,
     ) {
         let sent_at = Instant::now();
+        let generation = self.usage.cache_warm.generation();
         self.tasks.track(
             TaskId::CacheWarm,
             tokio::spawn(ping),
             OnCancel::RunToCompletion,
-            move |result| UiOutput::CacheWarm { sent_at, result }.into(),
+            move |result| {
+                UiOutput::CacheWarm {
+                    generation,
+                    sent_at,
+                    result,
+                }
+                .into()
+            },
         );
     }
 
-    /// Applies a finished ping. Returns whether the screen changed.
+    /// Applies a finished ping. Its spend always counts toward this
+    /// conversation; an orphaned ping changes nothing else. Returns whether
+    /// the screen changed.
     pub(super) fn apply_cache_warm(
         &mut self,
+        generation: u64,
         sent_at: Instant,
         result: Result<CacheWarmOutcome, JoinError>,
     ) -> bool {
@@ -320,6 +347,9 @@ impl App {
             resolved_usage_cost_usd_micros(&outcome.usage, self.model_metadata.as_ref())
         {
             self.usage.extra.cache_warm = self.usage.extra.cache_warm.saturating_add(cost);
+        }
+        if !self.usage.cache_warm.is_current(generation) {
+            return false;
         }
         let result = PingResult::classify(&outcome);
         if result == PingResult::Read {
@@ -337,7 +367,8 @@ impl App {
 
     /// Drops warming state for a new conversation and stops observing any
     /// in-flight ping. The ping still finishes, so its spend reaches the
-    /// usage ledger, but its result never touches the new conversation.
+    /// usage ledger, but neither its cost nor its result touches the new
+    /// conversation, whose totals `reset_usage` just cleared.
     pub(super) fn reset_cache_warm(&mut self) {
         self.usage.cache_warm.reset();
         self.tasks.abort(|id| matches!(id, TaskId::CacheWarm));
@@ -345,20 +376,21 @@ impl App {
     }
 
     /// The bound provider changed. An in-flight ping describes the old route,
-    /// so stop observing it (its spend still reaches the ledger), and wait
-    /// for a real request on the new route before warming again.
+    /// so orphan it (its spend still counts in this conversation and the
+    /// ledger), and wait for a real request on the new route before warming
+    /// again.
     pub(super) fn cache_warm_provider_replaced(&mut self) {
         self.usage.cache_stats.forget_prefix_read();
-        self.reset_cache_warm();
+        self.usage.cache_warm.reset();
+        self.sync_cache_warm_status();
     }
 
     /// A reasoning-only provider rebuild. Where effort changes keep the cached
     /// prefix, warming carries on; elsewhere effort is part of the prefix and
     /// this resets like a model switch.
-    pub(super) fn cache_warm_reasoning_changed(&mut self) {
+    pub(super) fn cache_warm_reasoning_changed(&mut self, agent: &InteractiveRuntime) {
         if !rho_providers::providers::openai::reasoning_change_preserves_prefix(
-            &self.info.runtime.provider,
-            &self.info.runtime.model,
+            &agent.provider_identity(),
         ) {
             self.cache_warm_provider_replaced();
         }

@@ -69,6 +69,8 @@ pub(super) enum UiOutput {
     Changelog(Result<ChangelogFetchResult, JoinError>),
     WebSearchTest(Result<Result<usize, rho_tools::tool::ToolError>, JoinError>),
     CacheWarm {
+        /// Warmer generation when the ping started; see `cache_warm`.
+        generation: u64,
         sent_at: std::time::Instant,
         result: Result<crate::app::interactive_runtime::CacheWarmOutcome, JoinError>,
     },
@@ -345,7 +347,11 @@ impl App {
             UiOutput::DiffPatch(index, result) => self.apply_diff_patch(index, result),
             UiOutput::Changelog(result) => self.apply_changelog_fetch(result),
             UiOutput::WebSearchTest(result) => self.apply_web_search_test(result),
-            UiOutput::CacheWarm { sent_at, result } => self.apply_cache_warm(sent_at, result),
+            UiOutput::CacheWarm {
+                generation,
+                sent_at,
+                result,
+            } => self.apply_cache_warm(generation, sent_at, result),
         }
     }
 

@@ -92,6 +92,9 @@ pub(super) enum NativeCompactionWire {
 }
 
 /// Credential-derived Responses identity and wire contract.
+/// `ModelIdentity::api` for every `OpenAiProvider`, first-party or custom host.
+pub(super) const RESPONSES_API: &str = "openai-responses";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ResponsesProfile {
     model: String,
@@ -127,7 +130,7 @@ impl ResponsesProfile {
     ) -> Self {
         let model = model.into();
         Self {
-            identity: ModelIdentity::new(identity_provider, "openai-responses", &model),
+            identity: ModelIdentity::new(identity_provider, RESPONSES_API, &model),
             identity_provider,
             model,
             contract,

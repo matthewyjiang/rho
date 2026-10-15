@@ -1013,3 +1013,23 @@ fn api_responses_body_sends_output_cap_only_when_requested() {
         assert!(uncapped.body.get("max_output_tokens").is_none());
     }
 }
+
+// Covers: keep-warm keeps its clock through an astra reasoning change on any
+// Responses host, including custom ones, and nowhere effort rewrites the prefix.
+// Owner: OpenAI provider prefix policy
+#[test]
+fn reasoning_change_preserves_prefix_only_for_responses_astra() {
+    let cases = [
+        ("openai", "openai-responses", "gpt-6-astra", true),
+        ("my-proxy", "openai-responses", "gpt-6-astra", true),
+        ("openai", "openai-responses", "gpt-5.5", false),
+        ("anthropic", "anthropic-messages", "gpt-6-astra", false),
+    ];
+    for (provider, api, model, expected) in cases {
+        assert_eq!(
+            reasoning_change_preserves_prefix(&ModelIdentity::new(provider, api, model)),
+            expected,
+            "{provider}/{api}/{model}"
+        );
+    }
+}

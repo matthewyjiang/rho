@@ -317,3 +317,29 @@ async fn reset_lets_an_in_flight_ping_finish_unobserved() {
     assert_eq!(ledger.await, Ok(()));
     assert!(!app.apply_finished_ui_tasks());
 }
+
+// Covers: a provider switch while a ping is in flight. The ping was billed in
+// this conversation, so its spend must reach the totals, but its result
+// describes the old route and must not halt warming on the new one.
+// Owner: App cache-warm wiring.
+#[tokio::test]
+async fn an_orphaned_ping_counts_its_spend_but_cannot_halt_the_new_route() {
+    let mut app = crate::tui::tests::test_app();
+    app.spawn_cache_warm_ping(async {
+        super::CacheWarmOutcome {
+            usage: ModelUsage {
+                cost_usd_micros: Some(700),
+                ..ModelUsage::default()
+            },
+            error: Some("connection reset".into()),
+        }
+    });
+    app.cache_warm_provider_replaced();
+    while !app.tasks.has_finished() {
+        tokio::task::yield_now().await;
+    }
+
+    assert!(!app.apply_finished_ui_tasks());
+    assert_eq!(app.usage.extra.cache_warm, 700);
+    assert_eq!(app.usage.cache_warm.halt, None);
+}
