@@ -34,7 +34,7 @@ use super::{
     commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
     events::EventMapper,
-    permission,
+    fast_mode, permission,
     signals::SessionSignals,
     thought_level, AcpClientPort, AcpStartup,
 };
@@ -335,19 +335,27 @@ impl SessionHost {
         request: SetSessionConfigOptionRequest,
         process_config: &Config,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
-        if request.config_id.0.as_ref() == thought_level::THOUGHT_LEVEL_ID {
-            let requested = thought_level::parse_thought_level_request(&request)?;
-            thought_level::apply_thought_level(
-                &self.built,
-                &self.thought_config(process_config),
-                requested,
-            )?;
-            return Ok(SetSessionConfigOptionResponse::new(
-                self.config_options(process_config),
-            ));
+        match request.config_id.0.as_ref() {
+            thought_level::THOUGHT_LEVEL_ID => {
+                let requested = thought_level::parse_thought_level_request(&request)?;
+                thought_level::apply_thought_level(
+                    &self.built,
+                    &self.thought_config(process_config),
+                    requested,
+                )?;
+            }
+            fast_mode::FAST_MODE_ID => {
+                let enabled = fast_mode::parse_fast_mode_request(&request)?;
+                fast_mode::apply_fast_mode(&self.built.session, &self.current_model(), enabled)?;
+            }
+            _ => {
+                return Ok(SetSessionConfigOptionResponse::new(
+                    self.set_model_option(&request, process_config).await?,
+                ));
+            }
         }
         Ok(SetSessionConfigOptionResponse::new(
-            self.set_model_option(&request, process_config).await?,
+            self.config_options(process_config),
         ))
     }
 
@@ -388,7 +396,10 @@ impl SessionHost {
         advertised_config_options(
             &self.current_model(),
             process_config,
-            self.built.session.reasoning_level(),
+            CurrentSettings {
+                reasoning: self.built.session.reasoning_level(),
+                service_tier: self.built.session.service_tier(),
+            },
         )
     }
 
@@ -704,10 +715,19 @@ impl SessionHost {
     }
 }
 
+/// Session settings the advertised options report as current values.
+#[derive(Clone, Copy)]
+struct CurrentSettings {
+    reasoning: rho_sdk::ReasoningLevel,
+    service_tier: Option<rho_sdk::model::ServiceTier>,
+}
+
+/// Every option a session advertises, rebuilt after each change so a model
+/// switch adds or drops the per-model `thought_level` and `fast_mode`.
 fn advertised_config_options(
     current: &CurrentModel,
     process_config: &Config,
-    reasoning: rho_sdk::ReasoningLevel,
+    settings: CurrentSettings,
 ) -> Vec<SessionConfigOption> {
     let available_auths = available_auth_modes(&AppCredentialStore);
     let mut options = config_options::model_config_options(
@@ -717,8 +737,9 @@ fn advertised_config_options(
     );
     options.extend(thought_level::config_options(
         &model_scoped_config(current, process_config),
-        reasoning,
+        settings.reasoning,
     ));
+    options.extend(fast_mode::config_options(current, settings.service_tier));
     options
 }
 

@@ -2,6 +2,7 @@ mod agent;
 mod commands;
 mod config_options;
 mod events;
+mod fast_mode;
 mod host_mcp;
 mod permission;
 mod session_host;

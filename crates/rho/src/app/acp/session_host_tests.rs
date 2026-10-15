@@ -25,7 +25,8 @@ use rho_sdk::{
 use super::{
     advertised_config_options,
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
-    pump_sources, ApprovalSource, CurrentModel, EventMapper, EventSource, PromptGate,
+    pump_sources, ApprovalSource, CurrentModel, CurrentSettings, EventMapper, EventSource,
+    PromptGate,
 };
 use crate::{app::acp::AcpClientPort, config::Config};
 use rho_providers::reasoning::ReasoningLevel;
@@ -290,11 +291,12 @@ async fn permission_request_does_not_block_event_drain() {
     pump.await.expect("pump task").expect("pump");
 }
 
-// Covers: session/new and set_config_option must advertise model, then
-// thought_level only when the current model can change reasoning.
+// Covers: session/new and set_config_option (including after a model switch)
+// must advertise model, then thought_level only when the current model can
+// change reasoning, then fast_mode only when it implements fast mode.
 // Owner: acp session config mapper
 #[test]
-fn advertised_options_merge_model_with_optional_thought_level() {
+fn advertised_options_merge_model_with_per_model_options() {
     let cases = [
         (
             CurrentModel {
@@ -303,6 +305,14 @@ fn advertised_options_merge_model_with_optional_thought_level() {
                 auth: "api-key".into(),
             },
             ["model", "thought_level"].as_slice(),
+        ),
+        (
+            CurrentModel {
+                provider: "openai-codex".into(),
+                model: "gpt-5.5".into(),
+                auth: "codex".into(),
+            },
+            ["model", "thought_level", "fast_mode"].as_slice(),
         ),
         (
             CurrentModel {
@@ -320,7 +330,11 @@ fn advertised_options_merge_model_with_optional_thought_level() {
             auth: current.auth.clone(),
             ..Config::default()
         };
-        let options = advertised_config_options(&current, &config, ReasoningLevel::High);
+        let settings = CurrentSettings {
+            reasoning: ReasoningLevel::High,
+            service_tier: Some(rho_sdk::model::ServiceTier::Priority),
+        };
+        let options = advertised_config_options(&current, &config, settings);
         let ids = options
             .iter()
             .map(|option| option.id.0.as_ref())
