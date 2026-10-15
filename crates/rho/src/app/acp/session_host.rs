@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64},
         Arc, Mutex,
     },
 };
@@ -63,10 +63,13 @@ mod compact;
 mod convert;
 #[path = "session_host_mode.rs"]
 mod mode;
+#[path = "session_host_persist.rs"]
+mod persist;
 
 use build::{build_session, mode_state, session_config};
 use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
 use mode::SessionPermission;
+use persist::TurnCheckpoint;
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
@@ -584,6 +587,22 @@ impl SessionHost {
                 tracing::debug!(%error, "could not send ACP load notice");
             }
         }
+        let checkpoint = self.install_turn_checkpoint(display)?;
+        let result = self.drive_run(&checkpoint, model, call, client).await;
+        // The run is over, so the session is idle again.
+        if let Err(error) = self.built.session.set_checkpoint_store(None) {
+            tracing::warn!(%error, "could not remove ACP turn checkpoint store");
+        }
+        result
+    }
+
+    async fn drive_run(
+        &mut self,
+        checkpoint: &TurnCheckpoint,
+        model: UserInput,
+        call: Option<rho_sdk::model::ToolCall>,
+        client: &dyn AcpClientPort,
+    ) -> anyhow::Result<PromptResponse> {
         let started = match call {
             Some(call) => self.built.session.start_with_tool_call(model, call).await,
             None => self.built.session.start(model).await,
@@ -622,7 +641,7 @@ impl SessionHost {
         self.sent_plan = signals.into_sent_plan();
         match outcome {
             Ok(outcome) => {
-                if let Err(error) = self.persist_turn(display, Some(outcome.text())) {
+                if let Err(error) = self.persist_turn(checkpoint, Some(outcome.text())) {
                     self.dispatch_failed(&error.to_string());
                     return Err(error);
                 }
@@ -634,7 +653,7 @@ impl SessionHost {
                 Ok(PromptResponse::new(EventMapper::map_stop(&outcome)))
             }
             Err(rho_sdk::Error::Cancelled) => {
-                if let Err(error) = self.persist_turn(display, None) {
+                if let Err(error) = self.persist_turn(checkpoint, None) {
                     self.dispatch_failed(&error.to_string());
                     return Err(error);
                 }
@@ -682,33 +701,6 @@ impl SessionHost {
             self.built.tools.todo_state(),
             model_context_window(&current.provider, &current.model),
             std::mem::take(&mut self.sent_plan),
-        )
-    }
-
-    fn persist_turn(&self, input: &UserInput, assistant_text: Option<&str>) -> anyhow::Result<()> {
-        if self.is_replaced() {
-            return Ok(());
-        }
-        let mut display_tail = vec![Message::User(input.blocks().to_vec())];
-        if let Some(text) = assistant_text.filter(|text| !text.is_empty()) {
-            display_tail.push(Message::assistant_text(text));
-        }
-        self.stored
-            .save_snapshot(&self.durable_snapshot(), &display_tail)
-    }
-
-    /// A replaced host must not write over its successor's session file.
-    fn is_replaced(&self) -> bool {
-        self.replaced.load(Ordering::Acquire)
-    }
-
-    /// The live snapshot with the host state a later load restores.
-    fn durable_snapshot(&self) -> rho_sdk::SessionSnapshot {
-        self.added_dirs.decorate(
-            self.built
-                .tools
-                .todo_state()
-                .decorate(self.built.prompt.decorate(self.built.session.snapshot())),
         )
     }
 

@@ -357,8 +357,10 @@ impl DerefMut for HostGuard<'_> {
     }
 }
 
+/// Cancels any prompt and tears the host down. Shutdown has no successor
+/// host, so unlike a replacement the cancelled turn still saves before the
+/// host lock is released.
 async fn shutdown_live(live: Arc<LiveSession>) {
-    live.replaced.store(true, Ordering::Release);
     live.cancel.cancel();
     let host = live.host.lock().await.take();
     if let Some(host) = host {
