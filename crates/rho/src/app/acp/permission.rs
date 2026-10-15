@@ -2,12 +2,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
-    SessionId, SessionMode, SessionModeId, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
+    SessionMode, SessionModeId, SetSessionConfigOptionRequest, ToolCallId, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
+use agent_client_protocol::Error as AcpError;
 
 use crate::permission::PermissionMode;
 use rho_sdk::CapabilityKind;
+
+/// Config option id for the permission mode. ACP clients that support config
+/// options ignore the legacy `modes` field, so the mode is advertised both ways.
+pub(super) const MODE_CONFIG_ID: &str = "mode";
 
 const OPTION_ALLOW_ONCE: &str = "allow_once";
 const OPTION_ALLOW_ALWAYS: &str = "allow_always";
@@ -28,6 +34,34 @@ pub(super) fn parse_mode_id(id: &str) -> Option<PermissionMode> {
     PermissionMode::ALL
         .into_iter()
         .find(|mode| mode.as_str() == id)
+}
+
+/// The `mode` config option: the same permission modes as the legacy `modes`
+/// field, with the same ids, so both stay in sync.
+pub(super) fn mode_config_option(current: PermissionMode) -> SessionConfigOption {
+    SessionConfigOption::select(
+        MODE_CONFIG_ID,
+        "Mode",
+        current.as_str(),
+        PermissionMode::ALL
+            .into_iter()
+            .map(|mode| SessionConfigSelectOption::new(mode.as_str(), mode.label()))
+            .collect::<Vec<_>>(),
+    )
+    .description("Which tool calls run without asking.")
+    .category(SessionConfigOptionCategory::Mode)
+}
+
+/// Parses a `mode` config value into a permission mode.
+pub(super) fn parse_mode_config_request(
+    request: &SetSessionConfigOptionRequest,
+) -> Result<PermissionMode, AcpError> {
+    let Some(value) = request.value.as_value_id() else {
+        return Err(AcpError::invalid_params().data("mode requires a select value id"));
+    };
+    parse_mode_id(value.0.as_ref()).ok_or_else(|| {
+        AcpError::invalid_params().data(format!("unknown session mode '{}'", value.0.as_ref()))
+    })
 }
 
 pub(super) fn next_placeholder_tool_call_id(counter: &AtomicU64) -> String {
