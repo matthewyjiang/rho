@@ -746,6 +746,16 @@ fn cli_custom_host_selection_without_auth_prefers_stored_key() {
         .set_secret("provider:keyedhost:api-key", "sk-test")
         .unwrap();
     let keyless = MemoryCredentialStore::default();
+    let mut base = Config {
+        provider: "openai-codex".into(),
+        model: "gpt-5.5".into(),
+        auth: "codex".into(),
+        ..Config::default()
+    };
+    base.providers
+        .set_endpoint("keyedhost", "http://127.0.0.1:9/v1")
+        .unwrap();
+    base.providers.activate().unwrap();
 
     with_cached_provider_models("keyedhost", vec!["vendor/model-a"], || {
         for args in [
@@ -753,18 +763,9 @@ fn cli_custom_host_selection_without_auth_prefers_stored_key() {
             &["--provider", "keyedhost", "--model", "vendor/model-a"],
             &["--provider", "keyedhost"],
         ] {
+            let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
             for (store, expected_auth) in [(&keyed, "keyedhost-api-key"), (&keyless, "none")] {
-                let mut cfg = Config {
-                    provider: "openai-codex".into(),
-                    model: "gpt-5.5".into(),
-                    auth: "codex".into(),
-                    ..Config::default()
-                };
-                cfg.providers
-                    .set_endpoint("keyedhost", "http://127.0.0.1:9/v1")
-                    .unwrap();
-                cfg.providers.activate().unwrap();
-                let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+                let mut cfg = base.clone();
 
                 apply_overrides(&mut cfg, &cli, store).unwrap();
 

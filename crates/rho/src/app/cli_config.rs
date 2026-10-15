@@ -68,7 +68,8 @@ pub(super) async fn refresh_model_cache(
         .or_else(|| {
             model_override
                 .as_ref()
-                .and_then(|selection| explicit_model_provider(&selection.model))
+                .and_then(|selection| split_model_reference(&selection.model))
+                .map(|(provider, _)| provider)
         })
         .unwrap_or(&config.provider);
     if cli.provider.is_none()
@@ -96,8 +97,8 @@ pub(super) async fn refresh_model_cache(
     );
     let auth = match cli.auth.as_deref() {
         Some(auth) => auth.to_string(),
-        // Match `apply_overrides`: a switched provider uses a mode with stored
-        // credentials, so a keyed host is not probed anonymously.
+        // Same rule as `--provider`: prefer a mode with stored credentials so
+        // a keyed host is not probed anonymously.
         None if provider != config.provider => provider::provider_descriptor(provider)
             .map(|descriptor| descriptor.discovery_auth(store).id.to_string())
             .unwrap_or_else(|| config.auth.clone()),
@@ -416,22 +417,18 @@ fn apply_model_override(
     store: &dyn CredentialStore,
 ) -> anyhow::Result<()> {
     let model_override = effective_model_override(config, reference, cli_provider)?;
-    // `provider/model` without `--provider` or an alias names its provider the
-    // same way, split at the first `/` like the catalog resolver does.
     let qualified = match model_override.provider.as_deref() {
         Some(provider) => Some((provider, model_override.model.as_str())),
-        None => model_override.model.trim().split_once('/'),
+        None => split_model_reference(&model_override.model),
     };
     let selection = match qualified {
         Some((provider, model)) => {
-            // Same auth choice as the TUI `/model` path: keep the configured
-            // auth when the provider offers it, else prefer a stored credential
-            // over the keyless default. An explicit `--auth` is applied
+            // Same auth choice as the TUI `/model` path, against the target
+            // provider's credentials only. An explicit `--auth` is applied
             // afterward and still takes precedence.
-            let mut available = provider_auths_with_credentials(provider.trim(), store);
-            // The configured auth is the user's choice for its provider even
-            // before its credentials exist; the run reports it if they don't.
-            available.push(config.auth.clone());
+            let available = provider::resolve_provider_reference(provider)
+                .map(|profile| credentials::provider_available_auth_modes(profile.provider, store))
+                .unwrap_or_default();
             catalog::resolve_model_selection_for_provider(
                 provider,
                 model,
@@ -453,22 +450,6 @@ fn apply_model_override(
     config.auth = selection.auth;
     config.model_alias = model_override.alias;
     Ok(())
-}
-
-/// Auth modes of `provider` that have usable credentials, including `RHO_*`
-/// env overrides and keyless modes. Legacy aliases such as `xai-oauth` look up
-/// their canonical provider. Empty for an unknown provider.
-///
-/// Scoped to one provider so the CLI touches the credential store only for the
-/// host it is switching to.
-fn provider_auths_with_credentials(provider: &str, store: &dyn CredentialStore) -> Vec<String> {
-    let canonical = provider::legacy_provider_alias(provider).map_or(provider, |(name, _)| name);
-    provider::provider_descriptor(canonical)
-        .into_iter()
-        .flat_map(|descriptor| descriptor.auth_modes())
-        .filter(|mode| credentials::auth_has_credentials(store, mode.id).unwrap_or(false))
-        .map(|mode| mode.id.to_string())
-        .collect()
 }
 
 fn effective_model_override(
@@ -540,9 +521,12 @@ fn provider_requires_cached_models(provider: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn explicit_model_provider(model: &str) -> Option<&str> {
-    let (provider, model) = model.trim().split_once('/')?;
-    (!provider.trim().is_empty() && !model.trim().is_empty()).then_some(provider.trim())
+/// Splits a `provider/model` reference at its first `/`, the way the catalog
+/// resolver does. `None` for a bare model id or an empty side.
+fn split_model_reference(reference: &str) -> Option<(&str, &str)> {
+    let (provider, model) = reference.trim().split_once('/')?;
+    let (provider, model) = (provider.trim(), model.trim());
+    (!provider.is_empty() && !model.is_empty()).then_some((provider, model))
 }
 
 #[cfg(test)]
