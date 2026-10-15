@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 #[path = "todo_state.rs"]
 mod state;
-pub(crate) use state::{is_restatement, TodoState};
+pub(crate) use state::{is_restatement, TodoCheckpoint, TodoState};
 
 // Product tripwire: five times the default ten-row collapsed card budget, not a
 // storage allocation. Larger projects should keep this list at milestone level.

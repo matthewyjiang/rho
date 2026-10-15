@@ -7,12 +7,13 @@
 //! prompt caching that marks only the request tail.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
 use rho_sdk::{
-    model::{ContentBlock, Message},
+    model::{context::estimate_context_tokens, ContentBlock, Message, ToolSpec},
     CompactionOutput, Error, SessionSnapshot,
 };
 
@@ -100,6 +101,39 @@ impl TodoCheckpoint {
         }
     }
 
+    /// Size the exact history `retain` would commit, including its unchanged
+    /// output fast path. Old restatements and a surviving native call must not
+    /// be counted alongside a restatement that will never be appended.
+    pub(crate) fn estimate_retained_tokens(
+        &self,
+        compacted: &[Message],
+        replacement: &[Message],
+        tools: &[ToolSpec],
+    ) -> u64 {
+        estimate_context_tokens(&self.retained_messages(compacted, replacement), tools)
+    }
+
+    fn retained_messages<'a>(
+        &self,
+        compacted: &[Message],
+        replacement: &'a [Message],
+    ) -> Cow<'a, [Message]> {
+        if replacement == compacted {
+            return Cow::Borrowed(replacement);
+        }
+        let mut messages: Vec<_> = replacement
+            .iter()
+            .filter(|message| !is_restatement(message))
+            .cloned()
+            .collect();
+        if let Some(list) = self.list.as_ref().filter(|_| self.restate) {
+            if successful_native_list(&messages).as_ref() != Some(list) {
+                messages.extend(restatement(list));
+            }
+        }
+        Cow::Owned(messages)
+    }
+
     /// Commits the captured list as snapshot metadata alongside `output`.
     ///
     /// Earlier restatements are dropped. When the replacement no longer ends
@@ -113,18 +147,11 @@ impl TodoCheckpoint {
         output: CompactionOutput,
     ) -> Result<CompactionOutput, Error> {
         let metadata = serde_json::to_string(&self.list).expect("todo lists serialize");
-        if output.messages() == compacted {
-            return Ok(output.with_metadata(METADATA_KEY, metadata));
+        match self.retained_messages(compacted, output.messages()) {
+            Cow::Borrowed(_) => Ok(output.with_metadata(METADATA_KEY, metadata)),
+            Cow::Owned(messages) => CompactionOutput::with_usage(messages, output.usage().clone())
+                .map(|output| output.with_metadata(METADATA_KEY, metadata)),
         }
-        let usage = output.usage().clone();
-        let mut messages = output.into_messages();
-        messages.retain(|message| !is_restatement(message));
-        if let Some(list) = self.list.as_ref().filter(|_| self.restate) {
-            if successful_native_list(&messages).as_ref() != Some(list) {
-                messages.extend(restatement(list));
-            }
-        }
-        Ok(CompactionOutput::with_usage(messages, usage)?.with_metadata(METADATA_KEY, metadata))
     }
 }
 

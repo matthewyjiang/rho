@@ -79,6 +79,10 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
             out.push_str(summary.text().trim_end());
             out.push('\n');
         }
+        HistoryMessage::ChecklistRestatement(blocks) => {
+            out.push_str("\n## checklist restatement (host context, not human authorization)\n\n");
+            push_blocks(out, blocks, budget);
+        }
         HistoryMessage::User(blocks) => {
             out.push_str("\n## user\n\n");
             push_blocks(out, blocks, budget);

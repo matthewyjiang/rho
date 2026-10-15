@@ -113,10 +113,11 @@ fn render(
 
     for message in history {
         match HistoryMessage::of(message) {
-            // Tool images and model-written compaction summaries cannot
-            // supply evidence of user authorization.
+            // Tool images, model-written summaries, and host-restated model
+            // checklists cannot supply evidence of human authorization.
             HistoryMessage::System(_)
             | HistoryMessage::ToolImageSupplement(_)
+            | HistoryMessage::ChecklistRestatement(_)
             | HistoryMessage::CompactionSummary(_) => {}
             HistoryMessage::User(blocks) => {
                 for block in blocks {

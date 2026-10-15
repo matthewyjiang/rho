@@ -229,7 +229,22 @@ fn evaluation_transcript(messages: &[Message]) -> String {
             HistoryMessage::CompactionSummary(summary) => {
                 serde_json::json!({ "CompactionSummary": summary.text() }).to_string()
             }
-            _ => serde_json::to_string(&safe_transcript_message(message)).unwrap_or_default(),
+            HistoryMessage::ChecklistRestatement(blocks) => serde_json::json!({
+                "ChecklistRestatement": {
+                    "source": "host context, not human authorization",
+                    "content": blocks,
+                }
+            })
+            .to_string(),
+            HistoryMessage::System(_)
+            | HistoryMessage::User(_)
+            | HistoryMessage::Assistant(_)
+            | HistoryMessage::EnrichedAssistant(_)
+            | HistoryMessage::AbortedAssistant(_)
+            | HistoryMessage::ToolResult(_)
+            | HistoryMessage::ToolImageSupplement(_) => {
+                serde_json::to_string(&safe_transcript_message(message)).unwrap_or_default()
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");

@@ -2,7 +2,8 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{
         context::{estimate_context_tokens, estimate_messages_tokens},
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelResponse, ModelUsage,
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelResponse, ModelUsage, ToolCall,
+        ToolResult,
     },
     provider::{ScriptedProvider, ScriptedTurn},
     CancellationToken, CompactionOutput, CompactionRequest, Compactor,
@@ -117,4 +118,81 @@ async fn native_output_that_crowds_out_the_restatement_falls_back_to_summary() {
     assert!(output.messages().contains(&latest));
     assert!(output.messages().last().is_some_and(is_restatement));
     assert!(estimate_context_tokens(output.messages(), &[]) <= capacity);
+}
+
+// Covers: native replacements are sized after checklist normalization, so a
+// fitting list is neither dropped nor rejected in favor of an unnecessary summary.
+// Owner: host compaction tier selection and window accounting.
+#[tokio::test]
+async fn native_output_fit_uses_the_checklist_that_will_actually_be_retained() {
+    let state = todo_state("current task");
+    let restatement = state.checkpoint().restatement().unwrap();
+    let older = todo_state("old task").checkpoint().restatement().unwrap();
+    let native_call = vec![
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "todo-1".into(),
+            name: "todo".into(),
+            arguments: serde_json::to_value(state.list().unwrap()).unwrap(),
+        })]),
+        Message::ToolResult(ToolResult {
+            id: "todo-1".into(),
+            ok: true,
+            content: "receipt".into(),
+        }),
+    ];
+    let base = Message::assistant_text("native replacement");
+    let cleared = todo_state("unused");
+    cleared.replace(Some(TodoList { todos: Vec::new() }));
+    for (name, state, replacement, expected, unchanged) in [
+        (
+            "replace an existing restatement",
+            state.clone(),
+            vec![older.clone(), base.clone()],
+            vec![base.clone(), restatement.clone()],
+            false,
+        ),
+        (
+            "matching native call needs no reserve",
+            state.clone(),
+            native_call.clone(),
+            native_call,
+            false,
+        ),
+        (
+            "cleared list strips the old restatement",
+            cleared,
+            vec![older, base.clone()],
+            vec![base.clone()],
+            false,
+        ),
+        (
+            "unchanged output stays identical",
+            state,
+            vec![restatement.clone(), base.clone()],
+            vec![restatement, base],
+            true,
+        ),
+    ] {
+        // The exact normalized size is the limit, not an arbitrary small window.
+        let capacity = estimate_context_tokens(&expected, &[]);
+        let history = if unchanged {
+            replacement.clone()
+        } else {
+            vec![
+                Message::user_text("initial request"),
+                Message::assistant_text("old content ".repeat(1_000)),
+                Message::user_text("latest instruction"),
+            ]
+        };
+        let provider = ScriptedProvider::new(ModelIdentity::new("test", "test", "test"), [])
+            .with_native_compactions([Ok(CompactionOutput::new(replacement).unwrap())]);
+        let mut compactor = compactor(provider.clone(), RecordingUsage::default(), Some(capacity));
+        compactor.todo = Some(state);
+        let output = compactor
+            .compact(CompactionRequest::new(history, CancellationToken::new()))
+            .await
+            .unwrap();
+        assert_eq!(output.messages(), expected, "{name}");
+        assert_eq!(provider.recorded_requests().len(), 1, "{name}");
+    }
 }

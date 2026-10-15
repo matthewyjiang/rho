@@ -265,7 +265,6 @@ fn partition<'a>(
 /// a checklist restatement an earlier compaction appended.
 fn is_user_input(message: &Message) -> bool {
     matches!(HistoryMessage::of(message), HistoryMessage::User(_))
-        && !crate::tools::todo::is_restatement(message)
 }
 
 /// End of the contiguous user messages at `start`, or `start` when together

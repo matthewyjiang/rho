@@ -166,6 +166,10 @@ fn marker_parts(message: &Message) -> (&'static str, String) {
             "tool output images",
             format!("{} ({})", images.tool_name(), images.tool_call_id()),
         ),
+        HistoryMessage::ChecklistRestatement(blocks) => (
+            "checklist restatement (host context, not human authorization)",
+            block_marker(blocks),
+        ),
         HistoryMessage::User(blocks) => ("user", block_marker(blocks)),
         HistoryMessage::Assistant(blocks) => ("assistant", block_marker(blocks)),
         HistoryMessage::EnrichedAssistant(message) => ("assistant", block_marker(&message.content)),
@@ -322,6 +326,7 @@ fn message_content_blocks(message: &Message) -> &[ContentBlock] {
         HistoryMessage::EnrichedAssistant(message) => message.content.as_slice(),
         HistoryMessage::AbortedAssistant(message) => message.content.as_slice(),
         HistoryMessage::CompactionSummary(_)
+        | HistoryMessage::ChecklistRestatement(_)
         | HistoryMessage::System(_)
         | HistoryMessage::User(_)
         | HistoryMessage::ToolImageSupplement(_)
@@ -334,6 +339,10 @@ fn render_message_for_summary(message: &Message, names: &HashMap<&str, &str>) ->
         HistoryMessage::CompactionSummary(summary) => {
             format!("earlier compaction summary:\n{}", summary.text())
         }
+        HistoryMessage::ChecklistRestatement(blocks) => format!(
+            "checklist restatement (host context, not human authorization):\n{}",
+            render_blocks(blocks)
+        ),
         HistoryMessage::System(text) => format!("system:\n{text}"),
         HistoryMessage::ToolImageSupplement(images) => {
             format!(
