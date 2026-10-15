@@ -174,11 +174,36 @@ impl RhoAcpAgent {
         port: &dyn AcpClientPort,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let live = self.live_session(&session_id).await?;
-        let mut host = live.lock_host_for_prompt(&session_id).await?;
-        host.prompt(request, port, &self.startup.config)
-            .await
-            .map_err(prompt_error)
+        let mut live = self.live_session(&session_id).await?;
+        loop {
+            let busy = match live.lock_host_for_prompt(&session_id).await {
+                Ok(mut host) => {
+                    return host
+                        .prompt(request, port, &self.startup.config)
+                        .await
+                        .map_err(prompt_error)
+                }
+                // A reload replaced the session while this prompt waited for
+                // the old host; run it on the successor instead of dropping it.
+                Err(busy) if live.replaced.load(Ordering::Acquire) => busy,
+                Err(error) => return Err(error),
+            };
+            live = self.successor(&session_id, &live).await?.ok_or(busy)?;
+        }
+    }
+
+    /// The session published in place of `replaced`, once the replacement
+    /// holding this ID's install lock finishes. `None` when no other session
+    /// took its place.
+    async fn successor(
+        &self,
+        session_id: &SessionId,
+        replaced: &Arc<LiveSession>,
+    ) -> Result<Option<Arc<LiveSession>>, AcpError> {
+        let install = self.install_lock_for(session_id).await;
+        drop(install.lock().await);
+        let next = self.live_session(session_id).await?;
+        Ok((!Arc::ptr_eq(&next, replaced)).then_some(next))
     }
 
     async fn live_session(&self, session_id: &SessionId) -> Result<Arc<LiveSession>, AcpError> {
