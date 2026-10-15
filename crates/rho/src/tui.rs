@@ -209,6 +209,7 @@ mod idle_input;
 mod reasoning_phase;
 mod rewind_actions;
 mod skill_actions;
+mod skill_mention_completion;
 mod skill_picker;
 mod startup_prompt;
 // Always compiled: display_version() is used in release TUI chrome.

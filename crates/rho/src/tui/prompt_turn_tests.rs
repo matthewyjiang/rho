@@ -19,7 +19,7 @@ fn failed_turn() -> FailedTurn {
         display_commit: DisplayCommit::Unsaved,
         notification_context: None,
         boundary_recovery: Vec::new(),
-        initial_tool_call: None,
+        skills: Vec::new(),
         generate_session_title_after_completion: true,
         session_title_user: None,
         parent_action_required: false,

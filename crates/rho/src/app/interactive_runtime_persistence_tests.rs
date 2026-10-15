@@ -84,7 +84,7 @@ async fn finish_run_persists_unconsumed_automatic_compaction() {
             .start_with_boundary_inputs(
                 UserInput::text("continue"),
                 /*display_user*/ None,
-                /*tool_call*/ None,
+                /*host_calls*/ Vec::new(),
             )
             .await
             .unwrap();
@@ -180,7 +180,7 @@ async fn failed_compaction_freezes_persistence_while_draining_queued_checkpoints
             .start_with_boundary_inputs(
                 UserInput::text("continue"),
                 /*display_user*/ None,
-                /*tool_call*/ None,
+                /*host_calls*/ Vec::new(),
             )
             .await
             .unwrap();

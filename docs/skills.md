@@ -112,6 +112,25 @@ plugin-owned skills stay distinct in inventory output. Skills from a project's
 plugin packages activate only in trusted workspaces
 (`RHO_TRUST_PROJECT_PLUGINS=1`).
 
+## Load a skill yourself
+
+You can load skills before the model responds instead of waiting for it to
+choose them:
+
+- Mention a skill as a whitespace-delimited `$<name>` token anywhere in a
+  prompt, such as `review this with $inspect-logs and $rho-config`. Every
+  known skill you mention loads once, in mention order, as one batch of
+  `skill` calls before the first model request. Other text stays prose, so
+  `$20` and `$HOME` are left alone. In the interactive TUI, typing `$` opens a
+  skill palette, and `tab` completes the selected name.
+- Start a prompt with `/skill:<name>`. That skill loads first, followed by any
+  skills the rest of the prompt mentions.
+
+Mentions load only for prompts you send, including queued follow-ups. A
+steering message sent during a turn, a goal continuation, and the prompts that
+`/init` and the agent creator write leave `$` text as prose. ACP hosts follow
+the same rule; see [Agent Client Protocol](/integrations/acp#skills).
+
 ## Built-in skills
 
 Rho includes three built-in skills:

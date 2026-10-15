@@ -80,8 +80,9 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `/` at start | Open the command palette |
 | `/help` | Open the keyboard shortcuts overlay |
 | `@` | Open workspace file path autocomplete |
+| `$` | Open skill autocomplete. Sending the prompt loads every mentioned [skill](/skills#load-a-skill-yourself) first |
 | `up` / `down` | Re-enter previous prompts from this and earlier sessions, or select a command or file while a picker is open |
-| `tab` | Complete the selected command or file path, or complete a workspace path in shell mode |
+| `tab` | Complete the selected command, skill, or file path, or complete a workspace path in shell mode |
 | `ctrl-p` | Cycle to the next pinned model. `ctrl-shift-p` cycles backward on terminals that report it. Does nothing when no models are pinned |
 | `Alt+M` | Cycle permission modes until Rho exits (not saved); during a turn, queue the next mode. Skips Auto without a classifier; configurable as `cycle_permission_mode` |
 | `Alt+S` | Cycle and save output streaming: live → paragraph → off → live. Works during a turn; configurable as `cycle_streaming_mode` |
@@ -224,7 +225,7 @@ Everything clickable reacts when you hover over it. In pickers, prompts, and pal
 
 - **Pickers:** click a row to select it and double-click to choose it. The wheel scrolls the list.
 - **Questionnaires, approvals, and confirmation prompts:** click a choice to focus it and double-click to confirm it. Clicks are ignored until the prompt has been drawn, so a stray click cannot move an approval off **Deny** before you see it.
-- **`/` and `@` palettes:** click a row to select it, and scroll over the palette to move the selection. Double-click completes the row like `tab`; it never runs a command.
+- **`/`, `$`, and `@` palettes:** click a row to select it, and scroll over the palette to move the selection. Double-click completes the row like `tab`; it never runs a command.
 - **Panels and side chat** (`/limits`, `/doctor`, `/hooks`, `/info`, `/spend`, `/side`, and similar): drag across text to copy it, drag the scrollbar to scroll, and click a copy target to copy it.
 - **Status line:** click the model, provider, or reasoning to open `/model`; context, cost, or rate to open `/info`; permission mode to open its picker; desktop access to open `/computer`; and a sign-in warning to open `/login`.
 - **Attachments:** click the `✕` after a queued attachment's label to remove it. Clicking the preview or label does nothing, and a double click removes only one attachment.

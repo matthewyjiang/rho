@@ -17,6 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
+pub(crate) mod mention;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillSource {
     BuiltIn,

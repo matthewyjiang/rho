@@ -404,6 +404,11 @@ pub(super) enum CommandChoiceKind {
     McpPromptArgument {
         value: std::ops::Range<usize>,
     },
+    /// A skill for the `$` mention under the cursor. Carries the token's char
+    /// range, so picking it rewrites that mention alone.
+    SkillMention {
+        token: std::ops::Range<usize>,
+    },
 }
 
 /// Clock for the live elapsed decoration: preserved across card replacement,

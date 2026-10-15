@@ -43,14 +43,28 @@ impl App {
             return Ok(SkillCommandAction::NotSkill);
         };
         Ok(SkillCommandAction::Prompt(Box::new(
-            TurnPrompt::command(model_prompt, display).with_initial_tool_call(
-                rho_sdk::model::ToolCall {
-                    id: rho_sdk::ToolCallId::new().into_string(),
-                    name: "skill".into(),
-                    arguments: serde_json::json!({"name": skill.name}),
-                },
-            ),
+            TurnPrompt::command(model_prompt, display).with_skill(skill.name),
         )))
+    }
+
+    /// Also loads the skills a typed turn mentions as `$<name>`, when the
+    /// active agent can load skills. Generated turns, such as goal
+    /// continuations and `/init`, skip this so their text stays prose.
+    pub(super) fn load_mentioned_skills(&self, turn: &mut TurnPrompt, agent: &InteractiveRuntime) {
+        if agent.has_tool(crate::skills::mention::SKILL_TOOL) {
+            turn.load_mentioned_skills(|| crate::skills::discover(&self.info.runtime.cwd));
+        }
+    }
+
+    /// A queued follow-up as a turn that loads the skills it mentions.
+    pub(super) fn queued_turn_submission(
+        &self,
+        prompt: QueuedPrompt,
+        agent: &InteractiveRuntime,
+    ) -> super::send_confirm::SendSubmission {
+        let mut turn = TurnPrompt::standard(prompt.prompt, prompt.display_prompt);
+        self.load_mentioned_skills(&mut turn, agent);
+        super::send_confirm::SendSubmission::turn(turn, prompt.media, prompt.paste_segments)
     }
 }
 

@@ -49,11 +49,17 @@ impl App {
                     &self.command_context(),
                 )
                 .is_empty()
-                || !self.mcp_argument_choices().is_empty()))
+                || !self.mcp_argument_choices().is_empty()
+                || self.skill_mention_cursor().is_some()))
         .then_some(matches)
     }
 
     pub(super) fn command_matches(&mut self) -> Vec<CommandChoice> {
+        // A `$` mention can sit anywhere in a prompt, command arguments
+        // included, and asks only for skills.
+        if let Some(cursor) = self.skill_mention_cursor() {
+            return self.skill_mention_choices(&cursor);
+        }
         let context = self.command_context();
         let argument_choices =
             commands::argument_choices(self.input_ui.text(), self.input_ui.cursor(), &context);
@@ -180,7 +186,7 @@ impl App {
     ///
     /// Get-or-discover: whichever path asks first — a keystroke or a render
     /// frame — walks skill directories once and shares the result.
-    fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
+    pub(super) fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
         DiscoveryCache::get_or_refresh(&mut self.palette_caches.skills, PALETTE_CACHE_TTL, || {
             crate::skills::discover(&self.info.runtime.cwd)
         })
@@ -327,6 +333,14 @@ impl App {
                         .mcp_argument_cursor()
                         .is_some_and(|cursor| !cursor.key.typed.trim().is_empty())
             }
+            // A bare `$` can be prose, such as a price, so Enter sends it as
+            // typed until a name or an explicit pick narrows the mention.
+            CommandChoiceKind::SkillMention { .. } => {
+                self.input_ui.command_selection_explicit()
+                    || self
+                        .skill_mention_cursor()
+                        .is_some_and(|cursor| !cursor.typed.is_empty())
+            }
         }
     }
 
@@ -392,6 +406,14 @@ impl App {
                 super::mcp_argument_completion::replace_value(
                     self.input_ui.text(),
                     value,
+                    &choice.name,
+                )
+            }
+            // Mentions are prompt text, so the submission mode stays as is.
+            CommandChoiceKind::SkillMention { token } => {
+                super::skill_mention_completion::complete_mention(
+                    self.input_ui.text(),
+                    token,
                     &choice.name,
                 )
             }
