@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Whether a started process holds the prompt cache warm while it runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum KeepWarm {
+    #[default]
+    Off,
+    On,
+}
+
 #[derive(Clone, Debug)]
 pub struct ProcessLimits {
     pub max_live: usize,

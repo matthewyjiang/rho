@@ -158,22 +158,32 @@ pub(super) struct UsageUi {
     pub(in crate::tui) live_stream: super::usage_cost::LiveStreamUsageEstimate,
     /// Main-agent prompt-cache miss detector and session re-bill totals.
     pub(in crate::tui) cache_stats: super::cache_stats::CacheStatsTracker,
-    // Cumulative cost from completed subagents (bg + fg), claimed once per run via
-    // SubagentManager::claim_terminal_costs_usd_micros during panel refresh.
-    pub(in crate::tui) subagent_total_cost_usd_micros: u64,
-    // Cumulative cost from finished advisor calls, claimed via
-    // AdvisorSessionStore::claim_cost_usd_micros during the same poll path.
-    pub(in crate::tui) advisor_total_cost_usd_micros: u64,
-    /// Keep-warm ping scheduler; also owns the ping spend for this conversation.
+    /// Non-main spend, claimed once per completed subagent/advisor/ping.
+    pub(in crate::tui) extra: ExtraCosts,
+    /// Keep-warm ping scheduler, independent of billing and the prefix clock.
     pub(in crate::tui) cache_warm: super::cache_warm::CacheWarmer,
 }
 
 impl UsageUi {
     /// Non-main session cost folded into the statusline total.
     pub(in crate::tui) fn extra_cost_usd_micros(&self) -> u64 {
-        self.subagent_total_cost_usd_micros
-            .saturating_add(self.advisor_total_cost_usd_micros)
-            .saturating_add(self.cache_warm.cost_usd_micros())
+        self.extra.total()
+    }
+}
+
+/// Non-main session spend in USD micros, shared by totals and `/info`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ExtraCosts {
+    pub(super) subagent: u64,
+    pub(super) advisor: u64,
+    pub(super) cache_warm: u64,
+}
+
+impl ExtraCosts {
+    pub(super) fn total(self) -> u64 {
+        self.subagent
+            .saturating_add(self.advisor)
+            .saturating_add(self.cache_warm)
     }
 }
 

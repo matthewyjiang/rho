@@ -133,7 +133,7 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request,
-        Some(ServiceTier::Priority),
+        &ModelRequestOptions::default().with_service_tier(ServiceTier::Priority),
         /*hosted_web_search*/ true,
         &BTreeSet::new(),
     )
@@ -301,7 +301,7 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
                 reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            /* service_tier */ None,
+            &ModelRequestOptions::default(),
             /*hosted_web_search*/ true,
             &BTreeSet::new(),
         )
@@ -397,7 +397,7 @@ fn create_and_compact_body_builders_diverge_on_tools() {
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request.clone(),
-        None,
+        &ModelRequestOptions::default(),
         /*hosted_web_search*/ true,
         &BTreeSet::new(),
     )
@@ -485,7 +485,7 @@ fn async_tools_are_advertised_only_when_supported_and_declared() {
                 reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
-            None,
+            &ModelRequestOptions::default(),
             case.hosted_web_search,
             &case.async_tools,
         )

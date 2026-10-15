@@ -652,6 +652,36 @@ pub(crate) fn handle_codex_sse_line(
     handle_codex_sse_value(&value, state, on_event, CodexTransport::HttpSse)
 }
 
+/// Completed and incomplete responses share usage fallback and throughput accounting.
+fn emit_terminal_usage(
+    value: &serde_json::Value,
+    state: &CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    // Aggregate output on reasoning models is not a reliable throughput count.
+    let context = GenerationTokenContext {
+        reasoning_streamed: state.reasoning_streamed,
+        hidden_reasoning_risk: HiddenReasoningRisk::Possible,
+    };
+    let report = value
+        .get("response")
+        .and_then(|response| extract_usage_report(response, context))
+        .or_else(|| extract_usage_report(value, context));
+    if let Some(on_event) = on_event.as_mut() {
+        if let Some(report) = report {
+            if let Some(tokens) = report.generation_output_tokens {
+                on_event(ModelEvent::GenerationOutputTokens(tokens))?;
+            }
+            on_event(ModelEvent::Usage(report.usage))?;
+        } else if state.reasoning_streamed {
+            on_event(ModelEvent::GenerationOutputTokens(
+                rho_sdk::model::GenerationOutputTokens::Unavailable,
+            ))?;
+        }
+    }
+    Ok(())
+}
+
 /// Core of [`handle_codex_sse_line`] for callers that already hold a parsed
 /// event payload (the Codex websocket transport), avoiding a serialize and
 /// re-parse round-trip per streamed event.
@@ -674,18 +704,7 @@ pub(crate) fn handle_codex_sse_value(
         // An incomplete response (for example one that hit `max_output_tokens`)
         // was still billed, so report its usage before failing the turn.
         if event_type == "response.incomplete" {
-            let context = GenerationTokenContext {
-                reasoning_streamed: state.reasoning_streamed,
-                hidden_reasoning_risk: HiddenReasoningRisk::Possible,
-            };
-            if let (Some(report), Some(on_event)) = (
-                value
-                    .get("response")
-                    .and_then(|response| extract_usage_report(response, context)),
-                on_event.as_mut(),
-            ) {
-                on_event(ModelEvent::Usage(report.usage))?;
-            }
+            emit_terminal_usage(value, state, on_event)?;
         }
         return Err(ModelError::ProviderReported {
             kind: provider_reported_kind(&error_type),
@@ -849,30 +868,7 @@ pub(crate) fn handle_codex_sse_value(
             .and_then(|status| status.as_str())
             .filter(|status| !status.is_empty())
             .map(str::to_owned);
-        let response = value.get("response");
-        // Responses backends host reasoning models, so an aggregate total
-        // without reasoning details cannot be trusted as a throughput count.
-        let context = GenerationTokenContext {
-            reasoning_streamed: state.reasoning_streamed,
-            hidden_reasoning_risk: HiddenReasoningRisk::Possible,
-        };
-        let usage_report = response
-            .and_then(|response| extract_usage_report(response, context))
-            .or_else(|| extract_usage_report(value, context));
-        if let Some(report) = usage_report {
-            if let Some(on_event) = on_event.as_mut() {
-                if let Some(tokens) = report.generation_output_tokens {
-                    on_event(ModelEvent::GenerationOutputTokens(tokens))?;
-                }
-                on_event(ModelEvent::Usage(report.usage))?;
-            }
-        } else if state.reasoning_streamed {
-            if let Some(on_event) = on_event.as_mut() {
-                on_event(ModelEvent::GenerationOutputTokens(
-                    rho_sdk::model::GenerationOutputTokens::Unavailable,
-                ))?;
-            }
-        }
+        emit_terminal_usage(value, state, on_event)?;
         // The completed envelope is authoritative, but may restate items already
         // handled by output_item.done. Reconcile each item independently so one
         // streamed output does not hide a different completed-only output.

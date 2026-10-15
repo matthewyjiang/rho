@@ -85,6 +85,14 @@ impl ProviderEndpointConfig {
 }
 
 impl ProviderConfigs {
+    /// Prompt-cache TTL assumed when the provider config names none.
+    ///
+    /// Receipt: Anthropic's default prompt-cache TTL is 5 minutes. Hosts that
+    /// keep prefixes longer (cliproxy writes 1h entries) set `prompt_cache_ttl`
+    /// on their custom provider.
+    pub(crate) const DEFAULT_PROMPT_CACHE_TTL: std::time::Duration =
+        std::time::Duration::from_secs(300);
+
     fn endpoint(&self, provider: &str) -> Option<&Url> {
         match provider {
             "ollama" => self.ollama.as_ref().map(|endpoint| &endpoint.base_url),

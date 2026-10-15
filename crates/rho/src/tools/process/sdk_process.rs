@@ -86,7 +86,7 @@ impl SdkProcess {
         &self,
         command: String,
         timeout: Option<Duration>,
-        keep_warm: super::tools::KeepWarm,
+        keep_warm: super::types::KeepWarm,
         context: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let workspace = context.workspace().ok_or_else(|| {

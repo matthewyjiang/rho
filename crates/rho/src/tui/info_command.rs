@@ -6,6 +6,7 @@ use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, Mode
 use super::{
     command_block::CommandBlock,
     model_performance::ModelPerformanceSummary,
+    types::ExtraCosts,
     usage_cost::{
         cache_hit_percent, context_fill_percent, display_input_tokens, format_usd,
         resolved_context_window, resolved_usage_cost_usd_micros, session_total_cost_usd_micros,
@@ -85,12 +86,8 @@ pub(super) struct RuntimeInfo {
     /// Antigravity install and sign-in, read from disk when the overlay opens;
     /// no probe, so it never shows as checking.
     antigravity: String,
-    /// Cumulative cost from all completed subagents, including failed/canceled ones.
-    subagent_total_cost_usd_micros: u64,
-    /// Cumulative cost from finished advisor calls in this conversation.
-    advisor_total_cost_usd_micros: u64,
-    /// Cumulative keep-warm ping cost in this conversation.
-    cache_warm_cost_usd_micros: u64,
+    /// Non-main spend for this conversation.
+    extra: super::types::ExtraCosts,
 }
 
 impl RuntimeInfo {
@@ -186,9 +183,7 @@ impl App {
             external_runtimes: checking_external_runtimes(),
             antigravity: AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default())
                 .description(),
-            subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
-            advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
-            cache_warm_cost_usd_micros: self.usage.cache_warm.cost_usd_micros(),
+            extra: self.usage.extra,
         };
         self.show_info_overlay(info);
         self.start_info_refresh();
@@ -332,7 +327,7 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        if ExtraCosts::from_info(info).total() == 0 {
+        if info.extra.total() == 0 {
             block.push_note("No token usage recorded yet.");
         } else {
             push_cost_fields(block, info, None);
@@ -355,32 +350,8 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     push_cost_fields(block, info, main_cost_micros);
 }
 
-/// Non-main session spend, each shown as its own `/info` row when nonzero.
-#[derive(Clone, Copy, Default)]
-struct ExtraCosts {
-    subagent: u64,
-    advisor: u64,
-    cache_warm: u64,
-}
-
-impl ExtraCosts {
-    fn from_info(info: &RuntimeInfo) -> Self {
-        Self {
-            subagent: info.subagent_total_cost_usd_micros,
-            advisor: info.advisor_total_cost_usd_micros,
-            cache_warm: info.cache_warm_cost_usd_micros,
-        }
-    }
-
-    fn total(self) -> u64 {
-        self.subagent
-            .saturating_add(self.advisor)
-            .saturating_add(self.cache_warm)
-    }
-}
-
 fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micros: Option<u64>) {
-    let extra = ExtraCosts::from_info(info);
+    let extra = info.extra;
     let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, extra.total()) else {
         return;
     };

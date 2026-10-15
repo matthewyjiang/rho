@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use crate::model::{ModelError, ModelIdentity, ModelRequest};
 use rho_sdk::model::{ServiceTier, ToolSpec};
+use rho_sdk::provider::ModelRequestOptions;
 
 use crate::protocol::openai_responses::{
     codex_reasoning_param, to_responses_tool, ToolAsync, ToolStrictness,
@@ -225,7 +226,7 @@ pub(super) fn build_responses_create_body(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
-    service_tier: Option<ServiceTier>,
+    options: &ModelRequestOptions,
     hosted_web_search: bool,
     async_tools: &BTreeSet<String>,
 ) -> Result<ResponsesCreateBody, ModelError> {
@@ -260,10 +261,16 @@ pub(super) fn build_responses_create_body(
 
     let mut body = base_responses_body(profile);
     body["stream"] = json!(true);
-    if service_tier == Some(ServiceTier::Priority)
+    if options.service_tier() == Some(ServiceTier::Priority)
         && super::supports_fast_mode(profile.provider(), profile.model())
     {
         body["service_tier"] = json!("priority");
+    }
+    if let Some(tokens) = options
+        .max_output_tokens()
+        .filter(|_| !contract.uses_codex_websocket())
+    {
+        body["max_output_tokens"] = json!(tokens.get());
     }
     body["instructions"] = json!(instructions);
     body["input"] = json!(input);
@@ -368,11 +375,14 @@ fn build_codex_responses_body_with_tier(
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
+    let options = service_tier.map_or_else(ModelRequestOptions::default, |tier| {
+        ModelRequestOptions::default().with_service_tier(tier)
+    });
     Ok(build_responses_create_body(
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request,
-        service_tier,
+        &options,
         hosted_web_search,
         &BTreeSet::new(),
     )?

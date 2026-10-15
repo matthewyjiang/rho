@@ -200,7 +200,7 @@ pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
 pub use request_context::RequestContext;
 pub use run::{Run, SteeringHandle};
 pub use secret::SecretString;
-pub use session::{Session, SessionState, UserInput};
+pub use session::{Session, SessionRequestPrefix, SessionState, UserInput};
 pub use steering::SteeringRetraction;
 pub use text::{
     ceil_char_boundary, floor_char_boundary, ASCII_ELLIPSIS, DIAGNOSTIC_TRUNCATION_MARKER,

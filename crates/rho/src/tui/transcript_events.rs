@@ -237,7 +237,6 @@ impl App {
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         if event.rewrites_prompt_prefix() {
             self.usage.cache_stats.prompt_prefix_reset();
-            self.usage.cache_warm.prefix_reset();
         }
         match event {
             ViewModelEvent::RunStarted => {
@@ -320,11 +319,9 @@ impl App {
                     metrics,
                     self.model_metadata.as_ref(),
                     now,
+                    self.info.runtime.prompt_cache_ttl,
                 );
-                // The provider read the prefix when the request started.
-                self.usage
-                    .cache_warm
-                    .record_request(now.checked_sub(metrics.total_latency).unwrap_or(now));
+                self.usage.cache_warm.record_request();
                 self.usage.model_performance.record(profile, metrics);
                 None
             }

@@ -41,9 +41,10 @@ pub(super) const PING_MARGIN: Duration = Duration::from_secs(30);
 pub(super) const MAX_PINGS_PER_IDLE: u32 = 12;
 
 /// What the idle loop allows the warmer to do right now.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum WarmGate {
     /// No live hold, or the user turned warming off.
+    #[default]
     Released,
     /// A turn or compaction owns the session; its own request refreshes the cache.
     Paused,
@@ -65,8 +66,8 @@ pub(super) enum WarmHalt {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WarmStep {
     Rest,
-    /// Nothing to do until this instant.
-    WakeAt(Instant),
+    /// Nothing to do until `next_wake()`.
+    Waiting,
     Ping,
     /// Warming just stopped; report it once.
     Halted(WarmHalt),
@@ -77,7 +78,7 @@ pub(super) enum WarmStep {
 pub(super) enum PingResult {
     /// Read the cached prefix; the TTL restarts.
     Read,
-    /// Read nothing from cache, so it paid a full write.
+    /// Too much of the prefix was uncached or rewritten to repeat the ping.
     Miss,
     /// Failed before reporting usage.
     Failed,
@@ -86,10 +87,20 @@ pub(super) enum PingResult {
 impl PingResult {
     /// A capped ping usually ends as an `incomplete` error after reporting
     /// usage, so usage decides before the error does.
-    pub(super) fn classify(usage: &ModelUsage, failed: bool) -> Self {
-        if usage.cache_read_tokens.is_some_and(|tokens| tokens > 0) {
+    pub(super) fn classify(outcome: &CacheWarmOutcome) -> Self {
+        let usage = &outcome.usage;
+        // Use the measured cache-breakpoint noise floor, not any nonzero hit:
+        // a short cached head with a large rewritten suffix is still a miss.
+        if usage.cache_read_tokens.is_some_and(|read| {
+            read > 0
+                && usage.inclusive_prompt_tokens().is_some_and(|prompt| {
+                    prompt.saturating_sub(read) <= super::cache_stats::CACHE_MISS_NOISE_FLOOR_TOKENS
+                })
+        }) {
             Self::Read
-        } else if failed && usage.cache_read_tokens.is_none() && usage.cache_write_tokens.is_none()
+        } else if outcome.error.is_some()
+            && usage.cache_read_tokens.is_none()
+            && usage.cache_write_tokens.is_none()
         {
             Self::Failed
         } else {
@@ -100,76 +111,45 @@ impl PingResult {
     }
 }
 
+#[derive(Default)]
 pub(super) struct CacheWarmer {
-    ttl: Duration,
-    /// When the provider last read the cached prefix: a real request's start
-    /// or a successful ping's send. `None` when there is nothing to keep warm.
-    last_prefix_read: Option<Instant>,
     pings: u32,
     in_flight: bool,
     halt: Option<WarmHalt>,
     wake: Option<Instant>,
-    /// Ping spend this conversation, folded into the session cost.
-    cost_usd_micros: u64,
-}
-
-impl Default for CacheWarmer {
-    fn default() -> Self {
-        Self {
-            ttl: super::cache_stats::DEFAULT_PROMPT_CACHE_TTL,
-            last_prefix_read: None,
-            pings: 0,
-            in_flight: false,
-            halt: None,
-            wake: None,
-            cost_usd_micros: 0,
-        }
-    }
+    gate: WarmGate,
 }
 
 impl CacheWarmer {
-    pub(super) fn set_ttl(&mut self, ttl: Duration) {
-        self.ttl = ttl;
-    }
-
-    pub(super) fn cost_usd_micros(&self) -> u64 {
-        self.cost_usd_micros
-    }
-
     /// The deadline the idle loop should wake for, if any.
     pub(super) fn next_wake(&self) -> Option<Instant> {
         self.wake
     }
 
-    /// A real request read the prefix at `started_at`; a new idle stretch
+    /// A real request established the prefix; a new idle stretch
     /// begins with a fresh budget. A miss stays sticky until the hold ends,
     /// since repeating a mismatched prefix would pay a write every stretch.
-    pub(super) fn record_request(&mut self, started_at: Instant) {
-        self.last_prefix_read = Some(
-            self.last_prefix_read
-                .map_or(started_at, |read| read.max(started_at)),
-        );
+    pub(super) fn record_request(&mut self) {
         self.pings = 0;
         if matches!(self.halt, Some(WarmHalt::Budget | WarmHalt::Failed)) {
             self.halt = None;
         }
     }
 
-    /// Compaction rewrote the prefix; nothing is cached until the next turn.
-    pub(super) fn prefix_reset(&mut self) {
-        self.last_prefix_read = None;
-    }
-
-    /// New conversation: drop all state except the configured TTL.
+    /// New conversation: drop scheduler state.
     pub(super) fn reset(&mut self) {
-        *self = Self {
-            ttl: self.ttl,
-            ..Self::default()
-        };
+        *self = Self::default();
     }
 
-    pub(super) fn step(&mut self, now: Instant, gate: WarmGate) -> WarmStep {
+    pub(super) fn step(
+        &mut self,
+        now: Instant,
+        gate: WarmGate,
+        last_prefix_read: Option<Instant>,
+        ttl: Duration,
+    ) -> WarmStep {
         self.wake = None;
+        self.gate = gate;
         match gate {
             WarmGate::Released => {
                 self.pings = 0;
@@ -183,19 +163,19 @@ impl CacheWarmer {
         if self.in_flight || self.halt.is_some() {
             return WarmStep::Rest;
         }
-        let Some(read_at) = self.last_prefix_read else {
+        let Some(read_at) = last_prefix_read else {
             return WarmStep::Rest;
         };
-        if now >= read_at + self.ttl {
+        if now >= read_at + ttl {
             // Already cold: a ping would only pay to rewrite it.
             return WarmStep::Rest;
         }
         // A TTL shorter than twice the margin still waits half of it, so a
         // tiny configured TTL cannot ping back to back.
-        let due = read_at + self.ttl.saturating_sub(PING_MARGIN).max(self.ttl / 2);
+        let due = read_at + ttl.saturating_sub(PING_MARGIN).max(ttl / 2);
         if now < due {
             self.wake = Some(due);
-            return WarmStep::WakeAt(due);
+            return WarmStep::Waiting;
         }
         if self.pings >= MAX_PINGS_PER_IDLE {
             return self.halt_once(WarmHalt::Budget);
@@ -204,29 +184,17 @@ impl CacheWarmer {
         WarmStep::Ping
     }
 
-    /// Applies a finished ping sent at `sent_at`; returns a new halt to report.
-    pub(super) fn ping_finished(
-        &mut self,
-        sent_at: Instant,
-        result: PingResult,
-    ) -> Option<WarmHalt> {
+    /// Applies a finished ping; returns a new halt to report.
+    pub(super) fn ping_finished(&mut self, result: PingResult) -> Option<WarmHalt> {
         self.in_flight = false;
         match result {
             PingResult::Read => {
                 self.pings += 1;
-                self.record_ping_read(sent_at);
                 None
             }
             PingResult::Miss => self.set_halt(WarmHalt::Miss),
             PingResult::Failed => self.set_halt(WarmHalt::Failed),
         }
-    }
-
-    fn record_ping_read(&mut self, sent_at: Instant) {
-        self.last_prefix_read = Some(
-            self.last_prefix_read
-                .map_or(sent_at, |read| read.max(sent_at)),
-        );
     }
 
     fn halt_once(&mut self, halt: WarmHalt) -> WarmStep {
@@ -244,8 +212,16 @@ impl CacheWarmer {
         Some(halt)
     }
 
-    fn status(&self) -> String {
-        format!("warming cache · {}/{MAX_PINGS_PER_IDLE}", self.pings)
+    fn status_text(
+        &self,
+        now: Instant,
+        last_prefix_read: Option<Instant>,
+        ttl: Duration,
+    ) -> Option<String> {
+        (self.gate == WarmGate::Holding
+            && self.halt.is_none()
+            && last_prefix_read.is_some_and(|read| now < read + ttl))
+        .then(|| format!("warming cache · {}/{MAX_PINGS_PER_IDLE}", self.pings))
     }
 }
 
@@ -269,11 +245,6 @@ impl App {
     /// Idle-loop step: start a due ping or report a halt. Returns whether the
     /// screen changed.
     pub(super) fn poll_cache_warm(&mut self, agent: &InteractiveRuntime) -> bool {
-        let ttl = agent.prompt_cache_ttl();
-        self.usage.cache_stats.set_ttl(ttl);
-        self.usage
-            .cache_warm
-            .set_ttl(ttl.unwrap_or(super::cache_stats::DEFAULT_PROMPT_CACHE_TTL));
         let gate = if !self.info.runtime.keep_cache_warm || !agent.has_keep_warm_hold() {
             WarmGate::Released
         } else if agent.is_session_busy() || self.is_ui_busy() {
@@ -283,27 +254,37 @@ impl App {
         } else {
             WarmGate::Holding
         };
-        match self.usage.cache_warm.step(Instant::now(), gate) {
-            WarmStep::Rest => match gate {
-                WarmGate::Released => self.clear_cache_warm_status(),
-                WarmGate::Paused | WarmGate::Unsupported | WarmGate::Holding => false,
-            },
-            WarmStep::WakeAt(_) => self.show_cache_warm_status(),
+        let changed = match self.usage.cache_warm.step(
+            Instant::now(),
+            gate,
+            self.usage.cache_stats.last_prefix_read(),
+            self.info.runtime.prompt_cache_ttl,
+        ) {
+            WarmStep::Rest | WarmStep::Waiting => false,
             WarmStep::Ping => {
                 let ping = agent.cache_warm_ping();
                 let sent_at = Instant::now();
-                self.tasks
-                    .spawn(TaskId::CacheWarm, ping.send(), move |result| {
-                        UiOutput::CacheWarm { sent_at, result }.into()
-                    });
+                self.tasks.spawn(
+                    TaskId::CacheWarm,
+                    async move {
+                        match ping {
+                            Ok(ping) => ping.send().await,
+                            Err(error) => CacheWarmOutcome {
+                                usage: ModelUsage::default(),
+                                error: Some(error.to_string()),
+                            },
+                        }
+                    },
+                    move |result| UiOutput::CacheWarm { sent_at, result }.into(),
+                );
                 false
             }
             WarmStep::Halted(halt) => {
-                self.clear_cache_warm_status();
                 self.insert_entry(&Entry::Notice(halt_notice(halt, None)));
                 true
             }
-        }
+        };
+        self.sync_cache_warm_status() || changed
     }
 
     /// Applies a finished ping. Returns whether the screen changed.
@@ -319,35 +300,43 @@ impl App {
         if let Some(cost) =
             resolved_usage_cost_usd_micros(&outcome.usage, self.model_metadata.as_ref())
         {
-            self.usage.cache_warm.cost_usd_micros =
-                self.usage.cache_warm.cost_usd_micros.saturating_add(cost);
+            self.usage.extra.cache_warm = self.usage.extra.cache_warm.saturating_add(cost);
         }
-        let result = PingResult::classify(&outcome.usage, outcome.error.is_some());
-        match self.usage.cache_warm.ping_finished(sent_at, result) {
-            None => self.show_cache_warm_status(),
+        let result = PingResult::classify(&outcome);
+        if result == PingResult::Read {
+            self.usage.cache_stats.record_prefix_read(sent_at);
+        }
+        let changed = match self.usage.cache_warm.ping_finished(result) {
+            None => false,
             Some(halt) => {
-                self.clear_cache_warm_status();
                 self.insert_entry(&Entry::Notice(halt_notice(halt, outcome.error.as_deref())));
                 true
             }
-        }
+        };
+        self.sync_cache_warm_status() || changed
     }
 
     /// Drops warming state and any in-flight ping for a new conversation.
     pub(super) fn reset_cache_warm(&mut self) {
         self.usage.cache_warm.reset();
         self.tasks.abort(|id| matches!(id, TaskId::CacheWarm));
-        self.clear_cache_warm_status();
+        self.sync_cache_warm_status();
     }
 
     /// Shows the ping counter unless another status is up. Returns whether
     /// the status changed.
-    fn show_cache_warm_status(&mut self) -> bool {
+    fn sync_cache_warm_status(&mut self) -> bool {
+        let Some(status) = self.usage.cache_warm.status_text(
+            Instant::now(),
+            self.usage.cache_stats.last_prefix_read(),
+            self.info.runtime.prompt_cache_ttl,
+        ) else {
+            return self.clear_cache_warm_status();
+        };
         let owned = self.status_source == StatusSource::CacheWarm;
         if !owned && !self.status().is_empty() {
             return false;
         }
-        let status = self.usage.cache_warm.status();
         if owned && self.status() == status {
             return false;
         }

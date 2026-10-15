@@ -41,7 +41,7 @@ pub(super) struct Record {
     pub(super) observed: bool,
     pub(super) explicitly_observed: bool,
     /// Holds the prompt cache warm while this record is live.
-    pub(super) keep_warm: super::tools::KeepWarm,
+    pub(super) keep_warm: super::types::KeepWarm,
 }
 
 impl Record {
@@ -107,7 +107,7 @@ impl ProcessManager {
         cwd: &Path,
         timeout: Option<Duration>,
     ) -> Result<Snapshot, String> {
-        self.start_with_keep_warm(command, cwd, timeout, super::tools::KeepWarm::Off)
+        self.start_with_keep_warm(command, cwd, timeout, super::types::KeepWarm::Off)
             .await
     }
 
@@ -118,7 +118,7 @@ impl ProcessManager {
         command: String,
         cwd: &Path,
         timeout: Option<Duration>,
-        keep_warm: super::tools::KeepWarm,
+        keep_warm: super::types::KeepWarm,
     ) -> Result<Snapshot, String> {
         let label = command.clone();
         let execution = ProcessExecution::new(
@@ -133,10 +133,10 @@ impl ProcessManager {
     }
 
     /// Starts a process from an already authorized execution plan.
-    pub async fn start_execution(
+    pub(crate) async fn start_execution(
         &self,
         execution: ProcessExecution,
-        keep_warm: super::tools::KeepWarm,
+        keep_warm: super::types::KeepWarm,
     ) -> Result<Snapshot, String> {
         let command = record_command(execution.invocation())?;
         self.spawn_execution(execution, command, keep_warm).await
@@ -147,7 +147,7 @@ impl ProcessManager {
     pub(crate) fn has_keep_warm_hold(&self) -> bool {
         self.inner.lock().unwrap().records.values().any(|record| {
             let record = record.lock().unwrap();
-            record.state.is_live() && record.keep_warm == super::tools::KeepWarm::On
+            record.state.is_live() && record.keep_warm == super::types::KeepWarm::On
         })
     }
 
@@ -155,7 +155,7 @@ impl ProcessManager {
         &self,
         execution: ProcessExecution,
         command: String,
-        keep_warm: super::tools::KeepWarm,
+        keep_warm: super::types::KeepWarm,
     ) -> Result<Snapshot, String> {
         self.prune();
         // Build the spawn plan before registering a live record so setup failures

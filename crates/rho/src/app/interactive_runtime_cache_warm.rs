@@ -11,9 +11,10 @@
 use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
 use rho_sdk::{
-    model::{Message, ModelRequest, ModelUsage, ToolSpec},
+    model::{Message, ModelUsage},
     provider::{ModelProvider, ModelRequestOptions},
-    CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, ReasoningLevel,
+    CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording,
+    SessionRequestPrefix,
 };
 
 use super::InteractiveRuntime;
@@ -33,10 +34,7 @@ const PING_PURPOSE: &str = "cache_warm";
 /// A ready-to-send ping, owned so it can run on a background task.
 pub(crate) struct CacheWarmPing {
     provider: Arc<dyn ModelProvider>,
-    messages: Vec<Message>,
-    tools: Vec<ToolSpec>,
-    reasoning: ReasoningLevel,
-    prompt_cache_key: String,
+    prefix: SessionRequestPrefix,
     context: ProviderRequestUsageContext,
     recording: ProviderRequestUsageRecording,
 }
@@ -62,13 +60,7 @@ impl CacheWarmPing {
         let result = crate::usage::send_recorded_with(
             self.provider.as_ref(),
             crate::usage::RecordedRequest {
-                request: ModelRequest {
-                    messages: &self.messages,
-                    tools: &self.tools,
-                    cancellation: CancellationToken::new(),
-                    reasoning_level: self.reasoning,
-                    prompt_cache_key: Some(&self.prompt_cache_key),
-                },
+                request: self.prefix.as_request(CancellationToken::new()),
                 options,
                 context: self.context,
                 recording: self.recording,
@@ -97,33 +89,30 @@ impl InteractiveRuntime {
         self.provider.provider().honors_max_output_tokens()
     }
 
-    /// Prompt cache TTL configured for the current provider, if any.
-    pub(crate) fn prompt_cache_ttl(&self) -> Option<Duration> {
+    /// Prompt cache TTL for the current provider, with its default resolved once.
+    pub(crate) fn prompt_cache_ttl(&self) -> Duration {
         self.config
             .providers
             .prompt_cache_ttl(&self.provider.provider().identity().provider)
+            .unwrap_or(crate::config::ProviderConfigs::DEFAULT_PROMPT_CACHE_TTL)
     }
 
     /// Builds a ping for the current session prefix.
-    pub(crate) fn cache_warm_ping(&self) -> CacheWarmPing {
+    pub(crate) fn cache_warm_ping(&self) -> Result<CacheWarmPing, rho_sdk::Error> {
         let provider = Arc::clone(self.provider.provider());
         let session_id = self.session_id().clone();
-        let mut messages = self.sessions.history();
-        messages.extend(rho_sdk::RequestContext::messages(
-            &self.tools.todo_state(),
-            &session_id,
-        ));
-        messages.push(Message::user_text(PING_TEXT));
+        let prefix = self
+            .sessions
+            .session()
+            .request_prefix()?
+            .with_trailing_message(Message::user_text(PING_TEXT));
         let context = ProviderRequestUsageContext::for_purpose(provider.identity(), PING_PURPOSE)
             .with_session_id(session_id.clone());
-        CacheWarmPing {
-            messages,
-            tools: self.tools.specs(),
-            reasoning: self.sessions.session().reasoning_level(),
-            prompt_cache_key: super::startup::prompt_cache_key(session_id.as_str()),
+        Ok(CacheWarmPing {
+            prefix,
             context,
             recording: self.usage_recording.clone(),
             provider,
-        }
+        })
     }
 }

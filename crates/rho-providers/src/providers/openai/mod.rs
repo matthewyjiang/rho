@@ -186,21 +186,14 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
         options: ModelRequestOptions,
     ) -> Result<ResponsesCreateBody, ModelError> {
-        let mut created = build_responses_create_body(
+        build_responses_create_body(
             &self.profile,
             &self.reasoning,
             request,
-            options.service_tier(),
+            &options,
             self.hosted_web_search,
             &self.async_tools,
-        )?;
-        if let Some(tokens) = options
-            .max_output_tokens()
-            .filter(|_| self.applies_max_output_tokens())
-        {
-            created.body["max_output_tokens"] = serde_json::json!(tokens.get());
-        }
-        Ok(created)
+        )
     }
 
     /// Plain HTTP Responses hosts take `max_output_tokens` per request. The
@@ -331,7 +324,12 @@ impl OpenAiProvider {
     }
 }
 
-crate::impl_sdk_model_provider!(OpenAiProvider, native_compact, request_options, steerable);
+crate::impl_sdk_model_provider!(
+    OpenAiProvider,
+    native_compact,
+    request_options(max_output_tokens = Self::applies_max_output_tokens),
+    steerable
+);
 
 impl OpenAiProvider {
     async fn send_codex_responses_complete(

@@ -426,9 +426,9 @@ where
 ///
 /// Pass `request_options` when the transport also exposes an inherent
 /// `stream_turn_with_options` method with [`rho_sdk::provider::ModelRequestOptions`]
-/// before the event callbacks, plus an inherent
-/// `applies_max_output_tokens(&self) -> bool` that reports whether that path
-/// sends [`rho_sdk::provider::ModelRequestOptions::max_output_tokens`].
+/// before the event callbacks. To advertise output caps, explicitly pass
+/// `request_options(max_output_tokens = Self::applies_max_output_tokens)` with
+/// a method that reports whether the selected transport sends the cap.
 ///
 /// Pass `native_compact_options` instead of `native_compact` when
 /// `native_compact_turn` also takes [`rho_sdk::provider::ModelRequestOptions`].
@@ -452,6 +452,9 @@ macro_rules! impl_sdk_model_provider {
     };
     ($provider:ty, native_compact, request_options, steerable) => {
         $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options], [@steerable]);
+    };
+    ($provider:ty, native_compact, request_options(max_output_tokens = $cap:path), steerable) => {
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options @max_output_tokens($cap)], [@steerable]);
     };
     (@impl $provider:ty, [$($native:tt)*], [$($options:tt)*], [$($steer:tt)*]) => {
         impl ::rho_sdk::provider::ModelProvider for $provider {
@@ -545,10 +548,12 @@ macro_rules! impl_sdk_model_provider {
         }
     };
     (@request_options_methods) => {};
-    (@request_options_methods @request_options) => {
-        fn honors_max_output_tokens(&self) -> bool {
-            self.applies_max_output_tokens()
-        }
+    (@max_output_tokens_method) => {};
+    (@max_output_tokens_method @max_output_tokens($cap:path)) => {
+        fn honors_max_output_tokens(&self) -> bool { ($cap)(self) }
+    };
+    (@request_options_methods @request_options $($cap:tt)*) => {
+        $crate::impl_sdk_model_provider!(@max_output_tokens_method $($cap)*);
 
         fn send_turn_stream_with_options<'a>(
             &'a self,

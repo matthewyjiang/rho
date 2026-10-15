@@ -15,14 +15,6 @@ pub(crate) enum KeepWarmOffer {
     Offered,
 }
 
-/// Whether a started process holds the prompt cache warm while it runs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum KeepWarm {
-    #[default]
-    Off,
-    On,
-}
-
 #[derive(Clone)]
 pub struct Process {
     manager: ProcessManager,
@@ -58,10 +50,6 @@ impl Process {
         self.manager.start_execution(execution, keep_warm).await
     }
 }
-
-/// Model-facing line appended to a start result that took a keep-warm hold.
-pub(super) const KEEP_WARM_ON_LINE: &str =
-    "keep_warm: on (prompt cache kept warm while this runs and you are idle; stops at exit, stop, or the warm-up budget)";
 
 const KEEP_WARM_DESCRIPTION: &str = " Set keep_warm on start only when you will end your turn and sit idle waiting for this process for more than about 5 minutes (long builds, test suites, training runs); Rho then sends small capped requests that keep the provider prompt cache warm so your next turn is not re-billed in full. Do not set it for quick commands, servers, watchers, or while you keep working. Warming stops when the process exits or is stopped.";
 

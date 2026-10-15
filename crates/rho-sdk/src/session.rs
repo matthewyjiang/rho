@@ -18,6 +18,9 @@ use crate::{
 
 #[path = "session_context.rs"]
 mod context;
+#[path = "session_request.rs"]
+mod request;
+pub use request::SessionRequestPrefix;
 
 /// Validated user input accepted by a session run.
 #[derive(Clone, Debug, PartialEq)]

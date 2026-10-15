@@ -366,6 +366,8 @@ pub struct RuntimeModelView {
     /// Live mirror of `behavior.keep_cache_warm`. Turning it off stops any
     /// active warming at once; the `keep_warm` tool parameter follows on restart.
     pub keep_cache_warm: bool,
+    /// Resolved cache lifetime for the active provider, shared by scheduling and notices.
+    pub prompt_cache_ttl: Duration,
     /// Show the keyboard hint block in the session header.
     pub show_header_hints: bool,
     /// Notify through the terminal when a turn finishes or needs the user

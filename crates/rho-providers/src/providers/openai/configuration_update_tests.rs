@@ -70,7 +70,7 @@ fn create_body(model: &str, messages: &[Message], level: ReasoningLevel) -> Resp
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request(messages, level),
-        None,
+        &rho_sdk::provider::ModelRequestOptions::default(),
         /*hosted_web_search*/ true,
         &std::collections::BTreeSet::new(),
     )
@@ -355,7 +355,7 @@ fn api_key_astra_create_body_emits_configuration_update() {
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request(&messages, ReasoningLevel::Max),
-        None,
+        &rho_sdk::provider::ModelRequestOptions::default(),
         /*hosted_web_search*/ true,
         &std::collections::BTreeSet::new(),
     )

@@ -63,6 +63,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             advisor_mode: false,
             cache_miss_notices: false,
             keep_cache_warm: true,
+            prompt_cache_ttl: crate::config::ProviderConfigs::DEFAULT_PROMPT_CACHE_TTL,
             show_header_hints: true,
             notifications: true,
             auth: "api-key".into(),

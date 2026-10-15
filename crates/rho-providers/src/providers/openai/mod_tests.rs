@@ -978,11 +978,11 @@ fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
 }
 
 // Covers: a capped request (cache warm ping) sends `max_output_tokens`; an
-// uncapped one leaves the host default.
+// uncapped one leaves the host default; the WebSocket route must not advertise
+// or send this cap, even though it shares the Responses body builder.
 // Owner: OpenAI provider request policy
 #[test]
 fn api_responses_body_sends_output_cap_only_when_requested() {
-    let provider = OpenAiProvider::new_with_auth("gpt-5.6".into(), Auth::ApiKey("test-key".into()));
     let messages = [Message::user_text("hello")];
     let request = || ModelRequest {
         messages: &messages,
@@ -991,17 +991,25 @@ fn api_responses_body_sends_output_cap_only_when_requested() {
         reasoning_level: ReasoningLevel::Low,
         prompt_cache_key: None,
     };
-    let capped = provider
-        .create_body(
-            request(),
-            ModelRequestOptions::default().with_max_output_tokens(std::num::NonZeroU32::MIN),
-        )
-        .unwrap();
-    let uncapped = provider
-        .create_body(request(), ModelRequestOptions::default())
-        .unwrap();
-
-    assert!(provider.applies_max_output_tokens());
-    assert_eq!(capped.body["max_output_tokens"], json!(1));
-    assert!(uncapped.body.get("max_output_tokens").is_none());
+    for (auth, expected_cap) in [
+        (Auth::ApiKey("test-key".into()), Some(json!(1))),
+        (super::codex_request::codex_test_auth(), None),
+    ] {
+        let provider = OpenAiProvider::new_with_auth("gpt-5.6".into(), auth);
+        let capped = provider
+            .create_body(
+                request(),
+                ModelRequestOptions::default().with_max_output_tokens(std::num::NonZeroU32::MIN),
+            )
+            .unwrap();
+        let uncapped = provider
+            .create_body(request(), ModelRequestOptions::default())
+            .unwrap();
+        assert_eq!(
+            rho_sdk::provider::ModelProvider::honors_max_output_tokens(&provider),
+            expected_cap.is_some()
+        );
+        assert_eq!(capped.body.get("max_output_tokens").cloned(), expected_cap);
+        assert!(uncapped.body.get("max_output_tokens").is_none());
+    }
 }
