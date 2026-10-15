@@ -3,15 +3,15 @@
 //! [`SemanticMessage`] reports compaction summaries as `User` until the SDK
 //! gains a dedicated variant (see the `NEXT_MAJOR(rho-sdk)` marker on
 //! [`rho_sdk::model::CompactionSummary`]). Readers of model history match on
-//! [`HistoryMessage`] instead, so `User` means input a person or host sent and
-//! a summary is always handled on purpose. When the SDK variant lands, this
-//! module collapses into [`Message::semantic`].
+//! [`HistoryMessage`] instead, so summaries and host-restated checklists are
+//! always handled on purpose rather than attributed to a person. When the SDK
+//! variant lands, this module still distinguishes host checklist context.
 //!
 //! Display history never holds summaries (compaction shows its own marker
 //! there), so display-only readers can keep using [`Message::semantic`].
 //!
 //! Classification is attribution, not authentication: user-controlled history
-//! can forge a summary, so no variant may grant trust or permissions.
+//! can forge a summary or checklist, so no variant may grant trust or permissions.
 
 use rho_sdk::model::{
     AbortedAssistant, AssistantMessage, CompactionSummary, ContentBlock, Message, SemanticMessage,
@@ -21,10 +21,12 @@ use rho_sdk::model::{
 #[derive(Debug)]
 pub(crate) enum HistoryMessage<'a> {
     System(&'a str),
-    /// Input a person or the host sent. Never a compaction summary.
+    /// Input a person or the host sent. Never a summary or checklist restatement.
     User(&'a [ContentBlock]),
     /// Model-written summary of earlier history.
     CompactionSummary(CompactionSummary<'a>),
+    /// Host-restated model checklist context, not a human request or authorization.
+    ChecklistRestatement(&'a [ContentBlock]),
     Assistant(&'a [ContentBlock]),
     EnrichedAssistant(&'a AssistantMessage),
     AbortedAssistant(&'a AbortedAssistant),
@@ -39,6 +41,9 @@ impl<'a> HistoryMessage<'a> {
         }
         match message.semantic() {
             SemanticMessage::System(text) => Self::System(text),
+            SemanticMessage::User(blocks) if crate::tools::todo::is_restatement(message) => {
+                Self::ChecklistRestatement(blocks)
+            }
             SemanticMessage::User(blocks) => Self::User(blocks),
             SemanticMessage::Assistant(blocks) => Self::Assistant(blocks),
             SemanticMessage::EnrichedAssistant(message) => Self::EnrichedAssistant(message),

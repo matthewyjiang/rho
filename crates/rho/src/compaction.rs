@@ -261,7 +261,8 @@ fn partition<'a>(
         })
 }
 
-/// Input a person sent, as opposed to tool images or compaction summaries.
+/// Input a person sent, as opposed to tool images, compaction summaries, or
+/// a checklist restatement an earlier compaction appended.
 fn is_user_input(message: &Message) -> bool {
     matches!(HistoryMessage::of(message), HistoryMessage::User(_))
 }

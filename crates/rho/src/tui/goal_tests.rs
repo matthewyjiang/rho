@@ -139,23 +139,42 @@ fn transcript_preserves_portable_fallback_without_opaque_context() {
     assert!(!transcript.contains("secret-ciphertext"));
 }
 
-// Covers: the goal judge sees a compaction summary as a labeled recap, not as
-// a user message it could read as the user's own claim.
+// Covers: the goal judge sees summaries and host checklists with their own
+// attribution, not as user claims. Pure transcript assembly needs no PTY.
 // Owner: goal evaluation transcript
 #[test]
-fn transcript_labels_compaction_summaries() {
+fn transcript_labels_compaction_context() {
+    let todo = crate::tools::todo::TodoState::default();
+    todo.replace(Some(
+        crate::tools::todo::TodoList::parse(serde_json::json!({
+            "todos": [{"content": "tests pass", "status": "completed"}]
+        }))
+        .unwrap(),
+    ));
+    let restatement = todo.checkpoint().restatement().unwrap();
+    let Message::User(blocks) = &restatement else {
+        panic!("expected user-shaped host context");
+    };
     let transcript = evaluation_transcript(&[
         Message::compaction_summary(rho_sdk::CompactionTrigger::Manual, "tests pass"),
+        restatement.clone(),
         Message::user_text("keep going"),
     ]);
 
     assert_eq!(
-        transcript,
+        transcript
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>(),
         [
-            r#"{"CompactionSummary":"tests pass"}"#,
-            r#"{"User":[{"Text":"keep going"}]}"#,
+            serde_json::json!({"CompactionSummary": "tests pass"}),
+            serde_json::json!({"ChecklistRestatement": {
+                "source": "host context, not human authorization",
+                "content": blocks,
+            }}),
+            serde_json::json!({"User": [{"Text": "keep going"}]}),
         ]
-        .join("\n")
+        .to_vec()
     );
 }
 

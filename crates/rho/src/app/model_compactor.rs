@@ -33,6 +33,7 @@ use crate::{
     },
     diagnostics::RuntimeDiagnostics,
     session::recall::RecallStore,
+    tools::todo::TodoCheckpoint,
 };
 
 pub(crate) struct ModelCompactor {
@@ -102,46 +103,40 @@ impl Compactor for ModelCompactor {
             let occurred_at_ms = chrono::Utc::now().timestamp_millis();
             let mut trace = Trace::default();
             let todo = self.todo.as_ref().map(|todo| todo.checkpoint());
-            let retained_context = todo.as_ref().map_or(&[][..], |todo| todo.messages());
-            let retained_tokens =
-                rho_sdk::model::context::estimate_messages_tokens(retained_context);
             let tools = self.tool_specs(&request);
             let context = request.context_estimate().unwrap_or_else(|| {
-                ContextEstimate::from_estimated_tokens(
-                    estimate_context_tokens(request.messages(), tools)
-                        .saturating_add(retained_tokens),
-                )
+                ContextEstimate::from_estimated_tokens(estimate_context_tokens(
+                    request.messages(),
+                    tools,
+                ))
             });
             let context_window = match (self.context_window, context.reported_context_window()) {
                 (Some(configured), Some(reported)) => Some(configured.min(reported)),
                 (configured, reported) => configured.or(reported),
             };
             let result = self
-                .compact_tiers(
-                    &request,
-                    retained_tokens,
-                    context,
-                    context_window,
-                    &mut trace,
-                )
+                .compact_tiers(&request, todo.as_ref(), context, context_window, &mut trace)
                 .await
-                .map(|output| {
-                    // A real replacement may crowd out a previously admitted
-                    // checklist. Preserve its exact captured metadata, but
-                    // bound the live projection against the measured history
-                    // so the next provider turn can shorten or clear it.
-                    if let Some(state) = &self.todo {
-                        state.set_context_budget(
-                            self.context_window,
-                            context,
-                            output.messages(),
-                            tools,
-                        );
+                .and_then(|output| match todo {
+                    Some(todo) => {
+                        // Irreducible history can leave no room for the
+                        // restatement; appending it anyway would overflow the
+                        // next request. The list stays in snapshot metadata.
+                        let fits = context_window.is_none_or(|window| {
+                            todo.estimate_retained_tokens(
+                                request.messages(),
+                                output.messages(),
+                                tools,
+                            ) <= context.estimated_budget(window)
+                        });
+                        let todo = if fits {
+                            todo
+                        } else {
+                            todo.without_restatement()
+                        };
+                        todo.retain(request.messages(), output)
                     }
-                    match todo {
-                        Some(todo) => todo.retain(output),
-                        None => output,
-                    }
+                    None => Ok(output),
                 });
             let removed = match &result {
                 Ok(output) => removed_tool_calls(request.messages(), output.messages()),
@@ -255,7 +250,7 @@ impl ModelCompactor {
     async fn compact_tiers(
         &self,
         request: &CompactionRequest,
-        retained_tokens: u64,
+        todo: Option<&TodoCheckpoint>,
         context: ContextEstimate,
         context_window: Option<u64>,
         trace: &mut Trace,
@@ -270,9 +265,13 @@ impl ModelCompactor {
         // Retention is a soft goal: a fixed prompt or the newest message group
         // can exceed it. Only the actual model window is a capacity limit.
         let capacity = context_window.map(|window| context.estimated_budget(window));
-        // Prefer retaining the exact live projection. If irreducible history
-        // still crowds it out, the final budget refresh suspends projection
-        // rather than making compaction itself an unrecoverable failure.
+        // Leave room for the checklist restatement appended after the tiers.
+        // Irreducible history may still crowd it; the list stays in metadata.
+        let retained_tokens = todo
+            .and_then(TodoCheckpoint::restatement)
+            .map_or(0, |message| {
+                rho_sdk::model::context::estimate_messages_tokens(&[message])
+            });
         let target_tokens = total_target.saturating_sub(retained_tokens);
         let (elided, elided_tool_results) = match self.elide(request, target_tokens) {
             Some(elision) => (Some(elision.messages), elision.originals.len()),
@@ -310,18 +309,17 @@ impl ModelCompactor {
         };
         match native {
             NativeCompactionResult::Success(output) => {
-                if retained_tokens == 0
-                    || capacity.is_none_or(|limit| {
-                        estimate_context_tokens(output.messages(), tools)
-                            .saturating_add(retained_tokens)
+                if todo.is_none_or(|todo| {
+                    capacity.is_none_or(|limit| {
+                        todo.estimate_retained_tokens(request.messages(), output.messages(), tools)
                             <= limit
                     })
-                {
+                }) {
                     trace.tier = Some(CompactionTier::Native);
                     return Ok(output);
                 }
-                // A native replacement that crowds out mandatory context is
-                // not usable; the portable summary gets the reduced budget.
+                // A native replacement that crowds out the checklist
+                // restatement is not usable; the summary gets the reduced budget.
                 rejected_native_usage = output.usage().clone();
             }
             NativeCompactionResult::Cancelled => {

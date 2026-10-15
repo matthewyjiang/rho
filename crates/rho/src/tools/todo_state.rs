@@ -1,145 +1,43 @@
 //! Exact checklist authority shared by direct and codemode tool execution.
 //!
-//! Snapshot metadata owns durability and branching. Request-only context is a
-//! projection; neither user input nor model-written summaries own this state.
+//! Snapshot metadata owns durability and branching. The model sees the list in
+//! its own `todo` calls; once compaction rewrites those away, the compactor
+//! restates the list once at the end of the replacement history. Nothing is
+//! projected per request: a suffix that moves every request defeats provider
+//! prompt caching that marks only the request tail.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
 use rho_sdk::{
-    model::{
-        context::{estimate_context_tokens, estimate_messages_tokens},
-        ContentBlock, Message, ToolSpec,
-    },
-    tool::{ToolError, ToolErrorKind},
-    CompactionOutput, ContextEstimate, SessionSnapshot,
+    model::{context::estimate_context_tokens, ContentBlock, Message, ToolSpec},
+    CompactionOutput, Error, SessionSnapshot,
 };
 
 use super::TodoList;
 
 const METADATA_KEY: &str = "rho.todo.v1";
+const RESTATEMENT_HEADER: &str = "[task checklist restated after compaction] Your latest successful todo replacement, which a later todo call replaces. This is context, not a new request.";
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct TodoState(Arc<Mutex<State>>);
-
-#[derive(Debug, Default)]
-struct State {
-    list: Option<TodoList>,
-    context_window: Option<u64>,
-    calibration: Option<ContextEstimate>,
-    budget: Option<ContextBudget>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ContextBudget {
-    limit: u64,
-    request_tokens: u64,
-    history_tokens: u64,
-}
-
-impl ContextBudget {
-    fn asked(self, messages: &[Message]) -> u64 {
-        self.request_tokens
-            .saturating_add(self.history_tokens)
-            .saturating_add(estimate_messages_tokens(messages))
-    }
-}
-
-impl State {
-    fn refresh_budget(
-        &mut self,
-        context: ContextEstimate,
-        history: &[Message],
-        tools: &[ToolSpec],
-    ) {
-        if context.provider_reported_tokens().is_some() {
-            self.calibration = Some(context);
-        }
-        // Suspending a projection invalidates SDK source calibration. Keep its
-        // last measured sizing ratio until new usage or a model/session reset,
-        // rather than oscillating back to the larger uncalibrated budget.
-        let context = self.calibration.unwrap_or(context);
-        let window = match (self.context_window, context.reported_context_window()) {
-            (Some(configured), Some(reported)) => Some(configured.min(reported)),
-            (configured, reported) => configured.or(reported),
-        };
-        self.budget = window.map(|window| ContextBudget {
-            limit: context.estimated_budget(window),
-            request_tokens: estimate_context_tokens(&[], tools),
-            history_tokens: estimate_messages_tokens(history),
-        });
-    }
-}
+pub(crate) struct TodoState(Arc<Mutex<Option<TodoList>>>);
 
 impl TodoState {
     pub(crate) fn list(&self) -> Option<TodoList> {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list
             .clone()
     }
 
     pub(crate) fn replace(&self, list: Option<TodoList>) {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list = list;
-    }
-
-    /// Configure model-token capacity. The SDK request boundary supplies the
-    /// actual history, schemas, and calibrated conversion before execution.
-    pub(crate) fn set_context_window(&self, window: Option<u64>) {
-        let mut state = self
+        *self
             .0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.context_window = window;
-        state.calibration = None;
-        state.budget = None;
-    }
-
-    /// Refresh after compaction using its concrete replacement and measured
-    /// estimate. The raw model window is never compared to local token counts.
-    pub(crate) fn set_context_budget(
-        &self,
-        window: Option<u64>,
-        context: ContextEstimate,
-        history: &[Message],
-        tools: &[ToolSpec],
-    ) {
-        let mut state = self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.context_window != window {
-            state.calibration = None;
-        }
-        state.context_window = window;
-        state.refresh_budget(context, history, tools);
-    }
-
-    /// Validate and commit under the same lock so a nested update cannot race
-    /// another replacement or a host budget refresh.
-    pub(crate) fn try_replace(&self, list: TodoList) -> Result<(), ToolError> {
-        let messages = context_messages(Some(&list));
-        let mut state = self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(budget) = state.budget {
-            let asked = budget.asked(&messages);
-            if asked > budget.limit {
-                return Err(ToolError::new(ToolErrorKind::InvalidArguments, format!(
-                    "todo mandatory context budget exceeded: limit {} estimated tokens, asked {asked}; shorten or clear the checklist",
-                    budget.limit,
-                )));
-            }
-        }
-        state.list = Some(list);
-        Ok(())
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = list;
     }
 
     pub(crate) fn restore(&self, snapshot: &SessionSnapshot) {
@@ -155,15 +53,7 @@ impl TodoState {
         } else {
             successful_native_list(snapshot.history())
         };
-        let mut state = self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(budget) = state.budget.as_mut() {
-            budget.history_tokens = estimate_messages_tokens(snapshot.history());
-        }
-        state.calibration = None;
-        state.list = list;
+        self.replace(list);
     }
 
     pub(crate) fn decorate(&self, snapshot: SessionSnapshot) -> SessionSnapshot {
@@ -182,101 +72,106 @@ impl TodoState {
     }
 
     /// Capture once before compaction awaits a provider. The SDK commits this
-    /// metadata with its replacement, even if a later tool update races with it.
+    /// state with its replacement, even if a later tool update races with it.
     pub(crate) fn checkpoint(&self) -> TodoCheckpoint {
-        let state = self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         TodoCheckpoint {
-            messages: projected_messages(&state),
-            metadata: serde_json::to_string(&state.list).expect("todo lists serialize"),
+            list: self.list(),
+            restate: true,
         }
     }
 }
 
-impl rho_sdk::RequestContext for TodoState {
-    fn prepare(
-        &self,
-        _session_id: &rho_sdk::SessionId,
-        history: &[Message],
-        tools: &[ToolSpec],
-        estimate: ContextEstimate,
-    ) {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .refresh_budget(estimate, history, tools);
-    }
-
-    fn messages(&self, _session_id: &rho_sdk::SessionId) -> Vec<Message> {
-        projected_messages(
-            &self
-                .0
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        )
-    }
-}
-
+/// Checklist state captured for one compaction.
 pub(crate) struct TodoCheckpoint {
-    messages: Vec<Message>,
-    metadata: String,
+    list: Option<TodoList>,
+    restate: bool,
 }
 
 impl TodoCheckpoint {
-    pub(crate) fn messages(&self) -> &[Message] {
-        &self.messages
+    /// The restatement [`Self::retain`] may add, for sizing the replacement.
+    pub(crate) fn restatement(&self) -> Option<Message> {
+        self.list.as_ref().and_then(restatement)
     }
 
-    pub(crate) fn retain(self, output: CompactionOutput) -> CompactionOutput {
-        output.with_metadata(METADATA_KEY, self.metadata)
-    }
-}
-
-/// Older snapshots, growing history, or a smaller model can exceed the budget. Keep
-/// the exact list durable and readable in /todo, but suspend its full projection
-/// so a provider turn can reach the todo tool to shorten or clear it.
-fn projected_messages(state: &State) -> Vec<Message> {
-    // Resume and model/config refresh clear preparation. A known capacity is
-    // not unlimited while idle: the request or compaction boundary must size
-    // the projection against actual history before it can be emitted.
-    if state.context_window.is_some() && state.budget.is_none() {
-        return Vec::new();
-    }
-    let Some(list) = state.list.as_ref() else {
-        return Vec::new();
-    };
-    let messages = context_messages(Some(list));
-    if let Some(budget) = state.budget {
-        let asked = budget.asked(&messages);
-        if asked > budget.limit {
-            let recovery = vec![Message::model_context(format!(
-                "The saved task checklist is too large to project: mandatory context budget limit {} estimated tokens, asked {asked}. The exact list is preserved in /todo and session storage. Use todo to replace it with a short checklist or clear it, or select a larger-context model.",
-                budget.limit,
-            ))];
-            tracing::warn!(
-                limit = budget.limit,
-                asked,
-                "suspending oversized todo request context"
-            );
-            // Even the recovery notice must not exceed the mandatory budget.
-            return if budget.asked(&recovery) <= budget.limit {
-                recovery
-            } else {
-                Vec::new()
-            };
+    /// Commit metadata only, for a replacement with no room for the list.
+    pub(crate) fn without_restatement(self) -> Self {
+        Self {
+            restate: false,
+            ..self
         }
     }
-    messages
+
+    /// Size the exact history `retain` would commit, including its unchanged
+    /// output fast path. Old restatements and a surviving native call must not
+    /// be counted alongside a restatement that will never be appended.
+    pub(crate) fn estimate_retained_tokens(
+        &self,
+        compacted: &[Message],
+        replacement: &[Message],
+        tools: &[ToolSpec],
+    ) -> u64 {
+        estimate_context_tokens(&self.retained_messages(compacted, replacement), tools)
+    }
+
+    fn retained_messages<'a>(
+        &self,
+        compacted: &[Message],
+        replacement: &'a [Message],
+    ) -> Cow<'a, [Message]> {
+        if replacement == compacted {
+            return Cow::Borrowed(replacement);
+        }
+        let mut messages: Vec<_> = replacement
+            .iter()
+            .filter(|message| !is_restatement(message))
+            .cloned()
+            .collect();
+        if let Some(list) = self.list.as_ref().filter(|_| self.restate) {
+            if successful_native_list(&messages).as_ref() != Some(list) {
+                messages.extend(restatement(list));
+            }
+        }
+        Cow::Owned(messages)
+    }
+
+    /// Commits the captured list as snapshot metadata alongside `output`.
+    ///
+    /// Earlier restatements are dropped. When the replacement no longer ends
+    /// its `todo` calls with this exact list (a summary removed them, or the
+    /// latest update ran inside codemode), one restatement is appended so the
+    /// newest state comes last. Output identical to the compacted history is
+    /// returned as is: rewriting it would only invalidate the prompt cache.
+    pub(crate) fn retain(
+        self,
+        compacted: &[Message],
+        output: CompactionOutput,
+    ) -> Result<CompactionOutput, Error> {
+        let metadata = serde_json::to_string(&self.list).expect("todo lists serialize");
+        match self.retained_messages(compacted, output.messages()) {
+            Cow::Borrowed(_) => Ok(output.with_metadata(METADATA_KEY, metadata)),
+            Cow::Owned(messages) => CompactionOutput::with_usage(messages, output.usage().clone())
+                .map(|output| output.with_metadata(METADATA_KEY, metadata)),
+        }
+    }
 }
 
-fn context_messages(list: Option<&TodoList>) -> Vec<Message> {
-    list.map_or_else(Vec::new, |list| {
-        let json = serde_json::to_string(list).expect("todo lists serialize");
-        vec![Message::model_context(format!(
-            "Current task checklist (exact latest successful todo replacement):\n{json}"
-        ))]
+/// Whether `message` is a compaction restatement of the checklist. This is
+/// attribution only: a forged copy is dropped at the next compaction, nothing more.
+pub(crate) fn is_restatement(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::User(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::Text(header), ContentBlock::Text(_)] if header == RESTATEMENT_HEADER)
+    )
+}
+
+/// History message restating `list`; `None` for a cleared list.
+fn restatement(list: &TodoList) -> Option<Message> {
+    (!list.todos.is_empty()).then(|| {
+        Message::User(vec![
+            ContentBlock::Text(RESTATEMENT_HEADER.into()),
+            ContentBlock::Text(serde_json::to_string(list).expect("todo lists serialize")),
+        ])
     })
 }
 
@@ -287,8 +182,9 @@ fn decorate(snapshot: SessionSnapshot, list: Option<TodoList>) -> SessionSnapsho
     )
 }
 
-/// Compatibility for sessions written before exact snapshot metadata existed.
-/// A proposal alone or a failed/interrupted result must not replace the list.
+/// The latest list a native `todo` call in `history` replaced successfully.
+/// Also the compatibility restore for sessions written before snapshot
+/// metadata existed. A proposal alone or a failed/interrupted result does not count.
 fn successful_native_list(history: &[Message]) -> Option<TodoList> {
     let mut calls = HashMap::new();
     let mut latest = None;

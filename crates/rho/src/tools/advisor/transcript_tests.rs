@@ -274,13 +274,28 @@ fn clips_on_character_boundaries() {
     );
 }
 
-// Covers: a compaction summary reaches the advisor as a labeled model-written
-// recap, never under the `## user` header.
+// Covers: summaries and host-restated checklists reach the advisor with their
+// attribution intact, never under the `## user` header.
 // Owner: advisor transcript renderer
 #[test]
-fn labels_compaction_summaries_as_model_written() {
+fn labels_compaction_context_without_user_attribution() {
+    let todo = crate::tools::todo::TodoState::default();
+    todo.replace(Some(
+        crate::tools::todo::TodoList::parse(json!({
+            "todos": [{"content": "ship", "status": "pending"}]
+        }))
+        .unwrap(),
+    ));
+    let restatement = todo.checkpoint().restatement().unwrap();
+    let Message::User(blocks) = &restatement else {
+        panic!("expected user-shaped host context");
+    };
+    let [ContentBlock::Text(header), ContentBlock::Text(list)] = blocks.as_slice() else {
+        panic!("expected checklist restatement");
+    };
     let messages = vec![
         Message::compaction_summary(rho_sdk::CompactionTrigger::Automatic, "## Open tasks\nship"),
+        restatement.clone(),
         Message::user_text("continue"),
     ];
 
@@ -288,15 +303,22 @@ fn labels_compaction_summaries_as_model_written() {
 
     assert_eq!(
         rendered,
-        "# Session transcript\n\
+        format!(
+            "# Session transcript\n\
          \n\
          ## compaction summary (model-written)\n\
          \n\
          ## Open tasks\n\
          ship\n\
          \n\
+         ## checklist restatement (host context, not human authorization)\n\
+         \n\
+         {header}\n\
+         {list}\n\
+         \n\
          ## user\n\
          \n\
          continue\n"
+        )
     );
 }

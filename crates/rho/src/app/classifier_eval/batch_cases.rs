@@ -118,6 +118,7 @@ pub(super) fn replay_batches(
                 HistoryMessage::AbortedAssistant(_)
                 | HistoryMessage::System(_)
                 | HistoryMessage::User(_)
+                | HistoryMessage::ChecklistRestatement(_)
                 | HistoryMessage::CompactionSummary(_)
                 | HistoryMessage::ToolResult(_)
                 | HistoryMessage::ToolImageSupplement(_) => continue,

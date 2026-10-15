@@ -5,16 +5,25 @@ use rho_sdk::{
 
 use super::HistoryMessage;
 
-// Covers: summaries, new and legacy, never classify as user input, while
-// ordinary user text and tool images keep their semantic meaning.
+// Covers: summaries and host-restated checklists never classify as user input,
+// while ordinary user text and tool images keep their semantic meaning.
 // Owner: model-history classification
 #[test]
-fn compaction_summaries_are_not_user_input() {
+fn compaction_context_is_not_user_input() {
+    let todo = crate::tools::todo::TodoState::default();
+    todo.replace(Some(
+        crate::tools::todo::TodoList::parse(serde_json::json!({
+            "todos": [{"content": "ship the fix", "status": "pending"}]
+        }))
+        .unwrap(),
+    ));
+    let restatement = todo.checkpoint().restatement().unwrap();
     let image = ImageContent {
         data: "aW1hZ2U=".into(),
         mime_type: "image/png".into(),
     };
     let cases = [
+        (restatement, "checklist"),
         (
             Message::compaction_summary(CompactionTrigger::Manual, "s"),
             "summary",
@@ -42,6 +51,7 @@ fn compaction_summaries_are_not_user_input() {
     for (message, expected) in cases {
         let kind = match HistoryMessage::of(&message) {
             HistoryMessage::CompactionSummary(_) => "summary",
+            HistoryMessage::ChecklistRestatement(_) => "checklist",
             HistoryMessage::User(_) => "user",
             HistoryMessage::ToolImageSupplement(_) => "tool images",
             other => panic!("unexpected {other:?}"),

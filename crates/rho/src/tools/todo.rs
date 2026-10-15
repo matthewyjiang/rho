@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 #[path = "todo_state.rs"]
 mod state;
-pub(crate) use state::TodoState;
+pub(crate) use state::{is_restatement, TodoCheckpoint, TodoState};
 
 // Product tripwire: five times the default ten-row collapsed card budget, not a
 // storage allocation. Larger projects should keep this list at milestone level.
@@ -62,7 +62,7 @@ impl Tool for TodoTool {
             let list = TodoList::parse(invocation.into_arguments())?;
             let output = ToolOutput::text(list.summary())
                 .metadata(ToolMetadata::new().operation(OperationKind::Other("todo".into())));
-            self.state.try_replace(list)?;
+            self.state.replace(Some(list));
             Ok(output)
         })
     }
