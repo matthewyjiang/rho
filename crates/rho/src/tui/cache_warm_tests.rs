@@ -272,8 +272,11 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
     }
 }
 
+// Covers: a process exits while its ping is in flight. The app stops
+// observing that ping, so the next hold must not wait on it.
+// Owner: cache-warm scheduler
 #[test]
-fn a_ping_that_finishes_after_release_reports_nothing() {
+fn release_drops_an_in_flight_ping_so_a_new_hold_can_warm() {
     let t0 = Instant::now();
     let interval = TTL - PING_MARGIN;
     let mut warmer = warmer(t0);
@@ -282,14 +285,10 @@ fn a_ping_that_finishes_after_release_reports_nothing() {
         warmer.step(t0 + interval, WarmGate::Holding),
         WarmStep::Ping
     );
-    // The process exits while the ping is in flight.
     assert_eq!(
         warmer.step(t0 + interval, WarmGate::Released),
         WarmStep::Rest
     );
-    assert_eq!(warmer.ping_finished(t0 + interval, PingResult::Miss), None);
-
-    // A later hold is not blocked by the stale result.
     assert_eq!(
         warmer.step(t0 + interval, WarmGate::Holding),
         WarmStep::Ping

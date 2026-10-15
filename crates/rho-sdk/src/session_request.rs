@@ -51,6 +51,9 @@ impl Session {
         let history = self.history();
         let tools = runtime.advertised_tool_specs();
         let messages = self.core.project_request(&runtime, &history, &tools);
+        // Preparation advanced in-flight accounting, but no run owns this
+        // request. Drop it so idle estimates keep resampling request context.
+        self.core.discard_working_context();
         Ok(SessionRequestPrefix {
             messages: messages.messages.into_owned(),
             tools,

@@ -92,6 +92,8 @@ async fn side_request_prefix_matches_real_turn_projection() {
         .unwrap()
         .with_trailing_message(Message::user_text("side request"));
     assert_eq!(session.history(), history);
+    // No run owns the side request, so idle accounting must stay committed-only.
+    assert!(session.core.data.lock().unwrap().working_context.is_none());
     provider
         .send_turn(prefix.as_request(CancellationToken::new()))
         .await

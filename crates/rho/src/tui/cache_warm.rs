@@ -152,6 +152,9 @@ impl CacheWarmer {
         self.gate = gate;
         match gate {
             WarmGate::Released => {
+                // The app stops observing any in-flight ping on release, so
+                // its result cannot leak into a later hold.
+                self.in_flight = false;
                 self.pings = 0;
                 self.halt = None;
                 return WarmStep::Rest;
@@ -187,11 +190,6 @@ impl CacheWarmer {
     /// Applies a finished ping; returns a new halt to report.
     pub(super) fn ping_finished(&mut self, result: PingResult) -> Option<WarmHalt> {
         self.in_flight = false;
-        // The hold ended while the ping ran, so a late miss or failure has no
-        // hold left to halt.
-        if self.gate == WarmGate::Released {
-            return None;
-        }
         match result {
             PingResult::Read => {
                 self.pings += 1;
@@ -259,6 +257,11 @@ impl App {
         } else {
             WarmGate::Holding
         };
+        if gate == WarmGate::Released {
+            // Stop observing a ping whose hold ended; it still finishes and
+            // reaches the ledger, but cannot halt a later hold.
+            self.tasks.abort(|id| matches!(id, TaskId::CacheWarm));
+        }
         let changed = match self.usage.cache_warm.step(
             Instant::now(),
             gate,
