@@ -47,17 +47,20 @@ impl SessionHost {
             }
             Err(error) => return Err(anyhow::anyhow!("could not compact context: {error}")),
         };
-        if !self.is_replaced() {
-            if let Err(error) =
-                self.stored
-                    .save_compaction_snapshot(&self.durable_snapshot(), &[], &outcome)
-            {
-                // Live history, compaction accounting, and metadata already
-                // moved on; refuse later prompts rather than run against
-                // state a reload would not see.
-                self.unsaved_compaction = true;
-                return Err(error.context("could not save compacted context"));
-            }
+        if self.is_replaced() {
+            // Load and shutdown cancel this prompt after snapshotting the
+            // file. The rewrite was not saved, so do not report it as done.
+            return Ok(PromptResponse::new(StopReason::Cancelled));
+        }
+        if let Err(error) =
+            self.stored
+                .save_compaction_snapshot(&self.durable_snapshot(), &[], &outcome)
+        {
+            // Live history, compaction accounting, and metadata already
+            // moved on; refuse later prompts rather than run against
+            // state a reload would not see.
+            self.unsaved_compaction = true;
+            return Err(error.context("could not save compacted context"));
         }
         // The context meter follows the committed history.
         let signals = self.signals();

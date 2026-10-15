@@ -141,6 +141,19 @@ async fn dynamic(
     name: &str,
     scope: &CommandScope<'_>,
 ) -> Result<PromptAction, CommandRejected> {
+    // Spec-following clients send a picked `$skill` command as `/$skill`.
+    if let Some(skill) = name.strip_prefix('$') {
+        if scope.tools.contains(skills::SKILL_TOOL)
+            && crate::skills::discover_with_home(scope.cwd, scope.home)
+                .iter()
+                .any(|known| known.name == skill)
+        {
+            return Ok(PromptAction::Turn {
+                input,
+                call: Some(skills::load_call(skill)),
+            });
+        }
+    }
     let trailing = leading_text(&input).map_or("", command_args);
     if let Some(template) =
         prompt_templates::command_template_name(name).and_then(|template_name| {

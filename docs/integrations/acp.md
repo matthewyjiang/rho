@@ -75,7 +75,7 @@ The session saves the command as typed, not its expansion. Other TUI commands, s
 
 When the active agent has the `skill` tool, the update also lists one `$<name>` command per discovered [skill](/skills), using the skill's description. Hosts such as T3 Code list these in their `$` menu. Rho leaves out names a host would read as amounts, such as `$20k`.
 
-A model turn that mentions a known skill as a whitespace-delimited `$<name>` token loads that skill before the first model request, as the TUI's `/skill:<name>` does. Any currency symbol works as the sigil. Only the first mentioned skill loads this way. The model sees any later mentions as ordinary prompt text.
+A model turn that mentions a known skill as a whitespace-delimited `$<name>` token loads that skill before the first model request, as the TUI's `/skill:<name>` does. A prompt that starts with `/$<name>`, as a client that prefixes every picked command with `/` sends it, loads the skill the same way. Any currency symbol works as the sigil. Only the first mentioned skill loads this way. The model sees any later mentions as ordinary prompt text.
 
 ## MCP
 

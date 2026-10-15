@@ -155,6 +155,11 @@ async fn resolve_routes_prompts_to_commands() {
             turn("Review $acp-demo carefully", Some("acp-demo")),
         ),
         (
+            "skill picked as a slash command",
+            "/$acp-demo please",
+            turn("/$acp-demo please", Some("acp-demo")),
+        ),
+        (
             "skill mention",
             "use $acp-demo please",
             turn("use $acp-demo please", Some("acp-demo")),
