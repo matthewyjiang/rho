@@ -5,19 +5,19 @@ use std::{cmp::Reverse, collections::BTreeMap, str::FromStr};
 use crate::tui::DefaultTerminal;
 
 use super::{
-    picker::OverlayChrome, workflow_discover, App, ComposerMode, Entry, InlineChoice,
-    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, App, ComposerMode, Entry, InlineChoice, InlineChoiceModal,
+    InlineChoiceOption, InlineChoicePending, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
 };
 use crate::{
     agent::AgentCapabilities,
     app::{
-        workflow_cli::{self, WorkflowOps},
+        workflow_cli::{self, discover, WorkflowOps},
         workflow_runtime::RecoveryDecision,
     },
     workflow::{
         PlanId, PlanInventoryItem, RecordAccess, RunId, RunInventoryItem, RunLifecycle, StoredRun,
-        WorkflowOutcome, WorkflowValue,
+        WorkflowOutcome,
     },
 };
 
@@ -139,7 +139,7 @@ fn run_item(run: &RunInventoryItem) -> PickerItem {
 
 /// Root list: start workflows, open runs, or reuse a saved plan.
 pub(super) fn hub_picker(
-    sources: &[workflow_discover::DiscoveredWorkflow],
+    sources: &[discover::DiscoveredWorkflow],
     plans: &[PlanInventoryItem],
     runs: &[RunInventoryItem],
 ) -> UiPicker {
@@ -269,7 +269,7 @@ impl App {
 
     pub(super) fn open_workflow_hub(&mut self) -> anyhow::Result<()> {
         let ops = self.workflow_ops()?;
-        let sources = workflow_discover::discover_workflow_sources(&self.info.runtime.cwd);
+        let sources = discover::discover_workflow_sources(&self.info.runtime.cwd);
         let plans = ops.list_workspace_plans()?;
         let runs = ops.list_workspace_runs()?;
         let picker = hub_picker(&sources, &plans, &runs);
@@ -463,7 +463,8 @@ impl App {
                 let path = value
                     .strip_prefix(SOURCE_PREFIX)
                     .expect("prefix checked above");
-                self.start_workflow_source(path, terminal, agent).await
+                self.start_workflow_source(path, BTreeMap::new(), agent)
+                    .await
             }
             // Enter on a saved plan runs it.
             value if value.starts_with(PLAN_PREFIX) => {
@@ -617,17 +618,28 @@ impl App {
         Ok(())
     }
 
-    async fn start_workflow_source(
+    /// Plans `relative_path` with `inputs` (declared defaults fill the rest)
+    /// and starts the run in the background. Shared by the hub's START rows
+    /// and `/workflow:<name>`.
+    pub(super) async fn start_workflow_source(
         &mut self,
         relative_path: &str,
-        _terminal: &mut DefaultTerminal,
+        inputs: BTreeMap<String, serde_json::Value>,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let absolute = self.info.runtime.cwd.join(relative_path);
         self.set_status(format!("starting {relative_path}"));
         let ops = self.workflow_ops()?;
         let available_tools = agent.workflow_host_capabilities();
-        let prepared = match self.prepare_source(&absolute, &available_tools).await {
+        let inputs_note = if inputs.is_empty() {
+            " Default inputs."
+        } else {
+            ""
+        };
+        let prepared = match self
+            .prepare_source(&absolute, inputs, &available_tools)
+            .await
+        {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -637,53 +649,55 @@ impl App {
                 return Ok(());
             }
         };
-        let plan = match ops.store_plan(&prepared) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not save plan: {error:#}")));
-                self.set_status("start failed");
-                return Ok(());
-            }
-        };
-        let created = ops
-            .recheck_plan(&plan)
-            .and_then(|()| ops.create_confirmed_run(&plan));
-        let run = match created {
+        let run = match ops.create_launch_run(&prepared) {
             Ok(run) => run,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("{error:#}")));
                 self.set_status("start failed");
                 return Ok(());
             }
         };
-        // Remove this launch-only plan only after the run owns its frozen graph.
-        // Failed launches retain the plan for retry; explicitly saved plans stay reusable.
-        if let Err(error) = ops.delete_workspace_plan(plan.manifest.plan_id) {
-            self.insert_entry(&Entry::Error(format!(
-                "could not remove launch plan: {error:#}"
-            )));
-        }
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
-            "Starting '{}' in the background (run {}). Default inputs only. Completion is delivered automatically.",
-            plan.graph.program.name,
+            "Starting '{}' in the background (run {}).{inputs_note} Completion is delivered automatically.",
+            run.graph.program.name,
             short_id(&run_id.to_string())
         )));
         self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
             .await
     }
 
+    /// `/workflow:<name> [inputs JSON]`: start one workspace workflow
+    /// without opening the hub, or report why it cannot start.
+    pub(super) async fn start_workflow_command(
+        &mut self,
+        name: &str,
+        resolved: Result<discover::StartCommand, String>,
+        agent: &mut super::InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        match resolved {
+            Ok(start) => {
+                self.start_workflow_source(&start.workflow.relative_path, start.inputs, agent)
+                    .await
+            }
+            Err(detail) => {
+                self.insert_entry(&Entry::Error(format!("could not run /{name}: {detail}")));
+                self.set_status("start failed");
+                Ok(())
+            }
+        }
+    }
+
     async fn prepare_source(
         &self,
         absolute: &std::path::Path,
+        inputs: BTreeMap<String, serde_json::Value>,
         available_tools: &AgentCapabilities,
     ) -> anyhow::Result<workflow_cli::PreparedPlan> {
         let ops = self.workflow_ops()?;
         let config = self.info.services.config_repository.load()?;
-        let limits = workflow_cli::planning_limits()?;
-        let inputs: BTreeMap<_, WorkflowValue> = BTreeMap::new();
-        ops.prepare_local(absolute, inputs, &config, available_tools, &limits)
+        ops.prepare_local_json(absolute, inputs, &config, available_tools)
             .await
     }
 
@@ -814,8 +828,8 @@ impl App {
 mod tests;
 
 #[cfg(test)]
-fn test_source(label: &str, relative: &str) -> workflow_discover::DiscoveredWorkflow {
-    workflow_discover::DiscoveredWorkflow {
+fn test_source(label: &str, relative: &str) -> discover::DiscoveredWorkflow {
+    discover::DiscoveredWorkflow {
         relative_path: relative.into(),
         absolute_path: std::path::PathBuf::from(relative),
         label: label.into(),

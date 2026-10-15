@@ -90,6 +90,25 @@ flowchart TD
 3. **PLANS** - `Saved plans` opens the reusable frozen-plan list. Select a plan
    by name and ID to start it, or press `d` to delete it.
 
+### Start a workflow by name
+
+Each workspace workflow also gets its own command, named after its folder or
+file: `.rho/workflows/review/workflow.star` and `.rho/workflows/review.star`
+both start with `/workflow:review`. Pass inputs as one JSON object after the
+name:
+
+```text
+/workflow:review
+/workflow:review {"target": "src", "depth": 2}
+```
+
+Omitted inputs use their declared defaults. The run starts in the background,
+like **Start** in the hub. The command is in the TUI command palette and in
+[ACP](/integrations/acp#commands) command menus, where `/workflow` itself is
+unavailable. In ACP the command ends the prompt without a model reply, and the
+result reaches the model at your next prompt. When both `review.star` and
+`review/workflow.star` exist, the command refuses to guess; rename one.
+
 Background workflows appear in the activity rail with their name, lifecycle,
 completed/total task count, active task, and elapsed time. Click a workflow row
 to open its watch screen while chat is idle; `/workflow` provides the keyboard

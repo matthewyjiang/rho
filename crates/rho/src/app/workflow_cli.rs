@@ -34,6 +34,8 @@ use super::workflow_runtime::{AttemptRecovery, ResetReason};
 
 #[path = "workflow_cli/cancel.rs"]
 mod cancel;
+#[path = "workflow_cli/discover.rs"]
+pub(crate) mod discover;
 #[path = "workflow_cli/documents.rs"]
 mod documents;
 #[path = "workflow_cli/ops.rs"]

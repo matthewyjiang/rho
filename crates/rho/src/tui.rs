@@ -248,7 +248,6 @@ mod usage_cost;
 mod view;
 mod view_composer;
 mod view_scroll;
-mod workflow_discover;
 mod workflow_hub;
 mod workflow_panel;
 // Separate full-screen mode for an active workflow run. The chat hub hands off

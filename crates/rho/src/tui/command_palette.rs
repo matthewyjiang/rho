@@ -141,6 +141,19 @@ impl App {
                     kind: CommandChoiceKind::McpPrompt,
                 }),
         );
+        // Command workflows are sorted by name; filtering preserves that order.
+        matches.extend(self.command_workflows().iter().filter_map(|workflow| {
+            let name = workflow.command_name()?;
+            if !name.starts_with(&prefix) {
+                return None;
+            }
+            Some(CommandChoice {
+                usage: workflow.command_usage()?,
+                description: workflow.command_description(),
+                name,
+                kind: CommandChoiceKind::Workflow,
+            })
+        }));
         // discovered skills are sorted by name; filtering preserves that order.
         matches.extend(
             self.discovered_skills()
@@ -170,6 +183,17 @@ impl App {
         DiscoveryCache::get_or_refresh(&mut self.palette_caches.skills, PALETTE_CACHE_TTL, || {
             crate::skills::discover(&self.info.runtime.cwd)
         })
+    }
+
+    /// Workspace workflows for palette matching, from the timed cache when fresh.
+    fn command_workflows(
+        &mut self,
+    ) -> Arc<Vec<crate::app::workflow_cli::discover::DiscoveredWorkflow>> {
+        DiscoveryCache::get_or_refresh(
+            &mut self.palette_caches.workflows,
+            PALETTE_CACHE_TTL,
+            || crate::app::workflow_cli::discover::command_workflows(&self.info.runtime.cwd),
+        )
     }
 
     /// Prompt templates for palette matching, served from the
@@ -293,6 +317,7 @@ impl App {
             CommandChoiceKind::Builtin(_)
             | CommandChoiceKind::PromptTemplate(_)
             | CommandChoiceKind::Skill
+            | CommandChoiceKind::Workflow
             | CommandChoiceKind::McpPrompt => true,
             CommandChoiceKind::BuiltinArgument(_) => self.input_ui.command_selection_explicit(),
             CommandChoiceKind::McpPromptArgument { .. } => {
@@ -347,10 +372,13 @@ impl App {
                     (input, cursor)
                 }
             }
-            // Both complete to a slash token and expand on submit: a skill
-            // needs a tool call, and an MCP prompt needs a `prompts/get`
-            // round-trip, neither of which can happen in this sync path.
-            CommandChoiceKind::Skill | CommandChoiceKind::McpPrompt => {
+            // These complete to a slash token and act on submit: a skill
+            // needs a tool call, an MCP prompt needs a `prompts/get`
+            // round-trip, and a workflow plans and starts a run, none of
+            // which can happen in this sync path.
+            CommandChoiceKind::Skill
+            | CommandChoiceKind::McpPrompt
+            | CommandChoiceKind::Workflow => {
                 self.input_ui
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 complete_slash_command(self.input_ui.text(), self.input_ui.cursor(), &choice.name)

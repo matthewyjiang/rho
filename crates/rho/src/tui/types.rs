@@ -393,6 +393,8 @@ pub(super) enum CommandChoiceKind {
     BuiltinArgument(&'static commands::CommandArgumentChoice),
     PromptTemplate(String),
     Skill,
+    /// `/workflow:<name>`: starts a workspace workflow on submit.
+    Workflow,
     /// A prompt offered by a connected MCP server. Expanded on submit, because
     /// `prompts/get` is a round-trip the palette cannot make.
     McpPrompt,

@@ -241,6 +241,13 @@ impl App {
             Err(commands::CommandParseError::Unknown(name)) => {
                 let trailing_prompt = slash_command_args(&turn.model).trim().to_string();
                 self.clear_submitted_input();
+                if let Some(resolved) = crate::app::workflow_cli::discover::resolve_start_command(
+                    &self.info.runtime.cwd,
+                    &name,
+                    &trailing_prompt,
+                ) {
+                    return self.start_workflow_command(&name, resolved, agent).await;
+                }
                 if let Some(prompt) = self.resolve_prompt_template(&name, &trailing_prompt) {
                     turn = TurnPrompt::standard(prompt.clone(), prompt);
                 } else if let Some(expanded) = self

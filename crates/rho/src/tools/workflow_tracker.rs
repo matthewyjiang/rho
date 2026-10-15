@@ -344,6 +344,35 @@ impl WorkflowRunTracker {
             })
     }
 
+    /// Whether a finished run for the session still awaits delivery.
+    pub fn has_pending_notification(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("workflow tracker lock")
+            .runs
+            .values()
+            .any(|entry| {
+                entry.session_id.as_deref() == Some(session_id)
+                    && entry.finished.is_some()
+                    && !entry.observed
+            })
+    }
+
+    /// Whether a run for the session that started at or after `since` is
+    /// still live. Headless prompts wait only for their own runs.
+    pub fn has_live_started_since(&self, session_id: &str, since: Instant) -> bool {
+        self.inner
+            .lock()
+            .expect("workflow tracker lock")
+            .runs
+            .values()
+            .any(|entry| {
+                entry.session_id.as_deref() == Some(session_id)
+                    && entry.finished.is_none()
+                    && entry.started >= since
+            })
+    }
+
     /// Drains unobserved terminal runs for the session, oldest first.
     pub fn take_notifications(&self, session_id: &str) -> Vec<WorkflowNotification> {
         let mut inner = self.inner.lock().expect("workflow tracker lock");

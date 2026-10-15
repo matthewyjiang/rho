@@ -15,7 +15,7 @@ pub(crate) fn preview_card(arguments: &Value, cwd: &Path, status: ToolStatus) ->
     let action = argument(arguments, "action");
     let verb = action.map_or_else(|| "workflow".into(), |action| format!("workflow.{action}"));
     let primary = match action {
-        Some("validate" | "plan") => {
+        Some("validate" | "plan" | "start") => {
             argument(arguments, "file").map(|file| compact_display_path(cwd, file))
         }
         _ => None,

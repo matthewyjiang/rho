@@ -66,6 +66,9 @@ pub(super) struct PaletteCaches {
     pub(super) skills: Option<DiscoveryCache<Vec<crate::skills::Skill>>>,
     /// File and inline prompt templates for `/` matching and expansion.
     pub(super) prompt_templates: Option<DiscoveryCache<crate::prompt_templates::PromptTemplates>>,
+    /// Workspace workflows with a `/workflow:<name>` command.
+    pub(super) workflows:
+        Option<DiscoveryCache<Vec<crate::app::workflow_cli::discover::DiscoveredWorkflow>>>,
     /// Workspace walk shared by different `@` queries against the same root.
     workspace: WorkspacePathCache,
 }

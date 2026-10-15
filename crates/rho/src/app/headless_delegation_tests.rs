@@ -22,6 +22,10 @@ const LONG_RUNNING_COMMAND: &str = "sleep 300";
 #[cfg(windows)]
 const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
 
+/// Every fixture session's id, so work from an "earlier prompt" can be
+/// registered to it before the fixture's prompt starts.
+const SESSION_ID: &str = "headless-fixture";
+
 /// Whether the fixture registers a running child before the prompt starts.
 enum Child {
     Running,
@@ -46,12 +50,13 @@ impl Fixture {
         Self::build(
             Child::Running,
             ProcessManager::new(ProcessLimits::default()),
+            WorkflowRunTracker::new(),
         )
         .await
     }
 
-    /// `processes` may already hold processes from an earlier prompt.
-    async fn build(child: Child, processes: ProcessManager) -> Self {
+    /// `processes` and `workflows` may already hold work from an earlier prompt.
+    async fn build(child: Child, processes: ProcessManager, workflows: WorkflowRunTracker) -> Self {
         let root = tempfile::tempdir().unwrap();
         let manager = SubagentManager::new(
             crate::config::Config::default(),
@@ -69,8 +74,10 @@ impl Fixture {
             ))
             .build()
             .unwrap();
-        let session = runtime.session(SessionOptions::default()).await.unwrap();
-        let workflows = WorkflowRunTracker::new();
+        let session = runtime
+            .session(SessionOptions::new().id(rho_sdk::SessionId::from_string(SESSION_ID).unwrap()))
+            .await
+            .unwrap();
         let host = HeadlessDelegation::attach(
             &session,
             BackgroundSources {
@@ -182,12 +189,14 @@ enum Work {
     ProcessDuringPrompt,
     Workflow,
     ProcessFromEarlierPrompt,
+    WorkflowFromEarlierPrompt,
 }
 
 // Covers: a child, a workflow, or a process started during the prompt holds
 // natural completion, and its result continues the original run exactly once;
-// a process left from an earlier prompt does not hold it. The SDK channel tests
-// do not own this wait.
+// a process or workflow left from an earlier prompt, such as an ACP
+// `/workflow:<name>` start, does not hold it. The SDK channel tests do not own
+// this wait.
 // Owner: shared CLI/ACP background delivery lifecycle.
 #[tokio::test]
 async fn background_work_holds_natural_completion_and_continues_parent_once() {
@@ -205,9 +214,15 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
             Work::ProcessFromEarlierPrompt,
             ("initial answer", 0, (0, 0, 1)),
         ),
+        (
+            "workflow from an earlier prompt",
+            Work::WorkflowFromEarlierPrompt,
+            ("initial answer", 0, (0, 1, 0)),
+        ),
     ];
     for (label, work, (text, applied, undelivered)) in cases {
         let processes = ProcessManager::new(ProcessLimits::default());
+        let workflows = WorkflowRunTracker::new();
         let earlier = match work {
             Work::ProcessFromEarlierPrompt => Some(
                 processes
@@ -216,15 +231,27 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                     .unwrap()
                     .process_id,
             ),
+            Work::WorkflowFromEarlierPrompt => {
+                // Owned by the session `build` creates, as an earlier prompt's
+                // `/workflow:<name>` start would be.
+                assert!(workflows.register_start(
+                    "wf-run",
+                    "fixture",
+                    "digest",
+                    Some(SESSION_ID.into())
+                ));
+                None
+            }
             Work::Child | Work::ProcessDuringPrompt | Work::Workflow => None,
         };
         let child = match work {
             Work::Child => Child::Running,
-            Work::ProcessDuringPrompt | Work::Workflow | Work::ProcessFromEarlierPrompt => {
-                Child::Absent
-            }
+            Work::ProcessDuringPrompt
+            | Work::Workflow
+            | Work::ProcessFromEarlierPrompt
+            | Work::WorkflowFromEarlierPrompt => Child::Absent,
         };
-        let mut fixture = Fixture::build(child, processes).await;
+        let mut fixture = Fixture::build(child, processes, workflows).await;
         let request = fixture.final_boundary().await;
         let during = match work {
             Work::ProcessDuringPrompt => Some(fixture.start_process().await),
@@ -234,7 +261,7 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                     .register_start("wf-run", "fixture", "digest", None));
                 None
             }
-            Work::Child | Work::ProcessFromEarlierPrompt => None,
+            Work::Child | Work::ProcessFromEarlierPrompt | Work::WorkflowFromEarlierPrompt => None,
         };
         {
             let reply = fixture.host.respond(request);
@@ -254,7 +281,9 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                 Work::ProcessDuringPrompt => {
                     Fixture::stop_process(&fixture.processes, during.as_deref().unwrap()).await;
                 }
-                Work::Workflow => Fixture::finish_workflow(&fixture.workflows, "wf-run"),
+                Work::Workflow | Work::WorkflowFromEarlierPrompt => {
+                    Fixture::finish_workflow(&fixture.workflows, "wf-run");
+                }
                 Work::ProcessFromEarlierPrompt => {
                     Fixture::stop_process(&fixture.processes, earlier.as_deref().unwrap()).await;
                 }

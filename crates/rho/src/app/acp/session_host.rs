@@ -65,6 +65,8 @@ mod convert;
 mod mode;
 #[path = "session_host_persist.rs"]
 mod persist;
+#[path = "session_host_workflow.rs"]
+mod workflow;
 
 use build::{build_session, mode_state, session_config};
 use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
@@ -277,11 +279,13 @@ impl SessionHost {
 
     /// Runs one `session/prompt`: a slash command or a model turn. A
     /// command that cannot run fails with [`commands::CommandRejected`].
+    /// `config_path` is the process config file, which workflow runs reload.
     pub(super) async fn prompt(
         &mut self,
         request: PromptRequest,
         client: &dyn AcpClientPort,
         process_config: &Config,
+        config_path: &std::path::Path,
     ) -> anyhow::Result<PromptResponse> {
         if self.unsaved_compaction {
             anyhow::bail!(
@@ -318,6 +322,10 @@ impl SessionHost {
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.compact(instructions, client).await
+            }
+            Some(Ok(PromptAction::StartWorkflow(start))) => {
+                self.start_workflow(&input, start, process_config, config_path, client)
+                    .await
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };

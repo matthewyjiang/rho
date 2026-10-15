@@ -75,6 +75,6 @@ fn workflow_tool_schema_is_a_root_object() {
     assert_eq!(schema["required"], serde_json::json!(["action"]));
     assert_eq!(
         schema["properties"]["action"]["enum"],
-        serde_json::json!(["validate", "plan", "run", "status", "cancel", "resume"])
+        serde_json::json!(["validate", "plan", "run", "start", "status", "cancel", "resume"])
     );
 }
