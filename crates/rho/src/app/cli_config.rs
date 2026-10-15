@@ -97,12 +97,15 @@ pub(super) async fn refresh_model_cache(
     );
     let auth = match cli.auth.as_deref() {
         Some(auth) => auth.to_string(),
-        // Same rule as `--provider`: prefer a mode with stored credentials so
-        // a keyed host is not probed anonymously.
-        None if provider != config.provider => provider::provider_descriptor(provider)
+        // A keyed auth already configured for this provider is kept, as the
+        // overrides do. Otherwise use the `--provider` rule and prefer a mode
+        // with stored credentials, so a keyed host is not probed anonymously.
+        None if provider == config.provider && config.auth != provider::KEYLESS_AUTH => {
+            config.auth.clone()
+        }
+        None => provider::provider_descriptor(provider)
             .map(|descriptor| descriptor.discovery_auth(store).id.to_string())
             .unwrap_or_else(|| config.auth.clone()),
-        None => config.auth.clone(),
     };
     let attempted = refresh_model_list_for_provider(
         provider,
@@ -383,11 +386,22 @@ fn apply_provider_override(
     store: &dyn CredentialStore,
     cached_models: CachedModelRequirement,
 ) -> anyhow::Result<()> {
-    let profile = provider::resolve_provider_reference_with_credentials(provider, store)
-        .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
+    // A keyed auth already configured for this provider stays, as with
+    // `--model`. A legacy alias such as `xai-oauth` pins its own auth instead.
+    let configured = if provider::legacy_provider_alias(provider).is_some() {
+        None
+    } else {
+        provider::resolve_profile_exact(provider, &config.auth)
+            .ok()
+            .filter(|profile| profile.auth_id() != provider::KEYLESS_AUTH)
+    };
+    let profile = match configured {
+        Some(profile) => profile,
+        None => provider::resolve_provider_reference_with_credentials(provider, store)
+            .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?,
+    };
     let provider = profile.provider_name();
     crate::config::ensure_serves_chat(provider)?;
-    let auth = Some(profile.auth_id());
     let model = if has_model_override {
         None
     } else if let Some(model) = catalog::default_model_for_provider(provider) {
@@ -401,9 +415,7 @@ fn apply_provider_override(
         }
     };
     config.provider = provider.to_string();
-    if let Some(auth) = auth {
-        config.auth = auth.to_string();
-    }
+    config.auth = profile.auth_id().to_string();
     if let Some(model) = model {
         config.model = model;
     }

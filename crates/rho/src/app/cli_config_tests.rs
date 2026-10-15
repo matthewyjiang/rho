@@ -777,18 +777,89 @@ fn cli_custom_host_selection_without_auth_prefers_stored_key() {
             }
         }
 
-        // A keyed auth already configured for the host survives a `--model`
-        // switch even with no stored secret; it must not drop to `none`.
-        let mut cfg = Config {
+        // A keyed auth already configured for the host survives a reselection
+        // even with no stored secret; it must not drop to `none`.
+        let configured = Config {
             provider: "keyedhost".into(),
             model: "vendor/model-a".into(),
             auth: "keyedhost-api-key".into(),
             ..base.clone()
         };
-        let cli = Cli::try_parse_from(["rho", "--model", "keyedhost/vendor/model-a"]).unwrap();
-        apply_overrides(&mut cfg, &cli, &keyless).unwrap();
-        assert_eq!(cfg.auth, "keyedhost-api-key");
+        for args in [
+            &["--model", "keyedhost/vendor/model-a"][..],
+            &["--provider", "keyedhost", "--model", "vendor/model-a"],
+            &["--provider", "keyedhost"],
+        ] {
+            let mut cfg = configured.clone();
+            let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+            apply_overrides(&mut cfg, &cli, &keyless).unwrap();
+            assert_eq!(cfg.auth, "keyedhost-api-key", "{args:?}");
+        }
     });
+}
+
+// Covers: `--provider` naming the configured keyless custom host must probe its
+// required model list with the stored key, or a keyed host aborts startup.
+// Owner: app startup
+// Same process-wide registry lock as the fetch test below.
+#[allow(clippy::await_holding_lock)]
+#[tokio::test(flavor = "current_thread")]
+async fn cli_custom_host_refresh_uses_stored_key_for_configured_keyless_host() {
+    use rho_providers::credentials::CredentialStore as _;
+
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 2048];
+        let bytes = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+        let request = String::from_utf8_lossy(&buffer[..bytes]).to_ascii_lowercase();
+        let body = r#"{"data":[{"id":"vendor/model-a"}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+            .await
+            .unwrap();
+        request.contains("authorization: bearer sk-test")
+    });
+
+    let cache_dir = unique_cache_dir("custom-host-keyed-refresh");
+    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let _restore = RestoreCustomProviders;
+    let mut cfg = Config {
+        provider: "keyedhost".into(),
+        model: "vendor/model-a".into(),
+        auth: "none".into(),
+        ..Config::default()
+    };
+    cfg.providers.set_endpoint("keyedhost", &api_base).unwrap();
+    cfg.providers.activate().unwrap();
+    let store = MemoryCredentialStore::default();
+    store
+        .set_secret("provider:keyedhost:api-key", "sk-test")
+        .unwrap();
+    let cli = Cli::try_parse_from(["rho", "--provider", "keyedhost"]).unwrap();
+
+    let refresh = refresh_model_cache(&cli, &cfg, &store).await;
+    let sent_key = server.await.unwrap();
+    set_provider_models_cache_dir_for_tests(None);
+    let _ = std::fs::remove_dir_all(cache_dir);
+
+    refresh.unwrap();
+    assert!(sent_key, "model-list refresh must send the stored key");
 }
 
 // Covers: custom hosts must populate the picker from /v1/models without a manual refresh
