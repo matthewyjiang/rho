@@ -212,6 +212,7 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
                 vec![AcpContentBlock::from("write")],
             ),
             &port,
+            &config,
         )
         .await
         .unwrap();

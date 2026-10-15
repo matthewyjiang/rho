@@ -16,12 +16,20 @@ use agent_client_protocol::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeResponse,
         LoadSessionRequest, LoadSessionResponse, McpCapabilities, NewSessionRequest,
         NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
-        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
-        SetSessionModeResponse,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        SetSessionModeRequest, SetSessionModeResponse,
     },
     schema::ProtocolVersion,
     Error as AcpError,
 };
+
+/// A published `session/new` or `session/load` result. `commands` is sent
+/// after `response`, once the client knows the session.
+#[derive(Debug)]
+pub(super) struct SessionStart<Response> {
+    pub(super) response: Response,
+    pub(super) commands: SessionNotification,
+}
 
 /// One ACP session slot. The host stays in this mutex for its whole life, so a
 /// prompt never has to take it out of the map and put it back.
@@ -110,28 +118,30 @@ impl RhoAcpAgent {
     pub(super) async fn new_session(
         self: &Arc<Self>,
         request: NewSessionRequest,
-    ) -> Result<NewSessionResponse, AcpError> {
+    ) -> Result<SessionStart<NewSessionResponse>, AcpError> {
         let _gate = self.begin_install().await?;
         let (host, response) = SessionHost::create(&self.startup, request)
             .await
             .map_err(host_error)?;
         let session_id = response.session_id.clone();
+        let commands = host.available_commands(&self.startup.config);
         self.install(session_id, host).await;
-        Ok(response)
+        Ok(SessionStart { response, commands })
     }
 
     pub(super) async fn load_session(
         self: &Arc<Self>,
         request: LoadSessionRequest,
         port: &dyn AcpClientPort,
-    ) -> Result<LoadSessionResponse, AcpError> {
+    ) -> Result<SessionStart<LoadSessionResponse>, AcpError> {
         let _gate = self.begin_install().await?;
         let session_id = request.session_id.clone();
         let (host, response) = SessionHost::load(&self.startup, request, port)
             .await
             .map_err(host_error)?;
+        let commands = host.available_commands(&self.startup.config);
         self.install(session_id, host).await;
-        Ok(response)
+        Ok(SessionStart { response, commands })
     }
 
     pub(super) async fn prompt(
@@ -142,7 +152,9 @@ impl RhoAcpAgent {
         let session_id = request.session_id.clone();
         let live = self.live_session(&session_id).await?;
         let mut host = live.try_lock_host(&session_id)?;
-        host.prompt(request, port).await.map_err(host_error)
+        host.prompt(request, port, &self.startup.config)
+            .await
+            .map_err(prompt_error)
     }
 
     async fn live_session(&self, session_id: &SessionId) -> Result<Arc<LiveSession>, AcpError> {
@@ -256,6 +268,14 @@ pub(super) fn busy_session(session_id: &SessionId) -> AcpError {
     AcpError::invalid_request().data(format!(
         "session '{session_id}' already has an active prompt"
     ))
+}
+
+/// A command the prompt names but cannot run is the caller's to fix.
+fn prompt_error(error: anyhow::Error) -> AcpError {
+    match error.downcast::<super::commands::CommandRejected>() {
+        Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
+        Err(error) => host_error(error),
+    }
 }
 
 fn host_error(error: anyhow::Error) -> AcpError {

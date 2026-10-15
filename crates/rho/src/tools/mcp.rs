@@ -28,6 +28,7 @@ mod http_client;
 pub(crate) mod inflight;
 pub(crate) mod oauth;
 pub(crate) mod progress;
+pub(crate) mod prompt_command;
 pub(crate) mod report;
 pub(crate) mod result;
 pub(crate) mod roots;

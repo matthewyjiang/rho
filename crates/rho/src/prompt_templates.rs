@@ -5,7 +5,19 @@ use std::{
 
 pub type PromptTemplates = BTreeMap<String, String>;
 
-pub(crate) fn discover_with_home(cwd: &Path, home: Option<&Path>) -> PromptTemplates {
+/// Templates on disk under `home` and `cwd`'s project ancestors, then the
+/// `configured` ones from config, which win on a name conflict.
+pub(crate) fn load(
+    cwd: &Path,
+    home: Option<&Path>,
+    configured: PromptTemplates,
+) -> PromptTemplates {
+    let mut templates = discover_with_home(cwd, home);
+    merge(&mut templates, configured);
+    templates
+}
+
+fn discover_with_home(cwd: &Path, home: Option<&Path>) -> PromptTemplates {
     let mut roots = Vec::new();
     if let Some(home) = home {
         roots.push(home.join(".rho").join("prompts"));

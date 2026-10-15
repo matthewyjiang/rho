@@ -1,10 +1,12 @@
 mod agent;
+mod commands;
 mod config_options;
 mod events;
 mod host_mcp;
 mod permission;
 mod session_host;
 mod signals;
+mod skills;
 mod thought_level;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
@@ -99,7 +101,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: NewSessionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
-                    spawn_response(
+                    spawn_session_start(
                         &cx,
                         responder,
                         async move { agent.new_session(request).await },
@@ -114,7 +116,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 async move |request: LoadSessionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     let port = ConnectionPort::new(cx.clone());
-                    spawn_response(&cx, responder, async move {
+                    spawn_session_start(&cx, responder, async move {
                         agent.load_session(request, &port).await
                     })
                 }
@@ -203,6 +205,32 @@ where
             Ok(response) => responder.respond(response),
             Err(error) => responder.respond_with_error(error),
         }
+    })
+}
+
+/// Like [`spawn_response`] for `session/new` and `session/load`, then sends
+/// the session's command advertisement. Updates name a session the client
+/// learns from the response, so they follow it on the wire.
+fn spawn_session_start<Resp, Fut>(
+    cx: &ConnectionTo<Client>,
+    responder: Responder<Resp>,
+    work: Fut,
+) -> Result<(), AcpError>
+where
+    Resp: JsonRpcResponse + Send + 'static,
+    Fut: Future<Output = Result<agent::SessionStart<Resp>, AcpError>> + Send + 'static,
+{
+    let port = ConnectionPort::new(cx.clone());
+    cx.spawn(async move {
+        let agent::SessionStart { response, commands } = match work.await {
+            Ok(started) => started,
+            Err(error) => return responder.respond_with_error(error),
+        };
+        responder.respond(response)?;
+        if let Err(error) = port.send_session_notification(commands).await {
+            tracing::warn!(%error, "could not advertise ACP commands");
+        }
+        Ok(())
     })
 }
 

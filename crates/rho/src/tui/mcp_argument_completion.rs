@@ -153,7 +153,8 @@ impl App {
             return None;
         }
         let text = self.input_ui.text();
-        let (server, name) = super::mcp_prompt::parse_command(commands::command_prefix(text)?)?;
+        let (server, name) =
+            crate::tools::mcp::prompt_command::parse_command(commands::command_prefix(text)?)?;
         let prompt = self
             .mcp_catalog
             .prompts()
