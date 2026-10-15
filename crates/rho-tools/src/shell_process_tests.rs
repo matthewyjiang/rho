@@ -340,9 +340,13 @@ async fn login_shell_keeps_parent_path_entries() {
     const MARKER_DIR: &str = "/rho-parent-only-path";
     // Child-only override: the parent PATH is not mutated.
     let parent_path = format!("{MARKER_DIR}:{}", std::env::var("PATH").unwrap());
+    // An empty HOME keeps the developer's own ~/.profile out of the run: it may
+    // reorder PATH on purpose. System login init is what the fix guards.
+    let home = tempfile::tempdir().unwrap();
     let mut command = Command::new("bash");
     command
         .args(["-lc", &login_shell_script("printf '%s' \"$PATH\"")])
+        .env("HOME", home.path())
         .env("PATH", &parent_path)
         .env(PARENT_PATH_VAR, &parent_path)
         .stdin(Stdio::null())
