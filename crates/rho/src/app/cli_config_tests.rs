@@ -798,6 +798,32 @@ fn cli_custom_host_selection_without_auth_prefers_stored_key() {
     });
 }
 
+// Covers: a configured auth with no credentials must not beat another mode of
+// the same provider that has a stored key.
+// Owner: cli config overrides
+#[test]
+fn cli_selection_prefers_stored_key_over_configured_auth_without_credentials() {
+    use rho_providers::credentials::CredentialStore as _;
+
+    let store = MemoryCredentialStore::default();
+    store
+        .set_secret(rho_providers::provider::XAI_API_KEY_ACCOUNT, "xai-test")
+        .unwrap();
+    for args in [&["--model", "xai/grok-4.7"][..], &["--provider", "xai"]] {
+        let mut cfg = Config {
+            provider: "xai".into(),
+            model: "grok-4.7".into(),
+            auth: "xai-oauth".into(),
+            ..Config::default()
+        };
+        let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+
+        apply_overrides(&mut cfg, &cli, &store).unwrap();
+
+        assert_eq!(cfg.auth, "xai-api-key", "{args:?}");
+    }
+}
+
 // Covers: `--provider` naming the configured keyless custom host must probe its
 // required model list with the stored key, or a keyed host aborts startup.
 // Owner: app startup

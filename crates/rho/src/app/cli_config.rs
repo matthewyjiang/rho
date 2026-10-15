@@ -11,7 +11,7 @@ use {
             ProviderModelEndpoint,
         },
     },
-    rho_providers::provider::{self, ProviderModelSource},
+    rho_providers::provider::{self, ProviderAuthKind, ProviderModelSource},
 };
 
 pub(super) enum ProviderRefreshStatus {
@@ -97,15 +97,10 @@ pub(super) async fn refresh_model_cache(
     );
     let auth = match cli.auth.as_deref() {
         Some(auth) => auth.to_string(),
-        // A keyed auth already configured for this provider is kept, as the
-        // overrides do. Otherwise use the `--provider` rule and prefer a mode
-        // with stored credentials, so a keyed host is not probed anonymously.
-        None if provider == config.provider && config.auth != provider::KEYLESS_AUTH => {
-            config.auth.clone()
-        }
-        None => provider::provider_descriptor(provider)
-            .map(|descriptor| descriptor.discovery_auth(store).id.to_string())
-            .unwrap_or_else(|| config.auth.clone()),
+        // Probe with the auth the overrides will select, so a keyed host is
+        // not probed anonymously.
+        None => inferred_auth(provider, &config.auth, store)
+            .map_or_else(|| config.auth.clone(), |profile| profile.auth_id().into()),
     };
     let attempted = refresh_model_list_for_provider(
         provider,
@@ -386,20 +381,8 @@ fn apply_provider_override(
     store: &dyn CredentialStore,
     cached_models: CachedModelRequirement,
 ) -> anyhow::Result<()> {
-    // A keyed auth already configured for this provider stays, as with
-    // `--model`. A legacy alias such as `xai-oauth` pins its own auth instead.
-    let configured = if provider::legacy_provider_alias(provider).is_some() {
-        None
-    } else {
-        provider::resolve_profile_exact(provider, &config.auth)
-            .ok()
-            .filter(|profile| profile.auth_id() != provider::KEYLESS_AUTH)
-    };
-    let profile = match configured {
-        Some(profile) => profile,
-        None => provider::resolve_provider_reference_with_credentials(provider, store)
-            .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?,
-    };
+    let profile = inferred_auth(provider, &config.auth, store)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
     let provider = profile.provider_name();
     crate::config::ensure_serves_chat(provider)?;
     let model = if has_model_override {
@@ -435,28 +418,17 @@ fn apply_model_override(
     };
     let selection = match qualified {
         Some((provider, model)) => {
-            // Same auth choice as the TUI `/model` path, against the target
-            // provider's credentials only, so the store is not queried for
-            // every provider. An explicit `--auth` is applied afterward and
+            // The catalog still checks the inferred auth against the model's
+            // own auth modes. An explicit `--auth` is applied afterward and
             // still takes precedence.
-            //
-            // The configured auth also counts: when the target provider offers
-            // it, it is the user's explicit choice and must survive even
-            // without a stored secret, or a keyed custom host would drop to
-            // `none` (and `--save` would persist that demotion).
-            let available = provider::resolve_provider_reference(provider)
-                .into_iter()
-                .flat_map(|profile| profile.provider.auth_modes())
-                .filter(|mode| credentials::auth_has_credentials(store, mode.id).unwrap_or(false))
-                .map(|mode| mode.id.to_string())
-                .chain(std::iter::once(config.auth.clone()))
-                .collect::<Vec<_>>();
+            let auth = inferred_auth(provider, &config.auth, store)
+                .map(|profile| profile.auth_id().to_string());
             catalog::resolve_model_selection_for_provider(
                 provider,
                 model,
                 catalog::SelectionAuthContext {
-                    current: Some(&config.auth),
-                    available: &available,
+                    current: auth.as_deref(),
+                    available: auth.as_slice(),
                 },
             )?
         }
@@ -472,6 +444,46 @@ fn apply_model_override(
     config.auth = selection.auth;
     config.model_alias = model_override.alias;
     Ok(())
+}
+
+/// Auth the CLI selects for `provider` when `--auth` is omitted, shared by
+/// `--provider`, `--model provider/model`, and the startup model refresh.
+///
+/// A legacy alias such as `xai-oauth` keeps its pinned auth. Otherwise, in
+/// order: the configured auth when the provider offers it and it has
+/// credentials; a keyed mode with stored credentials (or an `RHO_*` override),
+/// as the `/model` picker prefers; the configured keyed auth, so a keyed host
+/// never drops to keyless (which `--save` would persist); the provider
+/// default. `None` for an unknown provider. Only this provider's modes are
+/// checked, so the store is not queried for every provider.
+fn inferred_auth(
+    provider: &str,
+    configured: &str,
+    store: &dyn CredentialStore,
+) -> Option<provider::ResolvedProviderProfile> {
+    let profile = provider::resolve_provider_reference(provider).ok()?;
+    if provider::legacy_provider_alias(provider).is_some() {
+        return Some(profile);
+    }
+    let descriptor = profile.provider;
+    let keyed = |mode: &provider::AuthMode| !matches!(mode.auth_kind, ProviderAuthKind::None);
+    let has_credentials = |mode: &provider::AuthMode| {
+        credentials::auth_has_credentials(store, mode.id).unwrap_or(false)
+    };
+    let configured = descriptor.auth_mode(configured).filter(keyed);
+    let auth = configured
+        .filter(has_credentials)
+        .or_else(|| {
+            descriptor
+                .auth_modes()
+                .find(|mode| keyed(mode) && has_credentials(mode))
+        })
+        .or(configured)
+        .unwrap_or_else(|| descriptor.default_auth());
+    Some(provider::ResolvedProviderProfile {
+        provider: descriptor,
+        auth,
+    })
 }
 
 fn effective_model_override(
