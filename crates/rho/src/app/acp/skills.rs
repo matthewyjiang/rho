@@ -3,11 +3,11 @@
 //! T3 Code fills its `$` menu only from `available_commands_update` entries
 //! named `$<skill>` and sends a picked skill back as a `$<skill>` mention in
 //! plain prompt text. Rho advertises its discovered skills that way, then
-//! loads the first mentioned skill with a host-requested `skill` call before
-//! the first model request, like the TUI's `/skill:<name>`. The command
-//! catalog in [`super::commands`] owns when these apply.
+//! loads every mentioned skill before the first model request, as one batch
+//! of host-requested `skill` calls, like the TUI's `/skill:<name>`. The
+//! command catalog in [`super::commands`] owns when these apply.
 
-use std::sync::LazyLock;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 use agent_client_protocol::schema::v1::AvailableCommand;
 use rho_sdk::{
@@ -37,14 +37,27 @@ pub(super) fn available_commands(skills: &[Skill]) -> Vec<AvailableCommand> {
         .collect()
 }
 
-/// The first known skill mentioned in the prompt's text blocks. `discover`
-/// runs only when the prompt has a mention. Only one skill loads up front
-/// because a run starts with at most one host call; later mentions stay in
-/// the prompt for the model.
-pub(super) fn first_mention(
+/// Host calls that load the `leading` skills, then every known skill the
+/// prompt mentions, each skill once and in that order. The calls run as one
+/// batch, so each loads independently of the others.
+pub(super) fn load_calls(
+    leading: &[&str],
     input: &UserInput,
     discover: impl FnOnce() -> Vec<Skill>,
-) -> Option<Skill> {
+) -> Vec<ToolCall> {
+    let mut seen = BTreeSet::new();
+    leading
+        .iter()
+        .copied()
+        .chain(mentions(input, discover))
+        .filter(|name| seen.insert(*name))
+        .map(load_call)
+        .collect()
+}
+
+/// Names of the known skills mentioned in the prompt's text blocks, in
+/// mention order. `discover` runs only when the prompt has a mention.
+fn mentions(input: &UserInput, discover: impl FnOnce() -> Vec<Skill>) -> Vec<&str> {
     let names = input
         .blocks()
         .iter()
@@ -58,13 +71,13 @@ pub(super) fn first_mention(
         .filter(|name| mentionable(name))
         .collect::<Vec<_>>();
     if names.is_empty() {
-        return None;
+        return Vec::new();
     }
-    let mut skills = discover();
-    let index = names
+    let skills = discover();
+    names
         .into_iter()
-        .find_map(|name| skills.iter().position(|skill| skill.name == name))?;
-    Some(skills.swap_remove(index))
+        .filter(|name| skills.iter().any(|skill| skill.name == *name))
+        .collect()
 }
 
 /// Host-requested call that loads skill `name`, matching the TUI's `/skill:`.

@@ -19,7 +19,7 @@ const REPLAY_META_KEY: &str = "isReplay";
 /// Maps one prompt's SDK events onto ACP session updates.
 ///
 /// Proposed tool arguments are held until [`RunEvent::ToolStarted`] so the first
-/// ACP `ToolCall` can carry kind, locations, and raw input together.
+/// ACP `ToolCall` can carry name, kind, locations, and raw input together.
 pub(super) struct EventMapper {
     proposed: HashMap<String, Value>,
 }
@@ -172,6 +172,7 @@ fn started_tool_call(
 ) -> ToolCall {
     let title = tool_title(name, metadata);
     let mut tool = ToolCall::new(ToolCallId::new(call_id.as_str()), title)
+        .name(name.to_owned())
         .kind(tool_kind(metadata))
         .status(ToolCallStatus::InProgress)
         .locations(tool_locations(metadata.affected_paths()));
@@ -249,6 +250,7 @@ fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotif
                 session_id,
                 SessionUpdate::ToolCall(
                     ToolCall::new(ToolCallId::new(images.tool_call_id()), images.tool_name())
+                        .name(images.tool_name().to_owned())
                         .status(ToolCallStatus::Completed)
                         .content(content),
                 ),

@@ -94,13 +94,13 @@ impl Fixture {
     }
 }
 
-/// The parts of an action a test can predict: model text, and the skill a
-/// host call loads. Call ids are random.
+/// The parts of an action a test can predict: model text, and the skills its
+/// host batch loads, in order. Call ids are random.
 #[derive(Debug, PartialEq)]
 enum Resolved {
     Turn {
         text: String,
-        skill: Option<String>,
+        skills: Vec<String>,
     },
     Compact(Option<String>),
     Workflow {
@@ -112,15 +112,18 @@ enum Resolved {
 
 async fn resolved(text: &str, scope: &CommandScope<'_>) -> Resolved {
     match resolve(UserInput::text(text), scope).await {
-        Ok(PromptAction::Turn { input, call }) => Resolved::Turn {
+        Ok(PromptAction::Turn { input, calls }) => Resolved::Turn {
             text: match input.blocks() {
                 [ContentBlock::Text(text)] => text.clone(),
                 blocks => panic!("unexpected blocks {blocks:?}"),
             },
-            skill: call.map(|call| {
-                assert_eq!(call.name, "skill");
-                call.arguments["name"].as_str().unwrap().to_string()
-            }),
+            skills: calls
+                .into_iter()
+                .map(|call| {
+                    assert_eq!(call.name, "skill");
+                    call.arguments["name"].as_str().unwrap().to_string()
+                })
+                .collect(),
         },
         Ok(PromptAction::Compact { instructions }) => Resolved::Compact(instructions),
         Ok(PromptAction::StartWorkflow(start)) => Resolved::Workflow {
@@ -140,10 +143,10 @@ fn init_prompt(workspace: &Path) -> String {
     .unwrap()
 }
 
-fn turn(text: &str, skill: Option<&str>) -> Resolved {
+fn turn(text: &str, skills: &[&str]) -> Resolved {
     Resolved::Turn {
         text: text.into(),
-        skill: skill.map(str::to_owned),
+        skills: skills.iter().map(|skill| (*skill).to_owned()).collect(),
     }
 }
 
@@ -170,27 +173,35 @@ async fn resolve_routes_prompts_to_commands() {
         (
             "init",
             "/init",
-            turn(&init_prompt(fixture.workspace.path()), Some("rho-init")),
+            turn(&init_prompt(fixture.workspace.path()), &["rho-init"]),
         ),
         (
             "prompt template",
             "/prompt:review src/lib.rs",
-            turn("Review src/lib.rs carefully", None),
+            turn("Review src/lib.rs carefully", &[]),
         ),
         (
             "template expansion loads a mentioned skill",
             "/prompt:review $acp-demo",
-            turn("Review $acp-demo carefully", Some("acp-demo")),
+            turn("Review $acp-demo carefully", &["acp-demo"]),
         ),
         (
             "skill picked as a slash command",
             "/$acp-demo please",
-            turn("/$acp-demo please", Some("acp-demo")),
+            turn("/$acp-demo please", &["acp-demo"]),
+        ),
+        (
+            "slash command skill batches with later mentions",
+            "/$acp-demo with $rho-config and $acp-demo",
+            turn(
+                "/$acp-demo with $rho-config and $acp-demo",
+                &["acp-demo", "rho-config"],
+            ),
         ),
         (
             "skill mention",
             "use $acp-demo please",
-            turn("use $acp-demo please", Some("acp-demo")),
+            turn("use $acp-demo please", &["acp-demo"]),
         ),
         ("tui-only command", "/model gpt-5", Resolved::Rejected),
         (
@@ -206,7 +217,7 @@ async fn resolve_routes_prompts_to_commands() {
         (
             "unknown template passes through",
             "/prompt:missing x",
-            turn("/prompt:missing x", None),
+            turn("/prompt:missing x", &[]),
         ),
         (
             "workflow with default inputs",
@@ -227,7 +238,7 @@ async fn resolve_routes_prompts_to_commands() {
         (
             "path-like text passes through",
             "/usr/bin/env is odd",
-            turn("/usr/bin/env is odd", None),
+            turn("/usr/bin/env is odd", &[]),
         ),
     ];
 
@@ -270,7 +281,7 @@ async fn resolve_keeps_blocks_after_the_command() {
                 image,
             ])
             .unwrap(),
-            call: None,
+            calls: Vec::new(),
         }
     );
 }

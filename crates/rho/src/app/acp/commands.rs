@@ -49,10 +49,10 @@ pub(super) struct CommandScope<'a> {
 /// What a prompt asks the session to do.
 #[derive(Debug, PartialEq)]
 pub(super) enum PromptAction {
-    /// A model turn on `input`, first running `call` when it is set.
+    /// A model turn on `input`, first running `calls` as one host batch.
     Turn {
         input: UserInput,
-        call: Option<ToolCall>,
+        calls: Vec<ToolCall>,
     },
     /// `/compact`, with optional guidance on what to keep.
     Compact { instructions: Option<String> },
@@ -120,10 +120,10 @@ pub(super) async fn resolve(
     scope: &CommandScope<'_>,
 ) -> Result<PromptAction, CommandRejected> {
     let Some(text) = leading_text(&input) else {
-        return Ok(turn(input, scope));
+        return Ok(turn(input, &[], scope));
     };
     match crate::commands::parse_command(text) {
-        Ok(None) => Ok(turn(input, scope)),
+        Ok(None) => Ok(turn(input, &[], scope)),
         Ok(Some(invocation)) => built_in(input, invocation, scope),
         Err(CommandParseError::Unknown(name)) => dynamic(input, &name, scope).await,
     }
@@ -145,7 +145,7 @@ fn built_in(
             .map_err(|error| CommandRejected(error.to_string()))?;
             Ok(PromptAction::Turn {
                 input: replace_leading_text(input, model_prompt),
-                call: Some(skills::load_call(init_turn::SKILL)),
+                calls: vec![skills::load_call(init_turn::SKILL)],
             })
         }
         _ => Err(CommandRejected(format!(
@@ -160,17 +160,15 @@ async fn dynamic(
     name: &str,
     scope: &CommandScope<'_>,
 ) -> Result<PromptAction, CommandRejected> {
-    // Spec-following clients send a picked `$skill` command as `/$skill`.
+    // Spec-following clients send a picked `$skill` command as `/$skill`. It
+    // loads first, then any skills mentioned after it.
     if let Some(skill) = name.strip_prefix('$') {
         if scope.tools.contains(skills::SKILL_TOOL)
             && crate::skills::discover_with_home(scope.cwd, scope.home)
                 .iter()
                 .any(|known| known.name == skill)
         {
-            return Ok(PromptAction::Turn {
-                input,
-                call: Some(skills::load_call(skill)),
-            });
+            return Ok(turn(input, &[skill], scope));
         }
     }
     let trailing = leading_text(&input).map_or("", command_args);
@@ -193,11 +191,11 @@ async fn dynamic(
         })
     {
         let expanded = prompt_templates::expand(&template, trailing);
-        return Ok(turn(replace_leading_text(input, expanded), scope));
+        return Ok(turn(replace_leading_text(input, expanded), &[], scope));
     }
     let catalog = scope.tools.mcp_catalog();
     let Some(prompt) = prompt_command::find(catalog, name) else {
-        return Ok(turn(input, scope));
+        return Ok(turn(input, &[], scope));
     };
     let rejected = |detail: String| {
         CommandRejected(format!(
@@ -211,23 +209,21 @@ async fn dynamic(
             missing.join(", ")
         ))),
         McpPromptCommand::Failed(error) => Err(rejected(error.to_string())),
-        McpPromptCommand::Expanded(text) => Ok(turn(replace_leading_text(input, text), scope)),
+        McpPromptCommand::Expanded(text) => Ok(turn(replace_leading_text(input, text), &[], scope)),
     }
 }
 
-/// A model turn that loads the first mentioned `$skill` up front.
-fn turn(input: UserInput, scope: &CommandScope<'_>) -> PromptAction {
-    let call = scope
-        .tools
-        .contains(skills::SKILL_TOOL)
-        .then(|| {
-            skills::first_mention(&input, || {
-                crate::skills::discover_with_home(scope.cwd, scope.home)
-            })
+/// A model turn that first loads the `leading` skills and every mentioned
+/// `$skill`, all in one host batch.
+fn turn(input: UserInput, leading: &[&str], scope: &CommandScope<'_>) -> PromptAction {
+    let calls = if scope.tools.contains(skills::SKILL_TOOL) {
+        skills::load_calls(leading, &input, || {
+            crate::skills::discover_with_home(scope.cwd, scope.home)
         })
-        .flatten()
-        .map(|skill| skills::load_call(&skill.name));
-    PromptAction::Turn { input, call }
+    } else {
+        Vec::new()
+    };
+    PromptAction::Turn { input, calls }
 }
 
 fn templates(scope: &CommandScope<'_>) -> prompt_templates::PromptTemplates {
