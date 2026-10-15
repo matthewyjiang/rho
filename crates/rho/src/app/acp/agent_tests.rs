@@ -7,14 +7,10 @@ use std::{
 };
 
 use agent_client_protocol::{
-    schema::{
-        v1::{
-            CancelNotification, InitializeRequest, LoadSessionRequest, McpCapabilities,
-            PromptCapabilities, PromptRequest, RequestPermissionRequest, RequestPermissionResponse,
-            SessionId, SessionModeId, SessionNotification, SetSessionConfigOptionRequest,
-            SetSessionModeRequest,
-        },
-        ProtocolVersion,
+    schema::v1::{
+        CancelNotification, LoadSessionRequest, McpCapabilities, PromptCapabilities, PromptRequest,
+        RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionModeId,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
     Error as AcpError, ErrorCode,
 };
@@ -88,8 +84,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
 // Owner: ACP agent handshake
 #[test]
 fn initialize_advertises_load_session_and_prompt_caps() {
-    let request = InitializeRequest::new(ProtocolVersion::V1);
-    let response = RhoAcpAgent::initialize(&request);
+    let response = RhoAcpAgent::initialize();
 
     assert!(response.agent_capabilities.load_session);
     assert_eq!(
@@ -104,22 +99,6 @@ fn initialize_advertises_load_session_and_prompt_caps() {
         McpCapabilities::new().http(true)
     );
     assert!(response.auth_methods.is_empty());
-}
-
-// Covers: initialize must answer with the version Rho speaks, never echo a
-// newer one it cannot honor (T3 Code asks for v2).
-// Owner: ACP agent handshake
-#[test]
-fn initialize_negotiates_down_to_v1() {
-    for (requested, expected) in [
-        (ProtocolVersion::V0, ProtocolVersion::V0),
-        (ProtocolVersion::V1, ProtocolVersion::V1),
-        // V2 is feature-gated as an unstable draft; T3 sends the bare number.
-        (ProtocolVersion::from(2u16), ProtocolVersion::V1),
-    ] {
-        let response = RhoAcpAgent::initialize(&InitializeRequest::new(requested));
-        assert_eq!(response.protocol_version, expected, "requested {requested}");
-    }
 }
 
 // Covers: session/set_mode must reject unknown mode ids as invalid params

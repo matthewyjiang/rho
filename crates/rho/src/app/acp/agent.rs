@@ -13,11 +13,11 @@ use super::{
 };
 use agent_client_protocol::{
     schema::v1::{
-        AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeRequest,
-        InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities,
-        NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
-        SessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-        SetSessionModeRequest, SetSessionModeResponse,
+        AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeResponse,
+        LoadSessionRequest, LoadSessionResponse, McpCapabilities, NewSessionRequest,
+        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
+        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+        SetSessionModeResponse,
     },
     schema::ProtocolVersion,
     Error as AcpError,
@@ -64,10 +64,11 @@ impl RhoAcpAgent {
         }
     }
 
-    pub(super) fn initialize(request: &InitializeRequest) -> InitializeResponse {
-        // Rho speaks v1. A client asking for a newer version gets v1 back and
-        // decides whether to continue; an older request is echoed.
-        InitializeResponse::new(request.protocol_version.min(ProtocolVersion::V1))
+    /// Rho speaks ACP v1 only, so the answer does not depend on the request:
+    /// any other requested version, including the pre-release v0 and T3's v2,
+    /// gets v1 back and the client decides whether to continue.
+    pub(super) fn initialize() -> InitializeResponse {
+        InitializeResponse::new(ProtocolVersion::V1)
             .agent_capabilities(
                 AgentCapabilities::new()
                     .load_session(true)

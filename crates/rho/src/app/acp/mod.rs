@@ -88,8 +88,8 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
         .builder()
         .name("rho")
         .on_receive_request(
-            async move |request: InitializeRequest, responder, _cx| {
-                responder.respond(RhoAcpAgent::initialize(&request))
+            async move |_request: InitializeRequest, responder, _cx| {
+                responder.respond(RhoAcpAgent::initialize())
             },
             agent_client_protocol::on_receive_request!(),
         )

@@ -21,7 +21,7 @@ The process uses the model, provider, and other flags from the command line and 
 
 stdout is protocol only. Logs go to stderr. Do not write other text to stdout, and do not point a logger at stdout while a host is connected.
 
-Rho speaks ACP protocol version 1. A host that asks for a newer version gets `1` back in the `initialize` response.
+Rho speaks ACP protocol version 1. The `initialize` response always answers `1`, whatever version the host asked for; a host that cannot speak v1 should disconnect.
 
 ## Sessions
 
