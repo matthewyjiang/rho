@@ -132,11 +132,7 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::Phase("continue_session"),
     Step::TypeText("fixture stream"),
-    Step::WaitText {
-        text: "fixture stream",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
+    Step::Custom(submit_typed_follow_up),
     Step::WaitText {
         text: "assistant stream part one",
         timeout: STREAM,
@@ -195,6 +191,16 @@ fn picker_position(contents: &str) -> Option<(u32, u32)> {
         let (total, _) = rest.split_once(')')?;
         Some((selected.trim().parse().ok()?, total.trim().parse().ok()?))
     })
+}
+
+/// Typed text runs through the paste-burst detector, whose Enter suppression
+/// window starts when Rho *reads* the last key. A stalled runner can read the
+/// tail of the text in one turn, so Enter sent right after it renders becomes
+/// a newline. Wait for the text (Rho has read every key), then settle.
+fn submit_typed_follow_up(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_text("fixture stream", SETTLE)?;
+    harness.settle_plain_text_input();
+    harness.inject_key(&Key::Enter)
 }
 
 fn wait_for_denied_or_interrupted(harness: &mut PtyHarness) -> Result<()> {
