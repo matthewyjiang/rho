@@ -65,24 +65,35 @@ pub(super) fn model_config_options(
 ///
 /// A label is the catalog name (`Claude Opus 5.5`), or the bare model id when no
 /// catalog names the model. A label shared by several entries gets its provider
-/// appended (`GPT-5.5 (openai-codex)`) so every row stays distinguishable.
+/// appended (`GPT-5.5 (openai-codex)`), or its full `provider/model` id when the
+/// provider shares the name too, so every row stays distinguishable.
 fn model_labels(entries: &[ModelCatalogEntry]) -> Vec<String> {
-    let short = entries
+    let names = entries
         .iter()
         .map(|entry| {
             model_display_name(&entry.provider, &entry.model).unwrap_or_else(|| entry.model.clone())
         })
         .collect::<Vec<_>>();
-    let mut counts = HashMap::<&str, usize>::new();
-    for label in &short {
-        *counts.entry(label).or_default() += 1;
+    let mut name_counts = HashMap::<&str, usize>::new();
+    let mut provider_counts = HashMap::<(&str, &str), usize>::new();
+    for (name, entry) in names.iter().zip(entries) {
+        *name_counts.entry(name).or_default() += 1;
+        *provider_counts.entry((name, &entry.provider)).or_default() += 1;
     }
-    short
+    names
         .iter()
         .zip(entries)
-        .map(|(label, entry)| match counts[label.as_str()] {
-            1 => label.clone(),
-            _ => format!("{label} ({})", entry.provider),
+        .map(|(name, entry)| {
+            if name_counts[name.as_str()] == 1 {
+                name.clone()
+            } else if provider_counts[&(name.as_str(), entry.provider.as_str())] == 1 {
+                format!("{name} ({})", entry.provider)
+            } else {
+                format!(
+                    "{name} ({})",
+                    model_reference(&entry.provider, &entry.model)
+                )
+            }
         })
         .collect()
 }
