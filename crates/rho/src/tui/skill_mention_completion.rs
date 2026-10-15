@@ -26,6 +26,19 @@ impl SkillMentionCursor {
 }
 
 impl App {
+    /// Completes the mention `token` to `$name`. Only the token is spliced,
+    /// so collapsed pastes elsewhere in the prompt keep their offsets.
+    pub(super) fn complete_skill_mention(&mut self, token: &Range<usize>, name: &str) {
+        let edit = complete_mention(self.input_ui.text(), token, name);
+        let buffer = self.input_ui.buffer_mut();
+        buffer.replace_range(
+            edit.replace,
+            super::composer_buffer::Fragment::plain(edit.inserted),
+        );
+        buffer.set_cursor(edit.cursor);
+        self.input_ui.cancel_pointer_click_sequence();
+    }
+
     /// The mention the composer cursor sits in, when a palette could show
     /// for it.
     pub(super) fn skill_mention_cursor(&self) -> Option<SkillMentionCursor> {
@@ -91,20 +104,30 @@ pub(super) fn mention_under_cursor(text: &str, cursor: usize) -> Option<SkillMen
     })
 }
 
-/// `text` with the `token` char range replaced by `$name`, and the cursor
-/// after the space that ends the mention.
-pub(super) fn complete_mention(text: &str, token: &Range<usize>, name: &str) -> (String, usize) {
-    let chars = text.chars().collect::<Vec<_>>();
-    let before = chars[..token.start].iter().collect::<String>();
-    let after = chars[token.end..].iter().collect::<String>();
-    let separator = if after.starts_with(char::is_whitespace) {
-        ""
+/// The edit that completes a mention: replace the `replace` char range with
+/// `inserted`, then place the cursor at `cursor`.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct MentionEdit {
+    pub(super) replace: Range<usize>,
+    pub(super) inserted: String,
+    pub(super) cursor: usize,
+}
+
+/// Rewrites the `token` char range of `text` to `$name`. The cursor lands
+/// after the whitespace that ends the mention, adding a space only when none
+/// follows the token.
+pub(super) fn complete_mention(text: &str, token: &Range<usize>, name: &str) -> MentionEdit {
+    let followed_by_space = text.chars().nth(token.end).is_some_and(char::is_whitespace);
+    let inserted = if followed_by_space {
+        format!("${name}")
     } else {
-        " "
+        format!("${name} ")
     };
-    let completed = format!("{before}${name}{separator}{after}");
-    let cursor = token.start + 1 + name.chars().count() + 1;
-    (completed, cursor)
+    MentionEdit {
+        replace: token.clone(),
+        inserted,
+        cursor: token.start + 1 + name.chars().count() + 1,
+    }
 }
 
 #[cfg(test)]

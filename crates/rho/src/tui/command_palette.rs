@@ -333,13 +333,13 @@ impl App {
                         .mcp_argument_cursor()
                         .is_some_and(|cursor| !cursor.key.typed.trim().is_empty())
             }
-            // A bare `$` can be prose, such as a price, so Enter sends it as
-            // typed until a name or an explicit pick narrows the mention.
+            // `$` and `$20` read as prices, so Enter sends them as typed until
+            // the typed name could itself be a mention or a row was picked.
             CommandChoiceKind::SkillMention { .. } => {
                 self.input_ui.command_selection_explicit()
                     || self
                         .skill_mention_cursor()
-                        .is_some_and(|cursor| !cursor.typed.is_empty())
+                        .is_some_and(|cursor| crate::skills::mention::mentionable(&cursor.typed))
             }
         }
     }
@@ -411,11 +411,9 @@ impl App {
             }
             // Mentions are prompt text, so the submission mode stays as is.
             CommandChoiceKind::SkillMention { token } => {
-                super::skill_mention_completion::complete_mention(
-                    self.input_ui.text(),
-                    token,
-                    &choice.name,
-                )
+                self.complete_skill_mention(token, &choice.name);
+                self.input_ui.set_shell_mode(None);
+                return;
             }
         };
         self.input_ui.set_text_and_cursor(input, cursor);
