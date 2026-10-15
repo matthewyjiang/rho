@@ -100,7 +100,10 @@ impl ProcessManager {
         }
     }
 
-    /// Starts a shell command with no keep-warm hold.
+    /// Starts a shell command with no keep-warm hold. Only tests and the
+    /// debug-only TUI fixture use this; production goes through
+    /// [`Self::start_with_keep_warm`] or [`Self::start_execution`].
+    #[cfg(any(test, debug_assertions))]
     pub async fn start(
         &self,
         command: String,
