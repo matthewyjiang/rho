@@ -12,25 +12,28 @@ use crate::{
             approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
         },
         session_assembly::{
-            assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssembly,
+            assemble_session, ApprovalInputs, SessionApproval, SessionAssembly,
             SessionAssemblyOptions,
         },
         tools_prompt::McpSamplingSupport,
     },
+    config::Config,
     permission::PermissionMode,
 };
 
-/// `added_dirs` is the session's set: launch `--add-dir` values, plus any a
-/// loaded session saved.
+/// `config` is the session's config: the process config plus host-supplied
+/// MCP servers. `added_dirs` is the session's set: launch `--add-dir` values,
+/// plus any a loaded session saved.
 pub(super) async fn build_session(
     startup: &AcpStartup,
+    config: &Config,
     workspace: &Path,
     added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
-) -> anyhow::Result<BuiltSession> {
-    ensure_headless_auto_classifier_model(&startup.config)?;
-    let SessionAssembly { built, .. } = assemble_session(SessionAssemblyOptions {
-        config: &startup.config,
+) -> anyhow::Result<SessionAssembly> {
+    ensure_headless_auto_classifier_model(config)?;
+    assemble_session(SessionAssemblyOptions {
+        config,
         config_path: startup.config_path.clone(),
         cwd: workspace,
         no_system_prompt: startup.no_system_prompt,
@@ -68,10 +71,21 @@ pub(super) async fn build_session(
         },
         session_options,
     })
-    .await?;
-    Ok(built)
+    .await
 }
 
 pub(super) fn mode_state(mode: PermissionMode) -> SessionModeState {
     SessionModeState::new(permission::mode_id(mode), permission::mode_list())
+}
+
+/// The process config with the host's `mcpServers` merged in. A host entry
+/// replaces a config server of the same name for this session only, and an
+/// invalid host entry suppresses it.
+pub(super) fn session_config(
+    process: &Config,
+    host_servers: &[agent_client_protocol::schema::v1::McpServer],
+) -> Config {
+    let mut config = process.clone();
+    super::super::host_mcp::overlay_host_mcp(&mut config.mcp, host_servers);
+    config
 }

@@ -514,6 +514,7 @@ async fn run_session_with_output(
     let SessionAssembly {
         built,
         workspace_root,
+        ..
     } = assemble_session(SessionAssemblyOptions {
         config: startup.config,
         config_path: startup.config_path.clone(),

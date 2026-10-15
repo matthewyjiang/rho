@@ -7,14 +7,10 @@ use std::{
 };
 
 use agent_client_protocol::{
-    schema::{
-        v1::{
-            CancelNotification, InitializeRequest, LoadSessionRequest, PromptCapabilities,
-            PromptRequest, RequestPermissionRequest, RequestPermissionResponse, SessionId,
-            SessionModeId, SessionNotification, SetSessionConfigOptionRequest,
-            SetSessionModeRequest,
-        },
-        ProtocolVersion,
+    schema::v1::{
+        CancelNotification, LoadSessionRequest, McpCapabilities, PromptCapabilities, PromptRequest,
+        RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionModeId,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
     Error as AcpError, ErrorCode,
 };
@@ -83,14 +79,13 @@ fn test_agent() -> Arc<RhoAcpAgent> {
     }))
 }
 
-// Covers: initialize must advertise loadSession, image, embeddedContext, and no audio.
+// Covers: initialize must advertise loadSession, image, embeddedContext, no
+// audio, and the MCP transports host `mcpServers` may use.
 // Owner: ACP agent handshake
 #[test]
 fn initialize_advertises_load_session_and_prompt_caps() {
-    let request = InitializeRequest::new(ProtocolVersion::V1);
-    let response = RhoAcpAgent::initialize(&request);
+    let response = RhoAcpAgent::initialize();
 
-    assert_eq!(response.protocol_version, request.protocol_version);
     assert!(response.agent_capabilities.load_session);
     assert_eq!(
         response.agent_capabilities.prompt_capabilities,
@@ -99,32 +94,33 @@ fn initialize_advertises_load_session_and_prompt_caps() {
             .audio(false)
             .embedded_context(true)
     );
+    assert_eq!(
+        response.agent_capabilities.mcp_capabilities,
+        McpCapabilities::new().http(true)
+    );
     assert!(response.auth_methods.is_empty());
 }
 
-// Covers: session/set_mode must fail for a known mode without claiming the
-// advertised method does not exist.
+// Covers: session/set_mode must reject unknown mode ids as invalid params
+// before looking up the session, and a known mode on a missing session as
+// not found.
 // Owner: ACP agent handshake
-#[test]
-fn set_session_mode_is_unsupported() {
-    let error = RhoAcpAgent::set_session_mode(&SetSessionModeRequest::new(
-        SessionId::new("missing"),
-        SessionModeId::new("bypass"),
-    ));
-
-    assert_eq!(error.code, ErrorCode::InvalidRequest);
-}
-
-// Covers: session/set_mode must reject unknown ids instead of a generic not-found
-// Owner: ACP agent handshake
-#[test]
-fn set_session_mode_rejects_unknown_mode() {
-    let error = RhoAcpAgent::set_session_mode(&SetSessionModeRequest::new(
-        SessionId::new("missing"),
-        SessionModeId::new("yolo"),
-    ));
-
-    assert_eq!(error.code, ErrorCode::InvalidParams);
+#[tokio::test]
+async fn set_session_mode_validates_mode_then_session() {
+    let agent = test_agent();
+    for (mode, expected) in [
+        ("yolo", ErrorCode::InvalidParams),
+        ("bypass", ErrorCode::ResourceNotFound),
+    ] {
+        let error = agent
+            .set_session_mode(SetSessionModeRequest::new(
+                SessionId::new("missing"),
+                SessionModeId::new(mode),
+            ))
+            .await
+            .expect_err("missing session");
+        assert_eq!(error.code, expected, "mode {mode}");
+    }
 }
 
 // Covers: session/cancel for an unknown id must not panic or fail the connection.
