@@ -65,8 +65,10 @@ pub(super) fn model_config_options(
 ///
 /// A label is the catalog name (`Claude Opus 5.5`), or the bare model id when no
 /// catalog names the model. A label shared by several entries gets its provider
-/// appended (`GPT-5.5 (openai-codex)`), or its full `provider/model` id when the
-/// provider shares the name too, so every row stays distinguishable.
+/// appended (`GPT-5.5 (openai-codex)`). When one provider gives several models
+/// the same name, those rows show their model ids instead (`gpt-5.6-sol`,
+/// `gpt-5.6-sol-pro`), which are unique per provider, with the provider
+/// appended only when other providers share the name too.
 fn model_labels(entries: &[ModelCatalogEntry]) -> Vec<String> {
     let names = entries
         .iter()
@@ -84,15 +86,13 @@ fn model_labels(entries: &[ModelCatalogEntry]) -> Vec<String> {
         .iter()
         .zip(entries)
         .map(|(name, entry)| {
-            if name_counts[name.as_str()] == 1 {
-                name.clone()
-            } else if provider_counts[&(name.as_str(), entry.provider.as_str())] == 1 {
-                format!("{name} ({})", entry.provider)
-            } else {
-                format!(
-                    "{name} ({})",
-                    model_reference(&entry.provider, &entry.model)
-                )
+            let shared = name_counts[name.as_str()];
+            let within_provider = provider_counts[&(name.as_str(), entry.provider.as_str())];
+            match (shared, within_provider) {
+                (1, _) => name.clone(),
+                (_, 1) => format!("{name} ({})", entry.provider),
+                _ if shared == within_provider => entry.model.clone(),
+                _ => format!("{} ({})", entry.model, entry.provider),
             }
         })
         .collect()

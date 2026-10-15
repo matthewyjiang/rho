@@ -93,7 +93,7 @@ fn with_catalog_names<T>(names: &[(&str, &str, &str)], f: impl FnOnce() -> T) ->
 // Covers: ACP model select must follow TUI picker order, keep provider/model
 // value ids and descriptions, and use short labels that host pickers do not
 // truncate: the catalog name, else the bare model id, with the provider added
-// only when two rows would otherwise share a label, and the full id when the
+// only when two rows would otherwise share a label, and the model id when the
 // same provider names two models alike
 // Owner: ACP config options
 #[test]
@@ -102,8 +102,11 @@ fn model_options_list_favorites_first_with_provider_model_ids() {
         ("xai", "grok-3", "Grok 3"),
         ("openai", "gpt-5.5", "GPT-5.5"),
         ("openai-codex", "gpt-5.5", "GPT-5.5"),
+        ("openai", "gpt-5.6-sol", "GPT-5.6 Sol"),
+        ("openai", "gpt-5.6-sol-pro", "GPT-5.6 Sol"),
         ("xai", "grok-a", "Grok"),
         ("xai", "grok-b", "Grok"),
+        ("opencode-go", "grok", "Grok"),
     ];
     let options = with_catalog_names(&names, || {
         model_config_options(
@@ -114,8 +117,11 @@ fn model_options_list_favorites_first_with_provider_model_ids() {
                 entry("openai", "gpt-5.5"),
                 entry("openai-codex", "gpt-5.5"),
                 entry("xai", "grok-3"),
+                entry("openai", "gpt-5.6-sol"),
+                entry("openai", "gpt-5.6-sol-pro"),
                 entry("xai", "grok-a"),
                 entry("xai", "grok-b"),
+                entry("opencode-go", "grok"),
             ],
         )
     });
@@ -132,8 +138,11 @@ fn model_options_list_favorites_first_with_provider_model_ids() {
         ("openai/gpt-4", "gpt-4"),
         ("openai/gpt-5.5", "GPT-5.5 (openai)"),
         ("openai-codex/gpt-5.5", "GPT-5.5 (openai-codex)"),
-        ("xai/grok-a", "Grok (xai/grok-a)"),
-        ("xai/grok-b", "Grok (xai/grok-b)"),
+        ("openai/gpt-5.6-sol", "gpt-5.6-sol"),
+        ("openai/gpt-5.6-sol-pro", "gpt-5.6-sol-pro"),
+        ("xai/grok-a", "grok-a (xai)"),
+        ("xai/grok-b", "grok-b (xai)"),
+        ("opencode-go/grok", "Grok (opencode-go)"),
     ]
     .map(|(value, label)| {
         (
