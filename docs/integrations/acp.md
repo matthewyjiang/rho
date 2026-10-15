@@ -58,6 +58,25 @@ When the current model exposes configurable reasoning, new and loaded sessions a
 
 The change applies to later turns in that ACP session. It does not rewrite `config.toml`. Launch still honors `--reasoning` and config as the starting value. A prompt already in flight rejects the change as a busy session. After a model switch, the advertised `thought_level` list follows the new model.
 
+## Commands
+
+Right after each `session/new` and `session/load` response, Rho sends an `available_commands_update`. Hosts show it as their command menu and send a picked command back as `/name args` prompt text:
+
+| Command | Effect |
+| --- | --- |
+| `/compact [instructions]` | Compacts older context between turns, optionally saying what to keep, and replies with the before and after counts. Cancel stops it before it commits. If the compacted session cannot be saved, later prompts fail until the host loads the session again. |
+| `/init` | Surveys the repository and writes `AGENTS.md` through the `rho-init` skill, as in the TUI. Refused in `plan` mode or without the skill, write, and file-edit tools. |
+| `/prompt:<name> [args]` | Expands a [prompt template](/configuration#prompt-templates) and runs it as the turn. |
+| `/mcp:<server>:<prompt> [args]` | Fetches an MCP server prompt and runs it as the turn. Arguments follow the TUI rules. |
+
+The session saves the command as typed, not its expansion. Other TUI commands, such as `/model`, fail with an invalid-params error that names the command. Text that names no command, such as `/usr/bin` or an unknown template, reaches the model unchanged.
+
+### Skills
+
+When the active agent has the `skill` tool, the update also lists one `$<name>` command per discovered [skill](/skills), using the skill's description. Hosts such as T3 Code list these in their `$` menu. Rho leaves out names a host would read as amounts, such as `$20k`.
+
+A model turn that mentions a known skill as a whitespace-delimited `$<name>` token loads that skill before the first model request, as the TUI's `/skill:<name>` does. Any currency symbol works as the sigil. Only the first mentioned skill loads this way. The model sees any later mentions as ordinary prompt text.
+
 ## MCP
 
 Rho starts MCP servers from its own config, plus the `mcpServers` the host sends with `session/new` or `session/load`. Host servers belong to that session only. A host server replaces a config server with the same name.

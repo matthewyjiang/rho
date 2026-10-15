@@ -9,9 +9,10 @@ use std::{
 
 use agent_client_protocol::{
     schema::v1::{
-        LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
-        PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
-        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        AvailableCommandsUpdate, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+        NewSessionResponse, PromptRequest, PromptResponse, RequestPermissionOutcome,
+        SessionConfigOption, SessionId, SessionNotification, SessionUpdate,
+        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
@@ -30,6 +31,7 @@ use rho_sdk::{
 };
 
 use super::{
+    commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
     events::EventMapper,
     permission,
@@ -54,6 +56,8 @@ use crate::{
 
 #[path = "session_host_build.rs"]
 mod build;
+#[path = "session_host_compact.rs"]
+mod compact;
 #[path = "session_host_convert.rs"]
 mod convert;
 #[path = "session_host_mode.rs"]
@@ -75,6 +79,10 @@ pub(super) struct SessionHost {
     completed_runs: u64,
     permission_placeholders: AtomicU64,
     replaced: Arc<AtomicBool>,
+    /// Set when a compaction rewrote live state but could not be saved.
+    /// Later prompts are refused so the session never diverges further
+    /// from its file; `session/load` starts a fresh host from storage.
+    unsaved_compaction: bool,
     herdr: HerdrReporter,
     /// The todo checklist the client last received as an ACP `plan`.
     sent_plan: Vec<agent_client_protocol::schema::v1::PlanEntry>,
@@ -85,9 +93,10 @@ pub(super) struct SessionHost {
 
 /// Carries cancellation for the session's current prompt. The agent already
 /// serializes prompts with `try_lock` on the host slot, so this gate only has
-/// to cover the window between prompt entry and the run's token existing: a
-/// cancel that lands while `Starting` is replayed onto the token as soon as
-/// `activate` receives it. `cancel` is a no-op while idle.
+/// to cover the window between prompt entry and the run's token existing.
+/// While `Starting`, a cancel trips the prompt token that `begin` returned,
+/// so command expansion can stop, and is replayed onto the run's token as
+/// soon as `activate` receives it. `cancel` is a no-op while idle.
 pub(super) struct PromptGate {
     slot: Mutex<PromptGateState>,
 }
@@ -95,7 +104,7 @@ pub(super) struct PromptGate {
 #[derive(Debug)]
 enum PromptGateState {
     Idle,
-    Starting { cancelled: bool },
+    Starting(CancellationToken),
     Active(CancellationToken),
 }
 
@@ -113,15 +122,17 @@ impl PromptGate {
     }
 
     /// Opens the starting window for a prompt, dropping any cancel that
-    /// arrived for the previous one.
-    pub(super) fn begin(&self) {
-        *self.slot() = PromptGateState::Starting { cancelled: false };
+    /// arrived for the previous one. The returned token trips on a cancel
+    /// that lands before `activate`.
+    pub(super) fn begin(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        *self.slot() = PromptGateState::Starting(token.clone());
+        token
     }
 
     fn activate(&self, token: CancellationToken) {
         let mut slot = self.slot();
-        let cancelled = matches!(*slot, PromptGateState::Starting { cancelled: true });
-        if cancelled {
+        if matches!(&*slot, PromptGateState::Starting(starting) if starting.is_cancelled()) {
             token.cancel();
         }
         *slot = PromptGateState::Active(token);
@@ -134,8 +145,7 @@ impl PromptGate {
     pub(super) fn cancel(&self) {
         match &mut *self.slot() {
             PromptGateState::Idle => {}
-            PromptGateState::Starting { cancelled } => *cancelled = true,
-            PromptGateState::Active(token) => token.cancel(),
+            PromptGateState::Starting(token) | PromptGateState::Active(token) => token.cancel(),
         }
     }
 }
@@ -249,13 +259,21 @@ impl SessionHost {
         Ok((host, response))
     }
 
+    /// Runs one `session/prompt`: a slash command or a model turn. A
+    /// command that cannot run fails with [`commands::CommandRejected`].
     pub(super) async fn prompt(
         &mut self,
         request: PromptRequest,
         client: &dyn AcpClientPort,
+        process_config: &Config,
     ) -> anyhow::Result<PromptResponse> {
+        if self.unsaved_compaction {
+            anyhow::bail!(
+                "could not continue session: its compacted context was not saved; load the session again"
+            );
+        }
         let input = user_input_from_prompt(&request.prompt)?;
-        self.prompt_gate.begin();
+        let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
         let _ = self
             .herdr
@@ -267,24 +285,26 @@ impl SessionHost {
                 )),
             )
             .await;
-        let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
-            &self.built.session,
-            self.built.tools.subagents(),
-            Some(&self.stored),
-        )?;
-        let result = crate::app::headless_delegation::HeadlessDelegation::drive(
-            &mut delegation,
-            self.drive_prompt(input, client),
-        )
-        .await;
-        if let Some(manager) = self.built.tools.subagents() {
-            manager.shutdown().await;
-            // Cancellation, errors, and exhausted step budgets end this
-            // prompt's automatic delivery. Keep snapshots for explicit status
-            // queries, but do not wait on or inject leftover children into the
-            // next prompt, including runs still alive after shutdown timed out.
-            manager.end_automatic_delivery(self.built.session.id().as_str());
-        }
+        let home = crate::paths::home_dir();
+        let scope = self.command_scope(home.as_deref(), process_config);
+        // Expansion can wait on an MCP server, so a cancel drops it.
+        let action = tokio::select! {
+            biased;
+            () = starting.cancelled() => None,
+            action = commands::resolve(input.clone(), &scope) => Some(action),
+        };
+        let result = match action {
+            None => Ok(PromptResponse::new(
+                agent_client_protocol::schema::v1::StopReason::Cancelled,
+            )),
+            Some(Ok(PromptAction::Turn { input: model, call })) => {
+                self.run_turn(&input, model, call, client).await
+            }
+            Some(Ok(PromptAction::Compact { instructions })) => {
+                self.compact(instructions, client).await
+            }
+            Some(Err(rejected)) => Err(rejected.into()),
+        };
         let _ = self
             .herdr
             .report_state(
@@ -325,6 +345,31 @@ impl SessionHost {
 
     pub(super) fn replaced_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.replaced)
+    }
+
+    /// The commands this session runs, as an `available_commands_update`.
+    pub(super) fn available_commands(&self, process_config: &Config) -> SessionNotification {
+        let home = crate::paths::home_dir();
+        let commands =
+            commands::available_commands(&self.command_scope(home.as_deref(), process_config));
+        SessionNotification::new(
+            self.acp_session_id.clone(),
+            SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
+        )
+    }
+
+    fn command_scope<'a>(
+        &'a self,
+        home: Option<&'a std::path::Path>,
+        process_config: &'a Config,
+    ) -> CommandScope<'a> {
+        CommandScope {
+            cwd: self.stored.cwd(),
+            home,
+            tools: &self.built.tools,
+            config: process_config,
+            permission_mode: self.permission.mode,
+        }
     }
 
     pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
@@ -460,15 +505,48 @@ impl SessionHost {
             completed_runs: 0,
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
+            unsaved_compaction: false,
             herdr,
             sent_plan: Vec::new(),
             load_notice: None,
         }
     }
 
+    /// A model turn on `model`, saved for display as `display`, the prompt
+    /// as the user sent it. `call` runs before the first model request.
+    async fn run_turn(
+        &mut self,
+        display: &UserInput,
+        model: UserInput,
+        call: Option<rho_sdk::model::ToolCall>,
+        client: &dyn AcpClientPort,
+    ) -> anyhow::Result<PromptResponse> {
+        let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
+            &self.built.session,
+            self.built.tools.subagents(),
+            Some(&self.stored),
+        )?;
+        let result = crate::app::headless_delegation::HeadlessDelegation::drive(
+            &mut delegation,
+            self.drive_prompt(display, model, call, client),
+        )
+        .await;
+        if let Some(manager) = self.built.tools.subagents() {
+            manager.shutdown().await;
+            // Cancellation, errors, and exhausted step budgets end this
+            // prompt's automatic delivery. Keep snapshots for explicit status
+            // queries, but do not wait on or inject leftover children into the
+            // next prompt, including runs still alive after shutdown timed out.
+            manager.end_automatic_delivery(self.built.session.id().as_str());
+        }
+        result
+    }
+
     async fn drive_prompt(
         &mut self,
-        input: UserInput,
+        display: &UserInput,
+        model: UserInput,
+        call: Option<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         if let Some(notice) = self.load_notice.take() {
@@ -477,7 +555,11 @@ impl SessionHost {
                 tracing::debug!(%error, "could not send ACP load notice");
             }
         }
-        let mut run = match self.built.session.start(input.clone()).await {
+        let started = match call {
+            Some(call) => self.built.session.start_with_tool_call(model, call).await,
+            None => self.built.session.start(model).await,
+        };
+        let mut run = match started {
             Ok(run) => run,
             Err(error) => {
                 self.dispatch_failed(&error.to_string());
@@ -511,7 +593,7 @@ impl SessionHost {
         self.sent_plan = signals.into_sent_plan();
         match outcome {
             Ok(outcome) => {
-                if let Err(error) = self.persist_turn(&input, Some(outcome.text())) {
+                if let Err(error) = self.persist_turn(display, Some(outcome.text())) {
                     self.dispatch_failed(&error.to_string());
                     return Err(error);
                 }
@@ -523,7 +605,7 @@ impl SessionHost {
                 Ok(PromptResponse::new(EventMapper::map_stop(&outcome)))
             }
             Err(rho_sdk::Error::Cancelled) => {
-                if let Err(error) = self.persist_turn(&input, None) {
+                if let Err(error) = self.persist_turn(display, None) {
                     self.dispatch_failed(&error.to_string());
                     return Err(error);
                 }
@@ -575,21 +657,29 @@ impl SessionHost {
     }
 
     fn persist_turn(&self, input: &UserInput, assistant_text: Option<&str>) -> anyhow::Result<()> {
-        if self.replaced.load(Ordering::Acquire) {
+        if self.is_replaced() {
             return Ok(());
         }
         let mut display_tail = vec![Message::User(input.blocks().to_vec())];
         if let Some(text) = assistant_text.filter(|text| !text.is_empty()) {
             display_tail.push(Message::assistant_text(text));
         }
-        self.stored.save_snapshot(
-            &self.added_dirs.decorate(
-                self.built
-                    .tools
-                    .todo_state()
-                    .decorate(self.built.prompt.decorate(self.built.session.snapshot())),
-            ),
-            &display_tail,
+        self.stored
+            .save_snapshot(&self.durable_snapshot(), &display_tail)
+    }
+
+    /// A replaced host must not write over its successor's session file.
+    fn is_replaced(&self) -> bool {
+        self.replaced.load(Ordering::Acquire)
+    }
+
+    /// The live snapshot with the host state a later load restores.
+    fn durable_snapshot(&self) -> rho_sdk::SessionSnapshot {
+        self.added_dirs.decorate(
+            self.built
+                .tools
+                .todo_state()
+                .decorate(self.built.prompt.decorate(self.built.session.snapshot())),
         )
     }
 

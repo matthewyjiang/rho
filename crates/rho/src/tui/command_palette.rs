@@ -187,15 +187,11 @@ impl App {
         ttl: Duration,
     ) -> Arc<crate::prompt_templates::PromptTemplates> {
         DiscoveryCache::get_or_refresh(&mut self.palette_caches.prompt_templates, ttl, || {
-            let mut templates = crate::prompt_templates::discover_with_home(
+            crate::prompt_templates::load(
                 &self.info.runtime.cwd,
                 self.info.runtime.prompt_template_home.as_deref(),
-            );
-            crate::prompt_templates::merge(
-                &mut templates,
                 self.info.runtime.config_prompt_templates.clone(),
-            );
-            templates
+            )
         })
     }
 

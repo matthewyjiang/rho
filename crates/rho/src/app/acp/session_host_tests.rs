@@ -154,8 +154,12 @@ fn cancel_is_idle_safe() {
 #[test]
 fn cancel_during_start_marks_the_gate() {
     let gate = PromptGate::new();
-    gate.begin();
+    let starting = gate.begin();
     gate.cancel();
+    assert!(
+        starting.is_cancelled(),
+        "command expansion must see the cancel"
+    );
     let token = rho_sdk::CancellationToken::new();
     gate.activate(token.clone());
     assert!(token.is_cancelled());
