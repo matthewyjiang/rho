@@ -280,12 +280,13 @@ An agent with the `workflow` capability uses the same service and store as the C
 {"action":"validate","file":".rho/workflows/review.star","inputs":{"target":"src"}}
 {"action":"plan","file":".rho/workflows/review.star","inputs":{"target":"src"}}
 {"action":"run","plan_id":"..."}
+{"action":"start","file":".rho/workflows/review.star","inputs":{"target":"src"}}
 {"action":"status","run_id":"..."}
 {"action":"cancel","run_id":"..."}
 {"action":"resume","run_id":"..."}
 ```
 
-`run` and `resume` start in the background and return a run id. Completions arrive at the next turn boundary. Use `status` after delivery, and `cancel` to stop. Do not poll.
+`start` plans a file and runs it in one call. It removes its launch-only plan once the run owns the frozen graph; `/workflow:<name>` uses it. `run`, `start`, and `resume` start in the background and return a run id. Completions arrive at the next turn boundary. Use `status` after delivery, and `cancel` to stop. Do not poll.
 
 Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume use normal tool permissions, without a separate plan-confirmation questionnaire. Node capabilities are authorized separately; removing the extra form does not bypass policy, hooks, or required approvals. Background execution still fails closed when a required approval has no responder. Plan and run tool summaries report `program_digest`.
 

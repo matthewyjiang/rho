@@ -179,7 +179,12 @@ impl RhoAcpAgent {
             let busy = match live.lock_host_for_prompt(&session_id).await {
                 Ok(mut host) => {
                     return host
-                        .prompt(request, port, &self.startup.config)
+                        .prompt(
+                            request,
+                            port,
+                            &self.startup.config,
+                            &self.startup.config_path,
+                        )
                         .await
                         .map_err(prompt_error)
                 }

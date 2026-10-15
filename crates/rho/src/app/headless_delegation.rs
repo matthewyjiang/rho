@@ -2,8 +2,10 @@
 //! inbox (ACP and `rho run`). Finished subagents, workflows, and background
 //! processes reach the model at the next boundary. Natural completion waits for
 //! children, workflows, and processes started during this prompt, standing in
-//! for the TUI's idle wake. The wait stays inside the original run, so
-//! cancellation and the SDK step budget still govern parent continuations.
+//! for the TUI's idle wake. Workflows and processes from an earlier prompt,
+//! such as an ACP `/workflow:<name>` start, only deliver; a later prompt does
+//! not wait for them. The wait stays inside the original run, so cancellation
+//! and the SDK step budget still govern parent continuations.
 
 use std::time::Instant;
 
@@ -26,8 +28,8 @@ pub(crate) struct HeadlessDelegation {
     subagents: Option<SubagentDelivery>,
     processes: Option<ProcessManager>,
     workflows: WorkflowRunTracker,
-    /// Processes started from here on hold natural completion; older ones
-    /// only deliver.
+    /// Workflows and processes started from here on hold natural completion;
+    /// older ones only deliver.
     prompt_started: Instant,
 }
 
@@ -245,9 +247,10 @@ impl HeadlessDelegation {
             subagents
                 .manager
                 .has_active_or_pending_notification(&self.session_id)
-        }) || self
-            .workflows
-            .has_active_or_pending_notification(&self.session_id)
+        }) || self.workflows.has_pending_notification(&self.session_id)
+            || self
+                .workflows
+                .has_live_started_since(&self.session_id, self.prompt_started)
             || self.processes.as_ref().is_some_and(|processes| {
                 processes.has_pending_notification()
                     || processes.has_live_started_since(self.prompt_started)

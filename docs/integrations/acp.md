@@ -84,6 +84,7 @@ Right after each `session/new` and `session/load` response, Rho sends an `availa
 | `/init` | Surveys the repository and writes `AGENTS.md` through the `rho-init` skill, as in the TUI. Refused in `plan` mode or without the skill, write, and file-edit tools. |
 | `/prompt:<name> [args]` | Expands a [prompt template](/configuration#prompt-templates) and runs it as the turn. |
 | `/mcp:<server>:<prompt> [args]` | Fetches an MCP server prompt and runs it as the turn. Arguments follow the TUI rules. |
+| `/workflow:<name> [inputs JSON]` | Starts a workspace [workflow](/workflows#start-a-workflow-by-name) in the background and ends the prompt without a model turn. The run id is added to context, so the model can check on it later. Listed only when the active agent has the `workflow` tool; refused in plan mode. Inputs are one JSON object, such as `/workflow:review {"target": "src"}`; omitted inputs use their defaults. ACP has no way for the agent to start a turn, so the result reaches the model at the next prompt. That prompt does not wait for a run that is still going. |
 
 The session saves the command as typed, not its expansion. Other TUI commands, such as `/model`, fail with an invalid-params error that names the command. Text that names no command, such as `/usr/bin` or an unknown template, reaches the model unchanged.
 

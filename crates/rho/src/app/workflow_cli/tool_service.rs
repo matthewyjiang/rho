@@ -94,16 +94,28 @@ impl AppWorkflowToolService {
         let plans = layout.plans();
         let runs = layout.runs();
         let capabilities = match request {
-            WorkflowToolRequest::Validate { file, .. } | WorkflowToolRequest::Plan { file, .. } => {
+            WorkflowToolRequest::Validate { file, .. }
+            | WorkflowToolRequest::Plan { file, .. }
+            | WorkflowToolRequest::Start { file, .. } => {
                 let mut requests =
                     self.planning_read_capabilities(file, rho_home, home, project_agents_trusted)?;
                 requests.push(CapabilityRequest::process(
                     self.planner_process_request(executable)?,
                     source(),
                 ));
-                if matches!(request, WorkflowToolRequest::Plan { .. }) {
+                if matches!(
+                    request,
+                    WorkflowToolRequest::Plan { .. } | WorkflowToolRequest::Start { .. }
+                ) {
                     requests.push(CapabilityRequest::write_path(
                         plans,
+                        PathScope::UnrestrictedFilesystem,
+                        source(),
+                    ));
+                }
+                if matches!(request, WorkflowToolRequest::Start { .. }) {
+                    requests.push(CapabilityRequest::write_path(
+                        runs,
                         PathScope::UnrestrictedFilesystem,
                         source(),
                     ));
@@ -280,26 +292,18 @@ impl AppWorkflowToolService {
                 let run = ops
                     .create_confirmed_run(&plan)
                     .map_err(model_workflow_tool_error)?;
-                if !self.tracker.register_start(
-                    run.manifest.run_id.to_string(),
-                    run.graph.program.name.as_str(),
-                    run.manifest.program_digest.0.clone(),
-                    None,
-                ) {
-                    return Err(ToolError::new(
-                        ToolErrorKind::Execution,
-                        "workflow is already running",
-                    ));
-                }
-                let started = runtime::spawn_background_run(
-                    run,
-                    RecoveryDecision::NormalResume,
-                    self.config_path.clone(),
-                    Some(self.tracker.clone()),
-                )
-                .await
-                .map_err(model_workflow_tool_error)?;
-                run_result(started)
+                self.launch(run, RecoveryDecision::NormalResume).await
+            }
+            WorkflowToolRequest::Start { file, inputs } => {
+                let prepared = self
+                    .prepare(Path::new(&file), inputs, context)
+                    .await
+                    .map_err(model_workflow_tool_error)?;
+                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let run = ops
+                    .create_launch_run(&prepared)
+                    .map_err(model_workflow_tool_error)?;
+                self.launch(run, RecoveryDecision::NormalResume).await
             }
             WorkflowToolRequest::Status { run_id } => {
                 let ops = self.ops().map_err(model_workflow_tool_error)?;
@@ -355,28 +359,37 @@ impl AppWorkflowToolService {
                             model_workflow_tool_error(error)
                         }
                     })?;
-                if !self.tracker.register_start(
-                    run.manifest.run_id.to_string(),
-                    run.graph.program.name.as_str(),
-                    run.manifest.program_digest.0.clone(),
-                    None,
-                ) {
-                    return Err(ToolError::new(
-                        ToolErrorKind::Execution,
-                        "workflow is already running",
-                    ));
-                }
-                let started = runtime::spawn_background_run(
-                    run,
-                    recovery,
-                    self.config_path.clone(),
-                    Some(self.tracker.clone()),
-                )
-                .await
-                .map_err(model_workflow_tool_error)?;
-                run_result(started)
+                self.launch(run, recovery).await
             }
         }
+    }
+
+    /// Tracks `run` for completion delivery, then drives it in the background.
+    async fn launch(
+        &self,
+        run: StoredRun,
+        recovery: RecoveryDecision,
+    ) -> Result<WorkflowToolResult, ToolError> {
+        if !self.tracker.register_start(
+            run.manifest.run_id.to_string(),
+            run.graph.program.name.as_str(),
+            run.manifest.program_digest.0.clone(),
+            None,
+        ) {
+            return Err(ToolError::new(
+                ToolErrorKind::Execution,
+                "workflow is already running",
+            ));
+        }
+        let started = runtime::spawn_background_run(
+            run,
+            recovery,
+            self.config_path.clone(),
+            Some(self.tracker.clone()),
+        )
+        .await
+        .map_err(model_workflow_tool_error)?;
+        run_result(started)
     }
 
     fn ops(&self) -> anyhow::Result<WorkflowOps> {

@@ -1,6 +1,8 @@
 //! Covers: real workflow tools must not strand chat behind an extra run form,
 //! lose the structured receipt, or drop live progress after the turn ends.
 //! Also covers: starting a source must not accumulate launch-only saved plans.
+//! Also covers: `/workflow:<name>` must forward its JSON inputs to planning
+//! and start the named source without the hub.
 //! Owner: interactive workflow lifecycle; existing CLI scenarios use a matrix
 //! driver and never exercise model-facing tools or source-start persistence.
 
@@ -317,6 +319,31 @@ fn workflow_background(harness: &mut PtyHarness) -> Result<()> {
     ensure!(
         plans == original_plans && record_ids(&store.join("runs"))? == runs,
         "source Start must retain the explicitly frozen plan without adding a launch plan; plans={plans:?} runs={runs:?}"
+    );
+
+    harness.set_phase("named_command_forwards_inputs");
+    // The source declares no inputs, so planning rejects this one. Seeing that
+    // rejection proves the command handed its JSON to the planner.
+    harness.submit_text(r#"/workflow:pty-background {"unexpected": 1}"#)?;
+    harness.wait_for_text("could not start .rho/workflows/pty-background.star", STREAM)?;
+    ensure!(
+        record_ids(&store.join("runs"))? == runs,
+        "a rejected input must not create a run"
+    );
+
+    harness.set_phase("named_command_starts_without_hub");
+    harness.submit_text("/workflow:pty-background")?;
+    assert_live_rail(harness)?;
+    let named_runs = record_ids(&store.join("runs"))?;
+    let named_run = named_runs
+        .iter()
+        .find(|id| !runs.contains(id))
+        .context("/workflow:<name> did not create a distinct run")?;
+    release_gate(harness)?;
+    wait_for_completion(harness, named_run)?;
+    ensure!(
+        record_ids(&store.join("plans"))? == original_plans,
+        "/workflow:<name> must not keep its launch plan"
     );
     Ok(())
 }

@@ -91,6 +91,24 @@ impl WorkflowOps {
             .await
     }
 
+    /// [`Self::prepare_local`] with JSON input values, as `/workflow:<name>`
+    /// and the hub supply them, under the default planning limits.
+    pub(crate) async fn prepare_local_json(
+        &self,
+        entry: &Path,
+        inputs: BTreeMap<String, serde_json::Value>,
+        config: &crate::config::Config,
+        available_tools: &crate::agent::AgentCapabilities,
+    ) -> anyhow::Result<PreparedPlan> {
+        let inputs = inputs
+            .into_iter()
+            .map(|(name, value)| Ok((InputName::new(name)?, WorkflowValue::from_json(value)?)))
+            .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+        let limits = super::planning_limits()?;
+        self.prepare_local(entry, inputs, config, available_tools, &limits)
+            .await
+    }
+
     /// Single freeze pipeline output stored once. No second normalize/validate build.
     pub(crate) fn store_plan(&self, prepared: &PreparedPlan) -> anyhow::Result<StoredPlan> {
         Ok(self.service.store_frozen(
@@ -213,6 +231,29 @@ impl WorkflowOps {
                 confirmed: true,
             },
         )?)
+    }
+
+    /// Freezes `prepared` and creates a confirmed run from it, for starts
+    /// that go straight from source to a run (hub Start, `/workflow:<name>`,
+    /// the tool's `start`). The launch-only plan is removed once the run owns
+    /// its frozen graph; failing to remove it is logged, not fatal, because
+    /// the run is already valid. A failed run creation keeps the plan.
+    pub(crate) fn create_launch_run(&self, prepared: &PreparedPlan) -> anyhow::Result<StoredRun> {
+        use anyhow::Context as _;
+
+        let plan = self.store_plan(prepared).context("could not save plan")?;
+        let run = self
+            .recheck_plan(&plan)
+            .and_then(|()| self.create_confirmed_run(&plan))
+            .context("could not create run")?;
+        if let Err(error) = self.delete_workspace_plan(plan.manifest.plan_id) {
+            tracing::warn!(
+                plan_id = %plan.manifest.plan_id,
+                error = %error,
+                "could not remove launch-only workflow plan"
+            );
+        }
+        Ok(run)
     }
 
     pub(crate) fn prepare_run(&self, plan_prefix_or_id: &str) -> anyhow::Result<StoredPlan> {

@@ -16,8 +16,9 @@ use crate::{
     },
 };
 
-/// A workspace with one prompt template and one project skill, an empty
-/// home, and a session that can load skills and write files.
+/// A workspace with one prompt template, one project skill, and one
+/// workflow, an empty home, and a session that can load skills, start
+/// workflows, and write files.
 struct Fixture {
     workspace: tempfile::TempDir,
     home: tempfile::TempDir,
@@ -38,6 +39,9 @@ impl Fixture {
             "---\nname: acp-demo\ndescription: Demo skill.\n---\nBody\n",
         )
         .unwrap();
+        let workflows = workspace.path().join(".rho/workflows/check");
+        std::fs::create_dir_all(&workflows).unwrap();
+        std::fs::write(workflows.join("workflow.star"), "").unwrap();
         let config = Config::default();
         let tools = AppToolSet::new(
             &config,
@@ -45,10 +49,16 @@ impl Fixture {
             ToolSetOptions::new(AgentCapabilities::new(
                 [
                     ToolCapability::Skill,
+                    ToolCapability::Workflow,
                     ToolCapability::WriteFile,
                     ToolCapability::Edit,
                 ]
                 .into(),
+            ))
+            .workflow(crate::app::workflow_cli::workflow_tool_service(
+                workspace.path().to_path_buf(),
+                /*config_path*/ None,
+                crate::tools::workflow_tracker::WorkflowRunTracker::new(),
             )),
         );
         tools.mcp_catalog().insert_offline_prompt(
@@ -88,8 +98,15 @@ impl Fixture {
 /// host call loads. Call ids are random.
 #[derive(Debug, PartialEq)]
 enum Resolved {
-    Turn { text: String, skill: Option<String> },
+    Turn {
+        text: String,
+        skill: Option<String>,
+    },
     Compact(Option<String>),
+    Workflow {
+        file: String,
+        inputs: serde_json::Value,
+    },
     Rejected,
 }
 
@@ -106,6 +123,10 @@ async fn resolved(text: &str, scope: &CommandScope<'_>) -> Resolved {
             }),
         },
         Ok(PromptAction::Compact { instructions }) => Resolved::Compact(instructions),
+        Ok(PromptAction::StartWorkflow(start)) => Resolved::Workflow {
+            file: start.workflow.relative_path,
+            inputs: json!(start.inputs),
+        },
         Err(_) => Resolved::Rejected,
     }
 }
@@ -123,6 +144,13 @@ fn turn(text: &str, skill: Option<&str>) -> Resolved {
     Resolved::Turn {
         text: text.into(),
         skill: skill.map(str::to_owned),
+    }
+}
+
+fn workflow(inputs: serde_json::Value) -> Resolved {
+    Resolved::Workflow {
+        file: ".rho/workflows/check/workflow.star".into(),
+        inputs,
     }
 }
 
@@ -181,6 +209,22 @@ async fn resolve_routes_prompts_to_commands() {
             turn("/prompt:missing x", None),
         ),
         (
+            "workflow with default inputs",
+            "/workflow:check",
+            workflow(json!({})),
+        ),
+        (
+            "workflow with inputs",
+            r#"/workflow:check {"target": "src"}"#,
+            workflow(json!({"target": "src"})),
+        ),
+        ("unknown workflow", "/workflow:missing", Resolved::Rejected),
+        (
+            "workflow inputs that are not an object",
+            "/workflow:check src",
+            Resolved::Rejected,
+        ),
+        (
             "path-like text passes through",
             "/usr/bin/env is odd",
             turn("/usr/bin/env is odd", None),
@@ -190,6 +234,15 @@ async fn resolve_routes_prompts_to_commands() {
     for (label, text, expected) in cases {
         assert_eq!(resolved(text, &scope).await, expected, "{label}");
     }
+    let plan = CommandScope {
+        permission_mode: crate::permission::PermissionMode::Plan,
+        ..fixture.scope()
+    };
+    assert_eq!(
+        resolved("/workflow:check", &plan).await,
+        Resolved::Rejected,
+        "plan mode cannot start workflows"
+    );
 }
 
 // Covers: a command must keep the images attached to its prompt
@@ -225,7 +278,7 @@ async fn resolve_keeps_blocks_after_the_command() {
 // Covers: the host menu must list every runnable command with its argument hint
 // Owner: acp commands
 #[test]
-fn available_commands_list_built_ins_templates_mcp_prompts_and_skills() {
+fn available_commands_list_every_command_kind() {
     let fixture = Fixture::new();
 
     let commands = available_commands(&fixture.scope())
@@ -246,6 +299,7 @@ fn available_commands_list_built_ins_templates_mcp_prompts_and_skills() {
             json!(["init", null]),
             json!(["prompt:review", "[$1]"]),
             json!(["mcp:docs:search", "<query>"]),
+            json!(["workflow:check", "[inputs JSON]"]),
             json!(["$acp-demo", null]),
             json!(["$rho-agent-creator", null]),
             json!(["$rho-config", null]),

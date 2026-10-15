@@ -39,6 +39,13 @@ pub(crate) enum WorkflowToolRequest {
     Run {
         plan_id: PlanId,
     },
+    /// Plan `file` and run it in one call; the launch-only plan is removed
+    /// once the run owns its frozen graph. `/workflow:<name>` uses this.
+    Start {
+        file: String,
+        #[serde(default)]
+        inputs: BTreeMap<String, serde_json::Value>,
+    },
     Status {
         run_id: RunId,
     },
@@ -56,9 +63,11 @@ impl WorkflowToolRequest {
     fn operation(&self) -> OperationKind {
         match self {
             Self::Validate { .. } | Self::Status { .. } => OperationKind::Read,
-            Self::Plan { .. } | Self::Run { .. } | Self::Cancel { .. } | Self::Resume { .. } => {
-                OperationKind::Other("workflow".into())
-            }
+            Self::Plan { .. }
+            | Self::Run { .. }
+            | Self::Start { .. }
+            | Self::Cancel { .. }
+            | Self::Resume { .. } => OperationKind::Other("workflow".into()),
         }
     }
 }
@@ -123,7 +132,7 @@ pub(crate) enum WorkflowToolResult {
         workflow_name: String,
         node_count: u64,
     },
-    /// Shared by `run`, `status`, and `resume`: all three report the same run.
+    /// Shared by `run`, `start`, `status`, and `resume`: all report one run.
     Run {
         run_id: String,
         program_digest: String,
@@ -178,7 +187,7 @@ impl Tool for WorkflowTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: NAME.into(),
-            description: "Validate, freeze, run, inspect, cancel, or resume a Rho workflow. Run and resume start in the background and return immediately with a run id. Completions arrive automatically at the next turn boundary (batched); do not poll in a loop. Use status for a live check or after delivery, and cancel to stop. Results are bounded summaries; read artifacts separately.".into(),
+            description: "Validate, freeze, run, inspect, cancel, or resume a Rho workflow. Start plans a file and runs it in one call. Run, start, and resume run in the background and return immediately with a run id. Completions arrive automatically at the next turn boundary (batched); do not poll in a loop. Use status for a live check or after delivery, and cancel to stop. Results are bounded summaries; read artifacts separately.".into(),
             input_schema: workflow_schema(),
         }
     }
@@ -232,13 +241,13 @@ fn workflow_schema() -> serde_json::Value {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["validate", "plan", "run", "status", "cancel", "resume"],
-                "description": "validate/plan need file; run needs plan_id; status/cancel/resume need run_id."
+                "enum": ["validate", "plan", "run", "start", "status", "cancel", "resume"],
+                "description": "validate/plan/start need file; run needs plan_id; status/cancel/resume need run_id."
             },
             "file": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Workflow source path for validate and plan."
+                "description": "Workflow source path for validate, plan, and start."
             },
             "inputs": {
                 "type": "object",

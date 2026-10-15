@@ -157,6 +157,22 @@ fn action_preparation_declares_exact_capabilities() {
             ],
         ),
         (
+            WorkflowToolRequest::Start {
+                file: "flow.star".into(),
+                inputs: BTreeMap::new(),
+            },
+            vec![
+                CapabilityKind::Read,
+                CapabilityKind::Read,
+                CapabilityKind::Read,
+                CapabilityKind::Read,
+                CapabilityKind::Read,
+                CapabilityKind::Process,
+                CapabilityKind::Write,
+                CapabilityKind::Write,
+            ],
+        ),
+        (
             WorkflowToolRequest::Run {
                 plan_id: plan_id("00000000-0000-0000-0000-000000000001"),
             },

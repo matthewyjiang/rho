@@ -363,10 +363,14 @@ The tool forms are:
 ```json
 {"action":"plan","file":".rho/workflows/review.star","inputs":{"package":"rho-coding-agent"}}
 {"action":"run","plan_id":"..."}
+{"action":"start","file":".rho/workflows/review.star","inputs":{"package":"rho-coding-agent"}}
 {"action":"status","run_id":"..."}
 {"action":"cancel","run_id":"..."}
 {"action":"resume","run_id":"..."}
 ```
+
+`start` plans and runs a file in one call. Use it when you do not need to
+inspect the frozen plan first.
 
 Tool results contain bounded summaries, IDs, typed states, and artifact
 references. They do not contain full source or logs. Read an artifact through

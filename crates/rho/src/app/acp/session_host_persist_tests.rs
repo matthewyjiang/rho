@@ -108,9 +108,14 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
         SessionId::new(id.as_str()),
         vec![AcpContentBlock::from("the codeword is zebra")],
     );
-    host.prompt(request, &SilentPort, &config)
-        .await
-        .expect_err("the second step fails");
+    host.prompt(
+        request,
+        &SilentPort,
+        &config,
+        std::path::Path::new("/nonexistent/rho-test-config.toml"),
+    )
+    .await
+    .expect_err("the second step fails");
     host.shutdown().await;
 
     let (_, histories) =

@@ -3,9 +3,10 @@
 //! Hosts list `available_commands_update` entries in their command menus and
 //! send a picked command back as `/name args` prompt text. Rho offers the
 //! commands that work without the TUI: `/compact`, `/init`, prompt templates
-//! (`/prompt:<name>`), MCP prompts (`/mcp:<server>:<prompt>`), and `$skill`
-//! mentions (see [`super::skills`]). Other prompts, including unknown
-//! `/text`, reach the model unchanged.
+//! (`/prompt:<name>`), MCP prompts (`/mcp:<server>:<prompt>`), workspace
+//! workflows (`/workflow:<name> [inputs JSON]`, which start without a model
+//! turn), and `$skill` mentions (see [`super::skills`]). Other prompts,
+//! including unknown `/text`, reach the model unchanged.
 
 use std::path::Path;
 
@@ -19,6 +20,7 @@ use rho_sdk::{
 
 use super::skills;
 use crate::{
+    app::workflow_cli::discover::{self as workflows, StartCommand},
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError, COMMANDS},
     config::Config,
     permission::PermissionMode,
@@ -26,6 +28,7 @@ use crate::{
     tools::{
         mcp::prompt_command::{self, McpPromptCommand},
         sdk_registry::AppToolSet,
+        workflow as workflow_tool,
     },
 };
 
@@ -53,6 +56,8 @@ pub(super) enum PromptAction {
     },
     /// `/compact`, with optional guidance on what to keep.
     Compact { instructions: Option<String> },
+    /// `/workflow:<name>`: start one workspace workflow in the background.
+    StartWorkflow(StartCommand),
 }
 
 /// A recognized command that cannot run, such as a TUI-only command or an
@@ -62,7 +67,8 @@ pub(super) enum PromptAction {
 pub(super) struct CommandRejected(String);
 
 /// Every command this session can run: built-ins, prompt templates, MCP
-/// prompts, then `$skill` mentions when the session has the skill tool.
+/// prompts, workflows when the session has the workflow tool, then `$skill`
+/// mentions when it has the skill tool.
 pub(super) fn available_commands(scope: &CommandScope<'_>) -> Vec<AvailableCommand> {
     let built_in = COMMANDS
         .iter()
@@ -86,6 +92,19 @@ pub(super) fn available_commands(scope: &CommandScope<'_>) -> Vec<AvailableComma
         .chain(templates)
         .chain(mcp_prompts)
         .collect::<Vec<_>>();
+    if scope.tools.contains(workflow_tool::NAME) {
+        commands.extend(
+            workflows::command_workflows(scope.cwd)
+                .into_iter()
+                .filter_map(|workflow| {
+                    Some(command(
+                        workflow.command_name()?,
+                        &workflow.command_description(),
+                        &workflow.command_usage()?,
+                    ))
+                }),
+        );
+    }
     if scope.tools.contains(skills::SKILL_TOOL) {
         commands.extend(skills::available_commands(
             &crate::skills::discover_with_home(scope.cwd, scope.home),
@@ -155,6 +174,19 @@ async fn dynamic(
         }
     }
     let trailing = leading_text(&input).map_or("", command_args);
+    if let Some(resolved) = workflows::resolve_start_command(scope.cwd, name, trailing) {
+        let rejected = |detail: &str| CommandRejected(format!("could not run /{name}: {detail}"));
+        if !scope.tools.contains(workflow_tool::NAME) {
+            return Err(rejected("this session has no workflow tool"));
+        }
+        // Workflow nodes write and run commands, which plan mode forbids.
+        if scope.permission_mode == PermissionMode::Plan {
+            return Err(rejected("workflows cannot start in plan mode"));
+        }
+        return resolved
+            .map(PromptAction::StartWorkflow)
+            .map_err(|detail| rejected(&detail));
+    }
     if let Some(template) =
         prompt_templates::command_template_name(name).and_then(|template_name| {
             prompt_templates::find(&templates(scope), template_name).map(str::to_owned)
