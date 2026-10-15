@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     schema::v1::{
-        SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
+        SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
         SetSessionConfigOptionRequest,
     },
     Error as AcpError,
@@ -15,6 +15,7 @@ use rho_providers::{
     reasoning::ReasoningLevel,
 };
 
+use super::agent::session_apply_error;
 use crate::{
     app::{
         runtime_builder::{configured_context_window, refresh_session_compaction, CompactionSetup},
@@ -129,7 +130,7 @@ pub(super) fn apply_thought_level(
     built
         .session
         .set_reasoning_level(level)
-        .map_err(|error| map_session_error(&built.session, error))?;
+        .map_err(|error| session_apply_error(&built.session, error))?;
     if let Err(error) = refresh_session_compaction(
         &built.session,
         CompactionSetup {
@@ -149,22 +150,13 @@ pub(super) fn apply_thought_level(
         // not match. The session was idle to get here; ignore a restore
         // error rather than masking the compaction failure.
         let _ = built.session.set_reasoning_level(current);
-        return Err(map_session_error(&built.session, error));
+        return Err(session_apply_error(&built.session, error));
     }
     Ok(())
 }
 
 fn thought_capabilities(config: &Config) -> ReasoningCapabilities {
     cached_reasoning_capabilities(&config.provider, &config.model)
-}
-
-fn map_session_error(session: &rho_sdk::Session, error: rho_sdk::Error) -> AcpError {
-    match error {
-        rho_sdk::Error::SessionBusy => {
-            super::agent::busy_session(&SessionId::new(session.id().as_str()))
-        }
-        error => AcpError::internal_error().data(error.to_string()),
-    }
 }
 
 #[cfg(test)]

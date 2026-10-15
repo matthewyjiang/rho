@@ -270,6 +270,15 @@ pub(super) fn busy_session(session_id: &SessionId) -> AcpError {
     ))
 }
 
+/// Maps an SDK error from changing an idle session's settings: a busy
+/// session is the host's to retry, anything else is internal.
+pub(super) fn session_apply_error(session: &rho_sdk::Session, error: rho_sdk::Error) -> AcpError {
+    match error {
+        rho_sdk::Error::SessionBusy => busy_session(&SessionId::new(session.id().as_str())),
+        error => AcpError::internal_error().data(error.to_string()),
+    }
+}
+
 /// A command the prompt names but cannot run is the caller's to fix.
 fn prompt_error(error: anyhow::Error) -> AcpError {
     match error.downcast::<super::commands::CommandRejected>() {

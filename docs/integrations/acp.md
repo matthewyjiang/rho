@@ -58,6 +58,14 @@ When the current model exposes configurable reasoning, new and loaded sessions a
 
 The change applies to later turns in that ACP session. It does not rewrite `config.toml`. Launch still honors `--reasoning` and config as the starting value. A prompt already in flight rejects the change as a busy session. After a model switch, the advertised `thought_level` list follows the new model.
 
+## Fast mode
+
+When the current model supports fast mode, new and loaded sessions also advertise a `fast_mode` select with category `model_config`. It is the ACP counterpart of the TUI's `/fast`: value `on` (named Fast) sends later turns on the priority service tier, and `off` (named Normal) uses the standard tier. Fast mode is a select rather than a boolean option because ACP only allows boolean options for clients that advertise them.
+
+Hosts change it with `session/set_config_option` while the session is idle; a prompt already in flight rejects the change as a busy session. Selecting `on` for a model without fast mode is rejected. The change applies to later turns in that ACP session and does not rewrite `config.toml`. Typed `/fast` is not an ACP command.
+
+A model switch keeps the setting, as in the TUI. Switching to a model without fast mode drops `fast_mode` from the advertised list and the tier has no effect there. Switching back advertises it again with the same value. Like `model`, `session/load` starts from the process default (`fast_mode` in `config.toml`), not a value chosen earlier in that session.
+
 ## Commands
 
 Right after each `session/new` and `session/load` response, Rho sends an `available_commands_update`. Hosts show it as their command menu and send a picked command back as `/name args` prompt text:
