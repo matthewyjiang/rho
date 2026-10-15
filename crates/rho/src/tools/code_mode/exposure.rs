@@ -7,8 +7,7 @@ use rho_sdk::{
     tool::{Tool, ToolContext, ToolError, ToolErrorKind, ToolVisibility},
     ToolHost,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::{
     config::CodemodeMode,
@@ -16,21 +15,23 @@ use crate::{
 };
 
 use super::{
-    script_output,
     tool::CodeModeTool,
     tool_search::{ToolSearchTool, TOOL_SEARCH_NAME},
     CODEMODE_TOOL_NAME,
 };
 
-/// Also the `tool_search` output contract the interactive card reads back.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// The full contract script `describe_tool` returns. `tool_search` and script
+/// discovery send only compact summaries of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ToolCatalogEntry {
     pub name: String,
     pub description: String,
     /// The complete schema of arguments accepted by the tool.
     pub parameters: serde_json::Value,
-    /// The script envelope schema, with the tool's nullable data schema.
-    pub returns: serde_json::Value,
+    /// The schema of a successful call's `data`, or `None` for text-only
+    /// tools. The shared `{is_error, content, data}` envelope is documented
+    /// once in the `codemode` tool description instead of per entry.
+    pub returns: Option<serde_json::Value>,
 }
 
 struct ScriptTool {
@@ -48,7 +49,7 @@ impl ScriptTool {
             name: spec.name,
             description: spec.description,
             parameters: spec.input_schema,
-            returns: script_output::schema(self.tool.output_schema()),
+            returns: self.tool.output_schema(),
         }
     }
 }

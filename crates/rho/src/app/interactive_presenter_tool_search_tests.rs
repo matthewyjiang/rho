@@ -12,14 +12,24 @@ fn card(status: ToolStatus) -> ToolCard {
     )
 }
 
-// Covers: hits render as one `name · first sentence` row each with schemas
-// dropped; a miss notice or unparseable output shows as written instead of
-// being reinterpreted; a failure surfaces its reason.
+// Covers: hits render as one `name · first sentence` row each with parameter
+// summaries dropped; replayed hits from older sessions (full schemas) still
+// render as rows; a miss notice or unparseable output shows as written
+// instead of being reinterpreted; a failure surfaces its reason.
 // Owner: tool_search presenter.
 #[test]
 fn finished_card_lists_hits_without_schemas() {
     let arguments = json!({"query": "github issue"});
     let hits = serde_json::to_string_pretty(&json!([
+        {
+            "name": "mcp__github__create_issue",
+            "description": "Create a GitHub issue. Requires repo access.",
+            "parameters": ["title", "body?"],
+        },
+        {"name": "bare", "description": "", "parameters": []},
+    ]))
+    .unwrap();
+    let legacy_hits = serde_json::to_string_pretty(&json!([
         {
             "name": "mcp__github__create_issue",
             "description": "Create a GitHub issue. Requires repo access.",
@@ -47,6 +57,7 @@ fn finished_card_lists_hits_without_schemas() {
     }]);
     for (case, content, ok, want) in [
         ("hits", hits.as_str(), true, &found),
+        ("legacy hits", legacy_hits.as_str(), true, &found),
         ("miss notice", miss_text, true, &miss),
         ("unparseable output", "[\n  {", true, &cut),
         ("failure", "invalid arguments", false, &failed),

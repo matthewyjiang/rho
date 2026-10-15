@@ -283,7 +283,8 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         summaries("", limit, eval)
     }
 
-    /// The full catalog entry, with parameter and return schemas, or None.
+    /// The full catalog entry, with the parameter schema and the `data`
+    /// schema as `returns`, or None.
     fn describe_tool<'v>(
         name: &str,
         eval: &mut Evaluator<'v, '_, '_>,

@@ -8,7 +8,7 @@ fn entry(name: &str, description: &str) -> ToolCatalogEntry {
         name: name.into(),
         description: description.into(),
         parameters: json!({}),
-        returns: json!({}),
+        returns: None,
     }
 }
 

@@ -37,10 +37,10 @@ what scripts can call.
   calls an undeclared tool directly, Rho returns an unavailable-tool error.
 
 Rho never sends MCP tool schemas to the provider. To find a tool, the model
-calls `tool_search`, which returns names, descriptions, and parameter and return
-schemas. Scripts use `search_tools` or `list_tools` for compact name-and-description
-summaries, then `describe_tool` for complete schemas. Finding a tool does not add
-it to the direct list.
+calls `tool_search`, which returns names, descriptions, and top-level parameter
+names, with optional ones marked `?`. Scripts use `search_tools` or `list_tools`
+for name-and-description summaries. For complete schemas, a script calls
+`describe_tool`. Finding a tool does not add it to the direct list.
 
 Set the mode in [configuration](/configuration#codemode) or with
 `/codemode on|only` in the [interactive TUI](/interactive-tui). The command
@@ -70,7 +70,7 @@ There is no `while`, `try`, `import`, or exception handling.
 | `call_tools([(name, args), ...])` | Result dictionaries in input order |
 | `search_tools(query, limit=10)` | `[{name, description}]` rows |
 | `list_tools(limit=50)` | `[{name, description}]` rows |
-| `describe_tool(name)` | Full catalog entry, including the `parameters` and `returns` schemas |
+| `describe_tool(name)` | Full catalog entry: the `parameters` schema and the `returns` schema of a successful result's `data` (`None` for text-only tools) |
 | `print(...)` | Captures a line of output |
 
 Pass the exact tool name and an argument dictionary to `call_tool`, or batch
