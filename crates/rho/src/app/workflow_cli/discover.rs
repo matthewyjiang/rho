@@ -95,34 +95,36 @@ pub(crate) fn discover_workflow_sources(workspace: &Path) -> Vec<DiscoveredWorkf
 }
 
 /// Workflows that have a command, one per command name. When `<name>.star`
-/// and `<name>/workflow.star` both exist, the name is listed once and
-/// [`resolve_start_command`] reports the ambiguity.
+/// and `<name>/workflow.star` both exist, or two names differ only by case,
+/// the name is listed once and [`resolve_start_command`] reports the ambiguity.
 pub(crate) fn command_workflows(workspace: &Path) -> Vec<DiscoveredWorkflow> {
     let mut workflows = discover_workflow_sources(workspace);
     workflows.retain(|workflow| workflow.command_name().is_some());
-    workflows.sort_by(|left, right| left.label.cmp(&right.label));
-    workflows.dedup_by(|left, right| left.label == right.label);
+    workflows.sort_by_cached_key(|workflow| workflow.label.to_ascii_lowercase());
+    workflows.dedup_by(|left, right| left.label.eq_ignore_ascii_case(&right.label));
     workflows
 }
 
 /// Resolves the slash token `name` (without `/`) and its trailing `args`.
 ///
-/// `None` means `name` is not a workflow command. `Some(Err)` carries a
-/// user-facing reason: no such workflow, an ambiguous name, or inputs that
-/// are not one JSON object.
+/// The prefix and the name match without regard to ASCII case, like
+/// `/prompt:<name>`. `None` means `name` is not a workflow command.
+/// `Some(Err)` carries a user-facing reason: no such workflow, an ambiguous
+/// name, or inputs that are not one JSON object.
 pub(crate) fn resolve_start_command(
     workspace: &Path,
     name: &str,
     args: &str,
 ) -> Option<Result<StartCommand, String>> {
-    let label = name.strip_prefix(COMMAND_PREFIX)?;
-    Some(resolve_label(workspace, label, args))
+    name.get(..COMMAND_PREFIX.len())
+        .filter(|prefix| prefix.eq_ignore_ascii_case(COMMAND_PREFIX))
+        .map(|_| resolve_label(workspace, &name[COMMAND_PREFIX.len()..], args))
 }
 
 fn resolve_label(workspace: &Path, label: &str, args: &str) -> Result<StartCommand, String> {
     let mut matches = discover_workflow_sources(workspace)
         .into_iter()
-        .filter(|workflow| workflow.label == label)
+        .filter(|workflow| workflow.label.eq_ignore_ascii_case(label))
         .collect::<Vec<_>>();
     let workflow = match matches.len() {
         0 => return Err(format!("no workflow named '{label}' under .rho/workflows")),

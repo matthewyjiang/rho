@@ -144,7 +144,8 @@ impl App {
         // Command workflows are sorted by name; filtering preserves that order.
         matches.extend(self.command_workflows().iter().filter_map(|workflow| {
             let name = workflow.command_name()?;
-            if !name.starts_with(&prefix) {
+            // `prefix` is lowercased; labels keep their file-name case.
+            if !name.to_ascii_lowercase().starts_with(&prefix) {
                 return None;
             }
             Some(CommandChoice {

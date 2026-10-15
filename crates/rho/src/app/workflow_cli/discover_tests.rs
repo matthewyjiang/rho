@@ -81,6 +81,9 @@ fn start_command_resolves_one_workflow_and_its_inputs() {
         ".rho/workflows/review/workflow.star",
         ".rho/workflows/twin.star",
         ".rho/workflows/twin/workflow.star",
+        ".rho/workflows/Lint.star",
+        ".rho/workflows/Case.star",
+        ".rho/workflows/case/workflow.star",
     ]);
     let resolve = |name: &str, args: &str| {
         resolve_start_command(root.path(), name, args).map(|resolved| {
@@ -104,9 +107,17 @@ fn start_command_resolves_one_workflow_and_its_inputs() {
         resolve("workflow:review", "").map(|resolved| resolved.map(|(_, inputs)| inputs)),
         Some(Ok(Default::default()))
     );
+    for name in ["workflow:lint", "Workflow:LINT"] {
+        assert_eq!(
+            resolve(name, "").map(|resolved| resolved.map(|(path, _)| path)),
+            Some(Ok(".rho/workflows/Lint.star".to_owned())),
+            "/{name} ignores ASCII case"
+        );
+    }
     for (name, args) in [
         ("workflow:missing", ""),
         ("workflow:twin", ""),
+        ("workflow:case", ""),
         ("workflow:review", "src"),
         ("workflow:review", "[1]"),
     ] {
@@ -118,7 +129,8 @@ fn start_command_resolves_one_workflow_and_its_inputs() {
 }
 
 // Covers: command menus list each name once, so `<name>.star` beside
-// `<name>/workflow.star` cannot advertise two identical commands.
+// `<name>/workflow.star`, or names that differ only by case, cannot advertise
+// two commands for one ambiguous name.
 // Owner: `/workflow:<name>` advertising.
 #[test]
 fn command_workflows_lists_each_name_once() {
@@ -126,11 +138,16 @@ fn command_workflows_lists_each_name_once() {
         ".rho/workflows/twin.star",
         ".rho/workflows/twin/workflow.star",
         ".rho/workflows/solo.star",
+        ".rho/workflows/Case.star",
+        ".rho/workflows/case/workflow.star",
     ]);
 
     let names = command_workflows(root.path())
         .iter()
         .filter_map(super::DiscoveredWorkflow::command_name)
         .collect::<Vec<_>>();
-    assert_eq!(names, vec!["workflow:solo", "workflow:twin"]);
+    assert_eq!(
+        names,
+        vec!["workflow:Case", "workflow:solo", "workflow:twin"]
+    );
 }
