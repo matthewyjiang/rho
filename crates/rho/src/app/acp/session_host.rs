@@ -51,6 +51,7 @@ use crate::{
     config::Config,
     credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
     herdr::{HerdrReporter, HerdrSession, HerdrState},
+    permission::PermissionMode,
     session::Session as StoredSession,
 };
 
@@ -336,6 +337,10 @@ impl SessionHost {
         process_config: &Config,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         match request.config_id.0.as_ref() {
+            permission::MODE_CONFIG_ID => {
+                let mode = permission::parse_mode_config_request(&request)?;
+                self.set_permission_mode(mode, process_config).await?;
+            }
             thought_level::THOUGHT_LEVEL_ID => {
                 let requested = thought_level::parse_thought_level_request(&request)?;
                 thought_level::apply_thought_level(
@@ -397,6 +402,7 @@ impl SessionHost {
             &self.current_model(),
             process_config,
             CurrentSettings {
+                permission_mode: self.permission.mode,
                 reasoning: self.built.session.reasoning_level(),
                 service_tier: self.built.session.service_tier(),
             },
@@ -718,23 +724,26 @@ impl SessionHost {
 /// Session settings the advertised options report as current values.
 #[derive(Clone, Copy)]
 struct CurrentSettings {
+    permission_mode: PermissionMode,
     reasoning: rho_sdk::ReasoningLevel,
     service_tier: Option<rho_sdk::model::ServiceTier>,
 }
 
 /// Every option a session advertises, rebuilt after each change so a model
-/// switch adds or drops the per-model `thought_level` and `fast_mode`.
+/// switch adds or drops the per-model `thought_level` and `fast_mode`. The
+/// permission `mode` comes first, as the ACP spec's own example orders it.
 fn advertised_config_options(
     current: &CurrentModel,
     process_config: &Config,
     settings: CurrentSettings,
 ) -> Vec<SessionConfigOption> {
     let available_auths = available_auth_modes(&AppCredentialStore);
-    let mut options = config_options::model_config_options(
+    let mut options = vec![permission::mode_config_option(settings.permission_mode)];
+    options.extend(config_options::model_config_options(
         current,
         &process_config.favorite_models,
         catalog::available_models_for_auths(&available_auths),
-    );
+    ));
     options.extend(thought_level::config_options(
         &model_scoped_config(current, process_config),
         settings.reasoning,

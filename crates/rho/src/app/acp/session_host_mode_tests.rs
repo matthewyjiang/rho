@@ -8,7 +8,8 @@ use agent_client_protocol::{
     schema::v1::{
         ContentBlock as AcpContentBlock, PromptRequest, RequestPermissionOutcome,
         RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
-        SessionNotification, SessionUpdate, ToolCallStatus,
+        SessionConfigKind, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+        ToolCallStatus,
     },
     Error as AcpError, ErrorCode,
 };
@@ -243,5 +244,42 @@ async fn set_mode_auto_without_classifier_keeps_the_previous_mode() {
 
     assert_eq!(error.code, ErrorCode::InvalidParams);
     assert_eq!(host.permission.mode, PermissionMode::Bypass);
+    host.shutdown().await;
+}
+
+// Covers: hosts that use config options (Zed) switch modes through the `mode`
+// option; it must apply like session/set_mode and echo the new mode, and an
+// unknown value must be rejected without changing the mode.
+// Owner: ACP session transaction
+#[tokio::test]
+async fn mode_config_option_switches_the_permission_mode() {
+    let home = tempfile::tempdir().unwrap();
+    let config = test_config();
+    let mut host = host(home.path(), &config, Vec::new(), AppToolSet::disabled()).await;
+    let session_id = host.acp_session_id.clone();
+    let request =
+        |value: &str| SetSessionConfigOptionRequest::new(session_id.clone(), "mode", value);
+
+    let response = host
+        .set_config_option(request("plan"), &config)
+        .await
+        .unwrap();
+    let mode = response
+        .config_options
+        .iter()
+        .find(|option| option.id.0.as_ref() == "mode")
+        .expect("mode option");
+    let SessionConfigKind::Select(select) = &mode.kind else {
+        panic!("expected a select option, got {:?}", mode.kind);
+    };
+    assert_eq!(select.current_value.0.as_ref(), "plan");
+    assert_eq!(host.permission.mode, PermissionMode::Plan);
+
+    let error = host
+        .set_config_option(request("yolo"), &config)
+        .await
+        .expect_err("unknown mode");
+    assert_eq!(error.code, ErrorCode::InvalidParams);
+    assert_eq!(host.permission.mode, PermissionMode::Plan);
     host.shutdown().await;
 }

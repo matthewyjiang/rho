@@ -46,9 +46,9 @@ Background processes, workflows, and delegated agents report back much as they d
 
 ## Permissions
 
-New sessions advertise Rho permission modes: `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. The starting mode comes from config and flags.
+New sessions advertise Rho permission modes: `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. The starting mode comes from config and flags. The modes go out twice with the same ids: as the legacy `modes` field, and as the first `configOptions` entry, a select with id `mode` and category `mode`. Per ACP, hosts that support config options ignore `modes` and use the `mode` option; older hosts use `modes`.
 
-Hosts switch modes with `session/set_mode`. The new mode applies to later prompts in that ACP session and keeps the conversation. Write grants carry over the same way they do in the TUI. A switch is rejected while a prompt is in flight. Switching to `auto` fails with invalid params unless a classifier model is configured, the same check headless startup applies. The change does not rewrite `config.toml`, and `session/load` starts from the process default again.
+Hosts switch modes with `session/set_mode` or `session/set_config_option` on `mode`; both change the same state. The new mode applies to later prompts in that ACP session and keeps the conversation. Write grants carry over the same way they do in the TUI. A switch is rejected while a prompt is in flight. Switching to `auto` fails with invalid params unless a classifier model is configured, the same check headless startup applies. The change does not rewrite `config.toml`, and `session/load` starts from the process default again.
 
 When a tool needs approval, Rho asks the host. The host choices map to allow once, allow for this session, and reject.
 

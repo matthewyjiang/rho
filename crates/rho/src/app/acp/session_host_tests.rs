@@ -28,7 +28,7 @@ use super::{
     pump_sources, ApprovalSource, CurrentModel, CurrentSettings, EventMapper, EventSource,
     PromptGate,
 };
-use crate::{app::acp::AcpClientPort, config::Config};
+use crate::{app::acp::AcpClientPort, config::Config, permission::PermissionMode};
 use rho_providers::reasoning::ReasoningLevel;
 
 // Covers: session/new and session/load must refuse a non-workspace cwd
@@ -292,8 +292,10 @@ async fn permission_request_does_not_block_event_drain() {
 }
 
 // Covers: session/new and set_config_option (including after a model switch)
-// must advertise model, then thought_level only when the current model can
-// change reasoning, then fast_mode only when it implements fast mode.
+// must advertise the permission mode first (spec clients ignore legacy
+// `modes` once config options exist), then model, then thought_level only
+// when the current model can change reasoning, then fast_mode only when it
+// implements fast mode.
 // Owner: acp session config mapper
 #[test]
 fn advertised_options_merge_model_with_per_model_options() {
@@ -304,7 +306,7 @@ fn advertised_options_merge_model_with_per_model_options() {
                 model: "model".into(),
                 auth: "api-key".into(),
             },
-            ["model", "thought_level"].as_slice(),
+            ["mode", "model", "thought_level"].as_slice(),
         ),
         (
             CurrentModel {
@@ -312,7 +314,7 @@ fn advertised_options_merge_model_with_per_model_options() {
                 model: "gpt-5.5".into(),
                 auth: "codex".into(),
             },
-            ["model", "thought_level", "fast_mode"].as_slice(),
+            ["mode", "model", "thought_level", "fast_mode"].as_slice(),
         ),
         (
             CurrentModel {
@@ -320,7 +322,7 @@ fn advertised_options_merge_model_with_per_model_options() {
                 model: "gpt-4.1".into(),
                 auth: "github-copilot".into(),
             },
-            ["model"].as_slice(),
+            ["mode", "model"].as_slice(),
         ),
     ];
     for (current, expected_ids) in cases {
@@ -331,6 +333,7 @@ fn advertised_options_merge_model_with_per_model_options() {
             ..Config::default()
         };
         let settings = CurrentSettings {
+            permission_mode: PermissionMode::AllowEdits,
             reasoning: ReasoningLevel::High,
             service_tier: Some(rho_sdk::model::ServiceTier::Priority),
         };
@@ -340,6 +343,12 @@ fn advertised_options_merge_model_with_per_model_options() {
             .map(|option| option.id.0.as_ref())
             .collect::<Vec<_>>();
         assert_eq!(ids, expected_ids, "{}", current.provider);
+        assert_eq!(
+            select_current(&options[0]),
+            "allow_edits",
+            "{}",
+            current.provider
+        );
         if let Some(thought) = options
             .iter()
             .find(|option| option.id.0.as_ref() == "thought_level")
