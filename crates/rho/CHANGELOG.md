@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.21.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.20.1...rho-coding-agent-v2.21.0) (2026-10-15)
+
+
+### Features
+
+* **tui:** let the model keep the prompt cache warm during long processes ([#1474](https://github.com/matthewyjiang/rho/issues/1474)) ([e45b48b](https://github.com/matthewyjiang/rho/commit/e45b48b8271d2c92a7514ea9078408a81524dfc4))
+
+
+### Bug Fixes
+
+* **todo:** restore prompt cache hits in sessions that use the checklist ([#1475](https://github.com/matthewyjiang/rho/issues/1475)) ([c7c85d9](https://github.com/matthewyjiang/rho/commit/c7c85d951fcb7b050226d06be58c20734fef8f68))
+
 ## [2.20.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.20.0...rho-coding-agent-v2.20.1) (2026-10-13)
 
 

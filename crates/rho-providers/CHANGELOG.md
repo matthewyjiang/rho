@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.16.1...rho-providers-v2.17.0) (2026-10-15)
+
+
+### Features
+
+* **tui:** let the model keep the prompt cache warm during long processes ([#1474](https://github.com/matthewyjiang/rho/issues/1474)) ([e45b48b](https://github.com/matthewyjiang/rho/commit/e45b48b8271d2c92a7514ea9078408a81524dfc4))
+
 ## [2.16.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.16.0...rho-providers-v2.16.1) (2026-10-13)
 
 
