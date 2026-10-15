@@ -20,9 +20,10 @@ use super::{
 
 /// Commits the working history and saves it to the session's checkpoint store.
 ///
-/// The loop calls this before each provider request and after each model
-/// reply, before its tool calls start. A restored snapshot therefore names
-/// every call that may have started. Without a store this does nothing.
+/// The loop calls this before each provider request, after each model reply,
+/// and after recording a host batch, in both cases before the tool calls
+/// start. A restored snapshot therefore names every call that may have
+/// started. Without a store this does nothing.
 pub(super) async fn save(
     core: &SessionCore,
     runtime: &Rho,

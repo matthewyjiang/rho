@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicU8, Ordering},
         Arc, Mutex, MutexGuard, RwLock,
@@ -32,8 +32,12 @@ pub struct UserInput {
 pub(crate) enum RunStart {
     /// Append user input, then ask the model.
     User(UserInput),
-    /// Append user input, then run a host-requested tool call before the model.
-    WithToolCall { input: UserInput, call: ToolCall },
+    /// Append user input, then run a batch of host-requested tool calls before
+    /// the model.
+    WithToolCalls {
+        input: UserInput,
+        calls: HostToolCalls,
+    },
     /// Keep committed history as is. Unanswered tool calls are settled first.
     Continue,
 }
@@ -69,6 +73,44 @@ impl UserInput {
 
     pub(crate) fn into_blocks(self) -> Vec<ContentBlock> {
         self.content
+    }
+}
+
+/// Host-requested tool calls that one assistant message can carry, like a
+/// valid model response: nonempty, every call well formed, and IDs unique.
+pub(crate) struct HostToolCalls(Vec<ToolCall>);
+
+impl HostToolCalls {
+    fn new(calls: Vec<ToolCall>) -> Result<Self, Error> {
+        if calls.is_empty() {
+            return Err(Error::InvalidConfiguration {
+                message: "host tool call batch must contain at least one call".into(),
+            });
+        }
+        let mut ids = BTreeSet::new();
+        for (index, call) in calls.iter().enumerate() {
+            if !call.has_valid_protocol_fields() {
+                return Err(Error::InvalidConfiguration {
+                    message: format!(
+                        "host tool call {index} requires a nonempty ID and name plus object arguments"
+                    ),
+                });
+            }
+            if !ids.insert(call.id.as_str()) {
+                return Err(Error::InvalidConfiguration {
+                    message: format!("duplicate host tool call ID '{}'", call.id),
+                });
+            }
+        }
+        Ok(Self(calls))
+    }
+
+    pub(crate) fn calls(&self) -> &[ToolCall] {
+        &self.0
+    }
+
+    pub(crate) fn into_calls(self) -> Vec<ToolCall> {
+        self.0
     }
 }
 
@@ -566,8 +608,8 @@ impl Session {
     /// Installs or removes a step checkpoint store while the session is idle.
     ///
     /// With a store, each run commits its working history and saves the session
-    /// snapshot before every provider request and again after each model reply,
-    /// before that reply's tool calls start. A process that dies mid-run can
+    /// snapshot before every provider request and again after each model reply
+    /// or host tool-call batch, before those calls start. A process that dies mid-run can
     /// restore the last saved snapshot and call [`Session::continue_history`].
     /// A failed save fails the run.
     pub fn set_checkpoint_store(
@@ -601,20 +643,41 @@ impl Session {
 
     /// Starts a run by executing a host-requested tool call after the user input
     /// and before the first model request.
+    ///
+    /// This is [`Session::start_with_tool_calls`] with a one-call batch.
     pub async fn start_with_tool_call(
         &self,
         input: UserInput,
         tool_call: ToolCall,
     ) -> Result<Run, Error> {
-        if !tool_call.has_valid_protocol_fields() {
-            return Err(Error::InvalidConfiguration {
-                message: "host tool call requires a nonempty ID and name plus object arguments"
-                    .into(),
-            });
-        }
-        self.start_run(RunStart::WithToolCall {
+        self.start_with_tool_calls(input, vec![tool_call]).await
+    }
+
+    /// Starts a run by executing a batch of host-requested tool calls after the
+    /// user input and before the first model request.
+    ///
+    /// The batch behaves like one model response with parallel tool calls: the
+    /// calls are recorded as one assistant message, scheduled by the same
+    /// parallel and exclusive rules, and authorized individually. Their results
+    /// reach the first model request in call order, so providers see an
+    /// ordinary parallel tool-call turn. Every call is fixed before the batch
+    /// starts, so one call cannot consume another call's output; use separate
+    /// runs when a later call depends on an earlier result.
+    ///
+    /// Cancellation or failure pairs every call with a result, so history stays
+    /// replayable.
+    ///
+    /// Returns [`Error::InvalidConfiguration`] without starting a run when the
+    /// batch is empty, a call lacks a nonempty ID and name plus object
+    /// arguments, or two calls share an ID.
+    pub async fn start_with_tool_calls(
+        &self,
+        input: UserInput,
+        tool_calls: Vec<ToolCall>,
+    ) -> Result<Run, Error> {
+        self.start_run(RunStart::WithToolCalls {
             input,
-            call: tool_call,
+            calls: HostToolCalls::new(tool_calls)?,
         })
         .await
     }

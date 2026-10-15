@@ -142,3 +142,42 @@ async fn continuation_reruns_read_only_calls_and_interrupts_the_rest() {
     ]);
     assert_eq!(provider.recorded_requests()[0].messages, expected);
 }
+
+// Covers: a run that dies while a host batch runs leaves a checkpoint naming
+// the user input and every host call, so continuing it settles those calls
+// instead of losing the turn. Owner: SDK checkpoints.
+#[tokio::test]
+async fn host_batch_is_checkpointed_before_its_calls_start() {
+    let store = Arc::new(InMemorySessionStore::new());
+    let (invoked, mut invocations) = mpsc::unbounded_channel();
+    let crashed = runtime(
+        ScriptedProvider::new(identity(), Vec::<ScriptedTurn>::new()),
+        &invoked,
+        /* stall */ true,
+    );
+    let session = crashed.session(SessionOptions::default()).await.unwrap();
+    session.set_checkpoint_store(Some(store.clone())).unwrap();
+    let calls = ["read", "write"].map(|name| ToolCall {
+        id: format!("host-{name}"),
+        name: name.into(),
+        arguments: json!({}),
+    });
+    let run = session
+        .start_with_tool_calls(UserInput::text("load both"), calls.to_vec())
+        .await
+        .unwrap();
+    tokio::time::timeout(TEST_TIMEOUT, invocations.recv())
+        .await
+        .expect("no host call started")
+        .unwrap();
+    drop(run);
+
+    let saved = store.load(session.id()).expect("checkpoint was saved");
+    assert_eq!(
+        saved.history(),
+        [
+            Message::user_text("load both"),
+            Message::Assistant(calls.map(ContentBlock::ToolCall).to_vec()),
+        ]
+    );
+}

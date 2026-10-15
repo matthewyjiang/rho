@@ -118,7 +118,7 @@ async fn execute_turn_loop(
     hooks: &RunHooks,
 ) -> Result<RunOutcome, Error> {
     let (mut history, revision) = core.snapshot();
-    if let RunStart::User(input) | RunStart::WithToolCall { input, .. } = &start {
+    if let RunStart::User(input) | RunStart::WithToolCalls { input, .. } = &start {
         history.push(Message::User(input.blocks().to_vec()));
     }
     match emit(
@@ -144,11 +144,19 @@ async fn execute_turn_loop(
     let mut pending_outputs = pending_tool_outputs::PendingToolOutputs::default();
     let initial_turn = match start {
         RunStart::User(_) => None,
-        RunStart::WithToolCall { call, .. } => {
-            history.push(Message::Assistant(vec![ContentBlock::ToolCall(
-                call.clone(),
-            )]));
-            Some(StagedToolTurn::host_requested(call, &runtime))
+        RunStart::WithToolCalls { calls, .. } => {
+            // One assistant message carries the whole batch, exactly like a
+            // model's parallel tool calls. The scheduler pairs every call with
+            // a result, including on cancellation and failure.
+            history.push(Message::Assistant(
+                calls
+                    .calls()
+                    .iter()
+                    .cloned()
+                    .map(ContentBlock::ToolCall)
+                    .collect(),
+            ));
+            Some(StagedToolTurn::host_requested(calls, &runtime))
         }
         RunStart::Continue => checkpoint::settle_unanswered_calls(&mut history, &runtime),
     };
@@ -162,6 +170,14 @@ async fn execute_turn_loop(
             async_jobs: &mut async_jobs,
             pending_outputs: &mut pending_outputs,
         };
+        // Like a model reply, a host batch is saved before its calls start,
+        // so a restored snapshot names every call that may have started.
+        if tool_turn.is_host_requested() {
+            if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+                tool_turn.interrupt_unstarted(&mut history);
+                return control.terminate(core, history, error).await;
+            }
+        }
         let initial_result =
             run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control).await;
         history =
