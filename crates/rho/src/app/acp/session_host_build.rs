@@ -79,14 +79,13 @@ pub(super) fn mode_state(mode: PermissionMode) -> SessionModeState {
 }
 
 /// The process config with the host's `mcpServers` merged in. A host entry
-/// replaces a config server of the same name for this session only.
+/// replaces a config server of the same name for this session only, and an
+/// invalid host entry suppresses it.
 pub(super) fn session_config(
     process: &Config,
     host_servers: &[agent_client_protocol::schema::v1::McpServer],
 ) -> Config {
     let mut config = process.clone();
-    config
-        .mcp
-        .merge(super::super::host_mcp::host_mcp_config(host_servers));
+    super::super::host_mcp::overlay_host_mcp(&mut config.mcp, host_servers);
     config
 }

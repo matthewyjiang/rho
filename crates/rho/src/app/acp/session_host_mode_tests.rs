@@ -1,18 +1,34 @@
-use std::sync::Arc;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
-use agent_client_protocol::ErrorCode;
+use agent_client_protocol::{
+    schema::v1::{
+        ContentBlock as AcpContentBlock, PromptRequest, RequestPermissionOutcome,
+        RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+        SessionNotification, SessionUpdate, ToolCallStatus,
+    },
+    Error as AcpError, ErrorCode,
+};
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{Message, ModelIdentity},
-    provider::{ModelProvider, ScriptedProvider},
-    SessionOptions,
+    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
+    provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
+    tool::{Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolOutput},
+    CapabilityRequest, CapabilitySource, PathScope, SessionOptions,
 };
 
 use super::{super::SessionHost, SessionPermission};
 use crate::{
-    app::session_assembly::BuiltSession, config::Config, diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter, permission::PermissionMode, session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
+    app::{acp::AcpClientPort, session_assembly::BuiltSession},
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    herdr::HerdrReporter,
+    permission::PermissionMode,
+    session::Session as StoredSession,
+    tools::sdk_registry::{AppToolSet, StaticToolBundle},
 };
 use agent_client_protocol::schema::v1::SessionId;
 
@@ -25,16 +41,25 @@ fn test_config() -> Config {
     }
 }
 
-async fn host(home: &std::path::Path, config: &Config) -> SessionHost {
+async fn host(
+    home: &std::path::Path,
+    config: &Config,
+    turns: Vec<ScriptedTurn>,
+    tools: AppToolSet,
+) -> SessionHost {
     let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "model"),
-        Vec::new(),
+        turns,
     ));
     let runtime = rho_sdk::Rho::builder()
         .provider_shared(Arc::clone(&provider))
         .build()
         .unwrap();
-    let session = runtime.session(SessionOptions::new()).await.unwrap();
+    let stored = StoredSession::create_in_root(home, home).unwrap();
+    let session = runtime
+        .session(SessionOptions::new().id(rho_sdk::SessionId::from_string(stored.id()).unwrap()))
+        .await
+        .unwrap();
     session
         .append_message(Message::user_text("retained conversation"))
         .unwrap();
@@ -42,14 +67,13 @@ async fn host(home: &std::path::Path, config: &Config) -> SessionHost {
         runtime,
         session,
         provider,
-        tools: AppToolSet::disabled(),
+        tools,
         hooks: None,
         approval_receiver: None,
         prompt_template: None,
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(config),
     };
-    let stored = StoredSession::create_in_root(home, home).unwrap();
     SessionHost::from_built(
         SessionId::new(stored.id()),
         built,
@@ -65,33 +89,139 @@ async fn host(home: &std::path::Path, config: &Config) -> SessionHost {
     )
 }
 
-// Covers: session/set_mode must swap the runtime's approval wiring for the new
-// mode while keeping the live conversation and session identity, and modes
-// that answer through the host must get an approval channel.
+/// Tool that asks for an in-workspace write through the real authorization path.
+struct WriteProbe;
+
+const PROBE: &str = "write_probe";
+
+impl Tool for WriteProbe {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: PROBE.into(),
+            description: "test tool".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        let path = context
+            .workspace_root()
+            .expect("the session has a workspace")
+            .join("file.txt");
+        Box::pin(async move {
+            context
+                .authorize(CapabilityRequest::write_path(
+                    path,
+                    PathScope::PrimaryWorkspace,
+                    CapabilitySource::built_in_tool(PROBE),
+                ))
+                .await
+                .map_err(|error| ToolError::policy_denied(&error))?;
+            Ok(ToolOutput::text("wrote"))
+        })
+    }
+}
+
+/// Host that approves every permission prompt once and records what it saw.
+#[derive(Default)]
+struct ApprovingPort {
+    prompts: Mutex<usize>,
+    statuses: Mutex<Vec<ToolCallStatus>>,
+}
+
+impl ApprovingPort {
+    fn take(&self) -> (usize, Vec<ToolCallStatus>) {
+        (
+            std::mem::take(&mut *self.prompts.lock().unwrap()),
+            std::mem::take(&mut *self.statuses.lock().unwrap()),
+        )
+    }
+}
+
+impl AcpClientPort for ApprovingPort {
+    fn send_session_notification(
+        &self,
+        notification: SessionNotification,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
+        if let SessionUpdate::ToolCallUpdate(update) = notification.update {
+            if let Some(status) = update.fields.status {
+                self.statuses.lock().unwrap().push(status);
+            }
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn request_permission(
+        &self,
+        _request: RequestPermissionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>
+    {
+        *self.prompts.lock().unwrap() += 1;
+        Box::pin(async {
+            Ok(RequestPermissionResponse::new(
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("allow_once")),
+            ))
+        })
+    }
+}
+
+fn probe_turns(count: usize) -> Vec<ScriptedTurn> {
+    (0..count)
+        .flat_map(|index| {
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: format!("call-{index}"),
+                        name: PROBE.into(),
+                        arguments: serde_json::json!({}),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ]
+        })
+        .collect()
+}
+
+// Covers: after session/set_mode, tool writes must obey the new mode: plan
+// denies without asking, supervised asks the host, bypass runs without asking.
+// The live conversation and session identity survive every swap.
 // Owner: ACP session transaction
 #[tokio::test]
-async fn set_mode_rebuilds_policy_and_keeps_the_conversation() {
+async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     let home = tempfile::tempdir().unwrap();
     let config = test_config();
-    let mut host = host(home.path(), &config).await;
+    let cases = [
+        (PermissionMode::Plan, 0, ToolCallStatus::Failed),
+        (PermissionMode::Supervised, 1, ToolCallStatus::Completed),
+        (PermissionMode::Bypass, 0, ToolCallStatus::Completed),
+    ];
+    let mut tools = AppToolSet::disabled();
+    tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe)]));
+    let mut host = host(home.path(), &config, probe_turns(cases.len()), tools).await;
     let session_id = host.built.session.id().clone();
     let history = host.built.session.history();
+    let port = ApprovingPort::default();
 
-    for (mode, host_answers) in [
-        (PermissionMode::Plan, false),
-        (PermissionMode::Supervised, true),
-        (PermissionMode::AllowEdits, true),
-        (PermissionMode::Bypass, false),
-    ] {
+    for (mode, host_prompts, status) in cases {
         host.set_permission_mode(mode, &config).await.unwrap();
-        assert_eq!(host.permission.mode, mode);
+        host.prompt(
+            PromptRequest::new(
+                host.acp_session_id.clone(),
+                vec![AcpContentBlock::from("write")],
+            ),
+            &port,
+        )
+        .await
+        .unwrap();
+        assert_eq!(port.take(), (host_prompts, vec![status]), "{mode:?}");
+        assert_eq!(host.built.session.id(), &session_id, "{mode:?}");
         assert_eq!(
-            host.built.approval_receiver.is_some(),
-            host_answers,
+            host.built.session.history()[..history.len()],
+            history[..],
             "{mode:?}"
         );
-        assert_eq!(host.built.session.id(), &session_id, "{mode:?}");
-        assert_eq!(host.built.session.history(), history, "{mode:?}");
     }
     host.shutdown().await;
 }
@@ -103,7 +233,7 @@ async fn set_mode_rebuilds_policy_and_keeps_the_conversation() {
 async fn set_mode_auto_without_classifier_keeps_the_previous_mode() {
     let home = tempfile::tempdir().unwrap();
     let config = test_config();
-    let mut host = host(home.path(), &config).await;
+    let mut host = host(home.path(), &config, Vec::new(), AppToolSet::disabled()).await;
 
     let error = host
         .set_permission_mode(PermissionMode::Auto, &config)

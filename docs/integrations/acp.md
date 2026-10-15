@@ -57,7 +57,7 @@ Rho starts MCP servers from its own config, plus the `mcpServers` the host sends
 - HTTP servers connect over Streamable HTTP with the host's headers. The URL must be HTTPS or a loopback address.
 - SSE servers are skipped with a warning. `initialize` advertises `mcpCapabilities.http` and not `sse`.
 - Host servers cannot request sampling.
-- An entry with an invalid name, empty command, repeated environment variable or header, or unsafe URL is reported as an invalid server instead of connected.
+- An entry with an invalid name, empty command, repeated environment variable or header, or unsafe URL is reported as an invalid server instead of connected. An invalid host entry still claims its name: a config server with that name stays disconnected for the session rather than connecting with the config's endpoint and credentials.
 
 `rho acp` is not itself an MCP server. See [Model Context Protocol](/integrations/mcp).
 

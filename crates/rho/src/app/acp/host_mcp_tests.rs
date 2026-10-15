@@ -4,7 +4,7 @@ use agent_client_protocol::schema::v1::{
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
-use super::host_mcp_config;
+use super::{host_mcp_config, overlay_host_mcp};
 use crate::tools::mcp::config::{McpConfig, McpSamplingPolicy, McpTransport};
 
 /// Projects a converted config onto what a host controls: each accepted
@@ -123,5 +123,65 @@ fn host_servers_convert_to_session_config() {
     ];
     for (label, servers, expected) in cases {
         assert_eq!(summary(&host_mcp_config(&servers)), expected, "{label}");
+    }
+}
+
+// Covers: a host entry owns its name for the session. An invalid replacement
+// must not fall back to the configured server's endpoint and credentials, and
+// a repeated host name keeps only its last entry, valid or not.
+// Owner: ACP host MCP overlay
+#[test]
+fn host_entries_own_their_name_over_config_servers() {
+    let configured = || {
+        let mut config = McpConfig::default();
+        overlay_host_mcp(&mut config, &[http("bridge", "https://config.example/mcp")]);
+        config
+    };
+    let cases = [
+        (
+            "valid host entry replaces the config server",
+            vec![http("bridge", "https://host.example/mcp")],
+            json!({
+                "servers": { "bridge": { "http": {
+                    "url": "https://host.example/mcp",
+                    "headers": { "Authorization": "Bearer token" },
+                    "insecure": false,
+                } } },
+                "invalid": [],
+            }),
+        ),
+        (
+            "invalid host entry suppresses the config server",
+            vec![http("bridge", "http://100.75.19.168:3773/mcp")],
+            json!({ "servers": {}, "invalid": ["bridge"] }),
+        ),
+        (
+            "invalid repeat overrides an earlier valid host entry",
+            vec![
+                http("bridge", "https://host.example/mcp"),
+                http("bridge", "http://100.75.19.168:3773/mcp"),
+            ],
+            json!({ "servers": {}, "invalid": ["bridge"] }),
+        ),
+        (
+            "valid repeat clears an earlier invalid host entry",
+            vec![
+                http("bridge", "http://100.75.19.168:3773/mcp"),
+                http("bridge", "https://host.example/mcp"),
+            ],
+            json!({
+                "servers": { "bridge": { "http": {
+                    "url": "https://host.example/mcp",
+                    "headers": { "Authorization": "Bearer token" },
+                    "insecure": false,
+                } } },
+                "invalid": [],
+            }),
+        ),
+    ];
+    for (label, servers, expected) in cases {
+        let mut config = configured();
+        overlay_host_mcp(&mut config, &servers);
+        assert_eq!(summary(&config), expected, "{label}");
     }
 }
