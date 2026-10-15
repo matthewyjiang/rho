@@ -29,6 +29,9 @@ use super::{
     },
 };
 
+mod terminal;
+use terminal::{classify_error, TerminalMessages};
+
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
 #[derive(Debug)]
 pub struct AutomationExit {
@@ -212,6 +215,9 @@ pub(super) fn emit_startup_failure(message: impl Into<String>) -> anyhow::Result
 
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
     let mut jsonl = (startup.output == OutputFormat::Jsonl).then(JsonlAdapter::new);
+    // The bound agent may pin its own provider and auth; that is what runs.
+    let selection = startup.agent.rho_config().unwrap_or(startup.config);
+    let messages = TerminalMessages::for_selection(&selection.provider, &selection.auth);
     let deadline = startup
         .timeout
         .map(|timeout| tokio::time::Instant::now() + timeout);
@@ -234,7 +240,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     let mut reporter = match reporter_result {
         Ok(reporter) => reporter,
         Err(error) => {
-            emit_failure(&mut jsonl, TerminalReason::OutputError, &error)?;
+            emit_failure(&mut jsonl, TerminalReason::OutputError, &error, &messages)?;
             return Err(
                 AutomationExit::new(1, TerminalReason::OutputError, error.to_string()).into(),
             );
@@ -275,7 +281,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     if let Some(reporter) = reporter.as_mut() {
         reporter.finish_terminal(&terminal);
     }
-    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some())
+    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages)
 }
 
 fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow::Result<()> {
@@ -323,10 +329,11 @@ fn emit_failure(
     adapter: &mut Option<JsonlAdapter>,
     reason: TerminalReason,
     error: &anyhow::Error,
+    messages: &TerminalMessages,
 ) -> anyhow::Result<()> {
     if let Some(adapter) = adapter.as_mut() {
         let text = adapter.partial_text();
-        let message = terminal_error_message(reason, error);
+        let message = messages.for_error(reason, error);
         let event = adapter.failed(reason, message, text);
         emit(event)?;
     }
@@ -365,6 +372,7 @@ fn emit_and_exit_terminal(
     terminal: RunTerminal,
     jsonl: &mut Option<JsonlAdapter>,
     has_reporter: bool,
+    messages: &TerminalMessages,
 ) -> anyhow::Result<()> {
     match terminal {
         RunTerminal::Timeout => {
@@ -398,9 +406,9 @@ fn emit_and_exit_terminal(
             if reason == TerminalReason::Interrupted {
                 emit_stopped(jsonl, reason)?;
             } else if reason != TerminalReason::OutputError {
-                emit_failure(jsonl, reason, &error)?;
+                emit_failure(jsonl, reason, &error, messages)?;
             }
-            let message = terminal_error_message(reason, &error);
+            let message = messages.for_error(reason, &error);
             if error.is::<AutomationInterrupted>() {
                 return Err(error);
             }
@@ -423,66 +431,6 @@ fn print_provider_diagnostic(error: &anyhow::Error) {
     if let Some(diagnostic) = diagnostic {
         eprintln!("provider diagnostic: {diagnostic}");
     }
-}
-
-/// Builds the human-readable terminal message for a classified automation error.
-///
-/// Reason codes stay stable machine labels. The message carries actionable detail
-/// except for authentication failures, which stay generic so credentials and
-/// token material never leave the process through stdout, stderr, or JSONL.
-fn terminal_error_message(reason: TerminalReason, error: &anyhow::Error) -> String {
-    match reason {
-        TerminalReason::Authentication => "authentication failed".to_string(),
-        TerminalReason::ProviderError
-        | TerminalReason::ToolHostError
-        | TerminalReason::ConfigurationError
-        | TerminalReason::OutputError
-        | TerminalReason::OtherError
-        | TerminalReason::Interrupted
-        | TerminalReason::MaxSteps
-        | TerminalReason::Timeout
-        | TerminalReason::Completed => error.to_string(),
-    }
-}
-
-fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
-    if let Some(interrupted) = error.downcast_ref::<AutomationInterrupted>() {
-        return (TerminalReason::Interrupted, interrupted.exit_code());
-    }
-    if let Some(exit) = error.downcast_ref::<AutomationExit>() {
-        return (exit.reason(), exit.exit_code());
-    }
-    for cause in error.chain() {
-        if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
-            return match error {
-                rho_sdk::Error::Authentication { .. } => (TerminalReason::Authentication, 1),
-                rho_sdk::Error::Provider(provider)
-                    if provider.kind() == rho_sdk::ProviderErrorKind::Authentication =>
-                {
-                    (TerminalReason::Authentication, 1)
-                }
-                rho_sdk::Error::Provider(_) => (TerminalReason::ProviderError, 1),
-                rho_sdk::Error::Tool(_) => (TerminalReason::ToolHostError, 1),
-                rho_sdk::Error::InvalidConfiguration { .. } => {
-                    (TerminalReason::ConfigurationError, 2)
-                }
-                _ => (TerminalReason::OtherError, 1),
-            };
-        }
-        if let Some(error) = cause.downcast_ref::<rho_providers::model::ModelError>() {
-            use rho_providers::model::ModelError;
-            return match error {
-                ModelError::MissingCredentials(_) | ModelError::Credentials(_) => {
-                    (TerminalReason::Authentication, 1)
-                }
-                ModelError::UnsupportedReasoning { .. } | ModelError::UnsupportedProvider(_) => {
-                    (TerminalReason::ConfigurationError, 2)
-                }
-                _ => (TerminalReason::ProviderError, 1),
-            };
-        }
-    }
-    (TerminalReason::OtherError, 1)
 }
 
 pub(crate) async fn run_session(

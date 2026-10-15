@@ -11,7 +11,7 @@ use {
             ProviderModelEndpoint,
         },
     },
-    rho_providers::provider::{self, ProviderModelSource},
+    rho_providers::provider::{self, ProviderAuthKind, ProviderModelSource},
 };
 
 pub(super) enum ProviderRefreshStatus {
@@ -68,7 +68,8 @@ pub(super) async fn refresh_model_cache(
         .or_else(|| {
             model_override
                 .as_ref()
-                .and_then(|selection| explicit_model_provider(&selection.model))
+                .and_then(|selection| split_model_reference(&selection.model))
+                .map(|(provider, _)| provider)
         })
         .unwrap_or(&config.provider);
     if cli.provider.is_none()
@@ -96,10 +97,10 @@ pub(super) async fn refresh_model_cache(
     );
     let auth = match cli.auth.as_deref() {
         Some(auth) => auth.to_string(),
-        None if provider != config.provider => provider::provider_descriptor(provider)
-            .map(|descriptor| descriptor.default_auth().id.to_string())
-            .unwrap_or_else(|| config.auth.clone()),
-        None => config.auth.clone(),
+        // Probe with the auth the overrides will select, so a keyed host is
+        // not probed anonymously.
+        None => inferred_auth(provider, &config.auth, store)
+            .map_or_else(|| config.auth.clone(), |profile| profile.auth_id().into()),
     };
     let attempted = refresh_model_list_for_provider(
         provider,
@@ -163,8 +164,16 @@ enum CachedModelRequirement {
 /// normalization. Flag presence alone is not enough: identical overrides do not
 /// count as a change. Persistence is decided by the caller (only when `--save`
 /// is set).
-pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
-    apply_cli_overrides(config, cli, CachedModelRequirement::Required)
+///
+/// Without `--auth`, a switched provider takes a mode whose credentials are in
+/// `store` (or its `RHO_*` env override), the same way the TUI model picker
+/// does, and falls back to the provider default only when none has any.
+pub(super) fn apply_overrides(
+    config: &mut Config,
+    cli: &Cli,
+    store: &dyn CredentialStore,
+) -> anyhow::Result<bool> {
+    apply_cli_overrides(config, cli, store, CachedModelRequirement::Required)
 }
 
 /// Same resolution as [`apply_overrides`], including `@alias` checks, but keep
@@ -173,23 +182,25 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
 pub(super) fn apply_overrides_allowing_empty_cache(
     config: &mut Config,
     cli: &Cli,
+    store: &dyn CredentialStore,
 ) -> anyhow::Result<bool> {
-    apply_cli_overrides(config, cli, CachedModelRequirement::Optional)
+    apply_cli_overrides(config, cli, store, CachedModelRequirement::Optional)
 }
 
 fn apply_cli_overrides(
     config: &mut Config,
     cli: &Cli,
+    store: &dyn CredentialStore,
     cached_models: CachedModelRequirement,
 ) -> anyhow::Result<bool> {
     let before = CliSelection::capture(config);
     let mut flags_present = false;
     if let Some(provider) = &cli.provider {
-        apply_provider_override(config, provider, cli.model.is_some(), cached_models)?;
+        apply_provider_override(config, provider, cli.model.is_some(), store, cached_models)?;
         flags_present = true;
     }
     if let Some(model) = &cli.model {
-        apply_model_override(config, model, cli.provider.as_deref())?;
+        apply_model_override(config, model, cli.provider.as_deref(), store)?;
         flags_present = true;
     }
     if let Some(profile) = cli_auth_profile(cli)? {
@@ -204,7 +215,13 @@ fn apply_cli_overrides(
             config.provider = profile.name.into();
             config.auth = auth.into();
         } else {
-            apply_provider_override(config, profile.name, cli.model.is_some(), cached_models)?;
+            apply_provider_override(
+                config,
+                profile.name,
+                cli.model.is_some(),
+                store,
+                cached_models,
+            )?;
             config.auth = auth.into();
         }
         flags_present = true;
@@ -361,13 +378,13 @@ fn apply_provider_override(
     config: &mut Config,
     provider: &str,
     has_model_override: bool,
+    store: &dyn CredentialStore,
     cached_models: CachedModelRequirement,
 ) -> anyhow::Result<()> {
-    let profile = provider::resolve_provider_reference(provider)
-        .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
+    let profile = inferred_auth(provider, &config.auth, store)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
     let provider = profile.provider_name();
     crate::config::ensure_serves_chat(provider)?;
-    let auth = Some(profile.auth_id());
     let model = if has_model_override {
         None
     } else if let Some(model) = catalog::default_model_for_provider(provider) {
@@ -381,9 +398,7 @@ fn apply_provider_override(
         }
     };
     config.provider = provider.to_string();
-    if let Some(auth) = auth {
-        config.auth = auth.to_string();
-    }
+    config.auth = profile.auth_id().to_string();
     if let Some(model) = model {
         config.model = model;
     }
@@ -394,17 +409,27 @@ fn apply_model_override(
     config: &mut Config,
     reference: &str,
     cli_provider: Option<&str>,
+    store: &dyn CredentialStore,
 ) -> anyhow::Result<()> {
     let model_override = effective_model_override(config, reference, cli_provider)?;
-    let selection = match model_override.provider.as_deref() {
-        Some(provider) => {
-            // No credential store is available during CLI override resolution.
-            // An explicit `--auth` is applied afterward and still takes
-            // precedence.
+    let qualified = match model_override.provider.as_deref() {
+        Some(provider) => Some((provider, model_override.model.as_str())),
+        None => split_model_reference(&model_override.model),
+    };
+    let selection = match qualified {
+        Some((provider, model)) => {
+            // The catalog still checks the inferred auth against the model's
+            // own auth modes. An explicit `--auth` is applied afterward and
+            // still takes precedence.
+            let auth = inferred_auth(provider, &config.auth, store)
+                .map(|profile| profile.auth_id().to_string());
             catalog::resolve_model_selection_for_provider(
                 provider,
-                &model_override.model,
-                catalog::SelectionAuthContext::none(),
+                model,
+                catalog::SelectionAuthContext {
+                    current: auth.as_deref(),
+                    available: auth.as_slice(),
+                },
             )?
         }
         None => catalog::resolve_model_selection_for_auths(
@@ -419,6 +444,46 @@ fn apply_model_override(
     config.auth = selection.auth;
     config.model_alias = model_override.alias;
     Ok(())
+}
+
+/// Auth the CLI selects for `provider` when `--auth` is omitted, shared by
+/// `--provider`, `--model provider/model`, and the startup model refresh.
+///
+/// A legacy alias such as `xai-oauth` keeps its pinned auth. Otherwise, in
+/// order: the configured auth when the provider offers it and it has
+/// credentials; a keyed mode with stored credentials (or an `RHO_*` override),
+/// as the `/model` picker prefers; the configured keyed auth, so a keyed host
+/// never drops to keyless (which `--save` would persist); the provider
+/// default. `None` for an unknown provider. Only this provider's modes are
+/// checked, so the store is not queried for every provider.
+fn inferred_auth(
+    provider: &str,
+    configured: &str,
+    store: &dyn CredentialStore,
+) -> Option<provider::ResolvedProviderProfile> {
+    let profile = provider::resolve_provider_reference(provider).ok()?;
+    if provider::legacy_provider_alias(provider).is_some() {
+        return Some(profile);
+    }
+    let descriptor = profile.provider;
+    let keyed = |mode: &provider::AuthMode| !matches!(mode.auth_kind, ProviderAuthKind::None);
+    let has_credentials = |mode: &provider::AuthMode| {
+        credentials::auth_has_credentials(store, mode.id).unwrap_or(false)
+    };
+    let configured = descriptor.auth_mode(configured).filter(keyed);
+    let auth = configured
+        .filter(has_credentials)
+        .or_else(|| {
+            descriptor
+                .auth_modes()
+                .find(|mode| keyed(mode) && has_credentials(mode))
+        })
+        .or(configured)
+        .unwrap_or_else(|| descriptor.default_auth());
+    Some(provider::ResolvedProviderProfile {
+        provider: descriptor,
+        auth,
+    })
 }
 
 fn effective_model_override(
@@ -490,9 +555,12 @@ fn provider_requires_cached_models(provider: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn explicit_model_provider(model: &str) -> Option<&str> {
-    let (provider, model) = model.trim().split_once('/')?;
-    (!provider.trim().is_empty() && !model.trim().is_empty()).then_some(provider.trim())
+/// Splits a `provider/model` reference at its first `/`, the way the catalog
+/// resolver does. `None` for a bare model id or an empty side.
+fn split_model_reference(reference: &str) -> Option<(&str, &str)> {
+    let (provider, model) = reference.trim().split_once('/')?;
+    let (provider, model) = (provider.trim(), model.trim());
+    (!provider.is_empty() && !model.is_empty()).then_some((provider, model))
 }
 
 #[cfg(test)]

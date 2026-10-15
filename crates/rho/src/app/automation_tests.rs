@@ -30,9 +30,8 @@ use tokio::{
 
 use super::{
     classify_error, classify_run_terminal, complete_run, ensure_headless_auto_classifier_model,
-    headless_approval_session, headless_auto_classifier, prompt_from_reader,
-    terminal_error_message, AutomationExit, RunArtifactIdentity, RunEntry, RunReporter,
-    RunTerminal, MAX_STEPS_MESSAGE,
+    headless_approval_session, headless_auto_classifier, prompt_from_reader, AutomationExit,
+    RunArtifactIdentity, RunEntry, RunReporter, RunTerminal, TerminalMessages, MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::permission_classifier_handler::{
@@ -63,30 +62,59 @@ fn classifies_automation_exit_without_parsing_its_message() {
 }
 
 #[test]
-fn terminal_messages_keep_detail_except_authentication() {
+fn terminal_messages_keep_detail_but_hide_authentication_errors() {
+    let messages = TerminalMessages::for_selection("xai", "xai-oauth");
     let configuration = anyhow::anyhow!("TOML parse error at line 1, column 5");
     assert_eq!(
-        terminal_error_message(TerminalReason::ConfigurationError, &configuration),
+        messages.for_error(TerminalReason::ConfigurationError, &configuration),
         "TOML parse error at line 1, column 5"
     );
 
     let output = anyhow::anyhow!("could not write JSONL output: broken pipe");
     assert_eq!(
-        terminal_error_message(TerminalReason::OutputError, &output),
+        messages.for_error(TerminalReason::OutputError, &output),
         "could not write JSONL output: broken pipe"
     );
 
     let provider = anyhow::anyhow!("provider unavailable");
     assert_eq!(
-        terminal_error_message(TerminalReason::ProviderError, &provider),
+        messages.for_error(TerminalReason::ProviderError, &provider),
         "provider unavailable"
     );
 
+    // The provider's text may echo credentials; only the selection is named.
     let authentication = anyhow::anyhow!("token fixture-secret rejected");
     assert_eq!(
-        terminal_error_message(TerminalReason::Authentication, &authentication),
-        "authentication failed"
+        messages.for_error(TerminalReason::Authentication, &authentication),
+        "authentication failed for xai (auth: xai-oauth); run /login xai or pass --auth xai-api-key"
     );
+}
+
+// Covers: an auth failure names the provider and auth it used, offering only
+// other keyed modes of that provider as `--auth` fixes.
+// Owner: pure unit (automation terminal messages)
+#[test]
+fn authentication_message_offers_other_keyed_modes_only() {
+    let error = anyhow::anyhow!("rejected");
+    for (provider, auth, expected) in [
+        (
+            "openai-codex",
+            "codex",
+            "authentication failed for openai-codex (auth: codex); run /login openai-codex",
+        ),
+        (
+            "xai",
+            "xai-api-key",
+            "authentication failed for xai (auth: xai-api-key); run /login xai or pass --auth xai-oauth",
+        ),
+    ] {
+        assert_eq!(
+            TerminalMessages::for_selection(provider, auth)
+                .for_error(TerminalReason::Authentication, &error),
+            expected,
+            "{provider}/{auth}"
+        );
+    }
 }
 
 // Covers: MaxSteps must become RunTerminal::MaxSteps without output-mode or flag context.

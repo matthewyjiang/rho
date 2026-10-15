@@ -185,7 +185,7 @@ fn poolside_model_override_persists_internal_model_id() {
         let mut config = Config::default();
         let cli = Cli::try_parse_from(["rho", "--model", "poolside/laguna-m.1"]).unwrap();
 
-        assert!(apply_overrides(&mut config, &cli).unwrap());
+        assert!(apply_overrides(&mut config, &cli, &MemoryCredentialStore::default()).unwrap());
         assert_eq!(config.provider, "poolside");
         assert_eq!(config.model, "laguna-m.1");
         assert_eq!(config.auth, "poolside-api-key");
@@ -197,7 +197,7 @@ fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
     let mut config = Config::default();
     let cli = Cli::try_parse_from(["rho", "--provider", "xai-oauth"]).unwrap();
 
-    assert!(apply_overrides(&mut config, &cli).unwrap());
+    assert!(apply_overrides(&mut config, &cli, &MemoryCredentialStore::default()).unwrap());
     assert_eq!(config.provider, "xai");
     assert_eq!(config.model, "grok-4.7");
     assert_eq!(config.auth, "xai-oauth");
@@ -211,7 +211,7 @@ fn cli_model_override_with_provider_selects_matching_auth() {
         ..test_cli()
     };
 
-    let changed = apply_overrides(&mut cfg, &cli).unwrap();
+    let changed = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
     assert!(changed);
     assert_eq!(cfg.provider, "openai-codex");
@@ -231,7 +231,7 @@ fn identical_cli_overrides_do_not_report_change() {
         ..test_cli()
     };
 
-    assert!(!apply_overrides(&mut cfg, &cli).unwrap());
+    assert!(!apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap());
     assert_eq!(cfg.reasoning, reasoning);
 }
 
@@ -242,7 +242,7 @@ fn cli_permission_mode_override_applies_without_reporting_change() {
     let mut cfg = Config::default();
     let cli = Cli::try_parse_from(["rho", "--permission-mode", "auto"]).unwrap();
 
-    assert!(!apply_overrides(&mut cfg, &cli).unwrap());
+    assert!(!apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap());
     assert_eq!(cfg.permission_mode, crate::permission::PermissionMode::Auto);
 }
 
@@ -256,7 +256,7 @@ fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
             ..test_cli()
         };
 
-        apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.model, "claude-sonnet-4-5");
@@ -275,7 +275,7 @@ fn cli_github_copilot_provider_override_requires_cached_default() {
             ..test_cli()
         };
 
-        let err = apply_overrides(&mut cfg, &cli).unwrap_err();
+        let err = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap_err();
 
         assert!(err.to_string().contains("no cached models"));
     });
@@ -331,7 +331,7 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
 
     let refresh = refresh_model_cache(&cli, &cfg, &store).await;
     refresh.unwrap();
-    apply_overrides(&mut cfg, &cli).unwrap();
+    apply_overrides(&mut cfg, &cli, &store).unwrap();
     set_provider_models_cache_dir_for_tests(None);
     let _ = std::fs::remove_dir_all(cache_dir);
 
@@ -349,7 +349,7 @@ fn cli_github_copilot_provider_override_uses_cached_default() {
             ..test_cli()
         };
 
-        apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
         assert_eq!(cfg.provider, "github-copilot");
         assert_eq!(cfg.model, "copilot-cached-model");
@@ -367,7 +367,7 @@ fn cli_explicit_provider_keeps_slash_containing_model_id() {
             ..test_cli()
         };
 
-        apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
         assert_eq!(cfg.provider, "openrouter");
         assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
@@ -387,7 +387,7 @@ fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
         ..test_cli()
     };
 
-    apply_overrides(&mut cfg, &cli).unwrap();
+    apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
     assert_eq!(cfg.provider, "openai-codex");
     assert_eq!(cfg.model, "gpt-5.5");
@@ -403,7 +403,7 @@ fn cli_auth_override_wins_after_model_provider_auth() {
         ..test_cli()
     };
 
-    apply_overrides(&mut cfg, &cli).unwrap();
+    apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
     assert_eq!(cfg.provider, "openai");
     assert_eq!(cfg.model, "gpt-5.5");
@@ -437,7 +437,7 @@ fn decision_model_host_is_refused_as_the_chat_provider() {
     for (name, cli) in cli_cases {
         let mut cfg = Config::default();
 
-        let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+        let error = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap_err();
 
         assert_eq!(format!("{error:#}"), refused, "{name}");
     }
@@ -641,7 +641,7 @@ fn cli_model_override_resolves_user_defined_alias() {
             ..test_cli()
         };
 
-        let changed = apply_overrides(&mut cfg, &cli).unwrap();
+        let changed = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
         assert!(changed);
         assert_eq!(cfg.provider, "anthropic");
@@ -662,7 +662,7 @@ fn cli_model_alias_conflicting_with_provider_flag_errors() {
         ..test_cli()
     };
 
-    let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+    let error = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap_err();
 
     assert!(
         error.to_string().contains(
@@ -680,7 +680,7 @@ fn undefined_cli_model_alias_names_flag() {
         ..test_cli()
     };
 
-    let error = apply_overrides(&mut cfg, &cli).unwrap_err();
+    let error = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap_err();
 
     assert!(
         error.to_string().contains(
@@ -699,7 +699,7 @@ fn cli_auth_only_selection_resolves_provider_profile() {
             ..test_cli()
         };
 
-        apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
         assert_eq!(cfg.provider, "openrouter");
         assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
@@ -718,11 +718,203 @@ fn cli_auth_profile_normalizes_compatible_provider() {
             ..test_cli()
         };
 
-        apply_overrides(&mut cfg, &cli).unwrap();
+        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
 
         assert_eq!(cfg.provider, "openrouter");
         assert_eq!(cfg.auth, "openrouter-oauth");
     });
+}
+
+// Covers: selecting a keyed custom host from the CLI without --auth uses its
+// stored key instead of the keyless default, like the TUI picker (#1477).
+// Owner: cli config overrides
+#[test]
+fn cli_custom_host_selection_without_auth_prefers_stored_key() {
+    use rho_providers::credentials::CredentialStore as _;
+
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let _restore = RestoreCustomProviders;
+    let keyed = MemoryCredentialStore::default();
+    keyed
+        .set_secret("provider:keyedhost:api-key", "sk-test")
+        .unwrap();
+    let keyless = MemoryCredentialStore::default();
+    let mut base = Config {
+        provider: "openai-codex".into(),
+        model: "gpt-5.5".into(),
+        auth: "codex".into(),
+        ..Config::default()
+    };
+    base.providers
+        .set_endpoint("keyedhost", "http://127.0.0.1:9/v1")
+        .unwrap();
+    base.providers.activate().unwrap();
+
+    with_cached_provider_models("keyedhost", vec!["vendor/model-a"], || {
+        for args in [
+            &["--model", "keyedhost/vendor/model-a"][..],
+            &["--provider", "keyedhost", "--model", "vendor/model-a"],
+            &["--provider", "keyedhost"],
+        ] {
+            let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+            for (store, expected_auth) in [(&keyed, "keyedhost-api-key"), (&keyless, "none")] {
+                let mut cfg = base.clone();
+
+                apply_overrides(&mut cfg, &cli, store).unwrap();
+
+                assert_eq!(
+                    (cfg.provider.as_str(), cfg.model.as_str(), cfg.auth.as_str()),
+                    ("keyedhost", "vendor/model-a", expected_auth),
+                    "{args:?}"
+                );
+            }
+        }
+
+        // A keyed auth already configured for the host survives a reselection
+        // even with no stored secret; it must not drop to `none`.
+        let configured = Config {
+            provider: "keyedhost".into(),
+            model: "vendor/model-a".into(),
+            auth: "keyedhost-api-key".into(),
+            ..base.clone()
+        };
+        for args in [
+            &["--model", "keyedhost/vendor/model-a"][..],
+            &["--provider", "keyedhost", "--model", "vendor/model-a"],
+            &["--provider", "keyedhost"],
+        ] {
+            let mut cfg = configured.clone();
+            let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+            apply_overrides(&mut cfg, &cli, &keyless).unwrap();
+            assert_eq!(cfg.auth, "keyedhost-api-key", "{args:?}");
+        }
+    });
+}
+
+// Covers: `--provider` must switch between OpenAI siblings that share an auth
+// family, not keep the configured sibling.
+// Owner: cli config overrides
+#[test]
+fn cli_provider_switches_between_openai_and_codex_siblings() {
+    // `openai` has no built-in default model, so `--provider openai` alone
+    // needs a cached list to pick from.
+    with_cached_provider_models("openai", vec!["gpt-test"], || {
+        for (from, from_auth, to, expected_auth) in [
+            ("openai-codex", "codex", "openai", "api-key"),
+            ("openai", "api-key", "openai-codex", "codex"),
+        ] {
+            let mut cfg = Config {
+                provider: from.into(),
+                auth: from_auth.into(),
+                ..Config::default()
+            };
+            let cli = Cli::try_parse_from(["rho", "--provider", to]).unwrap();
+
+            apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
+
+            assert_eq!(
+                (cfg.provider.as_str(), cfg.auth.as_str()),
+                (to, expected_auth)
+            );
+        }
+    });
+}
+
+// Covers: a configured auth with no credentials must not beat another mode of
+// the same provider that has a stored key.
+// Owner: cli config overrides
+#[test]
+fn cli_selection_prefers_stored_key_over_configured_auth_without_credentials() {
+    use rho_providers::credentials::CredentialStore as _;
+
+    let store = MemoryCredentialStore::default();
+    store
+        .set_secret(rho_providers::provider::XAI_API_KEY_ACCOUNT, "xai-test")
+        .unwrap();
+    for args in [&["--model", "xai/grok-4.7"][..], &["--provider", "xai"]] {
+        let mut cfg = Config {
+            provider: "xai".into(),
+            model: "grok-4.7".into(),
+            auth: "xai-oauth".into(),
+            ..Config::default()
+        };
+        let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+
+        apply_overrides(&mut cfg, &cli, &store).unwrap();
+
+        assert_eq!(cfg.auth, "xai-api-key", "{args:?}");
+    }
+}
+
+// Covers: `--provider` naming the configured keyless custom host must probe its
+// required model list with the stored key, or a keyed host aborts startup.
+// Owner: app startup
+// Same process-wide registry lock as the fetch test below.
+#[allow(clippy::await_holding_lock)]
+#[tokio::test(flavor = "current_thread")]
+async fn cli_custom_host_refresh_uses_stored_key_for_configured_keyless_host() {
+    use rho_providers::credentials::CredentialStore as _;
+
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 2048];
+        let bytes = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+        let request = String::from_utf8_lossy(&buffer[..bytes]).to_ascii_lowercase();
+        let body = r#"{"data":[{"id":"vendor/model-a"}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+            .await
+            .unwrap();
+        request.contains("authorization: bearer sk-test")
+    });
+
+    let cache_dir = unique_cache_dir("custom-host-keyed-refresh");
+    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let _restore = RestoreCustomProviders;
+    let mut cfg = Config {
+        provider: "keyedhost".into(),
+        model: "vendor/model-a".into(),
+        auth: "none".into(),
+        ..Config::default()
+    };
+    cfg.providers.set_endpoint("keyedhost", &api_base).unwrap();
+    cfg.providers.activate().unwrap();
+    let store = MemoryCredentialStore::default();
+    store
+        .set_secret("provider:keyedhost:api-key", "sk-test")
+        .unwrap();
+    let cli = Cli::try_parse_from(["rho", "--provider", "keyedhost"]).unwrap();
+
+    let refresh = refresh_model_cache(&cli, &cfg, &store).await;
+    let sent_key = server.await.unwrap();
+    set_provider_models_cache_dir_for_tests(None);
+    let _ = std::fs::remove_dir_all(cache_dir);
+
+    refresh.unwrap();
+    assert!(sent_key, "model-list refresh must send the stored key");
 }
 
 // Covers: custom hosts must populate the picker from /v1/models without a manual refresh
