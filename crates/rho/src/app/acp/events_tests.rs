@@ -95,6 +95,7 @@ fn proposed_started_finished_map_kind_and_status() {
     match started {
         SessionUpdate::ToolCall(tool) => {
             assert_eq!(tool.tool_call_id.0.as_ref(), "call-1");
+            assert_eq!(tool.name.as_deref(), Some("write"));
             assert_eq!(tool.kind, ToolKind::Edit);
             assert_eq!(tool.status, ToolCallStatus::InProgress);
             assert_eq!(tool.raw_input, Some(json!({"path": "a.rs"})));

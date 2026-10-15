@@ -317,9 +317,10 @@ impl SessionHost {
             None => Ok(PromptResponse::new(
                 agent_client_protocol::schema::v1::StopReason::Cancelled,
             )),
-            Some(Ok(PromptAction::Turn { input: model, call })) => {
-                self.run_turn(&input, model, call, client).await
-            }
+            Some(Ok(PromptAction::Turn {
+                input: model,
+                calls,
+            })) => self.run_turn(&input, model, calls, client).await,
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.compact(instructions, client).await
             }
@@ -553,12 +554,13 @@ impl SessionHost {
     }
 
     /// A model turn on `model`, saved for display as `display`, the prompt
-    /// as the user sent it. `call` runs before the first model request.
+    /// as the user sent it. `calls` run as one host batch before the first
+    /// model request.
     async fn run_turn(
         &mut self,
         display: &UserInput,
         model: UserInput,
-        call: Option<rho_sdk::model::ToolCall>,
+        calls: Vec<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
@@ -568,7 +570,7 @@ impl SessionHost {
         )?;
         let result = crate::app::headless_delegation::HeadlessDelegation::drive(
             &mut delegation,
-            self.drive_prompt(display, model, call, client),
+            self.drive_prompt(display, model, calls, client),
         )
         .await;
         if let Some(manager) = self.built.tools.subagents() {
@@ -586,7 +588,7 @@ impl SessionHost {
         &mut self,
         display: &UserInput,
         model: UserInput,
-        call: Option<rho_sdk::model::ToolCall>,
+        calls: Vec<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         if let Some(notice) = self.load_notice.take() {
@@ -596,7 +598,7 @@ impl SessionHost {
             }
         }
         let checkpoint = self.install_turn_checkpoint(display)?;
-        let result = self.drive_run(&checkpoint, model, call, client).await;
+        let result = self.drive_run(&checkpoint, model, calls, client).await;
         // The run is over, so the session is idle again.
         if let Err(error) = self.built.session.set_checkpoint_store(None) {
             tracing::warn!(%error, "could not remove ACP turn checkpoint store");
@@ -608,12 +610,13 @@ impl SessionHost {
         &mut self,
         checkpoint: &TurnCheckpoint,
         model: UserInput,
-        call: Option<rho_sdk::model::ToolCall>,
+        calls: Vec<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let started = match call {
-            Some(call) => self.built.session.start_with_tool_call(model, call).await,
-            None => self.built.session.start(model).await,
+        let started = if calls.is_empty() {
+            self.built.session.start(model).await
+        } else {
+            self.built.session.start_with_tool_calls(model, calls).await
         };
         let mut run = match started {
             Ok(run) => run,
