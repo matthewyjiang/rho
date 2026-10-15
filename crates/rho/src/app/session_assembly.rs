@@ -123,6 +123,9 @@ async fn teardown_startup(hooks: Option<crate::hooks::HookPipeline>, tools: AppT
 pub(super) struct SessionAssembly {
     pub built: BuiltSession,
     pub workspace_root: PathBuf,
+    /// Write grants the session's policy remembers. A host that later swaps
+    /// the permission mode carries or drops these with the new mode.
+    pub session_writes: SessionWriteLog,
 }
 
 pub(super) async fn assemble_session<ExtendTools, Approval, Options>(
@@ -240,7 +243,10 @@ where
                 provider: Arc::clone(&provider),
                 tools: &tool_set,
                 workspace,
-                workspace_policy: AppPolicy::for_mode(config.permission_mode, session_writes),
+                workspace_policy: AppPolicy::for_mode(
+                    config.permission_mode,
+                    session_writes.clone(),
+                ),
                 approval_session,
                 system_prompt: prompt.system.clone(),
                 reasoning: sdk_options.runtime.reasoning,
@@ -301,5 +307,6 @@ where
             diagnostics: diagnostics.clone(),
         },
         workspace_root,
+        session_writes,
     })
 }

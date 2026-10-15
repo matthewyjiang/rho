@@ -92,6 +92,11 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         built,
         stored,
         Default::default(),
+        SessionPermission {
+            mode: config.permission_mode,
+            writes: Default::default(),
+            workspace_root: home.path().to_path_buf(),
+        },
         config.auth.clone(),
         HerdrReporter::default(),
     );

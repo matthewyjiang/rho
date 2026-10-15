@@ -1,6 +1,7 @@
 mod agent;
 mod config_options;
 mod events;
+mod host_mcp;
 mod permission;
 mod session_host;
 mod thought_level;
@@ -147,8 +148,14 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |request: SetSessionModeRequest, responder, _cx| {
-                responder.respond_with_error(RhoAcpAgent::set_session_mode(&request))
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: SetSessionModeRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(&cx, responder, async move {
+                        agent.set_session_mode(request).await
+                    })
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )

@@ -9,7 +9,7 @@ use std::{
 
 use agent_client_protocol::{
     schema::v1::{
-        LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
+        LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
         PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
         SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
@@ -54,9 +54,12 @@ use crate::{
 mod build;
 #[path = "session_host_convert.rs"]
 mod convert;
+#[path = "session_host_mode.rs"]
+mod mode;
 
-use build::{build_session, mode_state};
+use build::{build_session, mode_state, session_config};
 use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
+use mode::SessionPermission;
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
@@ -64,6 +67,7 @@ pub(super) struct SessionHost {
     stored: StoredSession,
     /// Saved with every snapshot so a later load restores them.
     added_dirs: crate::added_dirs::AddedDirs,
+    permission: SessionPermission,
     auth: String,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
@@ -143,13 +147,14 @@ impl SessionHost {
         request: NewSessionRequest,
     ) -> anyhow::Result<(Self, NewSessionResponse)> {
         let cwd = validate_session_cwd(&request.cwd)?;
-        ignore_host_mcp_servers(&request.mcp_servers);
+        let config = session_config(&startup.config, &request.mcp_servers);
         let sdk_id = rho_sdk::SessionId::new();
         let added_dirs = startup.added_dirs.clone();
-        let built = build_session(startup, cwd, &added_dirs, |_| {
+        let assembly = build_session(startup, &config, cwd, &added_dirs, |_| {
             Ok(session_options_for_id(sdk_id.clone()))
         })
         .await?;
+        let (built, permission) = split_assembly(assembly, config.permission_mode);
         let stored = match StoredSession::create_with_id(
             cwd,
             built.session.id().as_str(),
@@ -168,11 +173,12 @@ impl SessionHost {
             built,
             stored,
             added_dirs,
+            permission,
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
         let response = NewSessionResponse::new(acp_session_id)
-            .modes(mode_state(startup.config.permission_mode))
+            .modes(mode_state(host.permission.mode))
             .config_options(host.config_options(&startup.config));
         Ok((host, response))
     }
@@ -186,7 +192,7 @@ impl SessionHost {
         if !request.cwd.as_os_str().is_empty() {
             validate_session_cwd(cwd)?;
         }
-        ignore_host_mcp_servers(&request.mcp_servers);
+        let config = session_config(&startup.config, &request.mcp_servers);
         let (stored, histories) =
             StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref())?;
         // ACP has no notice channel at load, so a missing saved directory
@@ -197,12 +203,13 @@ impl SessionHost {
             tracing::warn!(dir = %dir.display(), "could not restore added directory: not found");
         }
         let added_dirs = startup.added_dirs.union(&root, &restored.dirs);
-        let built = build_session(startup, cwd, &added_dirs, |provider| {
+        let assembly = build_session(startup, &config, cwd, &added_dirs, |provider| {
             let snapshot =
                 stored.snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
             Ok(SessionOptions::from_snapshot(snapshot))
         })
         .await?;
+        let (built, permission) = split_assembly(assembly, config.permission_mode);
         let replay_result =
             replay_display_history(&request.session_id, &histories.display, client).await;
         if let Err(error) = replay_result {
@@ -231,11 +238,12 @@ impl SessionHost {
             built,
             stored,
             added_dirs,
+            permission,
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
         let response = LoadSessionResponse::new()
-            .modes(mode_state(startup.config.permission_mode))
+            .modes(mode_state(host.permission.mode))
             .config_options(host.config_options(&startup.config));
         Ok((host, response))
     }
@@ -435,6 +443,7 @@ impl SessionHost {
         built: BuiltSession,
         stored: StoredSession,
         added_dirs: crate::added_dirs::AddedDirs,
+        permission: SessionPermission,
         auth: String,
         herdr: HerdrReporter,
     ) -> Self {
@@ -444,6 +453,7 @@ impl SessionHost {
             built,
             stored,
             added_dirs,
+            permission,
             auth,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
@@ -611,9 +621,24 @@ fn host_apply_error(error: impl ToString) -> AcpError {
     AcpError::internal_error().data(error.to_string())
 }
 
-/// Host-supplied MCP servers are ignored. Rho loads MCP from the workspace and
-/// config through `assemble_tools_and_prompt`, not from `request.mcpServers`.
-fn ignore_host_mcp_servers(_servers: &[McpServer]) {}
+fn split_assembly(
+    assembly: crate::app::session_assembly::SessionAssembly,
+    mode: crate::permission::PermissionMode,
+) -> (BuiltSession, SessionPermission) {
+    let crate::app::session_assembly::SessionAssembly {
+        built,
+        workspace_root,
+        session_writes,
+    } = assembly;
+    (
+        built,
+        SessionPermission {
+            mode,
+            writes: session_writes,
+            workspace_root,
+        },
+    )
+}
 
 async fn replay_display_history(
     session_id: &SessionId,

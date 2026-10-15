@@ -14,10 +14,12 @@ use super::{
 use agent_client_protocol::{
     schema::v1::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeRequest,
-        InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
-        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+        InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpCapabilities,
+        NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
+        SessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        SetSessionModeRequest, SetSessionModeResponse,
     },
+    schema::ProtocolVersion,
     Error as AcpError,
 };
 
@@ -63,7 +65,9 @@ impl RhoAcpAgent {
     }
 
     pub(super) fn initialize(request: &InitializeRequest) -> InitializeResponse {
-        InitializeResponse::new(request.protocol_version)
+        // Rho speaks v1. A client asking for a newer version gets v1 back and
+        // decides whether to continue; an older request is echoed.
+        InitializeResponse::new(request.protocol_version.min(ProtocolVersion::V1))
             .agent_capabilities(
                 AgentCapabilities::new()
                     .load_session(true)
@@ -72,7 +76,10 @@ impl RhoAcpAgent {
                             .image(true)
                             .audio(false)
                             .embedded_context(true),
-                    ),
+                    )
+                    // Host stdio servers are the ACP baseline; Streamable
+                    // HTTP is the transport Rho also speaks. SSE is not.
+                    .mcp_capabilities(McpCapabilities::new().http(true)),
             )
             .auth_methods(Vec::new())
     }
@@ -81,14 +88,22 @@ impl RhoAcpAgent {
         not_yet_supported("authenticate")
     }
 
-    pub(super) fn set_session_mode(request: &SetSessionModeRequest) -> AcpError {
-        if super::permission::parse_mode_id(request.mode_id.0.as_ref()).is_none() {
-            return AcpError::invalid_params().data(format!(
+    /// Switches one session's permission mode for later prompts. Rejected
+    /// while a prompt is in flight, like model and thought-level changes.
+    pub(super) async fn set_session_mode(
+        self: &Arc<Self>,
+        request: SetSessionModeRequest,
+    ) -> Result<SetSessionModeResponse, AcpError> {
+        let Some(mode) = super::permission::parse_mode_id(request.mode_id.0.as_ref()) else {
+            return Err(AcpError::invalid_params().data(format!(
                 "unknown session mode '{}'",
                 request.mode_id.0.as_ref()
-            ));
-        }
-        not_yet_supported("session/set_mode")
+            )));
+        };
+        let live = self.live_session(&request.session_id).await?;
+        let mut host = live.try_lock_host(&request.session_id)?;
+        host.set_permission_mode(mode, &self.startup.config).await?;
+        Ok(SetSessionModeResponse::new())
     }
 
     pub(super) async fn new_session(
