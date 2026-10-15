@@ -214,7 +214,7 @@ fn map_stop_maps_sdk_stop_reasons() {
     }
 }
 
-// Covers: load_session replay must emit user/assistant text and skip tool-only rows
+// Covers: load_session replay must emit user/assistant text marked as replay and skip tool-only rows
 // Owner: acp event mapper
 #[test]
 fn replay_history_emits_user_and_assistant_text() {
@@ -231,6 +231,16 @@ fn replay_history_emits_user_and_assistant_text() {
         ],
     );
     assert_eq!(notifications.len(), 2);
+    for notification in &notifications {
+        assert_eq!(
+            notification.meta,
+            Some(serde_json::Map::from_iter([(
+                "isReplay".into(),
+                json!(true)
+            )])),
+            "replayed history must be marked so hosts with their own transcript skip it"
+        );
+    }
     match &notifications[0].update {
         SessionUpdate::UserMessageChunk(chunk) => assert_eq!(text_of(&chunk.content), "hello"),
         other => panic!("expected UserMessageChunk, got {other:?}"),

@@ -248,6 +248,7 @@ async fn permission_request_does_not_block_event_drain() {
             session_id: &session_id,
             cancel,
             mapper: &mut mapper,
+            signals: None,
             client: &port,
             placeholders: &placeholders,
             events: &mut EventSource::Channel(&mut event_rx),

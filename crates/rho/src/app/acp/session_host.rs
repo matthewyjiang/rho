@@ -11,7 +11,7 @@ use agent_client_protocol::{
     schema::v1::{
         LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
         PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
-        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
@@ -32,7 +32,9 @@ use rho_sdk::{
 use super::{
     config_options::{self, CurrentModel},
     events::EventMapper,
-    permission, thought_level, AcpClientPort, AcpStartup,
+    permission,
+    signals::SessionSignals,
+    thought_level, AcpClientPort, AcpStartup,
 };
 use crate::{
     app::{
@@ -221,10 +223,9 @@ impl SessionHost {
                 &built.session.snapshot(),
                 built.prompt.loaded.as_ref(),
             ) {
-                if let Err(error) = replay_display_history(
-                    &request.session_id,
-                    &[Message::assistant_text(notice)],
+                if let Err(error) = send_notification(
                     client,
+                    EventMapper::agent_notice(&request.session_id, &notice),
                 )
                 .await
                 {
@@ -242,6 +243,9 @@ impl SessionHost {
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
+        host.signals()
+            .send_usage(&host.acp_session_id, client)
+            .await;
         let response = LoadSessionResponse::new()
             .modes(mode_state(host.permission.mode))
             .config_options(host.config_options(&startup.config));
@@ -478,8 +482,15 @@ impl SessionHost {
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
         let mut mapper = EventMapper::new();
+        let mut signals = self.signals();
         let pump_result = self
-            .pump_run(&mut run, &mut mapper, client, approval_receiver.as_mut())
+            .pump_run(
+                &mut run,
+                &mut mapper,
+                &mut signals,
+                client,
+                approval_receiver.as_mut(),
+            )
             .await;
         self.built.approval_receiver = approval_receiver;
         if let Err(error) = pump_result {
@@ -488,7 +499,10 @@ impl SessionHost {
             self.dispatch_failed(&error.to_string());
             return Err(error);
         }
-        match run.outcome().await {
+        let outcome = run.outcome().await;
+        // The committed turn is the settled context; in-run updates were estimates.
+        signals.send_usage(&self.acp_session_id, client).await;
+        match outcome {
             Ok(outcome) => {
                 if let Err(error) = self.persist_turn(&input, Some(outcome.text())) {
                     self.dispatch_failed(&error.to_string());
@@ -521,6 +535,7 @@ impl SessionHost {
         &mut self,
         run: &mut rho_sdk::Run,
         mapper: &mut EventMapper,
+        signals: &mut SessionSignals,
         client: &dyn AcpClientPort,
         approval_receiver: Option<&mut ApprovalRequestReceiver>,
     ) -> anyhow::Result<()> {
@@ -529,6 +544,7 @@ impl SessionHost {
             session_id: &self.acp_session_id,
             cancel: run.cancellation_handle(),
             mapper,
+            signals: Some(signals),
             client,
             placeholders: &self.permission_placeholders,
             events: &mut EventSource::Run(run),
@@ -536,6 +552,16 @@ impl SessionHost {
             approvals_open,
         })
         .await
+    }
+
+    /// Fresh signal tracking for the session as it stands now.
+    fn signals(&self) -> SessionSignals {
+        let current = self.current_model();
+        SessionSignals::new(
+            self.built.session.clone(),
+            self.built.tools.todo_state(),
+            model_context_window(&current.provider, &current.model),
+        )
     }
 
     fn persist_turn(&self, input: &UserInput, assistant_text: Option<&str>) -> anyhow::Result<()> {
@@ -653,7 +679,7 @@ async fn replay_display_history(
 
 async fn send_notification(
     client: &dyn AcpClientPort,
-    notification: agent_client_protocol::schema::v1::SessionNotification,
+    notification: SessionNotification,
 ) -> anyhow::Result<()> {
     client
         .send_session_notification(notification)
@@ -706,6 +732,9 @@ struct PumpSources<'a> {
     session_id: &'a SessionId,
     cancel: CancellationToken,
     mapper: &'a mut EventMapper,
+    /// Session state mirrored alongside events; tests that only exercise the
+    /// event and approval plumbing pass `None`.
+    signals: Option<&'a mut SessionSignals>,
     client: &'a dyn AcpClientPort,
     placeholders: &'a AtomicU64,
     events: &'a mut EventSource<'a>,
@@ -718,6 +747,7 @@ async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()> {
         session_id,
         cancel,
         mapper,
+        mut signals,
         client,
         placeholders,
         events,
@@ -742,6 +772,11 @@ async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()> {
                     return Ok(());
                 };
                 if let Some(notification) = mapper.map_event(session_id, &event) {
+                    send_notification(client, notification).await?;
+                }
+                let signal = signals.as_deref_mut().and_then(|signals| signals.observe(&event));
+                if let Some(update) = signal {
+                    let notification = SessionNotification::new(session_id.clone(), update);
                     send_notification(client, notification).await?;
                 }
             }
