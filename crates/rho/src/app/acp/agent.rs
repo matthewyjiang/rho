@@ -137,11 +137,34 @@ impl RhoAcpAgent {
     ) -> Result<SessionStart<LoadSessionResponse>, AcpError> {
         let _gate = self.begin_install().await?;
         let session_id = request.session_id.clone();
-        let (host, response) = SessionHost::load(&self.startup, request, port)
-            .await
-            .map_err(host_error)?;
+        let install = self.install_lock_for(&session_id).await;
+        let _install = install.lock().await;
+        // A live session with this ID must stop saving before the replacement
+        // reads the file, or the replacement's next save would drop steps the
+        // old host checkpointed in between. Cancel its prompt, let that turn
+        // save, then hold its host so nothing runs there until publication.
+        let previous = { self.sessions.lock().await.get(&session_id).cloned() };
+        let mut retired = None;
+        if let Some(previous) = &previous {
+            previous.cancel.cancel();
+            let host = previous.host.lock().await;
+            previous.replaced.store(true, Ordering::Release);
+            retired = Some(host);
+        }
+        let (host, response) = match SessionHost::load(&self.startup, request, port).await {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                // The old session stays published, so it must keep saving.
+                if let Some(previous) = &previous {
+                    previous.replaced.store(false, Ordering::Release);
+                }
+                return Err(host_error(error));
+            }
+        };
         let commands = host.available_commands(&self.startup.config);
-        self.install(session_id, host).await;
+        let old_host = retired.and_then(|mut slot| slot.take());
+        self.publish_locked(session_id, LiveSession::new(host), old_host)
+            .await;
         Ok(SessionStart { response, commands })
     }
 
@@ -227,7 +250,17 @@ impl RhoAcpAgent {
         } else {
             None
         };
+        self.publish_locked(session_id, live, old_host).await;
+    }
 
+    /// Publishes `live` in place of the retired `old_host`. The caller holds
+    /// this ID's install lock and has already emptied the previous slot.
+    async fn publish_locked(
+        &self,
+        session_id: SessionId,
+        live: Arc<LiveSession>,
+        old_host: Option<SessionHost>,
+    ) {
         let outcome = {
             let mut sessions = self.sessions.lock().await;
             if self.closed.load(Ordering::Acquire) {

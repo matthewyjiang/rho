@@ -292,6 +292,44 @@ async fn replacement_finishes_before_the_next_one_publishes() {
         .is_some_and(|live| Arc::ptr_eq(live, &second)));
 }
 
+// Covers: session/load of a live session must not read the file until the old
+// host stops saving, and a failed load leaves the old session saving.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn reload_reads_storage_only_after_the_old_host_quiesces() {
+    let agent = test_agent();
+    let session_id = SessionId::new("reloaded");
+    let previous = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), Arc::clone(&previous));
+    let held = previous.host.lock().await;
+
+    let port = NullPort;
+    // No file backs this ID, so the load fails once it reads storage.
+    let load = agent.load_session(
+        LoadSessionRequest::new(session_id.clone(), PathBuf::from("/tmp")),
+        &port,
+    );
+    tokio::pin!(load);
+    assert!(
+        futures_util::poll!(&mut load).is_pending(),
+        "load must wait for the old prompt to release its host"
+    );
+
+    drop(held);
+    load.await.expect_err("no stored session");
+    assert!(!previous.replaced.load(std::sync::atomic::Ordering::Acquire));
+    assert!(agent
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .is_some_and(|live| Arc::ptr_eq(live, &previous)));
+}
+
 // Covers: tearing down a replaced session must not delay publication of another ID.
 // Owner: ACP agent session map
 #[tokio::test]
