@@ -5,13 +5,13 @@
 //! `InteractiveRuntime::cache_warm_ping`. [`CacheWarmer`] is a small state
 //! machine the idle loop steps: it pings once per TTL (minus a margin) after
 //! the last request that read the cached prefix, pauses while a turn or
-//! compaction owns the session, and halts on its budget, a missed ping, or a
-//! failed one. The hold itself lives on the process record, so it ends when
-//! the process exits or is stopped.
+//! compaction owns the session, and halts on its budget, a missed ping, a ping
+//! the host did not cap, or a failed one. The hold itself lives on the process
+//! record, so it ends when the process exits or is stopped.
 
 use std::time::{Duration, Instant};
 
-use rho_providers::model::ModelUsage;
+use rho_providers::model::{ModelMetadata, ModelUsage};
 use tokio::task::JoinError;
 
 use super::{
@@ -19,7 +19,7 @@ use super::{
     usage_cost::resolved_usage_cost_usd_micros,
     App, Entry, InteractiveRuntime, StatusSource,
 };
-use crate::app::interactive_runtime::CacheWarmOutcome;
+use crate::app::interactive_runtime::{CacheWarmOutcome, PING_OUTPUT_TOKENS};
 
 #[cfg(test)]
 #[path = "cache_warm_tests.rs"]
@@ -32,13 +32,43 @@ mod tests;
 /// slowest round trip plus idle-loop wake latency.
 pub(super) const PING_MARGIN: Duration = Duration::from_secs(30);
 
-/// Pings allowed per idle stretch (between real requests).
+/// Pings per idle stretch when the model's cache prices are unknown.
 ///
-/// Receipt: a ping re-reads the prefix at 0.05x input (Opus/Sonnet 5.5; Fable
-/// and Mythos 5.1 are cheaper at 0.025x), while a cold next turn re-writes it
-/// at 1.25x (5m TTL) instead of reading it at 0.05x. Warming pays off below
-/// 1.2 / 0.05 = 24 pings; 12 keeps the worst case at half of one miss.
-pub(super) const MAX_PINGS_PER_IDLE: u32 = 12;
+/// Receipt: [`ping_budget`] at Anthropic's Opus/Sonnet list prices (cache read
+/// 0.1x input, 5m cache write 1.25x): (1.25 - 0.1) / (2 * 0.1) = 5.
+pub(super) const FALLBACK_PING_BUDGET: u32 = 5;
+
+/// Pings one idle stretch (between real requests) may spend.
+///
+/// A ping re-reads the prefix at the cache-read price. Letting the cache lapse
+/// makes the next turn rewrite it at the cache-write price (the input price on
+/// hosts with no write premium) instead of reading it. Warming breaks even at
+/// `(write - read) / read` pings; the budget is half that, so the worst case
+/// costs half of one avoided miss. GPT-5.6 lands at 5, GPT-5.5 (no write
+/// premium) at 4, and GPT-6.1 Sol (0.05x reads) at 12. Unknown read prices use
+/// [`FALLBACK_PING_BUDGET`].
+pub(super) fn ping_budget(metadata: Option<&ModelMetadata>) -> u32 {
+    let prices = metadata
+        .and_then(|metadata| metadata.cost_default)
+        .and_then(|cost| {
+            let read = cost.cache_read_micros_per_m.filter(|read| *read > 0)?;
+            let write = cost.cache_write_micros_per_m.or(cost.input_micros_per_m)?;
+            Some((read, write))
+        });
+    match prices {
+        Some((read, write)) => {
+            u32::try_from(write.saturating_sub(read) / read.saturating_mul(2)).unwrap_or(u32::MAX)
+        }
+        None => FALLBACK_PING_BUDGET,
+    }
+}
+
+/// The route's cache lifetime and the current model's ping budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct WarmLimits {
+    pub(super) ttl: Duration,
+    pub(super) max_pings: u32,
+}
 
 /// What the idle loop allows the warmer to do right now.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,6 +88,8 @@ pub(super) enum WarmGate {
 pub(super) enum WarmHalt {
     Budget,
     Miss,
+    /// The host's usage did not confirm the ping's output cap.
+    Uncapped,
     Unsupported,
     Failed,
 }
@@ -80,6 +112,9 @@ pub(super) enum PingResult {
     Read,
     /// Too much of the prefix was uncached or rewritten to repeat the ping.
     Miss,
+    /// Read the prefix, but cannot prove the host applied the output cap, so
+    /// repeating it may bill a full response each time.
+    Uncapped,
     /// Failed before reporting usage.
     Failed,
 }
@@ -91,13 +126,21 @@ impl PingResult {
         let usage = &outcome.usage;
         // Use the measured cache-breakpoint noise floor, not any nonzero hit:
         // a short cached head with a large rewritten suffix is still a miss.
-        if usage.cache_read_tokens.is_some_and(|read| {
+        let read_prefix = usage.cache_read_tokens.is_some_and(|read| {
             read > 0
                 && usage.inclusive_prompt_tokens().is_some_and(|prompt| {
                     prompt.saturating_sub(read) <= super::cache_stats::CACHE_MISS_NOISE_FLOOR_TOKENS
                 })
-        }) {
+        });
+        // A custom host may accept the cap field and ignore it, so only
+        // reported output within the cap proves it.
+        let capped = usage
+            .output_tokens
+            .is_some_and(|output| output <= u64::from(PING_OUTPUT_TOKENS.get()));
+        if read_prefix && capped {
             Self::Read
+        } else if read_prefix {
+            Self::Uncapped
         } else if outcome.error.is_some()
             && usage.cache_read_tokens.is_none()
             && usage.cache_write_tokens.is_none()
@@ -131,8 +174,8 @@ impl CacheWarmer {
     }
 
     /// A real request established the prefix; a new idle stretch
-    /// begins with a fresh budget. A miss stays sticky until the hold ends,
-    /// since repeating a mismatched prefix would pay a write every stretch.
+    /// begins with a fresh budget. A miss or an uncapped ping stays sticky
+    /// until the hold ends, since the next stretch would repeat it.
     pub(super) fn record_request(&mut self) {
         self.pings = 0;
         if matches!(self.halt, Some(WarmHalt::Budget | WarmHalt::Failed)) {
@@ -164,8 +207,9 @@ impl CacheWarmer {
         now: Instant,
         gate: WarmGate,
         last_prefix_read: Option<Instant>,
-        ttl: Duration,
+        limits: WarmLimits,
     ) -> WarmStep {
+        let WarmLimits { ttl, max_pings } = limits;
         self.wake = None;
         self.gate = gate;
         match gate {
@@ -201,7 +245,7 @@ impl CacheWarmer {
             self.wake = Some(due);
             return WarmStep::Waiting;
         }
-        if self.pings >= MAX_PINGS_PER_IDLE {
+        if self.pings >= max_pings {
             return self.halt_once(WarmHalt::Budget);
         }
         self.in_flight = true;
@@ -217,6 +261,7 @@ impl CacheWarmer {
                 None
             }
             PingResult::Miss => self.set_halt(WarmHalt::Miss),
+            PingResult::Uncapped => self.set_halt(WarmHalt::Uncapped),
             PingResult::Failed => self.set_halt(WarmHalt::Failed),
         }
     }
@@ -240,21 +285,28 @@ impl CacheWarmer {
         &self,
         now: Instant,
         last_prefix_read: Option<Instant>,
-        ttl: Duration,
+        limits: WarmLimits,
     ) -> Option<String> {
         (self.gate == WarmGate::Holding
             && self.halt.is_none()
-            && last_prefix_read.is_some_and(|read| now < read + ttl))
-        .then(|| format!("warming cache · {}/{MAX_PINGS_PER_IDLE}", self.pings))
+            && last_prefix_read.is_some_and(|read| now < read + limits.ttl))
+        .then(|| format!("warming cache · {}/{}", self.pings, limits.max_pings))
     }
 }
 
-fn halt_notice(halt: WarmHalt, detail: Option<&str>) -> String {
+fn halt_notice(halt: WarmHalt, detail: Option<&str>, max_pings: u32) -> String {
     match halt {
+        WarmHalt::Budget if max_pings == 0 => {
+            "cache warm skipped: at this model's cache prices a ping costs more than the miss it prevents"
+                .to_string()
+        }
         WarmHalt::Budget => format!(
-            "cache warm stopped after {MAX_PINGS_PER_IDLE} pings; the prompt cache will expire"
+            "cache warm stopped after {max_pings} pings; the prompt cache will expire"
         ),
         WarmHalt::Miss => "cache warm stopped: a ping missed the prompt cache".to_string(),
+        WarmHalt::Uncapped => {
+            "cache warm stopped: the host did not confirm the ping's output cap".to_string()
+        }
         WarmHalt::Unsupported => {
             "cache warm unavailable: this model route cannot send capped requests".to_string()
         }
@@ -278,11 +330,12 @@ impl App {
         } else {
             WarmGate::Holding
         };
+        let limits = self.cache_warm_limits();
         let changed = match self.usage.cache_warm.step(
             Instant::now(),
             gate,
             self.usage.cache_stats.last_prefix_read(),
-            self.info.runtime.prompt_cache_ttl,
+            limits,
         ) {
             WarmStep::Rest | WarmStep::Waiting => false,
             WarmStep::Ping => {
@@ -299,7 +352,7 @@ impl App {
                 false
             }
             WarmStep::Halted(halt) => {
-                self.insert_entry(&Entry::Notice(halt_notice(halt, None)));
+                self.insert_entry(&Entry::Notice(halt_notice(halt, None, limits.max_pings)));
                 true
             }
         };
@@ -358,7 +411,12 @@ impl App {
         let changed = match self.usage.cache_warm.ping_finished(result) {
             None => false,
             Some(halt) => {
-                self.insert_entry(&Entry::Notice(halt_notice(halt, outcome.error.as_deref())));
+                let max_pings = self.cache_warm_limits().max_pings;
+                self.insert_entry(&Entry::Notice(halt_notice(
+                    halt,
+                    outcome.error.as_deref(),
+                    max_pings,
+                )));
                 true
             }
         };
@@ -396,13 +454,20 @@ impl App {
         }
     }
 
+    fn cache_warm_limits(&self) -> WarmLimits {
+        WarmLimits {
+            ttl: self.info.runtime.prompt_cache_ttl,
+            max_pings: ping_budget(self.model_metadata.as_ref()),
+        }
+    }
+
     /// Shows the ping counter unless another status is up. Returns whether
     /// the status changed.
     fn sync_cache_warm_status(&mut self) -> bool {
         let Some(status) = self.usage.cache_warm.status_text(
             Instant::now(),
             self.usage.cache_stats.last_prefix_read(),
-            self.info.runtime.prompt_cache_ttl,
+            self.cache_warm_limits(),
         ) else {
             return self.clear_cache_warm_status();
         };

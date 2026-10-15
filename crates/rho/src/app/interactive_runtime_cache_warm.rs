@@ -22,7 +22,7 @@ use super::InteractiveRuntime;
 /// Output cap for a ping. Receipt: the Responses API rejects
 /// `max_output_tokens: 0` while streaming; 1 returned one output token, zero
 /// reasoning tokens, and a full cache read (`/tmp/spike_resp.log`).
-const PING_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::MIN;
+pub(crate) const PING_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::MIN;
 
 /// Trailing user turn. Its text is never part of a real request, so only the
 /// prefix before it matters for cache reads.
@@ -93,8 +93,7 @@ impl InteractiveRuntime {
     pub(crate) fn prompt_cache_ttl(&self) -> Duration {
         self.config
             .providers
-            .prompt_cache_ttl(&self.provider.provider().identity().provider)
-            .unwrap_or(crate::config::ProviderConfigs::DEFAULT_PROMPT_CACHE_TTL)
+            .resolved_prompt_cache_ttl(&self.provider.provider().identity().provider)
     }
 
     /// Builds a ping for the current session prefix.

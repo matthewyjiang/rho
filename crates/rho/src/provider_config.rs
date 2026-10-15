@@ -85,13 +85,25 @@ impl ProviderEndpointConfig {
 }
 
 impl ProviderConfigs {
-    /// Prompt-cache TTL assumed when the provider config names none.
+    /// Prompt-cache TTL assumed when neither the provider config nor the
+    /// built-in provider names one.
     ///
     /// Receipt: Anthropic's default prompt-cache TTL is 5 minutes. Hosts that
     /// keep prefixes longer (cliproxy writes 1h entries) set `prompt_cache_ttl`
     /// on their custom provider.
     pub(crate) const DEFAULT_PROMPT_CACHE_TTL: std::time::Duration =
         std::time::Duration::from_secs(300);
+
+    /// Prompt-cache TTL on OpenAI's own API (`openai`).
+    ///
+    /// Receipt: OpenAI's prompt-caching guide keeps GPT-5.6+ prefixes at least
+    /// 30 minutes after the latest write or reuse (`prompt_cache_options.ttl`
+    /// defaults to `30m`), and earlier models default to `24h` retention
+    /// outside Zero Data Retention orgs, typically about 30 minutes. A ZDR org's
+    /// `in_memory` entries (5-10 minutes) make the first ping miss, which halts
+    /// warming.
+    pub(crate) const OPENAI_PROMPT_CACHE_TTL: std::time::Duration =
+        std::time::Duration::from_secs(30 * 60);
 
     fn endpoint(&self, provider: &str) -> Option<&Url> {
         match provider {
@@ -226,6 +238,15 @@ impl ProviderConfigs {
         self.custom
             .get(provider)
             .and_then(|endpoint| endpoint.prompt_cache_ttl)
+    }
+
+    /// Prompt-cache TTL for `provider`: a custom host's configured value, else
+    /// the built-in provider's documented lifetime.
+    pub(crate) fn resolved_prompt_cache_ttl(&self, provider: &str) -> std::time::Duration {
+        self.prompt_cache_ttl(provider).unwrap_or(match provider {
+            "openai" => Self::OPENAI_PROMPT_CACHE_TTL,
+            _ => Self::DEFAULT_PROMPT_CACHE_TTL,
+        })
     }
 }
 

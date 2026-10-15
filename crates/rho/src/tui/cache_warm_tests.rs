@@ -1,18 +1,20 @@
 use std::time::{Duration, Instant};
 
 use pretty_assertions::assert_eq;
-use rho_providers::model::ModelUsage;
+use rho_providers::model::{models_dev::ModelCost, ModelMetadata, ModelUsage};
 
 use super::{
-    CacheWarmer, PingResult, WarmGate, WarmHalt, WarmStep, MAX_PINGS_PER_IDLE, PING_MARGIN,
+    ping_budget, CacheWarmer, PingResult, WarmGate, WarmHalt, WarmLimits, WarmStep,
+    FALLBACK_PING_BUDGET, PING_MARGIN,
 };
 
 const TTL: Duration = Duration::from_secs(300);
+const MAX_PINGS: u32 = 3;
 
 struct Warmer {
     scheduler: CacheWarmer,
     clock: crate::tui::cache_stats::CacheStatsTracker,
-    ttl: Duration,
+    limits: WarmLimits,
 }
 
 impl Default for Warmer {
@@ -20,7 +22,10 @@ impl Default for Warmer {
         Self {
             scheduler: CacheWarmer::default(),
             clock: Default::default(),
-            ttl: TTL,
+            limits: WarmLimits {
+                ttl: TTL,
+                max_pings: MAX_PINGS,
+            },
         }
     }
 }
@@ -28,7 +33,7 @@ impl Default for Warmer {
 impl Warmer {
     fn step(&mut self, now: Instant, gate: WarmGate) -> WarmStep {
         self.scheduler
-            .step(now, gate, self.clock.last_prefix_read(), self.ttl)
+            .step(now, gate, self.clock.last_prefix_read(), self.limits)
     }
 
     fn record_request(&mut self, at: Instant) {
@@ -120,10 +125,8 @@ fn compaction_waits_for_the_next_real_request() {
 fn a_ttl_shorter_than_twice_the_margin_waits_half_the_ttl() {
     let t0 = Instant::now();
     let ttl = PING_MARGIN;
-    let mut warmer = Warmer {
-        ttl,
-        ..Warmer::default()
-    };
+    let mut warmer = Warmer::default();
+    warmer.limits.ttl = ttl;
     warmer.record_request(t0);
 
     assert_eq!(warmer.step(t0, WarmGate::Holding), WarmStep::Waiting);
@@ -136,7 +139,7 @@ fn budget_halts_once_per_idle_stretch_and_a_real_request_renews_it() {
     let interval = TTL - PING_MARGIN;
     let mut warmer = warmer(t0);
     let mut at = t0;
-    for _ in 0..MAX_PINGS_PER_IDLE {
+    for _ in 0..MAX_PINGS {
         at += interval;
         assert_eq!(ping_at(&mut warmer, at, PingResult::Read), None);
     }
@@ -200,6 +203,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
         cache_read: Option<u64>,
         cache_write: Option<u64>,
         input: Option<u64>,
+        output: Option<u64>,
         failed: bool,
         expected: PingResult,
     }
@@ -209,6 +213,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read: Some(22_357),
             cache_write: None,
             input: Some(43),
+            output: Some(1),
             failed: true,
             expected: PingResult::Read,
         },
@@ -217,6 +222,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read: Some(0),
             cache_write: Some(22_357),
             input: Some(0),
+            output: Some(1),
             failed: true,
             expected: PingResult::Miss,
         },
@@ -225,6 +231,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read: None,
             cache_write: None,
             input: None,
+            output: Some(1),
             failed: false,
             expected: PingResult::Miss,
         },
@@ -233,6 +240,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read: None,
             cache_write: None,
             input: None,
+            output: Some(1),
             failed: true,
             expected: PingResult::Failed,
         },
@@ -241,6 +249,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read: Some(1_024),
             cache_write: None,
             input: Some(22_000),
+            output: Some(1),
             failed: true,
             expected: PingResult::Miss,
         },
@@ -249,8 +258,27 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read: Some(22_357),
             cache_write: Some(5_000),
             input: Some(43),
+            output: Some(1),
             failed: true,
             expected: PingResult::Miss,
+        },
+        Case {
+            name: "host ignored the output cap and completed a response",
+            cache_read: Some(22_357),
+            cache_write: None,
+            input: Some(43),
+            output: Some(812),
+            failed: false,
+            expected: PingResult::Uncapped,
+        },
+        Case {
+            name: "unreported output cannot prove the cap",
+            cache_read: Some(22_357),
+            cache_write: None,
+            input: Some(43),
+            output: None,
+            failed: true,
+            expected: PingResult::Uncapped,
         },
     ];
     for case in cases {
@@ -258,6 +286,7 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             cache_read_tokens: case.cache_read,
             cache_write_tokens: case.cache_write,
             input_tokens: case.input,
+            output_tokens: case.output,
             ..ModelUsage::default()
         };
         assert_eq!(
@@ -269,6 +298,54 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
             "{}",
             case.name
         );
+    }
+}
+
+// Covers: the ping budget follows each model's cache prices, including hosts
+// with no write premium, and falls back when reads are unpriced.
+// Owner: cache-warm budget policy
+#[test]
+fn ping_budget_is_half_the_break_even_at_catalog_cache_prices() {
+    // Prices in USD micros per million tokens: (input, cache read, cache write).
+    let cases = [
+        (
+            "gpt-5.6",
+            Some((5_000_000, Some(500_000), Some(6_250_000))),
+            5,
+        ),
+        (
+            "gpt-5.5, no write premium",
+            Some((5_000_000, Some(500_000), None)),
+            4,
+        ),
+        (
+            "0.05x reads",
+            Some((5_000_000, Some(250_000), Some(6_250_000))),
+            12,
+        ),
+        (
+            "no cache discount",
+            Some((5_000_000, Some(5_000_000), None)),
+            0,
+        ),
+        (
+            "unpriced reads",
+            Some((5_000_000, None, Some(6_250_000))),
+            FALLBACK_PING_BUDGET,
+        ),
+        ("no catalog row", None, FALLBACK_PING_BUDGET),
+    ];
+    for (name, prices, expected) in cases {
+        let metadata = prices.map(|(input, read, write)| ModelMetadata {
+            cost_default: Some(ModelCost {
+                input_micros_per_m: Some(input),
+                output_micros_per_m: None,
+                cache_read_micros_per_m: read,
+                cache_write_micros_per_m: write,
+            }),
+            ..ModelMetadata::default()
+        });
+        assert_eq!(ping_budget(metadata.as_ref()), expected, "{name}");
     }
 }
 
