@@ -125,7 +125,7 @@ A tool that ran to completion but reports failure, such as a shell command that 
 
 NEXT_MAJOR(rho-sdk): collapse `Success` and `CompletedFailure` into `Completed(ToolOutput)`.
 
-Rho's `call_tool(...)` and each item of `call_tools([...])` return `{ is_error, content, data }`: host-owned status, model-facing text, and unchanged structured data (or `None` when absent or oversized). `is_error` includes completed tool failures and invocation errors represented as batch results. Discovery advertises this envelope schema with the tool's nullable schema for successful `data`; failed server data is unconstrained. Script authors must check every returned envelope's `is_error` before using its data, including every item of a batch, and handle `data: None` even for non-error results.
+Rho's `call_tool(...)` and each item of `call_tools([...])` return `{ is_error, content, data }`: host-owned status, model-facing text, and unchanged structured data (or `None` when absent or oversized). `is_error` includes completed tool failures and invocation errors represented as batch results. Discovery does not repeat this envelope per tool: `describe_tool(name)["returns"]` is the schema of a successful result's `data`, or `None` for text-only tools; failed server data is unconstrained. Script authors must check every returned envelope's `is_error` before using its data, including every item of a batch, and handle `data: None` even for non-error results.
 
 `rho-agent-tools` 1.7 exposes `Rendered<T>` with private fields and constructors/builders, plus `output_schema<T: schemars::JsonSchema>()` (schemars 1). No struct literals are required. SDK adapters use `limit_data(max_output_bytes)` to bound serialized JSON independently of text and assets.
 
