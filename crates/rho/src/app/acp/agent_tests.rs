@@ -200,6 +200,44 @@ async fn prompt_on_a_locked_session_is_busy() {
     assert_eq!(error.code, ErrorCode::InvalidRequest);
 }
 
+// Covers: a prompt sent while the previous one is cancelled and winding down
+// waits for the host instead of failing as busy, so hosts that steer by cancel
+// and resend (T3 Code) keep the user's message. A prompt behind an uncancelled
+// one is still refused at once.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn prompt_waits_only_behind_a_cancelled_prompt() {
+    for (label, cancelled, waits) in [
+        ("uncancelled prompt", false, false),
+        ("cancelled prompt", true, true),
+    ] {
+        let live = vacant_session();
+        live.cancel.begin();
+        if cancelled {
+            live.cancel.cancel();
+        }
+        let held = live.host.lock().await;
+        let session_id = SessionId::new("steer");
+        let next = live.lock_host_for_prompt(&session_id);
+        tokio::pin!(next);
+        let (waited, result) = match futures_util::poll!(&mut next) {
+            std::task::Poll::Ready(result) => (false, result),
+            std::task::Poll::Pending => {
+                drop(held);
+                (true, next.await)
+            }
+        };
+        // The fixture slot is vacant, so the prompt ends busy either way;
+        // only whether it waited for the host differs.
+        let error = result.err().expect("vacant slot");
+        assert_eq!(
+            (waited, error.code),
+            (waits, ErrorCode::InvalidRequest),
+            "{label}"
+        );
+    }
+}
+
 // Covers: a later session/load must not publish until the earlier replacement
 // has finished, so its success still names the host in the map.
 // Owner: ACP agent session map

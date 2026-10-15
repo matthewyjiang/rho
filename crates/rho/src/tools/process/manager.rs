@@ -325,6 +325,16 @@ impl ProcessManager {
             .any(|record| record.lock().unwrap().result_pending())
     }
 
+    /// True while a process started at or after `since` is still running.
+    /// Headless hosts hold a prompt open only for processes that prompt
+    /// started, so a server from an earlier prompt does not pin every later one.
+    pub(crate) fn has_live_started_since(&self, since: Instant) -> bool {
+        self.inner.lock().unwrap().records.values().any(|record| {
+            let record = record.lock().unwrap();
+            record.state.is_live() && record.started >= since
+        })
+    }
+
     /// Drains unobserved terminal processes, oldest first.
     pub fn take_notifications(&self) -> Vec<super::ProcessNotification> {
         let inner = self.inner.lock().unwrap();

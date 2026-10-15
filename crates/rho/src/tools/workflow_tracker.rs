@@ -1,8 +1,9 @@
 //! Parent-session tracking for background workflow runs.
 //!
 //! Mirrors delegated-agent notifications: start records a handle for the parent
-//! session, finish stores a bounded terminal snapshot, and the TUI drains
-//! unobserved terminals at the next turn boundary.
+//! session, finish stores a bounded terminal snapshot, and the host (the TUI,
+//! or headless delegation for ACP and `rho run`) drains unobserved terminals at
+//! the next turn boundary.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -103,6 +104,7 @@ struct Inner {
 #[derive(Clone, Default)]
 pub struct WorkflowRunTracker {
     inner: Arc<Mutex<Inner>>,
+    finished: Arc<tokio::sync::Notify>,
 }
 
 impl WorkflowRunTracker {
@@ -289,6 +291,14 @@ impl WorkflowRunTracker {
             _ => entry.outcome,
         };
         entry.finished = Some(finished);
+        drop(inner);
+        self.finished.notify_waiters();
+    }
+
+    /// Fires when any run finishes. Subscribe before checking pending
+    /// notifications so a finish during the wait is not lost.
+    pub(crate) fn notified_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.finished.clone().notified_owned()
     }
 
     pub fn mark_finished_from_stored(&self, run: &StoredRun) {

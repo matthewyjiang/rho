@@ -1,3 +1,5 @@
+use std::{path::Path, time::Duration};
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelResponse},
@@ -5,16 +7,33 @@ use rho_sdk::{
     BoundaryInputRequest, InputBoundary, Rho, RunEvent, SessionOptions, UserInput,
 };
 
-use super::HeadlessDelegation;
+use super::{BackgroundSources, HeadlessDelegation};
 use crate::{
     app::{agent_executor::AgentRunHandle, SubagentManager},
     subagent::{RunState, RunStatus},
+    tools::{
+        process::{ProcessLimits, ProcessManager},
+        workflow_tracker::{WorkflowFinishedSnapshot, WorkflowRunTracker},
+    },
 };
+
+#[cfg(unix)]
+const LONG_RUNNING_COMMAND: &str = "sleep 300";
+#[cfg(windows)]
+const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
+
+/// Whether the fixture registers a running child before the prompt starts.
+enum Child {
+    Running,
+    Absent,
+}
 
 struct Fixture {
     _root: tempfile::TempDir,
     session: rho_sdk::Session,
     manager: SubagentManager,
+    processes: ProcessManager,
+    workflows: WorkflowRunTracker,
     host: HeadlessDelegation,
     run: rho_sdk::Run,
     status: tokio::sync::watch::Sender<RunStatus>,
@@ -24,6 +43,15 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::build(
+            Child::Running,
+            ProcessManager::new(ProcessLimits::default()),
+        )
+        .await
+    }
+
+    /// `processes` may already hold processes from an earlier prompt.
+    async fn build(child: Child, processes: ProcessManager) -> Self {
         let root = tempfile::tempdir().unwrap();
         let manager = SubagentManager::new(
             crate::config::Config::default(),
@@ -33,7 +61,7 @@ impl Fixture {
         let runtime = Rho::builder()
             .provider(ScriptedProvider::new(
                 ModelIdentity::new("scripted", "test", "model"),
-                ["initial answer", "child result incorporated"].map(|text| {
+                ["initial answer", "result incorporated"].map(|text| {
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                         text.into(),
                     )]))
@@ -42,20 +70,31 @@ impl Fixture {
             .build()
             .unwrap();
         let session = runtime.session(SessionOptions::default()).await.unwrap();
-        let host = HeadlessDelegation::attach(&session, Some(&manager), None)
-            .unwrap()
-            .unwrap();
+        let workflows = WorkflowRunTracker::new();
+        let host = HeadlessDelegation::attach(
+            &session,
+            BackgroundSources {
+                subagents: Some(&manager),
+                processes: Some(&processes),
+                workflows: &workflows,
+            },
+            None,
+        )
+        .unwrap();
         let (status, status_rx) = tokio::sync::watch::channel(RunStatus {
             state: RunState::Running,
             ..Default::default()
         });
         let (completion, completion_rx) = tokio::sync::watch::channel(false);
         let child_cancel = rho_tools::cancellation::RunCancellation::new();
-        manager.insert_handle_for_test(
-            "abc123",
-            session.id().as_str(),
-            AgentRunHandle::controlled_for_test(status_rx, completion_rx, child_cancel.clone()),
-        );
+        match child {
+            Child::Running => manager.insert_handle_for_test(
+                "abc123",
+                session.id().as_str(),
+                AgentRunHandle::controlled_for_test(status_rx, completion_rx, child_cancel.clone()),
+            ),
+            Child::Absent => {}
+        }
         let run = session
             .start(UserInput::text("delegate work"))
             .await
@@ -64,6 +103,8 @@ impl Fixture {
             _root: root,
             session,
             manager,
+            processes,
+            workflows,
             host,
             run,
             status,
@@ -85,47 +126,162 @@ impl Fixture {
         assert_eq!(request.boundary(), InputBoundary::BeforeCompletion);
         request
     }
+
+    /// Drives the run to its end, returning the final text and how many
+    /// boundary inputs it applied.
+    async fn finish_run(self) -> (String, usize) {
+        let Self {
+            mut host, mut run, ..
+        } = self;
+        let applied = HeadlessDelegation::drive(&mut host, async {
+            let mut applied = 0;
+            while let Some(event) = run.next_event().await {
+                if matches!(event, RunEvent::BoundaryInputApplied { .. }) {
+                    applied += 1;
+                }
+            }
+            applied
+        })
+        .await;
+        (run.outcome().await.unwrap().text().to_owned(), applied)
+    }
+
+    async fn start_process(&self) -> String {
+        self.processes
+            .start(LONG_RUNNING_COMMAND.into(), Path::new("."), None)
+            .await
+            .unwrap()
+            .process_id
+    }
+
+    /// Stops a process and waits until its exit is recorded.
+    async fn stop_process(processes: &ProcessManager, id: &str) {
+        let exited = processes.notified_owned();
+        processes.stop(id, Duration::ZERO).await.unwrap();
+        exited.await;
+    }
+
+    fn finish_workflow(workflows: &WorkflowRunTracker, run_id: &str) {
+        workflows.mark_finished(
+            run_id,
+            WorkflowFinishedSnapshot {
+                lifecycle: "completed".into(),
+                outcome: Some("success".into()),
+                nodes: Vec::new(),
+                error: None,
+                outputs: Vec::new(),
+            },
+        );
+    }
 }
 
-// Covers: a live child holds natural completion, then its result continues the
-// original parent run exactly once. The SDK channel tests do not own this wait.
-// Owner: shared CLI/ACP delegation lifecycle.
+/// Background work a final-boundary case finishes after the first poll.
+#[derive(Clone, Copy)]
+enum Work {
+    Child,
+    ProcessDuringPrompt,
+    Workflow,
+    ProcessFromEarlierPrompt,
+}
+
+// Covers: a child, a workflow, or a process started during the prompt holds
+// natural completion, and its result continues the original run exactly once;
+// a process left from an earlier prompt does not hold it. The SDK channel tests
+// do not own this wait.
+// Owner: shared CLI/ACP background delivery lifecycle.
 #[tokio::test]
-async fn child_completion_at_final_boundary_continues_parent_once() {
-    let mut fixture = Fixture::new().await;
-    let request = fixture.final_boundary().await;
-    {
-        let reply = fixture.host.respond(request);
-        tokio::pin!(reply);
-        assert!(futures_util::poll!(&mut reply).is_pending());
-        fixture.status.send_replace(RunStatus {
-            state: RunState::Ok,
-            result: Some("child finding".into()),
-            ..Default::default()
-        });
-        fixture.completion.send_replace(true);
-        reply.await;
-    }
-    let mut host = Some(fixture.host);
-    let applied = HeadlessDelegation::drive(&mut host, async {
-        let mut applied = 0;
-        while let Some(event) = fixture.run.next_event().await {
-            if matches!(event, RunEvent::BoundaryInputApplied { .. }) {
-                applied += 1;
+async fn background_work_holds_natural_completion_and_continues_parent_once() {
+    let held = ("result incorporated", 1, (0, 0, 0));
+    let cases = [
+        ("child", Work::Child, held),
+        (
+            "process started during the prompt",
+            Work::ProcessDuringPrompt,
+            held,
+        ),
+        ("workflow", Work::Workflow, held),
+        (
+            "process from an earlier prompt",
+            Work::ProcessFromEarlierPrompt,
+            ("initial answer", 0, (0, 0, 1)),
+        ),
+    ];
+    for (label, work, (text, applied, undelivered)) in cases {
+        let processes = ProcessManager::new(ProcessLimits::default());
+        let earlier = match work {
+            Work::ProcessFromEarlierPrompt => Some(
+                processes
+                    .start(LONG_RUNNING_COMMAND.into(), Path::new("."), None)
+                    .await
+                    .unwrap()
+                    .process_id,
+            ),
+            Work::Child | Work::ProcessDuringPrompt | Work::Workflow => None,
+        };
+        let child = match work {
+            Work::Child => Child::Running,
+            Work::ProcessDuringPrompt | Work::Workflow | Work::ProcessFromEarlierPrompt => {
+                Child::Absent
             }
+        };
+        let mut fixture = Fixture::build(child, processes).await;
+        let request = fixture.final_boundary().await;
+        let during = match work {
+            Work::ProcessDuringPrompt => Some(fixture.start_process().await),
+            Work::Workflow => {
+                assert!(fixture
+                    .workflows
+                    .register_start("wf-run", "fixture", "digest", None));
+                None
+            }
+            Work::Child | Work::ProcessFromEarlierPrompt => None,
+        };
+        {
+            let reply = fixture.host.respond(request);
+            tokio::pin!(reply);
+            // The first poll decides whether to hold. Finishing the work only
+            // afterwards shows whether the boundary waited for it.
+            let _ = futures_util::poll!(&mut reply);
+            match work {
+                Work::Child => {
+                    fixture.status.send_replace(RunStatus {
+                        state: RunState::Ok,
+                        result: Some("child finding".into()),
+                        ..Default::default()
+                    });
+                    fixture.completion.send_replace(true);
+                }
+                Work::ProcessDuringPrompt => {
+                    Fixture::stop_process(&fixture.processes, during.as_deref().unwrap()).await;
+                }
+                Work::Workflow => Fixture::finish_workflow(&fixture.workflows, "wf-run"),
+                Work::ProcessFromEarlierPrompt => {
+                    Fixture::stop_process(&fixture.processes, earlier.as_deref().unwrap()).await;
+                }
+            }
+            reply.await;
         }
-        applied
-    })
-    .await;
-    assert_eq!(
-        fixture.run.outcome().await.unwrap().text(),
-        "child result incorporated"
-    );
-    assert_eq!(applied, 1);
-    assert!(fixture
-        .manager
-        .take_notifications(fixture.session.id().as_str())
-        .is_empty());
+        let session_id = fixture.session.id().to_string();
+        let (manager, processes, workflows) = (
+            fixture.manager.clone(),
+            fixture.processes.clone(),
+            fixture.workflows.clone(),
+        );
+        let (final_text, applied_inputs) = fixture.finish_run().await;
+        assert_eq!(
+            (
+                final_text.as_str(),
+                applied_inputs,
+                (
+                    manager.take_notifications(&session_id).len(),
+                    workflows.take_notifications(&session_id).len(),
+                    processes.take_notifications().len(),
+                ),
+            ),
+            (text, applied, undelivered),
+            "{label}"
+        );
+    }
 }
 
 // Covers: cancellation while natural completion is held does not wait for a
@@ -160,10 +316,11 @@ async fn cancellation_interrupts_child_wait_and_shutdown_stops_child() {
     );
 }
 
-// Covers: a cancelled SDK boundary must restore a result it did not accept.
+// Covers: a cancelled SDK boundary must restore every result it did not
+// accept, whichever source it came from.
 // Owner: shared CLI/ACP delivery receipts.
 #[tokio::test]
-async fn rejected_boundary_restores_terminal_result() {
+async fn rejected_boundary_restores_terminal_results() {
     let mut fixture = Fixture::new().await;
     let request = fixture.final_boundary().await;
     fixture.status.send_replace(RunStatus {
@@ -172,6 +329,12 @@ async fn rejected_boundary_restores_terminal_result() {
         ..Default::default()
     });
     fixture.completion.send_replace(true);
+    let process_id = fixture.start_process().await;
+    Fixture::stop_process(&fixture.processes, &process_id).await;
+    assert!(fixture
+        .workflows
+        .register_start("wf-run", "fixture", "digest", None));
+    Fixture::finish_workflow(&fixture.workflows, "wf-run");
     fixture.run.cancel();
     while fixture.run.next_event().await.is_some() {}
     assert!(matches!(
@@ -179,11 +342,35 @@ async fn rejected_boundary_restores_terminal_result() {
         Err(rho_sdk::Error::Cancelled)
     ));
     fixture.host.respond(request).await;
-    let notifications = fixture
-        .manager
-        .take_notifications(fixture.session.id().as_str());
-    assert_eq!(notifications.len(), 1);
-    assert_eq!(notifications[0].snapshot.id, "abc123");
+    let session_id = fixture.session.id().as_str();
+    let restored = (
+        fixture
+            .manager
+            .take_notifications(session_id)
+            .into_iter()
+            .map(|notification| notification.snapshot.id)
+            .collect::<Vec<_>>(),
+        fixture
+            .processes
+            .take_notifications()
+            .into_iter()
+            .map(|notification| notification.process_id)
+            .collect::<Vec<_>>(),
+        fixture
+            .workflows
+            .take_notifications(session_id)
+            .into_iter()
+            .map(|notification| notification.run_id)
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        restored,
+        (
+            vec!["abc123".to_owned()],
+            vec![process_id],
+            vec!["wf-run".to_owned()]
+        )
+    );
 }
 
 // Covers: ending the event pump immediately after input commits must still
@@ -198,8 +385,7 @@ async fn accepted_boundary_is_reaped_when_event_pump_returns() {
         ..Default::default()
     });
     fixture.completion.send_replace(true);
-    let mut host = Some(fixture.host);
-    HeadlessDelegation::drive(&mut host, async {
+    HeadlessDelegation::drive(&mut fixture.host, async {
         loop {
             match fixture.run.next_event().await {
                 Some(RunEvent::BoundaryInputApplied { .. }) => break,

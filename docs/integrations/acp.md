@@ -36,6 +36,14 @@ During a session, Rho also sends:
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. A model-prompt change notice found at load is sent when the next prompt starts.
 
+## Background work
+
+Background processes, workflows, and delegated agents report back much as they do in the TUI. ACP v1 gives an agent no way to start a turn on its own, so Rho keeps the prompt open instead of waking an idle session:
+
+- A result that arrives while a prompt is running reaches the model at its next step.
+- If the model ends its turn while a delegated agent, a workflow, or a background process started during that prompt is still running, the prompt stays open. The model continues in the same prompt once that work finishes. Processes left over from earlier prompts, such as a dev server, do not hold a prompt open; their results arrive at the next prompt.
+- Cancelling stops the wait. Background processes keep running and report in the next prompt. A `session/prompt` sent right after `session/cancel` waits for the cancelled prompt to finish instead of failing as busy, so hosts that steer by cancelling and resending, such as T3 Code, can interrupt a waiting prompt.
+
 ## Permissions
 
 New sessions advertise Rho permission modes: `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. The starting mode comes from config and flags.
