@@ -4,6 +4,7 @@ mod events;
 mod host_mcp;
 mod permission;
 mod session_host;
+mod signals;
 mod thought_level;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};

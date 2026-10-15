@@ -11,7 +11,7 @@ use agent_client_protocol::{
     schema::v1::{
         LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
         PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
-        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
@@ -32,7 +32,9 @@ use rho_sdk::{
 use super::{
     config_options::{self, CurrentModel},
     events::EventMapper,
-    permission, thought_level, AcpClientPort, AcpStartup,
+    permission,
+    signals::SessionSignals,
+    thought_level, AcpClientPort, AcpStartup,
 };
 use crate::{
     app::{
@@ -74,6 +76,11 @@ pub(super) struct SessionHost {
     permission_placeholders: AtomicU64,
     replaced: Arc<AtomicBool>,
     herdr: HerdrReporter,
+    /// The todo checklist the client last received as an ACP `plan`.
+    sent_plan: Vec<agent_client_protocol::schema::v1::PlanEntry>,
+    /// Notice found during `session/load`, sent with the first prompt because
+    /// hosts such as T3 Code discard live updates while a load is in flight.
+    load_notice: Option<String>,
 }
 
 /// Carries cancellation for the session's current prompt. The agent already
@@ -216,24 +223,17 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
-        if built.prompt_template.is_some() {
-            if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
-                &built.session.snapshot(),
-                built.prompt.loaded.as_ref(),
-            ) {
-                if let Err(error) = replay_display_history(
-                    &request.session_id,
-                    &[Message::assistant_text(notice)],
-                    client,
+        let load_notice = built
+            .prompt_template
+            .is_some()
+            .then(|| {
+                crate::app::model_prompt_metadata::change_notice(
+                    &built.session.snapshot(),
+                    built.prompt.loaded.as_ref(),
                 )
-                .await
-                {
-                    built.teardown().await;
-                    return Err(error);
-                }
-            }
-        }
-        let host = Self::from_built(
+            })
+            .flatten();
+        let mut host = Self::from_built(
             request.session_id,
             built,
             stored,
@@ -242,6 +242,7 @@ impl SessionHost {
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
+        host.load_notice = load_notice;
         let response = LoadSessionResponse::new()
             .modes(mode_state(host.permission.mode))
             .config_options(host.config_options(&startup.config));
@@ -460,6 +461,8 @@ impl SessionHost {
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
             herdr,
+            sent_plan: Vec::new(),
+            load_notice: None,
         }
     }
 
@@ -468,6 +471,12 @@ impl SessionHost {
         input: UserInput,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
+        if let Some(notice) = self.load_notice.take() {
+            let notice = EventMapper::agent_notice(&self.acp_session_id, &notice);
+            if let Err(error) = send_notification(client, notice).await {
+                tracing::debug!(%error, "could not send ACP load notice");
+            }
+        }
         let mut run = match self.built.session.start(input.clone()).await {
             Ok(run) => run,
             Err(error) => {
@@ -478,8 +487,16 @@ impl SessionHost {
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
         let mut mapper = EventMapper::new();
+        let mut signals = self.signals();
+        signals.send_plan_change(&self.acp_session_id, client).await;
         let pump_result = self
-            .pump_run(&mut run, &mut mapper, client, approval_receiver.as_mut())
+            .pump_run(
+                &mut run,
+                &mut mapper,
+                &mut signals,
+                client,
+                approval_receiver.as_mut(),
+            )
             .await;
         self.built.approval_receiver = approval_receiver;
         if let Err(error) = pump_result {
@@ -488,7 +505,11 @@ impl SessionHost {
             self.dispatch_failed(&error.to_string());
             return Err(error);
         }
-        match run.outcome().await {
+        let outcome = run.outcome().await;
+        // The committed turn is the settled context; in-run updates were estimates.
+        signals.send_usage(&self.acp_session_id, client).await;
+        self.sent_plan = signals.into_sent_plan();
+        match outcome {
             Ok(outcome) => {
                 if let Err(error) = self.persist_turn(&input, Some(outcome.text())) {
                     self.dispatch_failed(&error.to_string());
@@ -521,6 +542,7 @@ impl SessionHost {
         &mut self,
         run: &mut rho_sdk::Run,
         mapper: &mut EventMapper,
+        signals: &mut SessionSignals,
         client: &dyn AcpClientPort,
         approval_receiver: Option<&mut ApprovalRequestReceiver>,
     ) -> anyhow::Result<()> {
@@ -529,6 +551,7 @@ impl SessionHost {
             session_id: &self.acp_session_id,
             cancel: run.cancellation_handle(),
             mapper,
+            signals: Some(signals),
             client,
             placeholders: &self.permission_placeholders,
             events: &mut EventSource::Run(run),
@@ -536,6 +559,19 @@ impl SessionHost {
             approvals_open,
         })
         .await
+    }
+
+    /// Signal tracking for the next prompt, starting from the checklist the
+    /// client last saw. An early return before the prompt hands it back only
+    /// costs a resend of the current list.
+    fn signals(&mut self) -> SessionSignals {
+        let current = self.current_model();
+        SessionSignals::new(
+            self.built.session.clone(),
+            self.built.tools.todo_state(),
+            model_context_window(&current.provider, &current.model),
+            std::mem::take(&mut self.sent_plan),
+        )
     }
 
     fn persist_turn(&self, input: &UserInput, assistant_text: Option<&str>) -> anyhow::Result<()> {
@@ -653,7 +689,7 @@ async fn replay_display_history(
 
 async fn send_notification(
     client: &dyn AcpClientPort,
-    notification: agent_client_protocol::schema::v1::SessionNotification,
+    notification: SessionNotification,
 ) -> anyhow::Result<()> {
     client
         .send_session_notification(notification)
@@ -706,6 +742,9 @@ struct PumpSources<'a> {
     session_id: &'a SessionId,
     cancel: CancellationToken,
     mapper: &'a mut EventMapper,
+    /// Session state mirrored alongside events; tests that only exercise the
+    /// event and approval plumbing pass `None`.
+    signals: Option<&'a mut SessionSignals>,
     client: &'a dyn AcpClientPort,
     placeholders: &'a AtomicU64,
     events: &'a mut EventSource<'a>,
@@ -718,6 +757,7 @@ async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()> {
         session_id,
         cancel,
         mapper,
+        mut signals,
         client,
         placeholders,
         events,
@@ -742,6 +782,11 @@ async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()> {
                     return Ok(());
                 };
                 if let Some(notification) = mapper.map_event(session_id, &event) {
+                    send_notification(client, notification).await?;
+                }
+                let signal = signals.as_deref_mut().and_then(|signals| signals.observe(&event));
+                if let Some(update) = signal {
+                    let notification = SessionNotification::new(session_id.clone(), update);
                     send_notification(client, notification).await?;
                 }
             }

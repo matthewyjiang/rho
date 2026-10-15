@@ -13,6 +13,8 @@ use rho_sdk::{
 use serde_json::Value;
 
 const PROVIDER_STREAM_RESET_NOTICE: &str = "[provider response discarded; retrying]";
+/// `_meta` key that marks a notification as history replayed by `session/load`.
+const REPLAY_META_KEY: &str = "isReplay";
 
 /// Maps one prompt's SDK events onto ACP session updates.
 ///
@@ -126,10 +128,22 @@ impl EventMapper {
         session_id: &SessionId,
         messages: &[rho_sdk::model::Message],
     ) -> Vec<SessionNotification> {
+        // Hosts that persist their own transcript (T3 Code) skip updates
+        // marked as replay, so loading a session does not duplicate history.
+        let meta = serde_json::Map::from_iter([(REPLAY_META_KEY.to_string(), Value::Bool(true))]);
         messages
             .iter()
             .flat_map(|message| replay_message(session_id, message))
+            .map(|notification| notification.meta(meta.clone()))
             .collect()
+    }
+
+    /// A live agent message outside any run, such as a notice at load.
+    pub(super) fn agent_notice(session_id: &SessionId, text: &str) -> SessionNotification {
+        notify(
+            session_id,
+            SessionUpdate::AgentMessageChunk(text_chunk(text)),
+        )
     }
 }
 
