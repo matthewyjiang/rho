@@ -155,6 +155,25 @@ fn budget_halts_once_per_idle_stretch_and_a_real_request_renews_it() {
     assert_eq!(ping_at(&mut warmer, at + interval, PingResult::Read), None);
 }
 
+// Covers: a model whose cache prices make every ping a loss. The hold must
+// report the skip at once instead of showing a 0/0 counter until the first
+// ping is due, and a real request must not repeat the notice.
+// Owner: cache-warm scheduler
+#[test]
+fn a_zero_budget_halts_at_once_and_stays_halted_across_requests() {
+    let t0 = Instant::now();
+    let mut warmer = warmer(t0);
+    warmer.limits.max_pings = 0;
+
+    assert_eq!(
+        warmer.step(t0, WarmGate::Holding),
+        WarmStep::Halted(WarmHalt::Unprofitable)
+    );
+    let t1 = t0 + Duration::from_secs(60);
+    warmer.record_request(t1);
+    assert_eq!(warmer.step(t1, WarmGate::Holding), WarmStep::Rest);
+}
+
 #[test]
 fn a_missed_ping_stays_halted_until_the_hold_is_released() {
     let t0 = Instant::now();

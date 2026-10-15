@@ -90,6 +90,8 @@ pub(super) enum WarmHalt {
     Miss,
     /// The host's usage did not confirm the ping's output cap.
     Uncapped,
+    /// The model's cache prices give a zero ping budget.
+    Unprofitable,
     Unsupported,
     Failed,
 }
@@ -174,8 +176,8 @@ impl CacheWarmer {
     }
 
     /// A real request established the prefix; a new idle stretch
-    /// begins with a fresh budget. A miss or an uncapped ping stays sticky
-    /// until the hold ends, since the next stretch would repeat it.
+    /// begins with a fresh budget. A miss, an uncapped ping, or a zero budget
+    /// stays sticky until the hold ends, since the next stretch would repeat it.
     pub(super) fn record_request(&mut self) {
         self.pings = 0;
         if matches!(self.halt, Some(WarmHalt::Budget | WarmHalt::Failed)) {
@@ -230,6 +232,11 @@ impl CacheWarmer {
         }
         if self.in_flight || self.halt.is_some() {
             return WarmStep::Rest;
+        }
+        if max_pings == 0 {
+            // Report it now rather than showing a 0/0 counter until the first
+            // ping is due; sticky so each real request does not repeat it.
+            return self.halt_once(WarmHalt::Unprofitable);
         }
         let Some(read_at) = last_prefix_read else {
             return WarmStep::Rest;
@@ -296,14 +303,14 @@ impl CacheWarmer {
 
 fn halt_notice(halt: WarmHalt, detail: Option<&str>, max_pings: u32) -> String {
     match halt {
-        WarmHalt::Budget if max_pings == 0 => {
-            "cache warm skipped: at this model's cache prices a ping costs more than the miss it prevents"
-                .to_string()
-        }
         WarmHalt::Budget => format!(
             "cache warm stopped after {max_pings} pings; the prompt cache will expire"
         ),
         WarmHalt::Miss => "cache warm stopped: a ping missed the prompt cache".to_string(),
+        WarmHalt::Unprofitable => {
+            "cache warm skipped: at this model's cache prices a ping costs more than the miss it prevents"
+                .to_string()
+        }
         WarmHalt::Uncapped => {
             "cache warm stopped: the host did not confirm the ping's output cap".to_string()
         }
