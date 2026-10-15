@@ -7,6 +7,27 @@ pub(crate) enum KeepWarm {
     #[default]
     Off,
     On,
+    /// Requested, but the bound model route cannot send a capped ping, so
+    /// nothing holds and the start result says so.
+    Unavailable,
+}
+
+/// Whether the session's bound model route can send a capped keep-warm ping.
+///
+/// The interactive host owns it and updates it whenever it adopts a provider;
+/// `process start` reads it so the model is told whether warming will run.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CacheWarmRoute(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl CacheWarmRoute {
+    pub(crate) fn set_supported(&self, supported: bool) {
+        self.0
+            .store(supported, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn is_supported(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 #[derive(Clone, Debug)]

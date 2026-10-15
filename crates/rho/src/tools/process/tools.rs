@@ -8,11 +8,12 @@ const STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Whether `process start` advertises `keep_warm`. Only the interactive TUI
 /// runs a cache warmer, so every other host keeps it hidden.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) enum KeepWarmOffer {
     #[default]
     Hidden,
-    Offered,
+    /// Advertised; the route says whether a requested hold can warm right now.
+    Offered(CacheWarmRoute),
 }
 
 #[derive(Clone)]
@@ -34,11 +35,13 @@ impl Process {
         self
     }
 
-    /// The hold requested by `args`, honored only when the option is offered.
+    /// The hold requested by `args`, honored only when the option is offered
+    /// and the bound model route can send a capped ping.
     pub(super) fn keep_warm_for(&self, requested: bool) -> KeepWarm {
-        match (self.keep_warm, requested) {
-            (KeepWarmOffer::Offered, true) => KeepWarm::On,
-            (KeepWarmOffer::Offered | KeepWarmOffer::Hidden, _) => KeepWarm::Off,
+        match (&self.keep_warm, requested) {
+            (KeepWarmOffer::Offered(route), true) if route.is_supported() => KeepWarm::On,
+            (KeepWarmOffer::Offered(_), true) => KeepWarm::Unavailable,
+            (KeepWarmOffer::Offered(_) | KeepWarmOffer::Hidden, _) => KeepWarm::Off,
         }
     }
 
@@ -107,7 +110,7 @@ impl Tool for Process {
             "required": ["action"]
         });
         match self.keep_warm {
-            KeepWarmOffer::Offered => {
+            KeepWarmOffer::Offered(_) => {
                 description.push_str(KEEP_WARM_DESCRIPTION);
                 input_schema["properties"]["keep_warm"] = json!({"type": "boolean"});
             }

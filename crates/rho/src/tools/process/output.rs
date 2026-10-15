@@ -70,22 +70,27 @@ pub(super) fn render_snapshot(snapshot: Snapshot) -> rho_tools::Rendered<Process
     .failed_if(failed)
 }
 
-/// Model-facing result describes a request, not a guarantee of route support.
-const KEEP_WARM_ON_LINE: &str =
-    "keep_warm: requested (Rho warms the prompt cache while this runs and you are idle when the model route supports it; stops at exit, stop, or the warm-up budget)";
-
-/// Start result; names the accepted hold without promising provider support.
+/// Start result; says whether the hold warms, given the route at start time.
 pub(super) fn render_start(
     snapshot: Snapshot,
     keep_warm: super::types::KeepWarm,
 ) -> rho_tools::Rendered<ProcessOutput> {
+    use super::types::KeepWarm;
     // A process that exited or failed before the result was built holds nothing.
-    let holds = keep_warm == super::types::KeepWarm::On && snapshot.state.is_live();
+    let line = match keep_warm {
+        _ if !snapshot.state.is_live() => None,
+        KeepWarm::Off => None,
+        KeepWarm::On => Some(
+            "keep_warm: on (Rho warms the prompt cache while this runs and you are idle; stops at exit, stop, the warm-up budget, or a model switch to a route that cannot warm)",
+        ),
+        KeepWarm::Unavailable => Some(
+            "keep_warm: unavailable (this model route cannot send capped requests, so the prompt cache will expire while you idle)",
+        ),
+    };
     let rendered = render_snapshot(snapshot);
-    if holds {
-        rendered.map_text(|text| format!("{text}\n{KEEP_WARM_ON_LINE}"))
-    } else {
-        rendered
+    match line {
+        Some(line) => rendered.map_text(|text| format!("{text}\n{line}")),
+        None => rendered,
     }
 }
 

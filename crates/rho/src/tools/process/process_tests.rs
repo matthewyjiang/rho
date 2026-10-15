@@ -886,40 +886,58 @@ mod host_rail;
 
 #[tokio::test]
 async fn keep_warm_holds_only_while_an_offered_start_is_live() {
+    use super::tools::KeepWarmOffer;
     struct Case {
         name: &'static str,
-        offer: super::tools::KeepWarmOffer,
+        offer: KeepWarmOffer,
         requested: bool,
         holds: bool,
+        result_line: Option<&'static str>,
     }
+    let offered = |supported| {
+        let route = super::CacheWarmRoute::default();
+        route.set_supported(supported);
+        KeepWarmOffer::Offered(route)
+    };
     let cases = [
         Case {
             name: "offered and requested",
-            offer: super::tools::KeepWarmOffer::Offered,
+            offer: offered(true),
             requested: true,
             holds: true,
+            result_line: Some("keep_warm: on"),
+        },
+        Case {
+            name: "route cannot send a capped ping",
+            offer: offered(false),
+            requested: true,
+            holds: false,
+            result_line: Some("keep_warm: unavailable"),
         },
         Case {
             name: "offered but not requested",
-            offer: super::tools::KeepWarmOffer::Offered,
+            offer: offered(true),
             requested: false,
             holds: false,
+            result_line: None,
         },
         Case {
             name: "hidden ignores a stray flag",
-            offer: super::tools::KeepWarmOffer::Hidden,
+            offer: KeepWarmOffer::Hidden,
             requested: true,
             holds: false,
+            result_line: None,
         },
     ];
     for case in cases {
         let manager = ProcessManager::new(ProcessLimits::default());
+        let advertised = matches!(case.offer, KeepWarmOffer::Offered(_));
         let tool = Process::new(manager.clone()).with_keep_warm(case.offer);
         assert_eq!(
             tool.spec().input_schema["properties"]
                 .get("keep_warm")
                 .is_some(),
-            matches!(case.offer, super::tools::KeepWarmOffer::Offered),
+            advertised,
             "{}: schema",
             case.name
         );
@@ -935,6 +953,13 @@ async fn keep_warm_holds_only_while_an_offered_start_is_live() {
             )
             .await
             .unwrap();
+        // The model reads this line to decide whether idling is cheap.
+        let result_line = started
+            .content
+            .lines()
+            .find(|line| line.starts_with("keep_warm:"))
+            .map(|line| line.split(" (").next().unwrap_or(line));
+        assert_eq!(result_line, case.result_line, "{}: result", case.name);
         let process_id = header_field(&started.content, "process_id");
         assert_eq!(
             manager.has_keep_warm_hold(),

@@ -38,8 +38,11 @@ async fn todo_runtime(
 ) -> (InteractiveRuntime, ScriptedProvider) {
     let mut interactive = test_runtime(Vec::new()).await;
     let provider = ScriptedProvider::new(interactive.provider_identity(), turns);
-    interactive.provider =
-        ProviderController::new(Arc::new(provider.clone()), rho_sdk::ReasoningLevel::Off);
+    interactive.provider = ProviderController::new(
+        Arc::new(provider.clone()),
+        rho_sdk::ReasoningLevel::Off,
+        Default::default(),
+    );
     interactive.compaction.auto_compact = false;
     interactive.tools = AppToolSet::new(
         &interactive.config,

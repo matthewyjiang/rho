@@ -271,3 +271,50 @@ fn ping_results_are_judged_by_cache_reads_before_errors() {
         );
     }
 }
+
+#[test]
+fn a_ping_that_finishes_after_release_reports_nothing() {
+    let t0 = Instant::now();
+    let interval = TTL - PING_MARGIN;
+    let mut warmer = warmer(t0);
+
+    assert_eq!(
+        warmer.step(t0 + interval, WarmGate::Holding),
+        WarmStep::Ping
+    );
+    // The process exits while the ping is in flight.
+    assert_eq!(
+        warmer.step(t0 + interval, WarmGate::Released),
+        WarmStep::Rest
+    );
+    assert_eq!(warmer.ping_finished(t0 + interval, PingResult::Miss), None);
+
+    // A later hold is not blocked by the stale result.
+    assert_eq!(
+        warmer.step(t0 + interval, WarmGate::Holding),
+        WarmStep::Ping
+    );
+}
+
+// Covers: `/clear` while a ping is in flight. The provider already billed the
+// prefix read, so the send must finish and reach the usage ledger, while its
+// result stays out of the new conversation.
+// Owner: App cache-warm wiring (PTY cannot observe the detached send).
+#[tokio::test]
+async fn reset_lets_an_in_flight_ping_finish_unobserved() {
+    let mut app = crate::tui::tests::test_app();
+    let (release, gate) = tokio::sync::oneshot::channel::<()>();
+    let (recorded, ledger) = tokio::sync::oneshot::channel::<()>();
+    app.spawn_cache_warm_ping(async move {
+        gate.await.unwrap();
+        recorded.send(()).unwrap();
+        super::CacheWarmOutcome::default()
+    });
+
+    app.reset_cache_warm();
+    assert!(!app.tasks.has_pending());
+
+    release.send(()).unwrap();
+    assert_eq!(ledger.await, Ok(()));
+    assert!(!app.apply_finished_ui_tasks());
+}

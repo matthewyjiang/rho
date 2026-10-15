@@ -15,7 +15,7 @@ use rho_providers::model::ModelUsage;
 use tokio::task::JoinError;
 
 use super::{
-    background_tasks::{TaskId, UiOutput},
+    background_tasks::{OnCancel, TaskId, UiOutput},
     usage_cost::resolved_usage_cost_usd_micros,
     App, Entry, InteractiveRuntime, StatusSource,
 };
@@ -187,6 +187,11 @@ impl CacheWarmer {
     /// Applies a finished ping; returns a new halt to report.
     pub(super) fn ping_finished(&mut self, result: PingResult) -> Option<WarmHalt> {
         self.in_flight = false;
+        // The hold ended while the ping ran, so a late miss or failure has no
+        // hold left to halt.
+        if self.gate == WarmGate::Released {
+            return None;
+        }
         match result {
             PingResult::Read => {
                 self.pings += 1;
@@ -263,20 +268,15 @@ impl App {
             WarmStep::Rest | WarmStep::Waiting => false,
             WarmStep::Ping => {
                 let ping = agent.cache_warm_ping();
-                let sent_at = Instant::now();
-                self.tasks.spawn(
-                    TaskId::CacheWarm,
-                    async move {
-                        match ping {
-                            Ok(ping) => ping.send().await,
-                            Err(error) => CacheWarmOutcome {
-                                usage: ModelUsage::default(),
-                                error: Some(error.to_string()),
-                            },
-                        }
-                    },
-                    move |result| UiOutput::CacheWarm { sent_at, result }.into(),
-                );
+                self.spawn_cache_warm_ping(async move {
+                    match ping {
+                        Ok(ping) => ping.send().await,
+                        Err(error) => CacheWarmOutcome {
+                            usage: ModelUsage::default(),
+                            error: Some(error.to_string()),
+                        },
+                    }
+                });
                 false
             }
             WarmStep::Halted(halt) => {
@@ -285,6 +285,22 @@ impl App {
             }
         };
         self.sync_cache_warm_status() || changed
+    }
+
+    /// Tracks a ping as run-to-completion. The provider bills the prefix read
+    /// once it accepts the request, so a reset only stops observing the ping;
+    /// the send still records that usage in the ledger under the old session.
+    fn spawn_cache_warm_ping(
+        &mut self,
+        ping: impl std::future::Future<Output = CacheWarmOutcome> + Send + 'static,
+    ) {
+        let sent_at = Instant::now();
+        self.tasks.track(
+            TaskId::CacheWarm,
+            tokio::spawn(ping),
+            OnCancel::RunToCompletion,
+            move |result| UiOutput::CacheWarm { sent_at, result }.into(),
+        );
     }
 
     /// Applies a finished ping. Returns whether the screen changed.
@@ -316,7 +332,9 @@ impl App {
         self.sync_cache_warm_status() || changed
     }
 
-    /// Drops warming state and any in-flight ping for a new conversation.
+    /// Drops warming state for a new conversation and stops observing any
+    /// in-flight ping. The ping still finishes, so its spend reaches the
+    /// usage ledger, but its result never touches the new conversation.
     pub(super) fn reset_cache_warm(&mut self) {
         self.usage.cache_warm.reset();
         self.tasks.abort(|id| matches!(id, TaskId::CacheWarm));

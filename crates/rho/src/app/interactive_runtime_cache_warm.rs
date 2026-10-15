@@ -86,7 +86,7 @@ impl InteractiveRuntime {
 
     /// Whether the current model route can send a capped ping.
     pub(crate) fn supports_cache_warm(&self) -> bool {
-        self.provider.provider().honors_max_output_tokens()
+        self.provider.supports_cache_warm()
     }
 
     /// Prompt cache TTL for the current provider, with its default resolved once.
