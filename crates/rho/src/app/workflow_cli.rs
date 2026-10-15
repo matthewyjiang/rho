@@ -326,6 +326,11 @@ async fn prepare_plan(
     let supplied_inputs = parse_inputs(inputs)?;
     let config_repository = ConfigRepository::new(cli.config.clone());
     let mut config = config_repository.load()?;
+    // Register custom hosts and open this config's credential store before
+    // `apply_overrides` picks the auth the plan freezes.
+    config.providers.activate()?;
+    let config_path = super::bootstrap::absolute_config_path(&config_repository)?;
+    crate::credential_store::initialize_from_config(&mut config, &config_path)?;
     cli_config::apply_overrides(
         &mut config,
         cli,

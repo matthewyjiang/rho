@@ -562,25 +562,11 @@ fn auth_mode_has_credentials(
 pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
     let mut modes = provider::providers()
         .into_iter()
-        .flat_map(|provider| provider_available_auth_modes(provider, store))
+        .flat_map(|provider| provider.auth_modes())
+        .filter(|mode| auth_has_credentials(store, mode.id).unwrap_or(false))
+        .map(|mode| mode.id.to_string())
         .collect::<Vec<_>>();
     modes.sort();
     modes.dedup();
     modes
-}
-
-/// Auth modes of one provider with usable credentials, in declaration order.
-///
-/// Includes `RHO_*` env overrides and keyless modes. Use it instead of
-/// [`available_auth_modes`] when only one provider matters, so the store is
-/// not queried for every registered provider.
-pub fn provider_available_auth_modes(
-    provider: &provider::ProviderDescriptor,
-    store: &dyn CredentialStore,
-) -> Vec<String> {
-    provider
-        .auth_modes()
-        .filter(|mode| auth_has_credentials(store, mode.id).unwrap_or(false))
-        .map(|mode| mode.id.to_string())
-        .collect()
 }

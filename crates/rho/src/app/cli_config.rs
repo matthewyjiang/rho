@@ -424,11 +424,15 @@ fn apply_model_override(
     let selection = match qualified {
         Some((provider, model)) => {
             // Same auth choice as the TUI `/model` path, against the target
-            // provider's credentials only. An explicit `--auth` is applied
-            // afterward and still takes precedence.
+            // provider's credentials only, so the store is not queried for
+            // every provider. An explicit `--auth` is applied afterward and
+            // still takes precedence.
             let available = provider::resolve_provider_reference(provider)
-                .map(|profile| credentials::provider_available_auth_modes(profile.provider, store))
-                .unwrap_or_default();
+                .into_iter()
+                .flat_map(|profile| profile.provider.auth_modes())
+                .filter(|mode| credentials::auth_has_credentials(store, mode.id).unwrap_or(false))
+                .map(|mode| mode.id.to_string())
+                .collect::<Vec<_>>();
             catalog::resolve_model_selection_for_provider(
                 provider,
                 model,
