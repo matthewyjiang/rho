@@ -38,11 +38,8 @@ pub(super) const SIGNIFICANT_MISS_TOKENS: u64 = 20_000;
 /// USD micros to match [`ModelUsage::cost_usd_micros`].
 pub(super) const SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS: u64 = 100_000;
 
-/// Idle gap that is worth naming as a likely TTL expiry.
-///
-/// Receipt: Anthropic's default prompt-cache TTL is 5 minutes. Used only to
-/// attribute a cause, never to suppress a miss.
-pub(super) const PROVIDER_CACHE_TTL_HINT: Duration = Duration::from_secs(300);
+#[cfg(test)]
+const DEFAULT_PROMPT_CACHE_TTL: Duration = crate::config::ProviderConfigs::DEFAULT_PROMPT_CACHE_TTL;
 
 /// Session-level tokens and dollars re-billed by counted cache misses.
 ///
@@ -62,7 +59,11 @@ pub(super) struct CacheRebilled {
 pub(super) enum CacheMissCause {
     ModelSwitch,
     ToolListChanged,
-    Idle(Duration),
+    /// Idle `gap` reached the provider's prompt-cache `ttl`.
+    Idle {
+        gap: Duration,
+        ttl: Duration,
+    },
     Unattributed,
 }
 
@@ -100,7 +101,6 @@ impl ModelKey {
 struct CompletedRequest {
     prompt_tokens: u64,
     model: ModelKey,
-    completed_at: Instant,
 }
 
 /// In-memory miss detector for the main-agent request stream.
@@ -120,6 +120,8 @@ pub(super) struct CacheStatsTracker {
     /// Sticky until the next sampled request. A mid-session tool-list change
     /// busts the cached prefix even when the system prompt stays put.
     tool_list_changed: bool,
+    /// One prefix clock for real requests and successful keep-alive pings.
+    last_prefix_read: Option<Instant>,
 }
 
 impl CacheStatsTracker {
@@ -128,14 +130,40 @@ impl CacheStatsTracker {
         self.reported_usage = Some(step_delta.clone());
     }
 
-    /// Sample one completed model call against the previous one.
+    pub(super) fn last_prefix_read(&self) -> Option<Instant> {
+        self.last_prefix_read
+    }
+
+    /// The provider reads the prefix when a real request or ping is sent.
+    pub(super) fn record_prefix_read(&mut self, sent_at: Instant) {
+        self.last_prefix_read = Some(
+            self.last_prefix_read
+                .map_or(sent_at, |read| read.max(sent_at)),
+        );
+    }
+
+    /// The bound provider changed, so the old route's cached prefix says
+    /// nothing about the new one. Miss attribution keeps `previous`.
+    pub(super) fn forget_prefix_read(&mut self) {
+        self.last_prefix_read = None;
+    }
+
+    /// Sample one completed model call against the previous one. The call
+    /// read the prefix whether or not it reported usage, so the clock always
+    /// moves; only miss sampling needs usage.
     pub(super) fn record_request(
         &mut self,
         profile: &ModelCallProfile,
         metrics: ModelCallMetrics,
         metadata: Option<&ModelMetadata>,
         completed_at: Instant,
+        ttl: Duration,
     ) {
+        let started_at = completed_at
+            .checked_sub(metrics.total_latency)
+            .unwrap_or(completed_at);
+        let last_prefix_read = self.last_prefix_read;
+        self.record_prefix_read(started_at);
         let Some(usage) = self.reported_usage.take() else {
             return;
         };
@@ -146,17 +174,15 @@ impl CacheStatsTracker {
 
         let model = ModelKey::from_profile(profile);
         if let Some(previous) = self.previous.take().filter(|_| reports_cache(&usage)) {
-            let started_at = completed_at
-                .checked_sub(metrics.total_latency)
-                .unwrap_or(completed_at);
-            self.count_miss(
-                &usage,
-                prompt_tokens,
+            let cause = miss_cause(
                 &model,
                 started_at,
                 &previous,
-                metadata,
+                std::mem::take(&mut self.tool_list_changed),
+                last_prefix_read,
+                ttl,
             );
+            self.count_miss(&usage, prompt_tokens, &previous, metadata, cause);
         } else {
             self.tool_list_changed = false;
         }
@@ -164,7 +190,6 @@ impl CacheStatsTracker {
         self.previous = Some(CompletedRequest {
             prompt_tokens,
             model,
-            completed_at,
         });
     }
 
@@ -174,6 +199,7 @@ impl CacheStatsTracker {
         self.previous = None;
         self.reported_usage = None;
         self.tool_list_changed = false;
+        self.last_prefix_read = None;
     }
 
     /// The advertised tool list changed since the last sampled request.
@@ -198,12 +224,10 @@ impl CacheStatsTracker {
         &mut self,
         usage: &ModelUsage,
         prompt_tokens: u64,
-        model: &ModelKey,
-        started_at: Instant,
         previous: &CompletedRequest,
         metadata: Option<&ModelMetadata>,
+        cause: CacheMissCause,
     ) {
-        let tool_list_changed = std::mem::take(&mut self.tool_list_changed);
         let cache_read = usage.cache_read_tokens.unwrap_or(0);
         // A shrunken prompt can only re-bill what it actually sent.
         let missed = previous
@@ -232,7 +256,7 @@ impl CacheStatsTracker {
             self.turn_notices.push(CacheMissNotice {
                 missed_tokens: missed,
                 extra_cost_usd_micros: extra_cost,
-                cause: miss_cause(model, started_at, previous, tool_list_changed),
+                cause,
             });
         }
     }
@@ -253,6 +277,8 @@ fn miss_cause(
     started_at: Instant,
     previous: &CompletedRequest,
     tool_list_changed: bool,
+    last_prefix_read: Option<Instant>,
+    ttl: Duration,
 ) -> CacheMissCause {
     if model != &previous.model {
         return CacheMissCause::ModelSwitch;
@@ -260,9 +286,11 @@ fn miss_cause(
     if tool_list_changed {
         return CacheMissCause::ToolListChanged;
     }
-    let gap = started_at.saturating_duration_since(previous.completed_at);
-    if gap >= PROVIDER_CACHE_TTL_HINT {
-        CacheMissCause::Idle(gap)
+    let gap = last_prefix_read
+        .map(|read| started_at.saturating_duration_since(read))
+        .unwrap_or_default();
+    if gap >= ttl {
+        CacheMissCause::Idle { gap, ttl }
     } else {
         CacheMissCause::Unattributed
     }
@@ -298,10 +326,10 @@ pub(super) fn notice_text(notice: &CacheMissNotice) -> String {
     let mut text = match notice.cause {
         CacheMissCause::ModelSwitch => "cache miss after model switch".to_string(),
         CacheMissCause::ToolListChanged => "cache miss after tool list change".to_string(),
-        CacheMissCause::Idle(gap) => format!(
+        CacheMissCause::Idle { gap, ttl } => format!(
             "cache miss after {}m idle (cache TTL is about {}m)",
             whole_minutes(gap),
-            whole_minutes(PROVIDER_CACHE_TTL_HINT),
+            whole_minutes(ttl),
         ),
         CacheMissCause::Unattributed => "cache miss".to_string(),
     };

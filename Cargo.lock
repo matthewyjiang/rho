@@ -4909,7 +4909,7 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "2.16.1"
+version = "2.17.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4944,7 +4944,7 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "5.9.0"
+version = "5.10.0"
 dependencies = [
  "pretty_assertions",
  "proptest",

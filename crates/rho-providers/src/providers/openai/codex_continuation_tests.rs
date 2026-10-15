@@ -238,7 +238,7 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
             reasoning_level: ReasoningLevel::Low,
             prompt_cache_key: None,
         },
-        None,
+        &rho_sdk::provider::ModelRequestOptions::default(),
         /*hosted_web_search*/ true,
         &std::collections::BTreeSet::new(),
     )
@@ -269,7 +269,7 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: None,
         },
-        None,
+        &rho_sdk::provider::ModelRequestOptions::default(),
         /*hosted_web_search*/ true,
         &std::collections::BTreeSet::new(),
     )

@@ -6,7 +6,7 @@ use rho_sdk::{ModelCallMetrics, ModelCallProfile, ReasoningLevel};
 
 use super::{
     CacheMissCause, CacheRebilled, CacheStatsTracker, CACHE_MISS_NOISE_FLOOR_TOKENS,
-    PROVIDER_CACHE_TTL_HINT, SIGNIFICANT_MISS_TOKENS,
+    DEFAULT_PROMPT_CACHE_TTL, SIGNIFICANT_MISS_TOKENS,
 };
 
 /// One completed model call, as the tracker observes it.
@@ -90,6 +90,7 @@ fn play(
             },
             metadata,
             t0 + Duration::from_secs(request.at_secs),
+            DEFAULT_PROMPT_CACHE_TTL,
         );
     }
 }
@@ -245,7 +246,7 @@ fn tracker_counts_only_real_misses() {
             requests: vec![
                 Request::warm(0, SIGNIFICANT_MISS_TOKENS),
                 Request::next(
-                    PROVIDER_CACHE_TTL_HINT.as_secs() + 61,
+                    DEFAULT_PROMPT_CACHE_TTL.as_secs() + 61,
                     SIGNIFICANT_MISS_TOKENS,
                     0,
                 ),
@@ -258,9 +259,10 @@ fn tracker_counts_only_real_misses() {
                 unpriced_miss_count: 1,
             },
             notices: 1,
-            last_cause: Some(CacheMissCause::Idle(Duration::from_secs(
-                PROVIDER_CACHE_TTL_HINT.as_secs() + 60,
-            ))),
+            last_cause: Some(CacheMissCause::Idle {
+                gap: Duration::from_secs(DEFAULT_PROMPT_CACHE_TTL.as_secs() + 61),
+                ttl: DEFAULT_PROMPT_CACHE_TTL,
+            }),
         },
         Case {
             name: "a shrunken prompt only re-bills what it actually sent",
@@ -416,8 +418,8 @@ fn compaction_clears_the_prefix_but_keeps_session_totals() {
     assert_eq!(tracker.rebilled(), &after_miss);
 }
 
-// Covers: a request that never reported usage is not sampled, and a stale delta
-// is not reused by the next call.
+// Covers: a request that never reported usage is not sampled, a stale delta
+// is not reused by the next call, and the prefix clock still moves.
 // Owner: tui cache-miss policy
 #[test]
 fn a_request_without_reported_usage_is_not_sampled() {
@@ -438,12 +440,88 @@ fn a_request_without_reported_usage_is_not_sampled() {
         generation_output_tokens: None,
     };
 
-    tracker.record_request(&profile, metrics, None, t0);
+    tracker.record_request(&profile, metrics, None, t0, DEFAULT_PROMPT_CACHE_TTL);
     assert_eq!(tracker.rebilled(), &NONE);
 
     play(&mut tracker, t0, &[Request::warm(1, 50_000)], None);
     // Second call reports no new usage, so the warm sample must not be replayed.
-    tracker.record_request(&profile, metrics, None, t0 + Duration::from_secs(2));
+    tracker.record_request(
+        &profile,
+        metrics,
+        None,
+        t0 + Duration::from_secs(2),
+        DEFAULT_PROMPT_CACHE_TTL,
+    );
 
     assert_eq!(tracker.rebilled(), &NONE);
+    // The call still read the prefix, so the keep-warm clock moves.
+    assert_eq!(
+        tracker.last_prefix_read(),
+        Some(t0 + Duration::from_secs(1))
+    );
+}
+
+// Covers: miss attribution must not depend on the warmer's poll, and a ping
+// refresh must be visible to both scheduling and idle-miss attribution.
+// Owner: cache-prefix clock and miss policy, with explicit instants and TTLs.
+#[test]
+fn idle_miss_uses_the_supplied_ttl_and_latest_ping_read() {
+    let t0 = Instant::now();
+    for (ttl, ping_at, expected) in [
+        (
+            DEFAULT_PROMPT_CACHE_TTL,
+            None,
+            CacheMissCause::Idle {
+                gap: Duration::from_secs(600),
+                ttl: DEFAULT_PROMPT_CACHE_TTL,
+            },
+        ),
+        (
+            Duration::from_secs(3600),
+            None,
+            CacheMissCause::Unattributed,
+        ),
+        (
+            DEFAULT_PROMPT_CACHE_TTL,
+            Some(t0 + Duration::from_secs(570)),
+            CacheMissCause::Unattributed,
+        ),
+    ] {
+        let mut tracker = CacheStatsTracker::default();
+        play(&mut tracker, t0, &[Request::warm(1, 40_000)], None);
+        if let Some(at) = ping_at {
+            tracker.record_prefix_read(at);
+        }
+        tracker.usage_updated(&ModelUsage {
+            input_tokens: Some(40_000),
+            cache_read_tokens: Some(0),
+            ..ModelUsage::default()
+        });
+        tracker.record_request(
+            &ModelCallProfile {
+                provider: "anthropic".into(),
+                model: "claude".into(),
+                reasoning: ReasoningLevel::Off,
+                service_tier: None,
+            },
+            ModelCallMetrics {
+                output_tokens: None,
+                time_to_first_token: None,
+                generation_time: None,
+                total_latency: Duration::ZERO,
+                generation_output_tokens: None,
+            },
+            None,
+            t0 + Duration::from_secs(600),
+            ttl,
+        );
+        assert_eq!(
+            tracker
+                .take_turn_notices()
+                .into_iter()
+                .map(|notice| notice.cause)
+                .collect::<Vec<_>>(),
+            vec![expected]
+        );
+    }
 }

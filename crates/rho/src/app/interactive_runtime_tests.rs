@@ -291,7 +291,11 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         )
         .with_todo_state(tools.todo_state()),
         mcp_sampling: crate::tools::mcp::McpSamplingBridge::new(),
-        provider: ProviderController::new(shared_provider, rho_sdk::ReasoningLevel::Off),
+        provider: ProviderController::new(
+            shared_provider,
+            rho_sdk::ReasoningLevel::Off,
+            Default::default(),
+        ),
         tools,
         mcp_report: Default::default(),
         pending_mcp: None,

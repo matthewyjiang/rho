@@ -313,12 +313,15 @@ impl App {
                 None
             }
             ViewModelEvent::ModelCallCompleted { profile, metrics } => {
+                let now = Instant::now();
                 self.usage.cache_stats.record_request(
                     &profile,
                     metrics,
                     self.model_metadata.as_ref(),
-                    Instant::now(),
+                    now,
+                    self.info.runtime.prompt_cache_ttl,
                 );
+                self.usage.cache_warm.record_request();
                 self.usage.model_performance.record(profile, metrics);
                 None
             }

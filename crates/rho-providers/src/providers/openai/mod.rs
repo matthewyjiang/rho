@@ -37,6 +37,18 @@ pub fn supports_async_tools(provider: &str, model: &str) -> bool {
     matches!(provider, "openai" | "openai-codex") && is_gpt6_astra(model)
 }
 
+/// Returns whether changing reasoning effort keeps the cached prompt prefix
+/// for the provider bound to `identity`.
+///
+/// Every OpenAI Responses provider, first-party or custom host, carries
+/// `gpt-6-astra` effort changes as `configuration_update` input items instead
+/// of rewriting request-level effort, so the cached prefix stays valid.
+/// Everywhere else effort is part of the prefix.
+pub fn reasoning_change_preserves_prefix(identity: &ModelIdentity) -> bool {
+    identity.api == codex_request::RESPONSES_API
+        && configuration_update::preserves_prefix_for(&identity.model)
+}
+
 pub(super) fn is_gpt6_astra(model: &str) -> bool {
     model == "gpt-6-astra"
 }
@@ -190,10 +202,18 @@ impl OpenAiProvider {
             &self.profile,
             &self.reasoning,
             request,
-            options.service_tier(),
+            &options,
             self.hosted_web_search,
             &self.async_tools,
         )
+    }
+
+    /// Plain HTTP Responses hosts take `max_output_tokens` per request. The
+    /// Codex WebSocket transport is excluded: it chains each request onto the
+    /// previous response, so a capped side request would become the base the
+    /// next real turn continues from.
+    pub(crate) fn applies_max_output_tokens(&self) -> bool {
+        !self.profile.contract().uses_codex_websocket()
     }
 
     #[cfg(test)]
@@ -316,7 +336,12 @@ impl OpenAiProvider {
     }
 }
 
-crate::impl_sdk_model_provider!(OpenAiProvider, native_compact, request_options, steerable);
+crate::impl_sdk_model_provider!(
+    OpenAiProvider,
+    native_compact,
+    request_options(max_output_tokens = Self::applies_max_output_tokens),
+    steerable
+);
 
 impl OpenAiProvider {
     async fn send_codex_responses_complete(

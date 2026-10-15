@@ -351,7 +351,10 @@ impl App {
         };
 
         let handoff = match agent.replace_provider(new_provider, reasoning.effective, &auth) {
-            Ok(handoff) => handoff,
+            Ok(handoff) => {
+                self.cache_warm_provider_replaced();
+                handoff
+            }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not switch to {provider_model}: {error}"
@@ -364,6 +367,7 @@ impl App {
             self.insert_entry(&Entry::Notice(notice));
         }
         self.info.runtime.provider = provider.clone();
+        self.info.runtime.prompt_cache_ttl = agent.prompt_cache_ttl();
         self.info.runtime.model = model.clone();
         self.info
             .set_reasoning(reasoning.effective, reasoning.source);

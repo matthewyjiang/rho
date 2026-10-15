@@ -135,7 +135,7 @@ fn astra_compaction_preserves_reasoning_baseline() {
             reasoning_level: crate::reasoning::ReasoningLevel::High,
             prompt_cache_key: None,
         },
-        None,
+        &rho_sdk::provider::ModelRequestOptions::default(),
         /*hosted_web_search*/ true,
         /*async_tools*/ &Default::default(),
     )

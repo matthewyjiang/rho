@@ -22,10 +22,9 @@ use super::image_generation::{
 use super::stream::{line_decode_error, sse_data};
 use super::usage::{extract_usage_report, GenerationTokenContext, HiddenReasoningRisk};
 
-/// Max chars for a single search/url detail string in activity previews.
-const DETAIL_MAX_CHARS: usize = 80;
-/// Max chars per query when rendering multi-query search previews.
-const QUERY_MAX_CHARS: usize = 48;
+#[path = "codex_sse_search_detail.rs"]
+mod search_detail;
+use search_detail::{extract_codex_search_detail, truncate_detail, DETAIL_MAX_CHARS};
 
 /// The Responses transports that share terminal-failure handling.
 ///
@@ -546,77 +545,6 @@ fn emit_async_tool_call_marker(
     Ok(())
 }
 
-/// Bare semantic detail for a hosted search card (shown as a child fact).
-///
-/// Returns payload values only — no English chrome like `for` / `opened` /
-/// `found`. The TUI owns presentation (verb header + optional detail fact +
-/// `finished`).
-///
-/// Codex-style items put fields under `action`. xAI emits hosted X tools as
-/// `custom_tool_call` with JSON in `input`. Older shapes may use `x_search_call`
-/// and `arguments`. Empty detail is fine: the activity still emits.
-fn extract_codex_search_detail(item: &serde_json::Value) -> Option<String> {
-    item.get("action")
-        .and_then(detail_from_search_action)
-        .or_else(|| detail_from_search_arguments(item))
-}
-
-fn detail_from_search_action(action: &serde_json::Value) -> Option<String> {
-    detail_from_search_payload(action)
-        .or_else(|| first_nonempty_detail_field(action, &["url", "pattern"]))
-}
-
-fn detail_from_search_arguments(item: &serde_json::Value) -> Option<String> {
-    let arguments = item
-        .get("arguments")
-        .or_else(|| item.get("input"))
-        .and_then(|value| value.as_str())?;
-    let args: serde_json::Value = serde_json::from_str(arguments).ok()?;
-    if let Some(detail) = detail_from_search_payload(&args) {
-        return Some(detail);
-    }
-    first_nonempty_detail_field(&args, &["post_id", "username", "url", "prompt"])
-}
-
-fn first_nonempty_detail_field(payload: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        payload
-            .get(*key)
-            .and_then(|value| value.as_str())
-            .filter(|value| !value.is_empty())
-            .map(|value| truncate_detail(value, DETAIL_MAX_CHARS))
-    })
-}
-
-fn detail_from_search_payload(payload: &serde_json::Value) -> Option<String> {
-    if let Some(query) = payload
-        .get("query")
-        .and_then(|query| query.as_str())
-        .filter(|query| !query.is_empty())
-    {
-        return Some(truncate_detail(query, DETAIL_MAX_CHARS));
-    }
-    let queries = payload
-        .get("queries")
-        .and_then(|queries| queries.as_array())?
-        .iter()
-        .filter_map(|query| query.as_str())
-        .filter(|query| !query.is_empty())
-        .collect::<Vec<_>>();
-    if queries.is_empty() {
-        return None;
-    }
-    let mut rendered = queries
-        .iter()
-        .take(3)
-        .map(|query| truncate_detail(query, QUERY_MAX_CHARS))
-        .collect::<Vec<_>>();
-    if queries.len() > rendered.len() {
-        rendered.push(format!("{} more", queries.len() - rendered.len()));
-    }
-    Some(rendered.join(" · "))
-}
-
 fn codex_output_item_key(item: &serde_json::Value) -> Option<(&str, &str)> {
     let kind = item.get("type").and_then(|value| value.as_str())?;
     let id = item
@@ -632,19 +560,6 @@ fn codex_output_item_was_processed(state: &CodexSseState, item: &serde_json::Val
     state.output_items.iter().any(|processed| {
         key.is_some_and(|key| codex_output_item_key(processed) == Some(key)) || processed == item
     })
-}
-
-fn truncate_detail(value: &str, max_chars: usize) -> String {
-    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if value.chars().count() <= max_chars {
-        return value;
-    }
-    let mut truncated = value
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    truncated.push('…');
-    truncated
 }
 
 /// Stream index a tool-call event belongs to.
@@ -737,6 +652,36 @@ pub(crate) fn handle_codex_sse_line(
     handle_codex_sse_value(&value, state, on_event, CodexTransport::HttpSse)
 }
 
+/// Completed and incomplete responses share usage fallback and throughput accounting.
+fn emit_terminal_usage(
+    value: &serde_json::Value,
+    state: &CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    // Aggregate output on reasoning models is not a reliable throughput count.
+    let context = GenerationTokenContext {
+        reasoning_streamed: state.reasoning_streamed,
+        hidden_reasoning_risk: HiddenReasoningRisk::Possible,
+    };
+    let report = value
+        .get("response")
+        .and_then(|response| extract_usage_report(response, context))
+        .or_else(|| extract_usage_report(value, context));
+    if let Some(on_event) = on_event.as_mut() {
+        if let Some(report) = report {
+            if let Some(tokens) = report.generation_output_tokens {
+                on_event(ModelEvent::GenerationOutputTokens(tokens))?;
+            }
+            on_event(ModelEvent::Usage(report.usage))?;
+        } else if state.reasoning_streamed {
+            on_event(ModelEvent::GenerationOutputTokens(
+                rho_sdk::model::GenerationOutputTokens::Unavailable,
+            ))?;
+        }
+    }
+    Ok(())
+}
+
 /// Core of [`handle_codex_sse_line`] for callers that already hold a parsed
 /// event payload (the Codex websocket transport), avoiding a serialize and
 /// re-parse round-trip per streamed event.
@@ -756,6 +701,11 @@ pub(crate) fn handle_codex_sse_value(
     // A stream that starts normally and then fails must surface the provider's
     // error, not fall through to the empty-content diagnostic at stream end.
     if let Some((error_type, message)) = codex_terminal_failure(value, transport) {
+        // An incomplete response (for example one that hit `max_output_tokens`)
+        // was still billed, so report its usage before failing the turn.
+        if event_type == "response.incomplete" {
+            emit_terminal_usage(value, state, on_event)?;
+        }
         return Err(ModelError::ProviderReported {
             kind: provider_reported_kind(&error_type),
             error_type,
@@ -918,30 +868,7 @@ pub(crate) fn handle_codex_sse_value(
             .and_then(|status| status.as_str())
             .filter(|status| !status.is_empty())
             .map(str::to_owned);
-        let response = value.get("response");
-        // Responses backends host reasoning models, so an aggregate total
-        // without reasoning details cannot be trusted as a throughput count.
-        let context = GenerationTokenContext {
-            reasoning_streamed: state.reasoning_streamed,
-            hidden_reasoning_risk: HiddenReasoningRisk::Possible,
-        };
-        let usage_report = response
-            .and_then(|response| extract_usage_report(response, context))
-            .or_else(|| extract_usage_report(value, context));
-        if let Some(report) = usage_report {
-            if let Some(on_event) = on_event.as_mut() {
-                if let Some(tokens) = report.generation_output_tokens {
-                    on_event(ModelEvent::GenerationOutputTokens(tokens))?;
-                }
-                on_event(ModelEvent::Usage(report.usage))?;
-            }
-        } else if state.reasoning_streamed {
-            if let Some(on_event) = on_event.as_mut() {
-                on_event(ModelEvent::GenerationOutputTokens(
-                    rho_sdk::model::GenerationOutputTokens::Unavailable,
-                ))?;
-            }
-        }
+        emit_terminal_usage(value, state, on_event)?;
         // The completed envelope is authoritative, but may restate items already
         // handled by output_item.done. Reconcile each item independently so one
         // streamed output does not hide a different completed-only output.

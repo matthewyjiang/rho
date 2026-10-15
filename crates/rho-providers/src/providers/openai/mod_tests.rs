@@ -976,3 +976,60 @@ fn serializes_aborted_codex_tool_calls_as_non_executable_context() {
         })]
     );
 }
+
+// Covers: a capped request (cache warm ping) sends `max_output_tokens`; an
+// uncapped one leaves the host default; the WebSocket route must not advertise
+// or send this cap, even though it shares the Responses body builder.
+// Owner: OpenAI provider request policy
+#[test]
+fn api_responses_body_sends_output_cap_only_when_requested() {
+    let messages = [Message::user_text("hello")];
+    let request = || ModelRequest {
+        messages: &messages,
+        tools: &[],
+        cancellation: Default::default(),
+        reasoning_level: ReasoningLevel::Low,
+        prompt_cache_key: None,
+    };
+    for (auth, expected_cap) in [
+        (Auth::ApiKey("test-key".into()), Some(json!(1))),
+        (super::codex_request::codex_test_auth(), None),
+    ] {
+        let provider = OpenAiProvider::new_with_auth("gpt-5.6".into(), auth);
+        let capped = provider
+            .create_body(
+                request(),
+                ModelRequestOptions::default().with_max_output_tokens(std::num::NonZeroU32::MIN),
+            )
+            .unwrap();
+        let uncapped = provider
+            .create_body(request(), ModelRequestOptions::default())
+            .unwrap();
+        assert_eq!(
+            rho_sdk::provider::ModelProvider::honors_max_output_tokens(&provider),
+            expected_cap.is_some()
+        );
+        assert_eq!(capped.body.get("max_output_tokens").cloned(), expected_cap);
+        assert!(uncapped.body.get("max_output_tokens").is_none());
+    }
+}
+
+// Covers: keep-warm keeps its clock through an astra reasoning change on any
+// Responses host, including custom ones, and nowhere effort rewrites the prefix.
+// Owner: OpenAI provider prefix policy
+#[test]
+fn reasoning_change_preserves_prefix_only_for_responses_astra() {
+    let cases = [
+        ("openai", "openai-responses", "gpt-6-astra", true),
+        ("my-proxy", "openai-responses", "gpt-6-astra", true),
+        ("openai", "openai-responses", "gpt-5.5", false),
+        ("anthropic", "anthropic-messages", "gpt-6-astra", false),
+    ];
+    for (provider, api, model, expected) in cases {
+        assert_eq!(
+            reasoning_change_preserves_prefix(&ModelIdentity::new(provider, api, model)),
+            expected,
+            "{provider}/{api}/{model}"
+        );
+    }
+}

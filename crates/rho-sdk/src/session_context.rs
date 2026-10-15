@@ -187,6 +187,15 @@ impl SessionCore {
         working_context(&mut data).invalidate();
     }
 
+    /// Drops in-flight accounting without touching the committed baseline.
+    /// Only for callers that hold the session inactive.
+    pub(crate) fn discard_working_context(&self) {
+        self.data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .working_context = None;
+    }
+
     pub(crate) fn append_context_estimate(&self, message: &Message) {
         let mut data = self
             .data

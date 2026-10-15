@@ -127,6 +127,7 @@ impl App {
             (ConfigRow::CheckForUpdates, _) => self.toggle_check_for_updates(),
             (ConfigRow::EnableSubagents, _) => self.toggle_enable_subagents(),
             (ConfigRow::WorkspaceRewind, _) => self.toggle_workspace_rewind(),
+            (ConfigRow::KeepCacheWarm, _) => self.toggle_keep_cache_warm(),
             (
                 ConfigRow::AdvisorMode | ConfigRow::AdvisorModel | ConfigRow::AdvisorReasoning,
                 ConfigCommitCtx::DuringTurn,
@@ -530,6 +531,21 @@ impl App {
         self.refresh_main_config_picker_if_open(config_picker::ADVISOR_REASONING_VALUE)?;
         self.set_status(status);
         Ok(())
+    }
+
+    /// Off applies immediately (active warming stops at the next idle tick);
+    /// the `keep_warm` tool parameter is fixed at session start.
+    pub(super) fn toggle_keep_cache_warm(&mut self) -> anyhow::Result<()> {
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::KeepCacheWarm,
+                picker_value: config_picker::KEEP_CACHE_WARM_VALUE,
+                on_status: "keep cache warm: on; tool option appears next session",
+                off_status: "keep cache warm: off",
+                error_noun: "keep cache warm",
+            },
+            |app, enabled| app.info.runtime.keep_cache_warm = enabled,
+        )
     }
 
     pub(super) fn toggle_workspace_rewind(&mut self) -> anyhow::Result<()> {

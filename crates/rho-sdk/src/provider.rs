@@ -310,6 +310,7 @@ pub enum ProviderCancellationMode {
 #[non_exhaustive]
 pub struct ModelRequestOptions {
     service_tier: Option<ServiceTier>,
+    max_output_tokens: Option<std::num::NonZeroU32>,
 }
 
 impl ModelRequestOptions {
@@ -322,6 +323,22 @@ impl ModelRequestOptions {
     /// Returns the requested provider service class, if any.
     pub fn service_tier(&self) -> Option<ServiceTier> {
         self.service_tier
+    }
+
+    /// Caps generated output for this request, reasoning included.
+    ///
+    /// Only providers whose [`ModelProvider::honors_max_output_tokens`] returns
+    /// `true` apply it; others send their usual limit. Hosts that need the cap
+    /// (for example a cache warm-up that must not generate an answer) check
+    /// that method first.
+    pub fn with_max_output_tokens(mut self, tokens: std::num::NonZeroU32) -> Self {
+        self.max_output_tokens = Some(tokens);
+        self
+    }
+
+    /// Returns the requested output cap, if any.
+    pub fn max_output_tokens(&self) -> Option<std::num::NonZeroU32> {
+        self.max_output_tokens
     }
 }
 
@@ -339,6 +356,15 @@ pub trait ModelProvider: Send + Sync {
 
     /// Exact identity used to scope provider-native replay data.
     fn identity(&self) -> ModelIdentity;
+
+    /// Whether this provider applies [`ModelRequestOptions::max_output_tokens`].
+    ///
+    /// Defaults to `false`, which keeps existing implementors correct: they
+    /// ignore the option. Return `true` only when every request path sends the
+    /// cap to the host.
+    fn honors_max_output_tokens(&self) -> bool {
+        false
+    }
 
     /// Completes one model turn without streaming intermediate events.
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a>;

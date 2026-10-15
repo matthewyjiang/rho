@@ -70,6 +70,9 @@ pub(super) async fn initialize(
         .unwrap_or_default();
     let added_dirs = launch_added_dirs.union(&workspace_root, &restored.dirs);
     let workspace = sdk_options.workspace.build_workspace(&added_dirs)?;
+    // `ProviderController` binds this to the provider below and keeps it in
+    // sync on every switch; the process tool reads it for `keep_warm`.
+    let cache_warm_route = crate::tools::process::CacheWarmRoute::default();
     let ToolsAndPrompt {
         tools,
         prompt,
@@ -103,6 +106,12 @@ pub(super) async fn initialize(
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &added_dirs,
+        // Only this host runs the cache warmer, so only it may offer the flag.
+        process_keep_warm: if config.keep_cache_warm {
+            crate::tools::process::KeepWarmOffer::Offered(cache_warm_route.clone())
+        } else {
+            crate::tools::process::KeepWarmOffer::Hidden
+        },
     })
     .await?;
     // Desktop authority belongs to this interactive host, not agent definitions
@@ -230,7 +239,11 @@ pub(super) async fn initialize(
         )
         .with_todo_state(tools.todo_state())
         .with_added_dirs(added_dirs),
-        provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
+        provider: ProviderController::new(
+            provider,
+            sdk_options.runtime.reasoning,
+            cache_warm_route,
+        ),
         tools,
         mcp_sampling,
         mcp_report,

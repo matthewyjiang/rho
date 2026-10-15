@@ -70,6 +70,30 @@ pub(super) fn render_snapshot(snapshot: Snapshot) -> rho_tools::Rendered<Process
     .failed_if(failed)
 }
 
+/// Start result; says whether the hold warms, given the route at start time.
+pub(super) fn render_start(
+    snapshot: Snapshot,
+    keep_warm: super::types::KeepWarm,
+) -> rho_tools::Rendered<ProcessOutput> {
+    use super::types::KeepWarm;
+    // A process that exited or failed before the result was built holds nothing.
+    let line = match keep_warm {
+        _ if !snapshot.state.is_live() => None,
+        KeepWarm::Off => None,
+        KeepWarm::On => Some(
+            "keep_warm: on (Rho warms the prompt cache while this runs and you are idle; stops at exit, stop, the warm-up budget, or a model switch to a route that cannot warm)",
+        ),
+        KeepWarm::Unavailable => Some(
+            "keep_warm: unavailable (this model route cannot send capped requests, so the prompt cache will expire while you idle)",
+        ),
+    };
+    let rendered = render_snapshot(snapshot);
+    match line {
+        Some(line) => rendered.map_text(|text| format!("{text}\n{line}")),
+        None => rendered,
+    }
+}
+
 /// Page script data without changing model text. Poll cursors are stateless, so
 /// a later poll can retrieve deferred chunks while they remain retained.
 pub(super) fn limit_process_data(

@@ -84,6 +84,7 @@ async fn assemble_awaiting_catalog(
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &Default::default(),
+        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
     })
     .await
     .unwrap();
@@ -155,6 +156,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &Default::default(),
+        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
     })
     .await
     .unwrap();
@@ -274,6 +276,7 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             diagnostics: &diagnostics,
             agent: &agent,
             added_dirs: &Default::default(),
+            process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         }),
     )
     .await
@@ -447,6 +450,7 @@ async fn mcp_attach_none_does_not_connect_configured_servers() {
             diagnostics: &diagnostics,
             agent: &agent,
             added_dirs: &Default::default(),
+            process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         }),
     )
     .await

@@ -6,6 +6,7 @@ use rho_providers::model::{ContextUsage, ContextUsageSource, ModelMetadata, Mode
 use super::{
     command_block::CommandBlock,
     model_performance::ModelPerformanceSummary,
+    types::ExtraCosts,
     usage_cost::{
         cache_hit_percent, context_fill_percent, display_input_tokens, format_usd,
         resolved_context_window, resolved_usage_cost_usd_micros, session_total_cost_usd_micros,
@@ -85,10 +86,8 @@ pub(super) struct RuntimeInfo {
     /// Antigravity install and sign-in, read from disk when the overlay opens;
     /// no probe, so it never shows as checking.
     antigravity: String,
-    /// Cumulative cost from all completed subagents, including failed/canceled ones.
-    subagent_total_cost_usd_micros: u64,
-    /// Cumulative cost from finished advisor calls in this conversation.
-    advisor_total_cost_usd_micros: u64,
+    /// Non-main spend for this conversation.
+    extra: super::types::ExtraCosts,
 }
 
 impl RuntimeInfo {
@@ -184,8 +183,7 @@ impl App {
             external_runtimes: checking_external_runtimes(),
             antigravity: AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default())
                 .description(),
-            subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
-            advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
+            extra: self.usage.extra,
         };
         self.show_info_overlay(info);
         self.start_info_refresh();
@@ -329,7 +327,7 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     }
 
     let Some(usage) = info.usage.as_ref() else {
-        if info.subagent_total_cost_usd_micros == 0 && info.advisor_total_cost_usd_micros == 0 {
+        if info.extra.total() == 0 {
             block.push_note("No token usage recorded yet.");
         } else {
             push_cost_fields(block, info, None);
@@ -353,10 +351,8 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
 }
 
 fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micros: Option<u64>) {
-    let subagent = info.subagent_total_cost_usd_micros;
-    let advisor = info.advisor_total_cost_usd_micros;
-    let extra = subagent.saturating_add(advisor);
-    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, extra) else {
+    let extra = info.extra;
+    let Some(total_micros) = session_total_cost_usd_micros(main_cost_micros, extra.total()) else {
         return;
     };
     let equivalent = cost_equivalent_suffix(info.billing);
@@ -368,8 +364,7 @@ fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micr
 
     for (label, value) in cost_field_rows(
         main_cost_micros,
-        subagent,
-        advisor,
+        extra,
         total_micros,
         main_qualifier,
         equivalent,
@@ -379,11 +374,10 @@ fn push_cost_fields(block: &mut CommandBlock, info: &RuntimeInfo, main_cost_micr
 }
 
 /// Labels for /info cost rows. One component stays a single labeled field;
-/// multiple components break out Main/Subagent/Advisor plus Total.
+/// multiple components break out each component plus Total.
 fn cost_field_rows(
     main_cost_micros: Option<u64>,
-    subagent: u64,
-    advisor: u64,
+    extra: ExtraCosts,
     total_micros: u64,
     main_qualifier: &str,
     equivalent: &str,
@@ -395,11 +389,14 @@ fn cost_field_rows(
     if let Some(main) = main_cost_micros {
         rows.push(("Main cost", format_amount(main, main_qualifier)));
     }
-    if subagent > 0 {
-        rows.push(("Subagent cost", format_amount(subagent, "")));
-    }
-    if advisor > 0 {
-        rows.push(("Advisor cost", format_amount(advisor, "")));
+    for (label, amount) in [
+        ("Subagent cost", extra.subagent),
+        ("Advisor cost", extra.advisor),
+        ("Cache warm cost", extra.cache_warm),
+    ] {
+        if amount > 0 {
+            rows.push((label, format_amount(amount, "")));
+        }
     }
 
     match rows.len() {
@@ -535,32 +532,48 @@ mod tests {
         rows.iter().map(|(label, _)| *label).collect()
     }
 
+    fn extra(subagent: u64, advisor: u64, cache_warm: u64) -> ExtraCosts {
+        ExtraCosts {
+            subagent,
+            advisor,
+            cache_warm,
+        }
+    }
+
     #[test]
     fn cost_rows_cover_single_and_multi_component_layouts() {
-        assert_eq!(
-            labels(&cost_field_rows(Some(1_000), 0, 0, 1_000, "", "")),
-            ["Cost"]
-        );
-        assert_eq!(
-            labels(&cost_field_rows(None, 2_000, 0, 2_000, "", "")),
-            ["Subagent cost"]
-        );
-        assert_eq!(
-            labels(&cost_field_rows(None, 0, 3_000, 3_000, "", "")),
-            ["Advisor cost"]
-        );
-        assert_eq!(
-            labels(&cost_field_rows(Some(1_000), 0, 3_000, 4_000, "", "")),
-            ["Main cost", "Advisor cost", "Total cost"]
-        );
-        assert_eq!(
-            labels(&cost_field_rows(Some(1_000), 2_000, 3_000, 6_000, "", "")),
-            ["Main cost", "Subagent cost", "Advisor cost", "Total cost"]
-        );
-        assert_eq!(
-            labels(&cost_field_rows(None, 2_000, 3_000, 5_000, "", "")),
-            ["Subagent cost", "Advisor cost", "Total cost"]
-        );
+        let cases: [(Option<u64>, ExtraCosts, &[&str]); 7] = [
+            (Some(1_000), extra(0, 0, 0), &["Cost"]),
+            (None, extra(2_000, 0, 0), &["Subagent cost"]),
+            (None, extra(0, 3_000, 0), &["Advisor cost"]),
+            (
+                Some(1_000),
+                extra(0, 3_000, 0),
+                &["Main cost", "Advisor cost", "Total cost"],
+            ),
+            (
+                Some(1_000),
+                extra(2_000, 3_000, 0),
+                &["Main cost", "Subagent cost", "Advisor cost", "Total cost"],
+            ),
+            (
+                None,
+                extra(2_000, 3_000, 0),
+                &["Subagent cost", "Advisor cost", "Total cost"],
+            ),
+            (
+                Some(1_000),
+                extra(0, 0, 400),
+                &["Main cost", "Cache warm cost", "Total cost"],
+            ),
+        ];
+        for (main, extra, expected) in cases {
+            let total = main.unwrap_or(0) + extra.total();
+            assert_eq!(
+                labels(&cost_field_rows(main, extra, total, "", "")),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -678,7 +691,13 @@ mod tests {
 
     #[test]
     fn cost_rows_preserve_main_qualifier_and_amounts() {
-        let rows = cost_field_rows(Some(1_500_000), 500_000, 0, 2_000_000, " estimated", "");
+        let rows = cost_field_rows(
+            Some(1_500_000),
+            extra(500_000, 0, 0),
+            2_000_000,
+            " estimated",
+            "",
+        );
         assert_eq!(
             rows,
             vec![

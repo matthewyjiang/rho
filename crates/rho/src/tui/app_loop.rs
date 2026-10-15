@@ -199,6 +199,15 @@ impl App {
             } else {
                 Duration::from_secs(3600)
             };
+            // Wake for a due keep-warm ping even when nothing else is active.
+            let idle_timeout = self
+                .usage
+                .cache_warm
+                .next_wake()
+                .map_or(idle_timeout, |wake| {
+                    wake.saturating_duration_since(Instant::now())
+                        .min(idle_timeout)
+                });
             // About to wait for the user: a turn that finished since the
             // last wait notifies now, once per batch of turns, and the
             // terminal hears the resting status at the same moment.
@@ -273,6 +282,7 @@ impl App {
             needs_redraw |= self.apply_pending_permission_mode(agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
+            needs_redraw |= self.poll_cache_warm(agent);
             if !first_frame {
                 needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
             }
@@ -670,20 +680,14 @@ impl App {
         if let Some(manager) = agent.subagents() {
             let claimed = manager.claim_terminal_costs_usd_micros(agent.session_id().as_str());
             if claimed > 0 {
-                self.usage.subagent_total_cost_usd_micros = self
-                    .usage
-                    .subagent_total_cost_usd_micros
-                    .saturating_add(claimed);
+                self.usage.extra.subagent = self.usage.extra.subagent.saturating_add(claimed);
                 changed = true;
             }
         }
         if let Some(advisor) = agent.advisor() {
             let claimed = advisor.claim_cost_usd_micros();
             if claimed > 0 {
-                self.usage.advisor_total_cost_usd_micros = self
-                    .usage
-                    .advisor_total_cost_usd_micros
-                    .saturating_add(claimed);
+                self.usage.extra.advisor = self.usage.extra.advisor.saturating_add(claimed);
                 changed = true;
             }
         }
@@ -709,11 +713,11 @@ impl App {
         self.usage.usage_cost_tracker.reset();
         self.usage.usage_before_current_run = None;
         self.usage.run_usage.clear();
-        self.usage.subagent_total_cost_usd_micros = 0;
-        self.usage.advisor_total_cost_usd_micros = 0;
+        self.usage.extra = Default::default();
         self.usage.latest_usage = None;
         self.usage.model_performance.clear();
         self.usage.cache_stats.reset();
+        self.reset_cache_warm();
     }
 
     fn exit_receipt(&self) -> Option<ExitReceipt> {
