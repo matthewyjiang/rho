@@ -51,19 +51,20 @@ fn tool_finished() -> RunEvent {
     }
 }
 
-// Covers: the todo checklist reaches ACP clients as a full `plan` only when a
-// tool changed it, starting from the checklist as it stood when tracking began.
+// Covers: the todo checklist reaches ACP clients as a full `plan` only when it
+// differs from what the client last saw, including a checklist restored by
+// load that the client has never received.
 // Owner: ACP session signals
 #[tokio::test]
 async fn finished_tools_send_the_checklist_only_when_it_changed() {
     let todo = TodoState::default();
     todo.replace(list(&[("read", TodoStatus::Completed)]));
-    let mut signals = SessionSignals::new(session().await, todo.clone(), None);
+    let mut signals = SessionSignals::new(session().await, todo.clone(), None, Vec::new());
     let steps = [
         (
-            "same list as when tracking began",
+            "restored list the client has not seen",
             list(&[("read", TodoStatus::Completed)]),
-            None,
+            Some(vec![entry("read", PlanEntryStatus::Completed)]),
         ),
         (
             "replaced list",
@@ -114,7 +115,8 @@ async fn finished_tools_send_the_checklist_only_when_it_changed() {
 #[tokio::test]
 async fn usage_reports_the_known_window_or_zero() {
     for (window, size) in [(Some(200_000), 200_000), (None, 0)] {
-        let mut signals = SessionSignals::new(session().await, TodoState::default(), window);
+        let mut signals =
+            SessionSignals::new(session().await, TodoState::default(), window, Vec::new());
         let step = RunEvent::StepStarted {
             step: 1,
             estimated_context_tokens: 0,

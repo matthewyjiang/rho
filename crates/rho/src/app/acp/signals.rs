@@ -15,9 +15,11 @@ use crate::tools::todo::{TodoItem, TodoState, TodoStatus};
 
 /// Tracks one prompt's context fill and checklist for a session.
 ///
-/// Build one per prompt (or after load): the session handle changes when the
-/// runtime is rebound, and the plan baseline starts from the checklist as it
-/// stands, so only changes made during the prompt are sent.
+/// Build one per prompt, since the session handle changes when the runtime is
+/// rebound. The host keeps the last checklist it sent across prompts and hands
+/// it in, so a checklist restored by `session/load` goes out with the first
+/// prompt. Nothing is sent during load itself: hosts such as T3 Code discard
+/// every update for a session while its load is in flight.
 pub(super) struct SessionSignals {
     session: rho_sdk::Session,
     todo: TodoState,
@@ -32,8 +34,8 @@ impl SessionSignals {
         session: rho_sdk::Session,
         todo: TodoState,
         context_window: Option<u64>,
+        sent_plan: Vec<PlanEntry>,
     ) -> Self {
-        let sent_plan = plan_entries(&todo);
         Self {
             session,
             todo,
@@ -66,13 +68,26 @@ impl SessionSignals {
         SessionUpdate::UsageUpdate(UsageUpdate::new(estimate.tokens(), size))
     }
 
-    /// Sends current context fill outside the event stream (after load, at
-    /// turn end). Best effort: a closed connection fails the next request.
-    pub(super) async fn send_usage(&self, session_id: &SessionId, client: &dyn AcpClientPort) {
-        let notification = SessionNotification::new(session_id.clone(), self.usage());
-        if let Err(error) = client.send_session_notification(notification).await {
-            tracing::debug!(%error, "could not send ACP usage update");
+    /// Sends the checklist before the run starts if it differs from what the
+    /// client last saw, as after a load restored one.
+    pub(super) async fn send_plan_change(
+        &mut self,
+        session_id: &SessionId,
+        client: &dyn AcpClientPort,
+    ) {
+        if let Some(update) = self.plan_change() {
+            send(session_id, client, update).await;
         }
+    }
+
+    /// Sends current context fill at turn end, outside the event stream.
+    pub(super) async fn send_usage(&self, session_id: &SessionId, client: &dyn AcpClientPort) {
+        send(session_id, client, self.usage()).await;
+    }
+
+    /// The checklist the client last saw, for the next prompt's tracker.
+    pub(super) fn into_sent_plan(self) -> Vec<PlanEntry> {
+        self.sent_plan
     }
 
     fn plan_change(&mut self) -> Option<SessionUpdate> {
@@ -82,6 +97,14 @@ impl SessionSignals {
         }
         self.sent_plan.clone_from(&entries);
         Some(SessionUpdate::Plan(Plan::new(entries)))
+    }
+}
+
+/// Best effort: a closed connection fails the next request instead.
+async fn send(session_id: &SessionId, client: &dyn AcpClientPort, update: SessionUpdate) {
+    let notification = SessionNotification::new(session_id.clone(), update);
+    if let Err(error) = client.send_session_notification(notification).await {
+        tracing::debug!(%error, "could not send ACP session update");
     }
 }
 

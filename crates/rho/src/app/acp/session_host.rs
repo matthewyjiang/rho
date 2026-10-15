@@ -76,6 +76,11 @@ pub(super) struct SessionHost {
     permission_placeholders: AtomicU64,
     replaced: Arc<AtomicBool>,
     herdr: HerdrReporter,
+    /// The todo checklist the client last received as an ACP `plan`.
+    sent_plan: Vec<agent_client_protocol::schema::v1::PlanEntry>,
+    /// Notice found during `session/load`, sent with the first prompt because
+    /// hosts such as T3 Code discard live updates while a load is in flight.
+    load_notice: Option<String>,
 }
 
 /// Carries cancellation for the session's current prompt. The agent already
@@ -218,23 +223,17 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
-        if built.prompt_template.is_some() {
-            if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
-                &built.session.snapshot(),
-                built.prompt.loaded.as_ref(),
-            ) {
-                if let Err(error) = send_notification(
-                    client,
-                    EventMapper::agent_notice(&request.session_id, &notice),
+        let load_notice = built
+            .prompt_template
+            .is_some()
+            .then(|| {
+                crate::app::model_prompt_metadata::change_notice(
+                    &built.session.snapshot(),
+                    built.prompt.loaded.as_ref(),
                 )
-                .await
-                {
-                    built.teardown().await;
-                    return Err(error);
-                }
-            }
-        }
-        let host = Self::from_built(
+            })
+            .flatten();
+        let mut host = Self::from_built(
             request.session_id,
             built,
             stored,
@@ -243,9 +242,7 @@ impl SessionHost {
             startup.config.auth.clone(),
             startup.herdr.clone(),
         );
-        host.signals()
-            .send_usage(&host.acp_session_id, client)
-            .await;
+        host.load_notice = load_notice;
         let response = LoadSessionResponse::new()
             .modes(mode_state(host.permission.mode))
             .config_options(host.config_options(&startup.config));
@@ -464,6 +461,8 @@ impl SessionHost {
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
             herdr,
+            sent_plan: Vec::new(),
+            load_notice: None,
         }
     }
 
@@ -472,6 +471,12 @@ impl SessionHost {
         input: UserInput,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
+        if let Some(notice) = self.load_notice.take() {
+            let notice = EventMapper::agent_notice(&self.acp_session_id, &notice);
+            if let Err(error) = send_notification(client, notice).await {
+                tracing::debug!(%error, "could not send ACP load notice");
+            }
+        }
         let mut run = match self.built.session.start(input.clone()).await {
             Ok(run) => run,
             Err(error) => {
@@ -483,6 +488,7 @@ impl SessionHost {
         let mut approval_receiver = self.built.approval_receiver.take();
         let mut mapper = EventMapper::new();
         let mut signals = self.signals();
+        signals.send_plan_change(&self.acp_session_id, client).await;
         let pump_result = self
             .pump_run(
                 &mut run,
@@ -502,6 +508,7 @@ impl SessionHost {
         let outcome = run.outcome().await;
         // The committed turn is the settled context; in-run updates were estimates.
         signals.send_usage(&self.acp_session_id, client).await;
+        self.sent_plan = signals.into_sent_plan();
         match outcome {
             Ok(outcome) => {
                 if let Err(error) = self.persist_turn(&input, Some(outcome.text())) {
@@ -554,13 +561,16 @@ impl SessionHost {
         .await
     }
 
-    /// Fresh signal tracking for the session as it stands now.
-    fn signals(&self) -> SessionSignals {
+    /// Signal tracking for the next prompt, starting from the checklist the
+    /// client last saw. An early return before the prompt hands it back only
+    /// costs a resend of the current list.
+    fn signals(&mut self) -> SessionSignals {
         let current = self.current_model();
         SessionSignals::new(
             self.built.session.clone(),
             self.built.tools.todo_state(),
             model_context_window(&current.provider, &current.model),
+            std::mem::take(&mut self.sent_plan),
         )
     }
 
