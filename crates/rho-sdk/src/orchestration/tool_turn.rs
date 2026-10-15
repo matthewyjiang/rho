@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use crate::{
     event::RunOutcome,
     model::{ContentBlock, Message, ToolCall},
-    session::SessionCore,
+    session::{HostToolCalls, SessionCore},
     tool::{Tool, ToolInvocationSource},
     Error, RunEvent, ToolCallId,
 };
@@ -98,11 +98,19 @@ impl StagedToolTurn {
         Self { calls }
     }
 
-    pub(super) fn host_requested(call: ToolCall, runtime: &Rho) -> Self {
-        let tool = runtime.tools.get(&call.name);
-        Self {
-            calls: vec![StagedCall::new(call, ToolInvocationSource::Host, tool)],
-        }
+    /// Stages a host batch. Unlike model calls, host calls resolve against
+    /// every registered tool, not only the advertised subset, and never detach
+    /// as async jobs because no provider marked them async.
+    pub(super) fn host_requested(calls: HostToolCalls, runtime: &Rho) -> Self {
+        let calls = calls
+            .into_calls()
+            .into_iter()
+            .map(|call| {
+                let tool = runtime.tools.get(&call.name);
+                StagedCall::new(call, ToolInvocationSource::Host, tool)
+            })
+            .collect();
+        Self { calls }
     }
 }
 
