@@ -47,14 +47,25 @@ pub(super) fn thought_level_option(
 ) -> SessionConfigOption {
     let choices = selectable_thought_levels(config, current)
         .into_iter()
-        .map(|level| {
-            let id = level.to_string();
-            SessionConfigSelectOption::new(id.clone(), id)
-        })
+        .map(|level| SessionConfigSelectOption::new(level.to_string(), thought_level_label(level)))
         .collect::<Vec<_>>();
     SessionConfigOption::select(THOUGHT_LEVEL_ID, "Reasoning", current.to_string(), choices)
         .description("How much reasoning the model spends on each turn.")
         .category(SessionConfigOptionCategory::ThoughtLevel)
+}
+
+/// Human label for a level in host pickers. The value id stays the
+/// lowercase config spelling hosts send back in `session/set_config_option`.
+fn thought_level_label(level: ReasoningLevel) -> &'static str {
+    match level {
+        ReasoningLevel::Off => "Off",
+        ReasoningLevel::Minimal => "Minimal",
+        ReasoningLevel::Low => "Low",
+        ReasoningLevel::Medium => "Medium",
+        ReasoningLevel::High => "High",
+        ReasoningLevel::Xhigh => "Extra high",
+        ReasoningLevel::Max => "Max",
+    }
 }
 
 pub(super) fn selectable_thought_levels(
