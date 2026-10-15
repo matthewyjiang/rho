@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use agent_client_protocol::{
     schema::v1::{
         SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
@@ -8,6 +10,7 @@ use agent_client_protocol::{
 use rho_providers::model::catalog::{
     self, ModelCatalogEntry, ModelSelection, ModelSelectionError, SelectionAuthContext,
 };
+use rho_providers::model::display_name::model_display_name;
 use rho_providers::model::favorites;
 use rho_providers::provider::model_reference;
 
@@ -21,6 +24,10 @@ pub(super) struct CurrentModel {
 }
 
 /// One flat `model` select: favorites first, `provider/model` value ids.
+///
+/// Host pickers are narrow and truncate long labels, so the label is the short
+/// name a person recognizes (see [`model_labels`]) and the full `provider/model`
+/// id rides in the option description.
 pub(super) fn model_config_options(
     current: &CurrentModel,
     favorite_models: &[String],
@@ -39,17 +46,45 @@ pub(super) fn model_config_options(
         });
     }
     let favorites = favorites::normalized_favorite_models(favorite_models);
-    let options = favorites::reorder_models_by_favorites(available, &favorites)
+    let ordered = favorites::reorder_models_by_favorites(available, &favorites);
+    let options = model_labels(&ordered)
         .into_iter()
-        .map(|entry| {
+        .zip(&ordered)
+        .map(|(label, entry)| {
             let value = model_reference(&entry.provider, &entry.model);
-            SessionConfigSelectOption::new(value.clone(), value)
+            SessionConfigSelectOption::new(value.clone(), label).description(value)
         })
         .collect::<Vec<_>>();
     vec![
         SessionConfigOption::select(MODEL_CONFIG_ID, "Model", current_reference, options)
             .category(SessionConfigOptionCategory::Model),
     ]
+}
+
+/// Short picker labels, one per entry in order.
+///
+/// A label is the catalog name (`Claude Opus 5.5`), or the bare model id when no
+/// catalog names the model. A label shared by several entries gets its provider
+/// appended (`GPT-5.5 (openai-codex)`) so every row stays distinguishable.
+fn model_labels(entries: &[ModelCatalogEntry]) -> Vec<String> {
+    let short = entries
+        .iter()
+        .map(|entry| {
+            model_display_name(&entry.provider, &entry.model).unwrap_or_else(|| entry.model.clone())
+        })
+        .collect::<Vec<_>>();
+    let mut counts = HashMap::<&str, usize>::new();
+    for label in &short {
+        *counts.entry(label).or_default() += 1;
+    }
+    short
+        .iter()
+        .zip(entries)
+        .map(|(label, entry)| match counts[label.as_str()] {
+            1 => label.clone(),
+            _ => format!("{label} ({})", entry.provider),
+        })
+        .collect()
 }
 
 pub(super) fn resolve_model_value(

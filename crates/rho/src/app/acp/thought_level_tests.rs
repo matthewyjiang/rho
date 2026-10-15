@@ -50,12 +50,13 @@ fn select_current(options: &[SessionConfigOption]) -> &str {
     }
 }
 
-fn select_values(options: &[SessionConfigOption]) -> Vec<String> {
+/// `(value id, label)` pairs in advertised order.
+fn select_entries(options: &[SessionConfigOption]) -> Vec<(String, String)> {
     match &options[0].kind {
         SessionConfigKind::Select(select) => match &select.options {
             SessionConfigSelectOptions::Ungrouped(values) => values
                 .iter()
-                .map(|option| option.value.0.as_ref().to_string())
+                .map(|option| (option.value.0.as_ref().to_string(), option.name.clone()))
                 .collect(),
             _ => panic!("thought_level must be ungrouped"),
         },
@@ -87,7 +88,8 @@ async fn built_session(
 }
 
 // Covers: session/new and session/load must advertise thought_level as the
-// current reasoning select, not omit it or encode it as a boolean.
+// current reasoning select, not omit it or encode it as a boolean, with
+// lowercase config ids hosts send back and capitalized labels hosts display.
 // Owner: acp session config mapper
 #[test]
 fn advertises_thought_level_select_for_the_current_reasoning() {
@@ -100,9 +102,21 @@ fn advertises_thought_level_select_for_the_current_reasoning() {
         Some(SessionConfigOptionCategory::ThoughtLevel)
     );
     assert_eq!(select_current(&options), "high");
+    let entries = select_entries(&options);
     assert_eq!(
-        select_values(&options),
-        ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        entries
+            .iter()
+            .map(|(value, label)| (value.as_str(), label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("off", "Off"),
+            ("minimal", "Minimal"),
+            ("low", "Low"),
+            ("medium", "Medium"),
+            ("high", "High"),
+            ("xhigh", "Extra high"),
+            ("max", "Max"),
+        ]
     );
 }
 
