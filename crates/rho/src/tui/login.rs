@@ -943,6 +943,7 @@ impl App {
             &self.info.runtime.auth,
         ) {
             Ok(_) => {
+                self.cache_warm_provider_replaced();
                 self.using_unavailable_provider = true;
                 self.set_status("no providers configured; run /login");
             }

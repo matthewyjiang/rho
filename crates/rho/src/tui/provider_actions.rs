@@ -57,6 +57,7 @@ impl App {
             activation.reasoning.effective,
             &activation.auth,
         )?;
+        self.cache_warm_provider_replaced();
         self.info.runtime.provider = activation.provider;
         self.info.runtime.prompt_cache_ttl = agent.prompt_cache_ttl();
         self.info.runtime.model = activation.model;

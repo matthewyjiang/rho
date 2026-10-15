@@ -142,7 +142,15 @@ impl CacheStatsTracker {
         );
     }
 
-    /// Sample one completed model call against the previous one.
+    /// The bound provider changed, so the old route's cached prefix says
+    /// nothing about the new one. Miss attribution keeps `previous`.
+    pub(super) fn forget_prefix_read(&mut self) {
+        self.last_prefix_read = None;
+    }
+
+    /// Sample one completed model call against the previous one. The call
+    /// read the prefix whether or not it reported usage, so the clock always
+    /// moves; only miss sampling needs usage.
     pub(super) fn record_request(
         &mut self,
         profile: &ModelCallProfile,
@@ -151,6 +159,11 @@ impl CacheStatsTracker {
         completed_at: Instant,
         ttl: Duration,
     ) {
+        let started_at = completed_at
+            .checked_sub(metrics.total_latency)
+            .unwrap_or(completed_at);
+        let last_prefix_read = self.last_prefix_read;
+        self.record_prefix_read(started_at);
         let Some(usage) = self.reported_usage.take() else {
             return;
         };
@@ -160,16 +173,13 @@ impl CacheStatsTracker {
         };
 
         let model = ModelKey::from_profile(profile);
-        let started_at = completed_at
-            .checked_sub(metrics.total_latency)
-            .unwrap_or(completed_at);
         if let Some(previous) = self.previous.take().filter(|_| reports_cache(&usage)) {
             let cause = miss_cause(
                 &model,
                 started_at,
                 &previous,
                 std::mem::take(&mut self.tool_list_changed),
-                self.last_prefix_read,
+                last_prefix_read,
                 ttl,
             );
             self.count_miss(&usage, prompt_tokens, &previous, metadata, cause);
@@ -181,7 +191,6 @@ impl CacheStatsTracker {
             prompt_tokens,
             model,
         });
-        self.record_prefix_read(started_at);
     }
 
     /// Compaction rewrites the prompt prefix, so the next request has nothing

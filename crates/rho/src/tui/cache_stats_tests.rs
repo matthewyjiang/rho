@@ -418,8 +418,8 @@ fn compaction_clears_the_prefix_but_keeps_session_totals() {
     assert_eq!(tracker.rebilled(), &after_miss);
 }
 
-// Covers: a request that never reported usage is not sampled, and a stale delta
-// is not reused by the next call.
+// Covers: a request that never reported usage is not sampled, a stale delta
+// is not reused by the next call, and the prefix clock still moves.
 // Owner: tui cache-miss policy
 #[test]
 fn a_request_without_reported_usage_is_not_sampled() {
@@ -454,6 +454,11 @@ fn a_request_without_reported_usage_is_not_sampled() {
     );
 
     assert_eq!(tracker.rebilled(), &NONE);
+    // The call still read the prefix, so the keep-warm clock moves.
+    assert_eq!(
+        tracker.last_prefix_read(),
+        Some(t0 + Duration::from_secs(1))
+    );
 }
 
 // Covers: miss attribution must not depend on the warmer's poll, and a ping

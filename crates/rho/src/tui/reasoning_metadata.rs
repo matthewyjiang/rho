@@ -109,6 +109,7 @@ impl App {
             )));
             return;
         }
+        self.cache_warm_provider_replaced();
         self.info
             .set_reasoning(reasoning, ReasoningRequestSource::PersistedOrDefault);
         if let Err(err) = self.info.services.config_repository.update(|config| {
@@ -151,6 +152,7 @@ impl App {
             }
         };
         agent.replace_provider(provider, reasoning, &self.info.runtime.auth)?;
+        self.cache_warm_provider_replaced();
         self.info
             .set_reasoning(reasoning, ReasoningRequestSource::Explicit);
         let save_result = self.info.services.config_repository.update(|config| {

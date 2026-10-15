@@ -341,6 +341,14 @@ impl App {
         self.sync_cache_warm_status();
     }
 
+    /// The bound provider changed. An in-flight ping describes the old route,
+    /// so stop observing it (its spend still reaches the ledger), and wait
+    /// for a real request on the new route before warming again.
+    pub(super) fn cache_warm_provider_replaced(&mut self) {
+        self.usage.cache_stats.forget_prefix_read();
+        self.reset_cache_warm();
+    }
+
     /// Shows the ping counter unless another status is up. Returns whether
     /// the status changed.
     fn sync_cache_warm_status(&mut self) -> bool {
