@@ -798,6 +798,35 @@ fn cli_custom_host_selection_without_auth_prefers_stored_key() {
     });
 }
 
+// Covers: `--provider` must switch between OpenAI siblings that share an auth
+// family, not keep the configured sibling.
+// Owner: cli config overrides
+#[test]
+fn cli_provider_switches_between_openai_and_codex_siblings() {
+    // `openai` has no built-in default model, so `--provider openai` alone
+    // needs a cached list to pick from.
+    with_cached_provider_models("openai", vec!["gpt-test"], || {
+        for (from, from_auth, to, expected_auth) in [
+            ("openai-codex", "codex", "openai", "api-key"),
+            ("openai", "api-key", "openai-codex", "codex"),
+        ] {
+            let mut cfg = Config {
+                provider: from.into(),
+                auth: from_auth.into(),
+                ..Config::default()
+            };
+            let cli = Cli::try_parse_from(["rho", "--provider", to]).unwrap();
+
+            apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
+
+            assert_eq!(
+                (cfg.provider.as_str(), cfg.auth.as_str()),
+                (to, expected_auth)
+            );
+        }
+    });
+}
+
 // Covers: a configured auth with no credentials must not beat another mode of
 // the same provider that has a stored key.
 // Owner: cli config overrides
