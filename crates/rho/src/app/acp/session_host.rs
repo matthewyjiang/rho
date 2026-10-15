@@ -148,6 +148,18 @@ impl PromptGate {
             PromptGateState::Starting(token) | PromptGateState::Active(token) => token.cancel(),
         }
     }
+
+    /// Whether a new prompt may wait for the host instead of being refused:
+    /// the current prompt was cancelled, or none is running (the host is only
+    /// held briefly by teardown or a setup request).
+    pub(super) fn admits_queued_prompt(&self) -> bool {
+        match &*self.slot() {
+            PromptGateState::Idle => true,
+            PromptGateState::Starting(token) | PromptGateState::Active(token) => {
+                token.is_cancelled()
+            }
+        }
+    }
 }
 
 struct PromptGuard(Arc<PromptGate>);
@@ -523,7 +535,7 @@ impl SessionHost {
     ) -> anyhow::Result<PromptResponse> {
         let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
             &self.built.session,
-            self.built.tools.subagents(),
+            crate::app::headless_delegation::BackgroundSources::of(&self.built.tools),
             Some(&self.stored),
         )?;
         let result = crate::app::headless_delegation::HeadlessDelegation::drive(

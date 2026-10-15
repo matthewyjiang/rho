@@ -35,7 +35,8 @@ pub(super) struct SessionStart<Response> {
 /// prompt never has to take it out of the map and put it back.
 ///
 /// `try_lock` is the busy gate: the map lock is only held long enough to clone
-/// this `Arc`. Cancel reads `cancel` without the host lock. A replacement marks
+/// this `Arc`. A prompt may instead wait for the host while the previous turn
+/// is cancelled and winding down. Cancel reads `cancel` without the host lock. A replacement marks
 /// `replaced` and waits for any in-flight prompt to release the host lock before
 /// publishing the new slot, so a follow-up prompt cannot run on the new host
 /// while the old turn is still finishing.
@@ -151,7 +152,7 @@ impl RhoAcpAgent {
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
         let live = self.live_session(&session_id).await?;
-        let mut host = live.try_lock_host(&session_id)?;
+        let mut host = live.lock_host_for_prompt(&session_id).await?;
         host.prompt(request, port, &self.startup.config)
             .await
             .map_err(prompt_error)
@@ -303,6 +304,27 @@ impl LiveSession {
             return Err(busy_session(session_id));
         }
         Ok(HostGuard(guard))
+    }
+
+    /// Like [`Self::try_lock_host`], but a prompt queues behind a cancelled
+    /// turn that is still winding down. Hosts that steer by interrupting
+    /// (T3 Code) send `session/cancel` and the replacement prompt back to
+    /// back; rejecting the second as busy would drop the user's message.
+    async fn lock_host_for_prompt(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<HostGuard<'_>, AcpError> {
+        match self.try_lock_host(session_id) {
+            Err(busy) if !self.cancel.admits_queued_prompt() => Err(busy),
+            Err(_) => {
+                let guard = self.host.lock().await;
+                if guard.is_none() {
+                    return Err(busy_session(session_id));
+                }
+                Ok(HostGuard(guard))
+            }
+            held => held,
+        }
     }
 }
 

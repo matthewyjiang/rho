@@ -581,7 +581,7 @@ async fn run_session_with_output(
     }
     let mut delegation = super::headless_delegation::HeadlessDelegation::attach(
         session,
-        built.tools.subagents(),
+        super::headless_delegation::BackgroundSources::of(&built.tools),
         None,
     )?;
     if let Some(adapter) = jsonl.as_deref_mut() {

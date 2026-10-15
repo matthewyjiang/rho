@@ -1,8 +1,8 @@
 //! Parent-session delivery for finished background processes.
 //!
 //! Mirrors workflow and delegated-agent notifications: the manager stores a
-//! terminal snapshot, and the TUI drains unobserved terminals at the next
-//! turn boundary.
+//! terminal snapshot, and the host (the TUI, or headless delegation for ACP and
+//! `rho run`) drains unobserved terminals at the next turn boundary.
 
 use std::time::Duration;
 

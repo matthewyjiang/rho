@@ -83,7 +83,7 @@ For the full value set, constraints, and defaults, see [Agent definition schema]
 
 Every `agent` call starts a background run and returns a six-character run ID immediately. There is no foreground mode or `background` parameter. Independent calls in the same batch run together.
 
-Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. Side chats still disable delegation.
+Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. They wait the same way for workflows and for background processes started during the run. Side chats still disable delegation.
 
 Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. Remaining children are stopped; their saved status and artifacts remain available for inspection. ACP does not automatically inject these ended runs' results into a later prompt.
 
