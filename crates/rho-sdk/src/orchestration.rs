@@ -170,6 +170,14 @@ async fn execute_turn_loop(
             async_jobs: &mut async_jobs,
             pending_outputs: &mut pending_outputs,
         };
+        // Like a model reply, a host batch is saved before its calls start,
+        // so a restored snapshot names every call that may have started.
+        if tool_turn.is_host_requested() {
+            if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+                tool_turn.interrupt_unstarted(&mut history);
+                return control.terminate(core, history, error).await;
+            }
+        }
         let initial_result =
             run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control).await;
         history =

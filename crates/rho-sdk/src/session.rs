@@ -608,8 +608,8 @@ impl Session {
     /// Installs or removes a step checkpoint store while the session is idle.
     ///
     /// With a store, each run commits its working history and saves the session
-    /// snapshot before every provider request and again after each model reply,
-    /// before that reply's tool calls start. A process that dies mid-run can
+    /// snapshot before every provider request and again after each model reply
+    /// or host tool-call batch, before those calls start. A process that dies mid-run can
     /// restore the last saved snapshot and call [`Session::continue_history`].
     /// A failed save fails the run.
     pub fn set_checkpoint_store(

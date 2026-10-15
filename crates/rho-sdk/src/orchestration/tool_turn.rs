@@ -112,6 +112,18 @@ impl StagedToolTurn {
             .collect();
         Self { calls }
     }
+
+    pub(super) fn is_host_requested(&self) -> bool {
+        self.calls
+            .iter()
+            .all(|call| call.source == ToolInvocationSource::Host)
+    }
+
+    /// Pairs every staged call with an interrupted result when the turn
+    /// cannot start.
+    pub(super) fn interrupt_unstarted(self, history: &mut Vec<Message>) {
+        interrupt_unstarted_calls(self.calls, history);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
