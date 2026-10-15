@@ -47,7 +47,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
     if let Err(error) = super::cli_config::refresh_model_cache(cli, &config, store.as_ref()).await {
         eprintln!("warning: could not refresh model list: {error:#}");
     }
-    apply_doctor_overrides(&mut config, cli)?;
+    apply_doctor_overrides(&mut config, cli, store.as_ref())?;
 
     let cwd = std::env::current_dir()?;
     let home = crate::paths::home_dir();
@@ -115,8 +115,12 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
 /// Honor root `--provider`/`--model`/`--auth`/`--reasoning` without aborting
 /// when the target host has no cached models. Persistence stays with `--save`
 /// in `prepare_startup`; doctor never writes.
-fn apply_doctor_overrides(config: &mut crate::config::Config, cli: &Cli) -> anyhow::Result<()> {
-    super::cli_config::apply_overrides_allowing_empty_cache(config, cli)?;
+fn apply_doctor_overrides(
+    config: &mut crate::config::Config,
+    cli: &Cli,
+    store: &dyn CredentialStore,
+) -> anyhow::Result<()> {
+    super::cli_config::apply_overrides_allowing_empty_cache(config, cli, store)?;
     super::cli_config::normalize_reasoning_for_cli(
         config,
         if cli.reasoning.is_some() {

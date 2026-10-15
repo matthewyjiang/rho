@@ -326,7 +326,11 @@ async fn prepare_plan(
     let supplied_inputs = parse_inputs(inputs)?;
     let config_repository = ConfigRepository::new(cli.config.clone());
     let mut config = config_repository.load()?;
-    cli_config::apply_overrides(&mut config, cli)?;
+    cli_config::apply_overrides(
+        &mut config,
+        cli,
+        &crate::credential_store::AppCredentialStore,
+    )?;
     cli_config::normalize_reasoning_for_cli(
         &mut config,
         if cli.reasoning.is_some() {

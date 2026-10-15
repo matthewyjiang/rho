@@ -106,6 +106,8 @@ rho --reasoning high
 rho --provider openai --auth api-key --model gpt-5.6-sol --save
 ```
 
+Without `--auth`, a provider selected by `--provider` or a `provider/model` reference uses an auth mode that has a stored credential or `RHO_<NAME>_API_KEY` set, the same way the `/model` picker does. It falls back to the provider's default auth only when none does. For example, `rho --model my-proxy/some-model run "hi"` sends the key saved with `/login my-proxy`.
+
 `--config` selects the file to load and save. It does not override those keys:
 
 ```bash

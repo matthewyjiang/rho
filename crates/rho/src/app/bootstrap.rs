@@ -334,7 +334,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     }
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let permission_mode_before_override = config.permission_mode;
-    let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
+    let config_changed = cli_config::apply_overrides(&mut config, &cli, &store)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     // Full models.dev snapshot fills in the background for subagent and status
     // labels. Interactive sessions stay cache-only on the first frame, then

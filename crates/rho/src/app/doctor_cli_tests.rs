@@ -4,6 +4,7 @@ use serde_json::json;
 
 use super::*;
 use crate::doctor::{DoctorCheck, DoctorCheckId, DoctorStatus};
+use rho_providers::credentials::MemoryCredentialStore;
 
 // Covers: `rho doctor --json` emits summary counts plus sections with
 // snake_case status and tagged check ids.
@@ -88,7 +89,7 @@ async fn collect_probes_times_out_slow_tasks() {
 fn provider_override_with_empty_cache_still_selects_the_host() {
     let mut config = crate::config::Config::default();
     let cli = Cli::try_parse_from(["rho", "--provider", "ollama", "doctor"]).unwrap();
-    apply_doctor_overrides(&mut config, &cli).unwrap();
+    apply_doctor_overrides(&mut config, &cli, &MemoryCredentialStore::default()).unwrap();
     assert_eq!(config.provider, "ollama");
 }
 
@@ -98,7 +99,8 @@ fn provider_override_with_empty_cache_still_selects_the_host() {
 fn unknown_provider_override_still_errors() {
     let mut config = crate::config::Config::default();
     let cli = Cli::try_parse_from(["rho", "--provider", "not-a-real-host", "doctor"]).unwrap();
-    let err = apply_doctor_overrides(&mut config, &cli).unwrap_err();
+    let err =
+        apply_doctor_overrides(&mut config, &cli, &MemoryCredentialStore::default()).unwrap_err();
     assert!(
         err.to_string().contains("unknown provider"),
         "expected unknown provider, got {err:#}"
@@ -146,7 +148,7 @@ fn doctor_overrides_reject_errors_that_run_rejects() {
         };
         let cli = Cli::try_parse_from(args).unwrap();
         assert!(
-            apply_doctor_overrides(&mut config, &cli).is_err(),
+            apply_doctor_overrides(&mut config, &cli, &MemoryCredentialStore::default()).is_err(),
             "{name} must fail"
         );
         assert_ne!(

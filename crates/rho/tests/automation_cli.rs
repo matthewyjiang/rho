@@ -367,7 +367,11 @@ fn jsonl_sanitizes_authentication_failures() {
     let events = jsonl_events(&output);
     assert_eq!(events.last().unwrap()["type"], "run.failed");
     assert_eq!(events.last().unwrap()["reason"], "authentication");
-    assert_eq!(events.last().unwrap()["message"], "authentication failed");
+    // Names the selection that failed, never the provider's own error text.
+    assert_eq!(
+        events.last().unwrap()["message"],
+        "authentication failed for openai (auth: api-key); run /login openai"
+    );
     assert!(!stdout(&output).contains("fixture-secret"));
     assert!(!stderr(&output).contains("fixture-secret"));
 }

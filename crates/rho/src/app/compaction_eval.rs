@@ -511,7 +511,11 @@ pub(super) fn load_eval_config(cli: &Cli) -> anyhow::Result<Config> {
     config.providers.activate()?;
     let config_path = super::bootstrap::absolute_config_path(&repository)?;
     crate::credential_store::initialize_from_config(&mut config, &config_path)?;
-    super::cli_config::apply_overrides_allowing_empty_cache(&mut config, cli)?;
+    super::cli_config::apply_overrides_allowing_empty_cache(
+        &mut config,
+        cli,
+        &crate::credential_store::AppCredentialStore,
+    )?;
     Ok(config)
 }
 
@@ -522,13 +526,19 @@ pub(super) fn split_reference(reference: &str) -> anyhow::Result<(&str, &str)> {
         .ok_or_else(|| anyhow::anyhow!("expected provider/model, got '{reference}'"))
 }
 
-/// The configured auth for the current provider, else the provider's first.
+/// The configured auth for the current provider, else a mode of `provider`
+/// with stored credentials, else the provider's first.
 pub(super) fn default_auth(config: &Config, provider: &str) -> String {
     if provider == config.provider {
         return config.auth.clone();
     }
     rho_providers::provider::provider_descriptor(provider)
-        .map(|descriptor| descriptor.default_auth().id.to_string())
+        .map(|descriptor| {
+            descriptor
+                .discovery_auth(&crate::credential_store::AppCredentialStore)
+                .id
+                .to_string()
+        })
         .unwrap_or_else(|| config.auth.clone())
 }
 
