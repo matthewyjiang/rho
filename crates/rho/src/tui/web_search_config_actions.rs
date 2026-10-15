@@ -39,6 +39,10 @@ impl App {
             None
         };
         agent.apply_web_search(config, provider).await?;
+        if hosted_changed {
+            // A new provider and tool list: the old route's prefix is gone.
+            self.cache_warm_provider_replaced();
+        }
         self.set_status("web search settings applied");
         Ok(())
     }
