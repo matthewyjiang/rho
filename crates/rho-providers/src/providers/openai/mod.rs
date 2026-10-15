@@ -37,6 +37,16 @@ pub fn supports_async_tools(provider: &str, model: &str) -> bool {
     matches!(provider, "openai" | "openai-codex") && is_gpt6_astra(model)
 }
 
+/// Returns whether changing reasoning effort keeps the cached prompt prefix.
+///
+/// First-party `gpt-6-astra` carries effort changes as `configuration_update`
+/// input items instead of rewriting request-level effort, so the prefix the
+/// provider cached stays valid. Everywhere else effort is part of the prefix.
+pub fn reasoning_change_preserves_prefix(provider: &str, model: &str) -> bool {
+    matches!(provider, "openai" | "openai-codex")
+        && configuration_update::preserves_prefix_for(model)
+}
+
 pub(super) fn is_gpt6_astra(model: &str) -> bool {
     model == "gpt-6-astra"
 }

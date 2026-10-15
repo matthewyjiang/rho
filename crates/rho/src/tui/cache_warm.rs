@@ -352,6 +352,18 @@ impl App {
         self.reset_cache_warm();
     }
 
+    /// A reasoning-only provider rebuild. Where effort changes keep the cached
+    /// prefix, warming carries on; elsewhere effort is part of the prefix and
+    /// this resets like a model switch.
+    pub(super) fn cache_warm_reasoning_changed(&mut self) {
+        if !rho_providers::providers::openai::reasoning_change_preserves_prefix(
+            &self.info.runtime.provider,
+            &self.info.runtime.model,
+        ) {
+            self.cache_warm_provider_replaced();
+        }
+    }
+
     /// Shows the ping counter unless another status is up. Returns whether
     /// the status changed.
     fn sync_cache_warm_status(&mut self) -> bool {
