@@ -9,7 +9,7 @@ mod tool;
 mod tool_search;
 
 pub(crate) use bridge::CODEMODE_TOOL_NAME;
-pub(crate) use exposure::{CodeModeSurface, ToolCatalogEntry};
+pub(crate) use exposure::CodeModeSurface;
 pub(crate) use tool_search::TOOL_SEARCH_NAME;
 
 #[cfg(test)]

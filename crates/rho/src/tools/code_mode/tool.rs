@@ -30,7 +30,8 @@ There is no `tools` namespace.
 `\"data\"` (the tool's structured value or None). Check `\"is_error\"` before using a result \
 and check that `\"data\"` is not None before indexing it.
 - `list_tools()` and `search_tools(query)` return `[{name, description}]`; `describe_tool(name)` \
-adds the parameter and return schemas.
+adds the `parameters` schema and the `returns` schema of a successful result's `\"data\"` \
+(None for text-only tools).
 - Output: `print()` lines, then the global `result` as JSON. Other variable names are your choice.
 - Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
 or exceptions. At most 64 nested calls per script.

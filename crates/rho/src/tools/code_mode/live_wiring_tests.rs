@@ -175,7 +175,6 @@ async fn nested_outcomes_preserve_values_and_failure_status() {
         let mut probe = StubTool::output(ToolOutput::text(""));
         probe.outcome = outcome;
         let surface = surface(vec![Arc::new(probe)]);
-        let schema = surface.search("probe", 1).remove(0).returns;
         let host = ToolHost::builder()
             .tool(CodeModeTool::new(surface))
             .build()
@@ -184,10 +183,6 @@ async fn nested_outcomes_preserve_values_and_failure_status() {
             .await
             .map_err(|_| ());
         if let Ok(value) = &actual {
-            jsonschema::validator_for(&schema)
-                .unwrap()
-                .validate(value)
-                .unwrap();
             assert_eq!(
                 script(
                     &host,
@@ -242,8 +237,10 @@ impl Tool for DiscoveryTool {
     }
 }
 
-// Covers: discovery includes complete argument contracts, and execution shares
-// its inventory; orchestration is not a sibling and recursive calls fail.
+// Covers: tool_search hits summarize arguments (required first, optional
+// marked `?`) in text and data alike, describe_tool keeps the complete
+// contract, and execution shares the inventory; orchestration is not a
+// sibling and recursive calls fail.
 // Owner: codemode discovery / ToolHost bridge.
 #[tokio::test]
 async fn discovery_matches_callable_siblings() {
@@ -252,7 +249,11 @@ async fn discovery_matches_callable_siblings() {
     // Publishing the complete app inventory must not introduce an Arc cycle.
     let parameters = json!({
         "type": "object",
-        "properties": {"title": {"type": "string", "minLength": 1}},
+        "properties": {
+            "title": {"type": "string", "minLength": 1},
+            "body": {"type": "string"},
+            "labels": {"type": "array", "items": {"type": "string"}},
+        },
         "required": ["title"],
         "additionalProperties": false,
     });
@@ -286,7 +287,7 @@ async fn discovery_matches_callable_siblings() {
         ))
         .await
         .unwrap();
-    // Script discovery returns compact rows; tool_search keeps full entries.
+    // Discovery stays compact; only describe_tool carries schemas.
     assert_eq!(
         (listed, searched.clone()),
         (
@@ -294,13 +295,16 @@ async fn discovery_matches_callable_siblings() {
             json!([{"name": "mcp__github__create_issue", "description": "fixture sibling"}]),
         )
     );
-    let expected = json!([{
+    let hits = json!([{
         "name": "mcp__github__create_issue",
         "description": "fixture sibling",
-        "parameters": parameters,
-        "returns": super::script_output::schema(/*data_schema*/ None),
+        "parameters": ["title", "body?", "labels?"],
     }]);
-    assert_eq!(discovered.structured_content(), Some(&expected));
+    assert_eq!(discovered.structured_content(), Some(&hits));
+    assert_eq!(
+        serde_json::from_str::<Value>(discovered.content()).unwrap(),
+        hits
+    );
     // A miss keeps empty data but must not read as a bare `[]` to the model,
     // which took that as "MCP server not connected" and gave up.
     let missed = host
@@ -319,7 +323,12 @@ async fn discovery_matches_callable_siblings() {
         )
         .await
         .unwrap(),
-        expected
+        json!([{
+            "name": "mcp__github__create_issue",
+            "description": "fixture sibling",
+            "parameters": parameters,
+            "returns": null,
+        }])
     );
     let discovery_schema = orchestration[1].output_schema().unwrap();
     jsonschema::validator_for(&discovery_schema)
@@ -393,7 +402,7 @@ fn discovery_refreshes_live_definitions_without_resync() {
         name: revised.spec.name,
         description: revised.spec.description,
         parameters: revised.spec.input_schema,
-        returns: super::script_output::schema(revised.output_schema),
+        returns: revised.output_schema,
     };
     assert_eq!(
         surface.search(&expected.description, 1),

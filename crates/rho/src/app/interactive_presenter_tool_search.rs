@@ -1,18 +1,26 @@
 //! `tool_search` cards: the query, a hit count, and one `name · description`
-//! row per hit. The raw output carries full parameter and return schemas the
-//! model needs but a reader does not.
+//! row per hit. Parameter summaries are for the model, not a reader.
 
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::format::{push_error_output, quoted, split_body_lines, string_arg, truncate};
-use crate::tools::code_mode::{ToolCatalogEntry, TOOL_SEARCH_NAME};
+use crate::tools::code_mode::TOOL_SEARCH_NAME;
 
 /// Header query budget, matching `get_search_content`.
 const QUERY_MAX_CHARS: usize = 80;
 /// Description budget per hit row. A 100-column pane leaves ~96 columns after
 /// the card indent; MCP names run ~25-30 chars, so 60 keeps a hit on one row.
 const DESCRIPTION_MAX_CHARS: usize = 60;
+
+/// The hit fields a card shows. Other fields are ignored, so replays of older
+/// sessions, whose hits carried full schemas, still render as rows.
+#[derive(Deserialize)]
+struct Hit {
+    name: String,
+    description: String,
+}
 
 pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
     let primary = string_arg(arguments, "query")
@@ -33,7 +41,7 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> ToolC
         push_error_output(&mut card, content);
         return card;
     }
-    match serde_json::from_str::<Vec<ToolCatalogEntry>>(content) {
+    match serde_json::from_str::<Vec<Hit>>(content) {
         Ok(hits) if !hits.is_empty() => {
             let count = hits.len() as u64;
             card.push_fact(ToolFact::Count {
@@ -49,7 +57,7 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> ToolC
 }
 
 /// `name · first sentence`, so long tool docs stay one row.
-fn hit_row(hit: &ToolCatalogEntry) -> String {
+fn hit_row(hit: &Hit) -> String {
     let first = hit
         .description
         .split_once(". ")

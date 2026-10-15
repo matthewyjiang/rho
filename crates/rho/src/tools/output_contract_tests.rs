@@ -129,12 +129,12 @@ async fn built_in_script_results_match_advertised_schemas() {
             .await
             .unwrap();
         let result = &output.structured_content().unwrap()["return_value"];
-        jsonschema::validator_for(&entry.returns)
-            .unwrap()
-            .validate(result)
-            .unwrap();
         assert_eq!(result["is_error"], false, "{name}: {result}");
         assert!(!result["data"].is_null(), "{name}: {result}");
+        jsonschema::validator_for(&entry.returns.unwrap())
+            .unwrap()
+            .validate(&result["data"])
+            .unwrap();
     }
     manager.shutdown().await;
 }
