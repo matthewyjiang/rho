@@ -1,12 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
-    StopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ContentBlock, ContentChunk, SessionId, SessionNotification, SessionUpdate, StopReason,
+    ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use rho_sdk::{
-    model::Message,
     tool::{OperationKind, ToolMetadata, ToolOutput},
     RunEvent, ToolCompletion,
 };
@@ -20,8 +19,9 @@ use crate::{
 const PROVIDER_STREAM_RESET_NOTICE: &str = "[provider response discarded; retrying]";
 /// Title for a tool call whose name the mapper never saw proposed.
 const UNNAMED_TOOL_TITLE: &str = "tool";
-/// `_meta` key that marks a notification as history replayed by `session/load`.
-const REPLAY_META_KEY: &str = "isReplay";
+
+#[path = "events_replay.rs"]
+mod replay;
 
 /// Maps one prompt's SDK events onto ACP session updates.
 ///
@@ -200,14 +200,7 @@ impl EventMapper {
         session_id: &SessionId,
         messages: &[rho_sdk::model::Message],
     ) -> Vec<SessionNotification> {
-        // Hosts that persist their own transcript (T3 Code) skip updates
-        // marked as replay, so loading a session does not duplicate history.
-        let meta = serde_json::Map::from_iter([(REPLAY_META_KEY.to_string(), Value::Bool(true))]);
-        messages
-            .iter()
-            .flat_map(|message| replay_message(session_id, message))
-            .map(|notification| notification.meta(meta.clone()))
-            .collect()
+        replay::history(session_id, messages)
     }
 
     /// A live agent message outside any run, such as a notice at load.
@@ -350,94 +343,6 @@ fn display_row_call(row: &DisplayRow) -> ToolCall {
             .raw_output(Value::String(text.plain));
     }
     call
-}
-
-fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotification> {
-    use rho_sdk::model::SemanticMessage;
-    match message.semantic() {
-        SemanticMessage::ToolImageSupplement(images) => {
-            let content = images
-                .images()
-                .map(|image| {
-                    ToolCallContent::from(ContentBlock::Image(ImageContent::new(
-                        image.data.clone(),
-                        image.mime_type.clone(),
-                    )))
-                })
-                .collect::<Vec<_>>();
-            vec![notify(
-                session_id,
-                SessionUpdate::ToolCall(
-                    ToolCall::new(ToolCallId::new(images.tool_call_id()), images.tool_name())
-                        .name(images.tool_name().to_owned())
-                        .status(ToolCallStatus::Completed)
-                        .content(content),
-                ),
-            )]
-        }
-        SemanticMessage::User(blocks) => replay_blocks(session_id, ReplayRole::User, blocks),
-        SemanticMessage::Assistant(blocks) => replay_blocks(session_id, ReplayRole::Agent, blocks),
-        SemanticMessage::EnrichedAssistant(message) => {
-            let mut notifications = replay_blocks(session_id, ReplayRole::Agent, &message.content);
-            if let Some(summary) = message
-                .reasoning_summary
-                .as_deref()
-                .filter(|summary| !summary.is_empty())
-            {
-                notifications.push(notify(
-                    session_id,
-                    SessionUpdate::AgentThoughtChunk(text_chunk(summary)),
-                ));
-            }
-            notifications
-        }
-        SemanticMessage::AbortedAssistant(message) => {
-            replay_blocks(session_id, ReplayRole::Agent, &message.content)
-        }
-        SemanticMessage::System(text) => DisplayTranscript::from_display(text)
-            .map(|transcript| EventMapper::display_transcript(session_id, &transcript))
-            .unwrap_or_default(),
-        SemanticMessage::ToolResult(_) => Vec::new(),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ReplayRole {
-    User,
-    Agent,
-}
-
-fn replay_blocks(
-    session_id: &SessionId,
-    role: ReplayRole,
-    blocks: &[rho_sdk::model::ContentBlock],
-) -> Vec<SessionNotification> {
-    blocks
-        .iter()
-        .filter_map(|block| replay_block(block).map(|content| chunk_for(role, content)))
-        .map(|update| notify(session_id, update))
-        .collect()
-}
-
-fn replay_block(block: &rho_sdk::model::ContentBlock) -> Option<ContentBlock> {
-    match block {
-        rho_sdk::model::ContentBlock::Text(text) if !text.is_empty() => {
-            Some(ContentBlock::from(text.clone()))
-        }
-        rho_sdk::model::ContentBlock::Image(image) => Some(ContentBlock::Image(ImageContent::new(
-            image.data.clone(),
-            image.mime_type.clone(),
-        ))),
-        rho_sdk::model::ContentBlock::Text(_) | rho_sdk::model::ContentBlock::ToolCall(_) => None,
-    }
-}
-
-fn chunk_for(role: ReplayRole, content: ContentBlock) -> SessionUpdate {
-    let chunk = ContentChunk::new(content);
-    match role {
-        ReplayRole::User => SessionUpdate::UserMessageChunk(chunk),
-        ReplayRole::Agent => SessionUpdate::AgentMessageChunk(chunk),
-    }
 }
 
 #[cfg(test)]

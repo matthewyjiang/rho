@@ -3,7 +3,7 @@ use agent_client_protocol::schema::v1::{
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock as SdkContentBlock, Message, ToolCall},
+    model::ToolCall,
     tool::{OperationKind, ToolMetadata, ToolOutput, ToolProgress},
     ProviderStreamResetReason, Revision, RunEvent, RunId, ToolCallId, ToolCompletion,
 };
@@ -225,43 +225,6 @@ fn map_stop_maps_sdk_stop_reasons() {
     ];
     for (sdk, expected) in cases {
         assert_eq!(map_sdk_stop_reason(sdk), expected);
-    }
-}
-
-// Covers: load_session replay must emit user/assistant text marked as replay and skip tool-only rows
-// Owner: acp event mapper
-#[test]
-fn replay_history_emits_user_and_assistant_text() {
-    let notifications = EventMapper::replay_history(
-        &session_id(),
-        &[
-            Message::user_text("hello"),
-            Message::assistant_text("world"),
-            Message::Assistant(vec![SdkContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "read".into(),
-                arguments: json!({}),
-            })]),
-        ],
-    );
-    assert_eq!(notifications.len(), 2);
-    for notification in &notifications {
-        assert_eq!(
-            notification.meta,
-            Some(serde_json::Map::from_iter([(
-                "isReplay".into(),
-                json!(true)
-            )])),
-            "replayed history must be marked so hosts with their own transcript skip it"
-        );
-    }
-    match &notifications[0].update {
-        SessionUpdate::UserMessageChunk(chunk) => assert_eq!(text_of(&chunk.content), "hello"),
-        other => panic!("expected UserMessageChunk, got {other:?}"),
-    }
-    match &notifications[1].update {
-        SessionUpdate::AgentMessageChunk(chunk) => assert_eq!(text_of(&chunk.content), "world"),
-        other => panic!("expected AgentMessageChunk, got {other:?}"),
     }
 }
 
