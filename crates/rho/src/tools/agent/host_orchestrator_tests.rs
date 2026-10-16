@@ -5,11 +5,12 @@ use crate::agent::{
     AgentId, AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
 };
 
-// Covers: a partial connection or another server with similarly named tools
-// must not switch the session away from native delegation. Owner: host detection.
+// Covers: `--t3code` binds only the complete tool set from the `t3-code`
+// server; a partial connection or another server's tools fail the session
+// instead of delegating to the wrong place. Owner: host connection.
 #[test]
-fn detection_requires_the_complete_named_host_contract() {
-    for (server, remote_tools, detected) in [
+fn connection_requires_the_complete_named_host_contract() {
+    for (server, remote_tools, connects) in [
         (
             "t3-code",
             vec!["delegate_task", "task_status", "task_cancel"],
@@ -27,7 +28,7 @@ fn detection_requires_the_complete_named_host_contract() {
         let mut tools = AppToolSet::disabled();
         tools.add_bundle(crate::tools::sdk_registry::StaticToolBundle::new(
             remote_tools
-                .into_iter()
+                .iter()
                 .map(|name| {
                     Arc::new(rho_sdk::tool::ScriptedTool::new(
                         rho_sdk::model::ToolSpec {
@@ -40,7 +41,11 @@ fn detection_requires_the_complete_named_host_contract() {
                 })
                 .collect(),
         ));
-        assert_eq!(HostOrchestrator::detect(&tools).is_some(), detected);
+        assert_eq!(
+            HostOrchestrator::connect(&tools).is_ok(),
+            connects,
+            "{server} {remote_tools:?}"
+        );
     }
 }
 

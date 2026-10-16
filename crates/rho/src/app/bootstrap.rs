@@ -130,8 +130,9 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         })
         .await;
     }
-    if matches!(cli.command, Some(Command::Acp)) {
+    if let Some(Command::Acp(args)) = &cli.command {
         return run_acp_startup(AcpCommandStartup {
+            host: acp::AcpHost::from_args(args),
             config,
             config_repository,
             cwd,
@@ -319,7 +320,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
 
     // Only automation, ACP, and interactive sessions reach here; every other
     // command dispatches early.
-    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
+    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp(_))) {
         AgentRole::AutomationRoot
     } else {
         AgentRole::InteractiveRoot
@@ -462,6 +463,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
 }
 
 struct AcpCommandStartup {
+    host: acp::AcpHost,
     config: crate::config::Config,
     config_repository: ConfigRepository,
     cwd: std::path::PathBuf,
@@ -474,6 +476,7 @@ struct AcpCommandStartup {
 async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
     let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
     acp::run(acp::AcpStartup {
+        host: startup.host,
         config: startup.config,
         config_path: absolute_config_path(&startup.config_repository)?,
         cwd: startup.cwd,

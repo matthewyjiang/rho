@@ -26,34 +26,20 @@ use crate::{
     tools::{agent_output::AgentRunView, sdk_registry::AppToolSet},
 };
 
-/// ACP-only hook, called after MCP attachment. Missing host tools or a session
-/// without native launch capability leave the inventory unchanged. A supplied
-/// catalog must have been discovered for `cwd`; absence rediscovers it.
+/// `rho acp --t3code` hook, called after MCP attachment: swaps the native
+/// `agent`/`agents` tools for T3-backed ones. A session without the native
+/// `agent` tool (a delegated child, `--no-subagents`) is left unchanged. Missing
+/// T3 tools or an unreadable agent catalog fail the session build.
 pub(crate) fn install_host_delegation(
-    mut tools: AppToolSet,
+    tools: &mut AppToolSet,
     cwd: &Path,
-    catalog: Option<Arc<AgentCatalog>>,
     max_output_bytes: usize,
-) -> AppToolSet {
+) -> anyhow::Result<()> {
     if !tools.contains("agent") {
-        return tools;
+        return Ok(());
     }
-    let Some(orchestrator) = HostOrchestrator::detect(&tools) else {
-        return tools;
-    };
-    let catalog = match catalog {
-        Some(catalog) => catalog,
-        None => match AgentCatalog::discover(cwd) {
-            Ok(catalog) => Arc::new(catalog),
-            Err(error) => {
-                // Keep native delegation rather than fail the session build;
-                // the native tool reports the catalog error when it is used.
-                tracing::warn!(%error, "could not load agents for host delegation");
-                return tools;
-            }
-        },
-    };
-    let orchestrator = Arc::new(orchestrator);
+    let orchestrator = Arc::new(HostOrchestrator::connect(tools)?);
+    let catalog = AgentCatalog::discover(cwd)?;
     let agent = HostAgentTool::new(
         orchestrator.clone(),
         cwd,
@@ -68,7 +54,7 @@ pub(crate) fn install_host_delegation(
             max_output_bytes,
         }),
     ]);
-    tools
+    Ok(())
 }
 
 struct HostAgentTool {

@@ -92,7 +92,7 @@ impl Fixture {
             .collect(),
         ));
         Self {
-            orchestrator: Arc::new(HostOrchestrator::detect(&tools).unwrap()),
+            orchestrator: Arc::new(HostOrchestrator::connect(&tools).unwrap()),
             calls,
             catalog: catalog(),
         }
@@ -252,4 +252,37 @@ async fn external_runtime_is_not_advertised_or_launched() {
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
     assert_eq!(*fixture.calls.lock().unwrap(), Vec::new());
     assert!(fixture.orchestrator.runs().is_empty());
+}
+
+// Covers: under `--t3code`, a root session without T3's task tools must fail to
+// start rather than silently keep in-process subagents, while a session with no
+// native `agent` tool (a T3 child after `/agent:`) needs no T3 tools at all.
+// Owner: host delegation installer.
+#[test]
+fn installer_fails_loud_only_when_delegation_is_possible() {
+    for (native_agent, installs) in [(false, true), (true, false)] {
+        let mut tools = AppToolSet::disabled();
+        if native_agent {
+            tools.add_bundle(StaticToolBundle::new(vec![
+                Arc::new(rho_sdk::tool::ScriptedTool::new(
+                    ToolSpec {
+                        name: "agent".into(),
+                        description: String::new(),
+                        input_schema: json!({"type": "object"}),
+                    },
+                    rho_sdk::tool::ScriptedToolOutcome::Success(ToolOutput::text("native")),
+                )) as Arc<dyn Tool>,
+            ]));
+        }
+        let before = tools.specs();
+
+        let result = install_host_delegation(
+            &mut tools,
+            Path::new("."),
+            rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        );
+
+        assert_eq!(result.is_ok(), installs, "native agent: {native_agent}");
+        assert_eq!(tools.specs(), before);
+    }
 }

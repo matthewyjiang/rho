@@ -26,8 +26,29 @@ use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporte
 use super::agent_binding::BoundAgent;
 use agent::RhoAcpAgent;
 
+/// The ACP client Rho integrates with, chosen at launch rather than inferred
+/// from the tools a host happens to offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AcpHost {
+    /// Any ACP client. Subagents run in-process.
+    Generic,
+    /// T3 Code (`rho acp --t3code`). Subagents run as T3 child threads.
+    T3Code,
+}
+
+impl AcpHost {
+    pub(super) fn from_args(args: &crate::cli::AcpArgs) -> Self {
+        if args.t3code {
+            Self::T3Code
+        } else {
+            Self::Generic
+        }
+    }
+}
+
 /// Prepared process state for a `rho acp` stdio server.
 pub(super) struct AcpStartup {
+    pub(super) host: AcpHost,
     pub(super) config: Config,
     pub(super) config_path: PathBuf,
     pub(super) cwd: PathBuf,
@@ -72,6 +93,7 @@ impl AcpStartup {
         )
         .expect("bind test agent");
         Self {
+            host: AcpHost::Generic,
             diagnostics: RuntimeDiagnostics::new(&config),
             config,
             config_path: cwd.join("rho-test-config.toml"),

@@ -35,21 +35,20 @@ pub(super) struct HostRun {
 }
 
 impl HostOrchestrator {
-    /// All three tools must come from the named server; partial connections
-    /// leave native delegation intact. Use the encoder even for server names.
-    pub(super) fn detect(tools: &AppToolSet) -> Option<Self> {
+    /// Binds T3's three task tools from the `t3-code` server. The user opted in
+    /// with `--t3code`, so a missing tool is a broken setup, not a fallback.
+    pub(super) fn connect(tools: &AppToolSet) -> anyhow::Result<Self> {
         let lookup = |name| {
-            let tool = tools.tool_named(&namespaced_tool_name(SERVER, name));
-            if tool.is_none() {
-                tracing::debug!(
-                    server = SERVER,
-                    tool = name,
-                    "host delegation tool unavailable"
-                );
-            }
-            tool
+            tools
+                .tool_named(&namespaced_tool_name(SERVER, name))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--t3code needs tool `{name}` from MCP server `{SERVER}`, which \
+                         did not provide it; is Rho running inside T3 Code?"
+                    )
+                })
         };
-        Some(Self {
+        Ok(Self {
             delegate: lookup("delegate_task")?,
             status: lookup("task_status")?,
             cancel: lookup("task_cancel")?,

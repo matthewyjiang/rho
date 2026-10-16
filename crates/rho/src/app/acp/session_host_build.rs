@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use agent_client_protocol::schema::v1::SessionModeState;
 use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
 
-use super::super::{permission, AcpStartup};
+use super::super::{permission, AcpHost, AcpStartup};
 use crate::{
     added_dirs::AddedDirs,
     app::{
@@ -34,7 +34,8 @@ pub(super) async fn build_session(
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<SessionAssembly> {
     ensure_headless_auto_classifier_model(config)?;
-    assemble_session(SessionAssemblyOptions {
+    let mut host_tools: anyhow::Result<()> = Ok(());
+    let assembly = assemble_session(SessionAssemblyOptions {
         config,
         config_path: startup.config_path.clone(),
         cwd: workspace,
@@ -52,15 +53,19 @@ pub(super) async fn build_session(
         usage_parent_session_id: None,
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         added_dirs,
-        // Inside a host that runs children itself (T3 Code), the `agent` tool
-        // delegates to the host so its UI owns them; otherwise this is a no-op.
-        extend_tools: |tools| {
-            crate::tools::agent::install_host_delegation(
-                tools,
-                workspace,
-                /*catalog*/ None,
-                config.max_output_bytes,
-            )
+        // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
+        extend_tools: |mut tools| {
+            match startup.host {
+                AcpHost::Generic => {}
+                AcpHost::T3Code => {
+                    host_tools = crate::tools::agent::install_host_delegation(
+                        &mut tools,
+                        workspace,
+                        config.max_output_bytes,
+                    );
+                }
+            }
+            tools
         },
         system_prompt_suffix: None,
         approval: |inputs: ApprovalInputs| {
@@ -82,7 +87,12 @@ pub(super) async fn build_session(
         },
         session_options,
     })
-    .await
+    .await?;
+    if let Err(error) = host_tools {
+        assembly.built.teardown().await;
+        return Err(error);
+    }
+    Ok(assembly)
 }
 
 pub(super) fn mode_state(mode: PermissionMode) -> SessionModeState {

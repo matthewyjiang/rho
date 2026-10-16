@@ -75,6 +75,7 @@ fn startup(cwd: &Path) -> AcpStartup {
     )
     .unwrap();
     AcpStartup {
+        host: crate::app::acp::AcpHost::Generic,
         diagnostics: RuntimeDiagnostics::new(&config),
         config,
         config_path: cwd.join("config.toml"),

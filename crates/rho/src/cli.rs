@@ -287,7 +287,7 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
         json: bool,
     },
     /// Serve the Agent Client Protocol over stdio for editor/host integration.
-    Acp,
+    Acp(AcpArgs),
     /// Internal supervised workflow planner worker. Not a public command.
     #[command(name = "__workflow_planner_worker", hide = true)]
     WorkflowPlannerWorker,
@@ -304,6 +304,15 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
     #[cfg(debug_assertions)]
     #[command(name = "__acp-fixture-agent", hide = true)]
     AcpFixtureAgent(AcpFixtureAgentArgs),
+}
+
+/// Options for `rho acp`.
+#[derive(clap::Args, Debug, Default)]
+pub struct AcpArgs {
+    /// Integrate with T3 Code: subagents run as T3 child threads through its
+    /// `t3-code` MCP server. Sessions fail to start if those tools are missing.
+    #[arg(long)]
+    pub t3code: bool,
 }
 
 /// Inputs for the debug-only scripted ACP agent.

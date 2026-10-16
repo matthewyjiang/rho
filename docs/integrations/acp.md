@@ -17,7 +17,7 @@ flowchart TD
 rho acp
 ```
 
-The process uses the model, provider, and other flags from the command line and config. There is no extra host plugin inside Rho.
+The process uses the model, provider, and other flags from the command line and config. Host-specific integrations are opt-in flags; see [T3 Code](#t3-code).
 
 stdout is protocol only. Logs go to stderr. Do not write other text to stdout, and do not point a logger at stdout while a host is connected.
 
@@ -84,6 +84,7 @@ Right after each `session/new` and `session/load` response, Rho sends an `availa
 | `/init` | Surveys the repository and writes `AGENTS.md` through the `rho-init` skill, as in the TUI. Refused in `plan` mode or without the skill, write, and file-edit tools. |
 | `/prompt:<name> [args]` | Expands a [prompt template](/configuration#prompt-templates) and runs it as the turn. |
 | `/mcp:<server>:<prompt> [args]` | Fetches an MCP server prompt and runs it as the turn. Arguments follow the TUI rules. |
+| `/agent:<name> <task>` | Turns a new session into the [agent](/subagents) `<name>` and runs `<task>` as its first prompt. The session takes that agent's prompt, tools, and model, and keeps them when loaded again. Only a session with no conversation yet accepts it; a later one fails with an invalid-params error. Hosts that run subagents themselves, such as [T3 Code](#t3-code), start children this way. |
 | `/workflow:<name> [inputs JSON]` | Starts a workspace [workflow](/workflows#start-a-workflow-by-name) in the background and ends the prompt without a model turn. The run id is added to context, so the model can check on it later. Listed only when the active agent has the `workflow` tool; refused in plan mode. Inputs are one JSON object, such as `/workflow:review {"target": "src"}`; omitted inputs use their defaults. ACP has no way for the agent to start a turn, so the result reaches the model at the next prompt. That prompt does not wait for a run that is still going. |
 
 The session saves the command as typed, not its expansion. Other TUI commands, such as `/model`, fail with an invalid-params error that names the command. Text that names no command, such as `/usr/bin` or an unknown template, reaches the model unchanged.
@@ -93,6 +94,20 @@ The session saves the command as typed, not its expansion. Other TUI commands, s
 When the active agent has the `skill` tool, the update also lists one `$<name>` command per discovered [skill](/skills), using the skill's description. Hosts such as T3 Code list these in their `$` menu. Rho leaves out names a host would read as amounts, such as `$20k`.
 
 A model turn that mentions known skills as whitespace-delimited `$<name>` tokens loads each of them before the first model request, following the same [mention rule](/skills#load-a-skill-yourself) as the TUI. A prompt that starts with `/$<name>`, as a client that prefixes every picked command with `/` sends it, loads that skill first. Any currency symbol works as the sigil. Every mentioned skill loads once, in mention order, as one batch of `skill` tool calls, and the host sees one `tool_call` update per skill.
+
+## T3 Code
+
+Launch Rho in T3 Code with `--t3code`:
+
+```bash
+rho acp --t3code
+```
+
+Subagents then run as T3 threads, so they appear in T3's subagent panel and keep running after the parent's prompt ends. The `agent` tool starts each child through the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as its first prompt. `agents` maps `status` and `stop` to T3's `task_status` and `task_cancel`. It has no `message` action. T3 delivers a finished child's result to the parent as a new turn, so a waiting child does not hold the parent's prompt open.
+
+Only agents with Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected. Workflows still run inside Rho.
+
+A session fails to start if any of the three T3 tools is missing. Without `--t3code`, Rho never uses T3's task tools for delegation, even when T3's MCP server is attached.
 
 ## MCP
 
