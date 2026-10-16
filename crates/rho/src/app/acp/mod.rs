@@ -8,6 +8,7 @@ mod permission;
 mod session_host;
 mod signals;
 mod skills;
+mod t3_wake;
 mod thought_level;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
