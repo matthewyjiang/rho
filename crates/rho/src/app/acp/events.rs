@@ -12,6 +12,11 @@ use rho_sdk::{
 };
 use serde_json::Value;
 
+use crate::{
+    display_transcript::{DisplayRow, DisplayTranscript},
+    presentation::NotificationTone,
+};
+
 const PROVIDER_STREAM_RESET_NOTICE: &str = "[provider response discarded; retrying]";
 /// `_meta` key that marks a notification as history replayed by `session/load`.
 const REPLAY_META_KEY: &str = "isReplay";
@@ -145,6 +150,20 @@ impl EventMapper {
             SessionUpdate::AgentMessageChunk(text_chunk(text)),
         )
     }
+
+    /// Background results the model was given, one finished tool call card
+    /// per display row. Cards keep them out of the agent's message text, and
+    /// hosts already render them beside the tool calls that started the work.
+    pub(super) fn display_transcript(
+        session_id: &SessionId,
+        transcript: &DisplayTranscript,
+    ) -> Vec<SessionNotification> {
+        transcript
+            .0
+            .iter()
+            .map(|row| notify(session_id, SessionUpdate::ToolCall(display_row_call(row))))
+            .collect()
+    }
 }
 
 fn map_sdk_stop_reason(reason: rho_sdk::StopReason) -> StopReason {
@@ -233,6 +252,30 @@ fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {
     content
 }
 
+fn display_row_call(row: &DisplayRow) -> ToolCall {
+    let status = match row {
+        DisplayRow::Notification(card) => match card.tone {
+            NotificationTone::Error => ToolCallStatus::Failed,
+            NotificationTone::Neutral
+            | NotificationTone::Accent
+            | NotificationTone::Success
+            | NotificationTone::Warning => ToolCallStatus::Completed,
+        },
+        DisplayRow::Notice(_) => ToolCallStatus::Completed,
+    };
+    let (title, body) = row.card_text();
+    // Rows carry no stable identity of their own; a fresh id per card keeps
+    // hosts from merging two deliveries about the same run.
+    let id = format!("rho-notice-{}", uuid::Uuid::new_v4());
+    let mut call = ToolCall::new(ToolCallId::new(id), title)
+        .kind(ToolKind::Other)
+        .status(status);
+    if !body.trim().is_empty() {
+        call = call.content(vec![ToolCallContent::from(body)]);
+    }
+    call
+}
+
 fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotification> {
     use rho_sdk::model::SemanticMessage;
     match message.semantic() {
@@ -275,16 +318,9 @@ fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotif
         SemanticMessage::AbortedAssistant(message) => {
             replay_blocks(session_id, ReplayRole::Agent, &message.content)
         }
-        SemanticMessage::System(text) => {
-            crate::display_transcript::DisplayTranscript::from_display(text)
-                .map(|transcript| {
-                    vec![notify(
-                        session_id,
-                        SessionUpdate::AgentMessageChunk(text_chunk(transcript.plain_text())),
-                    )]
-                })
-                .unwrap_or_default()
-        }
+        SemanticMessage::System(text) => DisplayTranscript::from_display(text)
+            .map(|transcript| EventMapper::display_transcript(session_id, &transcript))
+            .unwrap_or_default(),
         SemanticMessage::ToolResult(_) => Vec::new(),
     }
 }

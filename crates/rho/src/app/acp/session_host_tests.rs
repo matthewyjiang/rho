@@ -259,6 +259,7 @@ async fn permission_request_does_not_block_event_drain() {
             events: &mut EventSource::Channel(&mut event_rx),
             approvals: &mut ApprovalSource::Channel(&mut approval_rx),
             approvals_open: true,
+            displays: None,
         })
         .await
     });
