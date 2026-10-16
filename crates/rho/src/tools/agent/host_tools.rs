@@ -133,7 +133,8 @@ impl HostAgentTool {
                 return Err(ToolError::new(
                     ToolErrorKind::InvalidArguments,
                     format!(
-                        "{} runs on {}, which a host-managed Rho ACP child cannot host",
+                        "{} runs on {}, which a host-managed Rho ACP child cannot host; \
+                         call T3's delegate_task tool directly to start another provider",
                         definition.id,
                         definition.runtime.runtime()
                     ),
