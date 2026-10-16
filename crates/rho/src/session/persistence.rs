@@ -72,7 +72,10 @@ impl SessionStore {
         index::reconcile_all_workspaces(&self.root)?;
         let global = index::matching_sessions_any_workspace(&self.root, id_prefix)?;
         let Some((path, cwd)) = single_match(&global, id_prefix)? else {
-            anyhow::bail!("no session found matching '{id_prefix}'");
+            return Err(NoSessionFound {
+                id_prefix: id_prefix.to_owned(),
+            }
+            .into());
         };
         Ok(ResolvedSession {
             id: session_id(path)?,
@@ -839,6 +842,13 @@ pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
 
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
 /// Returns `None` when nothing matched.
+/// No saved session in any workspace matches the requested id or prefix.
+#[derive(Debug, thiserror::Error)]
+#[error("no session found matching '{id_prefix}'")]
+pub(crate) struct NoSessionFound {
+    id_prefix: String,
+}
+
 fn single_match<'a, T>(matches: &'a [T], id_prefix: &str) -> anyhow::Result<Option<&'a T>> {
     match matches {
         [] => Ok(None),

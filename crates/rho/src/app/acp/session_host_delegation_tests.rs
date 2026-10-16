@@ -15,7 +15,7 @@ use rho_sdk::{
 };
 use tokio::sync::mpsc;
 
-use super::{mode::SessionPermission, SessionHost};
+use super::{mode::SessionPermission, persist::HostStorage, SessionHost};
 use crate::{
     app::{
         acp::AcpClientPort,
@@ -127,7 +127,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     let mut host = SessionHost::from_built(
         SessionId::new(id.as_str()),
         built,
-        stored,
+        HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: config.permission_mode,

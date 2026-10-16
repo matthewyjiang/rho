@@ -30,9 +30,9 @@ impl SessionHost {
         startup: &AcpStartup,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let catalog = AgentCatalog::discover(self.stored.cwd())?;
+        let catalog = AgentCatalog::discover(self.storage.cwd())?;
         let definition = catalog.find(agent_id)?.definition.clone();
-        let cwd = self.stored.cwd().to_path_buf();
+        let cwd = self.storage.cwd().to_path_buf();
         let added_dirs = self.added_dirs.clone();
         self.run_as_agent_with(
             display,
@@ -103,10 +103,11 @@ impl SessionHost {
         };
         let id = self.built.session.id().clone();
         let assembly = build(bound.clone(), config.clone(), id).await?;
-        if let Err(error) = self
-            .stored
-            .rebind_fresh_delegated_agent(bound.id().as_str(), &bound.fingerprint().to_string())
-        {
+        let rebound = self.stored().and_then(|stored| {
+            stored
+                .rebind_fresh_delegated_agent(bound.id().as_str(), &bound.fingerprint().to_string())
+        });
+        if let Err(error) = rebound {
             assembly.built.teardown().await;
             return Err(error);
         }
@@ -117,7 +118,7 @@ impl SessionHost {
         self.auth = config.auth.clone();
         tracing::debug!(previous = %self.agent.id(), agent = %bound.id(), "rebound ACP agent");
         self.agent = bound;
-        self.built.tools.bind_recall(Some(&self.stored));
+        self.built.tools.bind_recall(self.storage.file());
         self.run_turn(display, task, Vec::new(), client).await
     }
 

@@ -15,6 +15,7 @@ use rho_sdk::{
 };
 
 use super::super::{mode::SessionPermission, SessionHost};
+use super::{HostStorage, SaveScope, TurnDisplay};
 use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
@@ -23,7 +24,7 @@ use crate::{
     config::Config,
     diagnostics::RuntimeDiagnostics,
     display_transcript::{DisplayRow, DisplayTranscript},
-    session::Session as StoredSession,
+    session::{NoSessionFound, Session as StoredSession},
     tools::{sdk_registry::AppToolSet, workflow_tracker::WorkflowFinishedSnapshot},
 };
 
@@ -46,30 +47,25 @@ impl AcpClientPort for SilentPort {
     }
 }
 
-/// A host on a fresh stored session whose model replies with `turns`.
-/// `before_prompt` sees the tools first, to queue work from an earlier prompt.
+/// A host on `provider` and `tools` whose session `id` is saved through
+/// `storage`.
 async fn host(
-    home: &std::path::Path,
-    turns: Vec<ScriptedTurn>,
-    before_prompt: impl FnOnce(&AppToolSet, &str),
-) -> (SessionHost, AcpStartup, String) {
-    let config = Config::default();
-    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
-        ModelIdentity::new("test", "test", "model"),
-        turns,
-    ));
+    workspace: &std::path::Path,
+    id: &str,
+    storage: HostStorage,
+    provider: Arc<dyn ModelProvider>,
+    tools: AppToolSet,
+    startup: &AcpStartup,
+) -> SessionHost {
+    let config = &startup.config;
     let runtime = rho_sdk::Rho::builder()
         .provider_shared(Arc::clone(&provider))
         .build()
         .unwrap();
-    let stored = StoredSession::create_in_root(home, home).unwrap();
-    let id = stored.id().to_owned();
     let session = runtime
-        .session(SessionOptions::new().id(rho_sdk::SessionId::from_string(&id).unwrap()))
+        .session(SessionOptions::new().id(rho_sdk::SessionId::from_string(id).unwrap()))
         .await
         .unwrap();
-    let tools = AppToolSet::disabled();
-    before_prompt(&tools, &id);
     let built = BuiltSession {
         runtime,
         session,
@@ -79,40 +75,31 @@ async fn host(
         approval_receiver: None,
         prompt_template: None,
         prompt: Default::default(),
-        diagnostics: RuntimeDiagnostics::new(&config),
+        diagnostics: RuntimeDiagnostics::new(config),
     };
-    let startup = AcpStartup::for_tests(config.clone(), home);
-    let host = SessionHost::from_built(
-        SessionId::new(id.as_str()),
+    SessionHost::from_built(
+        SessionId::new(id),
         built,
-        stored,
+        storage,
         Default::default(),
         SessionPermission {
             mode: config.permission_mode,
             writes: Default::default(),
-            workspace_root: home.to_path_buf(),
+            workspace_root: workspace.to_path_buf(),
         },
-        &startup,
+        startup,
         Vec::new(),
-    );
-    (host, startup, id)
+    )
 }
 
-/// Sends `text` as one prompt, expects the turn to fail, and shuts down.
-/// Returns the session id to reopen.
-async fn prompt_failing(
-    (mut host, startup, id): (SessionHost, AcpStartup, String),
+async fn send(
+    host: &mut SessionHost,
+    id: &str,
     text: &str,
-) -> String {
-    let request = PromptRequest::new(
-        SessionId::new(id.as_str()),
-        vec![AcpContentBlock::from(text)],
-    );
-    host.prompt(request, &SilentPort, &startup)
-        .await
-        .expect_err("the scripted provider fails");
-    host.shutdown().await;
-    id
+    startup: &AcpStartup,
+) -> anyhow::Result<()> {
+    let request = PromptRequest::new(SessionId::new(id), vec![AcpContentBlock::from(text)]);
+    host.prompt(request, &SilentPort, startup).await.map(drop)
 }
 
 fn provider_failure(message: &str) -> ScriptedTurn {
@@ -123,42 +110,111 @@ fn provider_failure(message: &str) -> ScriptedTurn {
     ))
 }
 
+/// The model history from the first user message on: what display should
+/// hold when display and model text agree.
+fn from_first_user(history: &[Message]) -> Vec<Message> {
+    let start = history
+        .iter()
+        .position(|message| matches!(message, Message::User(_)))
+        .expect("a user message");
+    history[start..].to_vec()
+}
+
+// Covers: hosts open sessions they never prompt (T3 Code's provider refresh),
+// and each must not leave an empty, unnamed row in /resume. The first prompt
+// creates the file with the whole turn.
+// Owner: ACP session host turn persistence
+#[tokio::test]
+async fn new_session_saves_nothing_until_its_first_prompt() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().to_path_buf();
+    let startup = AcpStartup::for_tests(Config::default(), &root);
+    let id = rho_sdk::SessionId::new().to_string();
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "model"),
+        vec![ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("hello back".into()),
+        ]))],
+    ));
+    let storage = {
+        let (root, id) = (root.clone(), id.clone());
+        HostStorage::unsaved(
+            root.clone(),
+            Box::new(move || StoredSession::create_with_id_in_root_for_test(&root, &root, &id)),
+        )
+    };
+    let mut host = host(
+        &root,
+        &id,
+        storage,
+        provider,
+        AppToolSet::disabled(),
+        &startup,
+    )
+    .await;
+
+    let unsaved = StoredSession::open_by_id_with_histories_in_root(&root, &root, &id)
+        .expect_err("no file before the first prompt");
+    assert!(unsaved.is::<NoSessionFound>(), "{unsaved:#}");
+
+    send(&mut host, &id, "hello", &startup).await.unwrap();
+    host.shutdown().await;
+
+    let (_, histories) =
+        StoredSession::open_by_id_with_histories_in_root(&root, &root, &id).unwrap();
+    assert_eq!(histories.display, from_first_user(&histories.model));
+    assert_eq!(histories.display.len(), 2, "{:?}", histories.display);
+}
+
 // Covers: a host that kills the agent mid-turn (T3 Code restarts) must still
-// find the user's message and the model's started work on session/load, though
-// the end-of-turn save never ran.
+// find the user's message and the model's started work, tool calls included,
+// on session/load and TUI resume, though the end-of-turn save never ran.
 // Owner: ACP session host turn persistence
 #[tokio::test]
 async fn unfinished_turn_is_on_disk_for_session_load() {
     let home = tempfile::tempdir().unwrap();
+    let startup = AcpStartup::for_tests(Config::default(), home.path());
     // Step one calls a tool; step two fails, so the turn never settles.
-    let id = prompt_failing(
-        host(
-            home.path(),
-            vec![
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "missing".into(),
-                        arguments: serde_json::json!({}),
-                    },
-                )])),
-                provider_failure("host went away"),
-            ],
-            |_, _| {},
-        )
-        .await,
-        "the codeword is zebra",
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "model"),
+        vec![
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "call-1".into(),
+                    name: "missing".into(),
+                    arguments: serde_json::json!({}),
+                },
+            )])),
+            provider_failure("host went away"),
+        ],
+    ));
+    let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let id = stored.id().to_owned();
+    let mut host = host(
+        home.path(),
+        &id,
+        HostStorage::saved(stored),
+        provider,
+        AppToolSet::disabled(),
+        &startup,
     )
     .await;
 
+    send(&mut host, &id, "the codeword is zebra", &startup)
+        .await
+        .expect_err("the second step fails");
+    host.shutdown().await;
+
     let (_, histories) =
         StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id).unwrap();
-    let user = Message::user_text("the codeword is zebra");
-    assert_eq!(histories.display, vec![user.clone()]);
-    assert!(histories.model.contains(&user), "{:?}", histories.model);
+    assert_eq!(histories.display, from_first_user(&histories.model));
+    assert_eq!(
+        histories.display.first(),
+        Some(&Message::user_text("the codeword is zebra"))
+    );
     assert!(
         histories
-            .model
+            .display
             .iter()
             .any(|message| message
                 .completed_assistant_content()
@@ -166,7 +222,68 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
                     |block| matches!(block, ContentBlock::ToolCall(call) if call.id == "call-1")
                 ))),
         "{:?}",
-        histories.model
+        histories.display
+    );
+}
+
+// Covers: a compaction that rewrites history mid-turn must not make display
+// copy unrelated rows; the turn then shows its final reply instead.
+// Owner: ACP session host turn persistence
+#[test]
+fn turn_display_follows_only_history_that_extends_the_turn() {
+    let earlier = Message::user_text("earlier");
+    let input = Message::user_text("expanded input");
+    let shown = Message::user_text("input");
+    let reply = Message::assistant_text("reply");
+    let mut display = TurnDisplay::new(shown.clone(), 1);
+
+    let started = vec![earlier.clone(), input.clone()];
+    let pending = display.pending_rows(&started, SaveScope::Step);
+    assert_eq!(pending.rows, vec![shown]);
+    display.mark_written(pending);
+
+    let extended = vec![earlier, input, reply.clone()];
+    assert!(display.follows(&extended));
+    let pending = display.pending_rows(&extended, SaveScope::Step);
+    assert_eq!(pending.rows, vec![reply.clone()]);
+    display.mark_written(pending);
+
+    let compacted = vec![
+        Message::user_text("summary"),
+        reply,
+        Message::assistant_text("more"),
+    ];
+    assert!(!display.follows(&compacted));
+    assert_eq!(
+        display.pending_rows(&compacted, SaveScope::Settle).rows,
+        Vec::<Message>::new()
+    );
+}
+
+// Covers: a background result reaches history before the pump records the
+// row shown for it, so a step save must wait for that row rather than write
+// the model's copy; once recorded, the shown row takes its place in order.
+// Owner: ACP session host turn persistence
+#[test]
+fn turn_display_shows_recorded_rows_for_background_results() {
+    let input = Message::user_text("input");
+    let result = Message::user_text("<background result>");
+    let card = Message::System("card".into());
+    let reply = Message::assistant_text("reply");
+    let history = vec![input.clone(), result.clone(), reply.clone()];
+    let mut display = TurnDisplay::new(input.clone(), 0);
+
+    let pending = display.pending_rows(&history, SaveScope::Step);
+    assert_eq!(pending.rows, vec![input.clone()]);
+    display.mark_written(pending);
+
+    display.applied.push_back((result, card.clone()));
+    let pending = display.pending_rows(&history, SaveScope::Step);
+    assert_eq!(pending.rows, vec![card, reply]);
+    display.mark_written(pending);
+    assert_eq!(
+        display.pending_rows(&history, SaveScope::Settle).rows,
+        Vec::<Message>::new()
     );
 }
 
@@ -176,46 +293,56 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
 #[tokio::test]
 async fn background_result_survives_a_failed_turn() {
     let home = tempfile::tempdir().unwrap();
+    let startup = AcpStartup::for_tests(Config::default(), home.path());
+    let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let id = stored.id().to_owned();
     // A workflow from an earlier prompt finished while idle, so the first
     // boundary delivers it; the provider then fails before any reply.
-    let id = prompt_failing(
-        host(
-            home.path(),
-            vec![provider_failure("provider down")],
-            |tools, id| {
-                let workflows = tools.workflow_tracker();
-                assert!(workflows.register_start("wf-run", "fixture", "digest", Some(id.into())));
-                workflows.mark_finished(
-                    "wf-run",
-                    WorkflowFinishedSnapshot {
-                        lifecycle: "completed".into(),
-                        outcome: Some("success".into()),
-                        nodes: Vec::new(),
-                        error: None,
-                        outputs: Vec::new(),
-                    },
-                );
-            },
-        )
-        .await,
-        "anything new?",
+    let tools = AppToolSet::disabled();
+    let workflows = tools.workflow_tracker();
+    assert!(workflows.register_start("wf-run", "fixture", "digest", Some(id.clone())));
+    workflows.mark_finished(
+        "wf-run",
+        WorkflowFinishedSnapshot {
+            lifecycle: "completed".into(),
+            outcome: Some("success".into()),
+            nodes: Vec::new(),
+            error: None,
+            outputs: Vec::new(),
+        },
+    );
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "model"),
+        vec![provider_failure("provider down")],
+    ));
+    let mut host = host(
+        home.path(),
+        &id,
+        HostStorage::saved(stored),
+        provider,
+        tools,
+        &startup,
     )
     .await;
 
+    send(&mut host, &id, "anything new?", &startup)
+        .await
+        .expect_err("the scripted provider fails");
+    host.shutdown().await;
+
     let (_, histories) =
         StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id).unwrap();
-    let rows = histories
-        .display
-        .iter()
-        .filter_map(|message| match message {
-            Message::System(text) => DisplayTranscript::from_display(text),
-            _ => None,
-        })
-        .flat_map(|transcript| transcript.0)
-        .collect::<Vec<_>>();
+    let [user, Message::System(card)] = histories.display.as_slice() else {
+        panic!("{:?}", histories.display);
+    };
+    assert_eq!(user, &Message::user_text("anything new?"));
     assert!(
-        matches!(rows.as_slice(), [DisplayRow::Notice(_)]),
-        "{:?}",
-        histories.display
+        matches!(
+            DisplayTranscript::from_display(card)
+                .map(|transcript| transcript.0)
+                .as_deref(),
+            Some([DisplayRow::Notice(_)])
+        ),
+        "{card}"
     );
 }
