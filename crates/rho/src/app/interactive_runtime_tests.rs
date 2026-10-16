@@ -6,6 +6,9 @@ mod persistence;
 #[path = "interactive_runtime_model_prompt_tests.rs"]
 mod model_prompt;
 
+#[path = "interactive_runtime_codemode_tests.rs"]
+mod codemode;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse},
@@ -289,6 +292,7 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
             tools.recall_store(),
             tools.advisor().cloned(),
         )
+        .with_code_mode(tools.code_mode().clone())
         .with_todo_state(tools.todo_state()),
         mcp_sampling: crate::tools::mcp::McpSamplingBridge::new(),
         provider: ProviderController::new(

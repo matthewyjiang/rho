@@ -594,6 +594,7 @@ impl InteractiveRuntime {
                 diagnostics: self.diagnostics.clone(),
                 recall: self.tools.recall_store(),
                 todo: Some(self.tools.todo_state()),
+                code_mode: Some(self.tools.code_mode().clone()),
             },
         )
     }

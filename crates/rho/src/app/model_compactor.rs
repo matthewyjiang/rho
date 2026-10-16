@@ -46,6 +46,7 @@ pub(crate) struct ModelCompactor {
     pub(super) diagnostics: RuntimeDiagnostics,
     pub(super) recall: Option<RecallStore>,
     pub(super) todo: Option<crate::tools::todo::TodoState>,
+    pub(super) code_mode: Option<Arc<crate::tools::code_mode::CodeModeSurface>>,
     /// Built from `config.summarizer`; `None` summarizes with the session model.
     pub(super) summarizer: Option<Summarizer>,
 }
@@ -103,6 +104,7 @@ impl Compactor for ModelCompactor {
             let occurred_at_ms = chrono::Utc::now().timestamp_millis();
             let mut trace = Trace::default();
             let todo = self.todo.as_ref().map(|todo| todo.checkpoint());
+            let loaded_tools = self.code_mode.as_ref().map(|surface| surface.checkpoint());
             let tools = self.tool_specs(&request);
             let context = request.context_estimate().unwrap_or_else(|| {
                 ContextEstimate::from_estimated_tokens(estimate_context_tokens(
@@ -137,6 +139,10 @@ impl Compactor for ModelCompactor {
                         todo.retain(request.messages(), output)
                     }
                     None => Ok(output),
+                })
+                .map(|output| match loaded_tools {
+                    Some((key, value)) => output.with_metadata(key, value),
+                    None => output,
                 });
             let removed = match &result {
                 Ok(output) => removed_tool_calls(request.messages(), output.messages()),
@@ -680,3 +686,7 @@ mod session_tests;
 #[cfg(test)]
 #[path = "model_compactor_todo_tests.rs"]
 mod todo_tests;
+
+#[cfg(test)]
+#[path = "model_compactor_codemode_tests.rs"]
+mod codemode_tests;

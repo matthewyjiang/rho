@@ -1,7 +1,7 @@
 //! One live inventory for script execution, discovery, and model advertisement.
 
 use std::{
-    collections::HashSet,
+    collections::BTreeSet,
     sync::{Arc, RwLock},
 };
 
@@ -60,7 +60,7 @@ impl ScriptTool {
 #[derive(Default)]
 struct SurfaceState {
     tools: Vec<ScriptTool>,
-    loaded: HashSet<String>,
+    loaded: BTreeSet<String>,
     mode: CodemodeMode,
 }
 
@@ -96,11 +96,7 @@ impl CodeModeSurface {
             })
             .collect();
         siblings.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut state = self.state.write().expect("codemode surface");
-        state
-            .loaded
-            .retain(|name| siblings.iter().any(|sibling| sibling.name == *name));
-        state.tools = siblings;
+        self.state.write().expect("codemode surface").tools = siblings;
     }
 
     pub(crate) fn snapshot(
@@ -142,7 +138,41 @@ impl CodeModeSurface {
     pub(crate) fn set_mode(&self, mode: CodemodeMode) {
         self.state.write().expect("codemode surface").mode = mode;
     }
+
+    /// Store branch-local loading separately from history so compaction need
+    /// not retain the original search results. Absent tools may reconnect later.
+    pub(crate) fn decorate(&self, snapshot: rho_sdk::SessionSnapshot) -> rho_sdk::SessionSnapshot {
+        let (key, value) = self.checkpoint();
+        snapshot.with_metadata(key, value)
+    }
+
+    /// Freeze the loadout at a compaction boundary, before asynchronous work
+    /// can observe later searches. The SDK commits it with the replacement.
+    pub(crate) fn checkpoint(&self) -> (&'static str, String) {
+        let state = self.state.read().expect("codemode surface");
+        (
+            LOADED_TOOLS_KEY,
+            serde_json::to_string(&state.loaded).expect("serializable tool names"),
+        )
+    }
+
+    /// Conversation replacement restores its own loadout; policy-only runtime
+    /// rebuilds keep the current loadout instead of resetting it.
+    pub(crate) fn restore(&self, snapshot: &rho_sdk::SessionSnapshot) {
+        let loaded = snapshot
+            .metadata()
+            .get(LOADED_TOOLS_KEY)
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default();
+        self.state.write().expect("codemode surface").loaded = loaded;
+    }
+
+    pub(crate) fn clear_loaded(&self) {
+        self.state.write().expect("codemode surface").loaded.clear();
+    }
 }
+
+const LOADED_TOOLS_KEY: &str = "rho.codemode.loaded_tools";
 
 /// Keyword search shared by `tool_search` and script `search_tools`.
 ///

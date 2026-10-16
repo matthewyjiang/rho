@@ -308,6 +308,7 @@ impl EvalSetup {
             diagnostics: diagnostics.clone(),
             recall: Some(recall),
             todo: None,
+            code_mode: None,
         });
         let request = CompactionRequest::new(point.messages.clone(), CancellationToken::new())
             .with_trigger(CompactionTrigger::Automatic)

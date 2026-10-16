@@ -23,6 +23,7 @@ pub(crate) struct InteractiveSessionController {
     recall: Option<RecallStore>,
     advisor: Option<AdvisorSessionStore>,
     todo: crate::tools::todo::TodoState,
+    code_mode: Option<std::sync::Arc<crate::tools::code_mode::CodeModeSurface>>,
     /// Workspace directories this session added; saved in snapshot metadata.
     added_dirs: crate::added_dirs::AddedDirs,
     pub(super) prompt: super::active_prompt::ActivePrompt,
@@ -47,6 +48,7 @@ impl InteractiveSessionController {
             recall,
             advisor,
             todo: crate::tools::todo::TodoState::default(),
+            code_mode: None,
             added_dirs: crate::added_dirs::AddedDirs::default(),
             prompt: super::active_prompt::ActivePrompt::default(),
         };
@@ -63,6 +65,15 @@ impl InteractiveSessionController {
 
     pub(crate) fn with_added_dirs(mut self, added_dirs: crate::added_dirs::AddedDirs) -> Self {
         self.added_dirs = added_dirs;
+        self
+    }
+
+    pub(crate) fn with_code_mode(
+        mut self,
+        surface: std::sync::Arc<crate::tools::code_mode::CodeModeSurface>,
+    ) -> Self {
+        surface.restore(&self.session.snapshot());
+        self.code_mode = Some(surface);
         self
     }
 
@@ -117,12 +128,18 @@ impl InteractiveSessionController {
                 super::interactive_runtime::startup::prompt_cache_key(id.as_str()),
             );
         }
+        if let Some(surface) = &self.code_mode {
+            snapshot = surface.decorate(snapshot);
+        }
         self.added_dirs
             .decorate(self.todo.decorate(self.prompt.decorate(snapshot)))
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
         self.todo.restore(&session.snapshot());
+        if let Some(surface) = &self.code_mode {
+            surface.restore(&session.snapshot());
+        }
         self.session = session;
         self.pending_session_id = None;
         self.persisted_turn_display = 0;
@@ -190,6 +207,9 @@ impl InteractiveSessionController {
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {
         self.session.reset()?;
         self.todo.replace(None);
+        if let Some(surface) = &self.code_mode {
+            surface.clear_loaded();
+        }
         self.storage = None;
         self.sync_storage_sidecars();
         self.persisted_turn_display = 0;

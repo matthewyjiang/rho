@@ -238,6 +238,7 @@ pub(super) async fn initialize(
             tools.advisor().cloned(),
         )
         .with_todo_state(tools.todo_state())
+        .with_code_mode(tools.code_mode().clone())
         .with_added_dirs(added_dirs),
         provider: ProviderController::new(
             provider,

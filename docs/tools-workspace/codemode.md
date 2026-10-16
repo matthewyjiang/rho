@@ -45,6 +45,13 @@ loading notice and compact names, descriptions, and top-level parameter names,
 with optional ones marked `?`. Loaded tools' full argument schemas are declared
 on subsequent requests; other tools stay deferred. Wait for search to finish
 before issuing a direct call, rather than batching search and that call together.
+Loading belongs to the selected conversation branch: `/new` starts unloaded,
+and resume/tree navigation restores the destination's saved loadout. Rebuilding
+the runtime for the same conversation does not clear loaded tools.
+
+Use focused queries and small result limits: every returned tool adds its full
+schema to subsequent requests. For broad catalog browsing or large inventories,
+prefer script-side discovery and execution so those schemas stay out of context.
 
 Script-side `search_tools`, `list_tools`, and `describe_tool` are **read-only**:
 they never change the direct tool list. Scripts can discover and call MCP tools
