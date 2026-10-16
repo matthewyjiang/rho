@@ -630,6 +630,11 @@ impl AppToolSet {
         self.advertised_agents = Some(advertised);
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_subagents_for_tests(&mut self, manager: SubagentManager) {
+        self.subagents = Some(manager);
+    }
+
     pub fn processes(&self) -> Option<&super::process::ProcessManager> {
         self.processes.as_ref()
     }

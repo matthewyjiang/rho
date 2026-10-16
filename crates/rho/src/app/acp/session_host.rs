@@ -99,6 +99,8 @@ pub(super) struct SessionHost {
     /// Notice found during `session/load`, sent with the first prompt because
     /// hosts such as T3 Code discard live updates while a load is in flight.
     load_notice: Option<String>,
+    /// Child notice binding kept between prompts, since children outlive them.
+    held_notices: Option<crate::app::headless_delegation::HeldNotices>,
 }
 
 /// Carries cancellation for the session's current prompt. The agent already
@@ -567,6 +569,7 @@ impl SessionHost {
             herdr: startup.herdr.clone(),
             sent_plan: Vec::new(),
             load_notice: None,
+            held_notices: None,
         }
     }
 
@@ -584,21 +587,20 @@ impl SessionHost {
             &self.built.session,
             crate::app::headless_delegation::BackgroundSources::of(&self.built.tools),
             Some(&self.stored),
+            &mut self.held_notices,
         )?;
         let displays = delegation.offered_displays();
+        // Children outlive a cancelled, failed, or step-limited prompt, as they
+        // do across TUI turns: T3 Code cancels the open prompt to send each
+        // mid-turn message. The next prompt waits for and delivers them and
+        // their undelivered notices; only closing or replacing the session
+        // stops them.
         let result = crate::app::headless_delegation::HeadlessDelegation::drive(
             &mut delegation,
             self.drive_prompt(display, model, calls, displays, client),
         )
         .await;
-        if let Some(manager) = self.built.tools.subagents() {
-            manager.shutdown().await;
-            // Cancellation, errors, and exhausted step budgets end this
-            // prompt's automatic delivery. Keep snapshots for explicit status
-            // queries, but do not wait on or inject leftover children into the
-            // next prompt, including runs still alive after shutdown timed out.
-            manager.end_automatic_delivery(self.built.session.id().as_str());
-        }
+        self.held_notices = delegation.hold_notices();
         result
     }
 
@@ -869,3 +871,7 @@ mod tests;
 #[cfg(test)]
 #[path = "session_host_model_prompt_tests.rs"]
 mod model_prompt_tests;
+
+#[cfg(test)]
+#[path = "session_host_delegation_tests.rs"]
+mod delegation_tests;

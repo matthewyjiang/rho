@@ -419,8 +419,7 @@ impl SubagentManager {
             })
     }
 
-    /// True while this session still has an undelivered child. Observed
-    /// includes still-running rows closed by [`Self::end_automatic_delivery`].
+    /// True while this session still has an undelivered child.
     pub fn has_active_or_pending_notification(&self, session_id: &str) -> bool {
         self.inner
             .lock()
@@ -448,19 +447,6 @@ impl SubagentManager {
             .collect::<futures_util::stream::FuturesUnordered<_>>();
         if futures_util::StreamExt::next(&mut waits).await.is_none() {
             std::future::pending::<()>().await;
-        }
-    }
-
-    /// Ends automatic wait and delivery for every run bound to this parent
-    /// session, including children still running after shutdown timed out.
-    /// Snapshots stay queryable through `status` / `stop`.
-    pub fn end_automatic_delivery(&self, session_id: &str) {
-        let mut entries = self.inner.lock().expect("delegated registry lock");
-        for entry in entries.values_mut() {
-            if entry.session_id.as_deref() == Some(session_id) {
-                entry.observed = true;
-                entry.explicitly_observed = true;
-            }
         }
     }
 

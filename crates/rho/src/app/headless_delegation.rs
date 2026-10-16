@@ -1,15 +1,20 @@
 //! Background delivery at SDK input boundaries for hosts without an interactive
 //! inbox (ACP and `rho run`). Finished subagents, workflows, and background
 //! processes reach the model at the next boundary. Natural completion waits for
-//! children, workflows, and processes started during this prompt, standing in
-//! for the TUI's idle wake. Workflows and processes from an earlier prompt,
-//! such as an ACP `/workflow:<name>` start, only deliver; a later prompt does
-//! not wait for them. The wait stays inside the original run, so cancellation
-//! and the SDK step budget still govern parent continuations.
+//! every undelivered child of the session, whichever prompt started it, and for
+//! workflows and processes started during this prompt, standing in for the
+//! TUI's idle wake. Workflows and processes from an earlier prompt, such as an
+//! ACP `/workflow:<name>` start, only deliver; a later prompt does not wait for
+//! them. The wait stays inside the original run, so cancellation and the SDK
+//! step budget still govern parent continuations.
 //! Host-orchestrated ACP children are not registered here: they outlive the
 //! parent prompt and complete through the host's next prompt instead. Hosts
 //! that show a transcript take [`HeadlessDelegation::offered_displays`] to
 //! render what the model was given.
+//!
+//! In-process ACP children also outlive a cancelled prompt, so the ACP host
+//! keeps their notice binding between prompts with
+//! [`HeadlessDelegation::hold_notices`]. `rho run` drops it with the run.
 
 use std::time::Instant;
 
@@ -51,6 +56,11 @@ struct SubagentDelivery {
     pending: Vec<SubagentNotice>,
 }
 
+/// A notice binding kept between prompts. The binding stays installed, so a
+/// child can still queue `message_parent` text or an action request while no
+/// prompt runs, and notices a cancelled prompt never delivered reach the next.
+pub(crate) struct HeldNotices(SubagentDelivery);
+
 /// The background work a headless prompt delivers and waits for.
 pub(crate) struct BackgroundSources<'a> {
     pub(crate) subagents: Option<&'a SubagentManager>,
@@ -69,28 +79,34 @@ impl<'a> BackgroundSources<'a> {
 }
 
 impl HeadlessDelegation {
-    /// Installs boundary delivery for one prompt on an idle session.
+    /// Installs boundary delivery for one prompt on an idle session. A binding
+    /// in `held` resumes the previous prompt's notices; without one the prompt
+    /// binds afresh, retiring any earlier binding. `held` is taken only once
+    /// attach succeeds, so a failed attach keeps it for the next prompt.
     pub(crate) fn attach(
         session: &Session,
         sources: BackgroundSources<'_>,
         storage: Option<&crate::session::Session>,
+        held: &mut Option<HeldNotices>,
     ) -> Result<Self, rho_sdk::Error> {
         let (source, requests) = rho_sdk::boundary_input_channel();
         session.set_boundary_inputs(Some(source))?;
         let session_id = session.id().to_string();
+        let mut held = held.take().map(|HeldNotices(delivery)| delivery);
         let subagents = sources.subagents.map(|manager| {
             manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
                 session_id.clone(),
                 storage.and_then(crate::session::Session::subagents_dir),
             ));
-            // Each headless prompt drops and retires its previous notice binding.
-            let binding = manager.rebind_notices(None);
-            SubagentDelivery {
-                manager: manager.clone(),
-                notices: binding.receiver,
-                permits: binding.permits,
-                pending: binding.retained,
-            }
+            held.take().unwrap_or_else(|| {
+                let binding = manager.rebind_notices(None);
+                SubagentDelivery {
+                    manager: manager.clone(),
+                    notices: binding.receiver,
+                    permits: binding.permits,
+                    pending: binding.retained,
+                }
+            })
         });
         let workflows = sources.workflows.clone();
         workflows.bind_parent_session(session_id.clone());
@@ -126,6 +142,12 @@ impl HeadlessDelegation {
         // event pump notices cancellation in that same scheduling turn.
         let _ = futures_util::poll!(&mut service);
         result
+    }
+
+    /// Ends this prompt but keeps its notice binding, with every notice not yet
+    /// delivered, for the next [`Self::attach`].
+    pub(crate) fn hold_notices(mut self) -> Option<HeldNotices> {
+        self.subagents.take().map(HeldNotices)
     }
 
     async fn serve(&mut self) {
@@ -302,8 +324,8 @@ impl Drop for HeadlessDelegation {
         };
         let _delivery = super::notification_delivery::lock();
         subagents.manager.unbind_notices();
-        // Cancellation can leave queued notices behind. Retire their receipts
-        // along with this binding rather than leaking them into later prompts.
+        // Cancellation can leave queued notices behind. A host that drops the
+        // binding instead of holding it retires their receipts with it.
         while let Ok(notice) = subagents.notices.try_recv() {
             subagents.pending.push(notice);
         }
