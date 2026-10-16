@@ -62,6 +62,10 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
 
 type TestResponse = Box<dyn Fn(&CapturedRequest) -> (u16, String) + Send>;
 
+/// Serves one scripted response per connection. Every response says
+/// `connection: close` because the stream is dropped after one exchange: a
+/// keep-alive response would let reqwest pool a socket the server already
+/// closed, and the next POST could race that close and fail to send.
 async fn spawn_sequential_server(
     responses: Vec<TestResponse>,
 ) -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
@@ -90,7 +94,9 @@ async fn spawn_sequential_server(
             server_captured.lock().await.push(captured_request.clone());
             let Some(respond) = remaining.next() else {
                 let _ = stream
-                    .write_all(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n")
+                    .write_all(
+                        b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
                     .await;
                 continue;
             };
@@ -101,7 +107,7 @@ async fn spawn_sequential_server(
                 _ => "Error",
             };
             let response = format!(
-                "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             );
             let _ = stream.write_all(response.as_bytes()).await;
