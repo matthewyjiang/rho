@@ -109,7 +109,7 @@ Subagents then run as T3 threads, so they appear in T3's subagent panel and keep
 
 Only agents with Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected: T3 runs those providers itself, so the model can start one with T3's `delegate_task` tool directly. Workflows still run inside Rho.
 
-A session fails to start if any of the three T3 tools is missing. Without `--t3code`, Rho never uses T3's task tools for delegation, even when T3's MCP server is attached.
+If any of the three T3 tools is missing, the session still starts, so T3's provider status check passes, but `agent` and the `agents` `status` and `stop` actions fail with an error naming the missing tool. `agents` `list` still returns the session's local run list. Rho never falls back to in-process subagents under `--t3code`. Without `--t3code`, Rho never uses T3's task tools for delegation, even when T3's MCP server is attached.
 
 ## MCP
 

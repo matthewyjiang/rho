@@ -92,7 +92,7 @@ impl Fixture {
             .collect(),
         ));
         Self {
-            orchestrator: Arc::new(HostOrchestrator::connect(&tools).unwrap()),
+            orchestrator: Arc::new(HostOrchestrator::connect(&tools)),
             calls,
             catalog: catalog(),
         }
@@ -254,35 +254,18 @@ async fn external_runtime_is_not_advertised_or_launched() {
     assert!(fixture.orchestrator.runs().is_empty());
 }
 
-// Covers: under `--t3code`, a root session without T3's task tools must fail to
-// start rather than silently keep in-process subagents, while a session with no
-// native `agent` tool (a T3 child after `/agent:`) needs no T3 tools at all.
-// Owner: host delegation installer.
-#[test]
-fn installer_fails_loud_only_when_delegation_is_possible() {
-    for (native_agent, installs) in [(false, true), (true, false)] {
-        let mut tools = AppToolSet::disabled();
-        if native_agent {
-            tools.add_bundle(StaticToolBundle::new(vec![
-                Arc::new(rho_sdk::tool::ScriptedTool::new(
-                    ToolSpec {
-                        name: "agent".into(),
-                        description: String::new(),
-                        input_schema: json!({"type": "object"}),
-                    },
-                    rho_sdk::tool::ScriptedToolOutcome::Success(ToolOutput::text("native")),
-                )) as Arc<dyn Tool>,
-            ]));
-        }
-        let before = tools.specs();
-
-        let result = install_host_delegation(
-            &mut tools,
-            Path::new("."),
-            rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
-        );
-
-        assert_eq!(result.is_ok(), installs, "native agent: {native_agent}");
-        assert_eq!(tools.specs(), before);
-    }
+// Covers: under `--t3code`, a session without T3's task tools (such as T3's
+// provider status probe) still starts, but launching a child fails loud instead
+// of falling back to in-process subagents or recording a phantom run.
+// Owner: host delegation tools.
+#[tokio::test]
+async fn launch_without_host_contract_fails_without_a_run() {
+    let fixture = Fixture {
+        orchestrator: Arc::new(HostOrchestrator::connect(&AppToolSet::disabled())),
+        calls: RecordedCalls::default(),
+        catalog: catalog(),
+    };
+    let error = fixture.launch("host-worker").await.unwrap_err();
+    assert_eq!(error.kind(), ToolErrorKind::Execution);
+    assert!(fixture.orchestrator.runs().is_empty());
 }

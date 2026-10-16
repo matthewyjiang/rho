@@ -29,7 +29,8 @@ use crate::{
 /// `rho acp --t3code` hook, called after MCP attachment: swaps the native
 /// `agent`/`agents` tools for T3-backed ones. A session without the native
 /// `agent` tool (a delegated child, `--no-subagents`) is left unchanged. Missing
-/// T3 tools or an unreadable agent catalog fail the session build.
+/// T3 tools fail each delegation call, not the session; an unreadable agent
+/// catalog fails the session build.
 pub(crate) fn install_host_delegation(
     tools: &mut AppToolSet,
     cwd: &Path,
@@ -38,7 +39,7 @@ pub(crate) fn install_host_delegation(
     if !tools.contains("agent") {
         return Ok(());
     }
-    let orchestrator = Arc::new(HostOrchestrator::connect(tools)?);
+    let orchestrator = Arc::new(HostOrchestrator::connect(tools));
     let catalog = AgentCatalog::discover(cwd)?;
     let agent = HostAgentTool::new(
         orchestrator.clone(),
