@@ -213,36 +213,40 @@ async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
     );
 }
 
-// Covers: an empty session must not inject a switch notice before the first prompt
-// Owner: conversation switch
+// Covers: a session with no conversation yet (empty, or only its system
+// prompt, as every ACP session has) must not inject a switch notice before the
+// first prompt. Owner: conversation switch
 #[tokio::test]
-async fn empty_session_switch_stays_silent() {
-    let (_runtime, session, tools, previous_provider) = switchable_session(Vec::new(), None).await;
+async fn fresh_session_switch_stays_silent() {
+    for history in [Vec::new(), vec![Message::System("instructions".into())]] {
+        let (_runtime, session, tools, previous_provider) =
+            switchable_session(history.clone(), None).await;
 
-    apply_conversation_switch(
-        ConversationSwitch {
-            prepared_prompt: None,
-            session: &session,
-            tools: &tools,
-            previous_provider,
-            new_provider: replacement("replacement", "next"),
-            new_reasoning: rho_sdk::ReasoningLevel::Low,
-            auth: "test-auth",
-            compaction: CompactionConfig::default(),
-            context_window: None,
-            previous_context_window: None,
-            usage_recording: Default::default(),
-            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        },
-        SwitchNotice::SessionMessage,
-    )
-    .unwrap();
+        apply_conversation_switch(
+            ConversationSwitch {
+                prepared_prompt: None,
+                session: &session,
+                tools: &tools,
+                previous_provider,
+                new_provider: replacement("replacement", "next"),
+                new_reasoning: rho_sdk::ReasoningLevel::Low,
+                auth: "test-auth",
+                compaction: CompactionConfig::default(),
+                context_window: None,
+                previous_context_window: None,
+                usage_recording: Default::default(),
+                diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+            },
+            SwitchNotice::SessionMessage,
+        )
+        .unwrap();
 
-    assert_eq!(session.history(), Vec::<Message>::new());
-    assert_eq!(
-        session.snapshot().provider(),
-        &identity("replacement", "next")
-    );
+        assert_eq!(session.history(), history);
+        assert_eq!(
+            session.snapshot().provider(),
+            &identity("replacement", "next")
+        );
+    }
 }
 
 // Covers: failed host persistence after provider replacement must restore the

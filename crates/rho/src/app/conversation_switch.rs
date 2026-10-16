@@ -98,7 +98,13 @@ pub(crate) fn apply_conversation_switch(
     let previous_provider = Arc::clone(&switch.previous_provider);
     let previous_reasoning = switch.session.reasoning_level();
     let previous_prompt_model = PromptModel::from_sdk_identity(&previous_provider.identity());
-    let session_started = !switch.session.history().is_empty();
+    // The leading system prompt is setup, not conversation. Hosts such as T3
+    // select a model before the first prompt; that must not inject a notice.
+    let session_started = switch
+        .session
+        .history()
+        .iter()
+        .any(|message| !matches!(message, Message::System(_)));
     let previous_history = switch.session.history();
 
     switch.session.set_reasoning_level(switch.new_reasoning)?;
