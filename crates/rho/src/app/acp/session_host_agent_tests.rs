@@ -255,20 +255,22 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
 }
 
 // Covers: a reloaded child must come back with its delegated tool boundary,
-// never the root's, and must not load against a changed definition.
+// never the root's, even when it shares the launch agent's id; a root session
+// stays the launch agent; a changed definition fails the load.
 // Owner: ACP session load agent selection.
 #[test]
 fn load_restores_the_child_binding_or_fails() {
     let cwd = tempfile::tempdir().unwrap();
     let agents = cwd.path().join(".agents/agents");
     std::fs::create_dir_all(&agents).unwrap();
-    let file = agents.join("acp-loaded.md");
+    let startup = startup(cwd.path());
+    // Same id as the launch agent, so only the persisted role tells them apart.
+    let file = agents.join(format!("{}.md", startup.agent.id()));
     std::fs::write(
         &file,
         "---\ndescription: Loaded child\ntools: [read_file, agent]\n---\nInspect files\n",
     )
     .unwrap();
-    let startup = startup(cwd.path());
     let catalog = || {
         Ok(AgentCatalog::discover_with_home(
             cwd.path(),
@@ -276,29 +278,37 @@ fn load_restores_the_child_binding_or_fails() {
         )?)
     };
     let definitions = catalog().unwrap();
-    let definition = &definitions.find("acp-loaded").unwrap().definition;
-    let stored = StoredSession::create_in_root_with_agent(
-        cwd.path(),
-        cwd.path(),
-        "acp-loaded",
-        &definition.fingerprint().to_string(),
-    )
-    .unwrap();
+    let definition = &definitions
+        .find(startup.agent.id().as_str())
+        .unwrap()
+        .definition;
+    let session = |root: &Path| {
+        StoredSession::create_in_root_with_agent(
+            root,
+            cwd.path(),
+            startup.agent.id().as_str(),
+            &startup.agent.fingerprint().to_string(),
+        )
+        .unwrap()
+    };
+    let child_root = tempfile::tempdir().unwrap();
+    let child = session(child_root.path());
+    child
+        .rebind_fresh_delegated_agent(
+            startup.agent.id().as_str(),
+            &definition.fingerprint().to_string(),
+        )
+        .unwrap();
 
-    let (agent, _) = loaded_agent(&startup, &stored, startup.config.clone(), catalog).unwrap();
-    assert_eq!(agent.id().as_str(), "acp-loaded");
+    let (agent, _) = loaded_agent(&startup, &child, startup.config.clone(), catalog).unwrap();
+    assert_eq!(agent.fingerprint(), definition.fingerprint());
     assert_eq!(
         agent.rho_capabilities(),
         Some(&AgentCapabilities::new([ToolCapability::ReadFile].into()))
     );
 
-    let root = StoredSession::create_in_root_with_agent(
-        cwd.path(),
-        cwd.path(),
-        startup.agent.id().as_str(),
-        &startup.agent.fingerprint().to_string(),
-    )
-    .unwrap();
+    let root_dir = tempfile::tempdir().unwrap();
+    let root = session(root_dir.path());
     let (agent, _) = loaded_agent(&startup, &root, startup.config.clone(), catalog).unwrap();
     assert_eq!(agent.fingerprint(), startup.agent.fingerprint());
 
@@ -307,5 +317,5 @@ fn load_restores_the_child_binding_or_fails() {
         "---\ndescription: Loaded child\ntools: [read_file, write_file]\n---\nInspect files\n",
     )
     .unwrap();
-    assert!(loaded_agent(&startup, &stored, startup.config.clone(), catalog).is_err());
+    assert!(loaded_agent(&startup, &child, startup.config.clone(), catalog).is_err());
 }

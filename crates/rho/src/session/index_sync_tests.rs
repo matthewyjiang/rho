@@ -568,6 +568,7 @@ fn session_transcript_contents(cwd: &Path, id: &str, created_at: u64, prompt: &s
         cwd: cwd.to_path_buf(),
         agent_id: None,
         agent_fingerprint: None,
+        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
     };
     let message = SessionEntry::Message {
         timestamp: created_at.to_string(),

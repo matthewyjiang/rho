@@ -105,7 +105,7 @@ impl SessionHost {
         let assembly = build(bound.clone(), config.clone(), id).await?;
         if let Err(error) = self
             .stored
-            .rebind_fresh_agent(bound.id().as_str(), &bound.fingerprint().to_string())
+            .rebind_fresh_delegated_agent(bound.id().as_str(), &bound.fingerprint().to_string())
         {
             assembly.built.teardown().await;
             return Err(error);
@@ -136,23 +136,21 @@ impl SessionHost {
 }
 
 /// The agent and config a loaded session runs with. ACP roots run as
-/// `startup.agent`; a stored identity naming another definition was written by
-/// `/agent:`, so it binds as delegated again and must match its saved
-/// definition. A changed or missing definition fails the load rather than
-/// widening the child to the root's tools.
-/// `catalog` discovers definitions only when the session names another agent.
+/// `startup.agent`; a session `/agent:` rebound is marked delegated, so it binds
+/// as that child again and must match its saved definition. A changed or
+/// missing definition fails the load rather than widening the child to the
+/// root's tools. `catalog` discovers definitions only for delegated sessions.
 pub(super) fn loaded_agent(
     startup: &AcpStartup,
     stored: &StoredSession,
     config: Config,
     catalog: impl FnOnce() -> anyhow::Result<AgentCatalog>,
 ) -> anyhow::Result<(BoundAgent, Config)> {
-    let Some((stored_id, _)) = stored.stored_agent_identity()? else {
+    // The persisted role, not the id, decides: a child may share the launch
+    // agent's id and must still reload with its delegated tool boundary.
+    let Some(stored_id) = stored.delegated_agent_id()? else {
         return Ok((startup.agent.clone(), config));
     };
-    if stored_id == startup.agent.id().as_str() {
-        return Ok((startup.agent.clone(), config));
-    }
     let definition = catalog()?.find(&stored_id)?.definition.clone();
     stored.validate_agent_definition_identity(&definition)?;
     let bound = bind_delegated_agent(definition, startup, &config)?;

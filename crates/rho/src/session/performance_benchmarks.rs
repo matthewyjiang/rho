@@ -275,6 +275,7 @@ fn write_minimal_session(session_root: &Path, cwd: &Path, index: usize) -> PathB
         cwd: cwd.to_path_buf(),
         agent_id: None,
         agent_fingerprint: None,
+        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
     };
     let message = SessionEntry::Message {
         timestamp: created_at.to_string(),
@@ -300,6 +301,7 @@ fn write_large_transcript(path: &Path, cwd: &Path, entry_count: usize) -> usize 
         cwd: cwd.to_path_buf(),
         agent_id: None,
         agent_fingerprint: None,
+        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
     };
     contents.push_str(&serde_json::to_string(&header).expect("large header"));
     contents.push('\n');

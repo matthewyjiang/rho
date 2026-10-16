@@ -17,6 +17,7 @@ use rho_providers::model::{ContentBlock, Message, ToolResult};
 use rho_sdk::SessionId;
 use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 
+use super::agent_identity::SessionAgentRole;
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::tree::{NodeId, SessionNode, SessionTree};
 use super::{index, Session, SessionHistories, SessionIndexRecord, SessionSummary};
@@ -292,6 +293,8 @@ pub(super) enum SessionEntry {
         agent_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_fingerprint: Option<String>,
+        #[serde(default, skip_serializing_if = "SessionAgentRole::is_root")]
+        agent_role: SessionAgentRole,
     },
     Message {
         timestamp: String,
@@ -344,53 +347,6 @@ impl SessionEntry {
 }
 
 impl Session {
-    pub(super) fn rewrite_fresh_agent_identity(
-        &self,
-        agent_id: &str,
-        fingerprint: &str,
-    ) -> anyhow::Result<()> {
-        let mut cursor = self
-            .write_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let contents = fs::read_to_string(&self.path)?;
-        let mut lines = contents.lines();
-        let header = lines
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
-        if lines.next().is_some() {
-            anyhow::bail!("cannot rebind agent: the session already has history");
-        }
-        let mut entry: SessionEntry = serde_json::from_str(header)?;
-        let SessionEntry::Session {
-            agent_id: stored_id,
-            agent_fingerprint,
-            ..
-        } = &mut entry
-        else {
-            anyhow::bail!("session file does not start with session metadata");
-        };
-        *stored_id = Some(agent_id.to_owned());
-        *agent_fingerprint = Some(fingerprint.to_owned());
-
-        let parent = self
-            .path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("session file has no parent directory"))?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-        set_private_file_permissions(temporary.as_file())?;
-        serde_json::to_writer(&mut temporary, &entry)?;
-        temporary.write_all(b"\n")?;
-        temporary.as_file().sync_all()?;
-        temporary.persist(&self.path)?;
-        cursor.valid_len = None;
-        cursor.invalidate_tree();
-        // The index records transcript stats, not agent identity. Refresh them
-        // best-effort, like every other persistence operation.
-        let _ = index::sync_session_file(&self.session_root, &self.cwd, &self.path);
-        Ok(())
-    }
-
     fn append_entry(&self, entry: &SessionEntry) -> anyhow::Result<()> {
         let mut cursor = self
             .write_lock
@@ -550,6 +506,7 @@ impl Session {
             cwd: self.cwd.clone(),
             agent_id: agent.map(|(id, _)| id.to_string()),
             agent_fingerprint: agent.map(|(_, fingerprint)| fingerprint.to_string()),
+            agent_role: SessionAgentRole::Root,
         })?;
         let _ = index::record_created(self, created_at);
         Ok(())
@@ -595,24 +552,6 @@ impl Session {
             state.compaction,
         );
         self.save_snapshot(&snapshot, &[])
-    }
-}
-
-pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String, String)>> {
-    let file = fs::File::open(path)?;
-    let line = BufReader::new(file)
-        .lines()
-        .next()
-        .transpose()?
-        .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
-    match serde_json::from_str::<SessionEntry>(&line)? {
-        SessionEntry::Session {
-            agent_id: Some(id),
-            agent_fingerprint: Some(fingerprint),
-            ..
-        } => Ok(Some((id, fingerprint))),
-        SessionEntry::Session { .. } => Ok(None),
-        _ => anyhow::bail!("session file does not start with session metadata"),
     }
 }
 
@@ -986,10 +925,6 @@ fn system_time_secs(time: SystemTime) -> i64 {
         .map(|duration| clamp_u64_to_i64(duration.as_secs()))
         .unwrap_or_default()
 }
-
-#[cfg(test)]
-#[path = "persistence_agent_tests.rs"]
-mod agent_tests;
 
 #[cfg(test)]
 #[path = "persistence_complete_turn_tests.rs"]

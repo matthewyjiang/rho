@@ -15,6 +15,7 @@ use rho_providers::model::{Message, ModelIdentity};
 #[cfg(test)]
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
+mod agent_identity;
 mod delete;
 mod index;
 mod layout;
@@ -349,16 +350,22 @@ impl Session {
     }
 
     pub(crate) fn stored_agent_identity(&self) -> anyhow::Result<Option<(String, String)>> {
-        persistence::read_agent_identity(&self.path)
+        agent_identity::read_agent_identity(&self.path)
     }
 
-    /// Changes agent identity only before any history has been persisted.
-    pub(crate) fn rebind_fresh_agent(
+    /// Rebinds the session to a delegated child agent, only before any
+    /// history has been persisted. Reload restores it as that child.
+    pub(crate) fn rebind_fresh_delegated_agent(
         &self,
         agent_id: &str,
         fingerprint: &str,
     ) -> anyhow::Result<()> {
-        self.rewrite_fresh_agent_identity(agent_id, fingerprint)
+        self.rewrite_fresh_delegated_identity(agent_id, fingerprint)
+    }
+
+    /// The child agent id when the session was rebound as a delegated agent.
+    pub(crate) fn delegated_agent_id(&self) -> anyhow::Result<Option<String>> {
+        agent_identity::read_delegated_agent_id(&self.path)
     }
 
     /// Provider/API/model identity stored on the session snapshot, when present.
