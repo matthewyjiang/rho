@@ -21,7 +21,7 @@ pub(crate) struct McpToolIdentity {
 }
 
 /// Build Rho's unambiguous exported name for one MCP server tool.
-pub(super) fn namespaced_tool_name(server: &str, tool: &str) -> String {
+pub(crate) fn namespaced_tool_name(server: &str, tool: &str) -> String {
     format!(
         "mcp__{}__{}",
         encode_component(server),

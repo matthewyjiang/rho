@@ -352,6 +352,15 @@ impl Session {
         persistence::read_agent_identity(&self.path)
     }
 
+    /// Changes agent identity only before any history has been persisted.
+    pub(crate) fn rebind_fresh_agent(
+        &self,
+        agent_id: &str,
+        fingerprint: &str,
+    ) -> anyhow::Result<()> {
+        self.rewrite_fresh_agent_identity(agent_id, fingerprint)
+    }
+
     /// Provider/API/model identity stored on the session snapshot, when present.
     pub(crate) fn stored_provider_identity(&self) -> anyhow::Result<Option<ModelIdentity>> {
         Ok(persistence::read_session_state(&self.path)?

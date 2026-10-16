@@ -9,10 +9,10 @@ use std::{
 
 use agent_client_protocol::{
     schema::v1::{
-        AvailableCommandsUpdate, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-        NewSessionResponse, PromptRequest, PromptResponse, RequestPermissionOutcome,
-        SessionConfigOption, SessionId, SessionNotification, SessionUpdate,
-        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        AvailableCommandsUpdate, LoadSessionRequest, LoadSessionResponse, McpServer,
+        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+        RequestPermissionOutcome, SessionConfigOption, SessionId, SessionNotification,
+        SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
@@ -40,6 +40,7 @@ use super::{
 };
 use crate::{
     app::{
+        agent_binding::BoundAgent,
         conversation_switch::{
             apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
             SwitchNotice,
@@ -55,6 +56,8 @@ use crate::{
     session::Session as StoredSession,
 };
 
+#[path = "session_host_agent.rs"]
+mod agent;
 #[path = "session_host_build.rs"]
 mod build;
 #[path = "session_host_compact.rs"]
@@ -77,6 +80,9 @@ pub(super) struct SessionHost {
     acp_session_id: SessionId,
     built: BuiltSession,
     stored: StoredSession,
+    agent: BoundAgent,
+    /// Retained so an agent rebind reconnects the session's host-supplied tools.
+    host_mcp_servers: Vec<McpServer>,
     /// Saved with every snapshot so a later load restores them.
     added_dirs: crate::added_dirs::AddedDirs,
     permission: SessionPermission,
@@ -185,7 +191,7 @@ impl SessionHost {
         let config = session_config(&startup.config, &request.mcp_servers);
         let sdk_id = rho_sdk::SessionId::new();
         let added_dirs = startup.added_dirs.clone();
-        let assembly = build_session(startup, &config, cwd, &added_dirs, |_| {
+        let assembly = build_session(startup, &startup.agent, &config, cwd, &added_dirs, |_| {
             Ok(session_options_for_id(sdk_id.clone()))
         })
         .await?;
@@ -209,8 +215,8 @@ impl SessionHost {
             stored,
             added_dirs,
             permission,
-            startup.config.auth.clone(),
-            startup.herdr.clone(),
+            startup,
+            request.mcp_servers,
         );
         let response = NewSessionResponse::new(acp_session_id)
             .modes(mode_state(host.permission.mode))
@@ -238,7 +244,10 @@ impl SessionHost {
             tracing::warn!(dir = %dir.display(), "could not restore added directory: not found");
         }
         let added_dirs = startup.added_dirs.union(&root, &restored.dirs);
-        let assembly = build_session(startup, &config, cwd, &added_dirs, |provider| {
+        let (agent, config) = agent::loaded_agent(startup, &stored, config, || {
+            Ok(crate::agent::AgentCatalog::discover(cwd)?)
+        })?;
+        let assembly = build_session(startup, &agent, &config, cwd, &added_dirs, |provider| {
             let snapshot =
                 stored.snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
             Ok(SessionOptions::from_snapshot(snapshot))
@@ -267,10 +276,11 @@ impl SessionHost {
             stored,
             added_dirs,
             permission,
-            startup.config.auth.clone(),
-            startup.herdr.clone(),
+            startup,
+            request.mcp_servers,
         );
         host.load_notice = load_notice;
+        host.agent = agent;
         let response = LoadSessionResponse::new()
             .modes(mode_state(host.permission.mode))
             .config_options(host.config_options(&startup.config));
@@ -279,13 +289,13 @@ impl SessionHost {
 
     /// Runs one `session/prompt`: a slash command or a model turn. A
     /// command that cannot run fails with [`commands::CommandRejected`].
-    /// `config_path` is the process config file, which workflow runs reload.
+    /// `startup` supplies process defaults and the available root capabilities
+    /// when a fresh session binds an agent definition.
     pub(super) async fn prompt(
         &mut self,
         request: PromptRequest,
         client: &dyn AcpClientPort,
-        process_config: &Config,
-        config_path: &std::path::Path,
+        startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
         if self.unsaved_compaction {
             anyhow::bail!(
@@ -306,7 +316,7 @@ impl SessionHost {
             )
             .await;
         let home = crate::paths::home_dir();
-        let scope = self.command_scope(home.as_deref(), process_config);
+        let scope = self.command_scope(home.as_deref(), &startup.config);
         // Expansion can wait on an MCP server, so a cancel drops it.
         let action = tokio::select! {
             biased;
@@ -325,7 +335,14 @@ impl SessionHost {
                 self.compact(instructions, client).await
             }
             Some(Ok(PromptAction::StartWorkflow(start))) => {
-                self.start_workflow(&input, start, process_config, config_path, client)
+                self.start_workflow(&input, start, &startup.config, &startup.config_path, client)
+                    .await
+            }
+            Some(Ok(PromptAction::RunAsAgent {
+                agent_id,
+                input: task,
+            })) => {
+                self.run_as_agent(&input, &agent_id, task, startup, client)
                     .await
             }
             Some(Err(rejected)) => Err(rejected.into()),
@@ -531,23 +548,25 @@ impl SessionHost {
         stored: StoredSession,
         added_dirs: crate::added_dirs::AddedDirs,
         permission: SessionPermission,
-        auth: String,
-        herdr: HerdrReporter,
+        startup: &AcpStartup,
+        host_mcp_servers: Vec<McpServer>,
     ) -> Self {
         built.tools.bind_recall(Some(&stored));
         Self {
             acp_session_id,
             built,
             stored,
+            agent: startup.agent.clone(),
+            host_mcp_servers,
             added_dirs,
             permission,
-            auth,
+            auth: startup.config.auth.clone(),
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
             unsaved_compaction: false,
-            herdr,
+            herdr: startup.herdr.clone(),
             sent_plan: Vec::new(),
             load_notice: None,
         }

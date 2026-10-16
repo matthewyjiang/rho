@@ -7,6 +7,7 @@ use super::super::{permission, AcpStartup};
 use crate::{
     added_dirs::AddedDirs,
     app::{
+        agent_binding::BoundAgent,
         automation::ensure_headless_auto_classifier_model,
         interactive_runtime::startup::{
             approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
@@ -26,6 +27,7 @@ use crate::{
 /// plus any a loaded session saved.
 pub(super) async fn build_session(
     startup: &AcpStartup,
+    agent: &BoundAgent,
     config: &Config,
     workspace: &Path,
     added_dirs: &AddedDirs,
@@ -44,13 +46,22 @@ pub(super) async fn build_session(
         mcp_sampling: McpSamplingSupport::Unavailable,
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
         diagnostics: &startup.diagnostics,
-        agent: &startup.agent,
+        agent,
         max_steps: None,
         usage_purpose: "agent",
         usage_parent_session_id: None,
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         added_dirs,
-        extend_tools: std::convert::identity,
+        // Inside a host that runs children itself (T3 Code), the `agent` tool
+        // delegates to the host so its UI owns them; otherwise this is a no-op.
+        extend_tools: |tools| {
+            crate::tools::agent::install_host_delegation(
+                tools,
+                workspace,
+                /*catalog*/ None,
+                config.max_output_bytes,
+            )
+        },
         system_prompt_suffix: None,
         approval: |inputs: ApprovalInputs| {
             let ApprovalChannel {

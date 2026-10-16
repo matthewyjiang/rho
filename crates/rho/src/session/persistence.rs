@@ -344,6 +344,53 @@ impl SessionEntry {
 }
 
 impl Session {
+    pub(super) fn rewrite_fresh_agent_identity(
+        &self,
+        agent_id: &str,
+        fingerprint: &str,
+    ) -> anyhow::Result<()> {
+        let mut cursor = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let contents = fs::read_to_string(&self.path)?;
+        let mut lines = contents.lines();
+        let header = lines
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
+        if lines.next().is_some() {
+            anyhow::bail!("cannot rebind agent: the session already has history");
+        }
+        let mut entry: SessionEntry = serde_json::from_str(header)?;
+        let SessionEntry::Session {
+            agent_id: stored_id,
+            agent_fingerprint,
+            ..
+        } = &mut entry
+        else {
+            anyhow::bail!("session file does not start with session metadata");
+        };
+        *stored_id = Some(agent_id.to_owned());
+        *agent_fingerprint = Some(fingerprint.to_owned());
+
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("session file has no parent directory"))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        set_private_file_permissions(temporary.as_file())?;
+        serde_json::to_writer(&mut temporary, &entry)?;
+        temporary.write_all(b"\n")?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(&self.path)?;
+        cursor.valid_len = None;
+        cursor.invalidate_tree();
+        // The index records transcript stats, not agent identity. Refresh them
+        // best-effort, like every other persistence operation.
+        let _ = index::sync_session_file(&self.session_root, &self.cwd, &self.path);
+        Ok(())
+    }
+
     fn append_entry(&self, entry: &SessionEntry) -> anyhow::Result<()> {
         let mut cursor = self
             .write_lock
@@ -939,6 +986,10 @@ fn system_time_secs(time: SystemTime) -> i64 {
         .map(|duration| clamp_u64_to_i64(duration.as_secs()))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "persistence_agent_tests.rs"]
+mod agent_tests;
 
 #[cfg(test)]
 #[path = "persistence_complete_turn_tests.rs"]

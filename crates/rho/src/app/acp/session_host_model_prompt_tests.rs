@@ -87,6 +87,7 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         diagnostics,
     };
     let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = SessionHost::from_built(
         SessionId::new(stored.id()),
         built,
@@ -97,8 +98,8 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
             writes: Default::default(),
             workspace_root: home.path().to_path_buf(),
         },
-        config.auth.clone(),
-        HerdrReporter::default(),
+        &startup,
+        Vec::new(),
     );
     let next: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "next"),

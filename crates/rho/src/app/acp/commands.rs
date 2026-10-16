@@ -5,7 +5,8 @@
 //! commands that work without the TUI: `/compact`, `/init`, prompt templates
 //! (`/prompt:<name>`), MCP prompts (`/mcp:<server>:<prompt>`), workspace
 //! workflows (`/workflow:<name> [inputs JSON]`, which start without a model
-//! turn), and `$skill` mentions (see [`super::skills`]). Other prompts,
+//! turn), fresh-session agent binding (`/agent:<name> <task>`), and `$skill`
+//! mentions (see [`super::skills`]). Other prompts,
 //! including unknown `/text`, reach the model unchanged.
 
 use std::path::Path;
@@ -20,6 +21,7 @@ use rho_sdk::{
 
 use super::skills;
 use crate::{
+    agent::{AgentCatalog, AgentRuntimeSpec},
     app::workflow_cli::discover::{self as workflows, StartCommand},
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError, COMMANDS},
     config::Config,
@@ -58,17 +60,19 @@ pub(super) enum PromptAction {
     Compact { instructions: Option<String> },
     /// `/workflow:<name>`: start one workspace workflow in the background.
     StartWorkflow(StartCommand),
+    /// `/agent:<name>`: bind a fresh session before running the task.
+    RunAsAgent { agent_id: String, input: UserInput },
 }
 
 /// A recognized command that cannot run, such as a TUI-only command or an
 /// MCP prompt missing arguments. The message is user-facing.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub(super) struct CommandRejected(String);
+pub(super) struct CommandRejected(pub(super) String);
 
 /// Every command this session can run: built-ins, prompt templates, MCP
-/// prompts, workflows when the session has the workflow tool, then `$skill`
-/// mentions when it has the skill tool.
+/// prompts, workflows when the session has the workflow tool, `$skill`
+/// mentions when it has the skill tool, and Rho agent definitions.
 pub(super) fn available_commands(scope: &CommandScope<'_>) -> Vec<AvailableCommand> {
     let built_in = COMMANDS
         .iter()
@@ -110,6 +114,21 @@ pub(super) fn available_commands(scope: &CommandScope<'_>) -> Vec<AvailableComma
             &crate::skills::discover_with_home(scope.cwd, scope.home),
         ));
     }
+    if let Ok(catalog) = agent_catalog(scope) {
+        commands.extend(catalog.iter().filter_map(|entry| {
+            let definition = &entry.definition;
+            match &definition.runtime {
+                AgentRuntimeSpec::Rho { .. } => Some(command(
+                    format!("agent:{}", definition.id),
+                    &definition.description,
+                    &format!("/agent:{} <task>", definition.id),
+                )),
+                AgentRuntimeSpec::ClaudeCli(_)
+                | AgentRuntimeSpec::Cursor(_)
+                | AgentRuntimeSpec::Antigravity(_) => None,
+            }
+        }));
+    }
     commands
 }
 
@@ -122,6 +141,14 @@ pub(super) async fn resolve(
     let Some(text) = leading_text(&input) else {
         return Ok(turn(input, &[], scope));
     };
+    // Delegated briefs span paragraphs, and the shared parser declines any
+    // multiline text, so `/agent:` is matched here with the whole remainder
+    // as its task.
+    if let Some(rest) = text.strip_prefix("/agent:") {
+        let (agent_id, task) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        let (agent_id, task) = (agent_id.to_owned(), task.trim().to_owned());
+        return run_as_agent(input, &agent_id, task, scope);
+    }
     match crate::commands::parse_command(text) {
         Ok(None) => Ok(turn(input, &[], scope)),
         Ok(Some(invocation)) => built_in(input, invocation, scope),
@@ -153,6 +180,40 @@ fn built_in(
             invocation.name
         ))),
     }
+}
+
+/// `/agent:<id> <task>`: run this fresh session as a Rho agent definition.
+fn run_as_agent(
+    input: UserInput,
+    agent_id: &str,
+    task: String,
+    scope: &CommandScope<'_>,
+) -> Result<PromptAction, CommandRejected> {
+    if agent_id.is_empty() || task.is_empty() {
+        return Err(CommandRejected("usage: /agent:<name> <task>".into()));
+    }
+    let rejected =
+        |detail: String| CommandRejected(format!("could not run /agent:{agent_id}: {detail}"));
+    let catalog = agent_catalog(scope).map_err(|error| rejected(error.to_string()))?;
+    let definition = &catalog
+        .find(agent_id)
+        .map_err(|error| rejected(error.to_string()))?
+        .definition;
+    match &definition.runtime {
+        AgentRuntimeSpec::Rho { .. } => {}
+        AgentRuntimeSpec::ClaudeCli(_)
+        | AgentRuntimeSpec::Cursor(_)
+        | AgentRuntimeSpec::Antigravity(_) => {
+            return Err(rejected(format!(
+                "{agent_id} runs on {}, which an ACP session cannot host",
+                definition.runtime.runtime()
+            )));
+        }
+    }
+    Ok(PromptAction::RunAsAgent {
+        agent_id: agent_id.to_owned(),
+        input: replace_leading_text(input, task),
+    })
 }
 
 async fn dynamic(
@@ -228,6 +289,16 @@ fn turn(input: UserInput, leading: &[&str], scope: &CommandScope<'_>) -> PromptA
 
 fn templates(scope: &CommandScope<'_>) -> prompt_templates::PromptTemplates {
     prompt_templates::load(scope.cwd, scope.home, scope.config.prompt_templates.clone())
+}
+
+fn agent_catalog(
+    scope: &CommandScope<'_>,
+) -> Result<AgentCatalog, crate::agent::AgentCatalogError> {
+    AgentCatalog::discover_with_home_and_trust(
+        scope.cwd,
+        scope.home,
+        crate::workspace::ProjectTrust::from_agents_env(),
+    )
 }
 
 /// An advertised command. `usage` is `/name args`; the args become the hint.

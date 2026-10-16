@@ -41,6 +41,51 @@ pub(super) struct AcpStartup {
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
 }
 
+#[cfg(test)]
+impl AcpStartup {
+    /// Startup for session-host fixtures: `config` bound to a plain root agent
+    /// with every tool, rooted at `cwd`.
+    pub(super) fn for_tests(config: Config, cwd: &std::path::Path) -> Self {
+        use crate::{
+            agent::{
+                AgentCapabilities, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
+                PromptPolicy, ToolPolicy,
+            },
+            app::agent_binding::{AgentBinder, AgentInvocation, AgentRole},
+        };
+        let agent = AgentBinder::bind(
+            Arc::new(AgentDefinition {
+                id: AgentId::new("rho").expect("test agent id"),
+                description: "test".into(),
+                prompt: PromptPolicy::Extend(String::new()),
+                runtime: AgentRuntimeSpec::Rho {
+                    tools: ToolPolicy::All,
+                    model: ModelPolicy::Inherit,
+                    reasoning: None,
+                },
+            }),
+            AgentInvocation {
+                role: AgentRole::AutomationRoot,
+                available_tools: AgentCapabilities::all_host_tools(),
+            },
+            &config,
+        )
+        .expect("bind test agent");
+        Self {
+            diagnostics: RuntimeDiagnostics::new(&config),
+            config,
+            config_path: cwd.join("rho-test-config.toml"),
+            cwd: cwd.to_path_buf(),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent,
+            herdr: HerdrReporter::default(),
+            added_dirs: Default::default(),
+        }
+    }
+}
+
 /// Outbound ACP host port used by session hosts and tests.
 ///
 /// Implementors deliver session updates and permission prompts to the editor
