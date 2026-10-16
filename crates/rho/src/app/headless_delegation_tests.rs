@@ -86,6 +86,7 @@ impl Fixture {
                 workflows: &workflows,
             },
             None,
+            /*held*/ None,
         )
         .unwrap();
         let (status, status_rx) = tokio::sync::watch::channel(RunStatus {

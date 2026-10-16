@@ -1,4 +1,4 @@
-use std::{future::Future, path::Path, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -18,12 +18,14 @@ use tokio::sync::mpsc;
 use super::{mode::SessionPermission, SessionHost};
 use crate::{
     app::{
-        acp::AcpClientPort, agent_executor::AgentRunHandle, session_assembly::BuiltSession,
+        acp::AcpClientPort,
+        agent_executor::AgentRunHandle,
+        session_assembly::BuiltSession,
+        subagent_messaging::{NoticeDelivery, SubagentNotice},
         SubagentManager,
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
     session::Session as StoredSession,
     subagent::{RunState, RunStatus},
     tools::sdk_registry::AppToolSet,
@@ -68,8 +70,9 @@ async fn next_chunk(chunks: &mut mpsc::UnboundedReceiver<String>) -> String {
 
 // Covers: T3 Code sends `session/cancel` before every mid-turn message, so a
 // cancelled prompt must leave its running children alive, and the next prompt
-// must wait for them and continue with their result. The TUI keeps children
-// across cancelled turns the same way.
+// must deliver their queued notices, wait for them, and continue with their
+// result. The TUI keeps children and their inbox across cancelled turns the
+// same way.
 // Owner: ACP session host prompt lifecycle.
 #[tokio::test]
 async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
@@ -120,6 +123,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(&config),
     };
+    let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = SessionHost::from_built(
         SessionId::new(id.as_str()),
         built,
@@ -130,13 +134,12 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
             writes: Default::default(),
             workspace_root: home.path().to_path_buf(),
         },
-        config.auth.clone(),
-        HerdrReporter::default(),
+        &startup,
+        Vec::new(),
     );
     let gate = host.cancel_handle();
     let (sender, mut chunks) = mpsc::unbounded_channel();
     let port = ChunkPort(sender);
-    let config_path = Path::new("/nonexistent/rho-test-config.toml");
     let prompt = |text: &str| {
         PromptRequest::new(
             SessionId::new(id.as_str()),
@@ -144,40 +147,53 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
         )
     };
 
-    // The first prompt answers, then holds natural completion for the child.
-    // The user's next message cancels it.
+    let notice = |message: &str| SubagentNotice {
+        run_id: "abc123".into(),
+        agent_id: "fixture".into(),
+        parent_session_id: rho_sdk::SessionId::from_string(&id).unwrap(),
+        message: message.into(),
+        delivery: NoticeDelivery::NextTurn,
+        acknowledged: Default::default(),
+    };
+    let during = notice("progress while the prompt waits");
+    let between = notice("progress between prompts");
+
+    // The first prompt answers, then holds natural completion for the child,
+    // which posts progress. The user's next message cancels the prompt.
     let (first, ()) = tokio::join!(
-        host.prompt(prompt("run the experiments"), &port, &config, config_path),
+        host.prompt(prompt("run the experiments"), &port, &startup),
         async {
             assert_eq!(next_chunk(&mut chunks).await, "agents started");
+            manager.post_notice_for_test(during.clone());
             gate.cancel();
         },
     );
     assert_eq!(first.unwrap().stop_reason, StopReason::Cancelled);
+    manager.post_notice_for_test(between.clone());
 
-    // The follow-up waits for the surviving child and continues with its result.
-    let (second, ()) = tokio::join!(
-        host.prompt(prompt("status?"), &port, &config, config_path),
-        async {
-            assert_eq!(next_chunk(&mut chunks).await, "still running");
-            status.send_replace(RunStatus {
-                state: RunState::Ok,
-                result: Some("child finding".into()),
-                ..Default::default()
-            });
-            completion.send_replace(true);
-        },
-    );
+    // The follow-up delivers both notices, waits for the surviving child, and
+    // continues with its result.
+    let (second, ()) = tokio::join!(host.prompt(prompt("status?"), &port, &startup), async {
+        assert_eq!(next_chunk(&mut chunks).await, "still running");
+        status.send_replace(RunStatus {
+            state: RunState::Ok,
+            result: Some("child finding".into()),
+            ..Default::default()
+        });
+        completion.send_replace(true);
+    },);
     assert_eq!(
         (
             second.unwrap().stop_reason,
             chunks.try_recv().ok(),
+            (during.is_acknowledged(), between.is_acknowledged()),
             child_cancel.is_cancelled(),
             manager.status("abc123").unwrap().status.state,
         ),
         (
             StopReason::EndTurn,
             Some("result incorporated".into()),
+            (true, true),
             false,
             RunState::Ok
         ),

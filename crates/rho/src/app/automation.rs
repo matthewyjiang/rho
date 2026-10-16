@@ -531,6 +531,7 @@ async fn run_session_with_output(
         session,
         super::headless_delegation::BackgroundSources::of(&built.tools),
         None,
+        /*held*/ None,
     )?;
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
