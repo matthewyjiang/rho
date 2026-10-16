@@ -781,3 +781,7 @@ mod model_prompt_tests;
 #[cfg(test)]
 #[path = "session_host_delegation_tests.rs"]
 mod delegation_tests;
+
+#[cfg(test)]
+#[path = "session_host_tool_lifecycle_tests.rs"]
+mod tool_lifecycle_tests;

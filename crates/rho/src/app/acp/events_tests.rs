@@ -16,10 +16,23 @@ fn session_id() -> SessionId {
 }
 
 fn only_update(mapper: &mut EventMapper, event: RunEvent) -> SessionUpdate {
+    let mut notifications = mapper.map_event(&session_id(), &event);
+    assert_eq!(notifications.len(), 1, "one notification for {event:?}");
+    notifications.remove(0).update
+}
+
+/// A mapper that has already sent the host a `tool_call` for `call-1`.
+fn mapper_with_started_call() -> EventMapper {
+    let mut mapper = EventMapper::new();
+    only_update(
+        &mut mapper,
+        RunEvent::ToolStarted {
+            call_id: ToolCallId::from_string("call-1").unwrap(),
+            name: "write".into(),
+            metadata: ToolMetadata::new(),
+        },
+    );
     mapper
-        .map_event(&session_id(), &event)
-        .expect("one notification")
-        .update
 }
 
 fn text_of(block: &ContentBlock) -> &str {
@@ -79,7 +92,7 @@ fn proposed_started_finished_map_kind_and_status() {
             },
         },
     );
-    assert_eq!(proposed, None);
+    assert_eq!(proposed, Vec::new());
 
     let started = only_update(
         &mut mapper,
@@ -197,7 +210,7 @@ fn ignored_events_emit_nothing() {
         },
     ];
     for event in ignored {
-        assert_eq!(mapper.map_event(&session_id(), &event), None);
+        assert_eq!(mapper.map_event(&session_id(), &event), Vec::new());
     }
 }
 
@@ -257,7 +270,7 @@ fn replay_history_emits_user_and_assistant_text() {
 #[test]
 fn finished_unified_diff_is_patch_text() {
     let finished = only_update(
-        &mut EventMapper::new(),
+        &mut mapper_with_started_call(),
         RunEvent::ToolFinished {
             call_id: ToolCallId::from_string("call-1").unwrap(),
             result: ToolCompletion::Success(
@@ -284,14 +297,17 @@ fn finished_unified_diff_is_patch_text() {
     }
 }
 
-// Covers: in-flight progress must stay in_progress and carry the progress text
+// Covers: in-flight progress must stay in_progress and carry the progress text,
+// and progress after the result must not reopen the finished card
 // Owner: acp event mapper
 #[test]
 fn tool_updated_is_in_progress() {
+    let mut mapper = mapper_with_started_call();
+    let call_id = ToolCallId::from_string("call-1").unwrap();
     let update = only_update(
-        &mut EventMapper::new(),
+        &mut mapper,
         RunEvent::ToolUpdated {
-            call_id: ToolCallId::from_string("call-1").unwrap(),
+            call_id: call_id.clone(),
             progress: ToolProgress::message("working"),
         },
     );
@@ -309,6 +325,20 @@ fn tool_updated_is_in_progress() {
         }
         other => panic!("expected ToolCallUpdate, got {other:?}"),
     }
+
+    // Progress that arrives after the result must not reopen the host's card.
+    only_update(
+        &mut mapper,
+        RunEvent::ToolFinished {
+            call_id: call_id.clone(),
+            result: ToolCompletion::Success(ToolOutput::text("ok")),
+        },
+    );
+    let late = RunEvent::ToolUpdated {
+        call_id,
+        progress: ToolProgress::message("late"),
+    };
+    assert_eq!(mapper.map_event(&session_id(), &late), Vec::new());
 }
 
 // Covers: background results the model was given must replay as finished tool

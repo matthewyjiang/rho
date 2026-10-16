@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
@@ -18,6 +18,8 @@ use crate::{
 };
 
 const PROVIDER_STREAM_RESET_NOTICE: &str = "[provider response discarded; retrying]";
+/// Title for a tool call whose name the mapper never saw proposed.
+const UNNAMED_TOOL_TITLE: &str = "tool";
 /// `_meta` key that marks a notification as history replayed by `session/load`.
 const REPLAY_META_KEY: &str = "isReplay";
 
@@ -25,39 +27,51 @@ const REPLAY_META_KEY: &str = "isReplay";
 ///
 /// Proposed tool arguments are held until [`RunEvent::ToolStarted`] so the first
 /// ACP `ToolCall` can carry name, kind, locations, and raw input together.
+///
+/// Hosts only accept a `tool_call_update` for an id they saw in a `tool_call`
+/// (Zed shows anything else as a failed "Tool call not found" card), so every
+/// call opens with a full `tool_call`, even one the SDK finishes without
+/// starting, such as a call to a tool that does not exist. When the run ends,
+/// calls still open are closed as failed, since the SDK does not finish calls
+/// that a cancel interrupts and ACP has no cancelled tool status.
 pub(super) struct EventMapper {
-    proposed: HashMap<String, Value>,
+    proposed: HashMap<String, rho_sdk::model::ToolCall>,
+    announced: BTreeMap<String, CallState>,
+}
+
+/// Whether the host may still be waiting for a call's final status.
+#[derive(Clone, Copy, PartialEq)]
+enum CallState {
+    Open,
+    Finished,
 }
 
 impl EventMapper {
     pub(super) fn new() -> Self {
         Self {
             proposed: HashMap::new(),
+            announced: BTreeMap::new(),
         }
     }
 
-    /// Maps one SDK event onto at most one ACP notification. Events that only
-    /// move mapper state, or that ACP has no update for, map to `None`.
+    /// Maps one SDK event onto ACP notifications. Events that only move mapper
+    /// state, or that ACP has no update for, map to nothing; a run's terminal
+    /// event maps to the closing updates for calls still open.
     pub(super) fn map_event(
         &mut self,
         session_id: &SessionId,
         event: &rho_sdk::RunEvent,
-    ) -> Option<SessionNotification> {
-        match event {
-            RunEvent::AssistantTextDelta { text } => Some(notify(
-                session_id,
-                SessionUpdate::AgentMessageChunk(text_chunk(text)),
-            )),
+    ) -> Vec<SessionNotification> {
+        let update = match event {
+            RunEvent::AssistantTextDelta { text } => {
+                Some(SessionUpdate::AgentMessageChunk(text_chunk(text)))
+            }
             RunEvent::ReasoningDelta { text } | RunEvent::ReasoningSummaryDelta { text } => {
-                Some(notify(
-                    session_id,
-                    SessionUpdate::AgentThoughtChunk(text_chunk(text)),
-                ))
+                Some(SessionUpdate::AgentThoughtChunk(text_chunk(text)))
             }
             RunEvent::ToolProposed { call } => {
                 if !call.id.is_empty() {
-                    self.proposed
-                        .insert(call.id.clone(), call.arguments.clone());
+                    self.proposed.insert(call.id.clone(), call.clone());
                 }
                 None
             }
@@ -66,42 +80,35 @@ impl EventMapper {
                 name,
                 metadata,
             } => {
-                let proposed = self.proposed.remove(call_id.as_str());
-                Some(notify(
-                    session_id,
-                    SessionUpdate::ToolCall(started_tool_call(call_id, name, metadata, proposed)),
-                ))
+                let proposed = self
+                    .proposed
+                    .remove(call_id.as_str())
+                    .map(|call| call.arguments);
+                self.announced
+                    .insert(call_id.as_str().to_owned(), CallState::Open);
+                Some(SessionUpdate::ToolCall(started_tool_call(
+                    call_id, name, metadata, proposed,
+                )))
             }
-            RunEvent::ToolUpdated { call_id, progress } => Some(notify(
-                session_id,
-                SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new(call_id.as_str()),
-                    ToolCallUpdateFields::new()
-                        .status(ToolCallStatus::InProgress)
-                        .content(vec![ToolCallContent::from(progress.text())]),
-                )),
-            )),
+            RunEvent::ToolUpdated { call_id, progress } => self.tool_update(
+                call_id,
+                CallState::Open,
+                ToolCallStatus::InProgress,
+                vec![ToolCallContent::from(progress.text())],
+            ),
             RunEvent::ToolFinished { call_id, result } => {
-                self.proposed.remove(call_id.as_str());
                 let (status, content) = finished_content(result);
-                Some(notify(
-                    session_id,
-                    SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                        ToolCallId::new(call_id.as_str()),
-                        ToolCallUpdateFields::new().status(status).content(content),
-                    )),
-                ))
+                self.tool_update(call_id, CallState::Finished, status, content)
             }
             RunEvent::ProviderStreamReset { .. } => {
                 self.proposed.clear();
-                Some(notify(
-                    session_id,
-                    SessionUpdate::AgentThoughtChunk(text_chunk(PROVIDER_STREAM_RESET_NOTICE)),
-                ))
+                Some(SessionUpdate::AgentThoughtChunk(text_chunk(
+                    PROVIDER_STREAM_RESET_NOTICE,
+                )))
             }
             RunEvent::Completed { .. } | RunEvent::Cancelled { .. } | RunEvent::Failed { .. } => {
                 self.proposed.clear();
-                None
+                return self.close_open_calls(session_id);
             }
             RunEvent::Started { .. }
             | RunEvent::StepStarted { .. }
@@ -122,7 +129,67 @@ impl EventMapper {
             | RunEvent::ProviderServiceTierFallback { .. } => None,
             // RunEvent is non_exhaustive; unknown future variants have no ACP update.
             _ => None,
+        };
+        update
+            .map(|update| notify(session_id, update))
+            .into_iter()
+            .collect()
+    }
+
+    /// Final `failed` updates for calls the host saw start but never saw
+    /// finish. The run's terminal event closes them; the pump calls this again
+    /// when the event stream ends, for a run that ended without one.
+    pub(super) fn close_open_calls(&mut self, session_id: &SessionId) -> Vec<SessionNotification> {
+        self.announced
+            .iter_mut()
+            .filter(|(_, state)| **state == CallState::Open)
+            .map(|(call_id, state)| {
+                *state = CallState::Finished;
+                notify(
+                    session_id,
+                    SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                        ToolCallId::new(call_id.as_str()),
+                        ToolCallUpdateFields::new().status(ToolCallStatus::Failed),
+                    )),
+                )
+            })
+            .collect()
+    }
+
+    /// A progress or result update for a call, sent as a full `tool_call`
+    /// when the host has not seen the call yet. Progress that arrives after
+    /// a call finished is dropped, so it cannot reopen the host's card.
+    fn tool_update(
+        &mut self,
+        call_id: &rho_sdk::ToolCallId,
+        next: CallState,
+        status: ToolCallStatus,
+        content: Vec<ToolCallContent>,
+    ) -> Option<SessionUpdate> {
+        let id = call_id.as_str();
+        if let Some(state) = self.announced.get_mut(id) {
+            if *state == CallState::Finished && next == CallState::Open {
+                return None;
+            }
+            *state = next;
+            return Some(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                ToolCallId::new(id),
+                ToolCallUpdateFields::new().status(status).content(content),
+            )));
         }
+        self.announced.insert(id.to_owned(), next);
+        let proposed = self.proposed.remove(id);
+        let title = proposed
+            .as_ref()
+            .map_or(UNNAMED_TOOL_TITLE, |call| call.name.as_str());
+        let mut tool = ToolCall::new(ToolCallId::new(id), title)
+            .kind(ToolKind::Other)
+            .status(status)
+            .content(content);
+        if let Some(call) = proposed {
+            tool = tool.name(call.name).raw_input(call.arguments);
+        }
+        Some(SessionUpdate::ToolCall(tool))
     }
 
     pub(super) fn map_stop(outcome: &rho_sdk::RunOutcome) -> StopReason {
@@ -232,7 +299,11 @@ fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallCon
             ToolCallStatus::Failed,
             vec![ToolCallContent::from(failure.message())],
         ),
-        ToolCompletion::Unavailable => (ToolCallStatus::Failed, Vec::new()),
+        // The model called a tool that does not exist; say so on the card.
+        ToolCompletion::Unavailable => (
+            ToolCallStatus::Failed,
+            vec![ToolCallContent::from("tool is unavailable")],
+        ),
         // ToolCompletion is non_exhaustive; unknown results cannot be shown as success.
         _ => (ToolCallStatus::Failed, Vec::new()),
     }
