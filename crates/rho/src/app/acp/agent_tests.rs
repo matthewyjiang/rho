@@ -96,7 +96,11 @@ fn test_agent() -> Arc<RhoAcpAgent> {
 // Owner: ACP agent handshake
 #[test]
 fn initialize_response_wire_shape() {
-    let response = serde_json::to_value(RhoAcpAgent::initialize()).expect("serialize initialize");
+    let request = agent_client_protocol::schema::v1::InitializeRequest::new(
+        agent_client_protocol::schema::ProtocolVersion::V1,
+    );
+    let response =
+        serde_json::to_value(RhoAcpAgent::initialize(&request)).expect("serialize initialize");
 
     assert_eq!(
         response,

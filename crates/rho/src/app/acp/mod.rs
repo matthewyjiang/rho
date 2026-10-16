@@ -1,4 +1,5 @@
 mod agent;
+mod auth;
 mod commands;
 mod config_options;
 mod events;
@@ -9,6 +10,7 @@ mod session_host;
 mod session_list;
 mod signals;
 mod skills;
+mod startup;
 mod t3_wake;
 mod thought_level;
 
@@ -157,14 +159,14 @@ impl AcpClientPort for ConnectionPort {
     }
 }
 
-pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
-    let agent = Arc::new(RhoAcpAgent::new(startup));
+pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
+    let agent = Arc::new(startup::LazyAgent::new(cli)?);
     Agent
         .builder()
         .name("rho")
         .on_receive_request(
-            async move |_request: InitializeRequest, responder, _cx| {
-                responder.respond(RhoAcpAgent::initialize())
+            async move |request: InitializeRequest, responder, _cx| {
+                responder.respond(RhoAcpAgent::initialize(&request))
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -173,11 +175,9 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: NewSessionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
-                    spawn_session_start(
-                        &cx,
-                        responder,
-                        async move { agent.new_session(request).await },
-                    )
+                    spawn_session_start(&cx, responder, async move {
+                        agent.ready().await?.new_session(request).await
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -189,7 +189,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                     let agent = Arc::clone(&agent);
                     let port = ConnectionPort::new(cx.clone());
                     spawn_session_start(&cx, responder, async move {
-                        agent.load_session(request, &port).await
+                        agent.ready().await?.load_session(request, &port).await
                     })
                 }
             },
@@ -201,11 +201,9 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 async move |request: PromptRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     let port = ConnectionPort::new(cx.clone());
-                    spawn_response(
-                        &cx,
-                        responder,
-                        async move { agent.prompt(request, &port).await },
-                    )
+                    spawn_response(&cx, responder, async move {
+                        agent.ready().await?.prompt(request, &port).await
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -234,7 +232,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 async move |request: SetSessionConfigOptionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        agent.set_config_option(request).await
+                        agent.ready().await?.set_config_option(request).await
                     })
                 }
             },
@@ -246,7 +244,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 async move |request: SetSessionModeRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        agent.set_session_mode(request).await
+                        agent.ready().await?.set_session_mode(request).await
                     })
                 }
             },
@@ -257,11 +255,9 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: CloseSessionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
-                    spawn_response(
-                        &cx,
-                        responder,
-                        async move { agent.close_session(request).await },
-                    )
+                    spawn_response(&cx, responder, async move {
+                        agent.ready().await?.close_session(request).await
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -276,7 +272,11 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
             {
                 let agent = Arc::clone(&agent);
                 async move |notification: CancelNotification, _cx| {
-                    agent.cancel(notification).await;
+                    // Cancellation targets an ongoing prompt, not a future
+                    // turn after session setup. No prompt exists before ready.
+                    if let Some(agent) = agent.started() {
+                        agent.cancel(notification).await;
+                    }
                     Ok(())
                 }
             },
@@ -285,7 +285,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
         .on_close({
             let agent = Arc::clone(&agent);
             async move |_cx| {
-                agent.shutdown_all().await;
+                agent.shutdown().await;
                 Ok(())
             }
         })

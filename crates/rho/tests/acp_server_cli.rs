@@ -16,6 +16,9 @@ use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
+#[path = "support/acp_login.rs"]
+mod login;
+
 /// Failure bound for one reply; the fixture answers without network.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -31,7 +34,8 @@ impl AcpServer {
     /// Starts `rho acp` in `cwd` with the fixture provider in `mode`;
     /// `path` is the file the fixture's tool call targets.
     fn spawn(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_rho"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
+        command
             .current_dir(cwd)
             .env("HOME", home)
             .env("RHO_HOME", home.join(".rho"))
@@ -43,7 +47,12 @@ impl AcpServer {
             .env_remove("HERDR_PANE_ID")
             .arg("--config")
             .arg(home.join("config.toml"))
-            .arg("acp")
+            .arg("acp");
+        Self::from_command(&mut command)
+    }
+
+    fn from_command(command: &mut Command) -> Self {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
