@@ -71,6 +71,7 @@ mod workflow;
 
 use build::{build_session, session_config};
 use convert::user_input_from_prompt;
+pub(super) use convert::RejectedDirectory;
 use mode::SessionPermission;
 use persist::{HostStorage, TurnCheckpoint};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
@@ -82,7 +83,9 @@ pub(super) struct SessionHost {
     agent: BoundAgent,
     /// Retained so an agent rebind reconnects the session's host-supplied tools.
     host_mcp_servers: Vec<McpServer>,
-    /// Saved with every snapshot so a later load restores them.
+    /// Launch `--add-dir` values plus the host's `additionalDirectories`.
+    /// Saved with every snapshot so a TUI resume restores them; a later
+    /// `session/load` takes only the roots its request names.
     added_dirs: crate::added_dirs::AddedDirs,
     permission: SessionPermission,
     auth: String,
