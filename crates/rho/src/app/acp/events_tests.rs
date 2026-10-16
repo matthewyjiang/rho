@@ -297,14 +297,17 @@ fn finished_unified_diff_is_patch_text() {
     }
 }
 
-// Covers: in-flight progress must stay in_progress and carry the progress text
+// Covers: in-flight progress must stay in_progress and carry the progress text,
+// and progress after the result must not reopen the finished card
 // Owner: acp event mapper
 #[test]
 fn tool_updated_is_in_progress() {
+    let mut mapper = mapper_with_started_call();
+    let call_id = ToolCallId::from_string("call-1").unwrap();
     let update = only_update(
-        &mut mapper_with_started_call(),
+        &mut mapper,
         RunEvent::ToolUpdated {
-            call_id: ToolCallId::from_string("call-1").unwrap(),
+            call_id: call_id.clone(),
             progress: ToolProgress::message("working"),
         },
     );
@@ -322,6 +325,20 @@ fn tool_updated_is_in_progress() {
         }
         other => panic!("expected ToolCallUpdate, got {other:?}"),
     }
+
+    // Progress that arrives after the result must not reopen the host's card.
+    only_update(
+        &mut mapper,
+        RunEvent::ToolFinished {
+            call_id: call_id.clone(),
+            result: ToolCompletion::Success(ToolOutput::text("ok")),
+        },
+    );
+    let late = RunEvent::ToolUpdated {
+        call_id,
+        progress: ToolProgress::message("late"),
+    };
+    assert_eq!(mapper.map_event(&session_id(), &late), Vec::new());
 }
 
 // Covers: background results the model was given must replay as finished tool

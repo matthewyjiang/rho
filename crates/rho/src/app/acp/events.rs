@@ -90,15 +90,15 @@ impl EventMapper {
                     call_id, name, metadata, proposed,
                 )))
             }
-            RunEvent::ToolUpdated { call_id, progress } => Some(self.tool_update(
+            RunEvent::ToolUpdated { call_id, progress } => self.tool_update(
                 call_id,
                 CallState::Open,
                 ToolCallStatus::InProgress,
                 vec![ToolCallContent::from(progress.text())],
-            )),
+            ),
             RunEvent::ToolFinished { call_id, result } => {
                 let (status, content) = finished_content(result);
-                Some(self.tool_update(call_id, CallState::Finished, status, content))
+                self.tool_update(call_id, CallState::Finished, status, content)
             }
             RunEvent::ProviderStreamReset { .. } => {
                 self.proposed.clear();
@@ -157,24 +157,25 @@ impl EventMapper {
     }
 
     /// A progress or result update for a call, sent as a full `tool_call`
-    /// when the host has not seen the call yet.
+    /// when the host has not seen the call yet. Progress that arrives after
+    /// a call finished is dropped, so it cannot reopen the host's card.
     fn tool_update(
         &mut self,
         call_id: &rho_sdk::ToolCallId,
         next: CallState,
         status: ToolCallStatus,
         content: Vec<ToolCallContent>,
-    ) -> SessionUpdate {
+    ) -> Option<SessionUpdate> {
         let id = call_id.as_str();
         if let Some(state) = self.announced.get_mut(id) {
-            // A late progress update must not reopen a finished call.
-            if next == CallState::Finished {
-                *state = CallState::Finished;
+            if *state == CallState::Finished && next == CallState::Open {
+                return None;
             }
-            return SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            *state = next;
+            return Some(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                 ToolCallId::new(id),
                 ToolCallUpdateFields::new().status(status).content(content),
-            ));
+            )));
         }
         self.announced.insert(id.to_owned(), next);
         let proposed = self.proposed.remove(id);
@@ -188,7 +189,7 @@ impl EventMapper {
         if let Some(call) = proposed {
             tool = tool.name(call.name).raw_input(call.arguments);
         }
-        SessionUpdate::ToolCall(tool)
+        Some(SessionUpdate::ToolCall(tool))
     }
 
     pub(super) fn map_stop(outcome: &rho_sdk::RunOutcome) -> StopReason {
