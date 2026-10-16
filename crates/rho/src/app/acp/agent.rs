@@ -13,12 +13,12 @@ use super::{
 };
 use agent_client_protocol::{
     schema::v1::{
-        AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeResponse,
-        LoadSessionRequest, LoadSessionResponse, McpCapabilities, NewSessionRequest,
-        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
-        SessionAdditionalDirectoriesCapabilities, SessionCapabilities, SessionId,
-        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-        SetSessionModeRequest, SetSessionModeResponse,
+        AgentCapabilities, AuthenticateRequest, CancelNotification, CloseSessionRequest,
+        CloseSessionResponse, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+        McpCapabilities, NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest,
+        PromptResponse, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
+        SessionCloseCapabilities, SessionId, SessionNotification, SetSessionConfigOptionRequest,
+        SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
     },
     schema::ProtocolVersion,
     Error as AcpError,
@@ -41,6 +41,9 @@ pub(super) struct SessionStart<Response> {
 /// `replaced` and waits for any in-flight prompt to release the host lock before
 /// publishing the new slot, so a follow-up prompt cannot run on the new host
 /// while the old turn is still finishing.
+///
+/// `session/close` instead unpublishes the slot first and then waits for the
+/// host, so a prompt that wins the host after that finds its slot gone.
 struct LiveSession {
     host: tokio::sync::Mutex<Option<SessionHost>>,
     cancel: Arc<PromptGate>,
@@ -53,9 +56,10 @@ pub(super) struct RhoAcpAgent {
     startup: AcpStartup,
     sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<LiveSession>>>,
     /// Readers are `session/new` and `session/load` for their full
-    /// build-and-publish lifecycle. `shutdown_all` takes the write lock so it
-    /// waits for those requests, then sets `closed`. Prompt, cancel, and
-    /// `publish` never take this lock.
+    /// build-and-publish lifecycle, and `session/close` until its host is torn
+    /// down. `shutdown_all` takes the write lock so it waits for those
+    /// requests, then sets `closed`. Prompt, cancel, and `publish` never take
+    /// this lock.
     install_gate: tokio::sync::RwLock<()>,
     /// One lock per session ID. Replacements of the same ID stay ordered;
     /// different IDs publish and tear down independently.
@@ -91,10 +95,13 @@ impl RhoAcpAgent {
                     // Host stdio servers are the ACP baseline; Streamable
                     // HTTP is the transport Rho also speaks. SSE is not.
                     .mcp_capabilities(McpCapabilities::new().http(true))
-                    // `additionalDirectories` on `session/new` and `session/load`.
-                    .session_capabilities(SessionCapabilities::new().additional_directories(
-                        SessionAdditionalDirectoriesCapabilities::new(),
-                    )),
+                    // `additionalDirectories` on `session/new` and `session/load`,
+                    // and `session/close`.
+                    .session_capabilities(
+                        SessionCapabilities::new()
+                            .additional_directories(SessionAdditionalDirectoriesCapabilities::new())
+                            .close(SessionCloseCapabilities::new()),
+                    ),
             )
             .auth_methods(Vec::new())
             // Hosts display `version` as the agent version; it matches `rho --version`.
@@ -189,17 +196,29 @@ impl RhoAcpAgent {
         let session_id = request.session_id.clone();
         let mut live = self.live_session(&session_id).await?;
         loop {
-            let busy = match live.lock_host_for_prompt(&session_id).await {
-                Ok(mut host) => {
-                    return host
-                        .prompt(request, port, &self.startup)
-                        .await
-                        .map_err(prompt_error);
+            let busy = {
+                let locked = live.lock_host_for_prompt(&session_id).await;
+                // `session/close` cancels a prompt it finds waiting here, as
+                // `session/cancel` would, rather than letting it start a turn
+                // on the closing host or fail on the emptied slot.
+                if !live.replaced.load(Ordering::Acquire)
+                    && !self.is_published(&session_id, &live).await
+                {
+                    return Ok(PromptResponse::new(StopReason::Cancelled));
                 }
-                // A reload replaced the session while this prompt waited for
-                // the old host; run it on the successor instead of dropping it.
-                Err(busy) if live.replaced.load(Ordering::Acquire) => busy,
-                Err(error) => return Err(error),
+                match locked {
+                    Ok(mut host) => {
+                        return host
+                            .prompt(request, port, &self.startup)
+                            .await
+                            .map_err(prompt_error);
+                    }
+                    // A reload replaced the session while this prompt waited
+                    // for the old host; run it on the successor instead of
+                    // dropping it.
+                    Err(busy) if live.replaced.load(Ordering::Acquire) => busy,
+                    Err(error) => return Err(error),
+                }
             };
             live = self.successor(&session_id, &live).await?.ok_or(busy)?;
         }
@@ -227,6 +246,13 @@ impl RhoAcpAgent {
             .ok_or_else(|| missing_session(session_id))
     }
 
+    async fn is_published(&self, session_id: &SessionId, live: &Arc<LiveSession>) -> bool {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .is_some_and(|current| Arc::ptr_eq(current, live))
+    }
+
     pub(super) async fn set_config_option(
         self: &Arc<Self>,
         request: SetSessionConfigOptionRequest,
@@ -245,6 +271,33 @@ impl RhoAcpAgent {
         if let Some(live) = live {
             live.cancel.cancel();
         }
+    }
+
+    /// `session/close`: unpublishes the session, cancels its prompt as
+    /// `session/cancel` would, lets that turn save, then tears the host down
+    /// with its MCP servers, background processes, and delegated agents. The
+    /// saved session stays on disk, so a later `session/load` of the ID opens
+    /// it again. An ID with no live session, including one already closed, is
+    /// `resource_not_found` like every other session method; the spec lets an
+    /// agent reject a session that does not exist or is not active.
+    pub(super) async fn close_session(
+        &self,
+        request: CloseSessionRequest,
+    ) -> Result<CloseSessionResponse, AcpError> {
+        let _gate = self.begin_install().await?;
+        let session_id = request.session_id;
+        // Holding the ID's install lock through teardown keeps a `session/load`
+        // of the same ID from reading the file before the cancelled turn saves.
+        let install = self.install_lock_for(&session_id).await;
+        let _install = install.lock().await;
+        let live = self
+            .sessions
+            .lock()
+            .await
+            .remove(&session_id)
+            .ok_or_else(|| missing_session(&session_id))?;
+        shutdown_live(live).await;
+        Ok(CloseSessionResponse::new())
     }
 
     pub(super) async fn shutdown_all(&self) {

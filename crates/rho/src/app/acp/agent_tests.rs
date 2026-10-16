@@ -8,15 +8,21 @@ use std::{
 
 use agent_client_protocol::{
     schema::v1::{
-        CancelNotification, LoadSessionRequest, PromptRequest, RequestPermissionRequest,
-        RequestPermissionResponse, SessionId, SessionModeId, SessionNotification,
-        SetSessionConfigOptionRequest, SetSessionModeRequest,
+        CancelNotification, CloseSessionRequest, ContentBlock as AcpContentBlock,
+        LoadSessionRequest, PromptRequest, RequestPermissionRequest, RequestPermissionResponse,
+        SessionId, SessionModeId, SessionNotification, SetSessionConfigOptionRequest,
+        SetSessionModeRequest, StopReason,
     },
     Error as AcpError, ErrorCode,
 };
 use pretty_assertions::assert_eq;
+use rho_sdk::{
+    model::{Message, ModelIdentity, ModelRequest},
+    provider::{ModelProvider, ProviderFuture},
+    ProviderError,
+};
 
-use super::{LiveSession, PromptGate, RhoAcpAgent};
+use super::{LiveSession, PromptGate, RhoAcpAgent, SessionHost};
 use crate::{
     agent::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy},
     app::acp::{AcpClientPort, AcpStartup},
@@ -24,6 +30,7 @@ use crate::{
     config::Config,
     diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
+    session::{NoSessionFound, Session as StoredSession},
 };
 
 struct NullPort;
@@ -81,8 +88,10 @@ fn test_agent() -> Arc<RhoAcpAgent> {
 }
 
 // Covers: the initialize wire shape hosts parse: loadSession, image,
-// embeddedContext, no audio, the MCP transports host `mcpServers` may use, and
-// `agentInfo` with the same version `rho --version` prints.
+// embeddedContext, no audio, the MCP transports host `mcpServers` may use,
+// additionalDirectories, session/close (Zed and T3 Code only close sessions
+// when it is advertised), and `agentInfo` with the same version
+// `rho --version` prints.
 // Owner: ACP agent handshake
 #[test]
 fn initialize_response_wire_shape() {
@@ -96,7 +105,7 @@ fn initialize_response_wire_shape() {
                 "loadSession": true,
                 "promptCapabilities": { "image": true, "audio": false, "embeddedContext": true },
                 "mcpCapabilities": { "http": true, "sse": false },
-                "sessionCapabilities": { "additionalDirectories": {} },
+                "sessionCapabilities": { "additionalDirectories": {}, "close": {} },
                 "auth": {},
             },
             "authMethods": [],
@@ -300,7 +309,6 @@ async fn replacement_finishes_before_the_next_one_publishes() {
         .is_some_and(|live| Arc::ptr_eq(live, &second)));
 }
 
-// Covers: session/load of a live session must not read the file until the old
 // Covers: a prompt queued behind a cancelled turn while a reload replaces the
 // session must run on the successor, not fail busy on the emptied old slot.
 // Owner: ACP agent session map
@@ -627,4 +635,135 @@ async fn replacement_is_not_visible_until_the_old_prompt_releases() {
         .await
         .get(&session_id)
         .is_some_and(|live| Arc::ptr_eq(live, &replacement)));
+}
+
+/// Signals when its turn starts, then holds it until the run is cancelled.
+struct HoldUntilCancel(Arc<tokio::sync::Notify>);
+
+impl ModelProvider for HoldUntilCancel {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new("test", "test", "model")
+    }
+
+    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.0.notify_one();
+            request.cancellation.cancelled().await;
+            Err(ProviderError::interrupted("cancelled"))
+        })
+    }
+}
+
+/// A published `session/new`-style host under `root` whose turns hold until
+/// cancelled, and the notify each turn start signals.
+async fn install_held_session(
+    agent: &Arc<RhoAcpAgent>,
+    root: &std::path::Path,
+) -> (rho_sdk::SessionId, Arc<tokio::sync::Notify>) {
+    let id = rho_sdk::SessionId::new();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let host = SessionHost::unsaved_for_tests(
+        &agent.startup,
+        root,
+        id.clone(),
+        Arc::new(HoldUntilCancel(Arc::clone(&started))),
+    )
+    .await;
+    agent.install(SessionId::new(id.as_str()), host).await;
+    (id, started)
+}
+
+fn text_prompt(session_id: &SessionId, text: &str) -> PromptRequest {
+    PromptRequest::new(session_id.clone(), vec![AcpContentBlock::from(text)])
+}
+
+// Covers: session/close must cancel the running prompt as session/cancel
+// would, save that turn so a later session/load finds it, and free the
+// session, so a thread closed in Zed or T3 Code stops holding its host.
+// Closing it again is not found.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn close_cancels_the_running_prompt_saves_it_and_frees_the_session() {
+    let home = tempfile::tempdir().unwrap();
+    let agent = test_agent();
+    let (id, started) = install_held_session(&agent, home.path()).await;
+    let session_id = SessionId::new(id.as_str());
+
+    let prompt_agent = Arc::clone(&agent);
+    let request = text_prompt(&session_id, "the codeword is zebra");
+    let prompt = tokio::spawn(async move { prompt_agent.prompt(request, &NullPort).await });
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the turn should reach the model");
+
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        agent.close_session(CloseSessionRequest::new(session_id.clone())),
+    )
+    .await
+    .expect("close should cancel the turn instead of waiting it out")
+    .expect("close the live session");
+
+    let response = prompt.await.unwrap().expect("cancelled prompt");
+    assert_eq!(response.stop_reason, StopReason::Cancelled);
+    let (_, histories) =
+        StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), id.as_str())
+            .expect("the cancelled turn should be saved");
+    assert_eq!(
+        histories.display.first(),
+        Some(&Message::user_text("the codeword is zebra"))
+    );
+    let again = agent
+        .close_session(CloseSessionRequest::new(session_id))
+        .await
+        .expect_err("already closed");
+    assert_eq!(again.code, ErrorCode::ResourceNotFound);
+}
+
+// Covers: a prompt queued behind a cancelled turn (T3 Code steers by cancel
+// and resend) when session/close arrives must end cancelled, not start a turn
+// on the closing host and hold the close open until that turn ends.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
+    let home = tempfile::tempdir().unwrap();
+    let agent = test_agent();
+    let (id, _started) = install_held_session(&agent, home.path()).await;
+    let session_id = SessionId::new(id.as_str());
+    let live = agent.live_session(&session_id).await.unwrap();
+    // A cancelled turn still winding down holds the host.
+    live.cancel.begin();
+    live.cancel.cancel();
+    let held = live.host.lock().await;
+
+    let prompt = agent.prompt(text_prompt(&session_id, "steer"), &NullPort);
+    tokio::pin!(prompt);
+    assert!(futures_util::poll!(&mut prompt).is_pending());
+
+    let close_agent = Arc::clone(&agent);
+    let close_id = session_id.clone();
+    let close = tokio::spawn(async move {
+        close_agent
+            .close_session(CloseSessionRequest::new(close_id))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while agent.sessions.lock().await.contains_key(&session_id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("close should unpublish the session before waiting for its host");
+
+    drop(held);
+    let response = tokio::time::timeout(Duration::from_secs(5), prompt)
+        .await
+        .expect("the queued prompt must not run a turn")
+        .expect("queued prompt");
+    assert_eq!(response.stop_reason, StopReason::Cancelled);
+    close.await.unwrap().expect("close");
+    let unsaved =
+        StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), id.as_str())
+            .expect_err("no turn ran, so nothing was saved");
+    assert!(unsaved.is::<NoSessionFound>(), "{unsaved:#}");
 }

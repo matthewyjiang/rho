@@ -771,6 +771,62 @@ async fn send_notification(
 }
 
 #[cfg(test)]
+impl SessionHost {
+    /// A tool-less host for session `id` on `provider`, unsaved like a
+    /// `session/new` host until its first save creates its file under `root`,
+    /// which is also its workspace. Agent tests use it where a vacant slot
+    /// cannot run a prompt.
+    pub(super) async fn unsaved_for_tests(
+        startup: &AcpStartup,
+        root: &std::path::Path,
+        id: rho_sdk::SessionId,
+        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
+    ) -> Self {
+        let runtime = rho_sdk::Rho::builder()
+            .provider_shared(Arc::clone(&provider))
+            .build()
+            .expect("test runtime");
+        let session = runtime
+            .session(rho_sdk::SessionOptions::new().id(id))
+            .await
+            .expect("test session");
+        let id = session.id().to_string();
+        let (store_root, store_id) = (root.to_path_buf(), id.clone());
+        let storage = HostStorage::unsaved(
+            root.to_path_buf(),
+            Box::new(move || {
+                StoredSession::create_with_id_in_root_for_test(&store_root, &store_root, &store_id)
+            }),
+        );
+        let built = BuiltSession {
+            runtime,
+            session,
+            provider,
+            tools: crate::tools::sdk_registry::AppToolSet::disabled(),
+            hooks: None,
+            approval_receiver: None,
+            prompt_template: None,
+            prompt: Default::default(),
+            diagnostics: crate::diagnostics::RuntimeDiagnostics::new(&startup.config),
+        };
+        let permission = SessionPermission {
+            mode: startup.config.permission_mode,
+            writes: Default::default(),
+            workspace_root: root.to_path_buf(),
+        };
+        Self::from_built(
+            SessionId::new(id),
+            built,
+            storage,
+            Default::default(),
+            permission,
+            startup,
+            Vec::new(),
+        )
+    }
+}
+
+#[cfg(test)]
 #[path = "session_host_tests.rs"]
 mod tests;
 
