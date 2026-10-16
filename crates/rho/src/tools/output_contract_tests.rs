@@ -117,7 +117,7 @@ async fn built_in_script_results_match_advertised_schemas() {
         ("powershell", json!({"command": "Write-Output needle"})),
     ] {
         let entry = surface
-            .search(name, usize::MAX)
+            .search_and_load(name, usize::MAX)
             .into_iter()
             .find(|entry| entry.name == name)
             .unwrap();

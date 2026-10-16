@@ -1,6 +1,9 @@
 //! One live inventory for script execution, discovery, and model advertisement.
 
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+};
 
 use rho_sdk::{
     model::ToolSpec,
@@ -57,6 +60,7 @@ impl ScriptTool {
 #[derive(Default)]
 struct SurfaceState {
     tools: Vec<ScriptTool>,
+    loaded: HashSet<String>,
     mode: CodemodeMode,
 }
 
@@ -92,7 +96,11 @@ impl CodeModeSurface {
             })
             .collect();
         siblings.sort_by(|a, b| a.name.cmp(&b.name));
-        self.state.write().expect("codemode surface").tools = siblings;
+        let mut state = self.state.write().expect("codemode surface");
+        state
+            .loaded
+            .retain(|name| siblings.iter().any(|sibling| sibling.name == *name));
+        state.tools = siblings;
     }
 
     pub(crate) fn snapshot(
@@ -115,10 +123,16 @@ impl CodeModeSurface {
         ))
     }
 
-    pub(crate) fn search(&self, query: &str, limit: usize) -> Vec<ToolCatalogEntry> {
-        let state = self.state.read().expect("codemode surface");
+    /// Top-level search loads only returned hits for subsequent model requests,
+    /// including in `only` mode. Script discovery stays read-only in its bridge.
+    pub(crate) fn search_and_load(&self, query: &str, limit: usize) -> Vec<ToolCatalogEntry> {
+        let mut state = self.state.write().expect("codemode surface");
         let entries: Vec<_> = state.tools.iter().map(ScriptTool::catalog_entry).collect();
-        search_entries(entries.iter(), query, limit)
+        let hits = search_entries(entries.iter(), query, limit);
+        state
+            .loaded
+            .extend(hits.iter().map(|entry| entry.name.clone()));
+        hits
     }
 
     pub(crate) fn mode(&self) -> CodemodeMode {
@@ -197,11 +211,10 @@ impl ToolVisibility for CodeModeSurface {
             return true;
         }
         let state = self.state.read().expect("codemode surface");
-        state.mode == CodemodeMode::On
-            && state
-                .tools
-                .iter()
-                .any(|sibling| sibling.name == name && !sibling.mcp)
+        state.tools.iter().any(|sibling| {
+            sibling.name == name
+                && (state.loaded.contains(name) || (state.mode == CodemodeMode::On && !sibling.mcp))
+        })
     }
 
     fn describe(&self, spec: &ToolSpec) -> Option<String> {

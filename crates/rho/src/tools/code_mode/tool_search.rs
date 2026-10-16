@@ -1,7 +1,7 @@
-//! Model-side discovery, including native tools omitted in `only` mode.
+//! Model-side discovery loads tools for direct calls on the next request.
 //!
-//! Hits stay compact: MCP servers repeat large union schemas across tools, so
-//! full schemas sit behind script `describe_tool(name)` instead.
+//! Hits stay compact. Loaded tools get full argument schemas in the next
+//! provider request; scripts retrieve schemas with `describe_tool(name)`.
 
 use std::sync::Arc;
 
@@ -81,7 +81,7 @@ impl Tool for ToolSearchTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: TOOL_SEARCH_NAME.into(),
-            description: "Discover script-callable tools by keyword search over names and descriptions (multi-word queries match any word; a name match ranks above a description match), including MCP tools and native tools in codemode only mode. Returns names, descriptions, and top-level parameter names (`?` marks optional). Call discovered tools through codemode; when names alone do not settle the arguments, first get full parameter and result schemas with `describe_tool(name)` in a script.".into(),
+            description: "Search for tools and load matching tools for direct calls on the next model request, including MCP tools and native tools hidden by codemode only mode. Searches names and descriptions (multi-word queries match any word; a name match ranks above a description match). Returns names, descriptions, and top-level parameter names (`?` marks optional); full argument schemas are declared on the next request. Wait for this search to finish before calling a loaded tool directly. Script-side `search_tools`, `list_tools`, and `describe_tool` are read-only and do not load tools; use `call_tool` or `call_tools` inside codemode to call tools without loading them.".into(),
             input_schema: json!({"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "default": 10}}, "required": ["query"], "additionalProperties": false}),
         }
     }
@@ -101,7 +101,7 @@ impl Tool for ToolSearchTool {
                 })?;
             let hits: Vec<ToolSearchHit> = self
                 .surface
-                .search(&args.query, args.limit)
+                .search_and_load(&args.query, args.limit)
                 .into_iter()
                 .map(ToolSearchHit::from)
                 .collect();
@@ -113,7 +113,10 @@ impl Tool for ToolSearchTool {
                     args.query,
                 )
             } else {
-                serde_json::to_string_pretty(&hits).expect("serializable hits")
+                format!(
+                    "loaded tools for direct calls on the next model request; their full argument schemas will be declared then:\n{}",
+                    serde_json::to_string_pretty(&hits).expect("serializable hits"),
+                )
             };
             rho_tools::Rendered::new(text, hits).into_tool_output(Default::default())
         })

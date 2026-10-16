@@ -191,6 +191,7 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
         text.push_str(
             r#"
 Use `codemode` to batch independent tool calls with `call_tools`, chain dependent calls, or filter large output, instead of issuing many separate calls.
+Top-level `tool_search` loads its returned tools, including MCP tools, for direct calls on the next model request. Wait for search to finish before calling a loaded tool directly. Script-side `search_tools`, `list_tools`, and `describe_tool` are read-only: they do not load tools, but scripts can call discovered tools immediately with `call_tool` or `call_tools`.
 "#,
         );
     }
@@ -284,7 +285,7 @@ pub(crate) fn mcp_context(report: &crate::tools::mcp::McpSessionReport) -> Strin
     let mut text = String::new();
     if !servers.is_empty() {
         text.push_str(
-            "\n\n# MCP servers\n\nDiscover connected tools with tool_search or codemode:\n",
+            "\n\n# MCP servers\n\nUse top-level `tool_search` to load connected tools for direct calls on the next model request, or discover and call them inside `codemode` without loading direct schemas:\n",
         );
         for server in &servers {
             text.push_str(&format!("- {}\n", server.identity));
@@ -403,9 +404,10 @@ pub(crate) fn codemode_mode_context(mode: crate::config::CodemodeMode) -> (Strin
 single steps; prefer `codemode` for multi-step work, MCP tools, or filtering large output."
         }
         CodemodeMode::Only => {
-            "Direct tools are no longer declared. Reach them with `call_tool` or \
+            "Direct tools are hidden by default. Reach them with `call_tool` or \
 `call_tools` inside a `codemode` script; use `list_tools()` or `search_tools()` in the script \
-to find them."
+to find them without loading direct schemas. Top-level `tool_search` explicitly loads its \
+matches for direct calls on the next model request, even in this mode."
         }
     };
     let label = mode.as_str();
