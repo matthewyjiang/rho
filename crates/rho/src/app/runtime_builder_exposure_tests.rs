@@ -243,9 +243,10 @@ async fn tool_search_loads_mcp_hits_for_direct_calls() {
                 tool_call(
                     "nested",
                     CODEMODE_TOOL_NAME,
-                    json!({"script": format!(
-                        "list_tools()\nhit = search_tools(\"unwatch_pull_request\")[0]\ndescribe_tool(hit[\"name\"])\nresult = call_tool(hit[\"name\"], {{\"threadId\": \"thread\"}})"
-                    )}),
+                    json!({"script": r#"list_tools()
+hit = search_tools("unwatch_pull_request")[0]
+describe_tool(hit["name"])
+result = call_tool(hit["name"], {"threadId": "thread"})"#}),
                 ),
                 tool_call("before_search", &found, json!({"threadId": "thread"})),
                 tool_call(
