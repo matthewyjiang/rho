@@ -97,6 +97,14 @@ impl RhoAcpAgent {
                     )),
             )
             .auth_methods(Vec::new())
+            // Hosts display `version` as the agent version; it matches `rho --version`.
+            .agent_info(
+                agent_client_protocol::schema::v1::Implementation::new(
+                    "rho",
+                    env!("CARGO_PKG_VERSION"),
+                )
+                .title("Rho"),
+            )
     }
 
     pub(super) fn authenticate(_request: &AuthenticateRequest) -> AcpError {

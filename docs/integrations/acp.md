@@ -23,6 +23,8 @@ stdout is protocol only. Logs go to stderr. Do not write other text to stdout, a
 
 Rho speaks ACP protocol version 1. The `initialize` response always answers `1`, whatever version the host asked for; a host that cannot speak v1 should disconnect.
 
+The `initialize` response also carries `agentInfo` with `name: "rho"`, `title: "Rho"`, and `version` set to the same version `rho --version` prints, so hosts can show which Rho release they are talking to.
+
 ## Sessions
 
 ACP sessions persist under `~/.rho/sessions`. They appear in `rho sessions list` and you can resume them with `rho -R`. See [Sessions](/sessions).

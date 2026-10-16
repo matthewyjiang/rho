@@ -8,9 +8,9 @@ use std::{
 
 use agent_client_protocol::{
     schema::v1::{
-        CancelNotification, LoadSessionRequest, McpCapabilities, PromptCapabilities, PromptRequest,
-        RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionModeId,
-        SessionNotification, SetSessionConfigOptionRequest, SetSessionModeRequest,
+        CancelNotification, LoadSessionRequest, PromptRequest, RequestPermissionRequest,
+        RequestPermissionResponse, SessionId, SessionModeId, SessionNotification,
+        SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
     Error as AcpError, ErrorCode,
 };
@@ -80,26 +80,33 @@ fn test_agent() -> Arc<RhoAcpAgent> {
     }))
 }
 
-// Covers: initialize must advertise loadSession, image, embeddedContext, no
-// audio, and the MCP transports host `mcpServers` may use.
+// Covers: the initialize wire shape hosts parse: loadSession, image,
+// embeddedContext, no audio, the MCP transports host `mcpServers` may use, and
+// `agentInfo` with the same version `rho --version` prints.
 // Owner: ACP agent handshake
 #[test]
-fn initialize_advertises_load_session_and_prompt_caps() {
-    let response = RhoAcpAgent::initialize();
+fn initialize_response_wire_shape() {
+    let response = serde_json::to_value(RhoAcpAgent::initialize()).expect("serialize initialize");
 
-    assert!(response.agent_capabilities.load_session);
     assert_eq!(
-        response.agent_capabilities.prompt_capabilities,
-        PromptCapabilities::new()
-            .image(true)
-            .audio(false)
-            .embedded_context(true)
+        response,
+        serde_json::json!({
+            "protocolVersion": 1,
+            "agentCapabilities": {
+                "loadSession": true,
+                "promptCapabilities": { "image": true, "audio": false, "embeddedContext": true },
+                "mcpCapabilities": { "http": true, "sse": false },
+                "sessionCapabilities": { "additionalDirectories": {} },
+                "auth": {},
+            },
+            "authMethods": [],
+            "agentInfo": {
+                "name": "rho",
+                "title": "Rho",
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+        })
     );
-    assert_eq!(
-        response.agent_capabilities.mcp_capabilities,
-        McpCapabilities::new().http(true)
-    );
-    assert!(response.auth_methods.is_empty());
 }
 
 // Covers: session/set_mode must reject unknown mode ids as invalid params
