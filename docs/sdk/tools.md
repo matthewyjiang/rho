@@ -133,7 +133,9 @@ Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_m
 
 ## Presentation and progress
 
-`ToolMetadata` carries operation kind, paths, command summary, URLs, and unified diffs. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.
+`ToolMetadata` carries operation kind, paths, command summary, URLs, unified diffs, and complete file changes. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.
+
+Attach `ToolFileChange::created`, `modified`, or `deleted` with `ToolMetadata::file_change` to let hosts render file changes without parsing a patch. `file_changes()` exposes the ordered changes, each with a resolved absolute `path()`, `old_text()` (`None` only for creation), and complete `new_text()` (empty for deletion). Use the exact contents read and committed by the mutation, including line endings and final-newline state; never substitute a bounded preview or unified patch. File text is shared across metadata clones and is not sent to the model. Built-in coding tools retain both representations: the TUI uses `unified_diff()`, while ACP prefers complete file changes and falls back to patch text for tools that do not supply them.
 
 Progress uses a bounded channel and applies backpressure. Tools should stop cosmetic progress when the receiver is dropped and always give cancellation priority.
 

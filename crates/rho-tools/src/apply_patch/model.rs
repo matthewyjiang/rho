@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use rho_sdk::tool::ToolFileChange;
+
 use crate::diff::unified_diff;
 
 #[derive(Debug, Clone)]
@@ -36,6 +38,38 @@ pub(super) enum FileChange {
 }
 
 impl FileChange {
+    pub(super) fn into_file_changes(self) -> Vec<ToolFileChange> {
+        match self {
+            Self::Add {
+                target,
+                new_content,
+                ..
+            } => {
+                vec![ToolFileChange::created(target, new_content)]
+            }
+            Self::Delete {
+                target,
+                previous_content,
+                ..
+            } => {
+                vec![ToolFileChange::deleted(target, previous_content)]
+            }
+            Self::Update {
+                target,
+                old_content,
+                new_content,
+                move_from,
+                ..
+            } => match move_from {
+                Some(source) => vec![
+                    ToolFileChange::deleted(source.path, source.content),
+                    ToolFileChange::created(target, new_content),
+                ],
+                None => vec![ToolFileChange::modified(target, old_content, new_content)],
+            },
+        }
+    }
+
     pub(super) fn summary_line(&self) -> String {
         match self {
             Self::Add { display_path, .. } => format!("A {display_path}"),

@@ -25,6 +25,8 @@ pub(crate) struct FileMutationOutcome {
     pub display_paths: Vec<String>,
     /// Unified diff for UI cards (not repeated in model-facing content).
     pub diff: String,
+    /// Exact committed text for host diff views, independent of preview limits.
+    pub file_changes: Vec<rho_sdk::tool::ToolFileChange>,
 }
 
 /// Open and exclusively lock one existing file for a bounded rewrite.

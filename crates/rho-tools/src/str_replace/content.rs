@@ -93,6 +93,9 @@ fn str_replace_content_locked(
         ),
         display_paths: vec![display_path.to_string()],
         diff,
+        file_changes: vec![rho_sdk::tool::ToolFileChange::modified(
+            path, original, updated,
+        )],
     })
 }
 
