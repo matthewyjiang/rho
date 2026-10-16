@@ -6,6 +6,7 @@ mod fast_mode;
 mod host_mcp;
 mod permission;
 mod session_host;
+mod session_list;
 mod signals;
 mod skills;
 mod t3_wake;
@@ -13,6 +14,7 @@ mod thought_level;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
+use agent_client_protocol::schema::v1::{DeleteSessionRequest, ListSessionsRequest};
 use agent_client_protocol::{
     schema::v1::{
         AuthenticateRequest, CancelNotification, CloseSessionRequest, InitializeRequest,
@@ -204,6 +206,24 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                         responder,
                         async move { agent.prompt(request, &port).await },
                     )
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |request: ListSessionsRequest, responder, cx| {
+                spawn_response(&cx, responder, session_list::list(request))
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: DeleteSessionRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(&cx, responder, async move {
+                        agent.delete_session(request).await
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),

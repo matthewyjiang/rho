@@ -11,6 +11,9 @@ use super::{
     session_host::{PromptGate, SessionHost},
     AcpClientPort, AcpStartup,
 };
+use agent_client_protocol::schema::v1::{
+    DeleteSessionRequest, DeleteSessionResponse, SessionDeleteCapabilities, SessionListCapabilities,
+};
 use agent_client_protocol::{
     schema::v1::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, CloseSessionRequest,
@@ -127,12 +130,15 @@ impl RhoAcpAgent {
                     // Host stdio servers are the ACP baseline; Streamable
                     // HTTP is the transport Rho also speaks. SSE is not.
                     .mcp_capabilities(McpCapabilities::new().http(true))
-                    // `additionalDirectories` on `session/new` and `session/load`,
-                    // and `session/close`.
+                    // `additionalDirectories` on `session/new` and `session/load`;
+                    // `session/close`; `session/list` and `session/delete` for
+                    // host history.
                     .session_capabilities(
                         SessionCapabilities::new()
                             .additional_directories(SessionAdditionalDirectoriesCapabilities::new())
-                            .close(SessionCloseCapabilities::new()),
+                            .close(SessionCloseCapabilities::new())
+                            .list(SessionListCapabilities::new())
+                            .delete(SessionDeleteCapabilities::new()),
                     ),
             )
             .auth_methods(Vec::new())
@@ -148,6 +154,35 @@ impl RhoAcpAgent {
 
     pub(super) fn authenticate(_request: &AuthenticateRequest) -> AcpError {
         not_yet_supported("authenticate")
+    }
+
+    /// Deletes a saved session, closing it first if it is open on this
+    /// connection. Hosts such as Zed delete from history without closing the
+    /// thread, so refusing an open session would make the delete never stick.
+    pub(super) async fn delete_session(
+        &self,
+        request: DeleteSessionRequest,
+    ) -> Result<DeleteSessionResponse, AcpError> {
+        let _gate = self.begin_install().await?;
+        let target = super::session_list::delete_target(request.session_id.clone()).await?;
+        let _install = self.retire(&request.session_id).await;
+        // A refusal past this point leaves the session closed here but still
+        // saved; `session/load` reopens it.
+        super::session_list::delete(target).await
+    }
+
+    /// Closes session `session_id` on this connection, if open, the way
+    /// `session/close` does, and returns its install lock so nothing
+    /// republishes it until the guard drops. A `session/load` of the same ID
+    /// holds that lock from reading the file until publication, so retiring
+    /// waits for it and closes the session it published.
+    async fn retire(&self, session_id: &SessionId) -> tokio::sync::OwnedMutexGuard<()> {
+        let install = self.install_lock_for(session_id).await.lock_owned().await;
+        let live = self.sessions.lock().await.remove(session_id);
+        if let Some(live) = live {
+            shutdown_live(live).await;
+        }
+        install
     }
 
     /// Switches one session's permission mode for later prompts. Like
