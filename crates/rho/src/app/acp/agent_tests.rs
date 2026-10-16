@@ -767,3 +767,50 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
             .expect_err("no turn ran, so nothing was saved");
     assert!(unsaved.is::<NoSessionFound>(), "{unsaved:#}");
 }
+
+// Covers: a prompt that already holds the host when session/close arrives,
+// but has not started its turn, must start cancelled. Otherwise its fresh
+// turn escapes the close's cancel and holds close, same-ID load, and
+// shutdown open until it ends.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn prompt_starting_as_close_lands_runs_no_turn() {
+    let home = tempfile::tempdir().unwrap();
+    let agent = test_agent();
+    let (id, _started) = install_held_session(&agent, home.path()).await;
+    let session_id = SessionId::new(id.as_str());
+    let live = agent.live_session(&session_id).await.unwrap();
+    // The prompt has the host and is about to begin its turn.
+    let mut held = live.host.lock().await;
+
+    let close_agent = Arc::clone(&agent);
+    let close_id = session_id.clone();
+    let close = tokio::spawn(async move {
+        close_agent
+            .close_session(CloseSessionRequest::new(close_id))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !live.cancel.is_closed() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("close should close the gate before waiting for the host");
+
+    let host = held.as_mut().expect("the host is still in its slot");
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        host.prompt(text_prompt(&session_id, "late"), &NullPort, &agent.startup),
+    )
+    .await
+    .expect("the prompt must not run a turn the close cannot cancel")
+    .expect("late prompt");
+    assert_eq!(response.stop_reason, StopReason::Cancelled);
+    drop(held);
+    close.await.unwrap().expect("close");
+    let unsaved =
+        StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), id.as_str())
+            .expect_err("no turn ran, so nothing was saved");
+    assert!(unsaved.is::<NoSessionFound>(), "{unsaved:#}");
+}

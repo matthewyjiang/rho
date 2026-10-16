@@ -42,8 +42,9 @@ pub(super) struct SessionStart<Response> {
 /// publishing the new slot, so a follow-up prompt cannot run on the new host
 /// while the old turn is still finishing.
 ///
-/// `session/close` instead unpublishes the slot first and then waits for the
-/// host, so a prompt that wins the host after that finds its slot gone.
+/// `session/close` instead unpublishes the slot and closes its `cancel` gate
+/// before waiting for the host, so a prompt that wins the host after that
+/// ends cancelled instead of starting a turn the close would wait on.
 struct LiveSession {
     host: tokio::sync::Mutex<Option<SessionHost>>,
     cancel: Arc<PromptGate>,
@@ -198,12 +199,10 @@ impl RhoAcpAgent {
         loop {
             let busy = {
                 let locked = live.lock_host_for_prompt(&session_id).await;
-                // `session/close` cancels a prompt it finds waiting here, as
-                // `session/cancel` would, rather than letting it start a turn
-                // on the closing host or fail on the emptied slot.
-                if !live.replaced.load(Ordering::Acquire)
-                    && !self.is_published(&session_id, &live).await
-                {
+                // A closing session ends a prompt that waited for its host as
+                // `session/cancel` would, rather than failing it on the
+                // emptied slot. One that passes here starts cancelled.
+                if live.cancel.is_closed() {
                     return Ok(PromptResponse::new(StopReason::Cancelled));
                 }
                 match locked {
@@ -244,13 +243,6 @@ impl RhoAcpAgent {
             .get(session_id)
             .cloned()
             .ok_or_else(|| missing_session(session_id))
-    }
-
-    async fn is_published(&self, session_id: &SessionId, live: &Arc<LiveSession>) -> bool {
-        let sessions = self.sessions.lock().await;
-        sessions
-            .get(session_id)
-            .is_some_and(|current| Arc::ptr_eq(current, live))
     }
 
     pub(super) async fn set_config_option(
@@ -490,11 +482,12 @@ impl DerefMut for HostGuard<'_> {
     }
 }
 
-/// Cancels any prompt and tears the host down. Shutdown has no successor
-/// host, so unlike a replacement the cancelled turn still saves before the
-/// host lock is released.
+/// Cancels any prompt, closes the gate so no later prompt starts a turn, and
+/// tears the host down. Shutdown has no successor host, so unlike a
+/// replacement the cancelled turn still saves before the host lock is
+/// released.
 async fn shutdown_live(live: Arc<LiveSession>) {
-    live.cancel.cancel();
+    live.cancel.close();
     let host = live.host.lock().await.take();
     if let Some(host) = host {
         host.shutdown().await;
