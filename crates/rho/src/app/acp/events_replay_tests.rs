@@ -17,7 +17,23 @@ fn call_block(id: &str) -> model::ContentBlock {
 }
 
 fn replay(messages: &[Message]) -> Vec<SessionNotification> {
-    history(&SessionId::new("s1"), messages)
+    let mut notifications = history(&SessionId::new("s1"), messages);
+    // Canonicalize fresh ACP identities by announcement order, retaining
+    // pairing and rejecting duplicate announcements or updates to unknown IDs.
+    let mut ids = std::collections::HashMap::new();
+    for notification in &mut notifications {
+        let id = match &mut notification.update {
+            SessionUpdate::ToolCall(call) => {
+                let next = ids.len().to_string();
+                assert!(ids.insert(call.tool_call_id.clone(), next).is_none());
+                &mut call.tool_call_id
+            }
+            SessionUpdate::ToolCallUpdate(update) => &mut update.tool_call_id,
+            _ => continue,
+        };
+        *id = ToolCallId::new(ids.get(id).expect("previously announced call").clone());
+    }
+    notifications
 }
 
 fn expected(updates: Vec<SessionUpdate>) -> Vec<SessionNotification> {
@@ -81,24 +97,24 @@ fn replay_pairs_out_of_order_results_and_accumulates_images() {
                 SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::from(
                     "read images"
                 ))),
-                SessionUpdate::ToolCall(tool("a")),
+                SessionUpdate::ToolCall(tool("0")),
                 SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from("between"))),
-                SessionUpdate::ToolCall(tool("b")),
+                SessionUpdate::ToolCall(tool("1")),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new("b"),
+                    ToolCallId::new("1"),
                     ToolCallUpdateFields::new()
                         .status(status)
                         .content(content)
                         .raw_output(json!("output"))
                 )),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new("b"),
+                    ToolCallId::new("1"),
                     ToolCallUpdateFields::new()
                         .status(status)
                         .content(with_image)
                 )),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new("a"),
+                    ToolCallId::new("0"),
                     ToolCallUpdateFields::new()
                         .status(ToolCallStatus::Completed)
                         .content(vec![])
@@ -127,9 +143,9 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
         assert_eq!(
             replay(&[message]),
             expected(vec![
-                SessionUpdate::ToolCall(tool("a")),
+                SessionUpdate::ToolCall(tool("0")),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new("a"),
+                    ToolCallId::new("0"),
                     ToolCallUpdateFields::new().status(ToolCallStatus::Failed)
                 )),
             ])
@@ -146,11 +162,71 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
                 content: "output".into()
             })]),
             expected(vec![SessionUpdate::ToolCall(
-                ToolCall::new(ToolCallId::new("orphan"), "tool")
+                ToolCall::new(ToolCallId::new("0"), "tool")
                     .status(status)
                     .content(vec![ToolCallContent::from("output")])
                     .raw_output(json!("output"))
             )])
         );
     }
+}
+
+// Covers: a reused provider ID must close the superseded unfinished occurrence,
+// and later results/images and end-of-history closure must target the new cards.
+// Owner: ACP replay mapping; the stdio test covers ordinary completed reuse.
+#[test]
+fn replay_closes_superseded_occurrences_without_retargeting_their_images() {
+    let image = model::ImageContent {
+        data: "YWJj".into(),
+        mime_type: "image/png".into(),
+    };
+    let image_content =
+        ToolCallContent::from(ContentBlock::Image(ImageContent::new("YWJj", "image/png")));
+    let messages = vec![
+        Message::Assistant(vec![call_block("reused")]),
+        Message::tool_image_supplement("read", "reused", vec![image.clone()]).unwrap(),
+        Message::Assistant(vec![call_block("reused")]),
+        Message::ToolResult(ToolResult {
+            id: "reused".into(),
+            ok: false,
+            content: "second output".into(),
+        }),
+        Message::tool_image_supplement("read", "reused", vec![image]).unwrap(),
+        Message::Assistant(vec![call_block("reused")]),
+    ];
+    assert_eq!(
+        replay(&messages),
+        expected(vec![
+            SessionUpdate::ToolCall(tool("0")),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                ToolCallId::new("0"),
+                ToolCallUpdateFields::new()
+                    .status(ToolCallStatus::Pending)
+                    .content(vec![image_content.clone()])
+            )),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                ToolCallId::new("0"),
+                ToolCallUpdateFields::new().status(ToolCallStatus::Failed)
+            )),
+            SessionUpdate::ToolCall(tool("1")),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                ToolCallId::new("1"),
+                ToolCallUpdateFields::new()
+                    .status(ToolCallStatus::Failed)
+                    .content(vec![ToolCallContent::from("second output")])
+                    .raw_output(json!("second output"))
+            )),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                ToolCallId::new("1"),
+                ToolCallUpdateFields::new()
+                    .status(ToolCallStatus::Failed)
+                    .content(vec![ToolCallContent::from("second output"), image_content])
+            )),
+            SessionUpdate::ToolCall(tool("2")),
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                ToolCallId::new("2"),
+                ToolCallUpdateFields::new().status(ToolCallStatus::Failed)
+            )),
+        ])
+    );
 }

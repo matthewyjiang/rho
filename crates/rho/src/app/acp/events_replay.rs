@@ -24,20 +24,13 @@ pub(super) fn history(session_id: &SessionId, messages: &[Message]) -> Vec<Sessi
     }
     // A killed process can leave a saved call without a result. History is not
     // running work; ACP has no cancelled status, so do not leave cards spinning.
-    for call in replay.tools.values() {
-        if matches!(
-            call.status,
-            ToolCallStatus::Pending | ToolCallStatus::InProgress
-        ) {
-            updates.push(notify(
-                session_id,
-                SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    call.tool_call_id.clone(),
-                    ToolCallUpdateFields::new().status(ToolCallStatus::Failed),
-                )),
-            ));
-        }
-    }
+    updates.extend(
+        replay
+            .tools
+            .values()
+            .filter_map(interrupted_update)
+            .map(|update| notify(session_id, update)),
+    );
     let meta = serde_json::Map::from_iter([(REPLAY_META_KEY.to_owned(), Value::Bool(true))]);
     updates
         .into_iter()
@@ -47,6 +40,7 @@ pub(super) fn history(session_id: &SessionId, messages: &[Message]) -> Vec<Sessi
 
 #[derive(Default)]
 struct Replay {
+    /// Latest occurrence by stored/provider ID; ACP identities are session-unique.
     tools: BTreeMap<String, ToolCall>,
 }
 
@@ -150,11 +144,18 @@ impl Replay {
                     image.mime_type.clone(),
                 )),
                 model::ContentBlock::ToolCall(call) => {
-                    let tool = ToolCall::new(ToolCallId::new(call.id.clone()), call.name.clone())
+                    let tool = ToolCall::new(fresh_tool_call_id(), call.name.clone())
                         .name(call.name.clone())
                         .status(ToolCallStatus::Pending)
                         .raw_input(call.arguments.clone());
-                    self.tools.insert(call.id.clone(), tool.clone());
+                    if let Some(update) = self
+                        .tools
+                        .insert(call.id.clone(), tool.clone())
+                        .as_ref()
+                        .and_then(interrupted_update)
+                    {
+                        notifications.push(notify(session_id, update));
+                    }
                     notifications.push(notify(session_id, SessionUpdate::ToolCall(tool)));
                     continue;
                 }
@@ -171,7 +172,7 @@ impl Replay {
 
     /// Results and supplemental images replace ACP content as a whole, so
     /// retain earlier output. An orphan result still opens a complete card.
-    fn tool_update(&mut self, call: ToolCall) -> SessionUpdate {
+    fn tool_update(&mut self, mut call: ToolCall) -> SessionUpdate {
         let id = call.tool_call_id.0.to_string();
         if let Some(previous) = self.tools.get_mut(&id) {
             previous.status = call.status;
@@ -182,12 +183,35 @@ impl Replay {
             if let Some(output) = call.raw_output {
                 fields = fields.raw_output(output);
             }
-            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(call.tool_call_id, fields))
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                previous.tool_call_id.clone(),
+                fields,
+            ))
         } else {
+            call.tool_call_id = fresh_tool_call_id();
             self.tools.insert(id, call.clone());
             SessionUpdate::ToolCall(call)
         }
     }
+}
+
+/// Provider IDs can repeat across turns. Fresh replay identities also avoid
+/// collisions with future live calls when the restored conversation continues.
+fn fresh_tool_call_id() -> ToolCallId {
+    ToolCallId::new(format!("rho-replay-{}", uuid::Uuid::new_v4()))
+}
+
+fn interrupted_update(call: &ToolCall) -> Option<SessionUpdate> {
+    matches!(
+        call.status,
+        ToolCallStatus::Pending | ToolCallStatus::InProgress
+    )
+    .then(|| {
+        SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            call.tool_call_id.clone(),
+            ToolCallUpdateFields::new().status(ToolCallStatus::Failed),
+        ))
+    })
 }
 
 #[derive(Clone, Copy)]

@@ -288,7 +288,8 @@ fn additional_directories_reject_entries_they_cannot_grant() {
 }
 
 // Covers: loading saved history after a server restart must restore paired
-// tool cards, arguments, result status and output before session/load replies.
+// tool cards, arguments, result status and output before session/load replies,
+// even when successive provider turns reuse the same tool-call ID.
 // Owner: ACP session replay, over the real stdio server
 #[test]
 fn load_replays_tool_calls_and_results() {
@@ -312,62 +313,80 @@ fn load_replays_tool_calls_and_results() {
             .0
             .unwrap();
         let session_id = created["sessionId"].as_str().unwrap();
-        let (reply, live) = server.request(
-            "session/prompt",
-            json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "read the shared notes"}]}),
-        );
-        reply.unwrap();
-        let call = live
-            .iter()
-            .find(|u| u["sessionUpdate"] == "tool_call")
-            .unwrap();
-        let result = live
-            .iter()
-            .find(|u| u["sessionUpdate"] == "tool_call_update" && u["status"] == status)
-            .expect("live terminal result");
-        assert_ne!(result["content"], json!([]));
-        // Explicitly close to release the saved session before restarting.
-        server
-            .request("session/close", json!({"sessionId": session_id}))
-            .0
-            .unwrap();
-        drop(server);
-        let mut server = workspace.server();
-        server
-            .request("initialize", json!({"protocolVersion": 1}))
-            .0
-            .unwrap();
-        let (loaded, notifications) = server.request_notifications(
-            "session/load",
-            json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": [], "additionalDirectories": roots}),
-        );
-        loaded.unwrap();
-        let tools = notifications
-            .iter()
-            .filter(|n| {
-                matches!(
-                    n["update"]["sessionUpdate"].as_str(),
-                    Some("tool_call" | "tool_call_update")
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            tools.len(),
-            2,
-            "restored call and result: {notifications:#?}"
-        );
-        assert_eq!(
-            tools
+        let mut expected = Vec::new();
+        let mut provider_ids = Vec::new();
+        for text in ["first output", "second output"] {
+            std::fs::write(workspace.extra.join("notes.txt"), text).unwrap();
+            // Loading creates a new fixture provider, whose first response
+            // reuses the same ID as the previous process did.
+            let (reply, live) = server.request(
+                "session/prompt",
+                json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "read the shared notes"}]}),
+            );
+            reply.unwrap();
+            let call = live
                 .iter()
-                .map(|n| (&n["sessionId"], &n["_meta"]))
-                .collect::<Vec<_>>(),
-            vec![(&json!(session_id), &json!({"isReplay": true})); 2]
+                .find(|u| u["sessionUpdate"] == "tool_call")
+                .unwrap();
+            let result = live
+                .iter()
+                .find(|u| u["sessionUpdate"] == "tool_call_update" && u["status"] == status)
+                .expect("live terminal result");
+            assert_ne!(result["content"], json!([]));
+            provider_ids.push(call["toolCallId"].clone());
+            expected.push(json!({"name": call["name"], "rawInput": call["rawInput"],
+                "status": status, "content": result["content"]}));
+            server
+                .request("session/close", json!({"sessionId": session_id}))
+                .0
+                .unwrap();
+            drop(server);
+            server = workspace.server();
+            server
+                .request("initialize", json!({"protocolVersion": 1}))
+                .0
+                .unwrap();
+            let (loaded, notifications) = server.request_notifications(
+                "session/load",
+                json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": [], "additionalDirectories": roots}),
+            );
+            loaded.unwrap();
+            let tools = notifications
+                .iter()
+                .filter(|n| {
+                    matches!(
+                        n["update"]["sessionUpdate"].as_str(),
+                        Some("tool_call" | "tool_call_update")
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(tools.len(), expected.len() * 2, "{notifications:#?}");
+            let mut ids = std::collections::BTreeSet::new();
+            let restored = tools
+                .chunks_exact(2)
+                .map(|pair| {
+                    let call = &pair[0]["update"];
+                    let result = &pair[1]["update"];
+                    assert!(
+                        ids.insert(call["toolCallId"].as_str().unwrap()),
+                        "duplicate replay ID: {tools:#?}"
+                    );
+                    assert_eq!(result["toolCallId"], call["toolCallId"]);
+                    for notification in pair {
+                        assert_eq!(
+                            (&notification["sessionId"], &notification["_meta"]),
+                            (&json!(session_id), &json!({"isReplay": true}))
+                        );
+                    }
+                    json!({"name": call["name"], "rawInput": call["rawInput"],
+                    "status": result["status"], "content": result["content"]})
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(restored, expected);
+        }
+        assert_eq!(
+            provider_ids[0], provider_ids[1],
+            "fixture must reuse the provider ID"
         );
-        assert_eq!(tools[0]["update"]["toolCallId"], call["toolCallId"]);
-        assert_eq!(tools[0]["update"]["name"], call["name"]);
-        assert_eq!(tools[0]["update"]["rawInput"], call["rawInput"]);
-        assert_eq!(tools[1]["update"]["toolCallId"], call["toolCallId"]);
-        assert_eq!(tools[1]["update"]["status"], json!(status));
-        assert_eq!(tools[1]["update"]["content"], result["content"]);
     }
 }
