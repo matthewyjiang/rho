@@ -79,6 +79,7 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "Firecrawl API base URL",
             timeout: SETTLE,
         },
+        Step::Custom(main_list_shows_custom_firecrawl_url),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Firecrawl API base URL",
@@ -122,6 +123,22 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ true,
 )
 .with_env(OPENAI_KEY_ENV);
+
+// Covers: returning from a backend page must show its saved edits on the main
+// list rather than the badge captured when the page opened.
+// Owner: interactive TUI
+fn main_list_shows_custom_firecrawl_url(harness: &mut PtyHarness) -> Result<()> {
+    let rows = harness.screen().rows_text();
+    let row = rows
+        .iter()
+        .find(|row| row.starts_with("→ Firecrawl"))
+        .with_context(|| format!("Firecrawl row missing:\n{}", harness.screen().contents()))?;
+    ensure!(
+        row.trim_end().ends_with("http://127.0.0.1:3002/proxy"),
+        "main list kept a stale Firecrawl badge: {row}"
+    );
+    Ok(())
+}
 
 // Covers: resizing an inline choice must preserve its explanation and focus,
 // without a text caret obscuring the focus marker.

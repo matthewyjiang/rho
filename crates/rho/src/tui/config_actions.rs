@@ -5,7 +5,7 @@ use super::{
     config_editor, config_picker,
     config_row::{ConfigCommitCtx, ConfigRow},
     resolve_web_search_editor_value, App, ComposerMode, ConfigNumberInput, ConfigNumberKey,
-    ConfigToggle, Entry, InteractiveRuntime,
+    ConfigToggle, Entry, InteractiveRuntime, UiPicker,
 };
 
 /// Static description of one boolean `/config` row.
@@ -433,6 +433,53 @@ impl App {
         let mut config = self.info.services.config_repository.load()?;
         config.agent_concurrency = self.live_agent_concurrency(config.agent_concurrency);
         Ok(config)
+    }
+
+    /// Rebuilds a config page returning from a child so its rows show what
+    /// the child saved. Filter, selected row, and parent carry over. Pickers
+    /// without a [`config_picker::ConfigPage`] return unchanged.
+    pub(super) fn refreshed_config_page(&mut self, mut stale: UiPicker) -> UiPicker {
+        let Some(page) = stale.config_page() else {
+            return stale;
+        };
+        let mut fresh = match self.config_page_picker(page) {
+            Ok(fresh) => fresh,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!("could not reload config: {err}")));
+                return stale;
+            }
+        };
+        let selected = stale
+            .items
+            .get(stale.selected)
+            .map(|item| item.value.clone())
+            .unwrap_or_default();
+        Self::restore_picker_position(&mut fresh, &selected, std::mem::take(&mut stale.filter));
+        match stale.take_parent() {
+            Some(parent) => fresh.with_parent(parent),
+            None => fresh,
+        }
+    }
+
+    fn config_page_picker(&self, page: config_picker::ConfigPage) -> anyhow::Result<UiPicker> {
+        use config_picker::ConfigPage;
+        let config = self.load_config_for_display()?;
+        let info = &self.info.runtime;
+        Ok(match page {
+            ConfigPage::Root => config_picker::config_picker(info, &config),
+            ConfigPage::Category(category) => {
+                config_picker::category_picker(category.value(), info, &config)
+                    .expect("known config category must have a picker")
+            }
+            ConfigPage::WebSearch => {
+                config_picker::web_search_config_picker(&config, &info.provider, &info.model)
+            }
+            ConfigPage::WebSearchBackend(backend) => super::web_search_config::backend_picker(
+                backend,
+                &config,
+                self.credential_store.as_ref(),
+            ),
+        })
     }
 
     fn live_agent_concurrency(&self, persisted: usize) -> usize {

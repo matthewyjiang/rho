@@ -97,7 +97,7 @@ pub(in crate::tui) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> Ov
         .iter()
         .position(|index| *index == picker.selected)
         .unwrap_or(0);
-    let chrome = chrome_view(picker.overlay_chrome.as_ref());
+    let chrome = chrome_view(picker.overlay_chrome.as_deref());
     let content = OverlayContent {
         title: &picker.title,
         filter: &picker.filter,

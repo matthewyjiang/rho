@@ -182,9 +182,14 @@ pub(super) struct UiPicker {
     pub(super) force_fuzzy_filter: bool,
     /// When set, Space confirms the row like Enter (toggle-style pickers).
     space_confirms: bool,
-    pub(super) overlay_chrome: Option<OverlayChrome>,
+    /// Boxed: few pickers set it, and `ComposerMode::Picker` holds this
+    /// struct inline, so its size counts against clippy's variant budget.
+    pub(super) overlay_chrome: Option<Box<OverlayChrome>>,
     pub(super) overlay_shape: OverlayShape,
     pub(super) label_overflow: LabelOverflow,
+    /// Config page this picker shows. Returning to it from a child rebuilds
+    /// its rows from saved config; see [`crate::tui::App::pop_picker_level`].
+    config_page: Option<crate::tui::config_picker::ConfigPage>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
     detail_wrap_cache: RefCell<DetailWrapCache>,
@@ -343,6 +348,7 @@ impl UiPicker {
             overlay_chrome: None,
             overlay_shape: OverlayShape::Compact,
             label_overflow: LabelOverflow::KeepStart,
+            config_page: None,
             parent: None,
             matches: RefCell::default(),
             detail_wrap_cache: RefCell::default(),
@@ -439,7 +445,7 @@ impl UiPicker {
     }
 
     pub(super) fn with_overlay_chrome(mut self, chrome: OverlayChrome) -> Self {
-        self.overlay_chrome = Some(chrome);
+        self.overlay_chrome = Some(Box::new(chrome));
         self
     }
 
@@ -712,6 +718,15 @@ impl UiPicker {
     pub(super) fn with_parent(mut self, parent: UiPicker) -> Self {
         self.parent = Some(Box::new(parent));
         self
+    }
+
+    pub(super) fn with_config_page(mut self, page: crate::tui::config_picker::ConfigPage) -> Self {
+        self.config_page = Some(page);
+        self
+    }
+
+    pub(super) fn config_page(&self) -> Option<crate::tui::config_picker::ConfigPage> {
+        self.config_page
     }
 
     pub(super) fn has_parent(&self) -> bool {
