@@ -33,6 +33,7 @@ ACP sessions persist under `~/.rho/sessions`. They appear in `rho sessions list`
 
 During a session, Rho also sends:
 
+- `tool_call` when a tool call starts, then `tool_call_update` with its progress and a final `completed` or `failed` status. A call to a tool that does not exist arrives as a single `failed` `tool_call`. Calls still running when a prompt ends, such as after `session/cancel`, get a final `failed` update before the prompt response, since ACP v1 has no cancelled tool status.
 - `usage_update` with the estimated context fill (`used`) and the model's context window (`size`, `0` when unknown). It goes out at each model step and compaction, and when a prompt ends.
 - `plan` with the full `todo` checklist whenever it differs from the last one the host received. A checklist restored by `session/load` goes out when the next prompt starts. An empty `entries` list means the checklist was cleared, per ACP v1; T3 Code currently ignores empty plans and keeps showing the last one.
 

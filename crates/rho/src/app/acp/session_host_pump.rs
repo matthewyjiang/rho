@@ -126,6 +126,9 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
 
             event = events.next() => {
                 let Some(event) = event else {
+                    for notification in mapper.close_open_calls(session_id) {
+                        send_notification(client, notification).await?;
+                    }
                     while inflight.next().await.is_some() {}
                     return Ok(());
                 };
@@ -134,7 +137,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
                 {
                     displays.show(session_id, client, input).await?;
                 }
-                if let Some(notification) = mapper.map_event(session_id, &event) {
+                for notification in mapper.map_event(session_id, &event) {
                     send_notification(client, notification).await?;
                 }
                 let signal = signals.as_deref_mut().and_then(|signals| signals.observe(&event));
