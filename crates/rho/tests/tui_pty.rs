@@ -831,6 +831,9 @@ fn skill_mentions_complete_and_load_in_one_batch() {
             WaitTimeout::secs(10, "completed mention"),
         )
         .unwrap();
+    // Typed keys can arrive as one burst on a loaded runner; outlast the
+    // paste-Enter suppression so Enter submits instead of adding a newline.
+    harness.settle_plain_text_input();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
