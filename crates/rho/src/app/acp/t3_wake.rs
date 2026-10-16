@@ -15,10 +15,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -51,25 +48,74 @@ pub(super) struct T3Wake {
     /// Where this parent writes signals and its watchers look for them.
     signal_dir: PathBuf,
     armed: Option<Watcher>,
-    /// Watchers that fired and were dropped: their T3 wake notice may still
-    /// be on its way as a later prompt.
-    fired: Vec<String>,
+    /// Watchers that ended and were dropped: T3's notice that they finished
+    /// may still be on its way as a later prompt.
+    ended: Vec<String>,
+    /// Locks of cancelled watchers, held until a later prompt ends so a
+    /// watcher sees its cancel before it sees this parent let go.
+    retired: Vec<std::fs::File>,
 }
 
 struct Watcher {
     task_id: String,
     signal: WakeSignal,
-    /// Set once the signal is written. The watcher consumes the file, so
-    /// its absence says nothing.
-    fired: Arc<AtomicBool>,
-    notifier: Option<JoinHandle<()>>,
+    /// Held while this parent lives; the watcher ends once it is released.
+    lock: std::fs::File,
+    notifier: Option<Notifier>,
+}
+
+/// Fires a watcher's signal once a result is ready, unless a prompt that
+/// delivers results itself has started first.
+struct Notifier {
+    task: JoinHandle<()>,
+    state: Arc<Mutex<NotifierState>>,
+}
+
+#[derive(Default)]
+struct NotifierState {
+    /// Set as a prompt starts. Publication checks it under the same lock, so
+    /// once set no signal follows.
+    quiet: bool,
+    fired: bool,
+}
+
+impl Notifier {
+    fn spawn(background: Background, signal: WakeSignal) -> Self {
+        let state = Arc::new(Mutex::new(NotifierState::default()));
+        let publish = Arc::clone(&state);
+        let task = tokio::spawn(async move {
+            background.clone().result_ready().await;
+            let mut state = publish.lock().unwrap_or_else(|error| error.into_inner());
+            if state.quiet {
+                return;
+            }
+            match signal.fire(&finished_summary(&background)) {
+                Ok(()) => state.fired = true,
+                Err(error) => tracing::warn!(%error, "could not signal the T3 wake watcher"),
+            }
+        });
+        Self { task, state }
+    }
+
+    /// Stops the notifier and reports whether it fired.
+    fn quiet(self) -> bool {
+        let fired = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.quiet = true;
+            state.fired
+        };
+        self.task.abort();
+        fired
+    }
 }
 
 /// What a prompt was, as far as waking is concerned.
 #[derive(Debug, PartialEq)]
 pub(super) enum PromptOrigin {
-    /// T3's notice that a watcher finished: background results are ready.
-    Wake,
+    /// It mentions a watcher of this session, normally T3's notice that the
+    /// watcher finished, so the model needs to know the watcher holds no
+    /// result.
+    WatcherNotice,
     Other,
 }
 
@@ -90,7 +136,22 @@ impl Background {
         }
     }
 
-    /// Labels for work still running, oldest first.
+    /// Whether a result is waiting or could still arrive. A workflow counts
+    /// until its terminal snapshot is published, which follows its last
+    /// runtime event.
+    fn outstanding(&self) -> bool {
+        self.processes.as_ref().is_some_and(|processes| {
+            processes.has_pending_notification()
+                || processes
+                    .live_summaries()
+                    .iter()
+                    .any(|summary| summary.state.is_live())
+        }) || self
+            .workflows
+            .has_active_or_pending_notification(&self.session_id)
+    }
+
+    /// Labels for work still running, oldest first, for the watcher title.
     fn live_labels(&self) -> Vec<String> {
         let processes = self
             .processes
@@ -143,76 +204,68 @@ impl T3Wake {
         Self {
             signal_dir,
             armed: None,
-            fired: Vec::new(),
+            ended: Vec::new(),
+            retired: Vec::new(),
         }
     }
 
-    /// Call as a prompt starts, with its leading text. The prompt delivers
-    /// results itself, so the armed watcher's notifier stops until the
-    /// prompt ends. A watcher that already fired is dropped: its wake is
-    /// this prompt or a later one.
+    /// Call as a prompt starts, before anything it awaits, with its leading
+    /// text. The prompt delivers results itself, so the armed watcher's
+    /// notifier stops until the prompt ends. A watcher that fired, or that
+    /// this prompt reports as finished, is dropped: T3 already holds its
+    /// wake.
     pub(super) fn prompt_started(&mut self, text: Option<&str>) -> PromptOrigin {
+        let mentions = |id: &str| text.is_some_and(|text| text.contains(id));
         if let Some(watcher) = &mut self.armed {
-            if let Some(notifier) = watcher.notifier.take() {
-                notifier.abort();
-            }
-            if watcher.fired.load(Ordering::Acquire) {
+            let fired = watcher.notifier.take().is_some_and(Notifier::quiet);
+            if fired || mentions(&watcher.task_id) {
                 let watcher = self.armed.take().expect("armed watcher");
-                self.fired.push(watcher.task_id);
+                watcher.signal.remove();
+                self.ended.push(watcher.task_id);
             }
         }
-        let Some(text) = text else {
-            return PromptOrigin::Other;
-        };
-        match self.fired.iter().position(|id| text.contains(id.as_str())) {
-            Some(index) => {
-                self.fired.remove(index);
-                PromptOrigin::Wake
-            }
-            None => PromptOrigin::Other,
+        let before = self.ended.len();
+        self.ended.retain(|id| !mentions(id));
+        if self.ended.len() < before {
+            PromptOrigin::WatcherNotice
+        } else {
+            PromptOrigin::Other
         }
     }
 
-    /// Call as a prompt ends. Arms a watcher while work is still running or
-    /// a result is undelivered, and retires one that has nothing to wait for.
-    /// Fails when T3 refused to start the watcher, so the host can say that
-    /// results wait for the next message.
+    /// Call as a prompt ends. Arms a watcher while work is outstanding, and
+    /// retires one that has nothing left to wait for. Fails when T3 refused
+    /// to start the watcher, so the host can say that results wait for the
+    /// next message.
     pub(super) async fn prompt_ended(
         &mut self,
         tools: &AppToolSet,
         background: Background,
     ) -> anyhow::Result<()> {
-        let labels = background.live_labels();
-        if labels.is_empty() && !background.has_result() {
+        self.retired.clear();
+        if !background.outstanding() {
             if let Some(watcher) = self.armed.take() {
-                retire(tools, watcher).await;
+                self.retired.push(retire(tools, watcher).await);
             }
             return Ok(());
         }
         if self.armed.is_none() {
+            let labels = background.live_labels();
             self.armed = Some(arm(tools, &self.signal_dir, &labels).await?);
         }
         let watcher = self.armed.as_mut().expect("armed watcher");
-        let signal = watcher.signal.clone();
-        let fired = Arc::clone(&watcher.fired);
-        watcher.notifier = Some(tokio::spawn(async move {
-            background.clone().result_ready().await;
-            // Marked first, so whoever sees the signal file sees the mark.
-            fired.store(true, Ordering::Release);
-            if let Err(error) = signal.fire(&finished_summary(&background)) {
-                fired.store(false, Ordering::Release);
-                tracing::warn!(%error, "could not signal the T3 wake watcher");
-            }
-        }));
+        watcher.notifier = Some(Notifier::spawn(background, watcher.signal.clone()));
         Ok(())
     }
 }
 
+/// Dropping the state, as closing or replacing the session does, releases
+/// every watcher's lock, so they end instead of waiting forever.
 impl Drop for T3Wake {
     fn drop(&mut self) {
         if let Some(watcher) = &mut self.armed {
             if let Some(notifier) = watcher.notifier.take() {
-                notifier.abort();
+                notifier.quiet();
             }
         }
     }
@@ -221,38 +274,49 @@ impl Drop for T3Wake {
 /// Delegates a watcher titled after the running work.
 async fn arm(tools: &AppToolSet, signal_dir: &Path, labels: &[String]) -> anyhow::Result<Watcher> {
     let delegate = t3_tool(tools, "delegate_task")?;
-    let signal = WakeSignal::create(signal_dir)?;
+    let (signal, lock) = WakeSignal::create(signal_dir)?;
     let arguments = json!({
         "task": format!("{WAKE_COMMAND} {}", signal.token),
         "title": watcher_title(labels),
         "mode": "async",
     });
-    let output = delegate
+    let task_id = delegate
         .call(invocation(arguments), host_context())
         .await
-        .map_err(|error| anyhow::anyhow!("delegate_task failed: {}", error.message()))?;
-    if output.is_failure() {
-        anyhow::bail!("delegate_task failed: {}", output.content());
-    }
-    let task_id = output
-        .structured_content()
-        .and_then(|data| data.get("taskId"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("delegate_task returned no taskId"))?;
+        .map_err(|error| anyhow::anyhow!("delegate_task failed: {}", error.message()))
+        .and_then(|output| {
+            if output.is_failure() {
+                anyhow::bail!("delegate_task failed: {}", output.content());
+            }
+            output
+                .structured_content()
+                .and_then(|data| data.get("taskId"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow::anyhow!("delegate_task returned no taskId"))
+        });
+    let task_id = match task_id {
+        Ok(task_id) => task_id,
+        Err(error) => {
+            signal.cleanup();
+            return Err(error);
+        }
+    };
     Ok(Watcher {
-        task_id: task_id.to_owned(),
+        task_id,
         signal,
-        fired: Arc::new(AtomicBool::new(false)),
+        lock,
         notifier: None,
     })
 }
 
-/// Cancels a watcher whose work was delivered in-prompt. Best effort: a
-/// leftover watcher only costs an idle child in T3's panel.
-async fn retire(tools: &AppToolSet, mut watcher: Watcher) {
+/// Cancels a watcher whose work was delivered in-prompt, returning its lock
+/// for the caller to hold a while longer. Best effort: a leftover watcher
+/// only costs an idle child in T3's panel until this parent ends.
+async fn retire(tools: &AppToolSet, mut watcher: Watcher) -> std::fs::File {
     if let Some(notifier) = watcher.notifier.take() {
-        notifier.abort();
+        notifier.quiet();
     }
     watcher.signal.remove();
     let cancelled = match t3_tool(tools, "task_cancel") {
@@ -275,6 +339,7 @@ async fn retire(tools: &AppToolSet, mut watcher: Watcher) {
     if let Err(error) = cancelled {
         tracing::warn!(%error, task_id = %watcher.task_id, "could not cancel T3 wake watcher");
     }
+    watcher.lock
 }
 
 fn t3_tool(tools: &AppToolSet, name: &str) -> anyhow::Result<Arc<dyn Tool>> {
@@ -334,8 +399,14 @@ pub(super) fn signal_dir() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::rho_dir()?.join("acp-wakes"))
 }
 
-/// The file a parent writes to end one watcher. The token is a UUID, so a
-/// watcher prompt cannot name a path outside the signal directory.
+/// The watcher's result when its parent ended before any result was ready.
+const PARENT_ENDED: &str = "the Rho session that started this background work ended before it \
+                            finished";
+
+/// The files one watcher shares with its parent: the signal the parent
+/// writes when a result is ready, and a lock the parent holds while it
+/// lives. The token is a UUID, so a watcher prompt cannot name a path
+/// outside the signal directory.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct WakeSignal {
     token: String,
@@ -343,13 +414,17 @@ pub(super) struct WakeSignal {
 }
 
 impl WakeSignal {
-    fn create(dir: &Path) -> anyhow::Result<Self> {
+    /// A fresh signal, with the parent's lock on it held by the returned file.
+    fn create(dir: &Path) -> anyhow::Result<(Self, std::fs::File)> {
         std::fs::create_dir_all(dir)?;
         let token = uuid::Uuid::new_v4().to_string();
-        Ok(Self {
+        let signal = Self {
             path: dir.join(&token),
             token,
-        })
+        };
+        let lock = std::fs::File::create(signal.lock_path())?;
+        lock.lock()?;
+        Ok((signal, lock))
     }
 
     /// The signal a `/rho-wake` prompt names, if its token is well formed.
@@ -370,6 +445,10 @@ impl WakeSignal {
         &self.token
     }
 
+    fn lock_path(&self) -> PathBuf {
+        self.path.with_extension("lock")
+    }
+
     /// Writes `summary` whole: a temp file renamed into place, so a polling
     /// watcher never reads a partial file.
     fn fire(&self, summary: &str) -> std::io::Result<()> {
@@ -382,16 +461,37 @@ impl WakeSignal {
         let _ = std::fs::remove_file(&self.path);
     }
 
-    /// Waits for the parent's signal and consumes it, returning its summary.
-    /// `None` when `cancel` trips first.
+    fn cleanup(&self) {
+        self.remove();
+        let _ = std::fs::remove_file(self.lock_path());
+    }
+
+    /// Whether the parent let go of its lock: it ended, or closed or
+    /// replaced its session. The OS releases a dead process's lock.
+    fn parent_ended(&self) -> bool {
+        match std::fs::File::open(self.lock_path()) {
+            Ok(lock) => lock.try_lock().is_ok(),
+            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+        }
+    }
+
+    /// Waits for the parent's signal, or for the parent to end, and cleans
+    /// up, returning the watcher's result. `None` when `cancel` trips first.
     pub(super) async fn wait(&self, cancel: &CancellationToken) -> Option<String> {
         loop {
             if let Ok(summary) = std::fs::read_to_string(&self.path) {
-                self.remove();
+                self.cleanup();
                 return Some(summary);
             }
+            if self.parent_ended() {
+                self.cleanup();
+                return Some(PARENT_ENDED.into());
+            }
             tokio::select! {
-                () = cancel.cancelled() => return None,
+                () = cancel.cancelled() => {
+                    self.cleanup();
+                    return None;
+                }
                 () = tokio::time::sleep(SIGNAL_POLL) => {}
             }
         }

@@ -11,23 +11,25 @@ use super::{
 };
 use crate::app::acp::AcpClientPort;
 
-/// Model input for T3's wake notice. T3 asks the model to read the watcher
-/// with `task_status`, but the watcher holds no result: the results follow
-/// this text at the first boundary.
-const WAKE_INPUT: &str = "Background work you started finished while you were idle. Its \
-                          results follow.";
+/// Added for the model to a prompt that mentions a watcher, normally T3's
+/// notice that it finished. T3 asks the model to read the task, but a
+/// watcher holds no result: the background results follow at the first
+/// boundary. The notice stays whole, since T3 batches other tasks into it.
+const WATCHER_NOTE: &str = "Delegated tasks titled `waiting: ...` are Rho's background-work \
+                            watchers, not agents, and hold no result. Results of background work \
+                            that finished, if any, follow.";
 
 impl SessionHost {
-    /// Call as a prompt starts. Returns the model input for T3's wake notice,
-    /// which replaces the notice text.
-    pub(super) fn wake_prompt_started(&mut self, input: &UserInput) -> Option<UserInput> {
+    /// Call as a prompt starts, before anything it awaits. Returns the note
+    /// to add to its model input when it mentions a watcher.
+    pub(super) fn wake_prompt_started(&mut self, input: &UserInput) -> Option<&'static str> {
         let wake = self.t3_wake.as_mut()?;
         let text = match input.blocks().first() {
             Some(ContentBlock::Text(text)) => Some(text.as_str()),
             _ => None,
         };
         match wake.prompt_started(text) {
-            PromptOrigin::Wake => Some(UserInput::text(WAKE_INPUT)),
+            PromptOrigin::WatcherNotice => Some(WATCHER_NOTE),
             PromptOrigin::Other => None,
         }
     }

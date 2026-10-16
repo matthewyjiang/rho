@@ -210,6 +210,7 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
+        let watcher_note = self.wake_prompt_started(&input);
         let _ = self
             .herdr
             .report_state(
@@ -228,7 +229,6 @@ impl SessionHost {
             () = starting.cancelled() => None,
             action = commands::resolve(input.clone(), &scope) => Some(action),
         };
-        let wake_input = self.wake_prompt_started(&input);
         // The first model turn this host completes names an untitled session.
         let names_session = matches!(
             &action,
@@ -244,8 +244,11 @@ impl SessionHost {
                 input: model,
                 calls,
             })) => {
-                self.run_turn(&input, wake_input.unwrap_or(model), calls, client)
-                    .await
+                let model = match watcher_note {
+                    Some(note) => append_text(model, note),
+                    None => model,
+                };
+                self.run_turn(&input, model, calls, client).await
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.compact(instructions, client).await
@@ -787,6 +790,13 @@ fn split_assembly(
             workspace_root,
         },
     )
+}
+
+/// `input` with `text` as a final block.
+fn append_text(input: UserInput, text: &str) -> UserInput {
+    let mut blocks = input.blocks().to_vec();
+    blocks.push(rho_sdk::model::ContentBlock::Text(text.to_owned()));
+    UserInput::content(blocks).expect("adding a text block keeps the input valid")
 }
 
 async fn send_notification(

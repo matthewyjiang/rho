@@ -177,7 +177,7 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
             "Delegated task task-1 reached a terminal state. Use task_status with taskId \
              task-1 to read the result."
         )),
-        PromptOrigin::Wake
+        PromptOrigin::WatcherNotice
     );
     fixture.processes().take_notifications();
     fixture.prompt_ended().await;
@@ -204,4 +204,61 @@ async fn work_delivered_in_prompt_retires_the_watcher() {
         fixture.take_calls(),
         vec![("task_cancel".to_owned(), json!({"taskId": "task-1"}))]
     );
+}
+
+// Covers: a workflow whose runtime reported completion but whose result is
+// not yet published still counts as outstanding, so the prompt ending in
+// that window arms a watcher instead of leaving the result unannounced.
+// Owner: ACP T3 wake watcher.
+#[tokio::test]
+async fn workflow_completing_but_unpublished_arms_a_watcher() {
+    let mut fixture = Fixture::new();
+    let workflows = &fixture.background.workflows;
+    assert!(workflows.register_start("wf-run", "review", "digest", Some("parent".into())));
+    workflows.record_event(
+        "wf-run",
+        &crate::app::workflow_runtime::RuntimeEvent::Completed,
+    );
+
+    fixture.prompt_ended().await;
+
+    assert_eq!(
+        fixture
+            .take_calls()
+            .into_iter()
+            .map(|(tool, _)| tool)
+            .collect::<Vec<_>>(),
+        vec!["delegate_task"]
+    );
+}
+
+// Covers: a watcher that ends without this parent signalling it, because
+// the user cancelled it in T3 or the parent session closed, is never
+// reused: the next prompt end arms a fresh one, and a closed parent's
+// watcher stops waiting. A reused or orphaned watcher never wakes the
+// thread. Owner: ACP T3 wake watcher.
+#[tokio::test]
+async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
+    let mut fixture = Fixture::new();
+    fixture.start_process().await;
+    fixture.prompt_ended().await;
+    let first = Fixture::delegated_signal(&fixture.take_calls()[0].1["task"]);
+
+    assert_eq!(
+        fixture.wake.prompt_started(Some(
+            "Delegated tasks task-1, task-9 reached terminal states."
+        )),
+        PromptOrigin::WatcherNotice
+    );
+    fixture.prompt_ended().await;
+    let second = Fixture::delegated_signal(&fixture.take_calls()[0].1["task"]);
+    assert_ne!(first, second, "a fresh watcher replaces the ended one");
+
+    let signal = WakeSignal::parse_in(fixture.signals.path(), &second).unwrap();
+    let Fixture { wake, .. } = fixture;
+    drop(wake);
+    let result = tokio::time::timeout(TEST_WAIT, signal.wait(&CancellationToken::new()))
+        .await
+        .unwrap();
+    assert_eq!(result.as_deref(), Some(PARENT_ENDED));
 }

@@ -115,7 +115,7 @@ A session fails to start if any of the three T3 tools is missing. Without `--t3c
 
 Under `--t3code`, a prompt that ends while background processes or workflows are still running does not stay open. The thread goes idle, so you can keep talking to it, and the first result to finish wakes it with a new turn that delivers the result.
 
-ACP gives an agent no way to start a turn, and T3 refuses a thread's own requests once its turn ends. T3 does wake a parent when a delegated task finishes, so Rho delegates one watcher task, titled `waiting: <command>`, that makes no model call. It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The wake turn's text is replaced for the model with a short note; the results follow it as usual.
+ACP gives an agent no way to start a turn, and T3 refuses a thread's own requests once its turn ends. T3 does wake a parent when a delegated task finishes, so Rho delegates one watcher task, titled `waiting: <command>`, that makes no model call. It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result; the results follow it as usual. A watcher also ends if the session that started it closes or its Rho process exits, reporting that the work did not finish.
 
 Work that finishes during a prompt is delivered in that prompt, so most short commands never start a watcher. One watcher covers everything still running. When its work is delivered during a later prompt, Rho cancels it. If T3 refuses the watcher, Rho says so in the transcript and the results arrive with your next message. Watchers run `/rho-wake <token>`, which Rho never advertises as a command.
 
