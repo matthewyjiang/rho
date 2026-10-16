@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.11.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.10.0...rho-sdk-v5.11.0) (2026-10-16)
+
+
+### Features
+
+* **acp:** load every mentioned skill in one host batch ([#1496](https://github.com/matthewyjiang/rho/issues/1496)) ([2cd6c5f](https://github.com/matthewyjiang/rho/commit/2cd6c5f107c4e607bc4fa547ce805ea6966475e3))
+* **sdk:** batch host-requested tool calls ([#1494](https://github.com/matthewyjiang/rho/issues/1494)) ([7281464](https://github.com/matthewyjiang/rho/commit/7281464edc20b610c0fb049ea5f437a29b404140))
+
 ## [5.10.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.9.0...rho-sdk-v5.10.0) (2026-10-15)
 
 
