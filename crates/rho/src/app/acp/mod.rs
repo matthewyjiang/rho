@@ -231,8 +231,9 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: SetSessionConfigOptionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
+                    let port = ConnectionPort::new(cx.clone());
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.set_config_option(request).await
+                        agent.ready().await?.set_config_option(request, &port).await
                     })
                 }
             },
@@ -243,8 +244,9 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: SetSessionModeRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
+                    let port = ConnectionPort::new(cx.clone());
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.set_session_mode(request).await
+                        agent.ready().await?.set_session_mode(request, &port).await
                     })
                 }
             },
@@ -326,13 +328,19 @@ where
 {
     let port = ConnectionPort::new(cx.clone());
     cx.spawn(async move {
-        let agent::SessionStart { response, commands } = match work.await {
+        let agent::SessionStart {
+            response,
+            commands,
+            publication,
+        } = match work.await {
             Ok(started) => started,
             Err(error) => return responder.respond_with_error(error),
         };
         responder.respond(response)?;
         if let Err(error) = port.send_session_notification(commands).await {
             tracing::warn!(%error, "could not advertise ACP commands");
+        } else {
+            publication.sent();
         }
         Ok(())
     })

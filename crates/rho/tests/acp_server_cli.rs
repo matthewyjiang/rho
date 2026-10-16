@@ -16,6 +16,8 @@ use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
+#[path = "support/acp_advertisements_tests.rs"]
+mod advertisements;
 #[path = "support/acp_login.rs"]
 mod login;
 
@@ -39,6 +41,7 @@ impl AcpServer {
             .current_dir(cwd)
             .env("HOME", home)
             .env("RHO_HOME", home.join(".rho"))
+            .env("RHO_CREDENTIAL_STORE", "file")
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_PATH", path)
             .env_remove("RHO_AUTOMATION_TEST_RESPONSE")

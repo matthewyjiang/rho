@@ -140,10 +140,10 @@ async fn set_session_mode_validates_mode_then_session() {
         ("bypass", ErrorCode::ResourceNotFound),
     ] {
         let error = agent
-            .set_session_mode(SetSessionModeRequest::new(
-                SessionId::new("missing"),
-                SessionModeId::new(mode),
-            ))
+            .set_session_mode(
+                SetSessionModeRequest::new(SessionId::new("missing"), SessionModeId::new(mode)),
+                &NullPort,
+            )
             .await
             .expect_err("missing session");
         assert_eq!(error.code, expected, "mode {mode}");
@@ -182,11 +182,10 @@ async fn missing_session_prompt_and_load_return_errors() {
         .expect_err("missing load session");
 
     let config = agent
-        .set_config_option(SetSessionConfigOptionRequest::new(
-            missing,
-            "thought_level",
-            "high",
-        ))
+        .set_config_option(
+            SetSessionConfigOptionRequest::new(missing, "thought_level", "high"),
+            &NullPort,
+        )
         .await
         .expect_err("missing config session");
     assert_eq!(config.code, ErrorCode::ResourceNotFound);
@@ -423,11 +422,10 @@ async fn settings_change_queued_during_replacement_fails_instead_of_moving() {
     // Held for the whole test: a change that moved to the successor would wait here.
     let _successor_held = replacement.host.lock().await;
 
-    let change = agent.set_config_option(SetSessionConfigOptionRequest::new(
-        session_id.clone(),
-        "mode",
-        "plan",
-    ));
+    let change = agent.set_config_option(
+        SetSessionConfigOptionRequest::new(session_id.clone(), "mode", "plan"),
+        &NullPort,
+    );
     tokio::pin!(change);
     assert!(
         futures_util::poll!(&mut change).is_pending(),
@@ -637,11 +635,10 @@ async fn shutdown_all_prevents_later_publication() {
 #[tokio::test]
 async fn set_config_option_on_missing_session_is_not_found() {
     let error = test_agent()
-        .set_config_option(SetSessionConfigOptionRequest::new(
-            SessionId::new("missing"),
-            "model",
-            "xai/grok-3",
-        ))
+        .set_config_option(
+            SetSessionConfigOptionRequest::new(SessionId::new("missing"), "model", "xai/grok-3"),
+            &NullPort,
+        )
         .await
         .expect_err("missing session");
     assert_eq!(error.code, ErrorCode::ResourceNotFound);
@@ -811,11 +808,10 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
     let prompt = agent.prompt(text_prompt(&session_id, "steer"), &NullPort);
     tokio::pin!(prompt);
     assert!(futures_util::poll!(&mut prompt).is_pending());
-    let change = agent.set_config_option(SetSessionConfigOptionRequest::new(
-        session_id.clone(),
-        "mode",
-        "plan",
-    ));
+    let change = agent.set_config_option(
+        SetSessionConfigOptionRequest::new(session_id.clone(), "mode", "plan"),
+        &NullPort,
+    );
     tokio::pin!(change);
     assert!(futures_util::poll!(&mut change).is_pending());
 

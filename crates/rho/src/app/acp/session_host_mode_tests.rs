@@ -237,18 +237,17 @@ impl ModeRequest {
     ) -> Result<(), ErrorCode> {
         let result = match self {
             Self::SetMode => agent
-                .set_session_mode(SetSessionModeRequest::new(
-                    session_id.clone(),
-                    SessionModeId::new(mode),
-                ))
+                .set_session_mode(
+                    SetSessionModeRequest::new(session_id.clone(), SessionModeId::new(mode)),
+                    &ApprovingPort::default(),
+                )
                 .await
                 .map(drop),
             Self::ConfigOption => agent
-                .set_config_option(SetSessionConfigOptionRequest::new(
-                    session_id.clone(),
-                    "mode",
-                    mode,
-                ))
+                .set_config_option(
+                    SetSessionConfigOptionRequest::new(session_id.clone(), "mode", mode),
+                    &ApprovingPort::default(),
+                )
                 .await
                 .map(drop),
         };

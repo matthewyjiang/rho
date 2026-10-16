@@ -28,12 +28,18 @@ use agent_client_protocol::{
     Error as AcpError,
 };
 
+#[path = "agent_publication.rs"]
+mod publication;
+use publication::PublicationGuard;
+
 /// A published `session/new` or `session/load` result. `commands` is sent
-/// after `response`, once the client knows the session.
+/// after `response`, once the client knows the session. The guard keeps new
+/// requests out until both have been enqueued.
 #[derive(Debug)]
 pub(super) struct SessionStart<Response> {
     pub(super) response: Response,
     pub(super) commands: SessionNotification,
+    pub(super) publication: PublicationGuard,
 }
 
 /// One ACP session slot. The host stays in this mutex for its whole life, so a
@@ -191,6 +197,7 @@ impl RhoAcpAgent {
     pub(super) async fn set_session_mode(
         self: &Arc<Self>,
         request: SetSessionModeRequest,
+        port: &dyn AcpClientPort,
     ) -> Result<SetSessionModeResponse, AcpError> {
         let Some(mode) = super::permission::parse_mode_id(request.mode_id.0.as_ref()) else {
             return Err(AcpError::invalid_params().data(format!(
@@ -199,7 +206,10 @@ impl RhoAcpAgent {
             )));
         };
         let mut host = self.lock_settings_host(&request.session_id).await?;
-        host.set_permission_mode(mode, &self.startup.config).await?;
+        let result = host.set_permission_mode(mode, &self.startup.config).await;
+        host.refresh_advertisements(&self.startup.config, port)
+            .await;
+        result?;
         Ok(SetSessionModeResponse::new())
     }
 
@@ -208,13 +218,19 @@ impl RhoAcpAgent {
         request: NewSessionRequest,
     ) -> Result<SessionStart<NewSessionResponse>, AcpError> {
         let _gate = self.begin_install().await?;
-        let (host, response) = SessionHost::create(&self.startup, request)
+        let (mut host, response) = SessionHost::create(&self.startup, request)
             .await
             .map_err(session_start_error)?;
         let session_id = response.session_id.clone();
         let commands = host.available_commands(&self.startup.config);
-        self.install(session_id, host).await;
-        Ok(SessionStart { response, commands })
+        let live = LiveSession::new(host);
+        let publication = PublicationGuard::new(&live, &session_id).await;
+        self.publish(session_id, live).await;
+        Ok(SessionStart {
+            response,
+            commands,
+            publication,
+        })
     }
 
     pub(super) async fn load_session(
@@ -238,7 +254,7 @@ impl RhoAcpAgent {
             previous.replaced.store(true, Ordering::Release);
             retired = Some(host);
         }
-        let (host, response) = match SessionHost::load(&self.startup, request, port).await {
+        let (mut host, response) = match SessionHost::load(&self.startup, request, port).await {
             Ok(loaded) => loaded,
             Err(error) => {
                 // The old session stays published, so it must keep saving.
@@ -250,9 +266,14 @@ impl RhoAcpAgent {
         };
         let commands = host.available_commands(&self.startup.config);
         let old_host = retired.and_then(|mut slot| slot.take());
-        self.publish_locked(session_id, LiveSession::new(host), old_host)
-            .await;
-        Ok(SessionStart { response, commands })
+        let live = LiveSession::new(host);
+        let publication = PublicationGuard::new(&live, &session_id).await;
+        self.publish_locked(session_id, live, old_host).await;
+        Ok(SessionStart {
+            response,
+            commands,
+            publication,
+        })
     }
 
     pub(super) async fn prompt(
@@ -343,10 +364,14 @@ impl RhoAcpAgent {
     pub(super) async fn set_config_option(
         self: &Arc<Self>,
         request: SetSessionConfigOptionRequest,
+        port: &dyn AcpClientPort,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         let session_id = request.session_id.clone();
         let mut host = self.lock_settings_host(&session_id).await?;
-        host.set_config_option(request, &self.startup.config).await
+        let result = host.set_config_option(request, &self.startup.config).await;
+        host.refresh_advertisements(&self.startup.config, port)
+            .await;
+        result
     }
 
     pub(super) async fn cancel(&self, notification: CancelNotification) {
@@ -407,6 +432,7 @@ impl RhoAcpAgent {
         Ok(gate)
     }
 
+    #[cfg(test)]
     async fn install(&self, session_id: SessionId, host: SessionHost) {
         self.publish(session_id, LiveSession::new(host)).await;
     }
