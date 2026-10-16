@@ -1,7 +1,9 @@
 //! Names ACP sessions for `/resume` and `rho sessions`, as the TUI names its
-//! own: after the turn that opens the conversation, a background title-agent
-//! call turns that exchange into a short title. Until it lands, or if it
-//! fails, the session is listed by its first message.
+//! own: after the first turn a host completes, a background title-agent call
+//! turns that exchange into a short title, unless the session has one. A
+//! first turn the host cancelled does not count, and a loaded session that
+//! was never named gets its title then. Until it lands, or if it fails, the
+//! session is listed by its first message.
 
 use rho_sdk::{
     model::{ContentBlock, Message},
@@ -12,19 +14,9 @@ use super::{model_scoped_config, SessionHost};
 use crate::{config::Config, session::Session as StoredSession};
 
 impl SessionHost {
-    /// Whether the coming turn opens the conversation: no model reply yet.
-    pub(super) fn opens_conversation(&self) -> bool {
-        !self
-            .built
-            .session
-            .history()
-            .iter()
-            .any(|message| message.completed_assistant_content().is_some())
-    }
-
     /// Names the session from `user`'s message and the reply the turn ended
-    /// with. A title someone set meanwhile wins.
-    pub(super) fn spawn_title(&self, process_config: &Config, user: &UserInput) {
+    /// with, once per host. A title the session already has wins.
+    pub(super) fn spawn_title(&mut self, process_config: &Config, user: &UserInput) {
         let Some(stored) = self.storage.file() else {
             return;
         };
@@ -43,7 +35,11 @@ impl SessionHost {
         let session_id = self.built.session.id().clone();
         let stored_id = stored.id().to_owned();
         let cwd = self.storage.cwd().to_path_buf();
+        self.title_requested = true;
         tokio::spawn(async move {
+            if StoredSession::title_is_set(&cwd, &stored_id).unwrap_or(false) {
+                return;
+            }
             let usage_recording = crate::usage::default_recording().await;
             let title = crate::title::generate_title(
                 model,

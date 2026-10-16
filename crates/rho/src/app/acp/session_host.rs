@@ -88,6 +88,8 @@ pub(super) struct SessionHost {
     auth: String,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
+    /// Whether this host asked the title agent to name the session.
+    title_requested: bool,
     permission_placeholders: AtomicU64,
     replaced: Arc<AtomicBool>,
     /// Set when a compaction rewrote live state but could not be saved.
@@ -220,13 +222,13 @@ impl SessionHost {
             () = starting.cancelled() => None,
             action = commands::resolve(input.clone(), &scope) => Some(action),
         };
-        // A model turn that opens the conversation names the session.
+        // The first model turn this host completes names an untitled session.
         let names_session = matches!(
             &action,
             Some(Ok(
                 PromptAction::Turn { .. } | PromptAction::RunAsAgent { .. }
             ))
-        ) && self.opens_conversation();
+        ) && !self.title_requested;
         let result = match action {
             None => Ok(PromptResponse::new(
                 agent_client_protocol::schema::v1::StopReason::Cancelled,
@@ -473,6 +475,7 @@ impl SessionHost {
             auth: startup.config.auth.clone(),
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
+            title_requested: false,
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
             unsaved_compaction: false,
