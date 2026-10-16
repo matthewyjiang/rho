@@ -74,10 +74,10 @@ async fn host_operations_require_the_complete_named_host_contract() {
 
 // Covers: T3 children must rebind to their definition, and a pinned model is
 // never forwarded to the host, which rejects models Rho does not advertise.
+// Long task instructions must not be copied into T3's bounded title field.
 // Owner: host launch policy.
 #[test]
 fn delegation_arguments_route_through_the_child_rebind() {
-    let prompt = "\n  \nImplement the parser\nKeep public APIs stable";
     let definition = AgentDefinition {
         id: AgentId::new("host-worker").unwrap(),
         description: "Implementation".into(),
@@ -93,12 +93,18 @@ fn delegation_arguments_route_through_the_child_rebind() {
             reasoning: None,
         },
     };
-    assert_eq!(
-        delegate_arguments(&definition, prompt),
-        json!({
-            "task": format!("/agent:host-worker {prompt}"),
-            "title": "Implement the parser",
-            "mode": "async",
-        })
-    );
+    // One unit beyond T3's 512-unit explicit-title budget, but valid task text.
+    let long_prompt = "x".repeat(513);
+    for prompt in [
+        "\n  \nImplement the parser\nKeep public APIs stable",
+        long_prompt.as_str(),
+    ] {
+        assert_eq!(
+            delegate_arguments(&definition, prompt),
+            json!({
+                "task": format!("/agent:host-worker {prompt}"),
+                "mode": "async",
+            })
+        );
+    }
 }
