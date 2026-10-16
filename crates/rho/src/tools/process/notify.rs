@@ -30,7 +30,8 @@ pub(crate) struct ProcessNotification {
 
 impl ProcessNotification {
     /// Transcript card for one finished process: outcome and command up front,
-    /// run time beneath, output as the body, identity in the expandable details.
+    /// run time beneath, any terminal detail as the body with the output after
+    /// it, identity in the expandable details.
     pub(crate) fn card(&self) -> NotificationCard {
         let (outcome, tone) = match (self.state, self.exit_code) {
             (State::Exited, Some(0)) => ("Completed".to_string(), NotificationTone::Success),
@@ -43,14 +44,6 @@ impl ProcessNotification {
             (State::FailedToStart, _) => ("Failed to start".into(), NotificationTone::Error),
             (State::Starting | State::Running, _) => ("Running".into(), NotificationTone::Accent),
         };
-        let mut sections = Vec::new();
-        if let Some(detail) = &self.terminal_detail {
-            sections.push(detail.clone());
-        }
-        if !self.output.trim().is_empty() {
-            sections.push(fenced_output(self.output.trim_end()));
-        }
-        let body = sections.join("\n\n");
         NotificationCard {
             title: format!("{outcome} · {}", self.command),
             sender: "process".into(),
@@ -64,7 +57,8 @@ impl ProcessNotification {
                 "ran {}",
                 crate::subagent::format_elapsed_secs(self.elapsed.as_secs())
             )),
-            body,
+            body: self.terminal_detail.clone().unwrap_or_default(),
+            output: (!self.output.trim().is_empty()).then(|| self.output.trim_end().to_owned()),
             details: vec![
                 format!("process: {}", self.process_id),
                 format!("command: {}", self.command),
@@ -72,18 +66,6 @@ impl ProcessNotification {
             ],
         }
     }
-}
-
-/// Fence raw output so the card renderer keeps it verbatim instead of reading
-/// it as markdown. The fence outgrows any backtick run inside the output.
-fn fenced_output(output: &str) -> String {
-    let longest_run = output
-        .split(|ch| ch != '`')
-        .map(str::len)
-        .max()
-        .unwrap_or(0);
-    let fence = "`".repeat(longest_run.max(2) + 1);
-    format!("{fence}text\n{output}\n{fence}")
 }
 
 pub(crate) fn notification_prompt(notifications: &[ProcessNotification]) -> String {

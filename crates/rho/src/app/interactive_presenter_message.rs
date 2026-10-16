@@ -35,6 +35,7 @@ pub(super) fn finished_message(
         reference: Some(run_id.to_string()),
         subtitle: None,
         body: view.arguments.get("message")?.as_str()?.trim().into(),
+        output: None,
         details: vec![format!("task: {title}")],
     }))
 }

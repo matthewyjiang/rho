@@ -26,6 +26,7 @@ fn finished_presentations_preserve_journal_shape() {
         reference: None,
         subtitle: None,
         body: "Check the queued route.".into(),
+        output: None,
         details: vec!["run: abc123".into()],
     });
     for (presentation, data) in [

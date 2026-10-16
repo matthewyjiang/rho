@@ -194,6 +194,7 @@ fn agent_card(
         reference: Some(run_id.into()),
         subtitle: None,
         body,
+        output: None,
         details: vec![format!("task: {task}")],
     }
 }

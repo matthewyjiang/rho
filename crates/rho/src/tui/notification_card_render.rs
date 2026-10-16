@@ -50,11 +50,12 @@ pub(super) fn notification_card_sections(
     push_indented(&mut lines, &subtitle, content_width, Theme::dim());
 
     let mut body = Vec::new();
+    let markdown = message.markdown_body();
     // Empty bodies (e.g. a silent process) would otherwise render a blank row.
-    if !message.body.trim().is_empty() {
+    if !markdown.trim().is_empty() {
         push_wrapped_markdown_without_copy_button(
             &mut body,
-            &safe_message_text(&message.body),
+            &safe_message_text(&markdown),
             content_width,
             &mut CodeFenceState::default(),
             StreamLineStart::Fresh,

@@ -4,8 +4,8 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: a failed process card leads with outcome and command, and output
-// containing its own fences stays verbatim instead of breaking the card body.
+// Covers: a failed process card leads with outcome and command, and keeps its
+// output as verbatim card output rather than markdown body text.
 // Owner: process notification presentation.
 #[test]
 fn failed_process_card_shows_outcome_command_and_verbatim_output() {
@@ -32,7 +32,8 @@ fn failed_process_card_shows_outcome_command_and_verbatim_output() {
             visibility: NotificationVisibility::Conversation,
             reference: Some("891ba4bc".into()),
             subtitle: Some("ran 1m 05s".into()),
-            body: "````text\n```rust\npanic!()\n```\n````".into(),
+            body: String::new(),
+            output: Some("```rust\npanic!()\n```".into()),
             details: vec![
                 "process: 891ba4bc".into(),
                 "command: cargo test".into(),

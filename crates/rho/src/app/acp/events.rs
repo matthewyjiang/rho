@@ -263,15 +263,20 @@ fn display_row_call(row: &DisplayRow) -> ToolCall {
         },
         DisplayRow::Notice(_) => ToolCallStatus::Completed,
     };
-    let (title, body) = row.card_text();
+    let text = row.card_text();
     // Rows carry no stable identity of their own; a fresh id per card keeps
     // hosts from merging two deliveries about the same run.
     let id = format!("rho-notice-{}", uuid::Uuid::new_v4());
-    let mut call = ToolCall::new(ToolCallId::new(id), title)
+    let mut call = ToolCall::new(ToolCallId::new(id), text.title)
         .kind(ToolKind::Other)
         .status(status);
-    if !body.trim().is_empty() {
-        call = call.content(vec![ToolCallContent::from(body)]);
+    // Content is markdown for hosts that render it. Hosts that show a tool's
+    // output as is, such as T3 Code, read `rawOutput` first, so it carries
+    // the plain form without code fences.
+    if !text.plain.trim().is_empty() {
+        call = call
+            .content(vec![ToolCallContent::from(text.markdown)])
+            .raw_output(Value::String(text.plain));
     }
     call
 }
