@@ -8,9 +8,10 @@
 //! Hosts restart agents by killing them: T3 Code sends SIGTERM, then SIGKILL
 //! one second later. `session/load` must still replay the whole conversation,
 //! so a turn saves at every SDK step boundary (before each provider request
-//! and after each model reply), not only when it ends. The first save also
-//! writes the user's message, so replay shows what was asked even when the
-//! turn never finished. Each save adds the turn's new history rows (tool
+//! and after each model reply), not only when it ends. The turn writes the
+//! user's message before it starts, so replay shows what was asked even when
+//! the turn never finished, and a prompted session is never empty on disk.
+//! Each save adds the turn's new history rows (tool
 //! calls, results, interim replies) to the display transcript, as the TUI
 //! does, so a resumed session shows the work and not only the final answer.
 //! Background results the run applied are saved as the rows the host was
@@ -112,13 +113,20 @@ impl SessionHost {
         }
     }
 
-    /// Saves the coming turn at every step boundary. Call while idle; the
-    /// returned checkpoint settles the turn in [`Self::persist_turn`].
+    /// Writes the user's message, then saves the coming turn at every step
+    /// boundary. Call while idle, with the message as shown (`display`) and
+    /// as the run sends it (`model`); the returned checkpoint settles the
+    /// turn in [`Self::persist_turn`].
     pub(super) fn install_turn_checkpoint(
         &mut self,
         display: &UserInput,
+        model: &UserInput,
     ) -> anyhow::Result<TurnCheckpoint> {
+        let snapshot = self.durable_snapshot();
         let stored = self.stored()?.clone();
+        if !self.is_replaced() {
+            stored.save_snapshot(&snapshot, &[Message::User(display.blocks().to_vec())])?;
+        }
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
             todo: self.built.tools.todo_state(),
@@ -126,8 +134,8 @@ impl SessionHost {
             added_dirs: self.added_dirs.clone(),
             replaced: Arc::clone(&self.replaced),
             display: Mutex::new(TurnDisplay::new(
-                Message::User(display.blocks().to_vec()),
-                self.built.session.history().len(),
+                Message::User(model.blocks().to_vec()),
+                snapshot.history().len(),
             )),
         }));
         self.built
@@ -260,16 +268,17 @@ impl SessionStore for CheckpointStore {
 /// The display rows one turn has and has not written.
 ///
 /// History from `history_start` on is this turn: the model's copy of the
-/// user's message, then everything the run appends. Display shows the
-/// user's message as sent in its place, then the appended rows as they are,
+/// user's message, then everything the run appends. The run pushes that copy
+/// before its first save, and the user's message as shown is written when
+/// the turn starts, so saves add only the appended rows, as they are,
 /// except that background results show the rows recorded for them.
-/// A compaction during the turn rewrites history, so once the model's copy
-/// of the message is no longer at `history_start`, appended rows are lost
-/// and the turn falls back to its recorded results and final reply.
+/// A compaction can rewrite history before or during the turn, so once the
+/// model's copy is no longer at `history_start`, appended rows are lost and
+/// the turn falls back to its recorded results and final reply.
 #[derive(Debug)]
 struct TurnDisplay {
-    /// The user's message as sent, until a save writes it.
-    unsaved_user: Option<Message>,
+    /// The model's copy of the user's message.
+    input: Message,
     history_start: usize,
     followed: Followed,
     /// Background results applied and not yet written: the model's copy
@@ -277,13 +286,11 @@ struct TurnDisplay {
     applied: VecDeque<(Message, Message)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Followed {
-    /// No save has seen this turn's input in history yet.
-    Pending,
-    /// The model's copy of the input, and how many rows after it are written.
-    Tracking { input: Message, written: usize },
-    /// History no longer extends this turn.
+    /// History extends this turn; this many rows after the input are written.
+    Tracking { written: usize },
+    /// History stopped extending this turn.
     Lost,
 }
 
@@ -306,24 +313,20 @@ struct PendingRows {
 }
 
 impl TurnDisplay {
-    fn new(user: Message, history_start: usize) -> Self {
+    fn new(input: Message, history_start: usize) -> Self {
         Self {
-            unsaved_user: Some(user),
+            input,
             history_start,
-            followed: Followed::Pending,
+            followed: Followed::Tracking { written: 0 },
             applied: VecDeque::new(),
         }
     }
 
     /// Rows a save of `history` must add to the display transcript.
     fn pending_rows(&self, history: &[Message], scope: SaveScope) -> PendingRows {
-        let mut rows: Vec<Message> = self.unsaved_user.iter().cloned().collect();
+        let mut rows = Vec::new();
         let mut applied = self.applied.iter().peekable();
-        let Some((appended, input)) = self.appended(history) else {
-            let followed = match &self.followed {
-                Followed::Pending if history.len() <= self.history_start => Followed::Pending,
-                _ => Followed::Lost,
-            };
+        let Some((appended, written)) = self.appended(history) else {
             let applied_written = match scope {
                 SaveScope::Step => 0,
                 SaveScope::Settle => {
@@ -334,7 +337,7 @@ impl TurnDisplay {
             return PendingRows {
                 rows,
                 applied_written,
-                followed,
+                followed: Followed::Lost,
             };
         };
         let mut taken = 0;
@@ -349,16 +352,10 @@ impl TurnDisplay {
             }
             taken += 1;
         }
-        let applied_written = self.applied.len() - applied.len();
-        let written = match &self.followed {
-            Followed::Tracking { written, .. } => *written,
-            Followed::Pending | Followed::Lost => 0,
-        };
         PendingRows {
             rows,
-            applied_written,
+            applied_written: self.applied.len() - applied.len(),
             followed: Followed::Tracking {
-                input: input.clone(),
                 written: written + taken,
             },
         }
@@ -366,7 +363,6 @@ impl TurnDisplay {
 
     /// Records that a save wrote `pending`'s rows.
     fn mark_written(&mut self, pending: PendingRows) {
-        self.unsaved_user = None;
         self.applied.drain(..pending.applied_written);
         self.followed = pending.followed;
     }
@@ -377,20 +373,17 @@ impl TurnDisplay {
         self.appended(history).is_some()
     }
 
-    /// The rows after this turn's input that no save has written, with that
-    /// input. `None` when history does not extend this turn.
-    fn appended<'h>(&self, history: &'h [Message]) -> Option<(&'h [Message], &'h Message)> {
-        let input = history.get(self.history_start)?;
-        let written = match &self.followed {
-            Followed::Pending => 0,
-            Followed::Tracking {
-                input: seen,
-                written,
-            } if seen == input => *written,
-            Followed::Tracking { .. } | Followed::Lost => return None,
+    /// The rows after this turn's input that no save has written, and how
+    /// many before them were. `None` once history no longer extends this turn.
+    fn appended<'h>(&self, history: &'h [Message]) -> Option<(&'h [Message], usize)> {
+        let Followed::Tracking { written } = self.followed else {
+            return None;
         };
+        if history.get(self.history_start) != Some(&self.input) {
+            return None;
+        }
         let rows = history.get(self.history_start + 1 + written..)?;
-        Some((rows, input))
+        Some((rows, written))
     }
 }
 

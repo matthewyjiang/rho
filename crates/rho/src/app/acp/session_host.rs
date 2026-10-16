@@ -529,7 +529,7 @@ impl SessionHost {
                 tracing::debug!(%error, "could not send ACP load notice");
             }
         }
-        let checkpoint = self.install_turn_checkpoint(display)?;
+        let checkpoint = self.install_turn_checkpoint(display, &model)?;
         let result = self
             .drive_run(&checkpoint, model, calls, displays, client)
             .await;

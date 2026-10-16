@@ -11,7 +11,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    ProviderError, ProviderErrorKind, Retryability, SessionOptions,
+    ProviderError, ProviderErrorKind, Retryability, SessionOptions, UserInput,
 };
 
 use super::super::{mode::SessionPermission, SessionHost};
@@ -110,6 +110,15 @@ fn provider_failure(message: &str) -> ScriptedTurn {
     ))
 }
 
+/// Storage for a new session `id` in `root`, created on first save.
+fn unsaved_storage(root: &std::path::Path, id: &str) -> HostStorage {
+    let (root, id) = (root.to_path_buf(), id.to_owned());
+    HostStorage::unsaved(
+        root.clone(),
+        Box::new(move || StoredSession::create_with_id_in_root_for_test(&root, &root, &id)),
+    )
+}
+
 /// The model history from the first user message on: what display should
 /// hold when display and model text agree.
 fn from_first_user(history: &[Message]) -> Vec<Message> {
@@ -136,17 +145,10 @@ async fn new_session_saves_nothing_until_its_first_prompt() {
             ContentBlock::Text("hello back".into()),
         ]))],
     ));
-    let storage = {
-        let (root, id) = (root.clone(), id.clone());
-        HostStorage::unsaved(
-            root.clone(),
-            Box::new(move || StoredSession::create_with_id_in_root_for_test(&root, &root, &id)),
-        )
-    };
     let mut host = host(
         &root,
         &id,
-        storage,
+        unsaved_storage(&root, &id),
         provider,
         AppToolSet::disabled(),
         &startup,
@@ -164,6 +166,38 @@ async fn new_session_saves_nothing_until_its_first_prompt() {
         StoredSession::open_by_id_with_histories_in_root(&root, &root, &id).unwrap();
     assert_eq!(histories.display, from_first_user(&histories.model));
     assert_eq!(histories.display.len(), 2, "{:?}", histories.display);
+}
+
+// Covers: a host killed before the run's first step (a slow compaction)
+// must not leave an empty row in /resume; the file is created with the
+// user's message.
+// Owner: ACP session host turn persistence
+#[tokio::test]
+async fn turn_start_saves_the_users_message_with_the_new_file() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().to_path_buf();
+    let startup = AcpStartup::for_tests(Config::default(), &root);
+    let id = rho_sdk::SessionId::new().to_string();
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "model"),
+        Vec::new(),
+    ));
+    let mut host = host(
+        &root,
+        &id,
+        unsaved_storage(&root, &id),
+        provider,
+        AppToolSet::disabled(),
+        &startup,
+    )
+    .await;
+
+    let message = UserInput::text("hello");
+    let _checkpoint = host.install_turn_checkpoint(&message, &message).unwrap();
+
+    let (_, histories) =
+        StoredSession::open_by_id_with_histories_in_root(&root, &root, &id).unwrap();
+    assert_eq!(histories.display, vec![Message::user_text("hello")]);
 }
 
 // Covers: a host that kills the agent mid-turn (T3 Code restarts) must still
@@ -226,38 +260,42 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
     );
 }
 
-// Covers: a compaction that rewrites history mid-turn must not make display
-// copy unrelated rows; the turn then shows its final reply instead.
+// Covers: a compaction that rewrites history before or during the turn must
+// not make display copy unrelated rows, even once history grows past the
+// turn's old position; the turn then shows its final reply instead.
 // Owner: ACP session host turn persistence
 #[test]
 fn turn_display_follows_only_history_that_extends_the_turn() {
     let earlier = Message::user_text("earlier");
-    let input = Message::user_text("expanded input");
-    let shown = Message::user_text("input");
+    let input = Message::user_text("input");
     let reply = Message::assistant_text("reply");
-    let mut display = TurnDisplay::new(shown.clone(), 1);
+    let summary = Message::user_text("summary");
+    let later = Message::assistant_text("later");
 
-    let started = vec![earlier.clone(), input.clone()];
-    let pending = display.pending_rows(&started, SaveScope::Step);
-    assert_eq!(pending.rows, vec![shown]);
-    display.mark_written(pending);
-
-    let extended = vec![earlier, input, reply.clone()];
-    assert!(display.follows(&extended));
+    // Compacted mid-turn, after a save wrote the reply.
+    let mut display = TurnDisplay::new(input.clone(), 1);
+    let extended = vec![earlier.clone(), input.clone(), reply.clone()];
     let pending = display.pending_rows(&extended, SaveScope::Step);
     assert_eq!(pending.rows, vec![reply.clone()]);
     display.mark_written(pending);
-
-    let compacted = vec![
-        Message::user_text("summary"),
-        reply,
-        Message::assistant_text("more"),
-    ];
+    let compacted = vec![summary.clone(), reply.clone(), later.clone()];
     assert!(!display.follows(&compacted));
     assert_eq!(
         display.pending_rows(&compacted, SaveScope::Settle).rows,
         Vec::<Message>::new()
     );
+
+    // Compacted before the first save, then grown past the turn's position.
+    let mut display = TurnDisplay::new(input, 1);
+    for history in [
+        vec![summary.clone()],
+        vec![summary, reply, later.clone(), later],
+    ] {
+        assert!(!display.follows(&history));
+        let pending = display.pending_rows(&history, SaveScope::Step);
+        assert_eq!(pending.rows, Vec::<Message>::new());
+        display.mark_written(pending);
+    }
 }
 
 // Covers: a background result reaches history before the pump records the
@@ -271,10 +309,10 @@ fn turn_display_shows_recorded_rows_for_background_results() {
     let card = Message::System("card".into());
     let reply = Message::assistant_text("reply");
     let history = vec![input.clone(), result.clone(), reply.clone()];
-    let mut display = TurnDisplay::new(input.clone(), 0);
+    let mut display = TurnDisplay::new(input, 0);
 
     let pending = display.pending_rows(&history, SaveScope::Step);
-    assert_eq!(pending.rows, vec![input.clone()]);
+    assert_eq!(pending.rows, Vec::<Message>::new());
     display.mark_written(pending);
 
     display.applied.push_back((result, card.clone()));
