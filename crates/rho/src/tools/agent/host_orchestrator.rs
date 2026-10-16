@@ -19,10 +19,36 @@ use crate::{
 const SERVER: &str = "t3-code";
 
 pub(super) struct HostOrchestrator {
+    /// The bound T3 task tools, or why they could not be bound.
+    contract: Result<HostContract, String>,
+    runs: Mutex<Vec<HostRun>>,
+}
+
+/// T3's three task tools, bound only as a complete set.
+struct HostContract {
     delegate: Arc<dyn Tool>,
     status: Arc<dyn Tool>,
     cancel: Arc<dyn Tool>,
-    runs: Mutex<Vec<HostRun>>,
+}
+
+impl HostContract {
+    fn bind(tools: &AppToolSet) -> Result<Self, String> {
+        let lookup = |name| {
+            tools
+                .tool_named(&namespaced_tool_name(SERVER, name))
+                .ok_or_else(|| {
+                    format!(
+                        "--t3code needs tool `{name}` from MCP server `{SERVER}`, which \
+                         did not provide it; is Rho running inside T3 Code?"
+                    )
+                })
+        };
+        Ok(Self {
+            delegate: lookup("delegate_task")?,
+            status: lookup("task_status")?,
+            cancel: lookup("task_cancel")?,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -35,25 +61,22 @@ pub(super) struct HostRun {
 }
 
 impl HostOrchestrator {
-    /// Binds T3's three task tools from the `t3-code` server. The user opted in
-    /// with `--t3code`, so a missing tool is a broken setup, not a fallback.
-    pub(super) fn connect(tools: &AppToolSet) -> anyhow::Result<Self> {
-        let lookup = |name| {
-            tools
-                .tool_named(&namespaced_tool_name(SERVER, name))
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "--t3code needs tool `{name}` from MCP server `{SERVER}`, which \
-                         did not provide it; is Rho running inside T3 Code?"
-                    )
-                })
-        };
-        Ok(Self {
-            delegate: lookup("delegate_task")?,
-            status: lookup("task_status")?,
-            cancel: lookup("task_cancel")?,
+    /// Binds T3's three task tools from the `t3-code` server. A missing tool
+    /// does not fail the session: hosts open sessions without MCP servers too
+    /// (T3's provider status probe does). Instead every host operation fails
+    /// with the reason, so the user's `--t3code` opt-in never silently falls
+    /// back to in-process subagents.
+    pub(super) fn connect(tools: &AppToolSet) -> Self {
+        Self {
+            contract: HostContract::bind(tools),
             runs: Mutex::new(Vec::new()),
-        })
+        }
+    }
+
+    fn contract(&self) -> Result<&HostContract, ToolError> {
+        self.contract
+            .as_ref()
+            .map_err(|reason| ToolError::new(ToolErrorKind::Execution, reason.as_str()))
     }
 
     pub(super) async fn delegate(
@@ -66,6 +89,7 @@ impl HostOrchestrator {
         let arguments = delegate_arguments(definition, prompt);
         let title = arguments["title"].as_str().unwrap_or_default().to_owned();
         let output = self
+            .contract()?
             .delegate
             .call(ToolInvocation::new(invocation_id, arguments), context)
             .await
@@ -135,7 +159,8 @@ impl HostOrchestrator {
         task_id: &str,
         context: ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        self.status
+        self.contract()?
+            .status
             .call(
                 ToolInvocation::new(invocation_id, json!({"taskId": task_id})),
                 context,
@@ -154,7 +179,8 @@ impl HostOrchestrator {
         if let Some(reason) = reason {
             arguments["reason"] = json!(reason);
         }
-        self.cancel
+        self.contract()?
+            .cancel
             .call(ToolInvocation::new(invocation_id, arguments), context)
             .await
     }
