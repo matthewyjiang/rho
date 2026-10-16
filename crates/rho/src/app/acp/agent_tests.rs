@@ -90,8 +90,9 @@ fn test_agent() -> Arc<RhoAcpAgent> {
 // Covers: the initialize wire shape hosts parse: loadSession, image,
 // embeddedContext, no audio, the MCP transports host `mcpServers` may use,
 // additionalDirectories, session/close (Zed and T3 Code only close sessions
-// when it is advertised), and `agentInfo` with the same version
-// `rho --version` prints.
+// when it is advertised), session/list and session/delete (which gate Zed's
+// thread history), and `agentInfo` with the same version `rho --version`
+// prints.
 // Owner: ACP agent handshake
 #[test]
 fn initialize_response_wire_shape() {
@@ -105,7 +106,12 @@ fn initialize_response_wire_shape() {
                 "loadSession": true,
                 "promptCapabilities": { "image": true, "audio": false, "embeddedContext": true },
                 "mcpCapabilities": { "http": true, "sse": false },
-                "sessionCapabilities": { "additionalDirectories": {}, "close": {} },
+                "sessionCapabilities": {
+                    "additionalDirectories": {},
+                    "close": {},
+                    "list": {},
+                    "delete": {},
+                },
                 "auth": {},
             },
             "authMethods": [],
@@ -188,6 +194,40 @@ fn vacant_session() -> Arc<LiveSession> {
         cancel: Arc::new(PromptGate::new()),
         replaced: Arc::new(AtomicBool::new(false)),
     })
+}
+
+// Covers: session/delete must close a session open on this connection
+// before deleting it (its host would otherwise keep the file leased), as
+// session/close does: gate closed, and not marked replaced, which would skip
+// saving the cancelled turn. That includes a session a session/load of the
+// same id is still publishing.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn delete_retires_the_open_session_after_an_in_flight_load() {
+    let agent = test_agent();
+    let id = SessionId::new("open");
+    let install = agent.install_lock_for(&id).await;
+    let loading = install.lock().await;
+    let mut retire = std::pin::pin!(agent.retire(&id));
+    assert!(futures_util::poll!(retire.as_mut()).is_pending());
+
+    let loaded = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(id.clone(), Arc::clone(&loaded));
+    drop(loading);
+    let _retired = retire.await;
+
+    assert_eq!(
+        (
+            agent.sessions.lock().await.contains_key(&id),
+            loaded.cancel.is_closed(),
+            loaded.replaced.load(std::sync::atomic::Ordering::Acquire),
+        ),
+        (false, true, false)
+    );
 }
 
 async fn wait_until_replaced(live: &LiveSession) {
