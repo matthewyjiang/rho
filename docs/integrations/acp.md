@@ -25,6 +25,16 @@ Rho speaks ACP protocol version 1. The `initialize` response always answers `1`,
 
 The `initialize` response also carries `agentInfo` with `name: "rho"`, `title: "Rho"`, and `version` set to the same version `rho --version` prints, so hosts can show which Rho release they are talking to.
 
+## Authentication
+
+When the host advertises `clientCapabilities.auth.terminal: true`, Rho returns terminal authentication methods for its provider auth profiles, including API keys and OAuth. Each method appends `--login <auth-profile>` to the configured agent invocation. For example, T3 Code can launch `rho acp --t3code --login codex` in its sign-in terminal. This runs login instead of the ACP server; it does not require a working model or T3 MCP connection. Model discovery and agent binding wait until the host requests a session, so even a configured provider with no credentials or cached models can advertise login. A startup failure is returned to the session request; reconnect after fixing it to retry startup.
+
+API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Rho asks where to store credentials when no credential backend has been selected. Credentials stay in Rho's configured store, not in ACP messages. Cancelled, failed, and unconfirmed terminal logins exit nonzero; the host should reconnect after a successful login so the new process reads the saved credentials.
+
+Login does not switch the configured provider/model. Sign in to the configured provider before starting a session; additional provider credentials become available through Rho's model options after reconnecting. Hosts without terminal-auth support receive no authentication methods: run `rho login <provider>` separately in the same user/environment. Terminal method IDs must not be passed to ACP `authenticate`, which Rho does not implement.
+
+Ollama Cloud device-key setup is not advertised because it cannot confirm browser authorization. Complete `rho login ollama-cloud-device` separately and reconnect, or use the advertised Ollama Cloud API-key method.
+
 ## Sessions
 
 ACP sessions persist under `~/.rho/sessions`. They appear in `rho sessions list` and you can resume them with `rho -R`. See [Sessions](/sessions).

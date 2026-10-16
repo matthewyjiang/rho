@@ -1,4 +1,7 @@
+mod secret;
+
 use {
+    crate::cli::Command,
     crate::credential_store::AppCredentialStore,
     crate::login_prompt_print::eprint_login_prompt,
     rho_providers::auth::{
@@ -11,7 +14,37 @@ use {
     rho_providers::model::catalog,
 };
 
-pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {
+/// Both CLI entry points share setup; ACP auth bypasses session/model startup.
+pub(super) fn command(command: &Option<Command>) -> Option<(&str, bool)> {
+    match command {
+        Some(Command::Login {
+            provider,
+            device_auth,
+        }) => Some((provider, *device_auth)),
+        Some(Command::Acp(args)) => args.login.as_deref().map(|auth| (auth, false)),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum LoginCompletion {
+    Saved,
+    Unconfirmed,
+}
+
+impl LoginCompletion {
+    /// Terminal auth's zero exit status is a promise of completed sign-in.
+    pub(super) fn finish(self, require_confirmation: bool) -> anyhow::Result<()> {
+        match self {
+            Self::Unconfirmed if require_confirmation => {
+                anyhow::bail!("login could not be confirmed; complete the provider's instructions and reconnect")
+            }
+            Self::Saved | Self::Unconfirmed => Ok(()),
+        }
+    }
+}
+
+pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<LoginCompletion> {
     if rho_providers::provider::provider_descriptor(provider)
         .is_some_and(|descriptor| descriptor.is_keyless())
     {
@@ -35,9 +68,10 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
             anyhow::bail!("provider '{provider}' does not require login")
         }
         AuthenticationMethod::ApiKey { entry_label, .. } => {
-            anyhow::bail!(
-                "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
-            );
+            let key = secret::read(entry_label)?;
+            ProviderAuthentication::save_api_key(&AppCredentialStore, &target.auth, &key)?;
+            eprintln!("saved credentials for {}", target.auth);
+            return Ok(LoginCompletion::Saved);
         }
         AuthenticationMethod::Interactive { .. } => {}
     }
@@ -60,12 +94,13 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         InteractiveLoginCompletion::Confirm(completion) => {
             completion.await?.save(&AppCredentialStore)?;
             eprintln!("Successfully logged in to {}", target.auth);
+            Ok(LoginCompletion::Saved)
         }
         InteractiveLoginCompletion::Unconfirmed { instruction } => {
             eprintln!("{instruction}");
+            Ok(LoginCompletion::Unconfirmed)
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]

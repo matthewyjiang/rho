@@ -207,7 +207,7 @@ pub enum Command {
         #[arg(value_name = "ID")]
         id: Option<String>,
     },
-    /// Log in to a provider from a browser or device-code flow.
+    /// Log in to a provider with an API key, browser, or device-code flow.
     Login {
         /// Provider to authenticate, for example openai-codex or github-copilot,
         /// or `antigravity` to sign in the Antigravity subagent server.
@@ -313,6 +313,10 @@ pub struct AcpArgs {
     /// `t3-code` MCP server. Sessions fail to start if those tools are missing.
     #[arg(long)]
     pub t3code: bool,
+    /// Run terminal authentication for an auth profile instead of serving ACP.
+    /// Hosts append this option to the configured agent invocation.
+    #[arg(long, value_name = "AUTH")]
+    pub login: Option<String>,
 }
 
 /// Inputs for the debug-only scripted ACP agent.

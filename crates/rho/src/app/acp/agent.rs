@@ -17,10 +17,11 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{
     schema::v1::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, CloseSessionRequest,
-        CloseSessionResponse, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
-        McpCapabilities, NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest,
-        PromptResponse, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
-        SessionCloseCapabilities, SessionId, SessionNotification, SetSessionConfigOptionRequest,
+        CloseSessionResponse, InitializeRequest, InitializeResponse, LoadSessionRequest,
+        LoadSessionResponse, McpCapabilities, NewSessionRequest, NewSessionResponse,
+        PromptCapabilities, PromptRequest, PromptResponse,
+        SessionAdditionalDirectoriesCapabilities, SessionCapabilities, SessionCloseCapabilities,
+        SessionId, SessionNotification, SetSessionConfigOptionRequest,
         SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
     },
     schema::ProtocolVersion,
@@ -113,10 +114,10 @@ impl RhoAcpAgent {
         }
     }
 
-    /// Rho speaks ACP v1 only, so the answer does not depend on the request:
+    /// Rho speaks ACP v1 only, so the version does not depend on the request:
     /// any other requested version, including the pre-release v0 and T3's v2,
     /// gets v1 back and the client decides whether to continue.
-    pub(super) fn initialize() -> InitializeResponse {
+    pub(super) fn initialize(request: &InitializeRequest) -> InitializeResponse {
         InitializeResponse::new(ProtocolVersion::V1)
             .agent_capabilities(
                 AgentCapabilities::new()
@@ -141,7 +142,7 @@ impl RhoAcpAgent {
                             .delete(SessionDeleteCapabilities::new()),
                     ),
             )
-            .auth_methods(Vec::new())
+            .auth_methods(super::auth::methods(&request.client_capabilities))
             // Hosts display `version` as the agent version; it matches `rho --version`.
             .agent_info(
                 agent_client_protocol::schema::v1::Implementation::new(

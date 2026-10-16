@@ -81,6 +81,9 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;
     }
+    if matches!(cli.command, Some(Command::Acp(_))) {
+        return acp::run(cli).await;
+    }
 
     let keyring_notice = crate::credential_store::StartupKeyringNotice::begin(
         /*interactive*/ cli.command.is_none(),
@@ -125,19 +128,6 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             output,
             max_steps,
             timeout,
-            herdr: headless_herdr(),
-            added_dirs,
-        })
-        .await;
-    }
-    if let Some(Command::Acp(args)) = &cli.command {
-        return run_acp_startup(AcpCommandStartup {
-            host: acp::AcpHost::from_args(args),
-            config,
-            config_repository,
-            cwd,
-            cli,
-            bound_agent,
             herdr: headless_herdr(),
             added_dirs,
         })
@@ -238,15 +228,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             update::run_update(env!("CARGO_PKG_VERSION")).await,
         ));
     }
-    if let Some(Command::Login {
-        provider,
-        device_auth,
-    }) = &cli.command
-    {
+    if let Some((provider, device_auth)) = login::command(&cli.command) {
         // Antigravity's server owns its sign-in; Rho config and the credential
         // store are not involved.
         if provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME) {
-            if *device_auth {
+            if device_auth {
                 anyhow::bail!(
                     "antigravity login has no device flow; paste the redirect address instead"
                 );
@@ -257,11 +243,19 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         }
         let config_repository = ConfigRepository::new(cli.config.clone());
         let mut config = config_repository.load()?;
+        config.providers.activate()?;
         let config_path = absolute_config_path(&config_repository)?;
         ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
         crate::credential_store::initialize_from_config(&mut config, &config_path)?;
         return Ok(EarlyDispatch::Handled(
-            login::run(provider, *device_auth).await,
+            login::run(provider, device_auth)
+                .await
+                .and_then(|completion| {
+                    completion.finish(
+                        /*require_confirmation*/
+                        matches!(cli.command, Some(Command::Acp(_))),
+                    )
+                }),
         ));
     }
     Ok(EarlyDispatch::Continue)
@@ -462,21 +456,21 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
     .await
 }
 
-struct AcpCommandStartup {
-    host: acp::AcpHost,
-    config: crate::config::Config,
-    config_repository: ConfigRepository,
-    cwd: std::path::PathBuf,
-    cli: Cli,
-    bound_agent: super::agent_binding::BoundAgent,
-    herdr: HerdrReporter,
-    added_dirs: crate::added_dirs::AddedDirs,
-}
-
-async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
+/// Model discovery and agent binding are deferred until the host needs a session,
+/// so an unauthenticated provider cannot block initialize's login advertisement.
+pub(super) async fn prepare_acp(cli: Cli) -> anyhow::Result<acp::AcpStartup> {
+    let Some(Command::Acp(args)) = &cli.command else {
+        anyhow::bail!("ACP startup requires the acp command");
+    };
+    let host = acp::AcpHost::from_args(args);
+    let mut startup = prepare_startup(cli).await?;
+    validate_terminal_mode(&startup.cli)?;
+    cli_config::prepare_model_metadata(&startup.config, &startup.store, &startup.provider_refresh)
+        .await;
+    cli_config::normalize_reasoning_for_cli(&mut startup.config, startup.bound_reasoning_source)?;
     let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
-    acp::run(acp::AcpStartup {
-        host: startup.host,
+    Ok(acp::AcpStartup {
+        host,
         config: startup.config,
         config_path: absolute_config_path(&startup.config_repository)?,
         cwd: startup.cwd,
@@ -485,10 +479,9 @@ async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
         no_subagents: startup.cli.no_subagents,
         agent: startup.bound_agent,
         diagnostics,
-        herdr: startup.herdr,
+        herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
         added_dirs: startup.added_dirs,
     })
-    .await
 }
 
 struct InteractiveStartup<'a> {
