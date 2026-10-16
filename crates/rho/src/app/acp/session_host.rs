@@ -5,9 +5,8 @@ use std::sync::{
 
 use agent_client_protocol::{
     schema::v1::{
-        AvailableCommandsUpdate, McpServer, PromptRequest, PromptResponse, SessionConfigOption,
-        SessionId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
-        SetSessionConfigOptionResponse,
+        McpServer, PromptRequest, PromptResponse, SessionConfigOption, SessionId,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
@@ -49,6 +48,8 @@ use crate::{
     session::Session as StoredSession,
 };
 
+#[path = "session_host_advertisements.rs"]
+mod advertisements;
 #[path = "session_host_agent.rs"]
 mod agent;
 #[path = "session_host_build.rs"]
@@ -81,6 +82,7 @@ use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSourc
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
+    advertisements: advertisements::Advertisements,
     built: BuiltSession,
     storage: HostStorage,
     agent: BoundAgent,
@@ -246,6 +248,7 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
+        self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
         let _ = self
             .herdr
@@ -305,6 +308,7 @@ impl SessionHost {
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
+        self.refresh_advertisements(&startup.config, client).await;
         self.wake_prompt_ended(
             result.as_ref().ok().map(|response| response.stop_reason),
             client,
@@ -368,17 +372,6 @@ impl SessionHost {
 
     pub(super) fn replaced_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.replaced)
-    }
-
-    /// The commands this session runs, as an `available_commands_update`.
-    pub(super) fn available_commands(&self, process_config: &Config) -> SessionNotification {
-        let home = crate::paths::home_dir();
-        let commands =
-            commands::available_commands(&self.command_scope(home.as_deref(), process_config));
-        SessionNotification::new(
-            self.acp_session_id.clone(),
-            SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
-        )
     }
 
     fn command_scope<'a>(
@@ -523,6 +516,7 @@ impl SessionHost {
         built.tools.bind_recall(storage.file());
         Self {
             acp_session_id,
+            advertisements: Default::default(),
             built,
             storage,
             agent: startup.agent.clone(),

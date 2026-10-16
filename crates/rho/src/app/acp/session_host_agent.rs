@@ -119,6 +119,7 @@ impl SessionHost {
         tracing::debug!(previous = %self.agent.id(), agent = %bound.id(), "rebound ACP agent");
         self.agent = bound;
         self.built.tools.bind_recall(self.storage.file());
+        self.refresh_advertisements(&startup.config, client).await;
         self.run_turn(display, task, Vec::new(), client).await
     }
 
