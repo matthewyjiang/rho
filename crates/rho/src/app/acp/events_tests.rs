@@ -312,7 +312,10 @@ fn tool_updated_is_in_progress() {
 }
 
 // Covers: background results the model was given must replay as finished tool
-// cards, failed when the result failed, not as agent text merged into replies
+// cards, failed when the result failed, not as agent text merged into replies.
+// Process output is fenced in the markdown content, with a fence longer than
+// any inside it, and left unfenced in the plain `rawOutput` that hosts like
+// T3 Code show as is.
 // Owner: acp event mapper
 #[test]
 fn replayed_display_rows_become_finished_tool_cards() {
@@ -335,6 +338,7 @@ fn replayed_display_rows_become_finished_tool_cards() {
         reference: Some("p1".into()),
         subtitle: Some("ran 3s".into()),
         body: "1 test failed".into(),
+        output: Some("```rust\npanic!()\n```".into()),
         details: Vec::new(),
     };
     let transcript = DisplayTranscript(vec![
@@ -357,6 +361,7 @@ fn replayed_display_rows_become_finished_tool_cards() {
                         other => panic!("expected text content, got {other:?}"),
                     })
                     .collect::<Vec<_>>(),
+                call.raw_output,
                 notification.meta.is_some(),
             ),
             other => panic!("expected ToolCall, got {other:?}"),
@@ -369,7 +374,8 @@ fn replayed_display_rows_become_finished_tool_cards() {
                 "Failed (exit 1) · cargo test".to_owned(),
                 ToolKind::Other,
                 ToolCallStatus::Failed,
-                vec!["ran 3s\n1 test failed".to_owned()],
+                vec!["ran 3s\n1 test failed\n\n````text\n```rust\npanic!()\n```\n````".to_owned()],
+                Some(json!("ran 3s\n1 test failed\n\n```rust\npanic!()\n```")),
                 true,
             ),
             (
@@ -377,6 +383,7 @@ fn replayed_display_rows_become_finished_tool_cards() {
                 ToolKind::Other,
                 ToolCallStatus::Completed,
                 Vec::new(),
+                None,
                 true,
             ),
         ]

@@ -53,7 +53,7 @@ impl DisplayTranscript {
             .iter()
             .map(|row| match row {
                 DisplayRow::Notification(card) => {
-                    format!("{}\n{}\n{}", card.title, subtitle(card), card.body)
+                    format!("{}\n{}\n{}", card.title, subtitle(card), card.plain_body())
                 }
                 DisplayRow::Notice(text) => text.clone(),
             })
@@ -63,17 +63,41 @@ impl DisplayTranscript {
 }
 
 impl DisplayRow {
-    /// Title and body for hosts that show each row as its own titled card.
+    /// Text for hosts that show each row as its own titled card.
     /// A notice is titled by its first line.
-    pub(crate) fn card_text(&self) -> (&str, String) {
+    pub(crate) fn card_text(&self) -> CardText<'_> {
         match self {
-            Self::Notification(card) => (&card.title, format!("{}\n{}", subtitle(card), card.body)),
+            Self::Notification(card) => {
+                let subtitle = subtitle(card);
+                CardText {
+                    title: &card.title,
+                    markdown: format!("{subtitle}\n{}", card.markdown_body()),
+                    plain: format!("{subtitle}\n{}", card.plain_body()),
+                }
+            }
             Self::Notice(text) => match text.split_once('\n') {
-                Some((title, rest)) => (title, rest.to_string()),
-                None => (text, String::new()),
+                Some((title, rest)) => CardText {
+                    title,
+                    markdown: rest.to_owned(),
+                    plain: rest.to_owned(),
+                },
+                None => CardText {
+                    title: text,
+                    markdown: String::new(),
+                    plain: String::new(),
+                },
             },
         }
     }
+}
+
+/// One row's card title with its body in both host forms.
+pub(crate) struct CardText<'a> {
+    pub(crate) title: &'a str,
+    /// For hosts that render markdown.
+    pub(crate) markdown: String,
+    /// For hosts that show text as is.
+    pub(crate) plain: String,
 }
 
 /// The card's subtitle, or its routing line when it has none.

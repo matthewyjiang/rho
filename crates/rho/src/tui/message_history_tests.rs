@@ -28,6 +28,7 @@ fn notification_display_preserves_ownership() {
         reference: Some("abc123".into()),
         subtitle: None,
         body: "First finding\nSecond finding".into(),
+        output: None,
         details: vec!["attach: rho attach abc123".into()],
     };
     let display =
@@ -207,6 +208,7 @@ fn transcript_restores_message_receipts() {
                 reference: Some("abc123".into()),
                 subtitle: None,
                 body: body.trim().into(),
+                output: None,
                 details: vec![format!("task: {title}")],
             }))
         );

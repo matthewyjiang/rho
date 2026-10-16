@@ -51,8 +51,42 @@ pub(crate) struct NotificationCard {
     /// for the card's source (for example, background processes).
     #[serde(default)]
     pub subtitle: Option<String>,
+    /// Markdown shown in the card body.
     pub body: String,
+    /// Verbatim text shown after `body`, such as a process's output tail.
+    /// It is never read as markdown; see [`NotificationCard::markdown_body`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
     pub details: Vec<String>,
+}
+
+impl NotificationCard {
+    /// Body for markdown renderers: `body`, then `output` in a code fence that
+    /// outgrows any backtick run inside it, so the output stays verbatim.
+    pub(crate) fn markdown_body(&self) -> String {
+        self.body_with_output(|output| {
+            let longest_run = output
+                .split(|ch| ch != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            let fence = "`".repeat(longest_run.max(2) + 1);
+            format!("{fence}text\n{output}\n{fence}")
+        })
+    }
+
+    /// Body for hosts that show text as is: `body`, then `output` unfenced.
+    pub(crate) fn plain_body(&self) -> String {
+        self.body_with_output(str::to_owned)
+    }
+
+    fn body_with_output(&self, format_output: impl FnOnce(&str) -> String) -> String {
+        match &self.output {
+            Some(output) if self.body.is_empty() => format_output(output),
+            Some(output) => format!("{}\n\n{}", self.body, format_output(output)),
+            None => self.body.clone(),
+        }
+    }
 }
 
 /// Incoming parent text, with delivery details supplied by the runtime owner.
@@ -72,6 +106,7 @@ pub(crate) fn parent_message_card(
         reference: None,
         subtitle: None,
         body,
+        output: None,
         details: vec![detail],
     }
 }

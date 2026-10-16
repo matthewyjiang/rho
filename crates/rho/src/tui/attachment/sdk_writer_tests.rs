@@ -41,6 +41,7 @@ fn attachment_stream_round_trips_view_events() {
         reference: None,
         subtitle: None,
         body: "Check the queued route.\nKeep the full body.".into(),
+        output: None,
         details: vec!["run: abc123".into()],
     });
     let finished = attachment_update(

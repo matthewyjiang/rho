@@ -20,6 +20,7 @@ fn saved_v1_card_decodes_without_losing_metadata() {
         reference: Some("abc123".into()),
         subtitle: None,
         body: "Schema inspected.\nReady for the next step.".into(),
+        output: None,
         details: vec![
             "task: Inspect replayability".into(),
             "attach: rho attach abc123".into(),
