@@ -41,6 +41,8 @@ ACP sessions persist under `~/.rho/sessions`. They appear in `rho sessions list`
 
 Rho advertises `sessionCapabilities.list` and `sessionCapabilities.delete`, so hosts can show saved Rho sessions as history and reopen them. Zed builds its agent thread history from this.
 
+Listing and deleting saved history do not start model discovery or require provider credentials, even after a session startup failure.
+
 - `session/list` returns saved sessions newest first: those of `cwd` when the request names one, else those of every workspace. It lists the same sessions `/resume` offers, so sessions with nothing saved yet are left out, and so are sessions whose workspace directory no longer exists, which `session/load` cannot open. Each entry has the session's `cwd`, its title (or, when untitled, its first message on one line), and `updatedAt`. Pages hold 100 sessions; pass `nextCursor` back as `cursor` for the next page. Every listed `sessionId` opens with `session/load`.
 - `session/delete` deletes a saved session the same way `rho sessions rm` does, including its delegated-agent runs. A session open on the same connection is closed first, as `session/close` would close it, since hosts such as Zed may delete a thread from history without closing it. It refuses a session another Rho process has open and one whose delegated runs are still running; such a refusal can come after the session was closed, and `session/load` reopens it.
 

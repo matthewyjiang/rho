@@ -19,6 +19,7 @@ async fn disconnect_during_startup_rejects_the_waiting_request() {
         }
         .boxed()
         .shared(),
+        publication: tokio::sync::Mutex::new(()),
         closed: AtomicBool::new(false),
     });
     let waiting = tokio::spawn({

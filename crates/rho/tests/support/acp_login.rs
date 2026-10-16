@@ -9,20 +9,43 @@ use serde_json::json;
 use super::{AcpServer, Workspace, REPLY_TIMEOUT};
 
 // Covers: a cold-cache provider whose model discovery requires credentials
-// must still advertise login, and a failed session startup must not kill ACP.
+// must still advertise login, and a failed session startup must not kill ACP
+// or block history deletion, which needs no model or credentials.
 // Owner: ACP process startup; no model/credential fixtures mask discovery here.
 #[test]
 fn unauthenticated_cold_start_can_discover_login() {
-    let home = IsolatedHome::new().unwrap();
+    let workspace = Workspace::new();
+    let saved_ids = {
+        let mut fixture = workspace.server();
+        fixture
+            .request("initialize", json!({"protocolVersion": 1}))
+            .0
+            .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let (session, _) = fixture.request(
+                "session/new",
+                json!({"cwd": workspace.project, "mcpServers": []}),
+            );
+            let id = session.unwrap()["sessionId"].as_str().unwrap().to_owned();
+            fixture.prompt(&id, "save history for deletion");
+            fixture
+                .request("session/close", json!({"sessionId": id}))
+                .0
+                .unwrap();
+            ids.push(id);
+        }
+        ids
+    };
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
     command
         .env_clear()
-        .env("HOME", &home.home)
-        .env("RHO_HOME", home.home.join(".rho"))
+        .env("HOME", workspace.home.path())
+        .env("RHO_HOME", workspace.home.path().join(".rho"))
         .env("RHO_CREDENTIAL_STORE", "file")
-        .current_dir(&home.workspace)
+        .current_dir(&workspace.project)
         .arg("--config")
-        .arg(&home.config_path)
+        .arg(workspace.home.path().join("config.toml"))
         .args(["--provider", "github-copilot", "acp", "--t3code"]);
     let mut server = AcpServer::from_command(&mut command);
     let initialize =
@@ -39,9 +62,11 @@ fn unauthenticated_cold_start_can_discover_login() {
         (copilot["type"].clone(), copilot["args"].clone()),
         (json!("terminal"), json!(["--login", "github-copilot"]))
     );
+    let (deleted, _) = server.request("session/delete", json!({"sessionId": saved_ids[0]}));
+    assert_eq!(deleted.unwrap(), json!({}));
     let (session, _) = server.request(
         "session/new",
-        json!({"cwd": home.workspace, "mcpServers": []}),
+        json!({"cwd": workspace.project, "mcpServers": []}),
     );
     assert_eq!(
         session.expect_err("credentials are still required for a session")["code"],
@@ -49,6 +74,10 @@ fn unauthenticated_cold_start_can_discover_login() {
     );
     let (after_failure, _) = server.request("initialize", initialize);
     assert_eq!(after_failure.unwrap(), initialized);
+    let (deleted, _) = server.request("session/delete", json!({"sessionId": saved_ids[1]}));
+    assert_eq!(deleted.unwrap(), json!({}));
+    let (listed, _) = server.request("session/list", json!({}));
+    assert_eq!(listed.unwrap()["sessions"], json!([]));
 }
 
 // Covers: terminal methods must append to the configured

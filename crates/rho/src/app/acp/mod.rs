@@ -220,7 +220,7 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                 async move |request: DeleteSessionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.delete_session(request).await
+                        agent.delete_session(request).await
                     })
                 }
             },
@@ -272,6 +272,8 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
             {
                 let agent = Arc::clone(&agent);
                 async move |notification: CancelNotification, _cx| {
+                    // Cancellation targets an ongoing prompt, not a future
+                    // turn after session setup. No prompt exists before ready.
                     if let Some(agent) = agent.started() {
                         agent.cancel(notification).await;
                     }
