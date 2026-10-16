@@ -87,7 +87,6 @@ impl HostOrchestrator {
         context: ToolContext,
     ) -> Result<HostRun, ToolError> {
         let arguments = delegate_arguments(definition, prompt);
-        let title = arguments["title"].as_str().unwrap_or_default().to_owned();
         let output = self
             .contract()?
             .delegate
@@ -124,7 +123,13 @@ impl HostOrchestrator {
                 .and_then(Value::as_str)
                 .map(str::to_owned),
             agent_id: definition.id.to_string(),
-            title,
+            // Local run label only; T3 owns its thread's display title.
+            title: prompt
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or(definition.id.as_str())
+                .to_owned(),
             started: Instant::now(),
         };
         self.runs
@@ -192,16 +197,10 @@ impl HostOrchestrator {
 /// gpt-6-luna` failed with `model_unavailable`). The child's `/agent:` rebind
 /// applies the definition's model policy itself.
 fn delegate_arguments(definition: &AgentDefinition, prompt: &str) -> Value {
-    // T3's title schema has no length budget. Use only the first nonempty line
-    // rather than copying a multiline task into the host's roster label.
-    let title = prompt
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or(definition.id.as_str());
+    // Let T3 derive its display title from the task. Copying instructions into
+    // the separate title field can exceed its budget and reject the launch.
     json!({
         "task": format!("/agent:{} {prompt}", definition.id),
-        "title": title,
         "mode": "async",
     })
 }

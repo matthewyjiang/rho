@@ -145,6 +145,8 @@ rho acp --t3code
 
 Subagents then run as T3 threads, so they appear in T3's subagent panel and keep running after the parent's prompt ends. The `agent` tool starts each child through the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as its first prompt. `agents` maps `status` and `stop` to T3's `task_status` and `task_cancel`. It has no `message` action. T3 delivers a finished child's result to the parent as a new turn, so a waiting child does not hold the parent's prompt open.
 
+T3 derives each child's display title from its task. Rho sends the full task without copying it into T3's separately bounded title field; the local `agents list` label remains the task's first nonempty line.
+
 Only agents with Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected: T3 runs those providers itself, so the model can start one with T3's `delegate_task` tool directly. Workflows still run inside Rho.
 
 If any of the three T3 tools is missing, the session still starts, so T3's provider status check passes, but `agent` and the `agents` `status` and `stop` actions fail with an error naming the missing tool. `agents` `list` still returns the session's local run list. Rho never falls back to in-process subagents under `--t3code`. Without `--t3code`, Rho never uses T3's task tools for delegation, even when T3's MCP server is attached.
