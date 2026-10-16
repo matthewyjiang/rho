@@ -118,6 +118,15 @@ impl Fixture {
             .unwrap();
     }
 
+    /// Waits until the armed watcher's notifier has finished publishing.
+    async fn notifier_settled(&mut self) {
+        let notifier = self.wake.armed.as_mut().unwrap().notifier.as_mut().unwrap();
+        tokio::time::timeout(TEST_WAIT, &mut notifier.task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
     fn take_calls(&self) -> Vec<(String, Value)> {
         std::mem::take(&mut *self.calls.lock().unwrap())
     }
@@ -166,11 +175,22 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
     assert_eq!(fixture.take_calls(), Vec::new());
 
     fixture.stop_process(&process).await;
+    fixture.notifier_settled().await;
+    // A message that lands after the signal but before the watcher reads it
+    // must leave the signal and the parent's lock in place.
+    assert_eq!(
+        fixture.wake.prompt_started(Some("still there?")),
+        PromptOrigin::Other
+    );
     let signal = WakeSignal::parse_in(fixture.signals.path(), &token).unwrap();
     let summary = tokio::time::timeout(TEST_WAIT, signal.wait(&CancellationToken::new()))
         .await
         .unwrap();
-    assert!(summary.is_some(), "the watcher receives the exit");
+    let summary = summary.expect("the watcher receives the exit");
+    assert!(
+        summary.starts_with(LONG_RUNNING_COMMAND),
+        "the watcher reports the process, not that its parent ended: {summary}"
+    );
 
     assert_eq!(
         fixture.wake.prompt_started(Some(

@@ -48,9 +48,9 @@ pub(super) struct T3Wake {
     /// Where this parent writes signals and its watchers look for them.
     signal_dir: PathBuf,
     armed: Option<Watcher>,
-    /// Watchers that ended and were dropped: T3's notice that they finished
-    /// may still be on its way as a later prompt.
-    ended: Vec<String>,
+    /// Watchers no longer armed whose T3 notice that they finished may still
+    /// be on its way as a later prompt.
+    ended: Vec<EndedWatcher>,
     /// Locks of cancelled watchers, held until a later prompt ends so a
     /// watcher sees its cancel before it sees this parent let go.
     retired: Vec<std::fs::File>,
@@ -62,6 +62,14 @@ struct Watcher {
     /// Held while this parent lives; the watcher ends once it is released.
     lock: std::fs::File,
     notifier: Option<Notifier>,
+}
+
+/// A watcher that fired or ended. A fired one may not have read its signal
+/// yet, so its lock stays held until T3 reports it finished; releasing it
+/// earlier would make the watcher report that this parent ended.
+struct EndedWatcher {
+    task_id: String,
+    _lock: std::fs::File,
 }
 
 /// Fires a watcher's signal once a result is ready, unless a prompt that
@@ -220,12 +228,18 @@ impl T3Wake {
             let fired = watcher.notifier.take().is_some_and(Notifier::quiet);
             if fired || mentions(&watcher.task_id) {
                 let watcher = self.armed.take().expect("armed watcher");
-                watcher.signal.remove();
-                self.ended.push(watcher.task_id);
+                // A fired watcher consumes its signal itself.
+                if !fired {
+                    watcher.signal.remove();
+                }
+                self.ended.push(EndedWatcher {
+                    task_id: watcher.task_id,
+                    _lock: watcher.lock,
+                });
             }
         }
         let before = self.ended.len();
-        self.ended.retain(|id| !mentions(id));
+        self.ended.retain(|ended| !mentions(&ended.task_id));
         if self.ended.len() < before {
             PromptOrigin::WatcherNotice
         } else {
