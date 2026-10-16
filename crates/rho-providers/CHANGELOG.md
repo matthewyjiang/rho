@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.18.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.17.0...rho-providers-v2.18.0) (2026-10-16)
+
+
+### Features
+
+* **acp:** load every mentioned skill in one host batch ([#1496](https://github.com/matthewyjiang/rho/issues/1496)) ([2cd6c5f](https://github.com/matthewyjiang/rho/commit/2cd6c5f107c4e607bc4fa547ce805ea6966475e3))
+
 ## [2.17.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.16.1...rho-providers-v2.17.0) (2026-10-15)
 
 

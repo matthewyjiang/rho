@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.23.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.22.0...rho-coding-agent-v2.23.0) (2026-10-16)
+
+
+### Features
+
+* **acp:** load every mentioned skill in one host batch ([#1496](https://github.com/matthewyjiang/rho/issues/1496)) ([2cd6c5f](https://github.com/matthewyjiang/rho/commit/2cd6c5f107c4e607bc4fa547ce805ea6966475e3))
+* **acp:** show finished background processes and agents as cards in T3 Code ([#1501](https://github.com/matthewyjiang/rho/issues/1501)) ([5980cc5](https://github.com/matthewyjiang/rho/commit/5980cc5633a00398782499fe31cc5b9924c463ba))
+* **acp:** show Rho subagents in T3 Code's subagent panel with --t3code ([#1499](https://github.com/matthewyjiang/rho/issues/1499)) ([324545f](https://github.com/matthewyjiang/rho/commit/324545f93f86604f930e89171a1b49d18d45abbc))
+* **tui:** load $skill mentions in one host batch ([#1498](https://github.com/matthewyjiang/rho/issues/1498)) ([bf5c1ac](https://github.com/matthewyjiang/rho/commit/bf5c1ac65e409fe267da0d8e3a3a3df538104d42))
+* **workflow:** start any workspace workflow with /workflow:&lt;name&gt; in the TUI and ACP ([#1495](https://github.com/matthewyjiang/rho/issues/1495)) ([4884180](https://github.com/matthewyjiang/rho/commit/4884180e178c7d8d2a84f7075dfd2ddf70ef872c))
+
+
+### Bug Fixes
+
+* **acp:** keep the in-flight turn when the host restarts the agent ([#1493](https://github.com/matthewyjiang/rho/issues/1493)) ([74366e8](https://github.com/matthewyjiang/rho/commit/74366e88151d5a7dcbb37da0af662bda7e6394ce))
+* **acp:** show background result cards as readable text in T3 Code ([#1504](https://github.com/matthewyjiang/rho/issues/1504)) ([cab1e65](https://github.com/matthewyjiang/rho/commit/cab1e65cdae2bf2bec6be930f2a6ce746e369619))
+* **acp:** show short model names and capitalized reasoning levels in host pickers ([#1492](https://github.com/matthewyjiang/rho/issues/1492)) ([543669c](https://github.com/matthewyjiang/rho/commit/543669c94e2922714d33b0f2da8fe797fa19a465))
+* **acp:** stop empty ACP sessions from flooding /resume, and title and fully save the rest ([#1502](https://github.com/matthewyjiang/rho/issues/1502)) ([b4c4084](https://github.com/matthewyjiang/rho/commit/b4c40848162f5b55906e956e4a3b642244686a87))
+* **acp:** stop killing delegated agents when the user sends a message ([#1500](https://github.com/matthewyjiang/rho/issues/1500)) ([b9dafbd](https://github.com/matthewyjiang/rho/commit/b9dafbd3a9c6d12df221ddeceafdfbb40eaadde6))
+* **cli:** use stored credentials when --auth is omitted ([#1486](https://github.com/matthewyjiang/rho/issues/1486)) ([644daf5](https://github.com/matthewyjiang/rho/commit/644daf59017e843f2c28d73d4dd904a60875138b))
+* **process:** silence dead-code warning for ProcessManager::start in release builds ([#1491](https://github.com/matthewyjiang/rho/issues/1491)) ([7dfd0ca](https://github.com/matthewyjiang/rho/commit/7dfd0ca2871b2f46835f446697a54c5c7261955f))
+* **tools:** cut tool_search output ~88% with compact hits ([#1497](https://github.com/matthewyjiang/rho/issues/1497)) ([6baa33d](https://github.com/matthewyjiang/rho/commit/6baa33d809913b659dcc3d1bd7565f3e990304ce))
+* **tui:** refresh config parent pages on return so saved edits show ([#1503](https://github.com/matthewyjiang/rho/issues/1503)) ([8a7282f](https://github.com/matthewyjiang/rho/commit/8a7282f170343c242b92b2966d8461de8ac17b50))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.17.0 to 2.18.0
+
 ## [2.22.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.21.0...rho-coding-agent-v2.22.0) (2026-10-15)
 
 

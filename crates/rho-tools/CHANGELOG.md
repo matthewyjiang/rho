@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.10.0...rho-agent-tools-v1.11.0) (2026-10-16)
+
+
+### Features
+
+* **acp:** load every mentioned skill in one host batch ([#1496](https://github.com/matthewyjiang/rho/issues/1496)) ([2cd6c5f](https://github.com/matthewyjiang/rho/commit/2cd6c5f107c4e607bc4fa547ce805ea6966475e3))
+
 ## [1.10.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.9.0...rho-agent-tools-v1.10.0) (2026-10-15)
 
 
