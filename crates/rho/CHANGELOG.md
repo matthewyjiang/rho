@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.24.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.23.0...rho-coding-agent-v2.24.0) (2026-10-16)
+
+
+### Features
+
+* **acp:** free closed Zed and T3 Code threads with session/close ([#1510](https://github.com/matthewyjiang/rho/issues/1510)) ([748fa0a](https://github.com/matthewyjiang/rho/commit/748fa0a163e1d0a6d0bba10e643f3a0d78c0f404))
+* **acp:** let Zed multi-root workspaces see every root with additionalDirectories ([#1511](https://github.com/matthewyjiang/rho/issues/1511)) ([0cb38b1](https://github.com/matthewyjiang/rho/commit/0cb38b11f9934ab0272c085b8bac3beb03d7c7e6))
+* **acp:** list and delete saved sessions so Zed shows rho history ([f70ef8b](https://github.com/matthewyjiang/rho/commit/f70ef8bb62defdce2d930e4c0fb1edfffbccd14a))
+* **acp:** wake idle T3 Code threads when background work finishes ([#1515](https://github.com/matthewyjiang/rho/issues/1515)) ([4bb6a6c](https://github.com/matthewyjiang/rho/commit/4bb6a6cd47a872c22888681944dd292a8c2e6203))
+
+
+### Bug Fixes
+
+* **acp:** defer missing T3 tools errors to delegation calls ([#1506](https://github.com/matthewyjiang/rho/issues/1506)) ([fe3a509](https://github.com/matthewyjiang/rho/commit/fe3a509b9ad5e85bc1e0d982ed05e6c058d0d7e1))
+* **acp:** report rho name and version to ACP hosts in initialize ([#1507](https://github.com/matthewyjiang/rho/issues/1507)) ([1e03f48](https://github.com/matthewyjiang/rho/commit/1e03f48f75ed984fe6673b4011a23e6eb8fdc3f0))
+* **acp:** stop bogus and stuck tool call cards in ACP hosts ([#1514](https://github.com/matthewyjiang/rho/issues/1514)) ([939de50](https://github.com/matthewyjiang/rho/commit/939de502392bafc7c87f7148e570866fe988a71a))
+* **acp:** stop dropping model and mode changes sent mid-turn ([#1512](https://github.com/matthewyjiang/rho/issues/1512)) ([044047d](https://github.com/matthewyjiang/rho/commit/044047d49b36b63ea8ffa5dca2c1cd3729208c58))
+
 ## [2.23.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.22.0...rho-coding-agent-v2.23.0) (2026-10-16)
 
 
