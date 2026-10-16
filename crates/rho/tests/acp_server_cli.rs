@@ -18,6 +18,10 @@ use tempfile::TempDir;
 
 #[path = "support/acp_advertisements_tests.rs"]
 mod advertisements;
+
+#[path = "support/acp_file_diffs_tests.rs"]
+mod file_diffs;
+
 #[path = "support/acp_login.rs"]
 mod login;
 

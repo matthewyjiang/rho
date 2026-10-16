@@ -50,5 +50,8 @@ pub(super) fn mutation_output(outcome: FileMutationOutcome) -> ToolOutput {
     for path in outcome.display_paths {
         metadata = metadata.affected_path(path);
     }
+    for change in outcome.file_changes {
+        metadata = metadata.file_change(change);
+    }
     ToolOutput::text(outcome.content).metadata(metadata)
 }

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, SessionId, SessionNotification, SessionUpdate, StopReason,
+    ContentBlock, ContentChunk, Diff, SessionId, SessionNotification, SessionUpdate, StopReason,
     ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, ToolKind,
 };
@@ -307,11 +307,19 @@ fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {
     if !output.content().is_empty() {
         content.push(ToolCallContent::from(output.content()));
     }
-    if let Some(diff) = output.presentation().unified_diff() {
-        // unified_diff is patch text, not the file's new contents. ACP Diff.new_text
-        // is the post-edit file, so the patch is sent as ordinary tool content
-        // whether or not an affected path is present.
-        content.push(ToolCallContent::from(diff));
+    let metadata = output.presentation();
+    if metadata.file_changes().is_empty() {
+        // A patch is not the complete file text ACP Diff.new_text requires.
+        if let Some(diff) = metadata.unified_diff() {
+            content.push(ToolCallContent::from(diff));
+        }
+    } else {
+        content.extend(metadata.file_changes().iter().map(|change| {
+            ToolCallContent::Diff(
+                Diff::new(change.path(), change.new_text())
+                    .old_text(change.old_text().map(str::to_owned)),
+            )
+        }));
     }
     content
 }

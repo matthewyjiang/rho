@@ -8,6 +8,7 @@ use crate::{
 };
 
 mod arbiter;
+mod file_change;
 mod first_capability;
 mod output;
 mod preparation;
@@ -16,6 +17,7 @@ mod registry;
 pub(crate) mod scheduling;
 mod worker;
 
+pub use file_change::ToolFileChange;
 pub use output::{ProcessResult, ToolAsset, ToolError, ToolErrorKind, ToolMetadata, ToolOutput};
 pub use progress::{tool_progress_channel, ToolProgress, ToolProgressReceiver, ToolProgressSender};
 pub use registry::{advertised_specs, DuplicateToolName, ToolRegistry, ToolVisibility};

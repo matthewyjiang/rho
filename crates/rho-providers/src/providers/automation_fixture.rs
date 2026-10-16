@@ -46,6 +46,7 @@ enum Mode {
     ReadFile,
     ReadPath,
     WritePath,
+    ToolCall,
     ProcessThenDelay,
 }
 
@@ -62,6 +63,7 @@ impl Mode {
             "read-file" => Ok(Self::ReadFile),
             "read-path" => Ok(Self::ReadPath),
             "write-path" => Ok(Self::WritePath),
+            "tool-call" => Ok(Self::ToolCall),
             "process-then-delay" => Ok(Self::ProcessThenDelay),
             _ => Err(format!("unknown {MODE_ENV} value '{value}'")),
         }
@@ -131,6 +133,31 @@ impl ModelProvider for AutomationFixtureProvider {
                     }),
                 ),
                 Mode::WritePath => completed(fixed_response()),
+                Mode::ToolCall
+                    if matches!(
+                        request.messages.last(),
+                        Some(rho_sdk::model::Message::User(_))
+                    ) =>
+                {
+                    let text = request
+                        .messages
+                        .iter()
+                        .rev()
+                        .find_map(|message| match message {
+                            rho_sdk::model::Message::User(blocks) => {
+                                blocks.iter().find_map(|block| match block {
+                                    ContentBlock::Text(text) => Some(text),
+                                    _ => None,
+                                })
+                            }
+                            _ => None,
+                        })
+                        .expect("tool-call fixture needs a user message");
+                    let call: ToolCall = serde_json::from_str(text)
+                        .expect("tool-call fixture prompt must be a JSON tool call");
+                    completed_tool_call(&call.id, &call.name, call.arguments)
+                }
+                Mode::ToolCall => completed(last_tool_result(&request)?),
                 Mode::ProcessThenDelay if turn == 0 => completed_tool_call(
                     "fixture-process",
                     "process",

@@ -110,5 +110,9 @@ async fn apply_hunks_inner(
         content: truncate(content, max_output_bytes),
         display_paths,
         diff,
+        file_changes: planned
+            .into_iter()
+            .flat_map(FileChange::into_file_changes)
+            .collect(),
     })
 }

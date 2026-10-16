@@ -81,6 +81,15 @@ pub(super) async fn write_file_content(
     tokio::fs::write(path, content).await?;
 
     let created = old_content.is_none() && !existing_file_is_unreadable;
+    // An unreadable existing file is not a creation: do not invent its old text.
+    let file_changes = if existing_file_is_unreadable {
+        Vec::new()
+    } else {
+        vec![match old_content {
+            Some(original) => rho_sdk::tool::ToolFileChange::modified(path, original, content),
+            None => rho_sdk::tool::ToolFileChange::created(path, content),
+        }]
+    };
     let action = if created { "created" } else { "wrote" };
     // Model-facing chain contract: action line + bounded hashline snapshot.
     // Unified diff stays on metadata for UI cards.
@@ -94,6 +103,7 @@ pub(super) async fn write_file_content(
         content: truncate(content, max_output_bytes),
         display_paths: vec![display_path.to_string()],
         diff,
+        file_changes,
     })
 }
 

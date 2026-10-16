@@ -2,7 +2,7 @@ use std::{fmt, path::PathBuf, sync::Arc};
 
 use serde_json::Value;
 
-use super::OperationKind;
+use super::{OperationKind, ToolFileChange};
 use crate::AuthorizationError;
 
 /// Immutable binary data produced by a tool.
@@ -41,12 +41,23 @@ pub struct ToolMetadata {
     urls: Vec<String>,
     diff: Option<String>,
     assets: Vec<ToolAsset>,
+    extras: Option<Box<MetadataExtras>>,
+}
+
+/// Rare host presentation data stays off the stack of every tool event.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MetadataExtras {
+    file_changes: Vec<ToolFileChange>,
     presentation_notices: Vec<String>,
 }
 
 impl ToolMetadata {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn extras_mut(&mut self) -> &mut MetadataExtras {
+        self.extras.get_or_insert_with(Box::default)
     }
 
     pub fn operation(mut self, operation: OperationKind) -> Self {
@@ -74,6 +85,12 @@ impl ToolMetadata {
         self
     }
 
+    /// Adds complete before/after file contents for host diff views.
+    pub fn file_change(mut self, change: ToolFileChange) -> Self {
+        self.extras_mut().file_changes.push(change);
+        self
+    }
+
     /// Attaches immutable binary data produced by the tool.
     pub fn asset(mut self, asset: ToolAsset) -> Self {
         self.assets.push(asset);
@@ -82,7 +99,7 @@ impl ToolMetadata {
 
     /// Adds a host-facing notice that is not included in model-visible output.
     pub fn presentation_notice(mut self, notice: impl Into<String>) -> Self {
-        self.presentation_notices.push(notice.into());
+        self.extras_mut().presentation_notices.push(notice.into());
         self
     }
 
@@ -106,12 +123,21 @@ impl ToolMetadata {
         self.diff.as_deref()
     }
 
+    /// Complete file changes in mutation order, independent of the patch preview.
+    pub fn file_changes(&self) -> &[ToolFileChange] {
+        self.extras
+            .as_ref()
+            .map_or(&[], |extras| &extras.file_changes)
+    }
+
     pub fn assets(&self) -> &[ToolAsset] {
         &self.assets
     }
 
     pub fn presentation_notices(&self) -> &[String] {
-        &self.presentation_notices
+        self.extras
+            .as_ref()
+            .map_or(&[], |extras| &extras.presentation_notices)
     }
 }
 

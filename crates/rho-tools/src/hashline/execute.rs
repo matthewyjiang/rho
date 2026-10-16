@@ -181,6 +181,12 @@ fn apply_sections_locked(
             .map(|file| file.display_path.clone())
             .collect(),
         diff,
+        file_changes: planned
+            .into_iter()
+            .map(|file| {
+                rho_sdk::tool::ToolFileChange::modified(file.path, file.original, file.outcome.text)
+            })
+            .collect(),
     })
 }
 

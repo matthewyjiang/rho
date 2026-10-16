@@ -58,6 +58,8 @@ During a session, Rho also sends:
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A model-prompt change notice found at load is sent when the next prompt starts.
 
+Successful `write` and edit-tool calls include ACP `diff` content with an absolute `path` and the complete `oldText` and `newText`, so editors can show file changes. New files omit `oldText`; deletions use empty `newText`. Moves appear as a deletion of the source and creation of the destination. The normal text result stays alongside the diffs. If a write cannot read the existing file as UTF-8, it keeps the text notice instead of inventing original contents. Tools that supply only a unified patch still send that patch as text, not as `newText`.
+
 `initialize` advertises `sessionCapabilities.close`, so hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the session's prompt as `session/cancel` would, and a prompt waiting behind it also ends `cancelled`. The cancelled turn is saved, then the session's MCP servers, background processes, and the delegated agents Rho runs stop. The saved session stays on disk, so `session/load` can open it again. Closing an ID with no live session, including one already closed, fails with `resource_not_found` (`-32002`), the same error other session methods return for an unknown ID.
 
 ### Settings during a prompt
