@@ -260,7 +260,7 @@ impl App {
                         &name,
                         turn.model,
                         turn.display,
-                        agent.has_tool("skill"),
+                        agent.has_tool(crate::skills::mention::SKILL_TOOL),
                     )? {
                         skill_actions::SkillCommandAction::Prompt(prompt) => turn = *prompt,
                         skill_actions::SkillCommandAction::Rejected => return Ok(()),
@@ -272,6 +272,8 @@ impl App {
                 }
             }
         }
+
+        self.load_mentioned_skills(&mut turn, agent);
 
         if !self.setup_state().signed_in {
             return self.offer_login_instead_of_turn(turn);
@@ -454,11 +456,7 @@ impl App {
                 };
                 self.pending_input_changed();
                 self.select_pending_recall_target();
-                let submission = SendSubmission::turn(
-                    TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                    prompt.media,
-                    prompt.paste_segments,
-                );
+                let submission = self.queued_turn_submission(prompt, agent);
                 let Some(submission) = self.gate_send(submission, agent) else {
                     return Ok(true);
                 };
@@ -599,11 +597,7 @@ impl App {
             };
             self.pending_input_changed();
             self.select_pending_recall_target();
-            let submission = SendSubmission::turn(
-                TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                prompt.media,
-                prompt.paste_segments,
-            );
+            let submission = self.queued_turn_submission(prompt, agent);
             let Some(submission) = self.gate_send(submission, agent) else {
                 // Ownership moved from the queue to the modal. Re-inserting a
                 // copy here would send the same follow-up twice after approval.

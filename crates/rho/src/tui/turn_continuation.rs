@@ -4,8 +4,8 @@
 //! queued follow-ups have run. Failed goal turns retain their driver's retry
 //! handling; cancellation and interruption never auto-continue.
 
-use super::{App, DefaultTerminal, InteractiveRuntime, PromptTurnRequest, TurnOutcome, TurnPrompt};
-use crate::tui::send_confirm::{SendAuthorization, SendPayload, SendSubmission};
+use super::{App, DefaultTerminal, InteractiveRuntime, PromptTurnRequest, TurnOutcome};
+use crate::tui::send_confirm::{SendAuthorization, SendPayload};
 
 impl App {
     pub(super) async fn run_prompt_turn_request(
@@ -27,11 +27,7 @@ impl App {
             };
             self.pending_input_changed();
             self.select_pending_recall_target();
-            let submission = SendSubmission::turn(
-                TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                prompt.media,
-                prompt.paste_segments,
-            );
+            let submission = self.queued_turn_submission(prompt, agent);
             let Some(submission) = self.gate_send(submission, agent) else {
                 // Confirmation owns continuation from here. Approval drains the
                 // remaining queue only if its turn succeeds; rejection or failure

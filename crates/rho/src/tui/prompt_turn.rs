@@ -15,7 +15,8 @@ pub(super) struct FailedTurn {
     display_commit: DisplayCommit,
     notification_context: Option<String>,
     boundary_recovery: Vec<BoundaryRecovery>,
-    initial_tool_call: Option<rho_sdk::model::ToolCall>,
+    /// Skills its host batch loads before the first model request.
+    skills: Vec<String>,
     generate_session_title_after_completion: bool,
     session_title_user: Option<String>,
     /// Keep action-request retries runnable even after delivery consumed the notice.
@@ -49,7 +50,7 @@ impl FailedTurn {
             display_commit: DisplayCommit::Unsaved,
             notification_context: None,
             boundary_recovery: Vec::new(),
-            initial_tool_call: prompt.initial_tool_call,
+            skills: prompt.skills,
             generate_session_title_after_completion: false,
             session_title_user: None,
             parent_action_required: false,
@@ -289,7 +290,7 @@ impl App {
                     display_commit: DisplayCommit::Unsaved,
                     notification_context: None,
                     boundary_recovery: Vec::new(),
-                    initial_tool_call: None,
+                    skills: Vec::new(),
                     generate_session_title_after_completion: false,
                     session_title_user: None,
                     parent_action_required: false,
@@ -354,7 +355,11 @@ impl App {
             .start_with_boundary_inputs(
                 model_input,
                 Some(failed_turn.display_user.clone()),
-                failed_turn.initial_tool_call.clone(),
+                failed_turn
+                    .skills
+                    .iter()
+                    .map(|name| crate::skills::mention::load_call(name))
+                    .collect(),
             )
             .await
         {

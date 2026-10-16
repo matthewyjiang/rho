@@ -468,12 +468,15 @@ impl App {
 
     pub(super) fn clamp_command_selection(&mut self) {
         // What the palette is answering: a command prefix while the cursor is
-        // still in the command token, otherwise the argument value it has moved
-        // on to. Either way a change starts the selection over, so a row picked
-        // for one question is never left highlighted for the next.
+        // still in the command token, otherwise the `$` mention or argument
+        // value it has moved on to. Either way a change starts the selection
+        // over, so a row picked for one question is never left highlighted for
+        // the next.
         let in_command_token = self.cursor_in_command_token();
         let prefix = if in_command_token {
             commands::command_prefix(self.input_ui.text()).map(str::to_ascii_lowercase)
+        } else if let Some(mention) = self.skill_mention_cursor() {
+            Some(mention.palette_identity())
         } else {
             self.mcp_argument_cursor()
                 .map(|cursor| cursor.palette_identity())

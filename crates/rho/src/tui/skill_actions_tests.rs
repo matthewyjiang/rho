@@ -27,18 +27,12 @@ fn skill_command_prefills_the_skill_tool_call_without_expanding_the_user_prompt(
     else {
         panic!("skill command should resolve to a prompt");
     };
-    let call = prompt.initial_tool_call.clone().unwrap();
-
     assert_eq!(
         *prompt,
         TurnPrompt::command(
             "/skill:inspect Check errors.".into(),
             "/skill:inspect Check errors.".into(),
         )
-        .with_initial_tool_call(rho_sdk::model::ToolCall {
-            id: call.id,
-            name: "skill".into(),
-            arguments: serde_json::json!({"name": "inspect"}),
-        })
+        .with_skill("inspect".into())
     );
 }

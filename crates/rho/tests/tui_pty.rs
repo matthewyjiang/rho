@@ -785,6 +785,68 @@ fn bare_skill_command_starts_a_model_turn() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
+// Covers: `$` completes a skill mention in the composer, and a prompt that
+// mentions two skills loads both as one host batch before the model responds.
+// Owner: interactive TUI
+#[test]
+fn skill_mentions_complete_and_load_in_one_batch() {
+    let home = IsolatedHome::new().unwrap();
+    for name in ["alpha", "beta"] {
+        let skill_dir = home.workspace.join(".agents/skills").join(name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: The {name} mention skill\n---\nFollow {name}.\n"
+            ),
+        )
+        .unwrap();
+    }
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 40,
+            cols: 100,
+        },
+    );
+    let mut harness = PtyHarness::spawn_named(&plan, "skill_mentions").unwrap();
+
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.type_text("use $al").unwrap();
+    harness
+        .wait_for_text(
+            "The alpha mention skill",
+            WaitTimeout::secs(10, "skill mention palette"),
+        )
+        .unwrap();
+    harness.inject_key(&Key::Tab).unwrap();
+    harness.type_text("and $beta").unwrap();
+    harness
+        .wait_for_text(
+            "use $alpha and $beta",
+            WaitTimeout::secs(10, "completed mention"),
+        )
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "skill command loaded before model response: Follow alpha.",
+            WaitTimeout::secs(20, "skill response"),
+        )
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(
+        screen.contains("skill(alpha)") && screen.contains("skill(beta)"),
+        "both mentioned skills should load before the reply:\n{screen}"
+    );
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
 #[test]
 fn skill_command_reports_when_skill_tool_is_disabled() {
     let home = IsolatedHome::new().unwrap();

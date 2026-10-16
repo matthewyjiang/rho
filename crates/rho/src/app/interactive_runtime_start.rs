@@ -1,11 +1,6 @@
 //! Starts interactive runs after rebuilding pending session replacements.
 use super::*;
 
-enum TurnPrelude {
-    None,
-    ToolCall(ToolCall),
-}
-
 impl InteractiveRuntime {
     #[cfg(test)]
     pub(crate) async fn start(
@@ -16,7 +11,7 @@ impl InteractiveRuntime {
         self.start_run(
             input,
             display_user.map(|message| vec![message]),
-            TurnPrelude::None,
+            /*host_calls*/ Vec::new(),
             /*boundary_inputs*/ None,
         )
         .await
@@ -26,11 +21,10 @@ impl InteractiveRuntime {
         &mut self,
         input: UserInput,
         display_user: Option<Vec<Message>>,
-        tool_call: Option<ToolCall>,
+        host_calls: Vec<ToolCall>,
     ) -> Result<tokio::sync::mpsc::Receiver<rho_sdk::BoundaryInputRequest>, Error> {
         let (source, receiver) = rho_sdk::boundary_input_channel();
-        let prelude = tool_call.map_or(TurnPrelude::None, TurnPrelude::ToolCall);
-        self.start_run(input, display_user, prelude, Some(source))
+        self.start_run(input, display_user, host_calls, Some(source))
             .await?;
         Ok(receiver)
     }
@@ -39,7 +33,7 @@ impl InteractiveRuntime {
         &mut self,
         input: UserInput,
         display_user: Option<Vec<Message>>,
-        prelude: TurnPrelude,
+        host_calls: Vec<ToolCall>,
         boundary_inputs: Option<rho_sdk::BoundaryInputSource>,
     ) -> Result<(), Error> {
         if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
@@ -89,14 +83,14 @@ impl InteractiveRuntime {
             .map_err(|error| Error::Persistence {
                 message: error.to_string(),
             })?;
-        let run_result = match prelude {
-            TurnPrelude::None => self.sessions.session().start(input).await,
-            TurnPrelude::ToolCall(call) => {
-                self.sessions
-                    .session()
-                    .start_with_tool_call(input, call)
-                    .await
-            }
+        // Host calls run as one batch before the first model request.
+        let run_result = if host_calls.is_empty() {
+            self.sessions.session().start(input).await
+        } else {
+            self.sessions
+                .session()
+                .start_with_tool_calls(input, host_calls)
+                .await
         };
         let run = match run_result {
             Ok(run) => run,

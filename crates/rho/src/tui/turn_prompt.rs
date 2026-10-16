@@ -4,7 +4,9 @@ pub(super) struct TurnPrompt {
     pub(super) display: String,
     pub(super) history: String,
     pub(super) persisted_display: Option<String>,
-    pub(super) initial_tool_call: Option<rho_sdk::model::ToolCall>,
+    /// Skills loaded before the first model request, in order, as one batch
+    /// of host-requested `skill` calls.
+    pub(super) skills: Vec<String>,
 }
 
 impl TurnPrompt {
@@ -14,7 +16,7 @@ impl TurnPrompt {
             model,
             display,
             persisted_display: None,
-            initial_tool_call: None,
+            skills: Vec::new(),
         }
     }
 
@@ -24,12 +26,27 @@ impl TurnPrompt {
             display: command.clone(),
             history: command.clone(),
             persisted_display: Some(command),
-            initial_tool_call: None,
+            skills: Vec::new(),
         }
     }
 
-    pub(super) fn with_initial_tool_call(mut self, call: rho_sdk::model::ToolCall) -> Self {
-        self.initial_tool_call = Some(call);
+    pub(super) fn with_skill(mut self, name: String) -> Self {
+        self.skills.push(name);
         self
+    }
+
+    /// Also loads every known skill the model text mentions as `$<name>`,
+    /// after the skills already listed.
+    pub(super) fn load_mentioned_skills(
+        &mut self,
+        discover: impl FnOnce() -> Vec<crate::skills::Skill>,
+    ) {
+        let leading = self.skills.iter().map(String::as_str).collect::<Vec<_>>();
+        let skills =
+            crate::skills::mention::skills_to_load(&leading, &[self.model.as_str()], discover)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+        self.skills = skills;
     }
 }
