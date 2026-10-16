@@ -52,10 +52,11 @@ impl SessionHost {
             // file. The rewrite was not saved, so do not report it as done.
             return Ok(PromptResponse::new(StopReason::Cancelled));
         }
-        if let Err(error) =
-            self.stored
-                .save_compaction_snapshot(&self.durable_snapshot(), &[], &outcome)
-        {
+        let snapshot = self.durable_snapshot();
+        let saved = self
+            .stored()
+            .and_then(|stored| stored.save_compaction_snapshot(&snapshot, &[], &outcome));
+        if let Err(error) = saved {
             // Live history, compaction accounting, and metadata already
             // moved on; refuse later prompts rather than run against
             // state a reload would not see.

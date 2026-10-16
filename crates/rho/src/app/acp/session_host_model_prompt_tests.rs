@@ -5,6 +5,7 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     model_identity::PromptModel,
     prompt,
+    session::Session as StoredSession,
     tools::{
         advisor::AdvisorSessionStore,
         sdk_registry::{AppToolSet, ToolSetOptions},
@@ -12,8 +13,9 @@ use crate::{
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::ModelIdentity,
+    model::{Message, ModelIdentity},
     provider::{ModelProvider, ScriptedProvider},
+    SessionOptions,
 };
 
 // Covers: ACP model switches must replace the advisor's cached executor prompt
@@ -91,7 +93,7 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
     let mut host = SessionHost::from_built(
         SessionId::new(stored.id()),
         built,
-        stored,
+        HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: config.permission_mode,

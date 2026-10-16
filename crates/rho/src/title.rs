@@ -66,6 +66,11 @@ pub(crate) fn title_model_from_config(config: &Config) -> TitleModel {
     }
 }
 
+/// Title-agent input describing a session's opening exchange.
+pub(crate) fn first_turn_input(user: &str, assistant: &str) -> String {
+    format!("First turn:\n\nUser:\n{user}\n\nAssistant:\n{assistant}")
+}
+
 pub(crate) async fn generate_title(
     model: TitleModel,
     input: String,

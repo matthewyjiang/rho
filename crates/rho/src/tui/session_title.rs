@@ -81,9 +81,7 @@ pub(super) async fn generate_session_title(
             auth,
             reasoning,
         },
-        format!(
-            "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
-        ),
+        crate::title::first_turn_input(&first_user_message, &first_assistant_message),
         session_id,
         workspace_path,
         usage_recording,

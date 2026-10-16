@@ -90,7 +90,8 @@ impl AppliedDisplays<'_> {
         let Some(transcript) = self.offered.applied(input) else {
             return Ok(());
         };
-        self.checkpoint.record_display(transcript.display_message());
+        self.checkpoint
+            .record_display(input, transcript.display_message());
         for notification in EventMapper::display_transcript(session_id, &transcript) {
             send_notification(client, notification).await?;
         }

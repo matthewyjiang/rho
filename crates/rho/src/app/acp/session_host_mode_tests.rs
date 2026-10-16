@@ -78,7 +78,7 @@ async fn host(
     SessionHost::from_built(
         SessionId::new(stored.id()),
         built,
-        stored,
+        super::super::persist::HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: config.permission_mode,

@@ -1,19 +1,33 @@
-//! Saving ACP sessions so `session/load` can replay them.
+//! Saving ACP sessions so `session/load` and the TUI's `/resume` can replay them.
+//!
+//! A new session writes no file until it first saves. Hosts open sessions
+//! they never prompt (T3 Code's provider refresh runs `session/new` every few
+//! minutes), and each would otherwise leave an empty row in `/resume`. The
+//! TUI defers its file the same way.
 //!
 //! Hosts restart agents by killing them: T3 Code sends SIGTERM, then SIGKILL
 //! one second later. `session/load` must still replay the whole conversation,
 //! so a turn saves at every SDK step boundary (before each provider request
 //! and after each model reply), not only when it ends. The first save also
 //! writes the user's message, so replay shows what was asked even when the
-//! turn never finished.
+//! turn never finished. Each save adds the turn's new history rows (tool
+//! calls, results, interim replies) to the display transcript, as the TUI
+//! does, so a resumed session shows the work and not only the final answer.
+//! Background results the run applied are saved as the rows the host was
+//! shown for them, in place of the model's copy.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use rho_sdk::{
-    model::Message, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
+    model::{Message, SemanticMessage},
+    SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
 use super::SessionHost;
@@ -22,20 +36,102 @@ use crate::{
     tools::todo::TodoState,
 };
 
+/// Creates a new session's file on its first save.
+pub(super) type CreateStoredSession = Box<dyn Fn() -> anyhow::Result<StoredSession> + Send + Sync>;
+
+/// A host's workspace and session file. The file is absent until the first
+/// save of a new session.
+pub(super) struct HostStorage {
+    cwd: PathBuf,
+    file: SessionFile,
+}
+
+enum SessionFile {
+    Unsaved(CreateStoredSession),
+    Saved(StoredSession),
+}
+
+impl HostStorage {
+    /// Storage for a new session `id` in `cwd`, created on first save.
+    pub(super) fn deferred(
+        cwd: PathBuf,
+        id: String,
+        agent_id: String,
+        fingerprint: String,
+    ) -> Self {
+        let file_cwd = cwd.clone();
+        Self::unsaved(
+            cwd,
+            Box::new(move || {
+                StoredSession::create_with_id(&file_cwd, &id, &agent_id, &fingerprint)
+            }),
+        )
+    }
+
+    /// Storage in `cwd` whose file `create` makes on first save.
+    pub(super) fn unsaved(cwd: PathBuf, create: CreateStoredSession) -> Self {
+        Self {
+            cwd,
+            file: SessionFile::Unsaved(create),
+        }
+    }
+
+    /// Storage for a session already on disk.
+    pub(super) fn saved(stored: StoredSession) -> Self {
+        Self {
+            cwd: stored.cwd().to_path_buf(),
+            file: SessionFile::Saved(stored),
+        }
+    }
+
+    /// The session's workspace directory.
+    pub(super) fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    /// The session file, if it exists yet.
+    pub(super) fn file(&self) -> Option<&StoredSession> {
+        match &self.file {
+            SessionFile::Saved(stored) => Some(stored),
+            SessionFile::Unsaved(_) => None,
+        }
+    }
+}
+
 impl SessionHost {
-    /// Saves the coming turn at every step boundary. Call while idle; the
-    /// returned checkpoint settles the turn in [`Self::persist_turn`].
+    /// The session file, created now if this is the session's first save.
+    pub(super) fn stored(&mut self) -> anyhow::Result<&StoredSession> {
+        if let SessionFile::Unsaved(create) = &self.storage.file {
+            let stored = create()?;
+            self.built.tools.bind_recall(Some(&stored));
+            self.storage.file = SessionFile::Saved(stored);
+        }
+        match &self.storage.file {
+            SessionFile::Saved(stored) => Ok(stored),
+            SessionFile::Unsaved(_) => unreachable!("the file was created above"),
+        }
+    }
+
+    /// Saves the coming turn at every step boundary. Call while idle, with
+    /// the message as shown (`display`) and as the run sends it (`model`);
+    /// the returned checkpoint settles the turn in [`Self::persist_turn`].
     pub(super) fn install_turn_checkpoint(
-        &self,
+        &mut self,
         display: &UserInput,
+        model: &UserInput,
     ) -> anyhow::Result<TurnCheckpoint> {
+        let stored = self.stored()?.clone();
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
-            stored: self.stored.clone(),
+            stored,
             todo: self.built.tools.todo_state(),
             prompt: self.built.prompt.clone(),
             added_dirs: self.added_dirs.clone(),
             replaced: Arc::clone(&self.replaced),
-            unsaved_display: Mutex::new(vec![Message::User(display.blocks().to_vec())]),
+            display: Mutex::new(TurnDisplay::new(
+                Message::User(display.blocks().to_vec()),
+                Message::User(model.blocks().to_vec()),
+                self.built.session.history().len(),
+            )),
         }));
         self.built
             .session
@@ -44,27 +140,35 @@ impl SessionHost {
     }
 
     /// Saves the settled turn with the display rows its step checkpoints
-    /// have not written yet.
+    /// have not written yet. `assistant_text` is the reply to show when the
+    /// turn's history rows could not be followed.
     pub(super) fn persist_turn(
-        &self,
+        &mut self,
         checkpoint: &TurnCheckpoint,
         assistant_text: Option<&str>,
     ) -> anyhow::Result<()> {
         if self.is_replaced() {
             return Ok(());
         }
-        let mut display_tail = std::mem::take(&mut *checkpoint.0.lock_display());
-        if let Some(text) = assistant_text.filter(|text| !text.is_empty()) {
-            display_tail.push(Message::assistant_text(text));
+        let snapshot = self.durable_snapshot();
+        let mut display = checkpoint.0.lock_display();
+        let mut pending = display.pending_rows(snapshot.history(), SaveScope::Settle);
+        if !display.follows(snapshot.history()) {
+            pending.rows.extend(
+                assistant_text
+                    .filter(|text| !text.is_empty())
+                    .map(Message::assistant_text),
+            );
         }
-        self.stored
-            .save_snapshot(&self.durable_snapshot(), &display_tail)
+        self.stored()?.save_snapshot(&snapshot, &pending.rows)?;
+        display.mark_written(pending);
+        Ok(())
     }
 
     /// Saves what a failed turn already showed, such as background results
     /// delivered before the failure. The turn's own error is the one to
     /// report, so a failed save is only logged.
-    pub(super) fn persist_failed_turn(&self, checkpoint: &TurnCheckpoint) {
+    pub(super) fn persist_failed_turn(&mut self, checkpoint: &TurnCheckpoint) {
         if let Err(error) = self.persist_turn(checkpoint, /*assistant_text*/ None) {
             tracing::warn!(%error, "could not save failed ACP turn");
         }
@@ -102,9 +206,13 @@ fn decorate(
 pub(super) struct TurnCheckpoint(Arc<CheckpointStore>);
 
 impl TurnCheckpoint {
-    /// Queues a display row for the next save, after the rows already queued.
-    pub(super) fn record_display(&self, message: Message) {
-        self.0.lock_display().push(message);
+    /// Records the row shown for a background result the run applied as
+    /// `input`, so saves write it in place of the model's copy.
+    pub(super) fn record_display(&self, input: &UserInput, shown: Message) {
+        self.0
+            .lock_display()
+            .applied
+            .push_back((Message::User(input.blocks().to_vec()), shown));
     }
 }
 
@@ -114,14 +222,12 @@ struct CheckpointStore {
     prompt: ActivePrompt,
     added_dirs: AddedDirs,
     replaced: Arc<AtomicBool>,
-    /// Display rows no save has written yet: the user's message until the
-    /// first checkpoint lands, then any background results shown since.
-    unsaved_display: Mutex<Vec<Message>>,
+    display: Mutex<TurnDisplay>,
 }
 
 impl CheckpointStore {
-    fn lock_display(&self) -> std::sync::MutexGuard<'_, Vec<Message>> {
-        self.unsaved_display
+    fn lock_display(&self) -> std::sync::MutexGuard<'_, TurnDisplay> {
+        self.display
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -132,8 +238,9 @@ impl CheckpointStore {
         }
         let snapshot = decorate(&self.prompt, &self.todo, &self.added_dirs, snapshot);
         let mut display = self.lock_display();
-        self.stored.save_snapshot(&snapshot, &display)?;
-        display.clear();
+        let pending = display.pending_rows(snapshot.history(), SaveScope::Step);
+        self.stored.save_snapshot(&snapshot, &pending.rows)?;
+        display.mark_written(pending);
         Ok(())
     }
 }
@@ -150,6 +257,132 @@ impl SessionStore for CheckpointStore {
                     message: format!("{error:#}"),
                 })
         })
+    }
+}
+
+/// The display rows one turn has and has not written.
+///
+/// History from `history_start` on is this turn: the model's copy of the
+/// user's message, then everything the run appends. The run pushes that copy
+/// before its first save. Display shows the user's message as sent in its
+/// place, then the appended rows as they are, except that background results
+/// show the rows recorded for them.
+/// A compaction can rewrite history before or during the turn, so once the
+/// model's copy is no longer at `history_start`, appended rows are lost and
+/// the turn falls back to its recorded results and final reply.
+#[derive(Debug)]
+struct TurnDisplay {
+    /// The user's message as sent, until a save writes it.
+    unsaved_user: Option<Message>,
+    /// The model's copy of the user's message.
+    input: Message,
+    history_start: usize,
+    followed: Followed,
+    /// Background results applied and not yet written: the model's copy
+    /// and the row shown for it, in the order the run applied them.
+    applied: VecDeque<(Message, Message)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Followed {
+    /// History extends this turn; this many rows after the input are written.
+    Tracking { written: usize },
+    /// History stopped extending this turn.
+    Lost,
+}
+
+/// Which save is writing the turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SaveScope {
+    /// A step checkpoint mid-run. A background result the pump has not
+    /// recorded yet may still get its row, so the save stops before it.
+    Step,
+    /// The turn is over: write everything, including inputs that never got
+    /// a recorded row.
+    Settle,
+}
+
+/// What one save writes, and the display state once it lands.
+struct PendingRows {
+    rows: Vec<Message>,
+    applied_written: usize,
+    followed: Followed,
+}
+
+impl TurnDisplay {
+    fn new(user: Message, input: Message, history_start: usize) -> Self {
+        Self {
+            unsaved_user: Some(user),
+            input,
+            history_start,
+            followed: Followed::Tracking { written: 0 },
+            applied: VecDeque::new(),
+        }
+    }
+
+    /// Rows a save of `history` must add to the display transcript.
+    fn pending_rows(&self, history: &[Message], scope: SaveScope) -> PendingRows {
+        let mut rows: Vec<Message> = self.unsaved_user.iter().cloned().collect();
+        let mut applied = self.applied.iter().peekable();
+        let Some((appended, written)) = self.appended(history) else {
+            let applied_written = match scope {
+                SaveScope::Step => 0,
+                SaveScope::Settle => {
+                    rows.extend(applied.map(|(_, shown)| shown.clone()));
+                    self.applied.len()
+                }
+            };
+            return PendingRows {
+                rows,
+                applied_written,
+                followed: Followed::Lost,
+            };
+        };
+        let mut taken = 0;
+        for row in appended {
+            if let Some((_, shown)) = applied.next_if(|(model, _)| model == row) {
+                rows.push(shown.clone());
+            } else if scope == SaveScope::Step && matches!(row.semantic(), SemanticMessage::User(_))
+            {
+                break;
+            } else {
+                rows.push(row.clone());
+            }
+            taken += 1;
+        }
+        PendingRows {
+            rows,
+            applied_written: self.applied.len() - applied.len(),
+            followed: Followed::Tracking {
+                written: written + taken,
+            },
+        }
+    }
+
+    /// Records that a save wrote `pending`'s rows.
+    fn mark_written(&mut self, pending: PendingRows) {
+        self.unsaved_user = None;
+        self.applied.drain(..pending.applied_written);
+        self.followed = pending.followed;
+    }
+
+    /// Whether `history` still extends this turn. When it does not, the
+    /// turn's reply must be shown from the run outcome instead.
+    fn follows(&self, history: &[Message]) -> bool {
+        self.appended(history).is_some()
+    }
+
+    /// The rows after this turn's input that no save has written, and how
+    /// many before them were. `None` once history no longer extends this turn.
+    fn appended<'h>(&self, history: &'h [Message]) -> Option<(&'h [Message], usize)> {
+        let Followed::Tracking { written } = self.followed else {
+            return None;
+        };
+        if history.get(self.history_start) != Some(&self.input) {
+            return None;
+        }
+        let rows = history.get(self.history_start + 1 + written..)?;
+        Some((rows, written))
     }
 }
 

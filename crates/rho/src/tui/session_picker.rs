@@ -12,7 +12,9 @@ pub(super) fn session_picker(
         "Resume session",
         sessions
             .into_iter()
-            .filter(|session| current_session_id != Some(session.id.as_str()))
+            .filter(|session| {
+                session.has_messages() && current_session_id != Some(session.id.as_str())
+            })
             .map(|session| session_item(session, now))
             .collect(),
     )

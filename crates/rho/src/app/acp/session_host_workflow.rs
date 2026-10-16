@@ -44,7 +44,7 @@ impl SessionHost {
         self.prompt_gate.activate(cancel.clone());
 
         let ops = WorkflowOps::open(
-            self.stored.cwd().to_path_buf(),
+            self.storage.cwd().to_path_buf(),
             Some(config_path.to_path_buf()),
         )
         .map_err(failed)?;
@@ -106,12 +106,12 @@ impl SessionHost {
     /// never holds history its file lacks. No SDK run happens here, so no turn
     /// checkpoint is involved; a replaced host leaves the file to its successor.
     fn record_started(
-        &self,
+        &mut self,
         display: &UserInput,
         model: String,
         notice: &str,
     ) -> anyhow::Result<()> {
-        let session = &self.built.session;
+        let session = self.built.session.clone();
         let before = session.history();
         session.append_message(Message::user_text(model))?;
         if self.is_replaced() {
@@ -121,10 +121,11 @@ impl SessionHost {
             Message::User(display.blocks().to_vec()),
             Message::assistant_text(notice),
         ];
-        if let Err(error) = self
-            .stored
-            .save_snapshot(&self.durable_snapshot(), &display_rows)
-        {
+        let snapshot = self.durable_snapshot();
+        let saved = self
+            .stored()
+            .and_then(|stored| stored.save_snapshot(&snapshot, &display_rows));
+        if let Err(error) = saved {
             session.replace_history(before)?;
             // ACP shows only the outermost message, so keep the cause inline.
             anyhow::bail!("workflow started, but could not save its run id: {error:#}");

@@ -5,8 +5,7 @@ use std::sync::{
 
 use agent_client_protocol::{
     schema::v1::{
-        AvailableCommandsUpdate, LoadSessionRequest, LoadSessionResponse, McpServer,
-        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
+        AvailableCommandsUpdate, McpServer, PromptRequest, PromptResponse, SessionConfigOption,
         SessionId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
         SetSessionConfigOptionResponse,
     },
@@ -20,9 +19,7 @@ use rho_providers::{
     },
     provider::model_reference,
 };
-use rho_sdk::{
-    model::Message, ApprovalRequestReceiver, CancellationToken, SessionOptions, UserInput,
-};
+use rho_sdk::{ApprovalRequestReceiver, CancellationToken, UserInput};
 
 use super::{
     commands::{self, CommandScope, PromptAction},
@@ -40,7 +37,7 @@ use crate::{
             SwitchNotice,
         },
         headless_delegation::OfferedDisplays,
-        interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
+        interactive_runtime::startup::session_options_for_id,
         session_assembly::BuiltSession,
     },
     compaction::CompactionConfig,
@@ -61,23 +58,27 @@ mod compact;
 mod convert;
 #[path = "session_host_mode.rs"]
 mod mode;
+#[path = "session_host_open.rs"]
+mod open;
 #[path = "session_host_persist.rs"]
 mod persist;
 #[path = "session_host_pump.rs"]
 mod pump;
+#[path = "session_host_title.rs"]
+mod title;
 #[path = "session_host_workflow.rs"]
 mod workflow;
 
-use build::{build_session, mode_state, session_config};
-use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
+use build::{build_session, session_config};
+use convert::user_input_from_prompt;
 use mode::SessionPermission;
-use persist::TurnCheckpoint;
+use persist::{HostStorage, TurnCheckpoint};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
     built: BuiltSession,
-    stored: StoredSession,
+    storage: HostStorage,
     agent: BoundAgent,
     /// Retained so an agent rebind reconnects the session's host-supplied tools.
     host_mcp_servers: Vec<McpServer>,
@@ -87,6 +88,8 @@ pub(super) struct SessionHost {
     auth: String,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
+    /// Whether this host asked the title agent to name the session.
+    title_requested: bool,
     permission_placeholders: AtomicU64,
     replaced: Arc<AtomicBool>,
     /// Set when a compaction rewrote live state but could not be saved.
@@ -183,110 +186,6 @@ impl Drop for PromptGuard {
 }
 
 impl SessionHost {
-    pub(super) async fn create(
-        startup: &AcpStartup,
-        request: NewSessionRequest,
-    ) -> anyhow::Result<(Self, NewSessionResponse)> {
-        let cwd = validate_session_cwd(&request.cwd)?;
-        let config = session_config(&startup.config, &request.mcp_servers);
-        let sdk_id = rho_sdk::SessionId::new();
-        let added_dirs = startup.added_dirs.clone();
-        let assembly = build_session(startup, &startup.agent, &config, cwd, &added_dirs, |_| {
-            Ok(session_options_for_id(sdk_id.clone()))
-        })
-        .await?;
-        let (built, permission) = split_assembly(assembly, config.permission_mode);
-        let stored = match StoredSession::create_with_id(
-            cwd,
-            built.session.id().as_str(),
-            startup.agent.id().as_str(),
-            &startup.agent.fingerprint().to_string(),
-        ) {
-            Ok(stored) => stored,
-            Err(error) => {
-                built.teardown().await;
-                return Err(error);
-            }
-        };
-        let acp_session_id = SessionId::new(built.session.id().as_str());
-        let host = Self::from_built(
-            acp_session_id.clone(),
-            built,
-            stored,
-            added_dirs,
-            permission,
-            startup,
-            request.mcp_servers,
-        );
-        let response = NewSessionResponse::new(acp_session_id)
-            .modes(mode_state(host.permission.mode))
-            .config_options(host.config_options(&startup.config));
-        Ok((host, response))
-    }
-
-    pub(super) async fn load(
-        startup: &AcpStartup,
-        request: LoadSessionRequest,
-        client: &dyn AcpClientPort,
-    ) -> anyhow::Result<(Self, LoadSessionResponse)> {
-        let cwd = workspace_cwd(&request.cwd, &startup.cwd);
-        if !request.cwd.as_os_str().is_empty() {
-            validate_session_cwd(cwd)?;
-        }
-        let config = session_config(&startup.config, &request.mcp_servers);
-        let (stored, histories) =
-            StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref())?;
-        // ACP has no notice channel at load, so a missing saved directory
-        // is logged and skipped, matching the interactive notice.
-        let root = std::fs::canonicalize(cwd)?;
-        let restored = crate::added_dirs::AddedDirs::from_storage(&stored, &root);
-        for dir in &restored.missing {
-            tracing::warn!(dir = %dir.display(), "could not restore added directory: not found");
-        }
-        let added_dirs = startup.added_dirs.union(&root, &restored.dirs);
-        let (agent, config) = agent::loaded_agent(startup, &stored, config, || {
-            Ok(crate::agent::AgentCatalog::discover(cwd)?)
-        })?;
-        let assembly = build_session(startup, &agent, &config, cwd, &added_dirs, |provider| {
-            let snapshot =
-                stored.snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
-            Ok(SessionOptions::from_snapshot(snapshot))
-        })
-        .await?;
-        let (built, permission) = split_assembly(assembly, config.permission_mode);
-        let replay_result =
-            replay_display_history(&request.session_id, &histories.display, client).await;
-        if let Err(error) = replay_result {
-            built.teardown().await;
-            return Err(error);
-        }
-        let load_notice = built
-            .prompt_template
-            .is_some()
-            .then(|| {
-                crate::app::model_prompt_metadata::change_notice(
-                    &built.session.snapshot(),
-                    built.prompt.loaded.as_ref(),
-                )
-            })
-            .flatten();
-        let mut host = Self::from_built(
-            request.session_id,
-            built,
-            stored,
-            added_dirs,
-            permission,
-            startup,
-            request.mcp_servers,
-        );
-        host.load_notice = load_notice;
-        host.agent = agent;
-        let response = LoadSessionResponse::new()
-            .modes(mode_state(host.permission.mode))
-            .config_options(host.config_options(&startup.config));
-        Ok((host, response))
-    }
-
     /// Runs one `session/prompt`: a slash command or a model turn. A
     /// command that cannot run fails with [`commands::CommandRejected`].
     /// `startup` supplies process defaults and the available root capabilities
@@ -323,6 +222,13 @@ impl SessionHost {
             () = starting.cancelled() => None,
             action = commands::resolve(input.clone(), &scope) => Some(action),
         };
+        // The first model turn this host completes names an untitled session.
+        let names_session = matches!(
+            &action,
+            Some(Ok(
+                PromptAction::Turn { .. } | PromptAction::RunAsAgent { .. }
+            ))
+        ) && !self.title_requested;
         let result = match action {
             None => Ok(PromptResponse::new(
                 agent_client_protocol::schema::v1::StopReason::Cancelled,
@@ -347,6 +253,12 @@ impl SessionHost {
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
+        let completed = result.as_ref().is_ok_and(|response| {
+            response.stop_reason == agent_client_protocol::schema::v1::StopReason::EndTurn
+        });
+        if names_session && completed {
+            self.spawn_title(&startup.config, &input);
+        }
         let _ = self
             .herdr
             .report_state(
@@ -418,7 +330,7 @@ impl SessionHost {
         process_config: &'a Config,
     ) -> CommandScope<'a> {
         CommandScope {
-            cwd: self.stored.cwd(),
+            cwd: self.storage.cwd(),
             home,
             tools: &self.built.tools,
             config: process_config,
@@ -545,17 +457,17 @@ impl SessionHost {
     fn from_built(
         acp_session_id: SessionId,
         built: BuiltSession,
-        stored: StoredSession,
+        storage: HostStorage,
         added_dirs: crate::added_dirs::AddedDirs,
         permission: SessionPermission,
         startup: &AcpStartup,
         host_mcp_servers: Vec<McpServer>,
     ) -> Self {
-        built.tools.bind_recall(Some(&stored));
+        built.tools.bind_recall(storage.file());
         Self {
             acp_session_id,
             built,
-            stored,
+            storage,
             agent: startup.agent.clone(),
             host_mcp_servers,
             added_dirs,
@@ -563,6 +475,7 @@ impl SessionHost {
             auth: startup.config.auth.clone(),
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
+            title_requested: false,
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
             unsaved_compaction: false,
@@ -583,10 +496,11 @@ impl SessionHost {
         calls: Vec<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
+        let stored = self.stored()?.clone();
         let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
             &self.built.session,
             crate::app::headless_delegation::BackgroundSources::of(&self.built.tools),
-            Some(&self.stored),
+            Some(&stored),
             &mut self.held_notices,
         )?;
         let displays = delegation.offered_displays();
@@ -618,7 +532,7 @@ impl SessionHost {
                 tracing::debug!(%error, "could not send ACP load notice");
             }
         }
-        let checkpoint = self.install_turn_checkpoint(display)?;
+        let checkpoint = self.install_turn_checkpoint(display, &model)?;
         let result = self
             .drive_run(&checkpoint, model, calls, displays, client)
             .await;
@@ -841,17 +755,6 @@ fn split_assembly(
             workspace_root,
         },
     )
-}
-
-async fn replay_display_history(
-    session_id: &SessionId,
-    messages: &[Message],
-    client: &dyn AcpClientPort,
-) -> anyhow::Result<()> {
-    for notification in EventMapper::replay_history(session_id, messages) {
-        send_notification(client, notification).await?;
-    }
-    Ok(())
 }
 
 async fn send_notification(

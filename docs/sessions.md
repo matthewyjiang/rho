@@ -285,6 +285,8 @@ rho -c --prompt "keep going"
 
 If the workspace has no saved sessions yet, `-c` starts a new session instead of failing, so it is safe to use as a default launch command.
 
+The picker and `-c` skip sessions with no messages, such as one whose process was killed before its first save. `/sessions` still lists them so you can delete them.
+
 The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume` to open the saved-session picker or `/resume <id>` to switch directly. Both reject sessions owned by another workspace. In the picker, press `d` or `Delete` to remove the selected session after a confirmation prompt; `escape` cancels.
 
 To work across every directory, use `/sessions` inside the TUI. It opens a full-width session manager that groups saved sessions by directory, with the current directory first. Worktrees of the same Git repository share one section: the current worktree lists its sessions, and each other worktree shows as one row. Directories that no longer exist collect under a final `MISSING DIRECTORIES` section. Press Enter on a session in the current directory to resume it, or on a directory row to narrow the list to that directory. You can inspect and delete sessions from other directories, but Rho asks you to start it in that directory before resuming so tools and project context cannot stay bound to the wrong workspace. Press `d` on a session to delete it, or on a directory row to delete the reviewed saved sessions in that directory; both ask for confirmation. When saved sessions refer to workspace directories that no longer exist, the picker adds a cleanup row that deletes the reviewed sessions after confirmation. The current session is never deleted.

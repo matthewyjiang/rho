@@ -136,7 +136,7 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
     SessionHost::from_built(
         SessionId::new(stored.id()),
         built,
-        stored,
+        super::super::persist::HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: PermissionMode::Supervised,
@@ -211,7 +211,13 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
     assert_eq!(host.built.session.id(), &id);
     assert_eq!(host.current_model().model, "host-selected-model");
     assert_eq!(host.permission.mode, PermissionMode::Supervised);
-    let child_identity = host.stored.stored_agent_identity().unwrap().unwrap();
+    let child_identity = host
+        .storage
+        .file()
+        .unwrap()
+        .stored_agent_identity()
+        .unwrap()
+        .unwrap();
     assert_eq!(
         child_identity,
         ("acp-child".into(), host.agent.fingerprint().to_string())

@@ -58,6 +58,7 @@ use persistence::{read_entries, summarize_session_file, SessionEntry, SESSION_VE
 
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 pub(crate) use delete::{CleanupOutcome, WorkspaceDeleteOutcome};
+pub(crate) use persistence::NoSessionFound;
 pub(crate) use workspace_scope::Workspace;
 
 #[derive(Clone, Debug)]
@@ -114,6 +115,13 @@ pub(crate) fn workspace_key(cwd: &Path) -> String {
 impl SessionSummary {
     pub fn target(&self) -> SessionTarget {
         SessionTarget::new(self.id.clone(), self.cwd.clone())
+    }
+
+    /// Whether the session saved anything to resume. A session file exists
+    /// from just before its first save, so a process killed in between (or
+    /// an older Rho's unprompted ACP session) leaves an empty one.
+    pub fn has_messages(&self) -> bool {
+        self.message_count > 0
     }
 }
 
@@ -663,6 +671,15 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string(), None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn create_with_id_in_root_for_test(
+        session_root: &Path,
+        cwd: &Path,
+        id: &str,
+    ) -> anyhow::Result<Self> {
+        Self::create_with_id_in_root(session_root, cwd, id, None)
     }
 
     #[cfg(test)]
