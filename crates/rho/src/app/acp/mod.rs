@@ -14,9 +14,10 @@ use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
     schema::v1::{
-        AuthenticateRequest, CancelNotification, InitializeRequest, LoadSessionRequest,
-        NewSessionRequest, PromptRequest, RequestPermissionRequest, RequestPermissionResponse,
-        SessionNotification, SetSessionConfigOptionRequest, SetSessionModeRequest,
+        AuthenticateRequest, CancelNotification, CloseSessionRequest, InitializeRequest,
+        LoadSessionRequest, NewSessionRequest, PromptRequest, RequestPermissionRequest,
+        RequestPermissionResponse, SessionNotification, SetSessionConfigOptionRequest,
+        SetSessionModeRequest,
     },
     Agent, Client, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role, Stdio,
 };
@@ -226,6 +227,20 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                     spawn_response(&cx, responder, async move {
                         agent.set_session_mode(request).await
                     })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: CloseSessionRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(
+                        &cx,
+                        responder,
+                        async move { agent.close_session(request).await },
+                    )
                 }
             },
             agent_client_protocol::on_receive_request!(),

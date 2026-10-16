@@ -115,6 +115,10 @@ pub(super) struct SessionHost {
 /// While `Starting`, a cancel trips the prompt token that `begin` returned,
 /// so command expansion can stop, and is replayed onto the run's token as
 /// soon as `activate` receives it. `cancel` is a no-op while idle.
+///
+/// `close` is terminal: it cancels the current prompt, and every prompt that
+/// begins later starts cancelled, so a prompt that took the host just before
+/// teardown cannot run a turn the teardown would wait on.
 pub(super) struct PromptGate {
     slot: Mutex<PromptGateState>,
 }
@@ -124,6 +128,7 @@ enum PromptGateState {
     Idle,
     Starting(CancellationToken),
     Active(CancellationToken),
+    Closed,
 }
 
 impl PromptGate {
@@ -141,38 +146,66 @@ impl PromptGate {
 
     /// Opens the starting window for a prompt, dropping any cancel that
     /// arrived for the previous one. The returned token trips on a cancel
-    /// that lands before `activate`.
+    /// that lands before `activate`, and is already cancelled once closed.
     pub(super) fn begin(&self) -> CancellationToken {
         let token = CancellationToken::new();
-        *self.slot() = PromptGateState::Starting(token.clone());
+        let mut slot = self.slot();
+        if matches!(&*slot, PromptGateState::Closed) {
+            token.cancel();
+        } else {
+            *slot = PromptGateState::Starting(token.clone());
+        }
         token
     }
 
     fn activate(&self, token: CancellationToken) {
         let mut slot = self.slot();
-        if matches!(&*slot, PromptGateState::Starting(starting) if starting.is_cancelled()) {
+        let closed = matches!(&*slot, PromptGateState::Closed);
+        if closed
+            || matches!(&*slot, PromptGateState::Starting(starting) if starting.is_cancelled())
+        {
             token.cancel();
         }
-        *slot = PromptGateState::Active(token);
+        if !closed {
+            *slot = PromptGateState::Active(token);
+        }
     }
 
     pub(super) fn finish(&self) {
-        *self.slot() = PromptGateState::Idle;
+        let mut slot = self.slot();
+        if !matches!(&*slot, PromptGateState::Closed) {
+            *slot = PromptGateState::Idle;
+        }
     }
 
     pub(super) fn cancel(&self) {
         match &mut *self.slot() {
-            PromptGateState::Idle => {}
+            PromptGateState::Idle | PromptGateState::Closed => {}
             PromptGateState::Starting(token) | PromptGateState::Active(token) => token.cancel(),
         }
     }
 
+    /// Cancels the current prompt and every later one, for a session that
+    /// is being torn down.
+    pub(super) fn close(&self) {
+        let mut slot = self.slot();
+        if let PromptGateState::Starting(token) | PromptGateState::Active(token) = &*slot {
+            token.cancel();
+        }
+        *slot = PromptGateState::Closed;
+    }
+
+    pub(super) fn is_closed(&self) -> bool {
+        matches!(&*self.slot(), PromptGateState::Closed)
+    }
+
     /// Whether a new prompt may wait for the host instead of being refused:
-    /// the current prompt was cancelled, or none is running (the host is only
-    /// held briefly by teardown or a setup request).
+    /// the current prompt was cancelled, none is running (the host is only
+    /// held briefly by teardown or a setup request), or the session is
+    /// closing, which ends the waiting prompt cancelled.
     pub(super) fn admits_queued_prompt(&self) -> bool {
         match &*self.slot() {
-            PromptGateState::Idle => true,
+            PromptGateState::Idle | PromptGateState::Closed => true,
             PromptGateState::Starting(token) | PromptGateState::Active(token) => {
                 token.is_cancelled()
             }
@@ -768,6 +801,62 @@ async fn send_notification(
         .send_session_notification(notification)
         .await
         .map_err(|error| anyhow::Error::msg(error.to_string()))
+}
+
+#[cfg(test)]
+impl SessionHost {
+    /// A tool-less host for session `id` on `provider`, unsaved like a
+    /// `session/new` host until its first save creates its file under `root`,
+    /// which is also its workspace. Agent tests use it where a vacant slot
+    /// cannot run a prompt.
+    pub(super) async fn unsaved_for_tests(
+        startup: &AcpStartup,
+        root: &std::path::Path,
+        id: rho_sdk::SessionId,
+        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
+    ) -> Self {
+        let runtime = rho_sdk::Rho::builder()
+            .provider_shared(Arc::clone(&provider))
+            .build()
+            .expect("test runtime");
+        let session = runtime
+            .session(rho_sdk::SessionOptions::new().id(id))
+            .await
+            .expect("test session");
+        let id = session.id().to_string();
+        let (store_root, store_id) = (root.to_path_buf(), id.clone());
+        let storage = HostStorage::unsaved(
+            root.to_path_buf(),
+            Box::new(move || {
+                StoredSession::create_with_id_in_root_for_test(&store_root, &store_root, &store_id)
+            }),
+        );
+        let built = BuiltSession {
+            runtime,
+            session,
+            provider,
+            tools: crate::tools::sdk_registry::AppToolSet::disabled(),
+            hooks: None,
+            approval_receiver: None,
+            prompt_template: None,
+            prompt: Default::default(),
+            diagnostics: crate::diagnostics::RuntimeDiagnostics::new(&startup.config),
+        };
+        let permission = SessionPermission {
+            mode: startup.config.permission_mode,
+            writes: Default::default(),
+            workspace_root: root.to_path_buf(),
+        };
+        Self::from_built(
+            SessionId::new(id),
+            built,
+            storage,
+            Default::default(),
+            permission,
+            startup,
+            Vec::new(),
+        )
+    }
 }
 
 #[cfg(test)]

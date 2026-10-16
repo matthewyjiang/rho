@@ -39,6 +39,8 @@ During a session, Rho also sends:
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. A model-prompt change notice found at load is sent when the next prompt starts.
 
+`initialize` advertises `sessionCapabilities.close`, so hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the session's prompt as `session/cancel` would, and a prompt waiting behind it also ends `cancelled`. The cancelled turn is saved, then the session's MCP servers, background processes, and the delegated agents Rho runs stop. The saved session stays on disk, so `session/load` can open it again. Closing an ID with no live session, including one already closed, fails with `resource_not_found` (`-32002`), the same error other session methods return for an unknown ID.
+
 ## Workspace roots
 
 `initialize` advertises `sessionCapabilities.additionalDirectories`, so hosts with several workspace roots, such as a Zed multi-root workspace, send the extra roots with `session/new` and `session/load` as `additionalDirectories`. `cwd` stays the primary workspace. Each extra root joins the session as an [added directory](/tools-workspace#additional-workspace-directories), the same as `--add-dir`: reads there count as workspace reads in every permission mode, and its `AGENTS.md` chain loads. Directories passed to `rho acp --add-dir` apply to every session on top of the host's roots.
