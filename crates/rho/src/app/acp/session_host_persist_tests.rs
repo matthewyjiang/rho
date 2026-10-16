@@ -11,7 +11,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    ProviderError, ProviderErrorKind, Retryability, SessionOptions, UserInput,
+    ProviderError, ProviderErrorKind, Retryability, SessionOptions,
 };
 
 use super::super::{mode::SessionPermission, SessionHost};
@@ -168,38 +168,6 @@ async fn new_session_saves_nothing_until_its_first_prompt() {
     assert_eq!(histories.display.len(), 2, "{:?}", histories.display);
 }
 
-// Covers: a host killed before the run's first step (a slow compaction)
-// must not leave an empty row in /resume; the file is created with the
-// user's message.
-// Owner: ACP session host turn persistence
-#[tokio::test]
-async fn turn_start_saves_the_users_message_with_the_new_file() {
-    let home = tempfile::tempdir().unwrap();
-    let root = home.path().to_path_buf();
-    let startup = AcpStartup::for_tests(Config::default(), &root);
-    let id = rho_sdk::SessionId::new().to_string();
-    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
-        ModelIdentity::new("test", "test", "model"),
-        Vec::new(),
-    ));
-    let mut host = host(
-        &root,
-        &id,
-        unsaved_storage(&root, &id),
-        provider,
-        AppToolSet::disabled(),
-        &startup,
-    )
-    .await;
-
-    let message = UserInput::text("hello");
-    let _checkpoint = host.install_turn_checkpoint(&message, &message).unwrap();
-
-    let (_, histories) =
-        StoredSession::open_by_id_with_histories_in_root(&root, &root, &id).unwrap();
-    assert_eq!(histories.display, vec![Message::user_text("hello")]);
-}
-
 // Covers: a host that kills the agent mid-turn (T3 Code restarts) must still
 // find the user's message and the model's started work, tool calls included,
 // on session/load and TUI resume, though the end-of-turn save never ran.
@@ -272,11 +240,13 @@ fn turn_display_follows_only_history_that_extends_the_turn() {
     let summary = Message::user_text("summary");
     let later = Message::assistant_text("later");
 
+    let shown = Message::user_text("shown");
+
     // Compacted mid-turn, after a save wrote the reply.
-    let mut display = TurnDisplay::new(input.clone(), 1);
+    let mut display = TurnDisplay::new(shown.clone(), input.clone(), 1);
     let extended = vec![earlier.clone(), input.clone(), reply.clone()];
     let pending = display.pending_rows(&extended, SaveScope::Step);
-    assert_eq!(pending.rows, vec![reply.clone()]);
+    assert_eq!(pending.rows, vec![shown.clone(), reply.clone()]);
     display.mark_written(pending);
     let compacted = vec![summary.clone(), reply.clone(), later.clone()];
     assert!(!display.follows(&compacted));
@@ -286,14 +256,14 @@ fn turn_display_follows_only_history_that_extends_the_turn() {
     );
 
     // Compacted before the first save, then grown past the turn's position.
-    let mut display = TurnDisplay::new(input, 1);
-    for history in [
-        vec![summary.clone()],
-        vec![summary, reply, later.clone(), later],
+    let mut display = TurnDisplay::new(shown.clone(), input, 1);
+    for (history, written) in [
+        (vec![summary.clone()], vec![shown]),
+        (vec![summary, reply, later.clone(), later], Vec::new()),
     ] {
         assert!(!display.follows(&history));
         let pending = display.pending_rows(&history, SaveScope::Step);
-        assert_eq!(pending.rows, Vec::<Message>::new());
+        assert_eq!(pending.rows, written);
         display.mark_written(pending);
     }
 }
@@ -309,10 +279,10 @@ fn turn_display_shows_recorded_rows_for_background_results() {
     let card = Message::System("card".into());
     let reply = Message::assistant_text("reply");
     let history = vec![input.clone(), result.clone(), reply.clone()];
-    let mut display = TurnDisplay::new(input, 0);
+    let mut display = TurnDisplay::new(input.clone(), input.clone(), 0);
 
     let pending = display.pending_rows(&history, SaveScope::Step);
-    assert_eq!(pending.rows, Vec::<Message>::new());
+    assert_eq!(pending.rows, vec![input]);
     display.mark_written(pending);
 
     display.applied.push_back((result, card.clone()));

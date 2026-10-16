@@ -8,10 +8,9 @@
 //! Hosts restart agents by killing them: T3 Code sends SIGTERM, then SIGKILL
 //! one second later. `session/load` must still replay the whole conversation,
 //! so a turn saves at every SDK step boundary (before each provider request
-//! and after each model reply), not only when it ends. The turn writes the
-//! user's message before it starts, so replay shows what was asked even when
-//! the turn never finished, and a prompted session is never empty on disk.
-//! Each save adds the turn's new history rows (tool
+//! and after each model reply), not only when it ends. The first save also
+//! writes the user's message, so replay shows what was asked even when the
+//! turn never finished. Each save adds the turn's new history rows (tool
 //! calls, results, interim replies) to the display transcript, as the TUI
 //! does, so a resumed session shows the work and not only the final answer.
 //! Background results the run applied are saved as the rows the host was
@@ -113,20 +112,15 @@ impl SessionHost {
         }
     }
 
-    /// Writes the user's message, then saves the coming turn at every step
-    /// boundary. Call while idle, with the message as shown (`display`) and
-    /// as the run sends it (`model`); the returned checkpoint settles the
-    /// turn in [`Self::persist_turn`].
+    /// Saves the coming turn at every step boundary. Call while idle, with
+    /// the message as shown (`display`) and as the run sends it (`model`);
+    /// the returned checkpoint settles the turn in [`Self::persist_turn`].
     pub(super) fn install_turn_checkpoint(
         &mut self,
         display: &UserInput,
         model: &UserInput,
     ) -> anyhow::Result<TurnCheckpoint> {
-        let snapshot = self.durable_snapshot();
         let stored = self.stored()?.clone();
-        if !self.is_replaced() {
-            stored.save_snapshot(&snapshot, &[Message::User(display.blocks().to_vec())])?;
-        }
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
             todo: self.built.tools.todo_state(),
@@ -134,8 +128,9 @@ impl SessionHost {
             added_dirs: self.added_dirs.clone(),
             replaced: Arc::clone(&self.replaced),
             display: Mutex::new(TurnDisplay::new(
+                Message::User(display.blocks().to_vec()),
                 Message::User(model.blocks().to_vec()),
-                snapshot.history().len(),
+                self.built.session.history().len(),
             )),
         }));
         self.built
@@ -269,14 +264,16 @@ impl SessionStore for CheckpointStore {
 ///
 /// History from `history_start` on is this turn: the model's copy of the
 /// user's message, then everything the run appends. The run pushes that copy
-/// before its first save, and the user's message as shown is written when
-/// the turn starts, so saves add only the appended rows, as they are,
-/// except that background results show the rows recorded for them.
+/// before its first save. Display shows the user's message as sent in its
+/// place, then the appended rows as they are, except that background results
+/// show the rows recorded for them.
 /// A compaction can rewrite history before or during the turn, so once the
 /// model's copy is no longer at `history_start`, appended rows are lost and
 /// the turn falls back to its recorded results and final reply.
 #[derive(Debug)]
 struct TurnDisplay {
+    /// The user's message as sent, until a save writes it.
+    unsaved_user: Option<Message>,
     /// The model's copy of the user's message.
     input: Message,
     history_start: usize,
@@ -313,8 +310,9 @@ struct PendingRows {
 }
 
 impl TurnDisplay {
-    fn new(input: Message, history_start: usize) -> Self {
+    fn new(user: Message, input: Message, history_start: usize) -> Self {
         Self {
+            unsaved_user: Some(user),
             input,
             history_start,
             followed: Followed::Tracking { written: 0 },
@@ -324,7 +322,7 @@ impl TurnDisplay {
 
     /// Rows a save of `history` must add to the display transcript.
     fn pending_rows(&self, history: &[Message], scope: SaveScope) -> PendingRows {
-        let mut rows = Vec::new();
+        let mut rows: Vec<Message> = self.unsaved_user.iter().cloned().collect();
         let mut applied = self.applied.iter().peekable();
         let Some((appended, written)) = self.appended(history) else {
             let applied_written = match scope {
@@ -363,6 +361,7 @@ impl TurnDisplay {
 
     /// Records that a save wrote `pending`'s rows.
     fn mark_written(&mut self, pending: PendingRows) {
+        self.unsaved_user = None;
         self.applied.drain(..pending.applied_written);
         self.followed = pending.followed;
     }

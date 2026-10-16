@@ -4,7 +4,7 @@ use crate::{
     cli::Cli,
     config::Config,
     herdr::HerdrReporter,
-    session::{Session, SessionTarget},
+    session::{Session, SessionSummary, SessionTarget},
     tui::{self, ApplicationServices, RuntimeModelView, SessionBootstrap, TuiBootstrap},
 };
 
@@ -56,7 +56,9 @@ impl<'a> StartupSession<'a> {
     fn from_cli(cli: &'a Cli, cwd: &std::path::Path) -> anyhow::Result<Self> {
         if cli.continue_latest {
             // An empty workspace starts fresh so `rho -c` is always safe to run.
-            let latest = Session::list(cwd)?.into_iter().next();
+            let latest = Session::list(cwd)?
+                .into_iter()
+                .find(SessionSummary::has_messages);
             return Ok(latest.map_or(Self::Fresh, |summary| Self::Latest(summary.target())));
         }
         Ok(match &cli.resume {

@@ -116,6 +116,13 @@ impl SessionSummary {
     pub fn target(&self) -> SessionTarget {
         SessionTarget::new(self.id.clone(), self.cwd.clone())
     }
+
+    /// Whether the session saved anything to resume. A session file exists
+    /// from just before its first save, so a process killed in between (or
+    /// an older Rho's unprompted ACP session) leaves an empty one.
+    pub fn has_messages(&self) -> bool {
+        self.message_count > 0
+    }
 }
 
 /// Result of a successful session title update.
