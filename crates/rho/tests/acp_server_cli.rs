@@ -41,6 +41,7 @@ impl AcpServer {
             .current_dir(cwd)
             .env("HOME", home)
             .env("RHO_HOME", home.join(".rho"))
+            // Fixture sessions must not query the developer's OS keyring.
             .env("RHO_CREDENTIAL_STORE", "file")
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_PATH", path)
@@ -89,6 +90,20 @@ impl AcpServer {
     /// Sends `method` and waits for its reply. Returns the `result` or the
     /// `error` object, plus the `session/update` payloads that came first.
     fn request(&mut self, method: &str, params: Value) -> (Result<Value, Value>, Vec<Value>) {
+        let (reply, notifications) = self.request_notifications(method, params);
+        let updates = notifications
+            .into_iter()
+            .map(|notification| notification["update"].clone())
+            .collect();
+        (reply, updates)
+    }
+
+    /// Like `request`, retaining the session id and replay metadata.
+    fn request_notifications(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> (Result<Value, Value>, Vec<Value>) {
         self.next_id += 1;
         let id = self.next_id;
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
@@ -106,7 +121,7 @@ impl AcpServer {
                 return (reply, updates);
             }
             match message["method"].as_str() {
-                Some("session/update") => updates.push(message["params"]["update"].clone()),
+                Some("session/update") => updates.push(message["params"].clone()),
                 Some(other) => panic!("unexpected agent message {other}: {message}"),
                 None => panic!("reply to an unknown request: {message}"),
             }
@@ -269,5 +284,111 @@ fn additional_directories_reject_entries_they_cannot_grant() {
         );
         let error = created.expect_err(label);
         assert_eq!(error["code"], -32602, "{label}: {error}");
+    }
+}
+
+// Covers: loading saved history after a server restart must restore paired
+// tool cards, arguments, result status and output before session/load replies,
+// even when successive provider turns reuse the same tool-call ID.
+// Owner: ACP session replay, over the real stdio server
+#[test]
+fn load_replays_tool_calls_and_results() {
+    for (additional, status) in [(true, "completed"), (false, "failed")] {
+        let workspace = Workspace::new();
+        let mut server = workspace.server();
+        server
+            .request("initialize", json!({"protocolVersion": 1}))
+            .0
+            .unwrap();
+        let roots = if additional {
+            json!([workspace.extra])
+        } else {
+            json!([])
+        };
+        let created = server
+            .request(
+                "session/new",
+                json!({"cwd": workspace.project, "mcpServers": [], "additionalDirectories": roots}),
+            )
+            .0
+            .unwrap();
+        let session_id = created["sessionId"].as_str().unwrap();
+        let mut expected = Vec::new();
+        let mut provider_ids = Vec::new();
+        for text in ["first output", "second output"] {
+            std::fs::write(workspace.extra.join("notes.txt"), text).unwrap();
+            // Loading creates a new fixture provider, whose first response
+            // reuses the same ID as the previous process did.
+            let (reply, live) = server.request(
+                "session/prompt",
+                json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "read the shared notes"}]}),
+            );
+            reply.unwrap();
+            let call = live
+                .iter()
+                .find(|u| u["sessionUpdate"] == "tool_call")
+                .unwrap();
+            let result = live
+                .iter()
+                .find(|u| u["sessionUpdate"] == "tool_call_update" && u["status"] == status)
+                .expect("live terminal result");
+            assert_ne!(result["content"], json!([]));
+            provider_ids.push(call["toolCallId"].clone());
+            expected.push(json!({"name": call["name"], "rawInput": call["rawInput"],
+                "status": status, "content": result["content"]}));
+            server
+                .request("session/close", json!({"sessionId": session_id}))
+                .0
+                .unwrap();
+            drop(server);
+            server = workspace.server();
+            server
+                .request("initialize", json!({"protocolVersion": 1}))
+                .0
+                .unwrap();
+            let (loaded, notifications) = server.request_notifications(
+                "session/load",
+                json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": [], "additionalDirectories": roots}),
+            );
+            loaded.unwrap();
+            let tools = notifications
+                .iter()
+                .filter(|n| {
+                    matches!(
+                        n["update"]["sessionUpdate"].as_str(),
+                        Some("tool_call" | "tool_call_update")
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(tools.len(), expected.len() * 2, "{notifications:#?}");
+            let mut ids = std::collections::BTreeSet::new();
+            let restored = tools
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| {
+                    let call = &pair[0]["update"];
+                    let result = &pair[1]["update"];
+                    assert!(
+                        ids.insert(call["toolCallId"].as_str().unwrap()),
+                        "duplicate replay ID: {tools:#?}"
+                    );
+                    assert_eq!(result["toolCallId"], call["toolCallId"]);
+                    for notification in pair {
+                        assert_eq!(
+                            (&notification["sessionId"], &notification["_meta"]),
+                            (&json!(session_id), &json!({"isReplay": true}))
+                        );
+                    }
+                    json!({"name": call["name"], "rawInput": call["rawInput"],
+                    "status": result["status"], "content": result["content"]})
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(restored, expected);
+        }
+        assert_eq!(
+            provider_ids[0], provider_ids[1],
+            "fixture must reuse the provider ID"
+        );
     }
 }
