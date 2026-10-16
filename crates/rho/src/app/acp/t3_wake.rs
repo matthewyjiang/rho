@@ -48,12 +48,9 @@ pub(super) struct T3Wake {
     /// Where this parent writes signals and its watchers look for them.
     signal_dir: PathBuf,
     armed: Option<Watcher>,
-    /// Watchers no longer armed whose T3 notice that they finished may still
-    /// be on its way as a later prompt.
+    /// Watchers no longer armed: fired, or cancelled. T3's notice that one
+    /// finished may still be on its way as a later prompt.
     ended: Vec<EndedWatcher>,
-    /// Locks of cancelled watchers, held until a later prompt ends so a
-    /// watcher sees its cancel before it sees this parent let go.
-    retired: Vec<std::fs::File>,
 }
 
 struct Watcher {
@@ -64,9 +61,10 @@ struct Watcher {
     notifier: Option<Notifier>,
 }
 
-/// A watcher that fired or ended. A fired one may not have read its signal
-/// yet, so its lock stays held until T3 reports it finished; releasing it
-/// earlier would make the watcher report that this parent ended.
+/// A watcher that fired or was cancelled. A fired one may not have read its
+/// signal yet, and a cancelled one may not have seen its cancel, so its lock
+/// stays held until T3 reports it finished or the session ends. Releasing
+/// it earlier would make the watcher report that this parent ended.
 struct EndedWatcher {
     task_id: String,
     _lock: std::fs::File,
@@ -213,7 +211,6 @@ impl T3Wake {
             signal_dir,
             armed: None,
             ended: Vec::new(),
-            retired: Vec::new(),
         }
     }
 
@@ -256,10 +253,9 @@ impl T3Wake {
         tools: &AppToolSet,
         background: Background,
     ) -> anyhow::Result<()> {
-        self.retired.clear();
         if !background.outstanding() {
             if let Some(watcher) = self.armed.take() {
-                self.retired.push(retire(tools, watcher).await);
+                self.ended.push(retire(tools, watcher).await);
             }
             return Ok(());
         }
@@ -325,10 +321,10 @@ async fn arm(tools: &AppToolSet, signal_dir: &Path, labels: &[String]) -> anyhow
     })
 }
 
-/// Cancels a watcher whose work was delivered in-prompt, returning its lock
-/// for the caller to hold a while longer. Best effort: a leftover watcher
+/// Cancels a watcher whose work was delivered in-prompt, so it exits by
+/// cancel rather than by a released lock. Best effort: a leftover watcher
 /// only costs an idle child in T3's panel until this parent ends.
-async fn retire(tools: &AppToolSet, mut watcher: Watcher) -> std::fs::File {
+async fn retire(tools: &AppToolSet, mut watcher: Watcher) -> EndedWatcher {
     if let Some(notifier) = watcher.notifier.take() {
         notifier.quiet();
     }
@@ -353,7 +349,10 @@ async fn retire(tools: &AppToolSet, mut watcher: Watcher) -> std::fs::File {
     if let Err(error) = cancelled {
         tracing::warn!(%error, task_id = %watcher.task_id, "could not cancel T3 wake watcher");
     }
-    watcher.lock
+    EndedWatcher {
+        task_id: watcher.task_id,
+        _lock: watcher.lock,
+    }
 }
 
 fn t3_tool(tools: &AppToolSet, name: &str) -> anyhow::Result<Arc<dyn Tool>> {

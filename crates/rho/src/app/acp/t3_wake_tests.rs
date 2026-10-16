@@ -205,7 +205,8 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
 }
 
 // Covers: when the watched work finishes during a later prompt and is
-// delivered there, that prompt's end cancels the watcher, so it neither
+// delivered there, that prompt's end cancels the watcher and keeps its lock,
+// so it exits by cancel instead of reporting its parent ended, and neither
 // lingers in T3's panel nor wakes the thread for nothing.
 // Owner: ACP T3 wake watcher.
 #[tokio::test]
@@ -213,7 +214,8 @@ async fn work_delivered_in_prompt_retires_the_watcher() {
     let mut fixture = Fixture::new();
     let process = fixture.start_process().await;
     fixture.prompt_ended().await;
-    fixture.take_calls();
+    let token = Fixture::delegated_signal(&fixture.take_calls()[0].1["task"]);
+    let signal = WakeSignal::parse_in(fixture.signals.path(), &token).unwrap();
 
     assert_eq!(fixture.wake.prompt_started(None), PromptOrigin::Other);
     fixture.stop_process(&process).await;
@@ -223,6 +225,15 @@ async fn work_delivered_in_prompt_retires_the_watcher() {
     assert_eq!(
         fixture.take_calls(),
         vec![("task_cancel".to_owned(), json!({"taskId": "task-1"}))]
+    );
+
+    // Later prompts end before T3 delivers the cancel; the watcher must
+    // still not see its parent let go.
+    assert_eq!(fixture.wake.prompt_started(None), PromptOrigin::Other);
+    fixture.prompt_ended().await;
+    assert!(
+        !signal.parent_ended(),
+        "the cancelled watcher's lock is held"
     );
 }
 
