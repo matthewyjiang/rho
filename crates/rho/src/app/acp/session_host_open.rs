@@ -1,6 +1,7 @@
 //! Opening ACP sessions: `session/new` builds a host whose file waits for
 //! its first save, and `session/load` restores a saved one and replays its
-//! display history to the client.
+//! display history to the client. Both take the host's
+//! `additionalDirectories` as the session's added directories.
 
 use std::path::Path;
 
@@ -13,11 +14,12 @@ use rho_sdk::{model::Message, SessionOptions};
 use super::{
     agent,
     build::{build_session, mode_state, session_config},
-    convert::{validate_session_cwd, workspace_cwd},
+    convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
     persist::HostStorage,
     send_notification, split_assembly, EventMapper, SessionHost,
 };
 use crate::{
+    added_dirs::AddedDirs,
     app::{
         acp::{AcpClientPort, AcpStartup},
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
@@ -32,11 +34,15 @@ impl SessionHost {
         request: NewSessionRequest,
     ) -> anyhow::Result<(Self, NewSessionResponse)> {
         let cwd = validate_session_cwd(&request.cwd)?;
+        let root = std::fs::canonicalize(cwd)?;
+        let added_dirs =
+            session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
         let config = session_config(&startup.config, &request.mcp_servers);
         let host = Self::unsaved(
             startup,
             &config,
             cwd,
+            added_dirs,
             rho_sdk::SessionId::new(),
             request.mcp_servers,
         )
@@ -53,10 +59,10 @@ impl SessionHost {
         startup: &AcpStartup,
         config: &Config,
         cwd: &Path,
+        added_dirs: AddedDirs,
         sdk_id: rho_sdk::SessionId,
         host_mcp_servers: Vec<McpServer>,
     ) -> anyhow::Result<Self> {
-        let added_dirs = startup.added_dirs.clone();
         let assembly = build_session(startup, &startup.agent, config, cwd, &added_dirs, |_| {
             Ok(session_options_for_id(sdk_id))
         })
@@ -93,6 +99,9 @@ impl SessionHost {
         if !request.cwd.as_os_str().is_empty() {
             validate_session_cwd(cwd)?;
         }
+        let root = std::fs::canonicalize(cwd)?;
+        let added_dirs =
+            session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
         let config = session_config(&startup.config, &request.mcp_servers);
         let (stored, histories) =
             match StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref()) {
@@ -102,8 +111,15 @@ impl SessionHost {
                     else {
                         return Err(error);
                     };
-                    let host =
-                        Self::unsaved(startup, &config, cwd, sdk_id, request.mcp_servers).await?;
+                    let host = Self::unsaved(
+                        startup,
+                        &config,
+                        cwd,
+                        added_dirs,
+                        sdk_id,
+                        request.mcp_servers,
+                    )
+                    .await?;
                     let response = LoadSessionResponse::new()
                         .modes(mode_state(host.permission.mode))
                         .config_options(host.config_options(&startup.config));
@@ -111,14 +127,6 @@ impl SessionHost {
                 }
                 Err(error) => return Err(error),
             };
-        // ACP has no notice channel at load, so a missing saved directory
-        // is logged and skipped, matching the interactive notice.
-        let root = std::fs::canonicalize(cwd)?;
-        let restored = crate::added_dirs::AddedDirs::from_storage(&stored, &root);
-        for dir in &restored.missing {
-            tracing::warn!(dir = %dir.display(), "could not restore added directory: not found");
-        }
-        let added_dirs = startup.added_dirs.union(&root, &restored.dirs);
         let (agent, config) = agent::loaded_agent(startup, &stored, config, || {
             Ok(crate::agent::AgentCatalog::discover(cwd)?)
         })?;

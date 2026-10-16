@@ -24,7 +24,7 @@ use crate::{
 
 /// `config` is the session's config: the process config plus host-supplied
 /// MCP servers. `added_dirs` is the session's set: launch `--add-dir` values,
-/// plus any a loaded session saved.
+/// plus the host's `additionalDirectories`.
 pub(super) async fn build_session(
     startup: &AcpStartup,
     agent: &BoundAgent,

@@ -15,7 +15,8 @@ use agent_client_protocol::{
     schema::v1::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeResponse,
         LoadSessionRequest, LoadSessionResponse, McpCapabilities, NewSessionRequest,
-        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
+        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
+        SessionAdditionalDirectoriesCapabilities, SessionCapabilities, SessionId,
         SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
         SetSessionModeRequest, SetSessionModeResponse,
     },
@@ -89,7 +90,11 @@ impl RhoAcpAgent {
                     )
                     // Host stdio servers are the ACP baseline; Streamable
                     // HTTP is the transport Rho also speaks. SSE is not.
-                    .mcp_capabilities(McpCapabilities::new().http(true)),
+                    .mcp_capabilities(McpCapabilities::new().http(true))
+                    // `additionalDirectories` on `session/new` and `session/load`.
+                    .session_capabilities(SessionCapabilities::new().additional_directories(
+                        SessionAdditionalDirectoriesCapabilities::new(),
+                    )),
             )
             .auth_methods(Vec::new())
     }
@@ -123,7 +128,7 @@ impl RhoAcpAgent {
         let _gate = self.begin_install().await?;
         let (host, response) = SessionHost::create(&self.startup, request)
             .await
-            .map_err(host_error)?;
+            .map_err(session_start_error)?;
         let session_id = response.session_id.clone();
         let commands = host.available_commands(&self.startup.config);
         self.install(session_id, host).await;
@@ -158,7 +163,7 @@ impl RhoAcpAgent {
                 if let Some(previous) = &previous {
                     previous.replaced.store(false, Ordering::Release);
                 }
-                return Err(host_error(error));
+                return Err(session_start_error(error));
             }
         };
         let commands = host.available_commands(&self.startup.config);
@@ -348,6 +353,15 @@ fn prompt_error(error: anyhow::Error) -> AcpError {
 
 fn host_error(error: anyhow::Error) -> AcpError {
     AcpError::internal_error().data(error.to_string())
+}
+
+/// A lifecycle request naming a root the session cannot grant is the
+/// caller's to fix.
+fn session_start_error(error: anyhow::Error) -> AcpError {
+    match error.downcast::<super::session_host::RejectedDirectory>() {
+        Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
+        Err(error) => host_error(error),
+    }
 }
 
 fn agent_stopped() -> AcpError {

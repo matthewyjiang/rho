@@ -36,6 +36,14 @@ During a session, Rho also sends:
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. A model-prompt change notice found at load is sent when the next prompt starts.
 
+## Workspace roots
+
+`initialize` advertises `sessionCapabilities.additionalDirectories`, so hosts with several workspace roots, such as a Zed multi-root workspace, send the extra roots with `session/new` and `session/load` as `additionalDirectories`. `cwd` stays the primary workspace. Each extra root joins the session as an [added directory](/tools-workspace#additional-workspace-directories), the same as `--add-dir`: reads there count as workspace reads in every permission mode, and its `AGENTS.md` chain loads. Directories passed to `rho acp --add-dir` apply to every session on top of the host's roots.
+
+Each entry must be an absolute path to an existing directory. A request with an empty, relative, missing, or non-directory entry fails with invalid params and no session starts.
+
+The roots are saved with the session, so `rho -R` restores them. `session/load` does not: per ACP, the roots it sends are the session's complete list, and a load that sends none drops roots the session had before.
+
 ## Background work
 
 Background processes, workflows, and delegated agents report back much as they do in the TUI. ACP v1 gives an agent no way to start a turn on its own, so Rho keeps the prompt open instead of waking an idle session:
