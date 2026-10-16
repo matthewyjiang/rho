@@ -22,7 +22,7 @@ use rho_sdk::{
     ProviderError,
 };
 
-use super::{LiveSession, PromptGate, RhoAcpAgent, SessionHost};
+use super::{HostWait, LiveSession, PromptGate, RhoAcpAgent, SessionHost};
 use crate::{
     agent::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy},
     app::acp::{AcpClientPort, AcpStartup},
@@ -184,7 +184,7 @@ async fn missing_session_prompt_and_load_return_errors() {
 
 fn vacant_session() -> Arc<LiveSession> {
     Arc::new(LiveSession {
-        host: tokio::sync::Mutex::new(None),
+        host: Arc::new(tokio::sync::Mutex::new(None)),
         cancel: Arc::new(PromptGate::new()),
         replaced: Arc::new(AtomicBool::new(false)),
     })
@@ -235,7 +235,7 @@ async fn prompt_waits_only_behind_a_cancelled_prompt() {
         }
         let held = live.host.lock().await;
         let session_id = SessionId::new("steer");
-        let next = live.lock_host_for_prompt(&session_id);
+        let next = live.lock_host(&session_id, HostWait::Prompt);
         tokio::pin!(next);
         let (waited, result) = match futures_util::poll!(&mut next) {
             std::task::Poll::Ready(result) => (false, result),
@@ -355,6 +355,54 @@ async fn prompt_queued_during_replacement_moves_to_the_successor() {
     // The fixture successor is vacant, so the prompt ends busy there.
     assert_eq!(
         prompt.await.expect_err("vacant successor").code,
+        ErrorCode::InvalidRequest
+    );
+}
+
+// Covers: a settings change that reaches a host only after a replacement
+// claimed it must fail, neither applying to the discarded host nor following
+// to the successor, where requests sent after the reload would already have
+// overtaken it.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn settings_change_queued_during_replacement_fails_instead_of_moving() {
+    let agent = test_agent();
+    let session_id = SessionId::new("reloaded");
+    let previous = vacant_session();
+    let replacement = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), Arc::clone(&previous));
+    let held = previous.host.lock().await;
+    // Held for the whole test: a change that moved to the successor would wait here.
+    let _successor_held = replacement.host.lock().await;
+
+    // The single-threaded test runtime polls spawned tasks in order, so the
+    // change queues on the old host before the replacement does.
+    let change = tokio::spawn({
+        let agent = Arc::clone(&agent);
+        let request = SetSessionConfigOptionRequest::new(session_id.clone(), "mode", "plan");
+        async move { agent.set_config_option(request).await }
+    });
+
+    let publish_agent = Arc::clone(&agent);
+    let publish_id = session_id.clone();
+    let publish_live = Arc::clone(&replacement);
+    let publish = tokio::spawn(async move {
+        publish_agent.publish(publish_id, publish_live).await;
+    });
+    wait_until_replaced(&previous).await;
+    drop(held);
+    publish.await.expect("publish");
+
+    let result = tokio::time::timeout(Duration::from_secs(5), change)
+        .await
+        .expect("the queued change must not wait on the successor")
+        .expect("change task");
+    assert_eq!(
+        result.expect_err("replaced session").code,
         ErrorCode::InvalidRequest
     );
 }
@@ -552,31 +600,6 @@ async fn set_config_option_on_missing_session_is_not_found() {
     assert_eq!(error.code, ErrorCode::ResourceNotFound);
 }
 
-// Covers: session/set_config_option must report busy while a prompt holds the host
-// Owner: ACP agent session map
-#[tokio::test]
-async fn set_config_option_on_a_locked_session_is_busy() {
-    let agent = test_agent();
-    let session_id = SessionId::new("busy");
-    let live = vacant_session();
-    agent
-        .sessions
-        .lock()
-        .await
-        .insert(session_id.clone(), Arc::clone(&live));
-    let _held = live.host.lock().await;
-
-    let error = agent
-        .set_config_option(SetSessionConfigOptionRequest::new(
-            session_id,
-            "model",
-            "xai/grok-3",
-        ))
-        .await
-        .expect_err("busy session");
-    assert_eq!(error.code, ErrorCode::InvalidRequest);
-}
-
 // Covers: a same-ID replacement must not become promptable until the old host
 // lock is released, so the cancelled old prompt and a new prompt cannot run
 // on two hosts at once.
@@ -722,7 +745,9 @@ async fn close_cancels_the_running_prompt_saves_it_and_frees_the_session() {
 
 // Covers: a prompt queued behind a cancelled turn (T3 Code steers by cancel
 // and resend) when session/close arrives must end cancelled, not start a turn
-// on the closing host and hold the close open until that turn ends.
+// on the closing host and hold the close open until that turn ends. A
+// settings change queued with it must fail as not found, not report success
+// for a host the close tears down.
 // Owner: ACP agent session map
 #[tokio::test]
 async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
@@ -739,6 +764,13 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
     let prompt = agent.prompt(text_prompt(&session_id, "steer"), &NullPort);
     tokio::pin!(prompt);
     assert!(futures_util::poll!(&mut prompt).is_pending());
+    let change = agent.set_config_option(SetSessionConfigOptionRequest::new(
+        session_id.clone(),
+        "mode",
+        "plan",
+    ));
+    tokio::pin!(change);
+    assert!(futures_util::poll!(&mut change).is_pending());
 
     let close_agent = Arc::clone(&agent);
     let close_id = session_id.clone();
@@ -761,6 +793,11 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
         .expect("the queued prompt must not run a turn")
         .expect("queued prompt");
     assert_eq!(response.stop_reason, StopReason::Cancelled);
+    let change = tokio::time::timeout(Duration::from_secs(5), change)
+        .await
+        .expect("the queued change must not wait on a torn-down host")
+        .expect_err("closed session");
+    assert_eq!(change.code, ErrorCode::ResourceNotFound);
     close.await.unwrap().expect("close");
     let unsaved =
         StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), id.as_str())

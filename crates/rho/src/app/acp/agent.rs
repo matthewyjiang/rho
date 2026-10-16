@@ -35,10 +35,10 @@ pub(super) struct SessionStart<Response> {
 /// One ACP session slot. The host stays in this mutex for its whole life, so a
 /// prompt never has to take it out of the map and put it back.
 ///
-/// `try_lock` is the busy gate: the map lock is only held long enough to clone
-/// this `Arc`. A prompt may instead wait for the host while the previous turn
-/// is cancelled and winding down. Cancel reads `cancel` without the host lock. A replacement marks
-/// `replaced` and waits for any in-flight prompt to release the host lock before
+/// The host lock is the busy gate: the map lock is only held long enough to
+/// clone this `Arc`. [`HostWait`] decides who may queue for a held host.
+/// Cancel reads `cancel` without the host lock. A replacement marks `replaced`
+/// and waits for any in-flight prompt to release the host lock before
 /// publishing the new slot, so a follow-up prompt cannot run on the new host
 /// while the old turn is still finishing.
 ///
@@ -46,9 +46,40 @@ pub(super) struct SessionStart<Response> {
 /// before waiting for the host, so a prompt that wins the host after that
 /// ends cancelled instead of starting a turn the close would wait on.
 struct LiveSession {
-    host: tokio::sync::Mutex<Option<SessionHost>>,
+    host: Arc<tokio::sync::Mutex<Option<SessionHost>>>,
     cancel: Arc<PromptGate>,
     replaced: Arc<AtomicBool>,
+}
+
+/// How a request waits when another request holds the session host.
+#[derive(Clone, Copy, Debug)]
+enum HostWait {
+    /// A prompt queues behind a cancelled turn that is winding down, or a
+    /// brief settings or teardown hold. Hosts that steer by interrupting
+    /// (T3 Code) send `session/cancel` and the replacement prompt back to
+    /// back; rejecting the second as busy would drop the user's message. A
+    /// prompt behind a live turn is refused as busy.
+    Prompt,
+    /// A settings change (`session/set_mode`, `session/set_config_option`)
+    /// queues behind anything, a live turn included, and applies once the
+    /// host is free. ACP lets clients change settings mid-generation, but
+    /// the SDK refuses setting changes during a run and a mode switch
+    /// rebinds the runtime, so the change lands on the next prompt and the
+    /// response waits for it. A change that only reaches the host after a
+    /// replacement claimed it fails instead of applying there or following
+    /// it: the retiring host is discarded, the successor starts from
+    /// process defaults, and requests sent after the reload would reach the
+    /// successor first, so moving the stale change over would apply it out
+    /// of order. A change that gets the host before `session/load` claims
+    /// it applies, and the load then resets to defaults.
+    Settings,
+}
+
+/// What a request that waited for a session host got.
+enum SessionHostLock {
+    Ready(HostGuard),
+    /// `session/close` claimed the session while the request waited.
+    Closed,
 }
 
 /// In-process ACP agent. Session slots live in a mutex map so request
@@ -119,8 +150,8 @@ impl RhoAcpAgent {
         not_yet_supported("authenticate")
     }
 
-    /// Switches one session's permission mode for later prompts. Rejected
-    /// while a prompt is in flight, like model and thought-level changes.
+    /// Switches one session's permission mode for later prompts. Like
+    /// config options, it waits for a running prompt to finish first.
     pub(super) async fn set_session_mode(
         self: &Arc<Self>,
         request: SetSessionModeRequest,
@@ -131,8 +162,7 @@ impl RhoAcpAgent {
                 request.mode_id.0.as_ref()
             )));
         };
-        let live = self.live_session(&request.session_id).await?;
-        let mut host = live.try_lock_host(&request.session_id)?;
+        let mut host = self.lock_settings_host(&request.session_id).await?;
         host.set_permission_mode(mode, &self.startup.config).await?;
         Ok(SetSessionModeResponse::new())
     }
@@ -195,31 +225,60 @@ impl RhoAcpAgent {
         port: &dyn AcpClientPort,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let mut live = self.live_session(&session_id).await?;
+        match self
+            .lock_session_host(&session_id, HostWait::Prompt)
+            .await?
+        {
+            SessionHostLock::Ready(mut host) => host
+                .prompt(request, port, &self.startup)
+                .await
+                .map_err(prompt_error),
+            // A closing session ends a prompt that waited for its host as
+            // `session/cancel` would, rather than failing it.
+            SessionHostLock::Closed => Ok(PromptResponse::new(StopReason::Cancelled)),
+        }
+    }
+
+    /// The host for `session_id`, once `wait` lets this request have it.
+    async fn lock_session_host(
+        &self,
+        session_id: &SessionId,
+        wait: HostWait,
+    ) -> Result<SessionHostLock, AcpError> {
+        let mut live = self.live_session(session_id).await?;
         loop {
-            let busy = {
-                let locked = live.lock_host_for_prompt(&session_id).await;
-                // A closing session ends a prompt that waited for its host as
-                // `session/cancel` would, rather than failing it on the
-                // emptied slot. One that passes here starts cancelled.
-                if live.cancel.is_closed() {
-                    return Ok(PromptResponse::new(StopReason::Cancelled));
+            let locked = live.lock_host(session_id, wait).await;
+            // A closing session's host is about to be torn down, so nothing
+            // that waited for it may use it. One that passes here meets the
+            // closed gate instead and starts cancelled.
+            if live.cancel.is_closed() {
+                return Ok(SessionHostLock::Closed);
+            }
+            if !live.replaced.load(Ordering::Acquire) {
+                return locked.map(SessionHostLock::Ready);
+            }
+            match (wait, locked) {
+                (HostWait::Settings, _) => return Err(reloaded_session(session_id)),
+                (HostWait::Prompt, Ok(host)) => return Ok(SessionHostLock::Ready(host)),
+                // A reload replaced the session while this prompt waited for
+                // the old host; run it on the successor instead of dropping
+                // the user's message.
+                (HostWait::Prompt, Err(busy)) => {
+                    live = self.successor(session_id, &live).await?.ok_or(busy)?;
                 }
-                match locked {
-                    Ok(mut host) => {
-                        return host
-                            .prompt(request, port, &self.startup)
-                            .await
-                            .map_err(prompt_error);
-                    }
-                    // A reload replaced the session while this prompt waited
-                    // for the old host; run it on the successor instead of
-                    // dropping it.
-                    Err(busy) if live.replaced.load(Ordering::Acquire) => busy,
-                    Err(error) => return Err(error),
-                }
-            };
-            live = self.successor(&session_id, &live).await?.ok_or(busy)?;
+            }
+        }
+    }
+
+    /// The host for a settings change. A session closed while the change
+    /// waited is gone, like one that was never there.
+    async fn lock_settings_host(&self, session_id: &SessionId) -> Result<HostGuard, AcpError> {
+        match self
+            .lock_session_host(session_id, HostWait::Settings)
+            .await?
+        {
+            SessionHostLock::Ready(host) => Ok(host),
+            SessionHostLock::Closed => Err(missing_session(session_id)),
         }
     }
 
@@ -250,8 +309,7 @@ impl RhoAcpAgent {
         request: SetSessionConfigOptionRequest,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let live = self.live_session(&session_id).await?;
-        let mut host = live.try_lock_host(&session_id)?;
+        let mut host = self.lock_settings_host(&session_id).await?;
         host.set_config_option(request, &self.startup.config).await
     }
 
@@ -370,6 +428,29 @@ impl RhoAcpAgent {
     }
 }
 
+#[cfg(test)]
+impl RhoAcpAgent {
+    /// Publishes a prebuilt host, for fixtures that drive a real session
+    /// through the agent's request handlers.
+    pub(super) async fn install_for_tests(&self, session_id: SessionId, host: SessionHost) {
+        self.install(session_id, host).await;
+    }
+
+    /// Holds the session's host as a running prompt would, plus the flag a
+    /// replacement sets, so fixtures can race requests against a reload.
+    pub(super) async fn hold_host_for_tests(
+        &self,
+        session_id: &SessionId,
+    ) -> (
+        tokio::sync::OwnedMutexGuard<Option<SessionHost>>,
+        Arc<AtomicBool>,
+    ) {
+        let live = self.live_session(session_id).await.expect("live session");
+        let held = Arc::clone(&live.host).lock_owned().await;
+        (held, Arc::clone(&live.replaced))
+    }
+}
+
 /// The agent implements and advertises these methods, so `MethodNotFound`
 /// would lie about the surface. `InvalidRequest` says the call cannot be
 /// served as sent, and the data string says why.
@@ -384,6 +465,12 @@ fn missing_session(session_id: &SessionId) -> AcpError {
 pub(super) fn busy_session(session_id: &SessionId) -> AcpError {
     AcpError::invalid_request().data(format!(
         "session '{session_id}' already has an active prompt"
+    ))
+}
+
+fn reloaded_session(session_id: &SessionId) -> AcpError {
+    AcpError::invalid_request().data(format!(
+        "session '{session_id}' was reloaded before this change applied; send it again"
     ))
 }
 
@@ -426,49 +513,58 @@ impl LiveSession {
         let cancel = host.cancel_handle();
         let replaced = host.replaced_flag();
         Arc::new(Self {
-            host: tokio::sync::Mutex::new(Some(host)),
+            host: Arc::new(tokio::sync::Mutex::new(Some(host))),
             cancel,
             replaced,
         })
     }
 
-    fn try_lock_host(&self, session_id: &SessionId) -> Result<HostGuard<'_>, AcpError> {
-        let guard = self.host.try_lock().map_err(|_| busy_session(session_id))?;
-        if guard.is_none() {
-            return Err(busy_session(session_id));
-        }
-        Ok(HostGuard(guard))
+    fn try_lock_host(&self, session_id: &SessionId) -> Result<HostGuard, AcpError> {
+        let guard = Arc::clone(&self.host)
+            .try_lock_owned()
+            .map_err(|_| busy_session(session_id))?;
+        HostGuard::occupied(guard, session_id)
     }
 
-    /// Like [`Self::try_lock_host`], but a prompt queues behind a cancelled
-    /// turn that is still winding down. Hosts that steer by interrupting
-    /// (T3 Code) send `session/cancel` and the replacement prompt back to
-    /// back; rejecting the second as busy would drop the user's message.
-    async fn lock_host_for_prompt(
+    /// Like [`Self::try_lock_host`], but queues for a held host when `wait`
+    /// allows it.
+    async fn lock_host(
         &self,
         session_id: &SessionId,
-    ) -> Result<HostGuard<'_>, AcpError> {
+        wait: HostWait,
+    ) -> Result<HostGuard, AcpError> {
+        let queues = match wait {
+            HostWait::Prompt => self.cancel.admits_queued_prompt(),
+            HostWait::Settings => true,
+        };
         match self.try_lock_host(session_id) {
-            Err(busy) if !self.cancel.admits_queued_prompt() => Err(busy),
-            Err(_) => {
-                let guard = self.host.lock().await;
-                if guard.is_none() {
-                    return Err(busy_session(session_id));
-                }
-                Ok(HostGuard(guard))
-            }
+            Err(busy) if !queues => Err(busy),
+            Err(_) => HostGuard::occupied(Arc::clone(&self.host).lock_owned().await, session_id),
             held => held,
         }
     }
 }
 
-/// Exclusive access to a live session host. `try_lock_host` already rejected
+/// Exclusive access to a live session host. [`HostGuard::occupied`] rejects
 /// empty slots, so the Option unwrap is an invariant, not a caller concern.
-struct HostGuard<'a>(tokio::sync::MutexGuard<'a, Option<SessionHost>>);
+struct HostGuard(tokio::sync::OwnedMutexGuard<Option<SessionHost>>);
 
-const HOST_SLOT_INVARIANT: &str = "try_lock_host rejects an empty slot";
+const HOST_SLOT_INVARIANT: &str = "HostGuard::occupied rejects an empty slot";
 
-impl Deref for HostGuard<'_> {
+impl HostGuard {
+    /// A slot emptied by a replacement or shutdown has no host to lend.
+    fn occupied(
+        guard: tokio::sync::OwnedMutexGuard<Option<SessionHost>>,
+        session_id: &SessionId,
+    ) -> Result<Self, AcpError> {
+        if guard.is_none() {
+            return Err(busy_session(session_id));
+        }
+        Ok(Self(guard))
+    }
+}
+
+impl Deref for HostGuard {
     type Target = SessionHost;
 
     fn deref(&self) -> &Self::Target {
@@ -476,7 +572,7 @@ impl Deref for HostGuard<'_> {
     }
 }
 
-impl DerefMut for HostGuard<'_> {
+impl DerefMut for HostGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.0.as_mut().expect(HOST_SLOT_INVARIANT)
     }
