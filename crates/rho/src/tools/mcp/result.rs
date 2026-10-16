@@ -37,11 +37,18 @@ pub(crate) enum McpImageDelivery {
 const MAX_OUTPUT_SCHEMA_BYTES: usize = 64 * 1024;
 
 /// Serialized structured-content bytes Rho will walk during schema validation.
-/// This is the only bound on the instance: 256 KiB holds at most ~131k JSON
-/// nodes, which validate in ~1.6 ms against a simple schema and ~150 ms
-/// against a 1k-node, 500-branch `anyOf` schema (jsonschema 0.49, release).
-/// T3 Code's `orchestrator_capabilities` returns ~13k nodes in ~190 KB.
+/// This bounds the instance's width: 256 KiB holds at most ~131k JSON nodes,
+/// which validate in ~1.6 ms against a simple schema and ~150 ms against a
+/// 1k-node, 500-branch `anyOf` schema (jsonschema 0.49, release). T3 Code's
+/// `orchestrator_capabilities` returns ~13k nodes in ~190 KB.
 const MAX_STRUCTURED_CONTENT_BYTES: usize = 256 * 1024;
+
+/// Nesting depth Rho will hand to the recursive validator, for the schema and
+/// the instance. Width does not bound depth: jsonschema 0.49 recurses once per
+/// level through `items`/`$ref`, so a self-referencing schema overflowed a
+/// 2 MiB thread stack at 10,000 nested arrays (passed at 1,000). 128 matches
+/// serde_json's parser limit, so no MCP payload parsed off the wire reaches it.
+const MAX_VALIDATION_DEPTH: usize = 128;
 
 /// Maximum JSON nodes (objects, arrays, and leaves) in a declared output schema.
 /// Schema size multiplies per-node validation work, so it keeps its own bound.
@@ -154,7 +161,10 @@ fn validate_structured_content(
     structured: &serde_json::Value,
 ) -> Result<(), ToolError> {
     // Bound work before compiling or walking anything server-controlled. The
-    // schema and instance both come from an untrusted MCP server.
+    // schema and instance both come from an untrusted MCP server. Depth goes
+    // first: measuring bytes serializes recursively.
+    ensure_depth_budget(schema, "output schema")?;
+    ensure_depth_budget(structured, "structured content")?;
     ensure_json_budget(schema, MAX_OUTPUT_SCHEMA_BYTES, "output schema")?;
     ensure_json_budget(
         structured,
@@ -203,6 +213,31 @@ fn ensure_json_budget(
                 byte_size(max_bytes)
             ),
         ));
+    }
+    Ok(())
+}
+
+/// Iterative, so a value nested past the budget is rejected without recursing.
+fn ensure_depth_budget(value: &serde_json::Value, label: &str) -> Result<(), ToolError> {
+    let mut stack = vec![(value, 1usize)];
+    while let Some((next, depth)) = stack.pop() {
+        if depth > MAX_VALIDATION_DEPTH {
+            return Err(ToolError::new(
+                ToolErrorKind::Execution,
+                format!(
+                    "MCP server {label} exceeds the {MAX_VALIDATION_DEPTH}-level validation nesting budget"
+                ),
+            ));
+        }
+        match next {
+            serde_json::Value::Array(items) => {
+                stack.extend(items.iter().map(|item| (item, depth + 1)));
+            }
+            serde_json::Value::Object(map) => {
+                stack.extend(map.values().map(|item| (item, depth + 1)));
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
