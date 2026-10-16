@@ -379,13 +379,16 @@ async fn settings_change_queued_during_replacement_fails_instead_of_moving() {
     // Held for the whole test: a change that moved to the successor would wait here.
     let _successor_held = replacement.host.lock().await;
 
-    // The single-threaded test runtime polls spawned tasks in order, so the
-    // change queues on the old host before the replacement does.
-    let change = tokio::spawn({
-        let agent = Arc::clone(&agent);
-        let request = SetSessionConfigOptionRequest::new(session_id.clone(), "mode", "plan");
-        async move { agent.set_config_option(request).await }
-    });
+    let change = agent.set_config_option(SetSessionConfigOptionRequest::new(
+        session_id.clone(),
+        "mode",
+        "plan",
+    ));
+    tokio::pin!(change);
+    assert!(
+        futures_util::poll!(&mut change).is_pending(),
+        "the change must queue on the old host before the replacement does"
+    );
 
     let publish_agent = Arc::clone(&agent);
     let publish_id = session_id.clone();
@@ -395,16 +398,16 @@ async fn settings_change_queued_during_replacement_fails_instead_of_moving() {
     });
     wait_until_replaced(&previous).await;
     drop(held);
-    publish.await.expect("publish");
-
+    // The change is first in line for the old host, so it must finish before
+    // the replacement can take that host and publish.
     let result = tokio::time::timeout(Duration::from_secs(5), change)
         .await
-        .expect("the queued change must not wait on the successor")
-        .expect("change task");
+        .expect("the queued change must not wait on the successor");
     assert_eq!(
         result.expect_err("replaced session").code,
         ErrorCode::InvalidRequest
     );
+    publish.await.expect("publish");
 }
 
 // Covers: session/load of a live session must not read the file until the old
