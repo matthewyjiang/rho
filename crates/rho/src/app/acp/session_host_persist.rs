@@ -124,6 +124,7 @@ impl SessionHost {
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
             todo: self.built.tools.todo_state(),
+            code_mode: self.built.tools.code_mode().clone(),
             prompt: self.built.prompt.clone(),
             added_dirs: self.added_dirs.clone(),
             replaced: Arc::clone(&self.replaced),
@@ -184,21 +185,22 @@ impl SessionHost {
         decorate(
             &self.built.prompt,
             &self.built.tools.todo_state(),
+            self.built.tools.code_mode(),
             &self.added_dirs,
             self.built.session.snapshot(),
         )
     }
 }
 
-/// Adds the host state a load restores: model prompt, checklist, and added
-/// directories.
+/// Adds the host state a load restores, including the direct tool loadout.
 fn decorate(
     prompt: &ActivePrompt,
     todo: &TodoState,
+    code_mode: &crate::tools::code_mode::CodeModeSurface,
     added_dirs: &AddedDirs,
     snapshot: SessionSnapshot,
 ) -> SessionSnapshot {
-    added_dirs.decorate(todo.decorate(prompt.decorate(snapshot)))
+    added_dirs.decorate(todo.decorate(prompt.decorate(code_mode.decorate(snapshot))))
 }
 
 /// One turn's SDK checkpoint store, installed by
@@ -219,6 +221,7 @@ impl TurnCheckpoint {
 struct CheckpointStore {
     stored: StoredSession,
     todo: TodoState,
+    code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     prompt: ActivePrompt,
     added_dirs: AddedDirs,
     replaced: Arc<AtomicBool>,
@@ -236,7 +239,13 @@ impl CheckpointStore {
         if self.replaced.load(Ordering::Acquire) {
             return Ok(());
         }
-        let snapshot = decorate(&self.prompt, &self.todo, &self.added_dirs, snapshot);
+        let snapshot = decorate(
+            &self.prompt,
+            &self.todo,
+            &self.code_mode,
+            &self.added_dirs,
+            snapshot,
+        );
         let mut display = self.lock_display();
         let pending = display.pending_rows(snapshot.history(), SaveScope::Step);
         self.stored.save_snapshot(&snapshot, &pending.rows)?;

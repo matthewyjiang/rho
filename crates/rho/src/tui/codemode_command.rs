@@ -1,10 +1,10 @@
 //! `/codemode [status|on|only]`: Pi's `codemode.mode` for the always-registered
 //! `codemode` tool.
 //!
-//! `on` declares direct tools next to `codemode`; `only` hides them so the
-//! model composes through `codemode`. `status` or bare `/codemode` reports the
-//! mode. There
-//! is no mode that removes `codemode` and no `yolo` level: nested calls
+//! `on` declares direct tools next to `codemode`; `only` hides them by default.
+//! Top-level `tool_search` can load direct tools in either mode. `status` or
+//! bare `/codemode` reports the mode. There is no mode that removes `codemode`
+//! and no `yolo` level: nested calls
 //! inherit the session permission mode, so `/permissions` is the only
 //! permission ladder.
 
@@ -113,7 +113,7 @@ impl App {
     fn report_codemode(&mut self, mode: CodemodeMode) {
         let status = match mode {
             CodemodeMode::On => "codemode on: direct tools and codemode are both available",
-            CodemodeMode::Only => "codemode only: direct tools are reached through codemode",
+            CodemodeMode::Only => "codemode only: tools use codemode unless loaded by tool_search",
         };
         self.set_status(status);
     }

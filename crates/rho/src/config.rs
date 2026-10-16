@@ -282,7 +282,8 @@ pub enum CodemodeMode {
     /// Direct tools stay declared next to `codemode`; the model may use either.
     #[default]
     On,
-    /// Direct tools are hidden from the model and reached through `codemode`.
+    /// Direct tools are hidden by default and reached through `codemode`, unless
+    /// top-level `tool_search` explicitly loads them for direct calls.
     Only,
 }
 

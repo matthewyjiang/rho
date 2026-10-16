@@ -71,6 +71,7 @@ pub(super) fn compactor(
         diagnostics: seeded_diagnostics(),
         recall: None,
         todo: None,
+        code_mode: None,
     })
     .0
 }
@@ -459,6 +460,7 @@ fn tiered_compactor(
         diagnostics: diagnostics.clone(),
         recall,
         todo: None,
+        code_mode: None,
     })
     .0;
     (compactor, diagnostics)

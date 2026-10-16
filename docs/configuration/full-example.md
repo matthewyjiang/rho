@@ -96,7 +96,7 @@ base_url = "http://127.0.0.1:8787/v1"
 # edit_tool = "apply_patch" # auto preference: hashline, apply_patch, or str_replace
 
 [codemode]
-mode = "on" # "on": natives and codemode both declared; "only": natives reached through codemode
+mode = "on" # "on": natives and codemode declared; "only": tools hidden unless tool_search loads them
 
 [behavior]
 advisor_mode = false

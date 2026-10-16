@@ -154,6 +154,7 @@ pub(super) fn apply_thought_level(
             diagnostics: built.diagnostics.clone(),
             recall: built.tools.recall_store(),
             todo: Some(built.tools.todo_state()),
+            code_mode: Some(built.tools.code_mode().clone()),
         },
     ) {
         // Restore the previous level so a failed compaction rebuild does

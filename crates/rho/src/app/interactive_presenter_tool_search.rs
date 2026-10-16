@@ -33,15 +33,20 @@ pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
     )
 }
 
-/// Hits arrive as JSON text, live and replayed alike. Anything else (the
-/// tool's own miss notice) is shown as written rather than reinterpreted.
+/// Hits arrive as JSON, optionally preceded by a one-line loading notice.
+/// Keep older bare-JSON results readable on replay; other output stays literal.
 pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> ToolCard {
     let mut card = preview_card(arguments, ToolStatus::from_finished(ok));
     if !ok {
         push_error_output(&mut card, content);
         return card;
     }
-    match serde_json::from_str::<Vec<Hit>>(content) {
+    let json = if content.trim_start().starts_with('[') {
+        content
+    } else {
+        content.split_once('\n').map_or(content, |(_, json)| json)
+    };
+    match serde_json::from_str::<Vec<Hit>>(json) {
         Ok(hits) if !hits.is_empty() => {
             let count = hits.len() as u64;
             card.push_fact(ToolFact::Count {

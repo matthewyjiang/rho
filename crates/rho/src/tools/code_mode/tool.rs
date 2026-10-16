@@ -32,6 +32,9 @@ and check that `\"data\"` is not None before indexing it.
 - `list_tools()` and `search_tools(query)` return `[{name, description}]`; `describe_tool(name)` \
 adds the `parameters` schema and the `returns` schema of a successful result's `\"data\"` \
 (None for text-only tools).
+- Script discovery is read-only: it does not load tools for direct calls. Use top-level \
+`tool_search` to load matches for direct calls on the next model request, or call any discovered \
+tool inside this script with `call_tool` or `call_tools` without loading it.
 - Output: `print()` lines, then the global `result` as JSON. Other variable names are your choice.
 - Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
 or exceptions. At most 64 nested calls per script.

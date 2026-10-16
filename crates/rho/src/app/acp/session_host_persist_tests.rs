@@ -228,6 +228,89 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
     );
 }
 
+// Covers: both mid-turn checkpoints and settled ACP saves restore loaded tool
+// schemas in a fresh tool host, even when MCP inventory arrives after restore.
+// Owner: ACP session persistence, independent of provider/credential startup.
+#[tokio::test]
+async fn acp_saves_retain_the_loaded_tool_schemas() {
+    use crate::tools::sdk_registry::StaticToolBundle;
+    use rho_sdk::{
+        model::ToolSpec,
+        tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
+        SessionStore, UserInput,
+    };
+    let name = "mcp__docs__lookup";
+    let bundle = || {
+        StaticToolBundle::new(vec![Arc::new(ScriptedTool::new(
+            ToolSpec {
+                name: name.into(),
+                description: "docs".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+            ScriptedToolOutcome::Success(ToolOutput::text("docs")),
+        ))])
+    };
+    for scope in [SaveScope::Step, SaveScope::Settle] {
+        let home = tempfile::tempdir().unwrap();
+        let startup = AcpStartup::for_tests(Config::default(), home.path());
+        let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+        let id = stored.id().to_owned();
+        let provider = Arc::new(ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "model"),
+            [],
+        ));
+        let mut tools = AppToolSet::disabled();
+        tools.add_bundle(bundle());
+        let mut host = host(
+            home.path(),
+            &id,
+            HostStorage::saved(stored),
+            provider.clone(),
+            tools,
+            &startup,
+        )
+        .await;
+        let input = UserInput::text("load docs");
+        let checkpoint = host.install_turn_checkpoint(&input, &input).unwrap();
+        host.built
+            .session
+            .append_message(Message::user_text("load docs"))
+            .unwrap();
+        host.built.tools.code_mode().search_and_load(name, 1);
+        match scope {
+            SaveScope::Step => checkpoint
+                .0
+                .save(host.built.session.snapshot())
+                .await
+                .unwrap(),
+            SaveScope::Settle => host
+                .persist_turn(&checkpoint, /*assistant_text*/ None)
+                .unwrap(),
+        }
+        host.shutdown().await;
+
+        let (stored, _) =
+            StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id)
+                .unwrap();
+        let snapshot = stored
+            .snapshot_for_resume(provider.identity(), "restored".into())
+            .unwrap();
+        let mut restored = AppToolSet::disabled();
+        restored.code_mode().restore(&snapshot);
+        // A newly connected MCP bundle must not erase restored names.
+        restored.add_bundle(bundle());
+        assert_eq!(
+            restored
+                .specs()
+                .iter()
+                .map(|spec| spec.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![name],
+            "{scope:?}"
+        );
+    }
+}
+
 // Covers: a compaction that rewrites history before or during the turn must
 // not make display copy unrelated rows, even once history grows past the
 // turn's old position; the turn then shows its final reply instead.

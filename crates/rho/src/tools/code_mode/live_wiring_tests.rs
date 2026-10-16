@@ -238,7 +238,7 @@ impl Tool for DiscoveryTool {
 }
 
 // Covers: tool_search hits summarize arguments (required first, optional
-// marked `?`) in text and data alike, describe_tool keeps the complete
+// marked `?`), describe_tool keeps the complete
 // contract, and execution shares the inventory; orchestration is not a
 // sibling and recursive calls fail.
 // Owner: codemode discovery / ToolHost bridge.
@@ -301,10 +301,6 @@ async fn discovery_matches_callable_siblings() {
         "parameters": ["title", "body?", "labels?"],
     }]);
     assert_eq!(discovered.structured_content(), Some(&hits));
-    assert_eq!(
-        serde_json::from_str::<Value>(discovered.content()).unwrap(),
-        hits
-    );
     // A miss keeps empty data but must not read as a bare `[]` to the model,
     // which took that as "MCP server not connected" and gave up.
     let missed = host
@@ -405,7 +401,7 @@ fn discovery_refreshes_live_definitions_without_resync() {
         returns: revised.output_schema,
     };
     assert_eq!(
-        surface.search(&expected.description, 1),
+        surface.search_and_load(&expected.description, 1),
         vec![expected.clone()]
     );
     let fresh = ToolHostBridge::new(surface, context).unwrap();

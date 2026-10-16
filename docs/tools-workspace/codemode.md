@@ -17,7 +17,9 @@ flowchart TD
     Model[Model] --> Codemode[codemode script]
     Model --> Search[tool_search]
     Codemode --> Nested[Nested tool calls]
+    Search --> Direct[Direct calls on next request]
     Nested --> Policy[Same permissions, hooks, approvals]
+    Direct --> Policy
     Policy --> Tools[Native and MCP tools]
 ```
 
@@ -29,18 +31,33 @@ what scripts can call.
 | Tools | `on` (default) | `only` |
 | --- | --- | --- |
 | `codemode`, `tool_search` | declared | declared |
-| Native tools | declared | script-only |
-| MCP tools | script-only | script-only |
+| Native tools | declared | script-only until loaded by `tool_search` |
+| MCP tools | script-only until loaded by `tool_search` | script-only until loaded by `tool_search` |
 
 - `on`: the model can call native tools directly or through a script.
-- `only`: the model reaches every other tool through `codemode`. If the model
-  calls an undeclared tool directly, Rho returns an unavailable-tool error.
+- `only`: other tools are hidden by default, so the model reaches them through
+  `codemode` unless it explicitly loads them with top-level `tool_search`.
+  Calling an undeclared tool directly returns an unavailable-tool error.
 
-Rho never sends MCP tool schemas to the provider. To find a tool, the model
-calls `tool_search`, which returns names, descriptions, and top-level parameter
-names, with optional ones marked `?`. Scripts use `search_tools` or `list_tools`
-for name-and-description summaries. For complete schemas, a script calls
-`describe_tool`. Finding a tool does not add it to the direct list.
+Top-level `tool_search` finds tools and **loads its returned matches for direct
+calls on the next model request**, in either mode. The search result includes a
+loading notice and compact names, descriptions, and top-level parameter names,
+with optional ones marked `?`. Loaded tools' full argument schemas are declared
+on subsequent requests; other tools stay deferred. Wait for search to finish
+before issuing a direct call, rather than batching search and that call together.
+Loading belongs to the selected conversation branch: `/new` starts unloaded,
+and resume/tree navigation restores the destination's saved loadout. Rebuilding
+the runtime for the same conversation does not clear loaded tools.
+
+Use focused queries and small result limits: every returned tool adds its full
+schema to subsequent requests. For broad catalog browsing or large inventories,
+prefer script-side discovery and execution so those schemas stay out of context.
+
+Script-side `search_tools`, `list_tools`, and `describe_tool` are **read-only**:
+they never change the direct tool list. Scripts can discover and call MCP tools
+immediately with `call_tool` or `call_tools`, without loading their direct
+schemas into the model's context. `search_tools` and `list_tools` return compact
+name-and-description summaries; `describe_tool` returns complete schemas.
 
 Set the mode in [configuration](/configuration#codemode) or with
 `/codemode on|only` in the [interactive TUI](/interactive-tui). The command

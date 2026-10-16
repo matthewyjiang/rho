@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
+    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
     SessionOptions, SystemPrompt, Workspace,
@@ -69,7 +69,7 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn
 }
 
 // Covers: modes and descriptions are resolved for every request of ONE live
-// runtime; changing mode must neither rebuild it nor leak MCP schemas.
+// runtime; changing mode must neither rebuild it nor leak unsearched MCP schemas.
 // Owner: app runtime builder + SDK visibility snapshot.
 #[tokio::test]
 async fn codemode_mode_selects_each_live_provider_request() {
@@ -197,4 +197,126 @@ async fn only_mode_routes_natives_through_codemode() {
         ),
         (false, Some("nested".into()))
     );
+}
+
+// Covers: top-level search loads only returned MCP hits for direct calls on
+// the next request, while script discovery and execution leave them deferred.
+// Owner: app discovery + provider advertisement + SDK dispatch.
+#[tokio::test]
+async fn tool_search_loads_mcp_hits_for_direct_calls() {
+    use crate::tools::mcp::exported_name::namespaced_tool_name;
+
+    for mode in [CodemodeMode::On, CodemodeMode::Only] {
+        let config = Config::default();
+        let mut tools = AppToolSet::new(
+            &config,
+            RuntimeDiagnostics::new(&config),
+            ToolSetOptions::default(),
+        );
+        tools.code_mode().set_mode(mode);
+        let found = namespaced_tool_name("t3-code", "unwatch_pull_request");
+        let deferred = namespaced_tool_name("t3-code", "watch_pull_request");
+        let parameters = json!({
+            "type": "object",
+            "properties": {"threadId": {"type": "string"}},
+            "required": ["threadId"],
+            "additionalProperties": false,
+        });
+        tools.add_bundle(StaticToolBundle::new(
+            [&found, &deferred]
+                .into_iter()
+                .map(|name| {
+                    Arc::new(ScriptedTool::new(
+                        ToolSpec {
+                            name: name.clone(),
+                            description: "fixture t3-code MCP tool".into(),
+                            input_schema: parameters.clone(),
+                        },
+                        ScriptedToolOutcome::Success(ToolOutput::text("called")),
+                    )) as Arc<dyn rho_sdk::tool::Tool>
+                })
+                .collect(),
+        ));
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "test"),
+            [
+                tool_call(
+                    "nested",
+                    CODEMODE_TOOL_NAME,
+                    json!({"script": r#"list_tools()
+hit = search_tools("unwatch_pull_request")[0]
+describe_tool(hit["name"])
+result = call_tool(hit["name"], {"threadId": "thread"})"#}),
+                ),
+                tool_call("before_search", &found, json!({"threadId": "thread"})),
+                tool_call(
+                    "search",
+                    TOOL_SEARCH_NAME,
+                    // Both tools match t3-code; only the returned hit is loaded.
+                    json!({"query": "t3-code unwatch_pull_request", "limit": 1}),
+                ),
+                ScriptedTurn::completed(ModelResponse::Assistant(
+                    [("after_search", &found), ("unsearched", &deferred)]
+                        .into_iter()
+                        .map(|(id, name)| {
+                            ContentBlock::ToolCall(ToolCall {
+                                id: id.into(),
+                                name: name.clone(),
+                                arguments: json!({"threadId": "thread"}),
+                            })
+                        })
+                        .collect(),
+                )),
+                text_turn(),
+            ],
+        );
+        let runtime = runtime_for(
+            &config,
+            &tools,
+            &provider,
+            Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+        );
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("stop watching").await.unwrap();
+
+        assert_eq!(
+            session
+                .history()
+                .into_iter()
+                .filter_map(|message| match message {
+                    Message::ToolResult(result) => Some((result.id, result.ok)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                ("nested".into(), true),
+                ("before_search".into(), false),
+                ("search".into(), true),
+                ("after_search".into(), true),
+                ("unsearched".into(), false),
+            ],
+            "mode: {mode:?}"
+        );
+        let mut expected = tools.tool_named(&found).unwrap().spec();
+        if let Some(description) = tools.tool_visibility().describe(&expected) {
+            expected.description = description;
+        }
+        for (index, request) in provider.recorded_requests().iter().enumerate() {
+            let mcp_specs: Vec<_> = request
+                .tools
+                .iter()
+                .filter(|spec| spec.name.starts_with("mcp__"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                mcp_specs,
+                if index >= 3 {
+                    vec![expected.clone()]
+                } else {
+                    vec![]
+                },
+                "mode: {mode:?}, request: {index}"
+            );
+        }
+    }
 }

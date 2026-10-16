@@ -85,6 +85,7 @@ where
         diagnostics,
         recall,
         todo: Some(tools.todo_state()),
+        code_mode: Some(tools.code_mode().clone()),
     });
     let mut builder = Rho::builder()
         .provider_shared(provider)
@@ -144,6 +145,8 @@ pub(crate) struct CompactionSetup {
     pub(crate) recall: Option<RecallStore>,
     /// Host-owned exact checklist, shared with nested tool execution.
     pub(crate) todo: Option<crate::tools::todo::TodoState>,
+    /// Branch-local direct tool loadout, retained at compaction boundaries.
+    pub(crate) code_mode: Option<Arc<crate::tools::code_mode::CodeModeSurface>>,
 }
 
 pub(crate) fn build_compaction(
@@ -159,6 +162,7 @@ pub(crate) fn build_compaction(
         diagnostics,
         recall,
         todo,
+        code_mode,
     } = setup;
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
@@ -172,6 +176,7 @@ pub(crate) fn build_compaction(
         diagnostics,
         recall,
         todo,
+        code_mode,
     };
     (compactor, policy)
 }
