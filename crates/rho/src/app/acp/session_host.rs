@@ -587,7 +587,7 @@ impl SessionHost {
             &self.built.session,
             crate::app::headless_delegation::BackgroundSources::of(&self.built.tools),
             Some(&self.stored),
-            self.held_notices.take(),
+            &mut self.held_notices,
         )?;
         let displays = delegation.offered_displays();
         // Children outlive a cancelled, failed, or step-limited prompt, as they

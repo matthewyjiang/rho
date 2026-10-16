@@ -79,19 +79,20 @@ impl<'a> BackgroundSources<'a> {
 }
 
 impl HeadlessDelegation {
-    /// Installs boundary delivery for one prompt on an idle session. `held`
-    /// resumes the previous prompt's notice binding; without it the prompt
-    /// binds afresh, retiring any earlier binding.
+    /// Installs boundary delivery for one prompt on an idle session. A binding
+    /// in `held` resumes the previous prompt's notices; without one the prompt
+    /// binds afresh, retiring any earlier binding. `held` is taken only once
+    /// attach succeeds, so a failed attach keeps it for the next prompt.
     pub(crate) fn attach(
         session: &Session,
         sources: BackgroundSources<'_>,
         storage: Option<&crate::session::Session>,
-        held: Option<HeldNotices>,
+        held: &mut Option<HeldNotices>,
     ) -> Result<Self, rho_sdk::Error> {
         let (source, requests) = rho_sdk::boundary_input_channel();
         session.set_boundary_inputs(Some(source))?;
         let session_id = session.id().to_string();
-        let mut held = held.map(|HeldNotices(delivery)| delivery);
+        let mut held = held.take().map(|HeldNotices(delivery)| delivery);
         let subagents = sources.subagents.map(|manager| {
             manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
                 session_id.clone(),

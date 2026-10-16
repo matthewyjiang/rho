@@ -86,7 +86,7 @@ impl Fixture {
                 workflows: &workflows,
             },
             None,
-            /*held*/ None,
+            /*held*/ &mut None,
         )
         .unwrap();
         let (status, status_rx) = tokio::sync::watch::channel(RunStatus {
@@ -505,4 +505,38 @@ async fn action_request_wakes_parent_and_includes_earlier_notices() {
         fixture.run.outcome().await,
         Err(rho_sdk::Error::Cancelled)
     ));
+}
+
+// Covers: a failed attach must leave the held notice binding with the caller,
+// or the ACP host would drop child notices it promised to deliver later.
+// Owner: shared CLI/ACP notice binding handoff.
+#[tokio::test]
+async fn failed_attach_keeps_held_notices() {
+    let Fixture {
+        session,
+        manager,
+        processes,
+        workflows,
+        host,
+        mut run,
+        ..
+    } = Fixture::new().await;
+    let mut held = host.hold_notices();
+    assert!(held.is_some());
+    // The fixture's run is still active, so installing boundary inputs fails.
+    let attached = HeadlessDelegation::attach(
+        &session,
+        BackgroundSources {
+            subagents: Some(&manager),
+            processes: Some(&processes),
+            workflows: &workflows,
+        },
+        None,
+        &mut held,
+    );
+    assert!(attached.is_err());
+    assert!(held.is_some());
+    run.cancel();
+    while run.next_event().await.is_some() {}
+    let _ = run.outcome().await;
 }
