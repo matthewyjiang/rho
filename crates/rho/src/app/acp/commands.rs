@@ -8,6 +8,9 @@
 //! turn), fresh-session agent binding (`/agent:<name> <task>`), and `$skill`
 //! mentions (see [`super::skills`]). Other prompts,
 //! including unknown `/text`, reach the model unchanged.
+//!
+//! `/rho-wake <token>` runs a T3 wake watcher (see [`super::t3_wake`]). It is
+//! never advertised: only the host delegates it.
 
 use std::path::Path;
 
@@ -19,7 +22,10 @@ use rho_sdk::{
     UserInput,
 };
 
-use super::skills;
+use super::{
+    skills,
+    t3_wake::{WakeSignal, WAKE_COMMAND},
+};
 use crate::{
     agent::{AgentCatalog, AgentRuntimeSpec},
     app::workflow_cli::discover::{self as workflows, StartCommand},
@@ -62,6 +68,8 @@ pub(super) enum PromptAction {
     StartWorkflow(StartCommand),
     /// `/agent:<name>`: bind a fresh session before running the task.
     RunAsAgent { agent_id: String, input: UserInput },
+    /// `/rho-wake <token>`: wait for a parent's wake signal, without a model turn.
+    AwaitWake(WakeSignal),
 }
 
 /// A recognized command that cannot run, such as a TUI-only command or an
@@ -141,6 +149,14 @@ pub(super) async fn resolve(
     let Some(text) = leading_text(&input) else {
         return Ok(turn(input, &[], scope));
     };
+    if let Some(token) = text
+        .strip_prefix(WAKE_COMMAND)
+        .and_then(|rest| rest.starts_with(char::is_whitespace).then_some(rest))
+    {
+        return WakeSignal::parse(token)
+            .map(PromptAction::AwaitWake)
+            .ok_or_else(|| CommandRejected(format!("usage: {WAKE_COMMAND} <token>")));
+    }
     // Delegated briefs span paragraphs, and the shared parser declines any
     // multiline text, so `/agent:` is matched here with the whole remainder
     // as its task.

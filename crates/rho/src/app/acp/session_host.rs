@@ -27,7 +27,8 @@ use super::{
     events::EventMapper,
     fast_mode, permission,
     signals::SessionSignals,
-    thought_level, AcpClientPort, AcpStartup,
+    t3_wake::T3Wake,
+    thought_level, AcpClientPort, AcpHost, AcpStartup,
 };
 use crate::{
     app::{
@@ -66,6 +67,8 @@ mod persist;
 mod pump;
 #[path = "session_host_title.rs"]
 mod title;
+#[path = "session_host_wake.rs"]
+mod wake;
 #[path = "session_host_workflow.rs"]
 mod workflow;
 
@@ -107,6 +110,9 @@ pub(super) struct SessionHost {
     load_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<crate::app::headless_delegation::HeldNotices>,
+    /// T3 Code's wake watcher (`--t3code`): background work that outlives a
+    /// prompt wakes the idle thread instead of holding the prompt open.
+    t3_wake: Option<T3Wake>,
 }
 
 /// Carries cancellation for the session's current prompt. The agent already
@@ -240,6 +246,7 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
+        let watcher_note = self.wake_prompt_started(&input);
         let _ = self
             .herdr
             .report_state(
@@ -272,7 +279,13 @@ impl SessionHost {
             Some(Ok(PromptAction::Turn {
                 input: model,
                 calls,
-            })) => self.run_turn(&input, model, calls, client).await,
+            })) => {
+                let model = match watcher_note {
+                    Some(note) => append_text(model, note),
+                    None => model,
+                };
+                self.run_turn(&input, model, calls, client).await
+            }
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.compact(instructions, client).await
             }
@@ -287,8 +300,16 @@ impl SessionHost {
                 self.run_as_agent(&input, &agent_id, task, startup, client)
                     .await
             }
+            Some(Ok(PromptAction::AwaitWake(signal))) => {
+                self.await_wake(signal, &starting, client).await
+            }
             Some(Err(rejected)) => Err(rejected.into()),
         };
+        self.wake_prompt_ended(
+            result.as_ref().ok().map(|response| response.stop_reason),
+            client,
+        )
+        .await;
         let completed = result.as_ref().is_ok_and(|response| {
             response.stop_reason == agent_client_protocol::schema::v1::StopReason::EndTurn
         });
@@ -519,6 +540,16 @@ impl SessionHost {
             sent_plan: Vec::new(),
             load_notice: None,
             held_notices: None,
+            t3_wake: match startup.host {
+                AcpHost::Generic => None,
+                AcpHost::T3Code => match super::t3_wake::signal_dir() {
+                    Ok(dir) => Some(T3Wake::new(dir)),
+                    Err(error) => {
+                        tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
+                        None
+                    }
+                },
+            },
         }
     }
 
@@ -539,6 +570,10 @@ impl SessionHost {
             Some(&stored),
             &mut self.held_notices,
         )?;
+        if self.t3_wake.is_some() {
+            delegation
+                .set_background_wait(crate::app::headless_delegation::BackgroundWait::HostWakes);
+        }
         let displays = delegation.offered_displays();
         // Children outlive a cancelled, failed, or step-limited prompt, as they
         // do across TUI turns: T3 Code cancels the open prompt to send each
@@ -791,6 +826,13 @@ fn split_assembly(
             workspace_root,
         },
     )
+}
+
+/// `input` with `text` as a final block.
+fn append_text(input: UserInput, text: &str) -> UserInput {
+    let mut blocks = input.blocks().to_vec();
+    blocks.push(rho_sdk::model::ContentBlock::Text(text.to_owned()));
+    UserInput::content(blocks).expect("adding a text block keeps the input valid")
 }
 
 async fn send_notification(

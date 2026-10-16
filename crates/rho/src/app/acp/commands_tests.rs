@@ -126,6 +126,7 @@ enum Resolved {
         id: String,
         input: UserInput,
     },
+    Wake(String),
     Rejected,
 }
 
@@ -153,6 +154,7 @@ async fn resolved(text: &str, scope: &CommandScope<'_>) -> Resolved {
             id: agent_id,
             input,
         },
+        Ok(PromptAction::AwaitWake(signal)) => Resolved::Wake(signal.token().to_owned()),
         Err(_) => Resolved::Rejected,
     }
 }
@@ -290,6 +292,21 @@ async fn resolve_routes_prompts_to_commands() {
             "path-like text passes through",
             "/usr/bin/env is odd",
             turn("/usr/bin/env is odd", &[]),
+        ),
+        (
+            "wake watcher",
+            "/rho-wake 0F4E2C3A-9B1D-4E5F-8A7B-6C5D4E3F2A1B",
+            Resolved::Wake("0f4e2c3a-9b1d-4e5f-8a7b-6c5d4e3f2a1b".into()),
+        ),
+        (
+            "wake token that could name a path",
+            "/rho-wake ../config.toml",
+            Resolved::Rejected,
+        ),
+        (
+            "wake prefix of a longer word",
+            "/rho-wakeup now",
+            turn("/rho-wakeup now", &[]),
         ),
     ];
 

@@ -15,6 +15,11 @@
 //! In-process ACP children also outlive a cancelled prompt, so the ACP host
 //! keeps their notice binding between prompts with
 //! [`HeadlessDelegation::hold_notices`]. `rho run` drops it with the run.
+//!
+//! A host that can wake its idle session itself, such as T3 Code (see
+//! `acp::t3_wake`), sets [`BackgroundWait::HostWakes`]: running workflows and
+//! processes then never hold natural completion, and finished ones still
+//! deliver at every boundary.
 
 use std::time::Instant;
 
@@ -44,8 +49,18 @@ pub(crate) struct HeadlessDelegation {
     /// Workflows and processes started from here on hold natural completion;
     /// older ones only deliver.
     prompt_started: Instant,
+    background_wait: BackgroundWait,
     /// Display rows for each delivery offered to the runtime, when a host asked.
     displays: Option<mpsc::UnboundedSender<(UserInput, DisplayTranscript)>>,
+}
+
+/// Whether running workflows and processes hold a prompt's natural completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BackgroundWait {
+    /// The prompt waits for the work it started, standing in for an idle wake.
+    HoldPrompt,
+    /// The host wakes the idle session when the work finishes.
+    HostWakes,
 }
 
 /// The parent's subagent notice binding for one headless prompt.
@@ -117,8 +132,13 @@ impl HeadlessDelegation {
             processes: sources.processes.cloned(),
             workflows,
             prompt_started: Instant::now(),
+            background_wait: BackgroundWait::HoldPrompt,
             displays: None,
         })
+    }
+
+    pub(crate) fn set_background_wait(&mut self, wait: BackgroundWait) {
+        self.background_wait = wait;
     }
 
     /// Display rows for every delivery offered from now on. The host claims
@@ -281,18 +301,27 @@ impl HeadlessDelegation {
 
     /// Work whose result could still arrive and should hold natural completion.
     fn has_outstanding_work(&self) -> bool {
-        self.subagents.as_ref().is_some_and(|subagents| {
+        let subagents = self.subagents.as_ref().is_some_and(|subagents| {
             subagents
                 .manager
                 .has_active_or_pending_notification(&self.session_id)
-        }) || self.workflows.has_pending_notification(&self.session_id)
+        });
+        let finished = self.workflows.has_pending_notification(&self.session_id)
             || self
-                .workflows
-                .has_live_started_since(&self.session_id, self.prompt_started)
-            || self.processes.as_ref().is_some_and(|processes| {
-                processes.has_pending_notification()
-                    || processes.has_live_started_since(self.prompt_started)
-            })
+                .processes
+                .as_ref()
+                .is_some_and(ProcessManager::has_pending_notification);
+        let running = match self.background_wait {
+            BackgroundWait::HoldPrompt => {
+                self.workflows
+                    .has_live_started_since(&self.session_id, self.prompt_started)
+                    || self.processes.as_ref().is_some_and(|processes| {
+                        processes.has_live_started_since(self.prompt_started)
+                    })
+            }
+            BackgroundWait::HostWakes => false,
+        };
+        subagents || finished || running
     }
 }
 
