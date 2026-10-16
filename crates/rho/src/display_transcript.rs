@@ -53,21 +53,39 @@ impl DisplayTranscript {
             .iter()
             .map(|row| match row {
                 DisplayRow::Notification(card) => {
-                    let subtitle = card.subtitle.clone().unwrap_or_else(|| {
-                        let reference = card
-                            .reference
-                            .as_deref()
-                            .map(|id| format!(" · {id}"))
-                            .unwrap_or_default();
-                        format!("{} → {}{reference}", card.sender, card.recipient)
-                    });
-                    format!("{}\n{subtitle}\n{}", card.title, card.body)
+                    format!("{}\n{}\n{}", card.title, subtitle(card), card.body)
                 }
                 DisplayRow::Notice(text) => text.clone(),
             })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+}
+
+impl DisplayRow {
+    /// Title and body for hosts that show each row as its own titled card.
+    /// A notice is titled by its first line.
+    pub(crate) fn card_text(&self) -> (&str, String) {
+        match self {
+            Self::Notification(card) => (&card.title, format!("{}\n{}", subtitle(card), card.body)),
+            Self::Notice(text) => match text.split_once('\n') {
+                Some((title, rest)) => (title, rest.to_string()),
+                None => (text, String::new()),
+            },
+        }
+    }
+}
+
+/// The card's subtitle, or its routing line when it has none.
+fn subtitle(card: &NotificationCard) -> String {
+    card.subtitle.clone().unwrap_or_else(|| {
+        let reference = card
+            .reference
+            .as_deref()
+            .map(|id| format!(" · {id}"))
+            .unwrap_or_default();
+        format!("{} → {}{reference}", card.sender, card.recipient)
+    })
 }
 
 #[cfg(test)]

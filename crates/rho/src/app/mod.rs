@@ -8,6 +8,7 @@ pub(crate) mod agent_executor;
 mod automation;
 pub(crate) mod automation_protocol;
 mod bootstrap;
+pub(crate) mod boundary_results;
 mod classifier_eval;
 mod cli_config;
 mod compaction_eval;

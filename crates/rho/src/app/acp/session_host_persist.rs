@@ -61,6 +61,15 @@ impl SessionHost {
             .save_snapshot(&self.durable_snapshot(), &display_tail)
     }
 
+    /// Saves what a failed turn already showed, such as background results
+    /// delivered before the failure. The turn's own error is the one to
+    /// report, so a failed save is only logged.
+    pub(super) fn persist_failed_turn(&self, checkpoint: &TurnCheckpoint) {
+        if let Err(error) = self.persist_turn(checkpoint, /*assistant_text*/ None) {
+            tracing::warn!(%error, "could not save failed ACP turn");
+        }
+    }
+
     /// A replaced host must not write over its successor's session file.
     pub(super) fn is_replaced(&self) -> bool {
         self.replaced.load(Ordering::Acquire)
@@ -92,6 +101,13 @@ fn decorate(
 /// [`SessionHost::install_turn_checkpoint`].
 pub(super) struct TurnCheckpoint(Arc<CheckpointStore>);
 
+impl TurnCheckpoint {
+    /// Queues a display row for the next save, after the rows already queued.
+    pub(super) fn record_display(&self, message: Message) {
+        self.0.lock_display().push(message);
+    }
+}
+
 struct CheckpointStore {
     stored: StoredSession,
     todo: TodoState,
@@ -99,7 +115,7 @@ struct CheckpointStore {
     added_dirs: AddedDirs,
     replaced: Arc<AtomicBool>,
     /// Display rows no save has written yet: the user's message until the
-    /// first checkpoint lands.
+    /// first checkpoint lands, then any background results shown since.
     unsaved_display: Mutex<Vec<Message>>,
 }
 

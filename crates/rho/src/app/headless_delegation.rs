@@ -7,7 +7,9 @@
 //! not wait for them. The wait stays inside the original run, so cancellation
 //! and the SDK step budget still govern parent continuations.
 //! Host-orchestrated ACP children are not registered here: they outlive the
-//! parent prompt and complete through the host's next prompt instead.
+//! parent prompt and complete through the host's next prompt instead. Hosts
+//! that show a transcript take [`HeadlessDelegation::offered_displays`] to
+//! render what the model was given.
 
 use std::time::Instant;
 
@@ -15,13 +17,17 @@ use rho_sdk::{BoundaryInputRequest, InputBoundary, Session, UserInput};
 use tokio::sync::mpsc;
 
 use super::{
+    boundary_results::BoundaryResults,
     subagent_manager::{SubagentManager, SubagentNotification},
     subagent_messaging::{NoticePermits, SubagentNotice},
 };
-use crate::tools::{
-    process::{ProcessManager, ProcessNotification},
-    sdk_registry::AppToolSet,
-    workflow_tracker::{WorkflowNotification, WorkflowRunTracker},
+use crate::{
+    display_transcript::DisplayTranscript,
+    tools::{
+        process::{ProcessManager, ProcessNotification},
+        sdk_registry::AppToolSet,
+        workflow_tracker::{WorkflowNotification, WorkflowRunTracker},
+    },
 };
 
 pub(crate) struct HeadlessDelegation {
@@ -33,6 +39,8 @@ pub(crate) struct HeadlessDelegation {
     /// Workflows and processes started from here on hold natural completion;
     /// older ones only deliver.
     prompt_started: Instant,
+    /// Display rows for each delivery offered to the runtime, when a host asked.
+    displays: Option<mpsc::UnboundedSender<(UserInput, DisplayTranscript)>>,
 }
 
 /// The parent's subagent notice binding for one headless prompt.
@@ -93,7 +101,16 @@ impl HeadlessDelegation {
             processes: sources.processes.cloned(),
             workflows,
             prompt_started: Instant::now(),
+            displays: None,
         })
+    }
+
+    /// Display rows for every delivery offered from now on. The host claims
+    /// them as the run reports each input applied.
+    pub(crate) fn offered_displays(&mut self) -> OfferedDisplays {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.displays = Some(sender);
+        OfferedDisplays { receiver }
     }
 
     pub(crate) async fn drive<T>(host: &mut Self, run: impl std::future::Future<Output = T>) -> T {
@@ -139,7 +156,15 @@ impl HeadlessDelegation {
                     || boundary == InputBoundary::BeforeProvider
                     || !self.has_outstanding_work()
                 {
-                    let input = self.prompt(&batch).map(UserInput::text);
+                    let input = self.render(&batch).map(|(model, display)| {
+                        let input = UserInput::text(model);
+                        if let Some(sink) = &self.displays {
+                            // Queued before the reply, so its rows wait for
+                            // the applied event. A closed host shows nothing.
+                            let _ = sink.send((input.clone(), display));
+                        }
+                        input
+                    });
                     break (request.respond(input), batch);
                 }
             }
@@ -216,31 +241,20 @@ impl HeadlessDelegation {
         }
     }
 
-    /// Model input for a batch, in the TUI's turn-boundary order.
-    fn prompt(&self, batch: &DeliveryReservation) -> Option<String> {
-        let mut sections = Vec::new();
-        if let Some(subagents) = self.subagents.as_ref().filter(|s| !s.pending.is_empty()) {
-            sections.push(format!(
-                "Earlier child messages in send order. Any terminal result below supersedes that child's planning and progress; preserve substantive findings.\n\n{}",
-                super::subagent_messaging::notice_prompt(&subagents.pending),
-            ));
+    /// Model input and display rows for a batch, rendered as the TUI renders them.
+    fn render(&self, batch: &DeliveryReservation) -> Option<(String, DisplayTranscript)> {
+        BoundaryResults {
+            notices: self
+                .subagents
+                .as_ref()
+                .map(|subagents| subagents.pending.as_slice())
+                .unwrap_or_default(),
+            subagents: &batch.subagent_results,
+            workflows: &batch.workflow_results,
+            processes: &batch.process_results,
         }
-        if !batch.subagent_results.is_empty() {
-            sections.push(crate::tools::agent::notification_prompt(
-                &batch.subagent_results,
-            ));
-        }
-        if !batch.workflow_results.is_empty() {
-            let (model, _display) =
-                crate::tools::workflow_tracker::notification_prompts(&batch.workflow_results);
-            sections.push(model);
-        }
-        if !batch.process_results.is_empty() {
-            sections.push(crate::tools::process::notification_prompt(
-                &batch.process_results,
-            ));
-        }
-        (!sections.is_empty()).then(|| sections.join("\n\n"))
+        .render(self.subagents.as_ref().map(|subagents| &subagents.manager))
+        .finish()
     }
 
     /// Work whose result could still arrive and should hold natural completion.
@@ -257,6 +271,27 @@ impl HeadlessDelegation {
                 processes.has_pending_notification()
                     || processes.has_live_started_since(self.prompt_started)
             })
+    }
+}
+
+/// Display rows for deliveries offered to the runtime. Each waits for the
+/// [`rho_sdk::RunEvent::BoundaryInputApplied`] that confirms it, so a host
+/// shows a result exactly where it entered the run and never shows one the
+/// runtime rejected.
+pub(crate) struct OfferedDisplays {
+    receiver: mpsc::UnboundedReceiver<(UserInput, DisplayTranscript)>,
+}
+
+impl OfferedDisplays {
+    /// Rows for the `input` a run applied. A rejected offer can only precede
+    /// it, so older offers that do not match are discarded.
+    pub(crate) fn applied(&mut self, input: &UserInput) -> Option<DisplayTranscript> {
+        while let Ok((offered, display)) = self.receiver.try_recv() {
+            if offered == *input {
+                return Some(display);
+            }
+        }
+        None
     }
 }
 

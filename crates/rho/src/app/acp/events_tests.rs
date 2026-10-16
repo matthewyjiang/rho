@@ -310,3 +310,75 @@ fn tool_updated_is_in_progress() {
         other => panic!("expected ToolCallUpdate, got {other:?}"),
     }
 }
+
+// Covers: background results the model was given must replay as finished tool
+// cards, failed when the result failed, not as agent text merged into replies
+// Owner: acp event mapper
+#[test]
+fn replayed_display_rows_become_finished_tool_cards() {
+    use crate::{
+        display_transcript::{DisplayRow, DisplayTranscript},
+        presentation::{
+            NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+            NotificationVisibility,
+        },
+    };
+
+    let failed = NotificationCard {
+        title: "Failed (exit 1) · cargo test".into(),
+        sender: "process".into(),
+        recipient: "parent".into(),
+        delivery: NotificationDelivery::Received,
+        tone: NotificationTone::Error,
+        preview: NotificationPreview::Truncated,
+        visibility: NotificationVisibility::Conversation,
+        reference: Some("p1".into()),
+        subtitle: Some("ran 3s".into()),
+        body: "1 test failed".into(),
+        details: Vec::new(),
+    };
+    let transcript = DisplayTranscript(vec![
+        DisplayRow::Notification(Box::new(failed)),
+        DisplayRow::Notice("workflow wf (fixture) finished - success".into()),
+    ]);
+    let cards = EventMapper::replay_history(&session_id(), &[transcript.display_message()])
+        .into_iter()
+        .map(|notification| match notification.update {
+            SessionUpdate::ToolCall(call) => (
+                call.title,
+                call.kind,
+                call.status,
+                call.content
+                    .iter()
+                    .map(|content| match content {
+                        agent_client_protocol::schema::v1::ToolCallContent::Content(block) => {
+                            text_of(&block.content).to_owned()
+                        }
+                        other => panic!("expected text content, got {other:?}"),
+                    })
+                    .collect::<Vec<_>>(),
+                notification.meta.is_some(),
+            ),
+            other => panic!("expected ToolCall, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        cards,
+        vec![
+            (
+                "Failed (exit 1) · cargo test".to_owned(),
+                ToolKind::Other,
+                ToolCallStatus::Failed,
+                vec!["ran 3s\n1 test failed".to_owned()],
+                true,
+            ),
+            (
+                "workflow wf (fixture) finished - success".to_owned(),
+                ToolKind::Other,
+                ToolCallStatus::Completed,
+                Vec::new(),
+                true,
+            ),
+        ]
+    );
+}

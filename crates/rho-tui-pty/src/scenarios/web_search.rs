@@ -73,6 +73,12 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
         },
         Step::Phase("reopen_persisted_endpoint"),
         Step::Key(Key::Esc),
+        // The Firecrawl page still on screen also names the base URL, so wait
+        // for Esc to land on the main list before reopening the page.
+        Step::WaitTextGone {
+            text: "Firecrawl API base URL",
+            timeout: SETTLE,
+        },
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Firecrawl API base URL",

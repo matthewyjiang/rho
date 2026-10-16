@@ -1,22 +1,17 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, AtomicU64},
-        Arc, Mutex,
-    },
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64},
+    Arc, Mutex,
 };
 
 use agent_client_protocol::{
     schema::v1::{
         AvailableCommandsUpdate, LoadSessionRequest, LoadSessionResponse, McpServer,
-        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
-        RequestPermissionOutcome, SessionConfigOption, SessionId, SessionNotification,
-        SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionConfigOption,
+        SessionId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+        SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
-use futures_util::stream::{FuturesUnordered, StreamExt};
 use rho_providers::{
     credentials::available_auth_modes,
     model::{
@@ -26,8 +21,7 @@ use rho_providers::{
     provider::model_reference,
 };
 use rho_sdk::{
-    model::Message, ApprovalRequestReceiver, CancellationToken, PendingApproval, RunEvent,
-    SessionOptions, UserInput,
+    model::Message, ApprovalRequestReceiver, CancellationToken, SessionOptions, UserInput,
 };
 
 use super::{
@@ -45,6 +39,7 @@ use crate::{
             apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
             SwitchNotice,
         },
+        headless_delegation::OfferedDisplays,
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
         session_assembly::BuiltSession,
     },
@@ -68,6 +63,8 @@ mod convert;
 mod mode;
 #[path = "session_host_persist.rs"]
 mod persist;
+#[path = "session_host_pump.rs"]
+mod pump;
 #[path = "session_host_workflow.rs"]
 mod workflow;
 
@@ -75,6 +72,7 @@ use build::{build_session, mode_state, session_config};
 use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
 use mode::SessionPermission;
 use persist::TurnCheckpoint;
+use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
@@ -587,9 +585,10 @@ impl SessionHost {
             crate::app::headless_delegation::BackgroundSources::of(&self.built.tools),
             Some(&self.stored),
         )?;
+        let displays = delegation.offered_displays();
         let result = crate::app::headless_delegation::HeadlessDelegation::drive(
             &mut delegation,
-            self.drive_prompt(display, model, calls, client),
+            self.drive_prompt(display, model, calls, displays, client),
         )
         .await;
         if let Some(manager) = self.built.tools.subagents() {
@@ -608,6 +607,7 @@ impl SessionHost {
         display: &UserInput,
         model: UserInput,
         calls: Vec<rho_sdk::model::ToolCall>,
+        displays: OfferedDisplays,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         if let Some(notice) = self.load_notice.take() {
@@ -617,7 +617,9 @@ impl SessionHost {
             }
         }
         let checkpoint = self.install_turn_checkpoint(display)?;
-        let result = self.drive_run(&checkpoint, model, calls, client).await;
+        let result = self
+            .drive_run(&checkpoint, model, calls, displays, client)
+            .await;
         // The run is over, so the session is idle again.
         if let Err(error) = self.built.session.set_checkpoint_store(None) {
             tracing::warn!(%error, "could not remove ACP turn checkpoint store");
@@ -630,6 +632,7 @@ impl SessionHost {
         checkpoint: &TurnCheckpoint,
         model: UserInput,
         calls: Vec<rho_sdk::model::ToolCall>,
+        displays: OfferedDisplays,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         let started = if calls.is_empty() {
@@ -656,12 +659,17 @@ impl SessionHost {
                 &mut signals,
                 client,
                 approval_receiver.as_mut(),
+                AppliedDisplays {
+                    offered: displays,
+                    checkpoint,
+                },
             )
             .await;
         self.built.approval_receiver = approval_receiver;
         if let Err(error) = pump_result {
             run.cancel();
             let _ = run.outcome().await;
+            self.persist_failed_turn(checkpoint);
             self.dispatch_failed(&error.to_string());
             return Err(error);
         }
@@ -692,6 +700,7 @@ impl SessionHost {
                 ))
             }
             Err(error) => {
+                self.persist_failed_turn(checkpoint);
                 self.dispatch_failed(&error.to_string());
                 Err(error.into())
             }
@@ -705,6 +714,7 @@ impl SessionHost {
         signals: &mut SessionSignals,
         client: &dyn AcpClientPort,
         approval_receiver: Option<&mut ApprovalRequestReceiver>,
+        displays: AppliedDisplays<'_>,
     ) -> anyhow::Result<()> {
         let approvals_open = approval_receiver.is_some();
         pump_sources(PumpSources {
@@ -717,6 +727,7 @@ impl SessionHost {
             events: &mut EventSource::Run(run),
             approvals: &mut ApprovalSource::Receiver(approval_receiver),
             approvals_open,
+            displays: Some(displays),
         })
         .await
     }
@@ -849,139 +860,6 @@ async fn send_notification(
         .send_session_notification(notification)
         .await
         .map_err(|error| anyhow::Error::msg(error.to_string()))
-}
-
-enum EventSource<'a> {
-    Run(&'a mut rho_sdk::Run),
-    #[cfg(test)]
-    Channel(&'a mut tokio::sync::mpsc::UnboundedReceiver<RunEvent>),
-}
-
-impl EventSource<'_> {
-    async fn next(&mut self) -> Option<RunEvent> {
-        match self {
-            Self::Run(run) => run.next_event().await,
-            #[cfg(test)]
-            Self::Channel(events) => events.recv().await,
-        }
-    }
-
-    fn cancel_run(&mut self) {
-        match self {
-            Self::Run(run) => run.cancel(),
-            #[cfg(test)]
-            Self::Channel(_) => {}
-        }
-    }
-}
-
-enum ApprovalSource<'a> {
-    Receiver(Option<&'a mut ApprovalRequestReceiver>),
-    #[cfg(test)]
-    Channel(&'a mut tokio::sync::mpsc::UnboundedReceiver<PendingApproval>),
-}
-
-impl ApprovalSource<'_> {
-    async fn next(&mut self) -> Option<PendingApproval> {
-        match self {
-            Self::Receiver(None) => std::future::pending().await,
-            Self::Receiver(Some(receiver)) => receiver.recv().await,
-            #[cfg(test)]
-            Self::Channel(approvals) => approvals.recv().await,
-        }
-    }
-}
-
-struct PumpSources<'a> {
-    session_id: &'a SessionId,
-    cancel: CancellationToken,
-    mapper: &'a mut EventMapper,
-    /// Session state mirrored alongside events; tests that only exercise the
-    /// event and approval plumbing pass `None`.
-    signals: Option<&'a mut SessionSignals>,
-    client: &'a dyn AcpClientPort,
-    placeholders: &'a AtomicU64,
-    events: &'a mut EventSource<'a>,
-    approvals: &'a mut ApprovalSource<'a>,
-    approvals_open: bool,
-}
-
-async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()> {
-    let PumpSources {
-        session_id,
-        cancel,
-        mapper,
-        mut signals,
-        client,
-        placeholders,
-        events,
-        approvals,
-        mut approvals_open,
-    } = sources;
-    let mut run_cancelled = cancel.is_cancelled();
-    let mut inflight: FuturesUnordered<Pin<Box<dyn Future<Output = ()> + Send + '_>>> =
-        FuturesUnordered::new();
-    loop {
-        tokio::select! {
-            biased;
-
-            _ = cancel.cancelled(), if !run_cancelled => {
-                events.cancel_run();
-                run_cancelled = true;
-            }
-
-            event = events.next() => {
-                let Some(event) = event else {
-                    while inflight.next().await.is_some() {}
-                    return Ok(());
-                };
-                if let Some(notification) = mapper.map_event(session_id, &event) {
-                    send_notification(client, notification).await?;
-                }
-                let signal = signals.as_deref_mut().and_then(|signals| signals.observe(&event));
-                if let Some(update) = signal {
-                    let notification = SessionNotification::new(session_id.clone(), update);
-                    send_notification(client, notification).await?;
-                }
-            }
-
-            pending = approvals.next(), if approvals_open => {
-                let Some(pending) = pending else {
-                    approvals_open = false;
-                    continue;
-                };
-                inflight.push(Box::pin(answer_approval(
-                    session_id.clone(),
-                    pending,
-                    client,
-                    cancel.clone(),
-                    placeholders,
-                )));
-            }
-
-            Some(()) = inflight.next(), if !inflight.is_empty() => {}
-        }
-    }
-}
-
-async fn answer_approval(
-    session_id: SessionId,
-    mut pending: PendingApproval,
-    client: &dyn AcpClientPort,
-    cancel: CancellationToken,
-    placeholders: &AtomicU64,
-) {
-    let placeholder = permission::next_placeholder_tool_call_id(placeholders);
-    let request = permission::permission_request(&session_id, pending.request(), &placeholder);
-    let outcome = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => RequestPermissionOutcome::Cancelled,
-        response = client.request_permission(request) => match response {
-            Ok(response) => response.outcome,
-            Err(_) => RequestPermissionOutcome::Cancelled,
-        },
-    };
-    let _ = pending.respond(permission::decision_for(&outcome));
 }
 
 #[cfg(test)]

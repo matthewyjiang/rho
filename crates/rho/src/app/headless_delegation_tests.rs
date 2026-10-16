@@ -134,17 +134,17 @@ impl Fixture {
         request
     }
 
-    /// Drives the run to its end, returning the final text and how many
-    /// boundary inputs it applied.
-    async fn finish_run(self) -> (String, usize) {
+    /// Drives the run to its end, returning the final text and the boundary
+    /// inputs it applied.
+    async fn finish_run(self) -> (String, Vec<UserInput>) {
         let Self {
             mut host, mut run, ..
         } = self;
         let applied = HeadlessDelegation::drive(&mut host, async {
-            let mut applied = 0;
+            let mut applied = Vec::new();
             while let Some(event) = run.next_event().await {
-                if matches!(event, RunEvent::BoundaryInputApplied { .. }) {
-                    applied += 1;
+                if let RunEvent::BoundaryInputApplied { input, .. } = event {
+                    applied.push(input);
                 }
             }
             applied
@@ -193,10 +193,10 @@ enum Work {
 }
 
 // Covers: a child, a workflow, or a process started during the prompt holds
-// natural completion, and its result continues the original run exactly once;
-// a process or workflow left from an earlier prompt, such as an ACP
-// `/workflow:<name>` start, does not hold it. The SDK channel tests do not own
-// this wait.
+// natural completion, and its result continues the original run exactly once
+// with display rows the host can claim; a process or workflow left from an
+// earlier prompt, such as an ACP `/workflow:<name>` start, does not hold it.
+// The SDK channel tests do not own this wait.
 // Owner: shared CLI/ACP background delivery lifecycle.
 #[tokio::test]
 async fn background_work_holds_natural_completion_and_continues_parent_once() {
@@ -252,6 +252,7 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
             | Work::WorkflowFromEarlierPrompt => Child::Absent,
         };
         let mut fixture = Fixture::build(child, processes, workflows).await;
+        let mut displays = fixture.host.offered_displays();
         let request = fixture.final_boundary().await;
         let during = match work {
             Work::ProcessDuringPrompt => Some(fixture.start_process().await),
@@ -297,20 +298,48 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
             fixture.workflows.clone(),
         );
         let (final_text, applied_inputs) = fixture.finish_run().await;
+        let shown = applied_inputs
+            .iter()
+            .map(|input| displays.applied(input).map(|display| display.0.len()))
+            .collect::<Vec<_>>();
         assert_eq!(
             (
                 final_text.as_str(),
-                applied_inputs,
+                shown,
                 (
                     manager.take_notifications(&session_id).len(),
                     workflows.take_notifications(&session_id).len(),
                     processes.take_notifications().len(),
                 ),
             ),
-            (text, applied, undelivered),
+            (text, vec![Some(1); applied], undelivered),
             "{label}"
         );
     }
+}
+
+// Covers: an offer the runtime rejected must never be shown, even when a
+// later applied input is claimed after it.
+// Owner: shared CLI/ACP delivery display matching.
+#[test]
+fn applied_input_claims_only_its_own_display() {
+    use crate::display_transcript::{DisplayRow, DisplayTranscript};
+
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut displays = super::OfferedDisplays { receiver };
+    let display = |text: &str| DisplayTranscript(vec![DisplayRow::Notice(text.into())]);
+    for offer in ["rejected", "applied"] {
+        sender
+            .send((UserInput::text(offer), display(offer)))
+            .unwrap();
+    }
+    assert_eq!(
+        (
+            displays.applied(&UserInput::text("applied")),
+            displays.applied(&UserInput::text("rejected")),
+        ),
+        (Some(display("applied")), None)
+    );
 }
 
 // Covers: cancellation while natural completion is held does not wait for a
