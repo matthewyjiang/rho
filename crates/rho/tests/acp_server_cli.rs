@@ -363,7 +363,9 @@ fn load_replays_tool_calls_and_results() {
             assert_eq!(tools.len(), expected.len() * 2, "{notifications:#?}");
             let mut ids = std::collections::BTreeSet::new();
             let restored = tools
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| {
                     let call = &pair[0]["update"];
                     let result = &pair[1]["update"];
