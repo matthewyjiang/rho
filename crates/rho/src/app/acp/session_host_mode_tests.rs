@@ -6,9 +6,10 @@ use std::{
 
 use agent_client_protocol::{
     schema::v1::{
-        ContentBlock as AcpContentBlock, PromptRequest, RequestPermissionOutcome,
-        RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
-        SessionConfigKind, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+        CancelNotification, ContentBlock as AcpContentBlock, PromptRequest,
+        RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+        SelectedPermissionOutcome, SessionConfigKind, SessionModeId, SessionNotification,
+        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
         ToolCallStatus,
     },
     Error as AcpError, ErrorCode,
@@ -23,7 +24,10 @@ use rho_sdk::{
 
 use super::{super::SessionHost, SessionPermission};
 use crate::{
-    app::{acp::AcpClientPort, session_assembly::BuiltSession},
+    app::{
+        acp::{agent::RhoAcpAgent, AcpClientPort, AcpStartup},
+        session_assembly::BuiltSession,
+    },
     config::Config,
     diagnostics::RuntimeDiagnostics,
     permission::PermissionMode,
@@ -183,6 +187,225 @@ fn probe_turns(count: usize) -> Vec<ScriptedTurn> {
             ]
         })
         .collect()
+}
+
+/// Tool that holds its turn open until released or cancelled, and reports
+/// when it starts so a test can act while the prompt is running.
+struct HoldTurn {
+    started: tokio::sync::mpsc::UnboundedSender<()>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+const HOLD: &str = "hold_turn";
+
+impl Tool for HoldTurn {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: HOLD.into(),
+            description: "test tool".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        let started = self.started.clone();
+        let release = Arc::clone(&self.release);
+        Box::pin(async move {
+            let _ = started.send(());
+            tokio::select! {
+                biased;
+                () = context.cancellation().cancelled() => Err(ToolError::cancelled()),
+                () = release.notified() => Ok(ToolOutput::text("released")),
+            }
+        })
+    }
+}
+
+/// The two ACP requests that switch a session's permission mode.
+#[derive(Clone, Copy, Debug)]
+enum ModeRequest {
+    SetMode,
+    ConfigOption,
+}
+
+impl ModeRequest {
+    async fn send(
+        self,
+        agent: &Arc<RhoAcpAgent>,
+        session_id: &SessionId,
+        mode: &str,
+    ) -> Result<(), ErrorCode> {
+        let result = match self {
+            Self::SetMode => agent
+                .set_session_mode(SetSessionModeRequest::new(
+                    session_id.clone(),
+                    SessionModeId::new(mode),
+                ))
+                .await
+                .map(drop),
+            Self::ConfigOption => agent
+                .set_config_option(SetSessionConfigOptionRequest::new(
+                    session_id.clone(),
+                    "mode",
+                    mode,
+                ))
+                .await
+                .map(drop),
+        };
+        result.map_err(|error| error.code)
+    }
+}
+
+// Covers: a mode change sent while a prompt runs, or while a cancelled prompt
+// winds down (T3 Code cancels, reconfigures, then prompts), must not fail as
+// busy. It waits for the turn to end, then applies to the next prompt.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
+    let cases = [
+        (ModeRequest::SetMode, /*cancel*/ true),
+        (ModeRequest::ConfigOption, /*cancel*/ true),
+        (ModeRequest::SetMode, /*cancel*/ false),
+        (ModeRequest::ConfigOption, /*cancel*/ false),
+    ];
+    for (request, cancel) in cases {
+        let label = format!("{request:?}, cancel {cancel}");
+        let home = tempfile::tempdir().unwrap();
+        let config = test_config();
+        let (started_tx, mut started) = tokio::sync::mpsc::unbounded_channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut tools = AppToolSet::disabled();
+        tools.add_bundle(StaticToolBundle::new(vec![
+            Arc::new(HoldTurn {
+                started: started_tx,
+                release: Arc::clone(&release),
+            }),
+            Arc::new(WriteProbe),
+        ]));
+        let mut turns = vec![ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::ToolCall(ToolCall {
+                id: "hold".into(),
+                name: HOLD.into(),
+                arguments: serde_json::json!({}),
+            }),
+        ]))];
+        // A released tool hands its result back to the model; a cancelled
+        // turn ends without another request.
+        if !cancel {
+            turns.push(ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::Text("held".into()),
+            ])));
+        }
+        turns.extend(probe_turns(1));
+        let mut host = host(home.path(), &config, turns, tools).await;
+        // Supervised asks the host before the probe writes, so the later
+        // switch to plan is observable. This also binds the tools.
+        host.set_permission_mode(PermissionMode::Supervised, &config)
+            .await
+            .unwrap();
+        let session_id = host.acp_session_id.clone();
+        let agent = Arc::new(RhoAcpAgent::new(AcpStartup::for_tests(
+            config.clone(),
+            home.path(),
+        )));
+        agent.install_for_tests(session_id.clone(), host).await;
+        let port = Arc::new(ApprovingPort::default());
+        let prompt = |text: &str| PromptRequest::new(session_id.clone(), vec![text.into()]);
+
+        let turn = tokio::spawn({
+            let agent = Arc::clone(&agent);
+            let port = Arc::clone(&port);
+            let request = prompt("hold");
+            async move { agent.prompt(request, &*port).await }
+        });
+        started.recv().await.expect("the turn reaches its tool");
+        if cancel {
+            agent
+                .cancel(CancelNotification::new(session_id.clone()))
+                .await;
+        }
+        let change = request.send(&agent, &session_id, "plan");
+        tokio::pin!(change);
+        assert!(
+            futures_util::poll!(&mut change).is_pending(),
+            "{label}: the change must wait for the running turn"
+        );
+        if !cancel {
+            release.notify_one();
+        }
+        let stop = turn
+            .await
+            .expect("prompt task")
+            .expect("turn ends")
+            .stop_reason;
+        let expected_stop = if cancel {
+            StopReason::Cancelled
+        } else {
+            StopReason::EndTurn
+        };
+        assert_eq!((stop, change.await), (expected_stop, Ok(())), "{label}");
+
+        port.take();
+        agent.prompt(prompt("write"), &*port).await.unwrap();
+        assert_eq!(
+            port.take(),
+            (0, vec![ToolCallStatus::Failed]),
+            "{label}: plan must deny the next prompt's write without asking"
+        );
+        agent.shutdown_all().await;
+    }
+}
+
+// Covers: a mode change that reaches the host only after a replacement claimed
+// it must fail and leave that host's mode alone, not report success for a
+// host the replacement is about to discard.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
+    for request in [ModeRequest::SetMode, ModeRequest::ConfigOption] {
+        let home = tempfile::tempdir().unwrap();
+        let config = test_config();
+        let mut tools = AppToolSet::disabled();
+        tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe)]));
+        let mut host = host(home.path(), &config, probe_turns(1), tools).await;
+        host.set_permission_mode(PermissionMode::Supervised, &config)
+            .await
+            .unwrap();
+        let session_id = host.acp_session_id.clone();
+        let agent = Arc::new(RhoAcpAgent::new(AcpStartup::for_tests(
+            config.clone(),
+            home.path(),
+        )));
+        agent.install_for_tests(session_id.clone(), host).await;
+        let (held, replaced) = agent.hold_host_for_tests(&session_id).await;
+
+        let change = request.send(&agent, &session_id, "plan");
+        tokio::pin!(change);
+        assert!(futures_util::poll!(&mut change).is_pending(), "{request:?}");
+        // `publish` marks the old session replaced before it queues for the
+        // host, so the change gets the host first and must see the flag.
+        replaced.store(true, std::sync::atomic::Ordering::Release);
+        drop(held);
+        assert_eq!(change.await, Err(ErrorCode::InvalidRequest), "{request:?}");
+
+        // As after a failed load, the session stays published; it must still
+        // be supervised, so the write asks the host.
+        replaced.store(false, std::sync::atomic::Ordering::Release);
+        let port = ApprovingPort::default();
+        agent
+            .prompt(
+                PromptRequest::new(session_id.clone(), vec!["write".into()]),
+                &port,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            port.take(),
+            (1, vec![ToolCallStatus::Completed]),
+            "{request:?}"
+        );
+        agent.shutdown_all().await;
+    }
 }
 
 // Covers: after session/set_mode, tool writes must obey the new mode: plan
