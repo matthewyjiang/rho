@@ -37,13 +37,15 @@ pub(crate) enum McpImageDelivery {
 const MAX_OUTPUT_SCHEMA_BYTES: usize = 64 * 1024;
 
 /// Serialized structured-content bytes Rho will walk during schema validation.
+/// This is the only bound on the instance: 256 KiB holds at most ~131k JSON
+/// nodes, which validate in ~1.6 ms against a simple schema and ~150 ms
+/// against a 1k-node, 500-branch `anyOf` schema (jsonschema 0.49, release).
+/// T3 Code's `orchestrator_capabilities` returns ~13k nodes in ~190 KB.
 const MAX_STRUCTURED_CONTENT_BYTES: usize = 256 * 1024;
 
 /// Maximum JSON nodes (objects, arrays, and leaves) in a declared output schema.
+/// Schema size multiplies per-node validation work, so it keeps its own bound.
 const MAX_OUTPUT_SCHEMA_NODES: usize = 2_048;
-
-/// Maximum JSON nodes in structured content accepted for schema validation.
-const MAX_STRUCTURED_CONTENT_NODES: usize = 8_192;
 
 use rho_tools::Rendered;
 
@@ -160,11 +162,6 @@ fn validate_structured_content(
         "structured content",
     )?;
     ensure_node_budget(schema, MAX_OUTPUT_SCHEMA_NODES, "output schema")?;
-    ensure_node_budget(
-        structured,
-        MAX_STRUCTURED_CONTENT_NODES,
-        "structured content",
-    )?;
 
     // No remote or file $ref resolution: default-features disable the retrieve
     // backends. Prefer the linear `regex` pattern engine so a hostile pattern

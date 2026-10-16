@@ -347,3 +347,26 @@ fn structured_validation_rejects_oversize_schemas() {
     .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Execution);
 }
+
+// Covers: large-but-bounded structured results validate. T3 Code's
+// `orchestrator_capabilities` returns ~13k nodes in ~190 KB and was rejected by
+// a node cap far below what the byte budget already bounds.
+// Owner: MCP structured-result contract.
+#[test]
+fn structured_validation_accepts_many_nodes_within_byte_budget() {
+    let payload = serde_json::json!({ "items": vec![0; 20_000] });
+    let mut call = result(Vec::new());
+    call.structured_content = Some(payload.clone());
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "items": { "type": "array", "items": { "type": "integer" } } },
+    });
+    let rendered = render(
+        &call,
+        &expect_schema(schema),
+        /*max_output_bytes*/ 128 * 1024,
+        McpImageDelivery::PresentationOnly,
+    )
+    .unwrap();
+    assert_eq!(rendered.data(), Some(&payload));
+}
