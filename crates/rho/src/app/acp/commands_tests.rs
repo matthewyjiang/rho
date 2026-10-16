@@ -17,8 +17,8 @@ use crate::{
 };
 
 /// A workspace with one prompt template, one project skill, and one
-/// workflow, an empty home, and a session that can load skills, start
-/// workflows, and write files.
+/// workflow, user definitions for a Rho and an external agent, and a session
+/// that can load skills, start workflows, and write files (but not delegate).
 struct Fixture {
     workspace: tempfile::TempDir,
     home: tempfile::TempDir,
@@ -42,6 +42,21 @@ impl Fixture {
         let workflows = workspace.path().join(".rho/workflows/check");
         std::fs::create_dir_all(&workflows).unwrap();
         std::fs::write(workflows.join("workflow.star"), "").unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let agents = home.path().join(".rho/agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        for (id, contents) in [
+            (
+                "acp-rho",
+                "---\ndescription: Rho child\ntools: [read_file]\n---\nInspect files\n",
+            ),
+            (
+                "acp-claude",
+                "---\ndescription: Claude child\nruntime: claude-cli\ntools: [Read]\n---\nInspect files\n",
+            ),
+        ] {
+            std::fs::write(agents.join(format!("{id}.md")), contents).unwrap();
+        }
         let config = Config::default();
         let tools = AppToolSet::new(
             &config,
@@ -77,7 +92,7 @@ impl Fixture {
         );
         Self {
             workspace,
-            home: tempfile::tempdir().unwrap(),
+            home,
             tools,
             config,
         }
@@ -107,6 +122,10 @@ enum Resolved {
         file: String,
         inputs: serde_json::Value,
     },
+    Agent {
+        id: String,
+        input: UserInput,
+    },
     Rejected,
 }
 
@@ -129,6 +148,10 @@ async fn resolved(text: &str, scope: &CommandScope<'_>) -> Resolved {
         Ok(PromptAction::StartWorkflow(start)) => Resolved::Workflow {
             file: start.workflow.relative_path,
             inputs: json!(start.inputs),
+        },
+        Ok(PromptAction::RunAsAgent { agent_id, input }) => Resolved::Agent {
+            id: agent_id,
+            input,
         },
         Err(_) => Resolved::Rejected,
     }
@@ -231,6 +254,34 @@ async fn resolve_routes_prompts_to_commands() {
         ),
         ("unknown workflow", "/workflow:missing", Resolved::Rejected),
         (
+            "agent definition",
+            "/agent:acp-rho inspect the parser",
+            Resolved::Agent {
+                id: "acp-rho".into(),
+                input: UserInput::text("inspect the parser"),
+            },
+        ),
+        ("agent missing task", "/agent:acp-rho", Resolved::Rejected),
+        (
+            "multiline delegated brief",
+            "/agent:acp-rho\n\nGoal: inspect the parser.\n\nReport findings.\n",
+            Resolved::Agent {
+                id: "acp-rho".into(),
+                input: UserInput::text("Goal: inspect the parser.\n\nReport findings."),
+            },
+        ),
+        ("agent missing name", "/agent: inspect", Resolved::Rejected),
+        (
+            "unknown agent",
+            "/agent:missing inspect",
+            Resolved::Rejected,
+        ),
+        (
+            "external agent",
+            "/agent:acp-claude inspect",
+            Resolved::Rejected,
+        ),
+        (
             "workflow inputs that are not an object",
             "/workflow:check src",
             Resolved::Rejected,
@@ -265,25 +316,34 @@ async fn resolve_keeps_blocks_after_the_command() {
         mime_type: "image/png".into(),
         data: "AAAA".into(),
     });
-    let input = UserInput::content(vec![
-        ContentBlock::Text("/prompt:review this".into()),
-        image.clone(),
-    ])
-    .unwrap();
-
-    let action = resolve(input, &fixture.scope()).await.unwrap();
-
-    assert_eq!(
-        action,
-        PromptAction::Turn {
-            input: UserInput::content(vec![
-                ContentBlock::Text("Review this carefully".into()),
-                image,
-            ])
-            .unwrap(),
-            calls: Vec::new(),
-        }
-    );
+    for (command, expected) in [
+        (
+            "/prompt:review this",
+            PromptAction::Turn {
+                input: UserInput::content(vec![
+                    ContentBlock::Text("Review this carefully".into()),
+                    image.clone(),
+                ])
+                .unwrap(),
+                calls: Vec::new(),
+            },
+        ),
+        (
+            "/agent:acp-rho inspect this",
+            PromptAction::RunAsAgent {
+                agent_id: "acp-rho".into(),
+                input: UserInput::content(vec![
+                    ContentBlock::Text("inspect this".into()),
+                    image.clone(),
+                ])
+                .unwrap(),
+            },
+        ),
+    ] {
+        let input =
+            UserInput::content(vec![ContentBlock::Text(command.into()), image.clone()]).unwrap();
+        assert_eq!(resolve(input, &fixture.scope()).await.unwrap(), expected);
+    }
 }
 
 // Covers: the host menu must list every runnable command with its argument hint
@@ -316,6 +376,11 @@ fn available_commands_list_every_command_kind() {
             json!(["$rho-config", null]),
             json!(["$rho-init", null]),
             json!(["$rho-workflow-authoring", null]),
+            json!(["agent:acp-rho", "<task>"]),
+            json!(["agent:default", "<task>"]),
+            json!(["agent:explorer", "<task>"]),
+            json!(["agent:reviewer", "<task>"]),
+            json!(["agent:worker", "<task>"]),
         ]
     );
 }

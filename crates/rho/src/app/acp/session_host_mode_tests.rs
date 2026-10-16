@@ -26,7 +26,6 @@ use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,
     diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
     permission::PermissionMode,
     session::Session as StoredSession,
     tools::sdk_registry::{AppToolSet, StaticToolBundle},
@@ -75,6 +74,7 @@ async fn host(
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(config),
     };
+    let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home);
     SessionHost::from_built(
         SessionId::new(stored.id()),
         built,
@@ -85,8 +85,8 @@ async fn host(
             writes: Default::default(),
             workspace_root: home.to_path_buf(),
         },
-        config.auth.clone(),
-        HerdrReporter::default(),
+        &startup,
+        Vec::new(),
     )
 }
 
@@ -200,6 +200,7 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     ];
     let mut tools = AppToolSet::disabled();
     tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe)]));
+    let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = host(home.path(), &config, probe_turns(cases.len()), tools).await;
     let session_id = host.built.session.id().clone();
     let history = host.built.session.history();
@@ -213,8 +214,7 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
                 vec![AcpContentBlock::from("write")],
             ),
             &port,
-            &config,
-            std::path::Path::new("/nonexistent/rho-test-config.toml"),
+            &startup,
         )
         .await
         .unwrap();

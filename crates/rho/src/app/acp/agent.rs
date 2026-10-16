@@ -179,14 +179,9 @@ impl RhoAcpAgent {
             let busy = match live.lock_host_for_prompt(&session_id).await {
                 Ok(mut host) => {
                     return host
-                        .prompt(
-                            request,
-                            port,
-                            &self.startup.config,
-                            &self.startup.config_path,
-                        )
+                        .prompt(request, port, &self.startup)
                         .await
-                        .map_err(prompt_error)
+                        .map_err(prompt_error);
                 }
                 // A reload replaced the session while this prompt waited for
                 // the old host; run it on the successor instead of dropping it.

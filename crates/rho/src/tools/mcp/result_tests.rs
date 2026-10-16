@@ -3,7 +3,10 @@ use pretty_assertions::assert_eq;
 use rho_sdk::tool::ToolErrorKind;
 use rmcp::model::{CallToolResult, ContentBlock, Resource, ResourceContents};
 
-use super::{render, McpImageDelivery, Rendered, ResultExpectation, MAX_RETAINED_IMAGE_BYTES};
+use super::{
+    render, McpImageDelivery, Rendered, ResultExpectation, MAX_RETAINED_IMAGE_BYTES,
+    MAX_VALIDATION_DEPTH,
+};
 
 const LIMIT: usize = 12_000;
 
@@ -346,4 +349,61 @@ fn structured_validation_rejects_oversize_schemas() {
     )
     .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Execution);
+}
+
+// Covers: large-but-bounded structured results validate. T3 Code's
+// `orchestrator_capabilities` returns ~13k nodes in ~190 KB and was rejected by
+// a node cap far below what the byte budget already bounds.
+// Owner: MCP structured-result contract.
+#[test]
+fn structured_validation_accepts_many_nodes_within_byte_budget() {
+    let payload = serde_json::json!({ "items": vec![0; 20_000] });
+    let mut call = result(Vec::new());
+    call.structured_content = Some(payload.clone());
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "items": { "type": "array", "items": { "type": "integer" } } },
+    });
+    let rendered = render(
+        &call,
+        &expect_schema(schema),
+        /*max_output_bytes*/ 128 * 1024,
+        McpImageDelivery::PresentationOnly,
+    )
+    .unwrap();
+    assert_eq!(rendered.data(), Some(&payload));
+}
+
+// Covers: width is bounded by bytes, depth separately. Nested content past the
+// depth budget must fail validation instead of recursing the validator off the
+// stack, while content at the budget still validates.
+// Owner: MCP structured-result contract.
+#[test]
+fn structured_validation_bounds_nesting_depth() {
+    let schema = serde_json::json!({
+        "$defs": { "n": { "anyOf": [
+            { "type": "number" },
+            { "type": "array", "items": { "$ref": "#/$defs/n" } },
+        ] } },
+        "$ref": "#/$defs/n",
+    });
+    for (levels, accepted) in [
+        (MAX_VALIDATION_DEPTH, true),
+        (MAX_VALIDATION_DEPTH + 1, false),
+    ] {
+        // `levels` JSON values deep: `levels - 1` arrays around one number.
+        let mut payload = serde_json::json!(0);
+        for _ in 1..levels {
+            payload = serde_json::Value::Array(vec![payload]);
+        }
+        let mut call = result(Vec::new());
+        call.structured_content = Some(payload);
+        let rendered = render(
+            &call,
+            &expect_schema(schema.clone()),
+            /*max_output_bytes*/ 128 * 1024,
+            McpImageDelivery::PresentationOnly,
+        );
+        assert_eq!(rendered.is_ok(), accepted, "{levels} levels");
+    }
 }

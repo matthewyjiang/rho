@@ -66,6 +66,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
     )
     .expect("bind test agent");
     Arc::new(RhoAcpAgent::new(AcpStartup {
+        host: crate::app::acp::AcpHost::Generic,
         config: config.clone(),
         config_path: PathBuf::from("/tmp/rho-acp-test-config.toml"),
         cwd: PathBuf::from("/tmp"),

@@ -36,6 +36,7 @@ fn perf_audit_session_growing_history() {
             cwd: cwd.path().to_owned(),
             agent_id: None,
             agent_fingerprint: None,
+            agent_role: crate::session::agent_identity::SessionAgentRole::Root,
         };
         push_entry(&mut contents, &header);
         let mut history = Vec::new();

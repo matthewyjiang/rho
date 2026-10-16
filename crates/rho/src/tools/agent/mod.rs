@@ -1,6 +1,10 @@
-//! Delegated agent tools backed by in-process SDK runtimes.
+//! Delegated agent tools backed by native SDK runtimes or an ACP host.
 
+mod host_orchestrator;
+mod host_tools;
 pub(crate) mod message_receipt;
+
+pub(crate) use host_tools::install_host_delegation;
 
 use std::{
     future::Future,
@@ -143,43 +147,8 @@ struct AgentArgs {
 
 impl Tool for AgentTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        let names: Vec<&str> = self.advertised.iter().map(|(name, _)| name).collect();
-        // Deliberately model-free. Which model an agent runs on can change after
-        // this list is written - the conversation model switches, a catalog name
-        // arrives - and rewriting the list would change what the caller was
-        // already told. Each run reports its own model when it starts instead.
-        let summaries = self
-            .advertised
-            .iter()
-            .map(|(name, description)| format!("{name}: {description}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let properties = json!({
-            "agent_id": {
-                "type": "string",
-                "enum": names,
-                "description": "Agent ID"
-            },
-            "prompt": {
-                "type": "string",
-                "description": "Self-contained task and all context the agent needs"
-            }
-        });
-        let parallel_guidance =
-            " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
         let background_guidance = " Every call starts a background run and returns its id immediately. Completions arrive automatically at safe provider boundaries and wake an idle parent. Continue independent work, or end your turn to wait for required results. Never sleep or poll for results, and do not declare the task complete before required agents finish.";
-        rho_sdk::model::ToolSpec {
-            name: AGENT_TOOL.into(),
-            description: format!(
-                "Delegate a substantial, self-contained task to a fresh agent.{parallel_guidance}{background_guidance}\n\nAgents:\n{summaries}"
-            ),
-            input_schema: json!({
-                "type": "object",
-                "properties": properties,
-                "required": ["agent_id", "prompt"],
-                "additionalProperties": false
-            }),
-        }
+        agent_spec(&self.advertised, background_guidance)
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
@@ -399,6 +368,45 @@ impl Tool for AgentsTool {
                 move |_context| Box::pin(async move { self.execute(args).await }),
             ))
         })
+    }
+}
+
+/// Shared launch contract; each backend supplies its completion guidance.
+fn agent_spec(
+    advertised: &AdvertisedAgents,
+    background_guidance: &str,
+) -> rho_sdk::model::ToolSpec {
+    let names: Vec<&str> = advertised.iter().map(|(name, _)| name).collect();
+    // Deliberately model-free: policy is reloaded at launch, while the spec
+    // preserves the catalog the caller was originally told about.
+    let summaries = advertised
+        .iter()
+        .map(|(name, description)| format!("{name}: {description}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parallel_guidance =
+        " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
+    rho_sdk::model::ToolSpec {
+        name: AGENT_TOOL.into(),
+        description: format!(
+            "Delegate a substantial, self-contained task to a fresh agent.{parallel_guidance}{background_guidance}\n\nAgents:\n{summaries}"
+        ),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "enum": names,
+                    "description": "Agent ID"
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Self-contained task and all context the agent needs"
+                }
+            },
+            "required": ["agent_id", "prompt"],
+            "additionalProperties": false
+        }),
     }
 }
 

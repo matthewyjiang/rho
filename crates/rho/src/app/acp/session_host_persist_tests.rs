@@ -19,7 +19,6 @@ use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,
     diagnostics::RuntimeDiagnostics,
-    herdr::HerdrReporter,
     session::Session as StoredSession,
     tools::sdk_registry::AppToolSet,
 };
@@ -90,6 +89,7 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(&config),
     };
+    let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = SessionHost::from_built(
         SessionId::new(id.as_str()),
         built,
@@ -100,22 +100,17 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
             writes: Default::default(),
             workspace_root: home.path().to_path_buf(),
         },
-        config.auth.clone(),
-        HerdrReporter::default(),
+        &startup,
+        Vec::new(),
     );
 
     let request = PromptRequest::new(
         SessionId::new(id.as_str()),
         vec![AcpContentBlock::from("the codeword is zebra")],
     );
-    host.prompt(
-        request,
-        &SilentPort,
-        &config,
-        std::path::Path::new("/nonexistent/rho-test-config.toml"),
-    )
-    .await
-    .expect_err("the second step fails");
+    host.prompt(request, &SilentPort, &startup)
+        .await
+        .expect_err("the second step fails");
     host.shutdown().await;
 
     let (_, histories) =

@@ -6,6 +6,8 @@
 //! such as an ACP `/workflow:<name>` start, only deliver; a later prompt does
 //! not wait for them. The wait stays inside the original run, so cancellation
 //! and the SDK step budget still govern parent continuations.
+//! Host-orchestrated ACP children are not registered here: they outlive the
+//! parent prompt and complete through the host's next prompt instead.
 
 use std::time::Instant;
 

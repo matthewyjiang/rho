@@ -26,8 +26,29 @@ use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporte
 use super::agent_binding::BoundAgent;
 use agent::RhoAcpAgent;
 
+/// The ACP client Rho integrates with, chosen at launch rather than inferred
+/// from the tools a host happens to offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AcpHost {
+    /// Any ACP client. Subagents run in-process.
+    Generic,
+    /// T3 Code (`rho acp --t3code`). Subagents run as T3 child threads.
+    T3Code,
+}
+
+impl AcpHost {
+    pub(super) fn from_args(args: &crate::cli::AcpArgs) -> Self {
+        if args.t3code {
+            Self::T3Code
+        } else {
+            Self::Generic
+        }
+    }
+}
+
 /// Prepared process state for a `rho acp` stdio server.
 pub(super) struct AcpStartup {
+    pub(super) host: AcpHost,
     pub(super) config: Config,
     pub(super) config_path: PathBuf,
     pub(super) cwd: PathBuf,
@@ -39,6 +60,52 @@ pub(super) struct AcpStartup {
     pub(super) herdr: HerdrReporter,
     /// `--add-dir` directories granted to every ACP session.
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
+}
+
+#[cfg(test)]
+impl AcpStartup {
+    /// Startup for session-host fixtures: `config` bound to a plain root agent
+    /// with every tool, rooted at `cwd`.
+    pub(super) fn for_tests(config: Config, cwd: &std::path::Path) -> Self {
+        use crate::{
+            agent::{
+                AgentCapabilities, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
+                PromptPolicy, ToolPolicy,
+            },
+            app::agent_binding::{AgentBinder, AgentInvocation, AgentRole},
+        };
+        let agent = AgentBinder::bind(
+            Arc::new(AgentDefinition {
+                id: AgentId::new("rho").expect("test agent id"),
+                description: "test".into(),
+                prompt: PromptPolicy::Extend(String::new()),
+                runtime: AgentRuntimeSpec::Rho {
+                    tools: ToolPolicy::All,
+                    model: ModelPolicy::Inherit,
+                    reasoning: None,
+                },
+            }),
+            AgentInvocation {
+                role: AgentRole::AutomationRoot,
+                available_tools: AgentCapabilities::all_host_tools(),
+            },
+            &config,
+        )
+        .expect("bind test agent");
+        Self {
+            host: AcpHost::Generic,
+            diagnostics: RuntimeDiagnostics::new(&config),
+            config,
+            config_path: cwd.join("rho-test-config.toml"),
+            cwd: cwd.to_path_buf(),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            agent,
+            herdr: HerdrReporter::default(),
+            added_dirs: Default::default(),
+        }
+    }
 }
 
 /// Outbound ACP host port used by session hosts and tests.

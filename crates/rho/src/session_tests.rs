@@ -519,6 +519,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         cwd: cwd.to_path_buf(),
         agent_id: None,
         agent_fingerprint: None,
+        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),

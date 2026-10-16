@@ -17,6 +17,7 @@ use rho_providers::model::{ContentBlock, Message, ToolResult};
 use rho_sdk::SessionId;
 use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 
+use super::agent_identity::SessionAgentRole;
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::tree::{NodeId, SessionNode, SessionTree};
 use super::{index, Session, SessionHistories, SessionIndexRecord, SessionSummary};
@@ -292,6 +293,8 @@ pub(super) enum SessionEntry {
         agent_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_fingerprint: Option<String>,
+        #[serde(default, skip_serializing_if = "SessionAgentRole::is_root")]
+        agent_role: SessionAgentRole,
     },
     Message {
         timestamp: String,
@@ -503,6 +506,7 @@ impl Session {
             cwd: self.cwd.clone(),
             agent_id: agent.map(|(id, _)| id.to_string()),
             agent_fingerprint: agent.map(|(_, fingerprint)| fingerprint.to_string()),
+            agent_role: SessionAgentRole::Root,
         })?;
         let _ = index::record_created(self, created_at);
         Ok(())
@@ -548,24 +552,6 @@ impl Session {
             state.compaction,
         );
         self.save_snapshot(&snapshot, &[])
-    }
-}
-
-pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String, String)>> {
-    let file = fs::File::open(path)?;
-    let line = BufReader::new(file)
-        .lines()
-        .next()
-        .transpose()?
-        .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
-    match serde_json::from_str::<SessionEntry>(&line)? {
-        SessionEntry::Session {
-            agent_id: Some(id),
-            agent_fingerprint: Some(fingerprint),
-            ..
-        } => Ok(Some((id, fingerprint))),
-        SessionEntry::Session { .. } => Ok(None),
-        _ => anyhow::bail!("session file does not start with session metadata"),
     }
 }
 

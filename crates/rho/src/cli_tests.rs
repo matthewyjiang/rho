@@ -36,13 +36,22 @@ fn parses_doctor_subcommand() {
     assert!(matches!(cli.command, Some(Command::Doctor { json: true })));
 }
 
-// Covers: `rho acp` parses as the ACP stdio subcommand.
-// Owner: CLI parser.
+// Covers: `rho acp` parses as the ACP stdio subcommand, and `--t3code` opts
+// into the T3 Code integration. Owner: CLI parser.
 #[test]
 fn parses_acp_subcommand() {
-    let cli = Cli::try_parse_from(["rho", "acp"]).unwrap();
+    for (args, t3code) in [
+        (vec!["rho", "acp"], false),
+        (vec!["rho", "acp", "--t3code"], true),
+    ] {
+        let cli = Cli::try_parse_from(args).unwrap();
 
-    assert!(matches!(cli.command, Some(Command::Acp)));
+        assert!(
+            matches!(&cli.command, Some(Command::Acp(acp)) if acp.t3code == t3code),
+            "{:?}",
+            cli.command
+        );
+    }
 }
 
 #[test]
