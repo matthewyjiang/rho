@@ -78,6 +78,8 @@ impl App {
         let Some(parent) = parent else {
             return false;
         };
+        // The child may have saved edits the parent's rows were built before.
+        let parent = self.refreshed_config_page(parent);
         self.set_status_quiet(parent.title.clone());
         self.input_ui.set_composer(ComposerMode::Picker(parent));
         true

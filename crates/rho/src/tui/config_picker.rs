@@ -3,6 +3,57 @@ use {
     crate::config::{Config, EditTool},
     crate::permission::PermissionMode,
 };
+
+/// A `/config` page that can be rebuilt from saved config.
+///
+/// Pages that open child pages carry one, so returning to them shows edits
+/// saved on the child instead of the rows built when the child opened.
+/// Leaf choice pickers close on commit and need none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ConfigPage {
+    Root,
+    Category(ConfigCategory),
+    WebSearch,
+    WebSearchBackend(crate::config::SearchBackend),
+}
+
+/// A category page under the `/config` root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ConfigCategory {
+    Models,
+    Appearance,
+    Agent,
+    Context,
+    Tools,
+    Providers,
+}
+
+impl ConfigCategory {
+    fn from_value(value: &str) -> Option<Self> {
+        match value {
+            MODELS_CATEGORY_VALUE => Some(Self::Models),
+            APPEARANCE_CATEGORY_VALUE => Some(Self::Appearance),
+            AGENT_CATEGORY_VALUE => Some(Self::Agent),
+            CONTEXT_CATEGORY_VALUE => Some(Self::Context),
+            TOOLS_CATEGORY_VALUE => Some(Self::Tools),
+            PROVIDERS_CATEGORY_VALUE => Some(Self::Providers),
+            _ => None,
+        }
+    }
+
+    /// The category's row value in the root page.
+    pub(super) fn value(self) -> &'static str {
+        match self {
+            Self::Models => MODELS_CATEGORY_VALUE,
+            Self::Appearance => APPEARANCE_CATEGORY_VALUE,
+            Self::Agent => AGENT_CATEGORY_VALUE,
+            Self::Context => CONTEXT_CATEGORY_VALUE,
+            Self::Tools => TOOLS_CATEGORY_VALUE,
+            Self::Providers => PROVIDERS_CATEGORY_VALUE,
+        }
+    }
+}
+
 pub(super) const MODELS_CATEGORY_VALUE: &str = "config_category:models";
 pub(super) const APPEARANCE_CATEGORY_VALUE: &str = "config_category:appearance";
 pub(super) const AGENT_CATEGORY_VALUE: &str = "config_category:agent";
@@ -234,6 +285,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
         ],
     )
     .with_confirm_verb("open")
+    .with_config_page(ConfigPage::Root)
 }
 
 fn tools_summary(info: &super::RuntimeModelView, config: &Config) -> String {
@@ -258,6 +310,7 @@ pub(super) fn category_picker(
     info: &super::RuntimeModelView,
     config: &Config,
 ) -> Option<UiPicker> {
+    let page = ConfigPage::Category(ConfigCategory::from_value(category)?);
     let (title, items) = match category {
         MODELS_CATEGORY_VALUE => {
             let capabilities =
@@ -574,19 +627,11 @@ pub(super) fn category_picker(
         }
         _ => return None,
     };
-    Some(UiPicker::config(title, items))
+    Some(UiPicker::config(title, items).with_config_page(page))
 }
 
 pub(super) fn is_category(value: &str) -> bool {
-    matches!(
-        value,
-        MODELS_CATEGORY_VALUE
-            | APPEARANCE_CATEGORY_VALUE
-            | AGENT_CATEGORY_VALUE
-            | CONTEXT_CATEGORY_VALUE
-            | TOOLS_CATEGORY_VALUE
-            | PROVIDERS_CATEGORY_VALUE
-    )
+    ConfigCategory::from_value(value).is_some()
 }
 
 pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {

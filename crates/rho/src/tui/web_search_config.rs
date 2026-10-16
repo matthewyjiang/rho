@@ -16,6 +16,7 @@ use crate::config::{
 };
 
 use super::{
+    config_picker::ConfigPage,
     config_row::ConfigCommitCtx,
     picker::{PickerBadge, PickerBadgeTone, PickerItem, UiPicker},
     App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
@@ -199,6 +200,7 @@ pub(super) fn main_picker(config: &Config, provider: &str, model: &str) -> UiPic
             ),
         ],
     )
+    .with_config_page(ConfigPage::WebSearch)
 }
 
 pub(super) fn backend_picker(
@@ -223,6 +225,7 @@ pub(super) fn backend_picker(
         ),
     };
     UiPicker::config(backend_page_title(backend), items)
+        .with_config_page(ConfigPage::WebSearchBackend(backend))
 }
 
 fn backend_page_title(backend: SearchBackend) -> &'static str {
