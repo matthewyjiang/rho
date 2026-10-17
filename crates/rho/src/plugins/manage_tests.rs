@@ -86,6 +86,33 @@ fn install_copies_into_user_root_after_validation() {
     assert_eq!(entry.skill_names, ["hello"]);
 }
 
+// Covers: relative source paths resolve against the invocation directory.
+// Owner: plugin install source resolution.
+#[test]
+fn relative_source_paths_resolve_against_cwd() {
+    let env = env();
+    write_source(&env.project.path().join("pkg"), "copied");
+    write_source(&env.project.path().join("pkg"), "linked");
+    let cases = [
+        ("pkg/copied", InstallMode::Copy, PluginOrigin::Install),
+        ("pkg/linked", InstallMode::Link, PluginOrigin::Link),
+    ];
+    for (relative, mode, origin) in cases {
+        let package = install(
+            Path::new(relative),
+            PluginScope::User,
+            mode,
+            /* force */ false,
+            env.project.path(),
+            env.home.path(),
+            Some(env.rho_home.path()),
+        )
+        .unwrap();
+        assert_eq!(package.origin, origin, "{relative}");
+        assert!(package.path.join("plugin.json").is_file(), "{relative}");
+    }
+}
+
 // Covers: invalid packages never reach a managed root.
 // Owner: plugin install validation.
 #[test]

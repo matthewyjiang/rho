@@ -102,6 +102,10 @@ fn rejects_invalid_state_files() {
             "version = 1\n\n[plugins.Bad_Name]\nenabled = false\n",
         ),
         ("unknown field", "version = 1\nunexpected = true\n"),
+        (
+            "git origin without source",
+            "version = 1\n\n[plugins.demo]\norigin = \"git\"\n",
+        ),
     ];
     for (name, text) in cases {
         assert!(parse_state_file(text).is_err(), "{name}");

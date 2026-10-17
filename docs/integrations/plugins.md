@@ -220,6 +220,9 @@ so your existing credentials, SSH keys, and `insteadOf` rewrites apply to
 private repositories. It then validates and copies the package like a local
 install, without the `.git` directory. Accepted URL schemes are `https://`,
 `http://`, `ssh://`, `git://`, `file://`, and scp-style `git@host:path`.
+An argument that names an existing local path always installs locally.
+URLs with embedded credentials (`https://user:token@host/...`) are refused,
+because the URL is recorded and printed; use a credential helper or SSH key.
 
 In a GitHub `tree/` link, the first segment after `tree/` is the ref, so
 branch names that contain `/` cannot be expressed that way. Use a tag or
@@ -239,6 +242,9 @@ fetches the same ref again:
 project and user roots, reports each result, and exits nonzero if any failed.
 Packages installed from a local path have no source to refetch; reinstall
 them with `--force`.
+Project packages are updated only in a trusted workspace
+(`RHO_TRUST_PROJECT_PLUGINS=1`); otherwise `update` reports them as skipped
+without fetching.
 
 ### Activation state
 
@@ -316,9 +322,9 @@ remove act on the higher-precedence match.
   automatic background updates, and package signatures are not implemented
   yet.
 - Git sources recorded in a project `plugins.toml` arrive with cloned
-  repositories. Rho checks them against the same URL scheme and path rules
-  before every fetch, and project plugins stay inactive until the workspace
-  is trusted.
+  repositories. `rho plugins update` fetches them only in a trusted
+  workspace, and checks every recorded source against the same URL scheme,
+  credential, and path rules before fetching.
 
 ## Relationship to ordinary configuration
 

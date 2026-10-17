@@ -11,6 +11,7 @@
 //! out files; it never executes package code.
 
 use std::{
+    ffi::OsStr,
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -19,6 +20,18 @@ use super::contain;
 
 /// URL prefixes treated as git remotes. Anything else is a local path.
 const REMOTE_PREFIXES: &[&str] = &["https://", "http://", "ssh://", "git://", "file://", "git@"];
+
+/// Inherited variables that would point `git` at another repository instead
+/// of the temporary checkout (for example when Rho runs inside a git hook).
+const GIT_LOCATION_ENV: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+];
 
 /// GitHub web prefixes whose path is parsed as `<owner>/<repo>[/tree/<ref>[/<path>]]`.
 const GITHUB_PREFIXES: &[&str] = &[
@@ -37,7 +50,15 @@ pub(crate) enum InstallSource {
 
 impl InstallSource {
     /// Classify an install argument as a local path or a git source.
-    pub(crate) fn parse(arg: &str) -> anyhow::Result<Self> {
+    ///
+    /// An existing path (relative paths resolve against `cwd`) always wins, so
+    /// a directory that happens to be named like `github.com/...` still
+    /// installs locally.
+    pub(crate) fn parse(arg: &OsStr, cwd: &Path) -> anyhow::Result<Self> {
+        let path = Path::new(arg);
+        let Some(arg) = arg.to_str().filter(|_| !cwd.join(path).exists()) else {
+            return Ok(Self::Local(path.to_path_buf()));
+        };
         if let Some(rest) = GITHUB_PREFIXES
             .iter()
             .find_map(|prefix| arg.strip_prefix(prefix))
@@ -53,7 +74,7 @@ impl InstallSource {
             source.validate()?;
             return Ok(Self::Git(source));
         }
-        Ok(Self::Local(PathBuf::from(arg)))
+        Ok(Self::Local(path.to_path_buf()))
     }
 }
 
@@ -72,7 +93,8 @@ impl GitSource {
     ///
     /// Runs on parsed arguments and again on sources loaded from
     /// `plugins.toml`, because project state files arrive with cloned
-    /// repositories.
+    /// repositories. URLs must not embed credentials, because the URL is
+    /// recorded in `plugins.toml` and printed.
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         if !REMOTE_PREFIXES
             .iter()
@@ -82,6 +104,11 @@ impl GitSource {
                 "unsupported git URL `{}`: expected one of {}",
                 self.url,
                 REMOTE_PREFIXES.join(", ")
+            );
+        }
+        if embeds_credentials(&self.url) {
+            anyhow::bail!(
+                "refusing a git URL with embedded credentials; use a git credential helper or SSH key instead"
             );
         }
         if let Some(git_ref) = &self.git_ref {
@@ -104,6 +131,10 @@ impl GitSource {
         Ok(())
     }
 
+    pub(crate) fn is_github(&self) -> bool {
+        self.url.starts_with("https://github.com/")
+    }
+
     /// Human-readable location, e.g. `https://github.com/o/r (ref main, path plugins/x)`.
     pub(crate) fn describe(&self) -> String {
         let mut details = Vec::new();
@@ -119,6 +150,17 @@ impl GitSource {
             format!("{} ({})", self.url, details.join(", "))
         }
     }
+}
+
+/// Whether `url` carries a password, or any userinfo over HTTP(S) where a
+/// bare username is commonly an access token. `ssh://git@host` stays allowed.
+fn embeds_credentials(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        // scp-style `git@host:path` is not a URL and has no password slot.
+        return false;
+    };
+    parsed.password().is_some()
+        || matches!(parsed.scheme(), "http" | "https") && !parsed.username().is_empty()
 }
 
 /// Parse the part of a GitHub web URL after the host.
@@ -223,9 +265,13 @@ pub(crate) fn short_commit(commit: &str) -> &str {
     commit.get(..12).unwrap_or(commit)
 }
 
-/// Run `git -C <dir> <args>` and return trimmed stdout.
+/// Run `git -C <dir> <args>` against `dir` only and return trimmed stdout.
 fn run_git(dir: &Path, args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    for name in GIT_LOCATION_ENV {
+        command.env_remove(name);
+    }
+    let output = command
         .arg("-C")
         .arg(dir)
         .args(args)

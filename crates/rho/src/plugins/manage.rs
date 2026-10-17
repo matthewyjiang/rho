@@ -21,7 +21,9 @@ use super::{
 
 #[path = "manage_git.rs"]
 mod git;
-pub(crate) use git::{install_git, update, update_all, UpdateOutcome, UpdatedPackage};
+pub(crate) use git::{
+    install_git, update, UpdateOutcome, UpdateReport, UpdateSelection, UpdatedPackage,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallMode {
@@ -84,36 +86,46 @@ pub(crate) fn install(
     home: &Path,
     rho_home: Option<&Path>,
 ) -> anyhow::Result<ManagedPackage> {
-    let source = inspect_source(source)?;
+    // Relative CLI paths resolve against the invocation directory.
+    let source = inspect_source(&cwd.join(source))?;
+    let record = match mode {
+        InstallMode::Copy => InstallRecord::Copy,
+        InstallMode::Link => InstallRecord::Link {
+            target: crate::paths::display(&source.path),
+        },
+    };
+    install_validated(source, &record, scope, force, cwd, home, rho_home)
+}
+
+/// Place a validated package as `record` describes, then record it in state.
+fn install_validated(
+    source: SourcePackage,
+    record: &InstallRecord,
+    scope: PluginScope,
+    force: bool,
+    cwd: &Path,
+    home: &Path,
+    rho_home: Option<&Path>,
+) -> anyhow::Result<ManagedPackage> {
+    let mode = match record {
+        InstallRecord::Copy | InstallRecord::Git(_) => InstallMode::Copy,
+        InstallRecord::Link { .. } => InstallMode::Link,
+    };
     let root = managed_root(scope, cwd, home);
     let destination = place(&source, &root, mode, force)?;
 
-    let (origin, record) = match mode {
-        InstallMode::Copy => (PluginOrigin::Install, InstallRecord::Copy),
-        InstallMode::Link => (
-            PluginOrigin::Link,
-            InstallRecord::Link {
-                target: crate::paths::display(&source.path),
-            },
-        ),
-    };
-    let link_target = match &record {
-        InstallRecord::Link { target } => Some(PathBuf::from(target)),
-        InstallRecord::Copy | InstallRecord::Git(_) => None,
-    };
-
     let mut state = PluginStateStore::load(cwd, rho_home)?;
-    state.record_install(scope, &source.manifest.name, record)?;
+    state.record_install(scope, &source.manifest.name, record.clone())?;
 
     Ok(ManagedPackage {
         name: source.manifest.name,
         version: source.manifest.version,
         description: source.manifest.description,
         scope,
-        origin,
+        origin: record.origin(),
         path: destination,
-        link_target,
-        git: None,
+        link_target: record.link_target().map(PathBuf::from),
+        git: record.git().cloned(),
     })
 }
 

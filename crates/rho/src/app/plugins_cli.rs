@@ -13,7 +13,7 @@ use crate::{
     plugins::{
         discover_with_trust,
         git_source::{short_commit, InstallSource},
-        manage::{self, InstallMode, UpdateOutcome, UpdatedPackage},
+        manage::{self, InstallMode, UpdateOutcome, UpdateReport, UpdateSelection, UpdatedPackage},
         PluginLoadReport, PluginScope, PluginStatus, ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
@@ -42,32 +42,39 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
         } => {
             let home = require_home(home.as_deref())?;
             let scope = resolve_scope(*scope);
-            let package = match InstallSource::parse(source)? {
-                InstallSource::Local(path) => manage::install(
-                    &path,
-                    scope,
-                    InstallMode::Copy,
-                    *force,
-                    &cwd,
-                    home,
-                    rho_home.as_deref(),
-                )?,
+            match InstallSource::parse(source, &cwd)? {
+                InstallSource::Local(path) => {
+                    let package = manage::install(
+                        &path,
+                        scope,
+                        InstallMode::Copy,
+                        *force,
+                        &cwd,
+                        home,
+                        rho_home.as_deref(),
+                    )?;
+                    println!(
+                        "installed {} ({}) to {}",
+                        package.name,
+                        package.scope.as_str(),
+                        crate::paths::display(&package.path)
+                    );
+                }
                 InstallSource::Git(git) => {
                     eprintln!("fetching {}", git.describe());
-                    manage::install_git(&git, scope, *force, &cwd, home, rho_home.as_deref())?
+                    let package =
+                        manage::install_git(&git, scope, *force, &cwd, home, rho_home.as_deref())?;
+                    let commit = package.git.as_ref().map_or("-", |git| git.commit.as_str());
+                    println!(
+                        "installed {} ({}) to {} from {} at {}",
+                        package.name,
+                        package.scope.as_str(),
+                        crate::paths::display(&package.path),
+                        git.url,
+                        short_commit(commit)
+                    );
                 }
-            };
-            let from = package
-                .git
-                .as_ref()
-                .map(|git| format!(" from {} at {}", git.url, short_commit(&git.commit)))
-                .unwrap_or_default();
-            println!(
-                "installed {} ({}) to {}{from}",
-                package.name,
-                package.scope.as_str(),
-                crate::paths::display(&package.path)
-            );
+            }
             Ok(())
         }
         PluginsCommand::Link { path, scope, force } => {
@@ -96,14 +103,12 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
         }
         PluginsCommand::Update { name } => {
             let home = require_home(home.as_deref())?;
-            match name {
-                Some(name) => {
-                    let updated = manage::update(name, &cwd, home, rho_home.as_deref())?;
-                    print_update(&updated);
-                    Ok(())
-                }
-                None => update_all(&cwd, home, rho_home.as_deref()),
-            }
+            let selection = match name {
+                Some(name) => UpdateSelection::Named(name),
+                None => UpdateSelection::All,
+            };
+            let report = manage::update(selection, trust, &cwd, home, rho_home.as_deref())?;
+            print_update_report(report)
         }
         PluginsCommand::Enable { name } => {
             let package = manage::set_enabled(
@@ -168,20 +173,41 @@ fn resolve_scope(scope: PluginsScope) -> PluginScope {
     }
 }
 
-fn update_all(cwd: &Path, home: &Path, rho_home: Option<&Path>) -> anyhow::Result<()> {
-    let results = manage::update_all(cwd, home, rho_home)?;
-    if results.is_empty() {
-        println!("no git-installed plugins to update");
+/// Print one line per package; exit nonzero when any update failed.
+fn print_update_report(report: UpdateReport) -> anyhow::Result<()> {
+    if !report.untrusted.is_empty() {
+        println!(
+            "skipped project plugins in an untrusted workspace: {}; set {TRUST_PROJECT_PLUGINS_ENV}=1 to update them",
+            report.untrusted.join(", ")
+        );
+    }
+    if report.results.is_empty() {
+        if report.untrusted.is_empty() {
+            println!("no git-installed plugins to update");
+        }
         return Ok(());
     }
-    let total = results.len();
+    let total = report.results.len();
     let mut failed = 0;
-    for (name, result) in results {
+    for (target, result) in report.results {
+        let scope = target.scope.as_str();
         match result {
-            Ok(updated) => print_update(&updated),
+            Ok(UpdatedPackage { package, outcome }) => match outcome {
+                UpdateOutcome::Updated { previous, current } => println!(
+                    "updated {} ({scope}) {} -> {}",
+                    package.name,
+                    short_commit(&previous),
+                    short_commit(&current)
+                ),
+                UpdateOutcome::UpToDate { commit } => println!(
+                    "{} ({scope}) is up to date at {}",
+                    package.name,
+                    short_commit(&commit)
+                ),
+            },
             Err(error) => {
                 failed += 1;
-                eprintln!("could not update {name}: {error:#}");
+                eprintln!("could not update {} ({scope}): {error:#}", target.name);
             }
         }
     }
@@ -189,28 +215,6 @@ fn update_all(cwd: &Path, home: &Path, rho_home: Option<&Path>) -> anyhow::Resul
         anyhow::bail!("{failed} of {total} plugin updates failed");
     }
     Ok(())
-}
-
-fn print_update(updated: &UpdatedPackage) {
-    let package = &updated.package;
-    let commit = package
-        .git
-        .as_ref()
-        .map(|git| short_commit(&git.commit))
-        .unwrap_or("-");
-    match &updated.outcome {
-        UpdateOutcome::Updated { previous } => println!(
-            "updated {} ({}) {} -> {commit}",
-            package.name,
-            package.scope.as_str(),
-            short_commit(previous)
-        ),
-        UpdateOutcome::UpToDate => println!(
-            "{} ({}) is up to date at {commit}",
-            package.name,
-            package.scope.as_str()
-        ),
-    }
 }
 
 fn require_home(home: Option<&Path>) -> anyhow::Result<&Path> {

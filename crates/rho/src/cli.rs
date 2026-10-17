@@ -647,7 +647,7 @@ pub enum PluginsCommand {
         /// Local directory with `plugin.json`, a GitHub link
         /// (`https://github.com/<owner>/<repo>[/tree/<ref>/<path>]`), or a git URL.
         #[arg(value_name = "SOURCE")]
-        source: String,
+        source: std::ffi::OsString,
         /// Install under the user or project plugins root.
         #[arg(long, value_enum, default_value_t = PluginsScope::User)]
         scope: PluginsScope,

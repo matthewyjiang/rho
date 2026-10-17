@@ -1,6 +1,6 @@
 //! Install source parsing tests.
 
-use std::path::PathBuf;
+use std::{ffi::OsStr, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 
@@ -12,6 +12,11 @@ fn git(url: &str, git_ref: Option<&str>, subdir: Option<&str>) -> InstallSource 
         git_ref: git_ref.map(str::to_string),
         subdir: subdir.map(str::to_string),
     })
+}
+
+/// A cwd with no entries, so URL-shaped arguments never match a local path.
+fn missing_cwd() -> PathBuf {
+    std::env::temp_dir().join("rho-plugin-source-tests-no-such-dir")
 }
 
 // Covers: GitHub browser links, git URLs, and local paths classify correctly.
@@ -40,6 +45,10 @@ fn parses_install_sources() {
             git("git@gitlab.com:owner/repo.git", None, None),
         ),
         (
+            "ssh://git@example.com/owner/repo.git",
+            git("ssh://git@example.com/owner/repo.git", None, None),
+        ),
+        (
             "file:///srv/plugins.git",
             git("file:///srv/plugins.git", None, None),
         ),
@@ -53,11 +62,16 @@ fn parses_install_sources() {
         ),
     ];
     for (arg, expected) in cases {
-        assert_eq!(InstallSource::parse(arg).unwrap(), expected, "{arg}");
+        assert_eq!(
+            InstallSource::parse(OsStr::new(arg), &missing_cwd()).unwrap(),
+            expected,
+            "{arg}"
+        );
     }
 }
 
-// Covers: sources that could inject git options or escape the checkout fail.
+// Covers: sources that could inject git options, escape the checkout, or
+// persist credentials into plugins.toml fail.
 // Owner: plugin install source validation.
 #[test]
 fn rejects_unsafe_or_malformed_sources() {
@@ -68,9 +82,15 @@ fn rejects_unsafe_or_malformed_sources() {
         "https://github.com/owner/repo/tree/--upload-pack=evil",
         "https://github.com/owner/repo/tree/main/../outside",
         "https://github.com/owner/repo/tree/main/./plugin",
+        "https://user:ghp_secret@github.com/owner/repo",
+        "https://ghp_secret@gitlab.com/owner/repo.git",
+        "ssh://git:hunter2@example.com/owner/repo.git",
     ];
     for arg in cases {
-        assert!(InstallSource::parse(arg).is_err(), "{arg}");
+        assert!(
+            InstallSource::parse(OsStr::new(arg), &missing_cwd()).is_err(),
+            "{arg}"
+        );
     }
 
     // Recorded sources from plugins.toml go through the same gate.
@@ -80,4 +100,16 @@ fn rejects_unsafe_or_malformed_sources() {
         subdir: None,
     };
     assert!(recorded.validate().is_err());
+}
+
+// Covers: an existing local directory wins over URL-shaped parsing.
+// Owner: plugin install source parsing.
+#[test]
+fn existing_local_path_is_never_a_remote() {
+    let cwd = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(cwd.path().join("github.com/owner/repo")).unwrap();
+    assert_eq!(
+        InstallSource::parse(OsStr::new("github.com/owner/repo"), cwd.path()).unwrap(),
+        InstallSource::Local(PathBuf::from("github.com/owner/repo"))
+    );
 }

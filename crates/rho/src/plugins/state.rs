@@ -101,6 +101,30 @@ pub(crate) enum InstallRecord {
     Git(GitRecord),
 }
 
+impl InstallRecord {
+    pub(crate) fn origin(&self) -> PluginOrigin {
+        match self {
+            Self::Copy => PluginOrigin::Install,
+            Self::Link { .. } => PluginOrigin::Link,
+            Self::Git(_) => PluginOrigin::Git,
+        }
+    }
+
+    pub(crate) fn link_target(&self) -> Option<&str> {
+        match self {
+            Self::Link { target } => Some(target),
+            Self::Copy | Self::Git(_) => None,
+        }
+    }
+
+    pub(crate) fn git(&self) -> Option<&GitRecord> {
+        match self {
+            Self::Git(git) => Some(git),
+            Self::Copy | Self::Link { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginStateStore {
     pub(crate) user: PluginStateFile,
@@ -249,16 +273,11 @@ impl PluginStateStore {
         name: &str,
         record: InstallRecord,
     ) -> anyhow::Result<()> {
-        let (origin, link_target, git) = match record {
-            InstallRecord::Copy => (PluginOrigin::Install, None, None),
-            InstallRecord::Link { target } => (PluginOrigin::Link, Some(target), None),
-            InstallRecord::Git(git) => (PluginOrigin::Git, None, Some(git)),
-        };
         self.update_scope(scope, |file| {
             let entry = file.plugins.entry(name.to_string()).or_default();
-            entry.origin = Some(origin);
-            entry.link_target = link_target;
-            entry.git = git;
+            entry.origin = Some(record.origin());
+            entry.link_target = record.link_target().map(str::to_string);
+            entry.git = record.git().cloned();
             // Fresh installs start enabled even if a prior disable entry remained.
             entry.enabled = true;
             Ok(())
@@ -428,9 +447,15 @@ pub(crate) fn parse_state_file(text: &str) -> Result<PluginStateFile, String> {
             file.version
         ));
     }
-    for name in file.plugins.keys() {
+    for (name, entry) in &file.plugins {
         super::manifest::validate_plugin_name(name)
             .map_err(|error| format!("invalid plugin key `{name}`: {error}"))?;
+        // `update` reads the git table; origin and table must agree.
+        if (entry.origin == Some(PluginOrigin::Git)) != entry.git.is_some() {
+            return Err(format!(
+                "invalid plugin `{name}`: origin = \"git\" and a [plugins.{name}.git] table must appear together"
+            ));
+        }
     }
     Ok(file)
 }

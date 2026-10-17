@@ -5,7 +5,7 @@ use std::{path::Path, process::Command};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{install_git, update, update_all, UpdateOutcome};
+use super::{install_git, update, UpdateOutcome, UpdateSelection, UpdateTarget};
 use crate::plugins::{
     discover_with_trust,
     git_source::GitSource,
@@ -14,13 +14,16 @@ use crate::plugins::{
         tests::{env, write_source, Env},
         InstallMode,
     },
-    state::PluginScope,
+    state::{PluginScope, PluginStateStore},
     PluginOrigin, PluginStatus, ProjectTrust,
 };
 
 /// Run git in `dir` with an identity that ignores ambient signing config.
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .arg("-C")
         .arg(dir)
         .args([
@@ -49,25 +52,47 @@ fn commit_all(repo: &Path, message: &str) -> String {
     git(repo, &["rev-parse", "HEAD"])
 }
 
-/// A repository on branch `main` containing plugin `demo` at `plugins/demo`.
-fn plugin_repo() -> (TempDir, String) {
+/// A repository on branch `main` containing plugin `name` at `plugins/<name>`.
+fn plugin_repo(name: &str) -> (TempDir, String) {
     let repo = TempDir::new().unwrap();
     git(repo.path(), &["init", "--quiet", "--initial-branch=main"]);
-    write_source(&repo.path().join("plugins"), "demo");
+    write_source(&repo.path().join("plugins"), name);
     let commit = commit_all(repo.path(), "init");
     (repo, commit)
 }
 
-fn file_url(path: &Path) -> String {
-    url::Url::from_directory_path(path).unwrap().to_string()
+fn repo_source(repo: &Path, name: &str) -> GitSource {
+    GitSource {
+        url: url::Url::from_directory_path(repo).unwrap().to_string(),
+        git_ref: Some("main".to_string()),
+        subdir: Some(format!("plugins/{name}")),
+    }
 }
 
-fn demo_source(repo: &Path) -> GitSource {
-    GitSource {
-        url: file_url(repo),
-        git_ref: Some("main".to_string()),
-        subdir: Some("plugins/demo".to_string()),
-    }
+fn install_from(env: &Env, source: &GitSource, scope: PluginScope) {
+    install_git(
+        source,
+        scope,
+        /* force */ false,
+        env.project.path(),
+        env.home.path(),
+        Some(env.rho_home.path()),
+    )
+    .unwrap();
+}
+
+fn run_update(
+    env: &Env,
+    selection: UpdateSelection<'_>,
+    trust: ProjectTrust,
+) -> anyhow::Result<super::UpdateReport> {
+    update(
+        selection,
+        trust,
+        env.project.path(),
+        env.home.path(),
+        Some(env.rho_home.path()),
+    )
 }
 
 fn demo_status(env: &Env) -> PluginStatus {
@@ -83,15 +108,22 @@ fn demo_status(env: &Env) -> PluginStatus {
     .status
 }
 
+fn edit_manifest(repo: &Path, from: &str, to: &str) {
+    let path = repo.join("plugins/demo/plugin.json");
+    let text = std::fs::read_to_string(&path).unwrap().replace(from, to);
+    std::fs::write(path, text).unwrap();
+}
+
 // Covers: git install records its commit; update is a no-op until the ref
-// moves, then replaces the package while keeping a user disable.
+// moves, then replaces the package while keeping a user disable, and refuses
+// a fetched package that renamed itself.
 // Owner: plugin git install and update policy.
 #[test]
 fn git_install_then_update_follows_recorded_ref() {
     let env = env();
-    let (repo, first) = plugin_repo();
+    let (repo, first) = plugin_repo("demo");
     let installed = install_git(
-        &demo_source(repo.path()),
+        &repo_source(repo.path(), "demo"),
         PluginScope::User,
         /* force */ false,
         env.project.path(),
@@ -102,9 +134,8 @@ fn git_install_then_update_follows_recorded_ref() {
     assert_eq!(installed.origin, PluginOrigin::Git);
     assert_eq!(installed.git.as_ref().unwrap().commit, first);
     let manifest = env.home.path().join(".agents/plugins/demo/plugin.json");
-    assert!(manifest.is_file());
 
-    // A local install is not an update candidate.
+    // A local install has no source to refetch.
     let local_root = TempDir::new().unwrap();
     install(
         &write_source(local_root.path(), "local"),
@@ -116,40 +147,127 @@ fn git_install_then_update_follows_recorded_ref() {
         Some(env.rho_home.path()),
     )
     .unwrap();
-    let rho_home = Some(env.rho_home.path());
-    assert!(update("local", env.project.path(), env.home.path(), rho_home).is_err());
+    let error =
+        run_update(&env, UpdateSelection::Named("local"), ProjectTrust::Trusted).unwrap_err();
+    assert!(error.to_string().contains("not git"), "{error}");
 
     set_enabled(
         "demo",
         /* enabled */ false,
         env.project.path(),
         Some(env.home.path()),
-        rho_home,
+        Some(env.rho_home.path()),
     )
     .unwrap();
 
-    let results = update_all(env.project.path(), env.home.path(), rho_home).unwrap();
-    let outcomes = results
-        .into_iter()
-        .map(|(name, result)| (name, result.unwrap().outcome))
-        .collect::<Vec<_>>();
-    assert_eq!(outcomes, [("demo".to_string(), UpdateOutcome::UpToDate)]);
+    let outcomes = |report: super::UpdateReport| {
+        report
+            .results
+            .into_iter()
+            .map(|(target, result)| (target, result.map(|updated| updated.outcome).ok()))
+            .collect::<Vec<_>>()
+    };
+    let demo = UpdateTarget {
+        name: "demo".to_string(),
+        scope: PluginScope::User,
+    };
+    let report = run_update(&env, UpdateSelection::All, ProjectTrust::Trusted).unwrap();
+    assert_eq!(
+        outcomes(report),
+        [(
+            demo.clone(),
+            Some(UpdateOutcome::UpToDate {
+                commit: first.clone()
+            })
+        )]
+    );
 
-    let plugin_json = repo.path().join("plugins/demo/plugin.json");
-    let bumped = std::fs::read_to_string(&plugin_json)
-        .unwrap()
-        .replace("1.2.3", "2.0.0");
-    std::fs::write(&plugin_json, bumped).unwrap();
+    edit_manifest(repo.path(), "1.2.3", "2.0.0");
     let second = commit_all(repo.path(), "bump");
-
-    let updated = update("demo", env.project.path(), env.home.path(), rho_home).unwrap();
-    assert_eq!(updated.outcome, UpdateOutcome::Updated { previous: first });
-    assert_eq!(updated.package.version.as_deref(), Some("2.0.0"));
-    assert_eq!(updated.package.git.unwrap().commit, second);
+    let report = run_update(&env, UpdateSelection::Named("demo"), ProjectTrust::Trusted).unwrap();
+    assert_eq!(
+        outcomes(report),
+        [(
+            demo.clone(),
+            Some(UpdateOutcome::Updated {
+                previous: first,
+                current: second.clone(),
+            })
+        )]
+    );
     assert!(std::fs::read_to_string(&manifest)
         .unwrap()
         .contains("2.0.0"));
     assert_eq!(demo_status(&env), PluginStatus::Disabled);
+
+    edit_manifest(repo.path(), r#""name":"demo""#, r#""name":"renamed""#);
+    commit_all(repo.path(), "rename");
+    let report = run_update(&env, UpdateSelection::Named("demo"), ProjectTrust::Trusted).unwrap();
+    assert_eq!(outcomes(report), [(demo, None)]);
+    assert!(std::fs::read_to_string(&manifest)
+        .unwrap()
+        .contains("2.0.0"));
+    let state = PluginStateStore::load(env.project.path(), Some(env.rho_home.path())).unwrap();
+    assert_eq!(
+        state.git_record(PluginScope::User, "demo").unwrap().commit,
+        second
+    );
+}
+
+// Covers: update-all keeps going past a failed package, and project sources
+// from an untrusted workspace are never fetched.
+// Owner: plugin git update selection.
+#[test]
+fn update_all_isolates_failures_and_skips_untrusted_project_sources() {
+    let env = env();
+    let (demo_repo, demo_commit) = plugin_repo("demo");
+    let (other_repo, _) = plugin_repo("other");
+    let (project_repo, _) = plugin_repo("proj");
+    install_from(
+        &env,
+        &repo_source(demo_repo.path(), "demo"),
+        PluginScope::User,
+    );
+    install_from(
+        &env,
+        &repo_source(other_repo.path(), "other"),
+        PluginScope::User,
+    );
+    install_from(
+        &env,
+        &repo_source(project_repo.path(), "proj"),
+        PluginScope::Project,
+    );
+    std::fs::remove_dir_all(env.home.path().join(".agents/plugins/other")).unwrap();
+
+    let report = run_update(&env, UpdateSelection::All, ProjectTrust::Untrusted).unwrap();
+    let results = report
+        .results
+        .into_iter()
+        .map(|(target, result)| (target.name, result.map(|updated| updated.outcome).ok()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        results,
+        [
+            (
+                "demo".to_string(),
+                Some(UpdateOutcome::UpToDate {
+                    commit: demo_commit
+                })
+            ),
+            ("other".to_string(), None),
+        ]
+    );
+    assert_eq!(report.untrusted, ["proj"]);
+
+    assert!(run_update(
+        &env,
+        UpdateSelection::Named("proj"),
+        ProjectTrust::Untrusted
+    )
+    .is_err());
+    let trusted = run_update(&env, UpdateSelection::Named("proj"), ProjectTrust::Trusted).unwrap();
+    assert!(trusted.results[0].1.is_ok());
 }
 
 // Covers: repository-root packages install without git metadata, and a
@@ -165,7 +283,7 @@ fn git_install_copies_package_files_only() {
 
     let missing = GitSource {
         subdir: Some("plugins/nope".to_string()),
-        ..demo_source(&repo)
+        ..repo_source(&repo, "demo")
     };
     let error = install_git(
         &missing,
@@ -181,17 +299,9 @@ fn git_install_copies_package_files_only() {
 
     let root = GitSource {
         subdir: None,
-        ..demo_source(&repo)
+        ..repo_source(&repo, "demo")
     };
-    install_git(
-        &root,
-        PluginScope::User,
-        /* force */ false,
-        env.project.path(),
-        env.home.path(),
-        Some(env.rho_home.path()),
-    )
-    .unwrap();
+    install_from(&env, &root, PluginScope::User);
     let installed = env.home.path().join(".agents/plugins/demo");
     assert!(installed.join("plugin.json").is_file());
     assert!(!installed.join(".git").exists());
