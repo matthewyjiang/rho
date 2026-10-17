@@ -16,6 +16,9 @@ use acp::{
     bind_antigravity_runtime, bind_cursor_runtime, frozen_antigravity_runtime,
     frozen_cursor_runtime,
 };
+#[path = "agent_binding_model_override.rs"]
+mod model_override;
+pub(crate) use model_override::ModelOverride;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentRole {
@@ -366,10 +369,27 @@ impl AgentBinder {
         invocation: AgentInvocation,
         host_config: &Config,
     ) -> anyhow::Result<BoundAgent> {
+        Self::bind_with_model_override(
+            definition,
+            invocation,
+            host_config,
+            /*model_override*/ None,
+        )
+    }
+
+    /// Per-call selection changes only the launch model, never the definition
+    /// identity, prompt, capabilities, or host permission ceiling.
+    pub(crate) fn bind_with_model_override(
+        definition: Arc<AgentDefinition>,
+        invocation: AgentInvocation,
+        host_config: &Config,
+        model_override: Option<ModelOverride<'_>>,
+    ) -> anyhow::Result<BoundAgent> {
         Self::bind_with_credentials(
             definition,
             invocation,
             host_config,
+            model_override,
             &crate::credential_store::AppCredentialStore,
         )
     }
@@ -378,8 +398,18 @@ impl AgentBinder {
         definition: Arc<AgentDefinition>,
         invocation: AgentInvocation,
         host_config: &Config,
+        model_override: Option<ModelOverride<'_>>,
         store: &dyn CredentialStore,
     ) -> anyhow::Result<BoundAgent> {
+        if model_override.is_some()
+            && definition.runtime.runtime() != crate::agent::AgentRuntime::Rho
+        {
+            anyhow::bail!(
+                "agent '{}': per-call model overrides require runtime rho, not {}",
+                definition.id,
+                definition.runtime.runtime()
+            );
+        }
         let fingerprint = definition.fingerprint();
         let runtime = match &definition.runtime {
             AgentRuntimeSpec::Rho {
@@ -392,6 +422,7 @@ impl AgentBinder {
                     model,
                     *reasoning,
                     host_config,
+                    model_override,
                     store,
                 )?;
                 apply_fast_mode(&definition, invocation.role, &mut config)?;
@@ -656,6 +687,7 @@ pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config
         model,
         *reasoning,
         host_config,
+        /*model_override*/ None,
         &crate::credential_store::AppCredentialStore,
     )
     .unwrap_or_else(|_| host_config.clone())
@@ -666,10 +698,17 @@ fn bind_rho_config(
     model: &ModelPolicy,
     reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     host_config: &Config,
+    model_override: Option<ModelOverride<'_>>,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<Config> {
-    let mut config = host_config.clone();
-    apply_rho_model_policy(agent_id, model, &mut config, store)?;
+    let mut config = match model_override {
+        Some(reference) => model_override::bind_config(agent_id, reference, host_config, store)?,
+        None => {
+            let mut config = host_config.clone();
+            apply_rho_model_policy(agent_id, model, &mut config, store)?;
+            config
+        }
+    };
     if let Some(reasoning) = reasoning {
         config.reasoning = reasoning;
     }

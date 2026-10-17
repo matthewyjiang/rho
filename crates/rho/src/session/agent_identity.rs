@@ -7,9 +7,16 @@ use std::{
     path::Path,
 };
 
+use rho_sdk::SessionSnapshot;
 use serde::{Deserialize, Serialize};
 
-use super::{index, layout::set_private_file_permissions, persistence::SessionEntry, Session};
+use super::{
+    index,
+    layout::{set_private_file_permissions, timestamp},
+    persistence::{SessionEntry, SESSION_VERSION},
+    tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition},
+    Session,
+};
 
 /// How the session's agent was bound. Absent from the header means `Root`:
 /// the process launch agent. `Delegated` marks an ACP session rebound with
@@ -78,7 +85,16 @@ impl Session {
         &self,
         agent_id: &str,
         fingerprint: &str,
+        initial_snapshot: Option<&SessionSnapshot>,
     ) -> anyhow::Result<()> {
+        if let Some(snapshot) = initial_snapshot {
+            anyhow::ensure!(
+                snapshot.session_id().as_str() == self.id,
+                "snapshot session id '{}' does not match store id '{}'",
+                snapshot.session_id(),
+                self.id,
+            );
+        }
         let mut cursor = self
             .write_lock
             .lock()
@@ -93,6 +109,7 @@ impl Session {
         }
         let mut entry: SessionEntry = serde_json::from_str(header)?;
         let SessionEntry::Session {
+            version,
             agent_id: stored_id,
             agent_fingerprint,
             agent_role,
@@ -104,6 +121,11 @@ impl Session {
         *stored_id = Some(agent_id.to_owned());
         *agent_fingerprint = Some(fingerprint.to_owned());
         *agent_role = SessionAgentRole::Delegated;
+        if initial_snapshot.is_some() {
+            // A header-only legacy file has no history to migrate. Its new
+            // root snapshot uses the current explicit-tree representation.
+            *version = SESSION_VERSION;
+        }
 
         let parent = self
             .path
@@ -113,6 +135,23 @@ impl Session {
         set_private_file_permissions(temporary.as_file())?;
         serde_json::to_writer(&mut temporary, &entry)?;
         temporary.write_all(b"\n")?;
+        if let Some(snapshot) = initial_snapshot {
+            let state = SessionEntry::Node {
+                node: SessionNode {
+                    id: NodeId::new(),
+                    parent_id: None,
+                    timestamp: timestamp(),
+                    kind: SessionNodeKind::Commit,
+                    compaction_facts: None,
+                    transition: StoredStateTransition::Snapshot {
+                        snapshot: Box::new(snapshot.clone()),
+                    },
+                    display_messages: Vec::new(),
+                },
+            };
+            serde_json::to_writer(&mut temporary, &state)?;
+            temporary.write_all(b"\n")?;
+        }
         temporary.as_file().sync_all()?;
         temporary.persist(&self.path)?;
         cursor.valid_len = None;

@@ -84,9 +84,10 @@ impl HostOrchestrator {
         invocation_id: ToolCallId,
         definition: &AgentDefinition,
         prompt: &str,
+        model_override: Option<&str>,
         context: ToolContext,
     ) -> Result<HostRun, ToolError> {
-        let arguments = delegate_arguments(definition, prompt);
+        let arguments = delegate_arguments(definition, prompt, model_override);
         let output = self
             .contract()?
             .delegate
@@ -195,12 +196,23 @@ impl HostOrchestrator {
 /// No `target.model` is sent: T3 accepts only models the ACP agent advertises,
 /// which excludes most pinned definition models (measured: `openai-codex/
 /// gpt-6-luna` failed with `model_unavailable`). The child's `/agent:` rebind
-/// applies the definition's model policy itself.
-fn delegate_arguments(definition: &AgentDefinition, prompt: &str) -> Value {
+/// applies the definition's model policy or the explicit per-call override itself.
+fn delegate_arguments(
+    definition: &AgentDefinition,
+    prompt: &str,
+    model_override: Option<&str>,
+) -> Value {
     // Let T3 derive its display title from the task. Copying instructions into
     // the separate title field can exceed its budget and reject the launch.
+    let task = match model_override {
+        Some(model) => format!("/agent:{} --model {model} -- {prompt}", definition.id),
+        None if prompt.trim_start().starts_with("--") => {
+            format!("/agent:{} -- {prompt}", definition.id)
+        }
+        None => format!("/agent:{} {prompt}", definition.id),
+    };
     json!({
-        "task": format!("/agent:{} {prompt}", definition.id),
+        "task": task,
         "mode": "async",
     })
 }

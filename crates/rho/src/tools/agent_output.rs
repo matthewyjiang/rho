@@ -33,6 +33,10 @@ pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
 pub(super) struct AgentRunView {
     id: String,
     agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
     state: RunState,
     done: bool,
     result: Option<String>,
@@ -44,6 +48,8 @@ impl From<&SubagentSnapshot> for AgentRunView {
         Self {
             id: snapshot.id.clone(),
             agent_id: snapshot.agent_id.clone(),
+            provider: snapshot.status.provider.clone(),
+            model: snapshot.status.model.clone(),
             state: snapshot.status.state,
             done: snapshot.done,
             result: snapshot
@@ -58,10 +64,22 @@ impl From<&SubagentSnapshot> for AgentRunView {
 }
 
 impl AgentRunView {
+    /// A launch receipt is not a completion observation, even if the child has
+    /// already finished. Its result still arrives through normal delivery.
+    pub(super) fn started_with_identity(snapshot: &SubagentSnapshot) -> Self {
+        Self {
+            provider: snapshot.status.provider.clone(),
+            model: snapshot.status.model.clone(),
+            ..Self::started(snapshot.id.clone(), snapshot.agent_id.clone())
+        }
+    }
+
     pub(super) fn started(id: String, agent_id: String) -> Self {
         Self {
             id,
             agent_id,
+            provider: None,
+            model: None,
             state: RunState::Starting,
             done: false,
             result: None,

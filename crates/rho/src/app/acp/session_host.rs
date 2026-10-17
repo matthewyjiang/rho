@@ -271,9 +271,7 @@ impl SessionHost {
         // The first model turn this host completes names an untitled session.
         let names_session = matches!(
             &action,
-            Some(Ok(
-                PromptAction::Turn { .. } | PromptAction::RunAsAgent { .. }
-            ))
+            Some(Ok(PromptAction::Turn { .. } | PromptAction::RunAsAgent(_)))
         ) && !self.title_requested;
         let result = match action {
             None => Ok(PromptResponse::new(
@@ -296,12 +294,8 @@ impl SessionHost {
                 self.start_workflow(&input, start, &startup.config, &startup.config_path, client)
                     .await
             }
-            Some(Ok(PromptAction::RunAsAgent {
-                agent_id,
-                input: task,
-            })) => {
-                self.run_as_agent(&input, &agent_id, task, startup, client)
-                    .await
+            Some(Ok(PromptAction::RunAsAgent(task))) => {
+                self.run_as_agent(&input, task, startup, client).await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
                 self.await_wake(signal, &starting, client).await
@@ -411,22 +405,29 @@ impl SessionHost {
         let available_auths = available_auth_modes(&AppCredentialStore);
         let selection = config_options::resolve_model_value(request, &current, &available_auths)?;
         if model_reference(&selection.provider, &selection.model)
-            == model_reference(&current.provider, &current.model)
-            && selection.auth == current.auth
+            != model_reference(&current.provider, &current.model)
+            || selection.auth != current.auth
         {
-            return Ok(self.config_options(process_config));
-        }
-        let reasoning = resolve_switch_reasoning(&selection, self.built.session.reasoning_level())?;
-        let mut config = process_config.clone();
-        config.provider = selection.provider.clone();
-        config.model = selection.model.clone();
-        config.auth = selection.auth.clone();
-        config.reasoning = reasoning;
-        let provider =
-            build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
-                .await
+            let reasoning =
+                resolve_switch_reasoning(&selection, self.built.session.reasoning_level())?;
+            let mut config = process_config.clone();
+            config.provider = selection.provider.clone();
+            config.model = selection.model.clone();
+            config.auth = selection.auth.clone();
+            config.reasoning = reasoning;
+            self.validate_model_override_switch(&config)
                 .map_err(host_apply_error)?;
-        self.switch_provider(provider, &config)?;
+            let provider =
+                build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
+                    .await
+                    .map_err(host_apply_error)?;
+            self.switch_provider(provider, &config)?;
+        }
+        self.persist_model_override().map_err(|error| {
+            host_apply_error(anyhow::anyhow!(
+                "model changed but could not save session: {error}"
+            ))
+        })?;
         Ok(self.config_options(process_config))
     }
 

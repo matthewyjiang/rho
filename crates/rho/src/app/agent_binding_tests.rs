@@ -755,6 +755,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
             available_tools: capabilities(),
         },
         &host,
+        /*model_override*/ None,
         &credentials(&["xai-api-key"]),
     )
     .unwrap();
@@ -786,6 +787,7 @@ fn explicit_auth_pin_overrides_host_auth() {
             available_tools: capabilities(),
         },
         &host,
+        /*model_override*/ None,
         &credentials(&["xai-oauth"]),
     )
     .unwrap();
@@ -869,6 +871,7 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         )
         .unwrap();
@@ -985,6 +988,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         )
         .unwrap();
@@ -1282,6 +1286,7 @@ fn delegated_fast_mode_follows_definition_not_parent() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         );
         let actual = result
@@ -1318,6 +1323,7 @@ fn keep_host_fast_mode_restores_session_fast_when_servable() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         )
         .expect("bind");

@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use super::{
     agent_metadata, agent_spec, agents_metadata,
     host_orchestrator::{HostOrchestrator, HostRun},
-    parse_agent_args,
+    parse_agent_args, AgentArgs,
 };
 use crate::{
     agent::{AdvertisedAgents, AdvertisedChange, AgentCatalog, AgentDefinition, AgentRuntimeSpec},
@@ -112,7 +112,7 @@ impl HostAgentTool {
             .find(&args.agent_id)
             .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))?
             .definition;
-        self.launch(invocation.id().clone(), definition, &args.prompt, context)
+        self.launch(invocation.id().clone(), definition, &args, context)
             .await
     }
 
@@ -122,7 +122,7 @@ impl HostAgentTool {
         &self,
         invocation_id: ToolCallId,
         definition: &AgentDefinition,
-        prompt: &str,
+        args: &AgentArgs,
         context: ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         // Recheck at launch: the on-disk runtime may have changed since spec().
@@ -146,7 +146,13 @@ impl HostAgentTool {
             .mark_untracked_effect(rho_tools::UntrackedWorkspaceEffect::MutatingTool, "agent");
         let run = self
             .orchestrator
-            .delegate(invocation_id, definition, prompt, context)
+            .delegate(
+                invocation_id,
+                definition,
+                &args.prompt,
+                args.model.as_deref(),
+                context,
+            )
             .await?;
         rho_tools::Rendered::new(
             format!(

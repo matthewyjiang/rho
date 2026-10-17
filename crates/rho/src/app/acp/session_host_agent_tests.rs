@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, future::Future, path::Path, pin::Pin, sync::Arc
 use agent_client_protocol::{
     schema::v1::{
         RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionNotification,
-        StopReason,
+        SessionUpdate, StopReason,
     },
     Error as AcpError,
 };
@@ -17,7 +17,10 @@ use rho_sdk::{
 
 use super::*;
 use crate::{
-    agent::{AgentCapabilities, AgentId, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy},
+    agent::{
+        AgentCapabilities, AgentCatalogSources, AgentId, ModelPolicy, PromptPolicy, ToolCapability,
+        ToolPolicy,
+    },
     app::{acp::session_host::mode::SessionPermission, session_assembly::BuiltSession},
     diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
@@ -42,6 +45,40 @@ impl AcpClientPort for NullPort {
     ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>
     {
         Box::pin(async { Err(AcpError::method_not_found()) })
+    }
+}
+
+/// Read the durable state when the host can first observe the child selection,
+/// before its first turn has written any checkpoints. A restart sees this file.
+struct LaunchPort {
+    stored: StoredSession,
+    expected_override: Option<serde_json::Value>,
+}
+
+impl AcpClientPort for LaunchPort {
+    fn send_session_notification(
+        &self,
+        notification: SessionNotification,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
+        Box::pin(async move {
+            if matches!(notification.update, SessionUpdate::ConfigOptionUpdate(_)) {
+                let saved = self
+                    .stored
+                    .session_metadata(MODEL_OVERRIDE_METADATA)
+                    .unwrap()
+                    .map(|encoded| serde_json::from_str::<serde_json::Value>(&encoded).unwrap());
+                assert_eq!(saved, self.expected_override);
+            }
+            Ok(())
+        })
+    }
+
+    fn request_permission(
+        &self,
+        request: RequestPermissionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>
+    {
+        NullPort.request_permission(request)
     }
 }
 
@@ -95,7 +132,7 @@ async fn scripted_built(
     tools: AppToolSet,
 ) -> BuiltSession {
     let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
-        ModelIdentity::new("test", &config.provider, &config.model),
+        ModelIdentity::new(&config.provider, "scripted", &config.model),
         vec![ScriptedTurn::completed(ModelResponse::Assistant(vec![
             ContentBlock::Text("done".into()),
         ]))],
@@ -149,80 +186,173 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
 }
 
 // Covers: a child must bind its allowlist and delegated role before its first
-// turn, preserving the host's pre-prompt model/mode selection and session id.
+// turn, preserving the host's pre-prompt mode, reasoning and session id. A call
+// override must be durable before advertising the child, then survive the first
+// checkpoint and reload without changing identity.
 // Owner: ACP session rebind transaction (scripted provider, no credentials).
 #[tokio::test]
 async fn rebind_applies_child_tools_and_current_host_selection() {
     let cwd = tempfile::tempdir().unwrap();
     let startup = startup(cwd.path());
-    let mut host = host(cwd.path(), &startup).await;
-    let id = host.built.session.id().clone();
-    let child = definition(ToolPolicy::Allow(
-        [
-            ToolCapability::ReadFile,
-            ToolCapability::Agent,
-            ToolCapability::Agents,
-            ToolCapability::Advisor,
-        ]
-        .into(),
-    ));
-    // T3 picks a thought level before the child's first prompt; the rebind
-    // must keep it because the definition sets none.
-    host.built
-        .session
-        .set_reasoning_level(ReasoningLevel::High)
-        .unwrap();
-    let display = UserInput::text("/agent:acp-child inspect the parser");
-    let response = host
-        .run_as_agent_with(
-            &display,
-            child,
-            UserInput::text("inspect the parser"),
-            &startup,
-            &NullPort,
-            async |agent, config, id| {
-                assert_eq!(config.reasoning, ReasoningLevel::High);
-                let tools = AppToolSet::new(
-                    &config,
-                    RuntimeDiagnostics::new(&config),
-                    ToolSetOptions::new(agent.rho_capabilities().unwrap().clone()),
-                );
-                Ok(SessionAssembly {
-                    built: scripted_built(&config, id, tools).await,
-                    workspace_root: cwd.path().to_path_buf(),
-                    session_writes: Default::default(),
+    let catalog = || {
+        Ok(AgentCatalog::from_authorized_sources(AgentCatalogSources {
+            rho_home: vec![(
+                "acp-child.md".into(),
+                "---\ndescription: ACP child\ntools: [read_file, agent, agents, advisor]\n---\nInspect the requested files".into(),
+            )],
+            ..Default::default()
+        })?)
+    };
+    for model_override in [None, Some("@review")] {
+        let mut host = host(cwd.path(), &startup).await;
+        let id = host.built.session.id().clone();
+        let child = catalog()
+            .unwrap()
+            .find("acp-child")
+            .unwrap()
+            .definition
+            .clone();
+        let fingerprint = child.fingerprint();
+        let expected_model = if model_override.is_some() {
+            "call-model"
+        } else {
+            "host-selected-model"
+        };
+        let port = LaunchPort {
+            stored: host.storage.file().unwrap().clone(),
+            expected_override: model_override.map(|_| {
+                serde_json::json!({
+                    "provider": "test-override",
+                    "model": "call-model",
+                    "auth": "test-auth",
                 })
-            },
-        )
-        .await
-        .unwrap();
-    let inventory: BTreeSet<_> = host
-        .built
-        .tools
-        .tools()
-        .iter()
-        .map(|tool| tool.spec().name)
-        .collect();
-    assert_eq!(
-        inventory,
-        BTreeSet::from(["codemode".into(), "read_file".into(), "tool_search".into()])
-    );
-    assert_eq!(response.stop_reason, StopReason::EndTurn);
-    assert_eq!(host.built.session.id(), &id);
-    assert_eq!(host.current_model().model, "host-selected-model");
-    assert_eq!(host.permission.mode, PermissionMode::Supervised);
-    let child_identity = host
-        .storage
-        .file()
-        .unwrap()
-        .stored_agent_identity()
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        child_identity,
-        ("acp-child".into(), host.agent.fingerprint().to_string())
-    );
-    host.shutdown().await;
+            }),
+        };
+        // T3 picks a thought level before the child's first prompt; the rebind
+        // must keep it because the definition sets none.
+        host.built
+            .session
+            .set_reasoning_level(ReasoningLevel::High)
+            .unwrap();
+        let display = UserInput::text("/agent:acp-child inspect the parser");
+        let response = host
+            .run_as_agent_with(
+                &display,
+                AgentTask {
+                    agent_id: child.id.to_string(),
+                    model_override: model_override.map(str::to_owned),
+                    input: UserInput::text("inspect the parser"),
+                },
+                &startup,
+                &port,
+                |base| {
+                    // Catalog/credential resolution is the binder's own test gate.
+                    // Inject its resolved selection here to exercise ACP persistence.
+                    let mut base = base.clone();
+                    if model_override.is_some() {
+                        base.provider = "test-override".into();
+                        base.model = "call-model".into();
+                        base.auth = "test-auth".into();
+                    }
+                    bind_delegated_agent(child, /*model_override*/ None, &startup, &base)
+                },
+                async |agent, config, id| {
+                    assert_eq!(config.reasoning, ReasoningLevel::High);
+                    assert_eq!(config.model, expected_model);
+                    assert_eq!(agent.fingerprint(), fingerprint);
+                    let tools = AppToolSet::new(
+                        &config,
+                        RuntimeDiagnostics::new(&config),
+                        ToolSetOptions::new(agent.rho_capabilities().unwrap().clone()),
+                    );
+                    Ok(SessionAssembly {
+                        built: scripted_built(&config, id, tools).await,
+                        workspace_root: cwd.path().to_path_buf(),
+                        session_writes: Default::default(),
+                    })
+                },
+            )
+            .await
+            .unwrap();
+        let inventory: BTreeSet<_> = host
+            .built
+            .tools
+            .tools()
+            .iter()
+            .map(|tool| tool.spec().name)
+            .collect();
+        assert_eq!(
+            inventory,
+            BTreeSet::from(["codemode".into(), "read_file".into(), "tool_search".into()])
+        );
+        assert_eq!(response.stop_reason, StopReason::EndTurn);
+        assert_eq!(host.built.session.id(), &id);
+        assert_eq!(host.current_model().model, expected_model);
+        assert_eq!(host.permission.mode, PermissionMode::Supervised);
+        let child_identity = host
+            .storage
+            .file()
+            .unwrap()
+            .stored_agent_identity()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            child_identity,
+            ("acp-child".into(), host.agent.fingerprint().to_string())
+        );
+        if model_override.is_some() {
+            let stored = host.storage.file().unwrap();
+            for rebound_auth in ["test-auth", "fallback-auth"] {
+                let result = loaded_agent_with(
+                    &startup,
+                    stored,
+                    startup.config.clone(),
+                    catalog,
+                    |definition, selection, startup, base| {
+                        assert_eq!(
+                            selection,
+                            Some(ModelOverride::Saved {
+                                provider: "test-override",
+                                model: "call-model",
+                                auth: "test-auth",
+                            }),
+                        );
+                        assert_eq!(definition.fingerprint(), fingerprint);
+                        let base = Config {
+                            provider: "test-override".into(),
+                            model: "call-model".into(),
+                            auth: rebound_auth.into(),
+                            ..base.clone()
+                        };
+                        bind_delegated_agent(
+                            definition, /*model_override*/ None, startup, &base,
+                        )
+                    },
+                );
+                if rebound_auth != "test-auth" {
+                    assert!(
+                        result.is_err(),
+                        "resume must not substitute another auth profile"
+                    );
+                    continue;
+                }
+                let (loaded, config) = result.unwrap();
+                assert_eq!(loaded.fingerprint(), fingerprint);
+                assert_eq!(loaded.rho_capabilities(), host.agent.rho_capabilities());
+                assert_eq!(config.model, expected_model);
+            }
+        } else {
+            assert_eq!(
+                host.storage
+                    .file()
+                    .unwrap()
+                    .session_metadata(MODEL_OVERRIDE_METADATA)
+                    .unwrap(),
+                None
+            );
+        }
+        host.shutdown().await;
+    }
 }
 
 // Covers: rebinding must not silently discard a conversation, including a
@@ -246,10 +376,14 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
         let error = host
             .run_as_agent_with(
                 &input,
-                definition(ToolPolicy::All),
-                input.clone(),
+                AgentTask {
+                    agent_id: "acp-child".into(),
+                    model_override: None,
+                    input: input.clone(),
+                },
                 &startup,
                 &NullPort,
+                |_| panic!("nonfresh sessions must not rebind"),
                 |_, _, _| async { panic!("nonfresh sessions must not rebuild") },
             )
             .await
@@ -303,6 +437,7 @@ fn load_restores_the_child_binding_or_fails() {
         .rebind_fresh_delegated_agent(
             startup.agent.id().as_str(),
             &definition.fingerprint().to_string(),
+            /*initial_snapshot*/ None,
         )
         .unwrap();
 
@@ -323,5 +458,23 @@ fn load_restores_the_child_binding_or_fails() {
         "---\ndescription: Loaded child\ntools: [read_file, write_file]\n---\nInspect files\n",
     )
     .unwrap();
-    assert!(loaded_agent(&startup, &child, startup.config.clone(), catalog).is_err());
+    let snapshot = child
+        .snapshot_for_resume(
+            ModelIdentity::new("test", "test", "call-model"),
+            "cache".into(),
+        )
+        .unwrap()
+        .with_metadata(
+            MODEL_OVERRIDE_METADATA,
+            r#"{"provider":"test","model":"call-model","auth":"test-auth"}"#,
+        );
+    child.save_snapshot(&snapshot, &[]).unwrap();
+    assert!(loaded_agent_with(
+        &startup,
+        &child,
+        startup.config.clone(),
+        catalog,
+        |_, _, _, _| panic!("changed definitions must fail before override binding"),
+    )
+    .is_err());
 }
