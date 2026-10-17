@@ -134,7 +134,8 @@ pub(crate) struct AgentCatalogSources {
     pub(crate) workflow: Vec<AgentSource>,
 }
 
-/// One agent file a caller read under its own authorization.
+/// One agent file a caller read itself, under whatever read policy it
+/// enforces (the workflow tool gates the directories users own).
 pub(crate) struct AgentSource {
     pub(crate) path: PathBuf,
     /// The file's text, or why reading it failed. A failed read skips only
@@ -223,10 +224,9 @@ impl AgentCatalog {
         Ok(catalog)
     }
 
-    /// Builds a catalog from file bytes whose reads the caller already authorized.
-    pub(crate) fn from_authorized_sources(
-        sources: AgentCatalogSources,
-    ) -> Result<Self, AgentCatalogError> {
+    /// Builds a catalog from file bytes the caller read, instead of reading
+    /// the filesystem here.
+    pub(crate) fn from_sources(sources: AgentCatalogSources) -> Result<Self, AgentCatalogError> {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
         catalog.load_sources(AgentOrigin::UserPlugin, sources.user_plugins);

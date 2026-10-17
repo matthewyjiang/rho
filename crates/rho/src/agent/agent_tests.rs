@@ -389,7 +389,7 @@ fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
             format!("---\ndescription: {description}\n---\n"),
         )
     };
-    let catalog = AgentCatalog::from_authorized_sources(AgentCatalogSources {
+    let catalog = AgentCatalog::from_sources(AgentCatalogSources {
         user_plugins: vec![
             source("/user-plugin/auditor.md", "user plugin"),
             source("/user-plugin/reviewer.md", "replaces a built-in"),

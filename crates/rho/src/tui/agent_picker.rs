@@ -314,7 +314,7 @@ fn agent_model_fields(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) ->
                 .map_or_else(String::new, InternalAgentModelConfig::display_reference);
             return ModelFields {
                 model: DetailField::new("Model", reference, DetailTone::Warning)
-                    .with_note("override cannot apply"),
+                    .with_note(format!("[internal_agents.{}] cannot apply", definition.id)),
                 reasoning: reasoning_field(definition.reasoning()),
                 fast: definition.fast(),
             };
@@ -327,9 +327,14 @@ fn agent_model_fields(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) ->
     );
     let model = model_policy_field(policy);
     ModelFields {
-        model: match model_override {
-            Some(_) => model.with_note("override"),
-            None => model,
+        // Only plugin agents get the set/clear picker; for a file the user
+        // can edit, name the entry that wins over its model.
+        model: match (model_override.is_some(), entry.metadata.origin.is_plugin()) {
+            (true, true) => model.with_note("override"),
+            (true, false) => {
+                model.with_note(format!("override from [internal_agents.{}]", definition.id))
+            }
+            (false, _) => model,
         },
         reasoning: reasoning_field(reasoning),
         fast: policy.selection().is_some_and(|selection| selection.fast),

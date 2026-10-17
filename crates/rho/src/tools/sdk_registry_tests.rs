@@ -160,8 +160,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
                 root.path().to_owned(),
                 root.path().join("config.toml"),
                 Some(Arc::new(
-                    crate::agent::AgentCatalog::from_authorized_sources(Default::default())
-                        .unwrap(),
+                    crate::agent::AgentCatalog::from_sources(Default::default()).unwrap(),
                 )),
             ))
             .workflow(Arc::new(RegistryWorkflowService));
