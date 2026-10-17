@@ -169,7 +169,7 @@ runtime value cannot choose either setting.
 ```starlark
 inspect = agent(
     name = "inspect",
-    agent = "reviewer",
+    agent = "explorer",
     prompt = template([
         "Inspect ",
         inputs["target"],
