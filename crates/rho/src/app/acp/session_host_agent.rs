@@ -56,6 +56,34 @@ pub(super) fn decorate_model_override(
 }
 
 impl SessionHost {
+    /// A host-selected replacement must be bindable on the next load. Validate
+    /// through the same definition policy before touching live or saved state.
+    pub(super) fn validate_model_override_switch(&self, config: &Config) -> anyhow::Result<()> {
+        if !self
+            .built
+            .session
+            .snapshot()
+            .metadata()
+            .contains_key(MODEL_OVERRIDE_METADATA)
+        {
+            return Ok(());
+        }
+        AgentBinder::bind_with_model_override(
+            Arc::new(self.agent.definition().clone()),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: self.agent.rho_capabilities().cloned().unwrap_or_default(),
+            },
+            config,
+            Some(ModelOverride::Saved {
+                provider: &config.provider,
+                model: &config.model,
+                auth: &config.auth,
+            }),
+        )?;
+        Ok(())
+    }
+
     /// A host model change replaces a call override even without another turn.
     /// Ordinary ACP roots keep their existing reload policy and deferred files.
     pub(super) fn persist_model_override(&self) -> anyhow::Result<()> {

@@ -1,6 +1,99 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+/// All lifecycle cases use an isolated home, credentials, cache, and fixture
+/// provider through the real ACP stdio transport, without paid network calls.
+fn new_session(workspace: &Workspace) -> (AcpServer, String) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
+    command
+        .current_dir(&workspace.project)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", workspace.home.path())
+        .env("RHO_HOME", workspace.home.path().join(".rho"))
+        .env("XDG_CACHE_HOME", workspace.home.path().join(".cache"))
+        .env("RHO_CREDENTIAL_STORE", "file")
+        .env("RHO_AUTOMATION_TEST_MODE", "inspect")
+        .env("XAI_API_KEY", "fixture-key-not-a-real-credential")
+        .arg("--config")
+        .arg(workspace.home.path().join("config.toml"))
+        .arg("acp");
+    let mut server = AcpServer::from_command(&mut command);
+    server
+        .request("initialize", json!({"protocolVersion": 1}))
+        .0
+        .unwrap();
+    let created = server
+        .request(
+            "session/new",
+            json!({"cwd": workspace.project, "mcpServers": []}),
+        )
+        .0
+        .unwrap();
+    let id = created["sessionId"].as_str().unwrap().to_owned();
+    (server, id)
+}
+
+// Covers: a host model switch must not strand an overridden child on a model
+// that its preserved definition rejects on reload.
+// Owner: ACP settings/lifecycle using the canonical binder.
+#[test]
+fn overridden_child_rejects_switch_that_breaks_definition_fast_policy() {
+    use rho_providers::credentials::{save_codex_tokens, CodexTokens, FileCredentialStore};
+
+    let workspace = Workspace::new();
+    std::fs::write(
+        workspace.home.path().join("config.toml"),
+        "provider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n[behavior]\npermission_mode = \"plan\"\ncheck_for_updates = false\n",
+    ).unwrap();
+    let rho_home = workspace.home.path().join(".rho");
+    let agents = rho_home.join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("fast-fixture.md"),
+        "---\ndescription: fast fixture\nmodel-policy: select\nprovider: openai-codex\nmodel: gpt-6.1-sol\nauth: codex\nfast: true\ntools: [read_file]\n---\nReview the request.\n",
+    ).unwrap();
+    let store = FileCredentialStore::with_rho_home(rho_home).unwrap();
+    save_codex_tokens(
+        &store,
+        &CodexTokens {
+            access_token: "fixture-token".into(),
+            refresh_token: None,
+            id_token: None,
+            account_id: None,
+        },
+    )
+    .unwrap();
+    let (mut server, id) = new_session(&workspace);
+    let reply = server.prompt(
+        &id,
+        "/agent:fast-fixture --model openai-codex/gpt-6.1-sol -- Review this.",
+    );
+    let inspection: Value = serde_json::from_str(&reply).unwrap();
+    assert_eq!(inspection["identity"]["model"], "gpt-6.1-sol");
+    let switched = server
+        .request(
+            "session/set_config_option",
+            json!({"sessionId": id, "configId": "model", "value": "xai/grok-4.5"}),
+        )
+        .0;
+    assert!(
+        switched.is_err(),
+        "incompatible definition policy must reject the switch"
+    );
+    server
+        .request(
+            "session/load",
+            json!({"sessionId": id, "cwd": workspace.project, "mcpServers": []}),
+        )
+        .0
+        .unwrap();
+    let reply = server.prompt(&id, "Continue the review.");
+    let inspection: Value = serde_json::from_str(&reply).unwrap();
+    assert_eq!(inspection["identity"]["provider"], "openai-codex");
+    assert_eq!(inspection["identity"]["model"], "gpt-6.1-sol");
+}
+
 // Covers: adding an optional key must not prevent loading a keyless child or
 // silently change the saved authentication selection.
 // Owner: ACP restoration through the real binder and stdio server.
@@ -55,32 +148,8 @@ check_for_updates = false
     )
     .unwrap();
     let rho_home = workspace.home.path().join(".rho");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
-    command
-        .current_dir(&workspace.project)
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", workspace.home.path())
-        .env("RHO_HOME", &rho_home)
-        .env("XDG_CACHE_HOME", &cache)
-        .env("RHO_CREDENTIAL_STORE", "file")
-        .env("RHO_AUTOMATION_TEST_MODE", "inspect")
-        .arg("--config")
-        .arg(config)
-        .arg("acp");
-    let mut server = AcpServer::from_command(&mut command);
-    server
-        .request("initialize", json!({"protocolVersion": 1}))
-        .0
-        .unwrap();
-    let created = server
-        .request(
-            "session/new",
-            json!({"cwd": workspace.project, "mcpServers": []}),
-        )
-        .0
-        .unwrap();
-    let id = created["sessionId"].as_str().unwrap();
+    let (mut server, session_id) = new_session(&workspace);
+    let id = session_id.as_str();
     server.prompt(
         id,
         "/agent:reviewer --model review-fixture/vendor/review -- Review this.",
@@ -111,32 +180,8 @@ fn overridden_child_survives_load_save_load_with_foreign_parent_auth() {
         workspace.home.path().join("config.toml"),
         "provider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n[behavior]\npermission_mode = \"plan\"\ncheck_for_updates = false\n",
     ).unwrap();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
-    command
-        .current_dir(&workspace.project)
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", workspace.home.path())
-        .env("RHO_HOME", workspace.home.path().join(".rho"))
-        .env("RHO_CREDENTIAL_STORE", "file")
-        .env("RHO_AUTOMATION_TEST_MODE", "inspect")
-        .env("XAI_API_KEY", "fixture-key-not-a-real-credential")
-        .arg("--config")
-        .arg(workspace.home.path().join("config.toml"))
-        .arg("acp");
-    let mut server = AcpServer::from_command(&mut command);
-    server
-        .request("initialize", json!({"protocolVersion": 1}))
-        .0
-        .unwrap();
-    let created = server
-        .request(
-            "session/new",
-            json!({"cwd": workspace.project, "mcpServers": []}),
-        )
-        .0
-        .unwrap();
-    let id = created["sessionId"].as_str().unwrap();
+    let (mut server, session_id) = new_session(&workspace);
+    let id = session_id.as_str();
     let reply = server.prompt(id, "/agent:reviewer --model xai/grok-4.7 -- Review this.");
     let inspection: Value = serde_json::from_str(&reply).unwrap();
     assert_eq!(inspection["identity"]["provider"], "xai");

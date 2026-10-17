@@ -137,7 +137,9 @@ The effective provider, model, and auth profile survive session reload without
 changing the agent definition or its identity. Adding optional credentials later
 does not replace a saved keyless profile. `/agent:<name> -- <task>` keeps
 option-like task text literal. A later user-driven model switch supersedes the
-saved override immediately, including a reload before the next prompt.
+saved override immediately, including a reload before the next prompt. A switch
+that violates the child's definition constraints, such as required fast-mode
+support, is rejected before changing the session.
 
 ### Skills
 

@@ -415,6 +415,8 @@ impl SessionHost {
             config.model = selection.model.clone();
             config.auth = selection.auth.clone();
             config.reasoning = reasoning;
+            self.validate_model_override_switch(&config)
+                .map_err(host_apply_error)?;
             let provider =
                 build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                     .await
