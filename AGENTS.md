@@ -38,6 +38,7 @@ For PRs:
 - Prefer the most user-visible type, usually `feat`, `fix`, `docs`, or `refactor`.
 - Clearly summarize what changed and why, list validation, and call out behavior changes in the summary. Fill the template's major-release section only for an approved major.
 - Update documentation for important user-visible changes.
+- Do not commit benchmark code, harnesses, scripts, results, or measurement receipts. Run benchmarks ad hoc outside the committed tree and put results only in the PR body. Keep real regression tests and documentation that describes behavior.
 - When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
 - When the diff ships a minor-only API compromise, follow the `rho-next-major-debt` skill, leave a `NEXT_MAJOR(...)` marker, and fill the next-major debt section in the pull request template (or delete it if none).
 - Follow `rho-rust-change-validation` for check selection, result reuse, and the final gate, including the TUI proof plate. PR title/body-only updates do not require rebuilding or rerunning tests.

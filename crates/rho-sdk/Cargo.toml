@@ -10,10 +10,6 @@ readme = "README.md"
 keywords = ["agent", "ai", "sdk"]
 categories = ["asynchronous", "development-tools"]
 
-[[bench]]
-name = "release_benchmarks"
-harness = false
-
 [features]
 # Keep embedding side effects and sensitive capabilities opt-in. The SDK does
 # not currently ship capability adapters, so there are no opt-in features yet.

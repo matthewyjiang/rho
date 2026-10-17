@@ -129,8 +129,7 @@ pub(crate) fn task_id(value: &str) -> TaskInstanceId {
 }
 
 pub(crate) fn limits() -> PlanningLimits {
-    PlanningLimits::from_measurements(PlanningMeasurements {
-        receipt: "workflow test fixture measured from its exact source and graph".to_owned(),
+    PlanningLimits::from_values(PlanningLimitValues {
         total_source_bytes: 1_000_000,
         module_count: 100,
         module_depth: 20,

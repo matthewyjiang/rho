@@ -32,9 +32,7 @@ const MAX_DETAILS: usize = 1_024;
 const MAX_RENDERED_LINES: usize = 4_096;
 const MAX_RENDERED_CELLS: usize = 2_000_000;
 /// Narrowest pane where a horizontally clipped diagram still reads as one.
-/// Receipt: `mermaid_width_receipts` measures real fixtures rendering fully at
-/// 18-70 columns; below roughly one tight node box plus a border (12+4 wrap
-/// plus frame) a clipped canvas carries no structure, so source wins.
+/// Below this width, a clipped canvas carries too little structure, so source wins.
 const MIN_CLIP_WIDTH: usize = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,7 +389,3 @@ pub(crate) const PHASE_CHAIN_FLOWCHART: &str = concat!(
 #[cfg(test)]
 #[path = "mermaid_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "mermaid_width_receipts.rs"]
-mod width_receipts;

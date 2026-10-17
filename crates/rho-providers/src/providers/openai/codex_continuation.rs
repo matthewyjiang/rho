@@ -301,7 +301,3 @@ impl CodexContinuationState {
 #[cfg(test)]
 #[path = "codex_continuation_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "codex_continuation_perf_tests.rs"]
-mod perf_tests;

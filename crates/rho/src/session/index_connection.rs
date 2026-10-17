@@ -21,16 +21,6 @@ const INDEX_FILE_NAME: &str = "index.sqlite3";
 static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
     OnceLock::new();
 
-#[cfg(test)]
-pub(in crate::session) fn clear_index_connection_cache_for_test() {
-    if let Some(connections) = INDEX_CONNECTIONS.get() {
-        connections
-            .lock()
-            .expect("session index cache poisoned")
-            .clear();
-    }
-}
-
 /// Fsyncs the index WAL so every commit this process can read is durable.
 ///
 /// Index writes use synchronous=NORMAL, which may lose the newest commits on

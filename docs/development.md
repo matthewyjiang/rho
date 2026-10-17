@@ -236,37 +236,27 @@ Scenarios launch Rho with:
 
 Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the [Herdr](/integrations/herdr) page and the `rho-tui-pty-testing` and `rho-tui-herdr-testing` skills.
 
-## Workflow limit receipts
+## Performance investigations
 
-Planning budgets come from a checked-in receipt, not from a guessed constant. The planner reads that receipt. A deterministic generator builds separate stress cases for source modules, evaluator work and heap, values, a 750-node and 7,500-edge graph, schemas and conditions, serialized graph size, runtime output, templates, prompts, argv, inputs, and planner process frames.
+Run performance comparisons ad hoc. Record the commands, source commits, environment, results, and interpretation in the pull request body. Do not commit benchmark code, result reports, or comparison charts.
 
-The receipt and corpus map are `crates/rho/src/workflow/fixtures/limit_receipt.json` and `crates/rho/src/workflow/fixtures/limit_corpus.json`. The generator is `scripts/workflow_limit_corpus.py`.
+## Workflow limits and cancellation tests
 
-Verify after a build:
+Workflow planning policy lives in `crates/rho/src/workflow/planning_limits.rs`. Named budgets cover source modules, evaluator work and heap, values, graph structure, schemas, runtime output, templates, prompts, argv, and inputs. Runtime limits are frozen into the plan. Budget errors identify the budget, limit, and requested value.
 
-```bash
-cargo build -p rho-coding-agent -j 8
-python3 scripts/measure_workflow_limits.py --rho target/debug/rho
-```
+The evaluator heap metric matches Starlark's enforced quantity: mutable-heap peak plus frozen-heap allocated bytes. `graph_bytes` covers the entire serialized scoped program, including its root and input schemas, rather than just the root graph. The planner process also has a coarse OS memory backstop: `RLIMIT_AS` on Linux and a Job Object process-memory commit limit on Windows.
 
-The command runs each generated case in the product planner worker, reads the worker's evaluator tick and peak-heap counters, derives program and runtime values from the returned plan, and also runs `workflow validate`. Both paths isolate `HOME` and `RHO_HOME` so local agents and credentials cannot affect the corpus. It fails if a deterministic value differs from the receipt, if a process frame differs, or if wall time or address space loses its stated safety margin. Wall time and address space use checked baselines because OS load can change them. The verifier allows at most twice the baseline and still requires the separate minimum margin in the receipt. Add `--json-output /tmp/workflow-measurements.json` to retain completed measurements even when comparison fails.
+Workflow schema v1 forbids source-controlled environment entries; `environment_expansion_bytes` keeps a one-byte budget floor.
 
-The evaluator heap metric matches Starlark's enforced quantity: mutable-heap peak plus frozen-heap allocated bytes. Remeasuring the unchanged corpus found 67,111,744 mutable bytes and 19,176 frozen bytes, totaling 67,130,920 bytes. The old 50,334,528-byte receipt omitted frozen allocations and understated the current mutable peak by 16,777,216 bytes. The accepted heap budget is now 80,796,392 bytes, retaining the existing 13,665,472-byte absolute margin. No corpus workload was reduced. `graph_bytes` measures the entire serialized scoped program, including its root and input schemas, rather than just the root graph.
+The cross-process cancellation acceptance test starts a real workflow owner, waits on a Unix socket until a compiled command node is active, and starts a second Rho process to run `workflow cancel`. Linux `pidfd_open` checks that the command process exits. Explicit readiness and process completion synchronize the test; deadlines bound acknowledgement and cleanup without collecting timing samples.
 
-On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize` seen after the supervised child starts the planner worker. That omits the short period before the child applies its limit. The checked debug build used 1,170,087,936 bytes under a 4,294,967,296-byte OS ceiling. That ceiling is a coarse process backstop, `RLIMIT_AS` on Linux and the same value as a Job Object process-memory commit limit on Windows. It is not the product tripwire. Product memory policy lives in the receipt. Virtual size is much larger than resident memory because allocators reserve address space without committing it. If the worker needs more than the checked amount, the check reports the measured value and the hard limit.
-
-`environment_expansion_bytes` is a schema sentinel, not a corpus measurement. Workflow schema v1 forbids source-controlled environment entries and keeps a one-byte accepted floor.
-
-Current measured stress values include 750,000 source bytes, 75 modules at depth 15, 750,019 evaluator ticks, 67,130,920 evaluator heap bytes, 750 nodes, 7,500 edges, a 756,418-byte schema, a 7,515,385-byte program, 6,291,456 bytes per retained stream, and 50,331,648 total retained bytes. Read the receipt for every value and margin.
-
-Cancellation uses a separate measurement. It starts a real workflow owner, waits on a Unix socket until a compiled command node is active, and starts a second Rho process to run `workflow cancel`. Linux `pidfd_open` checks that the command process has exited. Process completion, not a sleep, ends each wait.
+After building Rho, run:
 
 ```bash
-python3 scripts/measure_workflow_cancellation.py \
-  --rho target/debug/rho --repeat 5
+python3 scripts/test_workflow_cancellation.py --rho target/debug/rho
 ```
 
-That command needs Linux with Unix sockets and `pidfd_open`, and `rustc` on `PATH`. It uses a new temporary `RHO_HOME` for each sample. The checked run measured 33 ms for acknowledgement, final command cleanup, and workflow owner completion. The accepted limits are 2,000 ms, 2,000 ms, and 2,500 ms. The cancellation command checks both the accepted limits and twice the checked baseline.
+The test requires Linux with Unix sockets and `pidfd_open`, and `rustc` on `PATH`. It isolates `HOME` and `RHO_HOME` in a temporary directory so local agents and credentials cannot affect the result.
 
 ## Compaction replay eval
 
@@ -292,7 +282,7 @@ python3 scripts/compaction_eval.py --recent 8 --points 2 \
   --variant 'target30=--tiers text --summarizer session --target-percent 30'
 ```
 
-Each `--variant` passes arguments to the hidden `rho __compaction_eval` command. You can set threshold and target percents, a fixed `--context-window`, a `--summarizer provider/model` (or `session`), `--tiers text` to turn off native compaction, `--tiers none` for the ceiling, and `--answer-model` and `--judge-model`. Root `--provider` and `--model` choose the session model. Without `--context-window`, each point's window is sized so the point sits exactly at the threshold, as a live automatic compaction would. Points below 32,768 estimated tokens are skipped. Across 221 local sessions, the median peak before any compaction was about 51,000 tokens, and 131 sessions reached 32,768. Replay stops at a session's first compaction, so an earlier summary never counts toward the score.
+Each `--variant` passes arguments to the hidden `rho __compaction_eval` command. You can set threshold and target percents, a fixed `--context-window`, a `--summarizer provider/model` (or `session`), `--tiers text` to turn off native compaction, `--tiers none` for the ceiling, and `--answer-model` and `--judge-model`. Root `--provider` and `--model` choose the session model. Without `--context-window`, each point's window is sized so the point sits exactly at the threshold, as a live automatic compaction would. Points below 32,768 estimated tokens are skipped. Replay stops at a session's first compaction, so an earlier summary never counts toward the score.
 
 The script prints a Markdown table: mean probe scores, post-compaction size as a fraction of the original, summary output tokens, cost, and latency. Each point in a report also carries the text summary the compaction wrote (`summary`, empty for native compaction and for points that needed no summary), so you can read what a configuration kept. Reports are saved under `--out` (default `/tmp/rho-compaction-eval`) with private permissions. `--render-only` redraws the table from saved reports.
 
@@ -314,7 +304,7 @@ python3 scripts/classifier_eval.py --recent 20 --per-session 5 \
 
 Each `--variant` passes arguments to the hidden `rho __classifier_eval` command. `--model provider/model` swaps the classifier model. It keeps the configured reasoning override, and keeps the classifier's auth when the provider is the same; the report records the auth that ran. To compare two builds, run each with its own `--rho` and variant name into the same `--out`, then use `--render-only --baseline NAME`. Pass fixed `--session` paths for those runs, because `--recent` can pick different sessions between runs.
 
-Variants run in parallel, and each classifies one case at a time by default. Latency is measured per case, and concurrent requests queue at the provider. On 15 cases against `openai-codex/gpt-6-luna`, `--jobs 8` raised the median from 1.6 s to 11.3 s with no errors and identical verdicts. Raise `--jobs` for a faster run when latency does not matter.
+Variants run in parallel, and each classifies one case at a time by default. Latency is measured per case, and concurrent requests queue at the provider. Raise `--jobs` for a faster run when latency does not matter.
 
 The script prints false allows, false denies, errors, allow and screen-escalation rates, and median latency per variant, then the IDs behind each count. A failed classification counts as an error, not a deny. Production denies it, but counting it as a correct deny would let a broken variant look safe. With `--baseline`, the script also lists flipped cases with their commands or paths. Each case carries a digest of the input the classifier saw. A case that only one report has, or whose digest changed (for example, a replayed session that grew between runs), is listed separately instead of counted as a flip, and the script exits nonzero.
 

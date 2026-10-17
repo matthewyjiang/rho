@@ -67,10 +67,7 @@ Do not tag `1.0.0-rc.1` until all applicable gates pass.
 
 ### Performance
 
-- define acceptable regression thresholds before measurement
-- benchmark startup, simple completion overhead, event delivery, snapshotting, and compaction against an identified baseline
-- record hardware, OS, toolchain, commit, sample method, raw results, and interpretation
-- fix or explicitly accept material regressions
+Investigate performance changes ad hoc against an identified baseline. Put the commands, source commits, environment, results, and interpretation in the pull request body, not in committed benchmark code or reports. Fix or explicitly accept material regressions.
 
 A checklist entry is not evidence. Link CI runs, local command logs, reports, or review records to the exact commit.
 

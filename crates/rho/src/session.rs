@@ -21,8 +21,6 @@ mod delete;
 mod display_rows;
 mod index;
 mod layout;
-#[cfg(test)]
-mod performance_benchmarks;
 mod persistence;
 pub(crate) mod recall;
 pub(crate) mod replay_points;

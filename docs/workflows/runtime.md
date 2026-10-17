@@ -300,7 +300,7 @@ A summary over the byte limit keeps whole lines that fit and ends with a notice 
 
 ## Planning limits
 
-Planning checks named measured budgets. A limit error names the budget, accepted
+Planning checks named budgets. A limit error names the budget, accepted
 limit, and requested or measured value. Runtime values do not use hidden
 defaults for timeout or output limits. Rho evaluates untrusted Starlark only in
 its supervised planning worker.
@@ -317,7 +317,7 @@ its supervised planning worker.
 - rendered templates, expanded prompts and argv, node timeouts, and retained
   command output
 
-The checked-in receipt and how to re-verify it are in [Development](/development#workflow-limit-receipts).
+The policy location and cancellation acceptance test are described in [Development](/development#workflow-limits-and-cancellation-tests).
 
 ## First-release limits
 

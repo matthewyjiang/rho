@@ -157,8 +157,6 @@ mod panel_pointer;
 mod panel_text;
 mod paste_burst;
 mod pending_input;
-#[cfg(test)]
-mod performance_benchmarks;
 mod permission_mode;
 mod picker;
 mod picker_actions;

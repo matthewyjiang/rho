@@ -6,15 +6,10 @@ use super::{WorkflowError, WorkflowResult};
 pub(crate) struct Budget {
     pub(crate) name: &'static str,
     pub(crate) limit: u64,
-    pub(crate) receipt: String,
 }
 
 impl Budget {
-    pub(crate) fn measured(
-        name: &'static str,
-        limit: u64,
-        receipt: impl Into<String>,
-    ) -> WorkflowResult<Self> {
+    pub(crate) fn new(name: &'static str, limit: u64) -> WorkflowResult<Self> {
         if limit == 0 {
             return Err(WorkflowError::BudgetExceeded {
                 budget: name,
@@ -22,11 +17,7 @@ impl Budget {
                 actual: 1,
             });
         }
-        Ok(Self {
-            name,
-            limit,
-            receipt: receipt.into(),
-        })
+        Ok(Self { name, limit })
     }
 
     pub(crate) fn check(&self, actual: u64) -> WorkflowResult<()> {
@@ -55,8 +46,7 @@ impl Budget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct PlanningMeasurements {
-    pub(crate) receipt: String,
+pub(crate) struct PlanningLimitValues {
     pub(crate) total_source_bytes: u64,
     pub(crate) module_count: u64,
     pub(crate) module_depth: u64,
@@ -82,6 +72,38 @@ pub(crate) struct PlanningMeasurements {
     pub(crate) prompt_expansion_bytes: u64,
     pub(crate) argv_expansion_bytes: u64,
     pub(crate) environment_expansion_bytes: u64,
+}
+
+impl PlanningLimitValues {
+    /// Workflow planning policy, including the limits frozen for runtime execution.
+    pub(crate) const STANDARD: Self = Self {
+        total_source_bytes: 1_000_000,
+        module_count: 100,
+        module_depth: 20,
+        evaluator_ticks: 1_000_000,
+        evaluator_heap_bytes: 80_796_392,
+        call_stack_depth: 25,
+        string_bytes: 1_000_000,
+        list_items: 10_000,
+        dict_items: 10_000,
+        input_depth: 20,
+        input_bytes: 1_000_000,
+        node_count: 1_000,
+        edge_count: 10_000,
+        condition_depth: 2,
+        schema_depth: 6,
+        schema_bytes: 1_000_000,
+        graph_bytes: 10_000_000,
+        worker_wall_millis: 10_000,
+        retained_output_per_stream_bytes: 8 * 1024 * 1024,
+        retained_output_total_bytes: 64 * 1024 * 1024,
+        rendered_template_bytes: 4 * 1024 * 1024,
+        node_timeout_seconds: 24 * 60 * 60,
+        prompt_expansion_bytes: 8 * 1024 * 1024,
+        argv_expansion_bytes: 8 * 1024 * 1024,
+        // Schema v1 forbids command environment entries; one byte is the budget floor.
+        environment_expansion_bytes: 1,
+    };
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -169,137 +191,55 @@ impl PlanningLimits {
         }
     }
 
-    /// Build limits from an externally recorded acceptance run. No guessed
-    /// default exists: the caller must provide each accepted measured value.
-    pub(crate) fn from_measurements(values: PlanningMeasurements) -> WorkflowResult<Self> {
-        let receipt = |entry: &str| {
-            format!(
-                "limit_receipt.json planning.accepted.{entry}; {}",
-                values.receipt
-            )
-        };
+    /// Validate the policy values and attach the budget names used in errors.
+    pub(crate) fn from_values(values: PlanningLimitValues) -> WorkflowResult<Self> {
         Ok(Self {
-            total_source_bytes: Budget::measured(
-                "total source bytes",
-                values.total_source_bytes,
-                receipt("total_source_bytes"),
-            )?,
-            module_count: Budget::measured(
-                "module count",
-                values.module_count,
-                receipt("module_count"),
-            )?,
-            module_depth: Budget::measured(
-                "module depth",
-                values.module_depth,
-                receipt("module_depth"),
-            )?,
-            evaluator_ticks: Budget::measured(
-                "Starlark evaluator ticks",
-                values.evaluator_ticks,
-                receipt("evaluator_ticks"),
-            )?,
-            evaluator_heap_bytes: Budget::measured(
+            total_source_bytes: Budget::new("total source bytes", values.total_source_bytes)?,
+            module_count: Budget::new("module count", values.module_count)?,
+            module_depth: Budget::new("module depth", values.module_depth)?,
+            evaluator_ticks: Budget::new("Starlark evaluator ticks", values.evaluator_ticks)?,
+            evaluator_heap_bytes: Budget::new(
                 "Starlark evaluator heap bytes",
                 values.evaluator_heap_bytes,
-                receipt("evaluator_heap_bytes"),
             )?,
-            call_stack_depth: Budget::measured(
-                "Starlark call-stack depth",
-                values.call_stack_depth,
-                receipt("call_stack_depth"),
-            )?,
-            string_bytes: Budget::measured(
-                "Starlark string bytes",
-                values.string_bytes,
-                receipt("string_bytes"),
-            )?,
-            list_items: Budget::measured(
-                "Starlark list items",
-                values.list_items,
-                receipt("list_items"),
-            )?,
-            dict_items: Budget::measured(
-                "Starlark dict items",
-                values.dict_items,
-                receipt("dict_items"),
-            )?,
-            input_depth: Budget::measured(
-                "input depth",
-                values.input_depth,
-                receipt("input_depth"),
-            )?,
-            input_bytes: Budget::measured(
-                "input bytes",
-                values.input_bytes,
-                receipt("input_bytes"),
-            )?,
-            node_count: Budget::measured("node count", values.node_count, receipt("node_count"))?,
-            edge_count: Budget::measured("edge count", values.edge_count, receipt("edge_count"))?,
-            condition_depth: Budget::measured(
-                "condition depth",
-                values.condition_depth,
-                receipt("condition_depth"),
-            )?,
-            schema_depth: Budget::measured(
-                "output schema depth",
-                values.schema_depth,
-                receipt("schema_depth"),
-            )?,
-            schema_bytes: Budget::measured(
-                "output schema bytes",
-                values.schema_bytes,
-                receipt("schema_bytes"),
-            )?,
-            graph_bytes: Budget::measured(
-                "serialized graph bytes",
-                values.graph_bytes,
-                receipt("graph_bytes"),
-            )?,
-            worker_wall_millis: Budget::measured(
+            call_stack_depth: Budget::new("Starlark call-stack depth", values.call_stack_depth)?,
+            string_bytes: Budget::new("Starlark string bytes", values.string_bytes)?,
+            list_items: Budget::new("Starlark list items", values.list_items)?,
+            dict_items: Budget::new("Starlark dict items", values.dict_items)?,
+            input_depth: Budget::new("input depth", values.input_depth)?,
+            input_bytes: Budget::new("input bytes", values.input_bytes)?,
+            node_count: Budget::new("node count", values.node_count)?,
+            edge_count: Budget::new("edge count", values.edge_count)?,
+            condition_depth: Budget::new("condition depth", values.condition_depth)?,
+            schema_depth: Budget::new("output schema depth", values.schema_depth)?,
+            schema_bytes: Budget::new("output schema bytes", values.schema_bytes)?,
+            graph_bytes: Budget::new("serialized graph bytes", values.graph_bytes)?,
+            worker_wall_millis: Budget::new(
                 "planning worker wall milliseconds",
                 values.worker_wall_millis,
-                receipt("worker_wall_millis"),
             )?,
-            retained_output_per_stream_bytes: Budget::measured(
+            retained_output_per_stream_bytes: Budget::new(
                 "retained output bytes per stream",
                 values.retained_output_per_stream_bytes,
-                receipt("retained_output_per_stream_bytes"),
             )?,
-            retained_output_total_bytes: Budget::measured(
+            retained_output_total_bytes: Budget::new(
                 "total retained workflow output bytes",
                 values.retained_output_total_bytes,
-                receipt("retained_output_total_bytes"),
             )?,
-            rendered_template_bytes: Budget::measured(
+            rendered_template_bytes: Budget::new(
                 "rendered template bytes",
                 values.rendered_template_bytes,
-                receipt("rendered_template_bytes"),
             )?,
-            node_timeout_seconds: Budget::measured(
-                "node timeout seconds",
-                values.node_timeout_seconds,
-                receipt("node_timeout_seconds"),
-            )?,
-            prompt_expansion_bytes: Budget::measured(
+            node_timeout_seconds: Budget::new("node timeout seconds", values.node_timeout_seconds)?,
+            prompt_expansion_bytes: Budget::new(
                 "expanded prompt bytes",
                 values.prompt_expansion_bytes,
-                receipt("prompt_expansion_bytes"),
             )?,
-            argv_expansion_bytes: Budget::measured(
-                "expanded argv bytes",
-                values.argv_expansion_bytes,
-                receipt("argv_expansion_bytes"),
-            )?,
-            environment_expansion_bytes: Budget::measured(
+            argv_expansion_bytes: Budget::new("expanded argv bytes", values.argv_expansion_bytes)?,
+            environment_expansion_bytes: Budget::new(
                 "expanded environment bytes",
                 values.environment_expansion_bytes,
-                receipt("environment_expansion_bytes"),
             )?,
         })
     }
 }
-
-#[cfg(test)]
-#[path = "planning_limits_tests.rs"]
-mod tests;

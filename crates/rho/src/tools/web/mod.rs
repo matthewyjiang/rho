@@ -115,6 +115,3 @@ pub(super) fn sdk_bundle(
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod performance_benchmarks;

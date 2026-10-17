@@ -55,7 +55,7 @@ class FeatureModesTests(unittest.TestCase):
 
     @mock.patch.object(check_sdk_compatibility, "run")
     @mock.patch.object(check_sdk_compatibility, "load_toml")
-    def test_feature_tests_exclude_benchmarks(
+    def test_feature_tests_select_contract_targets(
         self, load_toml: mock.Mock, run: mock.Mock
     ) -> None:
         load_toml.return_value = {"features": {"default": []}}

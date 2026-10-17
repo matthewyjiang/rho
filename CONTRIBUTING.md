@@ -24,6 +24,7 @@ Local workflow, the PTY harness, and MSRV details live in the
 - If an AI made the change, end the body with one factual line naming the model and harness. If several models were used, name each one and what it did.
 - Before a code PR, run `python3 scripts/validate.py full`. Title or body-only updates do not need a rebuild.
 - Update docs for user-visible behavior.
+- Run benchmarks ad hoc outside the committed tree. Put results only in the PR body; do not commit benchmark code, harnesses, scripts, results, or measurement receipts. Keep real regression tests and behavior documentation.
 - New or expanded tests follow `.agents/skills/rho-test-selection/SKILL.md`. Test a failure mode, not copy. Interactive TUI behavior uses the PTY harness.
 - A worse API kept only for minor compatibility needs a `NEXT_MAJOR(...)` marker. See `.agents/skills/rho-next-major-debt/SKILL.md`.
 
