@@ -1,8 +1,9 @@
-//! Local install, link, enable, disable, and remove for Agent Plugin packages.
+//! Install, link, update, enable, disable, and remove for Agent Plugin packages.
 //!
 //! These operations validate package shape and rewrite Rho-owned state only.
 //! They never execute package code, never touch `data/<plugin>`, and never
-//! write outside the chosen managed plugins root.
+//! write outside the chosen managed plugins root. Git installs fetch into a
+//! temporary checkout first and then copy like a local install.
 
 use std::{
     fs,
@@ -12,8 +13,15 @@ use std::{
 use super::{
     contain, discovery_roots,
     manifest::{self, PluginManifest},
-    state::{project_plugins_root, user_plugins_root, PluginOrigin, PluginScope, PluginStateStore},
+    state::{
+        project_plugins_root, user_plugins_root, GitRecord, InstallRecord, PluginOrigin,
+        PluginScope, PluginStateStore,
+    },
 };
+
+#[path = "manage_git.rs"]
+mod git;
+pub(crate) use git::{install_git, update, update_all, UpdateOutcome, UpdatedPackage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallMode {
@@ -30,6 +38,8 @@ pub(crate) struct ManagedPackage {
     pub(crate) origin: PluginOrigin,
     pub(crate) path: PathBuf,
     pub(crate) link_target: Option<PathBuf>,
+    /// Recorded source and commit for git-installed packages.
+    pub(crate) git: Option<GitRecord>,
 }
 
 #[derive(Clone, Debug)]
@@ -76,13 +86,52 @@ pub(crate) fn install(
 ) -> anyhow::Result<ManagedPackage> {
     let source = inspect_source(source)?;
     let root = managed_root(scope, cwd, home);
-    let destination = root.join(&source.manifest.name);
-    ensure_destination_replaceable(&destination, &root, force)?;
-    fs::create_dir_all(&root)?;
-    // Re-check after creating the root so canonicalize can run.
-    ensure_path_is_managed_child(&destination, &root)?;
+    let destination = place(&source, &root, mode, force)?;
 
-    let staging = unique_sibling_path(&root, &source.manifest.name, "staging")?;
+    let (origin, record) = match mode {
+        InstallMode::Copy => (PluginOrigin::Install, InstallRecord::Copy),
+        InstallMode::Link => (
+            PluginOrigin::Link,
+            InstallRecord::Link {
+                target: crate::paths::display(&source.path),
+            },
+        ),
+    };
+    let link_target = match &record {
+        InstallRecord::Link { target } => Some(PathBuf::from(target)),
+        InstallRecord::Copy | InstallRecord::Git(_) => None,
+    };
+
+    let mut state = PluginStateStore::load(cwd, rho_home)?;
+    state.record_install(scope, &source.manifest.name, record)?;
+
+    Ok(ManagedPackage {
+        name: source.manifest.name,
+        version: source.manifest.version,
+        description: source.manifest.description,
+        scope,
+        origin,
+        path: destination,
+        link_target,
+        git: None,
+    })
+}
+
+/// Copy or link a validated package into `root`, swapping out any existing
+/// package only after staging succeeds.
+fn place(
+    source: &SourcePackage,
+    root: &Path,
+    mode: InstallMode,
+    force: bool,
+) -> anyhow::Result<PathBuf> {
+    let destination = root.join(&source.manifest.name);
+    ensure_destination_replaceable(&destination, root, force)?;
+    fs::create_dir_all(root)?;
+    // Re-check after creating the root so canonicalize can run.
+    ensure_path_is_managed_child(&destination, root)?;
+
+    let staging = unique_sibling_path(root, &source.manifest.name, "staging")?;
     let staged = match mode {
         InstallMode::Copy => copy_package_tree(&source.path, &staging),
         InstallMode::Link => create_package_link(&source.path, &staging),
@@ -96,28 +145,7 @@ pub(crate) fn install(
         let _ = remove_path(&staging);
         return Err(error);
     }
-
-    let origin = match mode {
-        InstallMode::Copy => PluginOrigin::Install,
-        InstallMode::Link => PluginOrigin::Link,
-    };
-    let link_target = match mode {
-        InstallMode::Link => Some(crate::paths::display(&source.path)),
-        InstallMode::Copy => None,
-    };
-
-    let mut state = PluginStateStore::load(cwd, rho_home)?;
-    state.record_install(scope, &source.manifest.name, origin, link_target.clone())?;
-
-    Ok(ManagedPackage {
-        name: source.manifest.name,
-        version: source.manifest.version,
-        description: source.manifest.description,
-        scope,
-        origin,
-        path: destination,
-        link_target: link_target.map(PathBuf::from),
-    })
+    Ok(destination)
 }
 
 pub(crate) fn set_enabled(
@@ -225,6 +253,7 @@ fn package_at(
 ) -> anyhow::Result<ManagedPackage> {
     let source = inspect_source(path)?;
     let origin = state.origin(scope, &source.manifest.name, path);
+    let git = state.git_record(scope, &source.manifest.name).cloned();
     let link_target = state
         .entry(scope, &source.manifest.name)
         .and_then(|entry| entry.link_target.as_ref().map(PathBuf::from))
@@ -243,6 +272,7 @@ fn package_at(
         origin,
         path: path.to_path_buf(),
         link_target,
+        git,
     })
 }
 

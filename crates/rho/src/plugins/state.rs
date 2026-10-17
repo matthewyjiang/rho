@@ -13,6 +13,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::git_source::GitSource;
 use crate::config_writer;
 
 const STATE_VERSION: u32 = 1;
@@ -43,6 +44,8 @@ pub(crate) enum PluginOrigin {
     Install,
     /// Symlinked into a managed root by `rho plugins link`.
     Link,
+    /// Copied from a git repository by `rho plugins install <url>`.
+    Git,
 }
 
 impl PluginOrigin {
@@ -51,8 +54,51 @@ impl PluginOrigin {
             Self::Local => "local",
             Self::Install => "install",
             Self::Link => "link",
+            Self::Git => "git",
         }
     }
+}
+
+/// The git source and commit a package was installed from.
+///
+/// `rho plugins update` refetches `url` at `ref` and replaces the package when
+/// the fetched commit differs from `commit`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GitRecord {
+    pub(crate) url: String,
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub(crate) git_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) subdir: Option<String>,
+    pub(crate) commit: String,
+}
+
+impl GitRecord {
+    pub(crate) fn new(source: &GitSource, commit: String) -> Self {
+        Self {
+            url: source.url.clone(),
+            git_ref: source.git_ref.clone(),
+            subdir: source.subdir.clone(),
+            commit,
+        }
+    }
+
+    pub(crate) fn source(&self) -> GitSource {
+        GitSource {
+            url: self.url.clone(),
+            git_ref: self.git_ref.clone(),
+            subdir: self.subdir.clone(),
+        }
+    }
+}
+
+/// How a fresh install placed a package; decides the recorded origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InstallRecord {
+    Copy,
+    Link { target: String },
+    Git(GitRecord),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +138,9 @@ pub(crate) struct PluginStateEntry {
     /// Absolute path recorded for linked packages (display and inspect only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) link_target: Option<String>,
+    /// Source recorded for git-installed packages; read by `rho plugins update`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) git: Option<GitRecord>,
 }
 
 impl Default for PluginStateEntry {
@@ -100,6 +149,7 @@ impl Default for PluginStateEntry {
             enabled: true,
             origin: None,
             link_target: None,
+            git: None,
         }
     }
 }
@@ -151,6 +201,20 @@ impl PluginStateStore {
         self.file(scope).plugins.get(name)
     }
 
+    pub(crate) fn git_record(&self, scope: PluginScope, name: &str) -> Option<&GitRecord> {
+        self.entry(scope, name).and_then(|entry| entry.git.as_ref())
+    }
+
+    /// Names of packages in `scope` that were installed from git.
+    pub(crate) fn git_installed(&self, scope: PluginScope) -> Vec<String> {
+        self.file(scope)
+            .plugins
+            .iter()
+            .filter(|(_, entry)| entry.git.is_some())
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     pub(crate) fn origin(
         &self,
         scope: PluginScope,
@@ -183,15 +247,35 @@ impl PluginStateStore {
         &mut self,
         scope: PluginScope,
         name: &str,
-        origin: PluginOrigin,
-        link_target: Option<String>,
+        record: InstallRecord,
     ) -> anyhow::Result<()> {
+        let (origin, link_target, git) = match record {
+            InstallRecord::Copy => (PluginOrigin::Install, None, None),
+            InstallRecord::Link { target } => (PluginOrigin::Link, Some(target), None),
+            InstallRecord::Git(git) => (PluginOrigin::Git, None, Some(git)),
+        };
         self.update_scope(scope, |file| {
             let entry = file.plugins.entry(name.to_string()).or_default();
             entry.origin = Some(origin);
             entry.link_target = link_target;
+            entry.git = git;
             // Fresh installs start enabled even if a prior disable entry remained.
             entry.enabled = true;
+            Ok(())
+        })
+    }
+
+    /// Record a new commit for a git-installed package, keeping enablement.
+    pub(crate) fn record_git_update(
+        &mut self,
+        scope: PluginScope,
+        name: &str,
+        git: GitRecord,
+    ) -> anyhow::Result<()> {
+        self.update_scope(scope, |file| {
+            let entry = file.plugins.entry(name.to_string()).or_default();
+            entry.origin = Some(PluginOrigin::Git);
+            entry.git = Some(git);
             Ok(())
         })
     }

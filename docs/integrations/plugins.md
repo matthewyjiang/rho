@@ -172,8 +172,9 @@ Lifecycle commands:
 ```bash
 rho plugins list
 rho plugins inspect <name>
-rho plugins install <path> [--scope user|project] [--force]
+rho plugins install <path-or-url> [--scope user|project] [--force]
 rho plugins link <path> [--scope user|project] [--force]
+rho plugins update [name]
 rho plugins enable <name>
 rho plugins disable <name>
 rho plugins remove <name> [--yes]
@@ -182,8 +183,11 @@ rho plugins remove <name> [--yes]
 Behavior:
 
 - `install` validates `plugin.json` first, then copies the package into the
-  managed root. It never executes package code.
+  managed root. It never executes package code. The source can be a local
+  directory or a git repository; see [Installing from git](#installing-from-git).
 - `link` validates first, then creates a directory symlink in the managed root.
+- `update` refetches git-installed packages and replaces the ones whose ref
+  moved to a new commit. Enable and disable state is kept.
 - `inspect` and `list` read manifests and component metadata only. They do not
   connect MCP servers or run skill scripts. Use `rho mcp list` / `/mcp` for live
   MCP status.
@@ -194,6 +198,47 @@ Behavior:
 - `--force` is required to replace an existing package at the destination.
 - Destination paths must be immediate children of a managed root. The reserved
   `data/` directory is never a package slot.
+
+### Installing from git
+
+`rho plugins install` accepts GitHub links copied from the browser and other
+git URLs:
+
+```bash
+# Repository root on the default branch
+rho plugins install https://github.com/owner/repo
+
+# A branch, tag, or commit, and a plugin directory inside the repository
+rho plugins install https://github.com/owner/repo/tree/v1.2.0/plugins/demo
+
+# Any other git remote: default branch, repository root
+rho plugins install git@gitlab.com:owner/repo.git
+```
+
+Rho runs your `git` to shallow-fetch one commit into a temporary checkout,
+so your existing credentials, SSH keys, and `insteadOf` rewrites apply to
+private repositories. It then validates and copies the package like a local
+install, without the `.git` directory. Accepted URL schemes are `https://`,
+`http://`, `ssh://`, `git://`, `file://`, and scp-style `git@host:path`.
+
+In a GitHub `tree/` link, the first segment after `tree/` is the ref, so
+branch names that contain `/` cannot be expressed that way. Use a tag or
+commit link instead.
+
+The source URL, ref, package path, and installed commit are recorded in
+`plugins.toml`, and `rho plugins inspect` shows them. `rho plugins update`
+fetches the same ref again:
+
+- A branch ref, or no ref (the remote default branch), moves to the newest
+  commit.
+- A tag or commit ref stays put unless the tag itself moves.
+- An update is refused when the fetched package has a different `plugin.json`
+  name than the installed one.
+
+`rho plugins update` with no name updates every git-installed package in the
+project and user roots, reports each result, and exits nonzero if any failed.
+Packages installed from a local path have no source to refetch; reinstall
+them with `--force`.
 
 ### Activation state
 
@@ -207,7 +252,18 @@ $RHO_HOME/plugins.toml          user scope (default `~/.rho/plugins.toml`)
 
 A missing file means every discovered plugin is enabled. Disabling writes
 `enabled = false` for that package name in the matching scope file. Package
-contents are never modified.
+contents are never modified. Git installs also record their source here:
+
+```toml
+[plugins.demo]
+origin = "git"
+
+[plugins.demo.git]
+url = "https://github.com/owner/repo"
+ref = "main"
+subdir = "plugins/demo"
+commit = "53bd86b517a24260cb2c42d09e1e86489bdecf70"
+```
 
 ### Precedence
 
@@ -254,8 +310,15 @@ remove act on the higher-precedence match.
 - Skills can still direct the agent to run scripts and touch resources through
   ordinary Rho permissions after a package is enabled and loaded into a session.
 - MCP servers from enabled packages use the same permission, cancellation, and
-  output paths as ordinary MCP configuration. Remote registry install, automatic
-  updates, and package signatures are not implemented yet.
+  output paths as ordinary MCP configuration. Git installs and updates only
+  fetch and copy files. Review a repository before installing it, because its
+  skills and MCP servers become active in new sessions. Package registries,
+  automatic background updates, and package signatures are not implemented
+  yet.
+- Git sources recorded in a project `plugins.toml` arrive with cloned
+  repositories. Rho checks them against the same URL scheme and path rules
+  before every fetch, and project plugins stay inactive until the workspace
+  is trusted.
 
 ## Relationship to ordinary configuration
 
@@ -269,8 +332,9 @@ What comes from Agent Plugins versus Rho policy:
 | --- | --- |
 | Package layout, `plugin.json`, skills/, `mcp.json`, path containment | Agent Plugins |
 | Explicit discovery roots and component loading | Agent Plugins, with Rho root choices |
-| Install, link, enable, disable, remove commands | Rho policy |
+| Install, link, update, enable, disable, remove commands | Rho policy |
 | Enablement state files and managed install roots | Rho policy |
 | Skill and MCP runtime behavior after load | Rho |
 
-Remote registry distribution and automatic updates remain unsupported.
+Package registries and automatic background updates remain unsupported. Git
+installs update only when you run `rho plugins update`.

@@ -453,6 +453,7 @@ fn plugin(name: &str, status: PluginStatus) -> PluginReportEntry {
         scope: PluginScope::User,
         origin: PluginOrigin::Install,
         enabled: status != PluginStatus::Disabled,
+        git: None,
         status,
         problems: Vec::new(),
         skill_count: 1,

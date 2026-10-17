@@ -11,13 +11,13 @@ use crate::plugins::{
 
 const SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 
-struct Env {
-    home: TempDir,
-    project: TempDir,
-    rho_home: TempDir,
+pub(super) struct Env {
+    pub(super) home: TempDir,
+    pub(super) project: TempDir,
+    pub(super) rho_home: TempDir,
 }
 
-fn env() -> Env {
+pub(super) fn env() -> Env {
     let home = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     let rho_home = TempDir::new().unwrap();
@@ -29,7 +29,7 @@ fn env() -> Env {
     }
 }
 
-fn write_source(root: &Path, name: &str) -> PathBuf {
+pub(super) fn write_source(root: &Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     std::fs::create_dir_all(dir.join("skills").join("hello")).unwrap();
     std::fs::write(

@@ -15,7 +15,8 @@
 //!
 //! Enable and disable state is Rho policy stored outside package directories
 //! (`plugins.toml` under the Rho data root and the project `.rho` directory).
-//! Install and link place packages into the explicit roots above.
+//! Install (from a local path or a git repository) and link place packages
+//! into the explicit roots above.
 //!
 //! Project-scope plugins activate only in trusted workspaces: without
 //! `RHO_TRUST_PROJECT_PLUGINS=1` they load inventory-only (manifest and
@@ -31,6 +32,8 @@
 
 #[path = "plugins/contain.rs"]
 mod contain;
+#[path = "plugins/git_source.rs"]
+pub(crate) mod git_source;
 #[path = "plugins/manage.rs"]
 pub(crate) mod manage;
 #[path = "plugins/manifest.rs"]
@@ -122,6 +125,9 @@ pub(crate) struct PluginReportEntry {
     pub(crate) scope: PluginScope,
     pub(crate) origin: PluginOrigin,
     pub(crate) enabled: bool,
+    /// Recorded repository source for git-installed packages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) git: Option<state::GitRecord>,
     pub(crate) status: PluginStatus,
     /// Manifest warnings plus component-level problems; empty when clean.
     pub(crate) problems: Vec<String>,
@@ -328,6 +334,7 @@ fn load_candidate(
             scope,
             origin: state.origin(scope, &directory_name, candidate),
             enabled: true,
+            git: state.git_record(scope, &directory_name).cloned(),
             status: PluginStatus::Rejected,
             problems: vec![reason],
             skill_count: 0,
@@ -361,6 +368,7 @@ fn load_candidate(
 
     let enabled = state.is_enabled(scope, &manifest.name);
     let origin = state.origin(scope, &manifest.name, candidate);
+    let git = state.git_record(scope, &manifest.name).cloned();
     let status = PluginStatus::for_package(enabled, scope, trust);
 
     if discovery
@@ -377,6 +385,7 @@ fn load_candidate(
             scope,
             origin,
             enabled,
+            git: git.clone(),
             status: PluginStatus::Shadowed,
             problems: vec![format!(
                 "shadowed by a higher-precedence plugin root ({} root skipped)",
@@ -440,6 +449,7 @@ fn load_candidate(
         scope,
         origin,
         enabled,
+        git,
         status,
         problems,
         skill_count,
