@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.25.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.25.0...rho-coding-agent-v2.25.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **plugins:** list home-directory plugins once ([#1531](https://github.com/matthewyjiang/rho/issues/1531)) ([f1eec80](https://github.com/matthewyjiang/rho/commit/f1eec80056f74a38d06f4341debc0c85a8f338d1))
+* **tui:** keep the ctrl-c quit armed when a turn ends after leaving attach ([#1533](https://github.com/matthewyjiang/rho/issues/1533)) ([299dcc5](https://github.com/matthewyjiang/rho/commit/299dcc57bd7c4887df89046a29ecbec8aec706dd))
+
+
+### Performance Improvements
+
+* **session:** cut per-save index cost 20x by moving the session catalog to WAL ([#1539](https://github.com/matthewyjiang/rho/issues/1539)) ([da83e23](https://github.com/matthewyjiang/rho/commit/da83e23c045c474773db4a8d67faf6801b5fed8a))
+* **session:** cut session file size and save writes by 44% by deduplicating display rows ([#1538](https://github.com/matthewyjiang/rho/issues/1538)) ([b66e0c5](https://github.com/matthewyjiang/rho/commit/b66e0c52ee29ec883f1451627eddf3d893599424))
+* **session:** stop copying the whole history on every snapshot save ([#1535](https://github.com/matthewyjiang/rho/issues/1535)) ([1c1c1ce](https://github.com/matthewyjiang/rho/commit/1c1c1cee0769fead5cf7951c9647360d5f5e5f3c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.11.1 to 5.11.2
+    * rho-providers bumped from 2.19.0 to 2.19.1
+
 ## [2.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.24.0...rho-coding-agent-v2.25.0) (2026-10-17)
 
 

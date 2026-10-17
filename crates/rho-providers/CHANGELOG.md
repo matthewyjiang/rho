@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.19.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.19.0...rho-providers-v2.19.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **tui:** keep the ctrl-c quit armed when a turn ends after leaving attach ([#1533](https://github.com/matthewyjiang/rho/issues/1533)) ([299dcc5](https://github.com/matthewyjiang/rho/commit/299dcc57bd7c4887df89046a29ecbec8aec706dd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.11.1 to 5.11.2
+
 ## [2.19.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.18.0...rho-providers-v2.19.0) (2026-10-17)
 
 
