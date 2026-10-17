@@ -1,7 +1,8 @@
 //! The configured model of a catalog agent: its `[internal_agents.<id>]`
 //! entry, which overrides the file's model. Distinct from a per-call model
 //! selection on an `agent` call (`app::agent_binding::ModelOverride`), which
-//! wins over both for that call.
+//! replaces only provider, model, and auth for that call; the entry's
+//! reasoning and fast still apply.
 //!
 //! An entry applies to any Rho catalog agent whose id Rho does not reserve,
 //! whatever tier its file comes from (user files included). It exists for

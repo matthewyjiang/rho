@@ -681,7 +681,8 @@ fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
 }
 
 /// The config a fresh launch of `definition` would run with on top of
-/// `host_config`: its model policy and reasoning applied, as startup does after
+/// `host_config`: its effective model policy and reasoning (its configured
+/// entry, else the file's) applied, as startup does after
 /// CLI overrides. External-runtime and failing definitions keep `host_config`.
 pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config) -> Config {
     let AgentRuntimeSpec::Rho {
