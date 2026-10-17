@@ -373,6 +373,22 @@ fn write_file_in(root: &SecureDirectory, relative: &Path, bytes: &[u8]) -> Workf
     Ok(())
 }
 
+/// Reads the UTF-8 file at `path`, an already-resolved absolute path, opening
+/// every component with `O_NOFOLLOW` from the filesystem root. Unlike the
+/// verified-path helpers it never canonicalizes first, so a component
+/// replaced by a symlink after `path` was resolved fails the read instead of
+/// being followed.
+pub(crate) fn read_resolved_utf8(path: &Path) -> WorkflowResult<String> {
+    let root = canonical_root(path);
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| identity_drift(path, "cannot select a filesystem root"))?;
+    let mut file = open_beneath(root, relative, FrozenPathKind::File)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
 pub(crate) fn read_source_beneath(
     root: &Path,
     relative: &Path,

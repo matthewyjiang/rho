@@ -1026,3 +1026,53 @@ fn expands_placeholders_single_pass() {
         "${PLUGIN_DATA}"
     );
 }
+
+// Covers: a plugin agent file or agents directory swapped for a symlink after
+// discovery must not be read through, since the workflow tool reads plugin
+// agents without the permission gate; untouched files still read.
+// Owner: plugin path containment.
+#[cfg(unix)]
+#[test]
+fn plugin_agent_reads_refuse_symlinks_swapped_in_after_discovery() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    let dir = write_plugin(
+        &user_plugins(&env),
+        "agentic",
+        &manifest_json("agentic", ""),
+    );
+    let kept = write_agent(&dir, "kept");
+    let swapped = write_agent(&dir, "swapped");
+    let outside = env.home.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    for id in ["kept", "swapped"] {
+        std::fs::write(
+            outside.join(format!("{id}.md")),
+            "---\ndescription: outside\n---\noutside prompt\n",
+        )
+        .unwrap();
+    }
+    let discovery = discover_env(&env);
+    let plugin = &discovery.agents.user[0];
+    let readable = |plugin: &super::PluginAgentFiles| {
+        plugin
+            .read_sources()
+            .into_iter()
+            .map(|source| source.contents.is_ok())
+            .collect::<Vec<_>>()
+    };
+
+    std::fs::remove_file(&swapped).unwrap();
+    std::os::unix::fs::symlink(outside.join("swapped.md"), &swapped).unwrap();
+    let after_file_swap = readable(plugin);
+
+    let agents = kept.parent().unwrap();
+    std::fs::rename(agents, dir.join("moved-agents")).unwrap();
+    std::os::unix::fs::symlink(&outside, agents).unwrap();
+    let after_dir_swap = readable(plugin);
+
+    assert_eq!(
+        (after_file_swap, after_dir_swap),
+        (vec![true, false], vec![false, false])
+    );
+}

@@ -11,7 +11,7 @@ use super::{
     internal::{internal_definitions, is_internal_agent_id},
     parser::parse_definition,
 };
-use crate::plugins::PluginAgentTiers;
+use crate::plugins::{PluginAgentFiles, PluginAgentTiers};
 use crate::workspace::ProjectTrust;
 
 /// The built-in root agent. It is never offered for delegation.
@@ -189,8 +189,8 @@ impl AgentCatalog {
             (AgentOrigin::UserPlugin, &plugins.user),
             (AgentOrigin::ProjectPlugin, &plugins.project),
         ] {
-            let paths = tier.iter().flat_map(|plugin| plugin.files.iter().cloned());
-            catalog.load_paths(origin, paths.collect());
+            let sources = tier.iter().flat_map(PluginAgentFiles::read_sources);
+            catalog.load_sources(origin, sources.collect());
         }
         if let Some(home) = home {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
@@ -296,12 +296,6 @@ impl AgentCatalog {
     }
 
     /// Loads one tier from files already located (and contained) by the caller.
-    fn load_paths(&mut self, origin: AgentOrigin, paths: Vec<PathBuf>) {
-        let mut tier = TierLoad::new(origin);
-        tier.read_files(paths);
-        self.merge_tier(tier);
-    }
-
     fn load_sources(&mut self, origin: AgentOrigin, sources: Vec<AgentSource>) {
         let mut tier = TierLoad::new(origin);
         for AgentSource { path, contents } in sources {

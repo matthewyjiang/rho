@@ -39,6 +39,27 @@ impl PluginAgentFiles {
             .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
             .collect()
     }
+
+    /// Reads each kept file for the agent catalog. Every reader (the
+    /// interactive catalog and the workflow tool) goes through here.
+    ///
+    /// Each read walks the path discovery resolved without following links,
+    /// so a directory or file swapped for a symlink after discovery fails
+    /// instead of reaching outside the plugin root. That anchor is why the
+    /// workflow tool can skip the permission gate here: discovery already
+    /// applied enable state, trust, and containment, and Rho (not the
+    /// workflow graph) chose the files. A file that cannot be read is
+    /// third-party content, so it skips only itself.
+    pub(crate) fn read_sources(&self) -> Vec<crate::agent::AgentSource> {
+        self.files
+            .iter()
+            .map(|path| crate::agent::AgentSource {
+                path: path.clone(),
+                contents: crate::workflow::read_resolved_utf8(path)
+                    .map_err(|error| error.to_string()),
+            })
+            .collect()
+    }
 }
 
 /// Active plugins' agent files, grouped as the catalog's two plugin tiers.
