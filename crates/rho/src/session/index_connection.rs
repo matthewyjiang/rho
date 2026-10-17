@@ -46,11 +46,8 @@ pub(in crate::session) fn clear_index_connection_cache_for_test() {
 pub(in crate::session) fn sync_committed_writes(
     connection: MutexGuard<'_, Connection>,
 ) -> anyhow::Result<()> {
-    let wal = wal_path(&connection);
+    let wal = wal_path(&connection)?;
     drop(connection);
-    let Some(wal) = wal else {
-        return Ok(());
-    };
     // Only the WAL may be opened behind SQLite's back: unix SQLite holds no
     // POSIX locks on it, whereas closing a second handle to the database or
     // `-shm` would drop this process's fcntl locks and risk corruption.
@@ -65,13 +62,27 @@ pub(in crate::session) fn sync_committed_writes(
 
 /// The WAL SQLite actually writes. SQLite names it after the database path it
 /// resolved, and unix SQLite resolves a symlinked catalog file, so the
-/// requested `index.sqlite3-wal` may not be the live WAL. `None` for a
-/// connection without a database file.
-fn wal_path(connection: &Connection) -> Option<PathBuf> {
-    connection
-        .path()
-        .filter(|path| !path.is_empty())
-        .map(|path| PathBuf::from(format!("{path}-wal")))
+/// requested `index.sqlite3-wal` may not be the live WAL.
+///
+/// Reads the raw filename bytes: `Connection::path` returns `None` for a
+/// non-UTF-8 path, which would silently skip the flush.
+fn wal_path(connection: &Connection) -> anyhow::Result<PathBuf> {
+    let mut file = connection.query_row(
+        "select file from pragma_database_list where name = 'main'",
+        [],
+        |row| Ok(row.get_ref(0)?.as_bytes()?.to_vec()),
+    )?;
+    anyhow::ensure!(!file.is_empty(), "session index has no database file");
+    file.extend_from_slice(b"-wal");
+    #[cfg(unix)]
+    let wal = {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(file))
+    };
+    // Windows SQLite reports filenames as UTF-8.
+    #[cfg(not(unix))]
+    let wal = PathBuf::from(String::from_utf8(file)?);
+    Ok(wal)
 }
 
 pub(in crate::session) fn open_index(

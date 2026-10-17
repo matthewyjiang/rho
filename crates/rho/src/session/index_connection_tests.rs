@@ -28,31 +28,47 @@ fn migration_lock_contention_is_retryable() {
 }
 
 // Covers: title and search-cursor durability must flush the WAL SQLite really
-// writes; with a symlinked catalog that WAL sits beside the link target.
+// writes: beside a symlinked catalog's target, and under a non-UTF-8 root.
 // Owner: session index
 #[cfg(unix)]
 #[test]
-fn durability_flush_targets_the_wal_of_a_symlinked_catalog() {
-    let root = tempfile::TempDir::new().unwrap();
-    let target = root.path().join("catalog.sqlite3");
-    std::fs::write(&target, b"").unwrap();
-    std::os::unix::fs::symlink(&target, root.path().join("index.sqlite3")).unwrap();
+fn durability_flush_targets_the_live_wal() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::PathBuf};
 
-    let connection = open_index(root.path()).unwrap();
-    let connection = connection.lock().unwrap();
-    connection
-        .execute(
-            "insert into sessions (
-                workspace_key, cwd, id, path, created_at, updated_at, message_count
-             ) values ('ws', '/tmp/ws', 'id', '/tmp/ws/id.jsonl', 1, 1, 0)",
-            [],
-        )
-        .unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let symlinked = base.join("symlinked");
+    std::fs::create_dir(&symlinked).unwrap();
+    std::fs::write(symlinked.join("catalog.sqlite3"), b"").unwrap();
+    std::os::unix::fs::symlink(
+        symlinked.join("catalog.sqlite3"),
+        symlinked.join("index.sqlite3"),
+    )
+    .unwrap();
+    let non_utf8 = base.join(OsStr::from_bytes(b"caf\xe9"));
 
-    let live_wal =
-        std::path::PathBuf::from(format!("{}-wal", target.canonicalize().unwrap().display()));
-    assert_eq!(
-        (wal_path(&connection), live_wal.exists()),
-        (Some(live_wal), true)
-    );
+    let cases = [
+        (symlinked.clone(), symlinked.join("catalog.sqlite3-wal")),
+        (non_utf8.clone(), non_utf8.join("index.sqlite3-wal")),
+    ];
+    let resolved: Vec<(PathBuf, bool)> = cases
+        .iter()
+        .map(|(root, _)| {
+            let connection = open_index(root).unwrap();
+            let connection = connection.lock().unwrap();
+            connection
+                .execute(
+                    "insert into sessions (
+                        workspace_key, cwd, id, path, created_at, updated_at, message_count
+                     ) values ('ws', '/tmp/ws', 'id', '/tmp/ws/id.jsonl', 1, 1, 0)",
+                    [],
+                )
+                .unwrap();
+            let wal = wal_path(&connection).unwrap();
+            let exists = wal.exists();
+            (wal, exists)
+        })
+        .collect();
+    let expected: Vec<(PathBuf, bool)> = cases.into_iter().map(|(_, wal)| (wal, true)).collect();
+    assert_eq!(resolved, expected);
 }
