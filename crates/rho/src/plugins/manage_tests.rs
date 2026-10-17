@@ -180,6 +180,32 @@ fn install_conflict_requires_force() {
     .unwrap();
 }
 
+// Covers: project scope is refused when its root is the user root ($HOME
+// outside a repository), before anything is written to either scope.
+// Owner: plugin install scope policy.
+#[test]
+fn project_install_from_home_outside_repository_is_refused() {
+    let home = TempDir::new().unwrap();
+    let rho_home = TempDir::new().unwrap();
+    let source_root = TempDir::new().unwrap();
+    let source = write_source(source_root.path(), "demo");
+
+    let error = install(
+        &source,
+        PluginScope::Project,
+        InstallMode::Copy,
+        /* force */ false,
+        home.path(),
+        home.path(),
+        Some(rho_home.path()),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("--scope user"), "{error}");
+    assert!(!home.path().join(".agents").exists());
+    assert!(!home.path().join(".rho").exists());
+}
+
 // Covers: link creates a managed symlink and records link origin.
 // Owner: plugin link policy.
 #[cfg(unix)]

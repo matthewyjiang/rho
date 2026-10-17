@@ -462,6 +462,19 @@ pub(crate) fn project_plugins_root(cwd: &Path) -> PathBuf {
     plugins_root_at(&project_root(cwd))
 }
 
+/// Whether the project plugins root for `cwd` is the user plugins root, as when
+/// the project root is `$HOME` (no repository, or a dotfiles repository).
+/// Project scope then has no packages of its own; that folder is user scope.
+pub(crate) fn project_root_is_user_root(cwd: &Path, home: &Path) -> bool {
+    same_location(&project_plugins_root(cwd), &user_plugins_root(home))
+}
+
+/// Whether `a` and `b` name the same location, compared as given and then
+/// canonically when both exist.
+pub(crate) fn same_location(a: &Path, b: &Path) -> bool {
+    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+}
+
 fn load_file(path: &Path) -> anyhow::Result<PluginStateFile> {
     match std::fs::read_to_string(path) {
         Ok(text) => parse_state_file(&text)

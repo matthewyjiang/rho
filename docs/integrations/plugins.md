@@ -60,6 +60,11 @@ targets contain a `plugin.json`, are plugins. When two roots contain the same
 plugin name, the nearer root wins and Rho reports the shadowed copy. Installed
 and linked packages use these same roots.
 
+Outside a repository the project root is the current directory, so running
+from your home directory (or inside a repository rooted there, such as a
+dotfiles repository) makes the project root `~/.agents/plugins` itself. Rho
+then treats that folder as user scope only and lists each package once.
+
 Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are
 skipped per server. Rho also implements one client extension namespace,
@@ -238,6 +243,10 @@ Rho manages packages in the same explicit roots it discovers:
 ~/.agents/plugins/<name>/          user scope (default for install and link)
 <repository>/.agents/plugins/<name>/   project scope (`--scope project`)
 ```
+
+When the project plugins root is `~/.agents/plugins` (see
+[Discovery roots](#discovery-roots)), `--scope project` fails with a pointer to
+`--scope user`, and `rho plugins update` walks only user scope.
 
 Lifecycle commands:
 

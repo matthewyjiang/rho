@@ -264,6 +264,51 @@ fn discovers_only_explicit_roots_without_recursion() {
     assert_eq!(names, ["top-level"]);
 }
 
+// Covers: a project root at $HOME aliases the user root, which then lists once
+// as user scope instead of also as an untrusted project copy.
+// Owner: plugin discovery roots.
+#[test]
+fn home_project_root_lists_user_plugins_once() {
+    // (label, home is a git repository, cwd relative to home)
+    let cases = [
+        ("no repository", false, ""),
+        ("dotfiles repository", true, "notes"),
+    ];
+    for (label, repository, relative_cwd) in cases {
+        let home = TempDir::new().unwrap();
+        let rho_home = TempDir::new().unwrap();
+        if repository {
+            std::fs::create_dir(home.path().join(".git")).unwrap();
+        }
+        let cwd = home.path().join(relative_cwd);
+        std::fs::create_dir_all(&cwd).unwrap();
+        write_plugin(
+            &home.path().join(".agents/plugins"),
+            "demo",
+            &manifest_json("demo", ""),
+        );
+
+        let discovery = discover_with_trust(
+            &cwd,
+            Some(home.path()),
+            Some(rho_home.path()),
+            ProjectTrust::Untrusted,
+        );
+
+        let entries: Vec<_> = discovery
+            .report
+            .plugins
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.scope, entry.status))
+            .collect();
+        assert_eq!(
+            entries,
+            [("demo", PluginScope::User, PluginStatus::Loaded)],
+            "{label}"
+        );
+    }
+}
+
 // Covers: duplicate plugin names resolve to the nearer root with a reported shadow.
 // Owner: plugin discovery policy.
 #[test]

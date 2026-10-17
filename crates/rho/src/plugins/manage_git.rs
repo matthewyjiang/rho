@@ -13,7 +13,9 @@ use super::{
 };
 use crate::plugins::{
     git_source::{self, Checkout, GitSource},
-    state::{InstallRecord, PluginScope, PluginStateStore},
+    state::{
+        project_root_is_user_root, same_location, InstallRecord, PluginScope, PluginStateStore,
+    },
     ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
 };
 
@@ -64,10 +66,11 @@ pub(crate) fn install_git(
     home: &Path,
     rho_home: Option<&Path>,
 ) -> anyhow::Result<GitInstall> {
+    let root = managed_root(scope, cwd, home)?;
     let checkout = git_source::fetch(source)?;
     let package = inspect_checkout(&checkout, source)?;
     let record = InstallRecord::Git(source.record(checkout.commit.clone()));
-    let package = install_validated(package, &record, scope, force, cwd, home, rho_home)?;
+    let package = install_validated(package, &record, scope, &root, force, cwd, rho_home)?;
     Ok(GitInstall {
         package,
         commit: checkout.commit,
@@ -87,7 +90,7 @@ pub(crate) fn update(
 ) -> anyhow::Result<UpdateReport> {
     let mut state = PluginStateStore::load(cwd, rho_home)?;
     let mut report = UpdateReport::default();
-    for scope in update_scopes(&state) {
+    for scope in update_scopes(&state, cwd, home) {
         for name in state.git_installed(scope) {
             if matches!(selection, UpdateSelection::Named(wanted) if wanted != name) {
                 continue;
@@ -119,18 +122,16 @@ pub(crate) fn update(
     Ok(report)
 }
 
-/// Scopes to walk, dropping project scope when it reads the user state file.
+/// Scopes to walk, dropping project scope when it has nothing of its own.
 ///
-/// Outside a repository, running from the home directory makes the project
-/// root `$HOME`, so with the default `RHO_HOME` both scopes load
-/// `~/.rho/plugins.toml`. Walking both would update each package twice and
-/// misreport it as untrusted. Distinct state files hold distinct records, so
-/// both are walked even when their package roots coincide.
-fn update_scopes(state: &PluginStateStore) -> Vec<PluginScope> {
-    let (project, user) = (&state.project_path, &state.user_path);
-    let aliased = project == user
-        || matches!((project.canonicalize(), user.canonicalize()), (Ok(a), Ok(b)) if a == b);
-    if aliased {
+/// Running from `$HOME` outside a repository makes the project root `$HOME`:
+/// its plugins root is the user root, and with the default `RHO_HOME` both
+/// scopes also load `~/.rho/plugins.toml`. Walking both would update each
+/// package twice and misreport it as untrusted. A `RHO_HOME` inside the
+/// project root shares the state file without sharing the plugins root.
+fn update_scopes(state: &PluginStateStore, cwd: &Path, home: &Path) -> Vec<PluginScope> {
+    if same_location(&state.project_path, &state.user_path) || project_root_is_user_root(cwd, home)
+    {
         vec![PluginScope::User]
     } else {
         vec![PluginScope::Project, PluginScope::User]
@@ -150,7 +151,7 @@ fn update_one(
         anyhow::bail!("`{name}` has no recorded git source");
     };
     let source = GitSource::try_from(&record)?;
-    let root = managed_root(scope, cwd, home);
+    let root = managed_root(scope, cwd, home)?;
     let path = root.join(name);
     if !package_exists(&path) {
         anyhow::bail!(
