@@ -57,7 +57,7 @@ Run the full workflow before opening or updating a pull request:
 python3 scripts/validate.py full
 ```
 
-The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. It stops at the first failure. Both modes cap Cargo at 8 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect. They also set `RUST_MIN_STACK` to at least 16 MiB so rustc 1.92 does not overflow its 8 MiB compile-thread stack.
+The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, the docs TUI proof-plate PTY check against the `rho` binary those tests built, a `rho` check without dev-dependency features, documentation tests, and SDK feature and downstream checks. It stops at the first failure and prints per-step timings. Both modes cap Cargo at 8 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect. They also set `RUST_MIN_STACK` to at least 16 MiB so rustc 1.92 does not overflow its 8 MiB compile-thread stack.
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
