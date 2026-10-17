@@ -53,8 +53,8 @@ fn compiles_typed_exports_and_rejects_invalid_bindings() {
             r#"
 def build(inputs):
     return workflow(name = "exports", nodes = [
-        agent(name = "report", agent = "reviewer", prompt = "review", access = "read_only", timeout_seconds = 5, max_output_bytes = 4096, output = schema.record({{"field": schema.string()}})),
-        agent(name = "untyped", agent = "reviewer", prompt = "review", access = "read_only", timeout_seconds = 5, max_output_bytes = 4096),
+        agent(name = "report", agent = "explorer", prompt = "review", access = "read_only", timeout_seconds = 5, max_output_bytes = 4096, output = schema.record({{"field": schema.string()}})),
+        agent(name = "untyped", agent = "explorer", prompt = "review", access = "read_only", timeout_seconds = 5, max_output_bytes = 4096),
     ], exports = {exports})
 WORKFLOW = define(inputs = {{}}, build = build)
 "#
@@ -91,7 +91,7 @@ def build(inputs):
     calls.append(inputs["target"])
     return workflow(name = "review", nodes = [agent(
         name = "inspect_" + str(len(calls)),
-        agent = "reviewer",
+        agent = "explorer",
         prompt = template(["Inspect ", inputs["target"]]),
         access = "read_only",
         timeout_seconds = 5,
