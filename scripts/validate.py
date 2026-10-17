@@ -119,18 +119,12 @@ def full_plan() -> tuple[Step, ...]:
             "Run workspace tests",
             ("cargo", "test", "--workspace", "--locked"),
         ),
-        # Must directly follow the workspace tests: they refresh
-        # target/debug/rho, and the script's own build would recompile
-        # rho-coding-agent (see --bin in check_docs_ui_demo.sh).
+        # Must directly follow the workspace tests: they refresh debug/rho,
+        # and the script's own build would recompile rho-coding-agent (see
+        # --reuse-build in check_docs_ui_demo.sh).
         Step(
             "Check docs TUI proof plate",
-            (
-                "bash",
-                "scripts/check_docs_ui_demo.sh",
-                "--check",
-                "--bin",
-                "target/debug/rho",
-            ),
+            ("bash", "scripts/check_docs_ui_demo.sh", "--check", "--reuse-build"),
         ),
         # Every other cargo step enables workspace dev-dependency features, so
         # this is the only local check that rho compiles as `cargo install`

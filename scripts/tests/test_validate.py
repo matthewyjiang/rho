@@ -70,8 +70,8 @@ class FullPlanTests(unittest.TestCase):
         plate = labels.index("Check docs TUI proof plate")
 
         self.assertEqual(
-            (plan[plate - 1].label, plan[plate].command[-2:]),
-            ("Run workspace tests", ("--bin", "target/debug/rho")),
+            (plan[plate - 1].label, plan[plate].command[-1]),
+            ("Run workspace tests", "--reuse-build"),
         )
 
 

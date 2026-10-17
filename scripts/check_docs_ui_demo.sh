@@ -15,6 +15,7 @@ cd "$root"
 mode="check"
 jobs="${CARGO_BUILD_JOBS:-12}"
 bin_path=""
+reuse_build=0
 dark_assets=(
   "docs/assets/rho-ui-demo.svg"
   "docs/public/assets/rho-ui-demo.svg"
@@ -26,13 +27,16 @@ light_assets=(
 
 usage() {
   cat <<'EOF'
-Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH] [--jobs N]
+Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH|--reuse-build] [--jobs N]
 
   --check   Fail when checked-in SVGs drift from a live PTY capture (default).
   --write   Regenerate dark and light docs asset paths from a live PTY capture.
   --bin     Debug rho binary built from the checked-out source; skips the
-            default rebuild. Pass target/debug/rho right after
-            `cargo test --workspace`, which re-copies it from the fresh test build.
+            default rebuild.
+  --reuse-build
+            Use debug/rho in Cargo's target directory without rebuilding.
+            Pass it right after `cargo test --workspace`, which re-copies that
+            binary from the fresh test build.
   --jobs    Cargo job cap (default: CARGO_BUILD_JOBS or 12).
 EOF
 }
@@ -50,6 +54,10 @@ while [[ $# -gt 0 ]]; do
     --bin)
       bin_path="${2:-}"
       shift 2
+      ;;
+    --reuse-build)
+      reuse_build=1
+      shift
       ;;
     --jobs)
       jobs="${2:-}"
@@ -75,15 +83,25 @@ case "$(uname -s)" in
     ;;
 esac
 
-if [[ -z "$bin_path" ]]; then
-  # Always rebuild so rust-cache / earlier cargo steps cannot leave a stale
-  # target/debug/rho that captures a different screen than the checked-out source.
-  # This build drops workspace dev-dependency features, so after
-  # `cargo test --workspace` it recompiles rho-coding-agent; callers that just
-  # ran those tests pass --bin target/debug/rho instead.
-  echo "==> Build debug rho for matrix mode"
-  cargo build -j "$jobs" -p rho-coding-agent --bin rho --locked
-  bin_path="$root/target/debug/rho"
+if [[ -n "$bin_path" ]]; then
+  if [[ "$reuse_build" -eq 1 ]]; then
+    echo "error: pass either --bin or --reuse-build, not both" >&2
+    exit 2
+  fi
+else
+  # Honors CARGO_TARGET_DIR and build.target-dir instead of assuming ./target.
+  target_dir="$(cargo metadata --format-version 1 --no-deps --locked |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
+  bin_path="$target_dir/debug/rho"
+  if [[ "$reuse_build" -eq 0 ]]; then
+    # Always rebuild so rust-cache / earlier cargo steps cannot leave a stale
+    # debug/rho that captures a different screen than the checked-out source.
+    # This build drops workspace dev-dependency features, so after
+    # `cargo test --workspace` it recompiles rho-coding-agent; callers that
+    # just ran those tests pass --reuse-build instead.
+    echo "==> Build debug rho for matrix mode"
+    cargo build -j "$jobs" -p rho-coding-agent --bin rho --locked
+  fi
 fi
 
 if [[ ! -x "$bin_path" && ! -f "$bin_path" ]]; then
