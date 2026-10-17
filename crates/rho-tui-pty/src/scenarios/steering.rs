@@ -80,6 +80,7 @@ const STEER_APPEARS_IN_TRANSCRIPT_STEPS: &[Step] = &[
         text: "STEER",
         timeout: STREAM,
     },
+    Step::Custom(|harness| super::release_fixture(harness, ".rho-fixture-release-steering")),
     Step::Phase("applied"),
     Step::WaitText {
         text: "steering applied exactly once: fixture steer detail",
