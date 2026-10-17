@@ -41,7 +41,14 @@ pub(in crate::session) fn clear_index_connection_cache_for_test() {
 /// Committed frames are either in the WAL or were checkpointed into the
 /// database file, which SQLite syncs after each completed checkpoint.
 pub(in crate::session) fn sync_committed_writes(session_root: &Path) -> anyhow::Result<()> {
-    let wal = session_root.join(format!("{INDEX_FILE_NAME}-wal"));
+    let connection = open_index(session_root)?;
+    let Some(wal) = wal_path(
+        &connection
+            .lock()
+            .expect("session index connection poisoned"),
+    ) else {
+        return Ok(());
+    };
     // Only the WAL may be opened behind SQLite's back: unix SQLite holds no
     // POSIX locks on it, whereas closing a second handle to the database or
     // `-shm` would drop this process's fcntl locks and risk corruption.
@@ -52,6 +59,17 @@ pub(in crate::session) fn sync_committed_writes(session_root: &Path) -> anyhow::
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
     }
+}
+
+/// The WAL SQLite actually writes. SQLite names it after the database path it
+/// resolved, and unix SQLite resolves a symlinked catalog file, so the
+/// requested `index.sqlite3-wal` may not be the live WAL. `None` for a
+/// connection without a database file.
+fn wal_path(connection: &Connection) -> Option<PathBuf> {
+    connection
+        .path()
+        .filter(|path| !path.is_empty())
+        .map(|path| PathBuf::from(format!("{path}-wal")))
 }
 
 pub(in crate::session) fn open_index(
