@@ -1,6 +1,6 @@
 use rusqlite::ErrorCode;
 
-use super::{open_index, wal_path, IndexOpenError};
+use super::IndexOpenError;
 use crate::sqlite_support::is_lock_contention;
 
 fn sqlite_failure(code: ErrorCode) -> rusqlite::Error {
@@ -28,12 +28,15 @@ fn migration_lock_contention_is_retryable() {
 }
 
 // Covers: title and search-cursor durability must flush the WAL SQLite really
-// writes: beside a symlinked catalog's target, and under a non-UTF-8 root.
+// writes: beside a symlinked catalog's target, and under a non-UTF-8 root
+// (not on macOS, whose filesystems reject non-UTF-8 names).
 // Owner: session index
 #[cfg(unix)]
 #[test]
 fn durability_flush_targets_the_live_wal() {
-    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::PathBuf};
+    use std::path::PathBuf;
+
+    use super::{open_index, wal_path};
 
     let temp = tempfile::TempDir::new().unwrap();
     let base = temp.path().canonicalize().unwrap();
@@ -45,12 +48,14 @@ fn durability_flush_targets_the_live_wal() {
         symlinked.join("index.sqlite3"),
     )
     .unwrap();
-    let non_utf8 = base.join(OsStr::from_bytes(b"caf\xe9"));
-
-    let cases = [
-        (symlinked.clone(), symlinked.join("catalog.sqlite3-wal")),
-        (non_utf8.clone(), non_utf8.join("index.sqlite3-wal")),
-    ];
+    #[cfg_attr(target_os = "macos", allow(unused_mut))]
+    let mut cases = vec![(symlinked.clone(), symlinked.join("catalog.sqlite3-wal"))];
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        let non_utf8 = base.join(OsStr::from_bytes(b"caf\xe9"));
+        cases.push((non_utf8.clone(), non_utf8.join("index.sqlite3-wal")));
+    }
     let resolved: Vec<(PathBuf, bool)> = cases
         .iter()
         .map(|(root, _)| {
