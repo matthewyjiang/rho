@@ -355,7 +355,11 @@ Navigation restores conversation and model state only. It does not undo file edi
 
 Manual and automatic compactions are durable tree states. A compaction node stores the exact model context after summary generation succeeds, while its parent keeps the exact pre-compaction state. The visible transcript keeps the original user, assistant, and tool messages. Selecting the parent lets you continue without that compaction; descendants of the compaction always include it.
 
-Session files use format version 4 for new trees. Rho reads version 1, 2, and 3 files as a single legacy path without rewriting them. The first tree change appends an upgrade record and leaves old bytes unchanged. Older Rho versions cannot resume a session after version 4 records have been appended.
+New session files use session format 5. Each tree node stores the model messages it adds and the transcript rows it shows. Most rows are the same messages, so format 5 stores a row as a reference to a message in the same node and keeps full content only for rows that differ, such as user input rewritten for the model. This avoids storing most messages twice. Resume, export, `/tree`, the session list, and session search show the same transcript as before.
+
+Rho reads every older format. A file keeps the format its header declares: continuing a format 4 session appends format 4 records, so a Rho release that predates format 5 can still open it. Rho reads format 1, 2, and 3 files as a single legacy path without rewriting them. The first tree change appends an upgrade record and leaves old bytes unchanged; Rho releases that predate format 4 cannot resume such an upgraded file.
+
+Rho releases that predate format 5 refuse format 5 files rather than show an incomplete transcript. Resuming or exporting one fails with `unsupported session version 5`. Their session list may still show a row a newer Rho indexed, and their session search skips the file. Upgrade Rho to open these sessions.
 
 Auto compaction is not a privacy or deletion feature.
 

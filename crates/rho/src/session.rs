@@ -18,6 +18,7 @@ use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
 mod delete;
+mod display_rows;
 mod index;
 mod layout;
 #[cfg(test)]

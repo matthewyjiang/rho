@@ -21,8 +21,8 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use super::persistence::{
-    session_dir_in_root, summarize_session_file, SessionEntry, SESSION_TRANSCRIPT_FILE_NAME,
-    SESSION_VERSION,
+    session_dir_in_root, summarize_session_file, SessionEntry, EXPLICIT_TREE_VERSION,
+    SESSION_TRANSCRIPT_FILE_NAME, SESSION_VERSION,
 };
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
@@ -269,7 +269,8 @@ fn write_minimal_session(session_root: &Path, cwd: &Path, index: usize) -> PathB
     fs::create_dir_all(&session_dir).expect("list session dir");
     let path = session_dir.join(SESSION_TRANSCRIPT_FILE_NAME);
     let header = SessionEntry::Session {
-        version: SESSION_VERSION - 1,
+        // Legacy message records are valid only before the explicit tree format.
+        version: EXPLICIT_TREE_VERSION - 1,
         id,
         timestamp: created_at.to_string(),
         cwd: cwd.to_path_buf(),

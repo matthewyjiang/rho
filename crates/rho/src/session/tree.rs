@@ -9,12 +9,16 @@ use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
+#[path = "tree_legacy.rs"]
+mod legacy;
 #[path = "tree_restore.rs"]
 mod restore;
 
+use super::display_rows::{DisplayRowFormat, StoredDisplayRow};
 use super::persistence::{
     next_revision, parse_timestamp, resume_normalized_history, session_id_from_path,
     validate_session_version, PersistedSessionState, SessionEntry, StoredDisplayMessage,
+    EXPLICIT_TREE_VERSION, SESSION_VERSION,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionSummary};
@@ -79,6 +83,17 @@ pub(crate) enum StoredStateTransition {
     SnapshotDelta { delta: Box<StoredSnapshotDelta> },
 }
 
+impl StoredStateTransition {
+    /// Model messages this record stores itself, which `StoredDisplayRow::Model`
+    /// indexes: a delta's appended history or a snapshot's full history.
+    pub(crate) fn model_messages(&self) -> &[rho_providers::model::Message] {
+        match self {
+            Self::Snapshot { snapshot } => snapshot.history(),
+            Self::SnapshotDelta { delta } => delta.appended_history(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StoredCompactionFacts {
     pub(crate) previous_messages: usize,
@@ -88,8 +103,10 @@ pub(crate) struct StoredCompactionFacts {
     pub(crate) cost_usd_micros: Option<u64>,
 }
 
+/// One tree node record. `D` is the display row type: stored rows as read
+/// from or written to disk, or rows resolved to full messages once loaded.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct SessionNode {
+pub(crate) struct SessionNode<D = StoredDisplayRow> {
     pub(crate) id: NodeId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) parent_id: Option<NodeId>,
@@ -98,8 +115,37 @@ pub(crate) struct SessionNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) compaction_facts: Option<StoredCompactionFacts>,
     pub(crate) transition: StoredStateTransition,
-    #[serde(default)]
-    pub(crate) display_messages: Vec<StoredDisplayMessage>,
+    /// Display rows: stored rows may reference `transition` messages (see
+    /// `display_rows`); loaded rows are full messages.
+    /// `Vec::new` instead of `default` keeps serde from bounding `D: Default`.
+    #[serde(default = "Vec::new")]
+    pub(crate) display_messages: Vec<D>,
+}
+
+/// A node whose display rows are full messages.
+pub(crate) type LoadedNode = SessionNode<StoredDisplayMessage>;
+
+impl SessionNode {
+    /// Resolves stored rows against this node's own transition; `format`
+    /// comes from the file header.
+    pub(crate) fn resolve_display(self, format: DisplayRowFormat) -> anyhow::Result<LoadedNode> {
+        let display_messages = StoredDisplayRow::resolve(
+            self.display_messages,
+            self.transition.model_messages(),
+            format,
+            &self.timestamp,
+            self.id.as_str(),
+        )?;
+        Ok(SessionNode {
+            id: self.id,
+            parent_id: self.parent_id,
+            timestamp: self.timestamp,
+            kind: self.kind,
+            compaction_facts: self.compaction_facts,
+            transition: self.transition,
+            display_messages,
+        })
+    }
 }
 
 /// Compact facts kept on every node so picker labels and tree checks do not
@@ -123,32 +169,34 @@ impl NodeFacts {
     }
 }
 
+/// A node in the loaded tree: its record with display rows resolved, plus
+/// the state facts derived while inserting it.
 #[derive(Clone, Debug)]
 pub(crate) struct RestoredNode {
-    node: SessionNode,
+    record: LoadedNode,
     facts: NodeFacts,
 }
 
 impl RestoredNode {
     pub(crate) fn id(&self) -> &NodeId {
-        &self.node.id
+        &self.record.id
     }
 
     pub(crate) fn parent_id(&self) -> Option<&NodeId> {
-        self.node.parent_id.as_ref()
+        self.record.parent_id.as_ref()
     }
 
     pub(crate) fn kind(&self) -> SessionNodeKind {
-        self.node.kind
+        self.record.kind
     }
 
     #[cfg(test)]
     pub(crate) fn timestamp(&self) -> &str {
-        &self.node.timestamp
+        &self.record.timestamp
     }
 
     pub(crate) fn display_messages(&self) -> &[StoredDisplayMessage] {
-        &self.node.display_messages
+        &self.record.display_messages
     }
 
     pub(crate) fn revision(&self) -> Revision {
@@ -160,11 +208,11 @@ impl RestoredNode {
     }
 
     pub(super) fn transition(&self) -> &StoredStateTransition {
-        &self.node.transition
+        &self.record.transition
     }
 
     pub(super) fn compaction_facts(&self) -> Option<&StoredCompactionFacts> {
-        self.node.compaction_facts.as_ref()
+        self.record.compaction_facts.as_ref()
     }
 }
 
@@ -292,7 +340,7 @@ impl SessionTree {
     /// saved with every snapshot survive tree navigation.
     pub(crate) fn newest_node_metadata(&self, key: &str) -> Option<&str> {
         let node = self.order.last().and_then(|id| self.nodes.get(id))?;
-        match &node.node.transition {
+        match node.transition() {
             StoredStateTransition::Snapshot { snapshot } => snapshot.metadata().get(key),
             StoredStateTransition::SnapshotDelta { delta } => delta.metadata().get(key),
         }
@@ -376,7 +424,7 @@ impl SessionTree {
                     }
                 };
                 display.push(StoredDisplayMessage {
-                    timestamp: node.node.timestamp.clone(),
+                    timestamp: node.record.timestamp.clone(),
                     message: rho_providers::model::Message::assistant_text(format!(
                         "◆ Compacted context{detail}"
                     )),
@@ -487,15 +535,28 @@ impl SessionTree {
     }
 
     pub(crate) fn effective_format_version(&self) -> u32 {
-        if self.upgraded || self.version == Some(4) {
-            4
+        if self.upgraded {
+            EXPLICIT_TREE_VERSION
         } else {
-            self.version.unwrap_or(4)
+            self.version.unwrap_or(SESSION_VERSION)
         }
     }
 
     pub(crate) fn needs_upgrade_marker(&self) -> bool {
-        self.version.is_some_and(|version| version < 4) && !self.upgraded
+        self.version
+            .is_some_and(|version| version < EXPLICIT_TREE_VERSION)
+            && !self.upgraded
+    }
+
+    /// Row encoding for nodes in this file. The header version fixes it, so
+    /// resuming an older file keeps it readable by older binaries.
+    pub(crate) fn display_row_format(&self) -> DisplayRowFormat {
+        DisplayRowFormat::for_version(self.effective_format_version())
+    }
+
+    fn is_explicit_tree_version(&self) -> bool {
+        self.version
+            .is_some_and(|version| version >= EXPLICIT_TREE_VERSION)
     }
 
     pub(crate) fn apply_explicit_node(&mut self, node: SessionNode) -> anyhow::Result<()> {
@@ -525,8 +586,8 @@ impl SessionTree {
         active_leaf_id: NodeId,
         timestamp_str: &str,
     ) -> anyhow::Result<()> {
-        if self.version == Some(4) {
-            anyhow::bail!("version 4 session cannot contain a legacy upgrade marker");
+        if self.is_explicit_tree_version() {
+            anyhow::bail!("explicit tree session cannot contain a legacy upgrade marker");
         }
         if self.version.is_none() {
             anyhow::bail!("legacy upgrade marker appears before the session header");
@@ -648,8 +709,8 @@ impl SessionTree {
                 self.set_active_leaf(target_id)?;
             }
             SessionEntry::Upgrade { active_leaf_id, .. } => {
-                if self.version == Some(4) {
-                    anyhow::bail!("version 4 session cannot contain a legacy upgrade marker");
+                if self.is_explicit_tree_version() {
+                    anyhow::bail!("explicit tree session cannot contain a legacy upgrade marker");
                 }
                 if self.version.is_none() {
                     anyhow::bail!("legacy upgrade marker appears before the session header");
@@ -669,7 +730,7 @@ impl SessionTree {
                 if self.version.is_none() {
                     anyhow::bail!("legacy record appears before the session header");
                 }
-                if self.version == Some(4) || self.upgraded {
+                if self.is_explicit_tree_version() || self.upgraded {
                     anyhow::bail!("legacy record appears in the explicit tree phase");
                 }
                 self.apply_legacy_entry(legacy, offset, legacy_state)?;
@@ -680,7 +741,7 @@ impl SessionTree {
 
     fn require_explicit_phase(&self, record: &str) -> anyhow::Result<()> {
         match (self.version, self.upgraded) {
-            (Some(4), _) | (Some(1..=3), true) => Ok(()),
+            (Some(EXPLICIT_TREE_VERSION..), _) | (Some(1..=3), true) => Ok(()),
             (Some(_), false) => {
                 anyhow::bail!("explicit {record} record appears before the legacy upgrade marker")
             }
@@ -691,138 +752,6 @@ impl SessionTree {
                 anyhow::bail!("explicit {record} record appears before the session header")
             }
         }
-    }
-
-    fn apply_legacy_entry(
-        &mut self,
-        entry: SessionEntry,
-        offset: u64,
-        state: &mut PersistedSessionState,
-    ) -> anyhow::Result<()> {
-        let previous = state.clone();
-        let (timestamp, display_messages, suggested_kind, changed) = match entry {
-            SessionEntry::Message {
-                timestamp,
-                message,
-                display_message,
-            } => {
-                let display = StoredDisplayMessage {
-                    timestamp: timestamp.clone(),
-                    message: display_message.map_or_else(|| message.clone(), |message| *message),
-                };
-                state.model.push(message);
-                state.display.push(display.clone());
-                state.revision = next_revision(state.revision)?;
-                refresh_snapshot_state(state);
-                (timestamp, vec![display], SessionNodeKind::Commit, true)
-            }
-            SessionEntry::ReplaceHistory {
-                timestamp,
-                messages,
-            } => {
-                super::persistence::apply_legacy_history_replacement(state, messages)?;
-                refresh_snapshot_state(state);
-                (timestamp, Vec::new(), SessionNodeKind::Compaction, true)
-            }
-            SessionEntry::Snapshot {
-                timestamp,
-                snapshot,
-                display_messages,
-            } => {
-                let replaced_history = !state.model.is_empty()
-                    && !snapshot.history().starts_with(state.model.as_slice());
-                let compaction = snapshot.compaction() != &state.compaction || replaced_history;
-                let changed = state.snapshot.is_none()
-                    || snapshot.revision() != state.revision
-                    || snapshot.history() != state.model
-                    || snapshot.compaction() != &state.compaction;
-                state.model = snapshot.history().to_vec();
-                state.display.extend(display_messages.clone());
-                state.revision = snapshot.revision();
-                state.compaction = snapshot.compaction().clone();
-                state.snapshot = Some(*snapshot);
-                (
-                    timestamp,
-                    display_messages,
-                    if compaction {
-                        SessionNodeKind::Compaction
-                    } else {
-                        SessionNodeKind::Commit
-                    },
-                    changed,
-                )
-            }
-            SessionEntry::SnapshotDelta {
-                timestamp,
-                delta,
-                display_messages,
-            } => {
-                let base = state.snapshot.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("snapshot delta does not have a complete base snapshot")
-                })?;
-                let snapshot = delta.restore(base)?;
-                let changed = snapshot.revision() != state.revision
-                    || snapshot.history() != state.model
-                    || snapshot.compaction() != &state.compaction;
-                let kind = if snapshot.compaction() != &state.compaction {
-                    SessionNodeKind::Compaction
-                } else {
-                    SessionNodeKind::Commit
-                };
-                state.model = snapshot.history().to_vec();
-                state.display.extend(display_messages.clone());
-                state.revision = snapshot.revision();
-                state.compaction = snapshot.compaction().clone();
-                state.snapshot = Some(snapshot);
-                (timestamp, display_messages, kind, changed)
-            }
-            SessionEntry::Session { .. }
-            | SessionEntry::Node { .. }
-            | SessionEntry::SetLeaf { .. }
-            | SessionEntry::Upgrade { .. } => {
-                unreachable!("entry was classified before projection")
-            }
-        };
-
-        if !changed {
-            if let Some(active) = self.active_leaf_id.as_ref() {
-                if let Some(node) = self.nodes.get_mut(active) {
-                    node.node.display_messages.extend(display_messages);
-                }
-            }
-            if let Some(active_state) = self.active_state.as_mut() {
-                active_state.display = state.display.clone();
-            }
-            return Ok(());
-        }
-
-        let id = NodeId::legacy(offset);
-        let parent_id = self.active_leaf_id.clone();
-        let snapshot = state.snapshot.clone().or(previous.snapshot).ok_or_else(|| {
-            anyhow::anyhow!("legacy state at byte offset {offset} has no snapshot transition")
-        });
-        let transition = match snapshot {
-            Ok(snapshot) => StoredStateTransition::Snapshot {
-                snapshot: Box::new(snapshot),
-            },
-            Err(_) => {
-                // Message-only v1 records predate snapshots. Their restored state is retained
-                // directly on the virtual node and the transition is never serialized.
-                StoredStateTransition::Snapshot {
-                    snapshot: Box::new(synthetic_snapshot(self.session_id.as_deref(), state)?),
-                }
-            }
-        };
-        let node = SessionNode {
-            id,
-            parent_id,
-            timestamp,
-            kind: suggested_kind,
-            compaction_facts: None,
-            transition,
-            display_messages,
-        };
-        self.insert_restored_node(node, state.clone())
     }
 
     fn state_from_snapshot(
@@ -852,7 +781,7 @@ impl SessionTree {
 
     fn insert_restored_node(
         &mut self,
-        node: SessionNode,
+        node: LoadedNode,
         state: PersistedSessionState,
     ) -> anyhow::Result<()> {
         self.insert_node(node, NodeFacts::from_state(&state))?;
@@ -861,7 +790,7 @@ impl SessionTree {
         Ok(())
     }
 
-    fn insert_node(&mut self, node: SessionNode, facts: NodeFacts) -> anyhow::Result<()> {
+    fn insert_node(&mut self, node: LoadedNode, facts: NodeFacts) -> anyhow::Result<()> {
         if self.nodes.contains_key(&node.id) {
             anyhow::bail!("duplicate session node id '{}'", node.id);
         }
@@ -878,7 +807,13 @@ impl SessionTree {
         }
         let id = node.id.clone();
         self.order.push(id.clone());
-        self.nodes.insert(id.clone(), RestoredNode { node, facts });
+        self.nodes.insert(
+            id.clone(),
+            RestoredNode {
+                record: node,
+                facts,
+            },
+        );
         self.active_leaf_id = Some(id);
         Ok(())
     }
@@ -910,43 +845,6 @@ impl SessionTree {
             (None, Some(_)) => anyhow::bail!("materialized state exists without an active leaf"),
         }
     }
-}
-
-fn refresh_snapshot_state(state: &mut PersistedSessionState) {
-    let Some(previous) = state.snapshot.take() else {
-        return;
-    };
-    let mut snapshot = SessionSnapshot::new(
-        previous.session_id().clone(),
-        state.revision,
-        state.model.clone(),
-        previous.provider().clone(),
-        state.compaction.clone(),
-    );
-    for (key, value) in previous.metadata() {
-        snapshot = snapshot.with_metadata(key.clone(), value.clone());
-    }
-    if let Some(prompt_cache_key) = previous.prompt_cache_key() {
-        snapshot = snapshot.with_prompt_cache_key(prompt_cache_key);
-    }
-    state.snapshot = Some(snapshot);
-}
-
-fn synthetic_snapshot(
-    session_id: Option<&str>,
-    state: &PersistedSessionState,
-) -> anyhow::Result<SessionSnapshot> {
-    use rho_providers::model::ModelIdentity;
-    use rho_sdk::SessionId;
-
-    let id = session_id.ok_or_else(|| anyhow::anyhow!("legacy record appears before header"))?;
-    Ok(SessionSnapshot::new(
-        SessionId::from_string(id.to_owned())?,
-        state.revision,
-        state.model.clone(),
-        ModelIdentity::new("legacy", "legacy", "legacy"),
-        state.compaction.clone(),
-    ))
 }
 
 fn snapshot_less_parent_state_changed(

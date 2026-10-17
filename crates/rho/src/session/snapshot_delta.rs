@@ -107,6 +107,10 @@ impl StoredSnapshotDelta {
         &self.metadata
     }
 
+    pub(super) fn appended_history(&self) -> &[Message] {
+        &self.appended_history
+    }
+
     /// The delta from `base` to `current`, or `None` unless `current` extends
     /// `base` exactly. The prefix check reads every base message: `current` is
     /// the caller's independent copy, so nothing cheaper proves its prefix is

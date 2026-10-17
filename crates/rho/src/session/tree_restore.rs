@@ -5,7 +5,7 @@ use rho_sdk::SessionSnapshot;
 use super::super::snapshot_delta::{SnapshotDeltaBase, SnapshotReplay};
 
 use super::{
-    snapshot_less_parent_state_changed, NodeId, PersistedSessionState, SessionNode,
+    snapshot_less_parent_state_changed, LoadedNode, NodeId, PersistedSessionState, SessionNode,
     SessionNodeKind, StoredDisplayMessage, StoredSnapshotDelta, StoredStateTransition,
 };
 
@@ -27,12 +27,7 @@ impl super::SessionTree {
         if node.parent_id.is_none() && !self.nodes.is_empty() {
             anyhow::bail!("session node '{}' creates a disconnected root", node.id);
         }
-        if let (Some(parent_id), StoredStateTransition::SnapshotDelta { delta }) =
-            (&node.parent_id, &node.transition)
-        {
-            return self.insert_delta_node(&node, parent_id, delta);
-        }
-        self.ensure_active_state()?;
+        let node = node.resolve_display(self.display_row_format())?;
         let state = match (&node.parent_id, &node.transition) {
             (None, StoredStateTransition::Snapshot { snapshot }) => {
                 if node.kind == SessionNodeKind::Compaction {
@@ -43,7 +38,15 @@ impl super::SessionTree {
             (None, StoredStateTransition::SnapshotDelta { .. }) => {
                 anyhow::bail!("root node '{}' cannot store a snapshot delta", node.id)
             }
+            (Some(parent_id), StoredStateTransition::SnapshotDelta { delta }) => {
+                let (facts, replay) = self.replay_delta(&node, parent_id, delta)?;
+                self.insert_node(node, facts)?;
+                self.active_state = None;
+                self.active_replay = Some(replay);
+                return Ok(());
+            }
             (Some(parent_id), StoredStateTransition::Snapshot { snapshot }) => {
+                self.ensure_active_state()?;
                 let parent_facts = self
                     .nodes
                     .get(parent_id)
@@ -84,9 +87,6 @@ impl super::SessionTree {
                 state.display.extend(node.display_messages.iter().cloned());
                 state
             }
-            (Some(_), StoredStateTransition::SnapshotDelta { .. }) => {
-                unreachable!("delta nodes use the incremental replay path above")
-            }
         };
         self.insert_restored_node(node, state)
     }
@@ -94,13 +94,13 @@ impl super::SessionTree {
     /// Keep one growable history during JSONL replay and across saves instead
     /// of copying every prefix. The replay stays pending until load, `set_leaf`,
     /// or a full-snapshot node materializes it; readers copy it via
-    /// [`Self::state_for`].
-    fn insert_delta_node(
+    /// [`Self::state_for`]. Returns the delta node's facts and that replay.
+    fn replay_delta(
         &mut self,
-        node: &SessionNode,
+        node: &LoadedNode,
         parent_id: &NodeId,
         delta: &StoredSnapshotDelta,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(super::NodeFacts, ReplayState)> {
         let parent = self.nodes.get(parent_id).ok_or_else(|| {
             anyhow::anyhow!("node '{}' names missing parent '{parent_id}'", node.id)
         })?;
@@ -157,10 +157,7 @@ impl super::SessionTree {
             compaction: replay.snapshot.header.compaction().clone(),
         };
         replay.display.extend(node.display_messages.iter().cloned());
-        self.insert_node(node.clone(), facts)?;
-        self.active_state = None;
-        self.active_replay = Some(replay);
-        Ok(())
+        Ok((facts, replay))
     }
 
     /// The active leaf's complete snapshot as the base for the next delta,

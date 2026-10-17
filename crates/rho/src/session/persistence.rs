@@ -31,7 +31,13 @@ pub(super) use super::layout::{
 };
 
 const MIN_SESSION_VERSION: u32 = 1;
-pub(super) const SESSION_VERSION: u32 = 4;
+/// First version whose files hold only explicit tree records. Versions 1-3
+/// are legacy logs that switch to tree records after an upgrade marker.
+pub(super) const EXPLICIT_TREE_VERSION: u32 = 4;
+/// Version written to new session headers. Version 5 node display rows may
+/// reference same-node model messages (`display_rows::MODEL_REF_VERSION`);
+/// older binaries reject the header instead of misreading rows.
+pub(super) const SESSION_VERSION: u32 = 5;
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedSession {
     pub(super) id: String,
