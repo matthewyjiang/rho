@@ -88,8 +88,9 @@ impl SdkSkillTool {
                             .map_err(|error| {
                                 SdkToolError::new(ToolErrorKind::Execution, error.to_string())
                             })?;
+                    let instructions = crate::skills::instructions(&contents);
                     let content = format!(
-                        "Loaded skill: {name}\nSource: {source_display}\nReferences are relative to {directory_display}.\n\n{contents}"
+                        "Loaded skill: {name}\nSource: {source_display}\nReferences are relative to {directory_display}.\n\n{instructions}"
                     );
                     Ok(ToolOutput::text(truncate(content, max_output_bytes)))
                 })
@@ -106,7 +107,7 @@ impl SdkTool for SdkSkillTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: "skill".into(),
-            description: "Load the full SKILL.md for a skill listed under available skills, by its exact name. Returns the file contents, including frontmatter; for file-backed skills, relative paths inside it resolve against the skill's directory. Unknown names return an error. Output beyond the tool-output limit is truncated.".into(),
+            description: "Load the instructions for a skill listed under available skills, by its exact name. Returns the SKILL.md body without its YAML frontmatter; for file-backed skills, relative paths inside it resolve against the skill's directory. Unknown names return an error. Output beyond the tool-output limit is truncated.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -178,7 +179,7 @@ impl SdkTool for SdkSkillTool {
                     let content = truncate(
                         format!(
                             "Loaded skill: {name}\nSource: {source_display}\n\n{}",
-                            skill.contents
+                            crate::skills::instructions(&skill.contents)
                         ),
                         self.max_output_bytes,
                     );

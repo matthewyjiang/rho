@@ -13,9 +13,9 @@ flowchart LR
 ```
 
 In the interactive TUI, each load appears as a collapsed `skill(<name>)` card.
-Click the card or press `Ctrl+O` to read what the model received: the source,
-front matter, and instructions. If a skill fails to load, the card shows the
-reason.
+Click the card or press `Ctrl+O` to read what the model received: the source
+and the instructions after the front matter. If a skill fails to load, the card
+shows the reason.
 
 ## `SKILL.md` format
 

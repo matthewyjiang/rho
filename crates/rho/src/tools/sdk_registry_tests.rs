@@ -507,7 +507,7 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
         line.starts_with("References are relative to ")
             && line.ends_with("/project/.agents/skills/ancestor-skill.")
     }));
-    assert!(output.ends_with("ancestor body\n"));
+    assert!(output.ends_with("/project/.agents/skills/ancestor-skill.\n\nancestor body\n"));
 }
 
 #[tokio::test]
