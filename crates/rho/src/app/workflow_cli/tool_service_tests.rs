@@ -63,7 +63,7 @@ fn malformed_agent_catalog_error_redacts_private_absolute_path() {
     let private_path = Path::new("/home/alice/private/agents/worker.md");
     let catalog =
         crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
-            rho_home: vec![(
+            rho_home: vec![crate::agent::AgentSource::read(
                 private_path.to_owned(),
                 "---\ndescription: demo\nruntime: malformed\n---\n".to_owned(),
             )],
@@ -459,7 +459,7 @@ fn agent_parse_uses_the_authorized_open_file() {
     let source = opened.read_utf8().unwrap();
     let catalog =
         crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
-            rho_home: vec![(path, source)],
+            rho_home: vec![crate::agent::AgentSource::read(path, source)],
             ..Default::default()
         })
         .unwrap();
@@ -505,7 +505,10 @@ fn agent_discovery_stays_on_the_authorized_directory_handle() {
     let source = opened.read_utf8().unwrap();
     let catalog =
         crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
-            rho_home: vec![(root.join("worker.md"), source)],
+            rho_home: vec![crate::agent::AgentSource::read(
+                root.join("worker.md"),
+                source,
+            )],
             ..Default::default()
         })
         .unwrap();

@@ -172,11 +172,11 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         .unwrap_or_default()
         .into_iter()
         .filter_map(|(id, group)| {
-            if catalog_entry_lacks_model(&id, &group) {
+            if catalog_entry_cannot_override(&id, &group, &cfg.model_aliases) {
                 warnings.push(ConfigWarning::Normalized {
-                    key: "internal_agents.model",
-                    from: format!("absent for agent '{id}'"),
-                    to: "no override; an entry for a catalog agent must name provider and model"
+                    key: "internal_agents",
+                    from: format!("for agent '{id}'"),
+                    to: "no override; a catalog agent's entry must name a Rho provider and model"
                         .into(),
                 });
                 return None;
@@ -585,18 +585,36 @@ struct PartialInternalAgentModelConfig {
     reasoning: Option<ReasoningLevel>,
 }
 
-/// Whether a Rho entry for a catalog agent (one that is neither internal nor
-/// the permission screen) leaves out `provider` or `model`. Such an entry
-/// replaces the model the agent's file names, so filling the gap from the
-/// conversation model would swap models nobody asked to swap.
-fn catalog_entry_lacks_model(id: &str, group: &PartialInternalAgentModelConfig) -> bool {
-    let catalog = !crate::agent::is_internal_agent_id(id)
-        && id != crate::permission_classifier::DECISION_SCREEN_ID;
+/// Whether an entry for a catalog agent (an id Rho does not reserve, such
+/// as a plugin agent's) fails to name an explicit Rho provider and model.
+/// A `@alias` model whose target names a provider names both.
+/// Such an entry replaces the model the agent's file names, so the
+/// conversation-model fallback internal agents use would swap models nobody
+/// asked to swap; config load drops it instead.
+fn catalog_entry_cannot_override(
+    id: &str,
+    group: &PartialInternalAgentModelConfig,
+    aliases: &ModelAliases,
+) -> bool {
+    let catalog =
+        crate::agent::AgentId::new(id).is_ok_and(|id| !crate::agent::is_reserved_agent_id(&id));
     let rho = matches!(
         group.runtime.as_deref(),
         None | Some(crate::config::RHO_RUNTIME_KEY)
     );
-    catalog && rho && (group.provider.is_none() || group.model.is_none())
+    // An undefined alias counts as named, so alias resolution fails the load
+    // loudly instead of this check dropping the entry.
+    let alias_names_provider = |model: &str| {
+        aliases
+            .resolve(model)
+            .map_or(true, |resolved| resolved.provider.is_some())
+    };
+    let names_model = match (&group.provider, group.model.as_deref()) {
+        (Some(_), Some(_)) => true,
+        (None, Some(model)) => model.starts_with('@') && alias_names_provider(model),
+        (_, None) => false,
+    };
+    catalog && !(rho && names_model)
 }
 
 /// Builds one internal-agent selection, filling Rho defaults from the

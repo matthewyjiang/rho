@@ -48,8 +48,8 @@ fn context() -> ToolContext {
 fn catalog() -> AgentCatalog {
     AgentCatalog::from_authorized_sources(AgentCatalogSources {
         rho_home: vec![
-            (PathBuf::from("host-worker.md"), "---\ndescription: host implementation\n---\nUse this child policy".into()),
-            (PathBuf::from("external-worker.md"), "---\ndescription: external implementation\nruntime: claude-cli\ntools: [Read]\n---\nUse the external runtime".into()),
+            crate::agent::AgentSource::read(PathBuf::from("host-worker.md"), "---\ndescription: host implementation\n---\nUse this child policy".into()),
+            crate::agent::AgentSource::read(PathBuf::from("external-worker.md"), "---\ndescription: external implementation\nruntime: claude-cli\ntools: [Read]\n---\nUse the external runtime".into()),
         ],
         ..Default::default()
     }).unwrap()

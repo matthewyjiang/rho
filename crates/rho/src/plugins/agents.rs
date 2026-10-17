@@ -90,28 +90,26 @@ pub(super) fn discover_plugin_agents(
             return None;
         }
     };
-    let mut candidates: Vec<PathBuf> = entries
+    let mut entries: Vec<_> = entries
         .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
         .collect();
-    candidates.sort();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
 
     let mut files = Vec::new();
-    for candidate in candidates {
-        let Some(name) = candidate.file_name() else {
-            continue;
-        };
-        // `dir` is resolved inside the root, so a regular file in it is too.
-        match std::fs::symlink_metadata(&candidate) {
-            Ok(metadata) if !metadata.file_type().is_symlink() => files.push(dir.join(name)),
-            Ok(_) => problems.push(format!(
+    for entry in entries {
+        // `file_type` does not follow links. `dir` is resolved inside the
+        // root, so a regular file in it is too.
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => files.push(entry.path()),
+            Ok(kind) if kind.is_symlink() => problems.push(format!(
                 "skipping agent file `{}`: symlinked agent files are not supported",
-                name.to_string_lossy()
+                entry.file_name().to_string_lossy()
             )),
+            Ok(_) => {}
             Err(error) => problems.push(format!(
                 "skipping agent file `{}`: {error}",
-                name.to_string_lossy()
+                entry.file_name().to_string_lossy()
             )),
         }
     }

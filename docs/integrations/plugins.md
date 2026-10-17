@@ -152,15 +152,17 @@ model = "gpt-5.5"
 auth = "api-key"
 ```
 
-The entry replaces the file's model and `fast` setting, so it must name
-`provider` and `model`; config load drops an entry missing either, with a
-warning, and the file's model stays. Its optional `reasoning` key replaces the file's reasoning; without one the file's
+The entry replaces the file's model and `fast` setting, so it must name a Rho
+`provider` and `model` (a `@alias` whose target names a provider counts).
+Config load drops an entry that leaves either out or names another
+`runtime`, with a warning, and the file's model stays; the next config save
+removes the dropped entry. The
+optional `reasoning` key replaces the file's reasoning; without one the file's
 reasoning stays. The entry is keyed by agent ID, so it also applies to an
 agent file of yours that takes over the same ID; built-in agents never take
-one. Rho refuses to launch the agent when it runs on another runtime, since
-the entry would switch runtime rather than model, and `/agents` marks such an
-entry as unable to apply. Config load already turns a `runtime = "claude-cli"`
-entry into the conversation model, with a warning.
+one. Rho refuses to launch an agent that runs on another runtime while it has
+an entry, since the entry would switch runtime rather than model, and
+`/agents` marks such an entry as unable to apply.
 
 ## MCP servers
 

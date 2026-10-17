@@ -384,7 +384,7 @@ fn workflow_local_agents_root_is_sibling_agents_dir() {
 #[test]
 fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
     let source = |path: &str, description: &str| {
-        (
+        AgentSource::read(
             PathBuf::from(path),
             format!("---\ndescription: {description}\n---\n"),
         )
@@ -393,10 +393,15 @@ fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
         user_plugins: vec![
             source("/user-plugin/auditor.md", "user plugin"),
             source("/user-plugin/reviewer.md", "replaces a built-in"),
-            (
+            AgentSource::read(
                 PathBuf::from("/user-plugin/worker.md"),
                 "---\ndescription: broken\ntools: [teleport]\n---\n".into(),
             ),
+            // An unreadable plugin file skips only itself.
+            AgentSource {
+                path: PathBuf::from("/user-plugin/garbled.md"),
+                contents: Err("stream did not contain valid UTF-8".into()),
+            },
             source("/user-plugin/shared.md", "user plugin"),
             source("/user-plugin/side.md", "claims the /side agent"),
         ],
@@ -431,6 +436,7 @@ fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
         [
             Path::new("/user-plugin/reviewer.md"),
             Path::new("/user-plugin/worker.md"),
+            Path::new("/user-plugin/garbled.md"),
             Path::new("/user-plugin/side.md")
         ]
     );

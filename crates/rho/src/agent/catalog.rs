@@ -126,12 +126,29 @@ impl DiscoveredAgentCatalog {
 
 #[derive(Default)]
 pub(crate) struct AgentCatalogSources {
-    pub(crate) user_plugins: Vec<(PathBuf, String)>,
-    pub(crate) project_plugins: Vec<(PathBuf, String)>,
-    pub(crate) agents_home: Vec<(PathBuf, String)>,
-    pub(crate) rho_home: Vec<(PathBuf, String)>,
-    pub(crate) project: Vec<Vec<(PathBuf, String)>>,
-    pub(crate) workflow: Vec<(PathBuf, String)>,
+    pub(crate) user_plugins: Vec<AgentSource>,
+    pub(crate) project_plugins: Vec<AgentSource>,
+    pub(crate) agents_home: Vec<AgentSource>,
+    pub(crate) rho_home: Vec<AgentSource>,
+    pub(crate) project: Vec<Vec<AgentSource>>,
+    pub(crate) workflow: Vec<AgentSource>,
+}
+
+/// One agent file a caller read under its own authorization.
+pub(crate) struct AgentSource {
+    pub(crate) path: PathBuf,
+    /// The file's text, or why reading it failed. A failed read skips only
+    /// that file, as it does in discovery.
+    pub(crate) contents: Result<String, String>,
+}
+
+impl AgentSource {
+    pub(crate) fn read(path: PathBuf, contents: String) -> Self {
+        Self {
+            path,
+            contents: Ok(contents),
+        }
+    }
 }
 
 impl AgentCatalog {
@@ -285,10 +302,13 @@ impl AgentCatalog {
         self.merge_tier(tier);
     }
 
-    fn load_sources(&mut self, origin: AgentOrigin, sources: Vec<(PathBuf, String)>) {
+    fn load_sources(&mut self, origin: AgentOrigin, sources: Vec<AgentSource>) {
         let mut tier = TierLoad::new(origin);
-        for (path, contents) in sources {
-            tier.load_file(path, &contents);
+        for AgentSource { path, contents } in sources {
+            match contents {
+                Ok(contents) => tier.load_file(path, &contents),
+                Err(error) => tier.skip_unreadable(path, error),
+            }
         }
         self.merge_tier(tier);
     }
@@ -358,15 +378,19 @@ impl TierLoad {
         for path in paths {
             match std::fs::read_to_string(&path) {
                 Ok(contents) => self.load_file(path, &contents),
-                Err(error) => {
-                    let error = AgentCatalogError::at_path(
-                        path.clone(),
-                        format!("cannot read file: {error}"),
-                    );
-                    self.skip(stem_id(&path), error);
-                }
+                Err(error) => self.skip_unreadable(path, error.to_string()),
             }
         }
+    }
+
+    /// Skips a file that could not be read; the id it claims becomes
+    /// unavailable from this tier down, as for a file that cannot parse.
+    fn skip_unreadable(&mut self, path: PathBuf, error: String) {
+        let id = stem_id(&path);
+        self.skip(
+            id,
+            AgentCatalogError::at_path(path, format!("cannot read file: {error}")),
+        );
     }
 
     /// Parses one user file, skipping it when it cannot load.
