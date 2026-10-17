@@ -47,9 +47,10 @@ impl InstallSource {
     /// Classify an install argument as a local path or a git source.
     ///
     /// Arguments with a URL scheme (any case) or a `git@` prefix are always
-    /// remotes; unsupported schemes are rejected rather than read as paths. A scheme-less argument is local when that path exists
-    /// (relative to `cwd`), so a directory named like `github.com/...` still
-    /// installs locally; otherwise it may be a scheme-less GitHub link.
+    /// remotes; unsupported schemes are rejected rather than read as paths.
+    /// A scheme-less argument is local when that path exists (relative to
+    /// `cwd`), so a directory named like `github.com/...` still installs
+    /// locally; otherwise it may be a scheme-less GitHub link.
     pub(crate) fn parse(arg: &OsStr, cwd: &Path) -> anyhow::Result<Self> {
         let path = Path::new(arg);
         let local = || Ok(Self::Local(path.to_path_buf()));
@@ -238,6 +239,11 @@ fn is_github_web(url: &url::Url) -> bool {
 /// GitHub shows `/` in ref names unencoded, so in a plain tree link the first
 /// segment after `tree/` is taken as the ref.
 fn github_source(arg: &str) -> Option<anyhow::Result<GitSource>> {
+    // scp-style remotes are SSH; prefixing them with `https://` would read
+    // `git@github.com:1234/repo` as a username and port.
+    if arg.starts_with("git@") {
+        return None;
+    }
     let with_scheme = if arg.contains("://") {
         arg.to_string()
     } else {

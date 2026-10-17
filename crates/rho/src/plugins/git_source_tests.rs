@@ -56,6 +56,10 @@ fn parses_install_sources() {
             git("git@gitlab.com:owner/repo.git", None, None),
         ),
         (
+            "git@github.com:1234/repo.git",
+            git("git@github.com:1234/repo.git", None, None),
+        ),
+        (
             "SSH://git@example.com/owner/repo.git",
             git("ssh://git@example.com/owner/repo.git", None, None),
         ),
