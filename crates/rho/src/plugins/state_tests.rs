@@ -14,7 +14,7 @@ fn missing_state_files_default_to_enabled() {
     let project = TempDir::new().unwrap();
     std::fs::create_dir(project.path().join(".git")).unwrap();
 
-    let store = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+    let store = PluginStateStore::load(project.path(), None, Some(home.path())).unwrap();
 
     assert!(store.is_enabled(PluginScope::User, "demo"));
     assert!(store.is_enabled(PluginScope::Project, "demo"));
@@ -28,10 +28,10 @@ fn persists_enablement_outside_package_tree() {
     let project = TempDir::new().unwrap();
     std::fs::create_dir(project.path().join(".git")).unwrap();
 
-    let mut store = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+    let mut store = PluginStateStore::load(project.path(), None, Some(home.path())).unwrap();
     store.set_enabled(PluginScope::User, "demo", false).unwrap();
 
-    let reloaded = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+    let reloaded = PluginStateStore::load(project.path(), None, Some(home.path())).unwrap();
     assert!(!reloaded.is_enabled(PluginScope::User, "demo"));
     assert!(reloaded.is_enabled(PluginScope::Project, "demo"));
     assert!(home.path().join("plugins.toml").is_file());
@@ -75,12 +75,12 @@ fn records_install_metadata() {
     ];
 
     for (name, record, expected) in cases {
-        let mut store = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+        let mut store = PluginStateStore::load(project.path(), None, Some(home.path())).unwrap();
         store
             .record_install(PluginScope::Project, name, record)
             .unwrap();
 
-        let reloaded = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+        let reloaded = PluginStateStore::load(project.path(), None, Some(home.path())).unwrap();
         assert_eq!(
             reloaded.entry(PluginScope::Project, name),
             Some(&expected),

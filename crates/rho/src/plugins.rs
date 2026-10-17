@@ -266,7 +266,7 @@ fn discover_components(
         agents: PluginAgentTiers::default(),
         report: PluginLoadReport::default(),
     };
-    let state = PluginStateStore::load(cwd, rho_home)
+    let state = PluginStateStore::load(cwd, home, rho_home)
         .unwrap_or_else(|_| PluginStateStore::empty(cwd, rho_home));
 
     for root in plugin_roots(cwd, home) {
@@ -303,12 +303,12 @@ fn plugin_roots(cwd: &Path, home: Option<&Path>) -> Vec<RootSpec> {
 
 /// Shared project/user root enumeration used by discovery and management.
 ///
-/// Project ancestors are reversed so nearer roots win during first-match walks
-/// that prefer the front of the list.
+/// Project roots come first, nearest first, so nearer roots win during
+/// first-match walks that prefer the front of the list. The user root, once,
+/// comes last (see [`state::project_plugin_dirs`]).
 pub(crate) fn discovery_roots(cwd: &Path, home: Option<&Path>) -> Vec<(PluginScope, PathBuf)> {
-    let mut roots: Vec<(PluginScope, PathBuf)> = crate::workspace::project_ancestor_dirs(cwd)
+    let mut roots: Vec<(PluginScope, PathBuf)> = state::project_plugin_dirs(cwd, home)
         .into_iter()
-        .rev()
         .map(|dir| (PluginScope::Project, state::plugins_root_at(&dir)))
         .collect();
     if let Some(home) = home {

@@ -60,6 +60,12 @@ targets contain a `plugin.json`, are plugins. When two roots contain the same
 plugin name, the nearer root wins and Rho reports the shadowed copy. Installed
 and linked packages use these same roots.
 
+Outside a repository the project root is the current directory, so running
+from your home directory (or inside a repository rooted there, such as a
+dotfiles repository) makes the project root your home directory and its
+plugins root `~/.agents/plugins` itself. Rho then treats that folder as user
+scope only and lists each package once.
+
 Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are
 skipped per server. Rho also implements one client extension namespace,
@@ -239,6 +245,10 @@ Rho manages packages in the same explicit roots it discovers:
 <repository>/.agents/plugins/<name>/   project scope (`--scope project`)
 ```
 
+When the project plugins root is `~/.agents/plugins` (see
+[Discovery roots](#discovery-roots)), `--scope project` fails with a pointer to
+`--scope user`, and `rho plugins update` walks only user scope.
+
 Lifecycle commands:
 
 ```bash
@@ -330,6 +340,11 @@ format. State files live outside package directories:
 $RHO_HOME/plugins.toml          user scope (default `~/.rho/plugins.toml`)
 <repository>/.rho/plugins.toml  project scope
 ```
+
+When the project root is your home directory, there is no project scope. With
+a separate `RHO_HOME`, older Rho builds recorded `disable` from there in
+`~/.rho/plugins.toml`; those disables still apply to the matching user plugin
+until you run `rho plugins enable` or `rho plugins remove` for it.
 
 A missing file means every discovered plugin is enabled. Disabling writes
 `enabled = false` for that package name in the matching scope file. Package

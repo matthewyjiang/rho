@@ -7,7 +7,7 @@
 //! git worktree). Missing files mean every discovered plugin is enabled.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -100,6 +100,11 @@ pub(crate) struct PluginStateStore {
     pub(crate) project: PluginStateFile,
     pub(crate) user_path: PathBuf,
     pub(crate) project_path: PathBuf,
+    /// Whether `cwd` has project plugins roots, so `project` was loaded.
+    project_scope: bool,
+    /// User plugins disabled by an older Rho in the project state file of a
+    /// repository rooted at `$HOME`; see [`Self::load`].
+    home_disables: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,15 +226,40 @@ fn is_true(value: &bool) -> bool {
 
 impl PluginStateStore {
     /// Load user and project state for `cwd`. Missing files are empty defaults.
-    pub(crate) fn load(cwd: &Path, rho_home: Option<&Path>) -> anyhow::Result<Self> {
-        let user_path = user_state_path(rho_home)?;
-        let project_path = project_state_path(cwd);
-        Ok(Self {
-            user: load_file(&user_path)?,
-            project: load_file(&project_path)?,
-            user_path,
-            project_path,
-        })
+    ///
+    /// Project state loads whenever `cwd` has project plugins roots
+    /// ([`project_plugin_dirs`]), including nested roots in a repository
+    /// rooted at `$HOME`. Without any, project scope does not exist and its
+    /// state file is not loaded as one.
+    ///
+    /// When the project root is `$HOME` and `RHO_HOME` is separate, older
+    /// builds recorded `disable` of user plugins from there in the project
+    /// state file. Those disables keep the user plugin off until `enable`,
+    /// `remove` or a fresh install clears them; with no project scope the file
+    /// is read only for them, leniently.
+    pub(crate) fn load(
+        cwd: &Path,
+        home: Option<&Path>,
+        rho_home: Option<&Path>,
+    ) -> anyhow::Result<Self> {
+        let mut store = Self {
+            user_path: user_state_path(rho_home)?,
+            project_scope: !project_plugin_dirs(cwd, home).is_empty(),
+            ..Self::empty(cwd, rho_home)
+        };
+        store.user = load_file(&store.user_path)?;
+        if store.project_scope {
+            store.project = load_file(&store.project_path)?;
+        }
+        let home_root = home.is_some_and(|home| project_plugins_root(cwd, home).is_none());
+        if home_root && !same_location(&store.project_path, &store.user_path) {
+            store.home_disables = if store.project_scope {
+                disabled_in(&store.project)
+            } else {
+                read_disabled(&store.project_path)
+            };
+        }
+        Ok(store)
     }
 
     /// Empty store with paths resolved for `cwd` (tests and fallback loads).
@@ -239,15 +269,18 @@ impl PluginStateStore {
             project: PluginStateFile::default(),
             user_path: user_state_path(rho_home).unwrap_or_else(|_| PathBuf::from("plugins.toml")),
             project_path: project_state_path(cwd),
+            project_scope: true,
+            home_disables: BTreeSet::new(),
         }
     }
 
     pub(crate) fn is_enabled(&self, scope: PluginScope, name: &str) -> bool {
-        self.file(scope)
+        let recorded = self
+            .file(scope)
             .plugins
             .get(name)
-            .map(|entry| entry.enabled)
-            .unwrap_or(true)
+            .is_none_or(|entry| entry.enabled);
+        recorded && !(scope == PluginScope::User && self.home_disables.contains(name))
     }
 
     pub(crate) fn entry(&self, scope: PluginScope, name: &str) -> Option<&PluginStateEntry> {
@@ -301,7 +334,11 @@ impl PluginStateStore {
             let entry = file.plugins.entry(name.to_string()).or_default();
             entry.enabled = enabled;
             Ok(())
-        })
+        })?;
+        if enabled {
+            self.clear_home_disable(scope, name)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn record_install(
@@ -316,7 +353,8 @@ impl PluginStateStore {
             // Fresh installs start enabled even if a prior disable entry remained.
             entry.enabled = true;
             Ok(())
-        })
+        })?;
+        self.clear_home_disable(scope, name)
     }
 
     /// Record a new commit for a git-installed package, keeping enablement.
@@ -341,7 +379,28 @@ impl PluginStateStore {
         self.update_scope(scope, |file| {
             file.plugins.remove(name);
             Ok(())
-        })
+        })?;
+        self.clear_home_disable(scope, name)
+    }
+
+    /// Drop a user plugin's older-build disable from the project state file.
+    fn clear_home_disable(&mut self, scope: PluginScope, name: &str) -> anyhow::Result<()> {
+        if scope != PluginScope::User || !self.home_disables.remove(name) {
+            return Ok(());
+        }
+        // The file keys by name, so a same-named nested project plugin in a
+        // repository rooted at `$HOME` shares this entry, as it did before.
+        self.update_scope(PluginScope::Project, |file| {
+            if let Some(entry) = file.plugins.get_mut(name) {
+                entry.enabled = true;
+            }
+            Ok(())
+        })?;
+        if !self.project_scope {
+            // No project scope here, so the store keeps no copy of its file.
+            self.project = PluginStateFile::default();
+        }
+        Ok(())
     }
 
     fn file(&self, scope: PluginScope) -> &PluginStateFile {
@@ -458,8 +517,41 @@ pub(crate) fn user_plugins_root(home: &Path) -> PathBuf {
     plugins_root_at(home)
 }
 
-pub(crate) fn project_plugins_root(cwd: &Path) -> PathBuf {
-    plugins_root_at(&project_root(cwd))
+/// Project plugins root for `cwd`, or `None` when the project root shares the
+/// user plugins root (see [`shares_user_plugins_root`]). Project scope then has
+/// no packages of its own; that folder is user scope.
+pub(crate) fn project_plugins_root(cwd: &Path, home: &Path) -> Option<PathBuf> {
+    let project = project_root(cwd);
+    (!shares_user_plugins_root(&project, home)).then(|| plugins_root_at(&project))
+}
+
+/// Project directories whose `.agents/plugins` are project plugins roots for
+/// `cwd`, nearest first. Ancestors that share the user plugins root are
+/// dropped so that folder is only ever user scope.
+pub(crate) fn project_plugin_dirs(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    crate::workspace::project_ancestor_dirs(cwd)
+        .into_iter()
+        .rev()
+        .filter(|dir| home.is_none_or(|home| !shares_user_plugins_root(dir, home)))
+        .collect()
+}
+
+/// Whether project directory `dir` has the user plugins root as its plugins
+/// root, as when it is `$HOME` (no repository, or a dotfiles repository) or its
+/// `.agents/plugins` links there. Discovery and management both use this so
+/// that folder is only ever user scope.
+///
+/// The directories are compared too because the plugins roots usually do not
+/// exist before a first install, and `cwd` is physical while `$HOME` may pass
+/// through a symlink (`/home` -> `/var/home`).
+pub(crate) fn shares_user_plugins_root(dir: &Path, home: &Path) -> bool {
+    same_location(dir, home) || same_location(&plugins_root_at(dir), &user_plugins_root(home))
+}
+
+/// Whether `a` and `b` name the same location, compared as given and then
+/// canonically when both exist.
+pub(crate) fn same_location(a: &Path, b: &Path) -> bool {
+    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
 fn load_file(path: &Path) -> anyhow::Result<PluginStateFile> {
@@ -470,6 +562,31 @@ fn load_file(path: &Path) -> anyhow::Result<PluginStateFile> {
             Ok(PluginStateFile::default())
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Names `file` disables.
+fn disabled_in(file: &PluginStateFile) -> BTreeSet<String> {
+    file.plugins
+        .iter()
+        .filter(|(_, entry)| !entry.enabled)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Names disabled in the state file at `path`. Unreadable files only warn:
+/// the caller reads them for compatibility, not as a scope it manages.
+fn read_disabled(path: &Path) -> BTreeSet<String> {
+    match load_file(path) {
+        Ok(file) => disabled_in(&file),
+        Err(error) => {
+            tracing::warn!(
+                path = %crate::paths::display(path),
+                %error,
+                "ignoring unreadable plugin state"
+            );
+            BTreeSet::new()
+        }
     }
 }
 

@@ -5,7 +5,7 @@
 //! recorded in `plugins.toml`, refetches each recorded ref, and replaces a
 //! package only when the commit moved.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{
     inspect_source, install_validated, managed_root, package_exists, place, resolve_named_package,
@@ -13,7 +13,10 @@ use super::{
 };
 use crate::plugins::{
     git_source::{self, Checkout, GitSource},
-    state::{InstallRecord, PluginScope, PluginStateStore},
+    state::{
+        project_plugins_root, same_location, user_plugins_root, InstallRecord, PluginScope,
+        PluginStateStore,
+    },
     ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
 };
 
@@ -64,10 +67,12 @@ pub(crate) fn install_git(
     home: &Path,
     rho_home: Option<&Path>,
 ) -> anyhow::Result<GitInstall> {
+    let root = managed_root(scope, cwd, home)?;
+    let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     let checkout = git_source::fetch(source)?;
     let package = inspect_checkout(&checkout, source)?;
     let record = InstallRecord::Git(source.record(checkout.commit.clone()));
-    let package = install_validated(package, &record, scope, force, cwd, home, rho_home)?;
+    let package = install_validated(package, &record, scope, &root, force, &mut state)?;
     Ok(GitInstall {
         package,
         commit: checkout.commit,
@@ -85,9 +90,9 @@ pub(crate) fn update(
     home: &Path,
     rho_home: Option<&Path>,
 ) -> anyhow::Result<UpdateReport> {
-    let mut state = PluginStateStore::load(cwd, rho_home)?;
+    let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     let mut report = UpdateReport::default();
-    for scope in update_scopes(&state) {
+    for (scope, root) in update_scopes(&state, cwd, home) {
         for name in state.git_installed(scope) {
             if matches!(selection, UpdateSelection::Named(wanted) if wanted != name) {
                 continue;
@@ -96,7 +101,7 @@ pub(crate) fn update(
                 report.untrusted.push(name);
                 continue;
             }
-            let result = update_one(scope, &name, &mut state, cwd, home);
+            let result = update_one(scope, &root, &name, &mut state);
             report.results.push((UpdateTarget { name, scope }, result));
         }
     }
@@ -119,38 +124,37 @@ pub(crate) fn update(
     Ok(report)
 }
 
-/// Scopes to walk, dropping project scope when it reads the user state file.
+/// Scopes to walk with their plugins roots, dropping project scope when it
+/// would revisit user records or packages.
 ///
-/// Outside a repository, running from the home directory makes the project
-/// root `$HOME`, so with the default `RHO_HOME` both scopes load
-/// `~/.rho/plugins.toml`. Walking both would update each package twice and
-/// misreport it as untrusted. Distinct state files hold distinct records, so
-/// both are walked even when their package roots coincide.
-fn update_scopes(state: &PluginStateStore) -> Vec<PluginScope> {
-    let (project, user) = (&state.project_path, &state.user_path);
-    let aliased = project == user
-        || matches!((project.canonicalize(), user.canonicalize()), (Ok(a), Ok(b)) if a == b);
-    if aliased {
-        vec![PluginScope::User]
-    } else {
-        vec![PluginScope::Project, PluginScope::User]
-    }
+/// Running from `$HOME` outside a repository makes the project root `$HOME`:
+/// its plugins root is the user root, and with the default `RHO_HOME` both
+/// scopes also load `~/.rho/plugins.toml`. Walking both would update each
+/// package twice and misreport it as untrusted. A `RHO_HOME` inside the
+/// project root shares the state file without sharing the plugins root.
+fn update_scopes(state: &PluginStateStore, cwd: &Path, home: &Path) -> Vec<(PluginScope, PathBuf)> {
+    let project = project_plugins_root(cwd, home)
+        .filter(|_| !same_location(&state.project_path, &state.user_path))
+        .map(|root| (PluginScope::Project, root));
+    project
+        .into_iter()
+        .chain([(PluginScope::User, user_plugins_root(home))])
+        .collect()
 }
 
-/// Refetch one recorded source. Works from the state record and the package
-/// directory alone, so a corrupted installed manifest is still repairable.
+/// Refetch one recorded source into `root`, the plugins root for `scope`.
+/// Works from the state record and the package directory alone, so a
+/// corrupted installed manifest is still repairable.
 fn update_one(
     scope: PluginScope,
+    root: &Path,
     name: &str,
     state: &mut PluginStateStore,
-    cwd: &Path,
-    home: &Path,
 ) -> anyhow::Result<UpdateOutcome> {
     let Some(record) = state.git_record(scope, name).cloned() else {
         anyhow::bail!("`{name}` has no recorded git source");
     };
     let source = GitSource::try_from(&record)?;
-    let root = managed_root(scope, cwd, home);
     let path = root.join(name);
     if !package_exists(&path) {
         anyhow::bail!(
@@ -175,7 +179,7 @@ fn update_one(
             fetched.manifest.name
         );
     }
-    place(&fetched, &root, InstallMode::Copy, /* force */ true)?;
+    place(&fetched, root, InstallMode::Copy, /* force */ true)?;
     state.record_git_update(scope, name, source.record(checkout.commit.clone()))?;
     Ok(UpdateOutcome::Updated {
         previous: record.commit,
