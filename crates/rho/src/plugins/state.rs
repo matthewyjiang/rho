@@ -458,19 +458,24 @@ pub(crate) fn user_plugins_root(home: &Path) -> PathBuf {
     plugins_root_at(home)
 }
 
-/// Project plugins root for `cwd`, or `None` when it is the user plugins root,
-/// as when the project root is `$HOME` (no repository, or a dotfiles
-/// repository). Project scope then has no packages of its own; that folder is
-/// user scope.
+/// Project plugins root for `cwd`, or `None` when the project root shares the
+/// user plugins root (see [`shares_user_plugins_root`]). Project scope then has
+/// no packages of its own; that folder is user scope.
+pub(crate) fn project_plugins_root(cwd: &Path, home: &Path) -> Option<PathBuf> {
+    let project = project_root(cwd);
+    (!shares_user_plugins_root(&project, home)).then(|| plugins_root_at(&project))
+}
+
+/// Whether project directory `dir` has the user plugins root as its plugins
+/// root, as when it is `$HOME` (no repository, or a dotfiles repository) or its
+/// `.agents/plugins` links there. Discovery and management both use this so
+/// that folder is only ever user scope.
 ///
 /// The directories are compared too because the plugins roots usually do not
 /// exist before a first install, and `cwd` is physical while `$HOME` may pass
 /// through a symlink (`/home` -> `/var/home`).
-pub(crate) fn project_plugins_root(cwd: &Path, home: &Path) -> Option<PathBuf> {
-    let project = project_root(cwd);
-    let root = plugins_root_at(&project);
-    let aliased = same_location(&project, home) || same_location(&root, &user_plugins_root(home));
-    (!aliased).then_some(root)
+pub(crate) fn shares_user_plugins_root(dir: &Path, home: &Path) -> bool {
+    same_location(dir, home) || same_location(&plugins_root_at(dir), &user_plugins_root(home))
 }
 
 /// Whether `a` and `b` name the same location, compared as given and then

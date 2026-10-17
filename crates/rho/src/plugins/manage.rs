@@ -280,14 +280,14 @@ fn package_at(
 
 /// Plugins root that `scope` manages.
 ///
-/// Refuses project scope when its plugins root is the user root, which
+/// Refuses project scope when the project shares the user plugins root, which
 /// discovery reports as user scope only.
 fn managed_root(scope: PluginScope, cwd: &Path, home: &Path) -> anyhow::Result<PathBuf> {
     match scope {
         PluginScope::User => Ok(user_plugins_root(home)),
         PluginScope::Project => project_plugins_root(cwd, home).ok_or_else(|| {
             anyhow::anyhow!(
-                "project scope is unavailable here: {} is the user plugins root; use --scope user",
+                "project scope is unavailable here: this project's plugins root is the user plugins root {}; use --scope user",
                 crate::paths::display(&user_plugins_root(home))
             )
         }),

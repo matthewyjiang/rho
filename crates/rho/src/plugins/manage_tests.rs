@@ -182,7 +182,7 @@ fn install_conflict_requires_force() {
 
 // Covers: project scope is refused when its project root is $HOME, before
 // anything is written to either scope, including a first install where $HOME
-// is spelled through a symlink but cwd is physical.
+// is spelled through a symlink but cwd is physical. User scope still installs.
 // Owner: plugin install scope policy.
 #[test]
 fn project_install_from_home_is_refused() {
@@ -213,19 +213,29 @@ fn project_install_from_home_is_refused() {
             physical.path().to_path_buf()
         };
 
-        let result = install(
-            &source,
-            PluginScope::Project,
-            InstallMode::Copy,
-            /* force */ false,
-            &cwd,
-            &home,
-            Some(rho_home.path()),
-        );
+        let install_as = |scope| {
+            install(
+                &source,
+                scope,
+                InstallMode::Copy,
+                /* force */ false,
+                &cwd,
+                &home,
+                Some(rho_home.path()),
+            )
+        };
 
-        assert!(result.is_err(), "{label}");
-        assert!(!physical.path().join(".agents").exists(), "{label}");
-        assert!(!physical.path().join(".rho").exists(), "{label}");
+        let project = install_as(PluginScope::Project);
+        let untouched =
+            !physical.path().join(".agents").exists() && !physical.path().join(".rho").exists();
+        // Control: the same setup installs at user scope, so the refusal is the scope.
+        let user = install_as(PluginScope::User);
+
+        assert_eq!(
+            (project.is_err(), untouched, user.is_ok()),
+            (true, true, true),
+            "{label}"
+        );
     }
 }
 
