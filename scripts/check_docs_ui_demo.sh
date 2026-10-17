@@ -30,7 +30,9 @@ Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH] [--jobs N]
 
   --check   Fail when checked-in SVGs drift from a live PTY capture (default).
   --write   Regenerate dark and light docs asset paths from a live PTY capture.
-  --bin     Path to a debug rho binary (skips the default rebuild of target/debug/rho).
+  --bin     Debug rho binary built from the checked-out source; skips the
+            default rebuild. Pass target/debug/rho right after
+            `cargo test --workspace`, which re-copies it from the fresh test build.
   --jobs    Cargo job cap (default: CARGO_BUILD_JOBS or 12).
 EOF
 }
@@ -76,6 +78,9 @@ esac
 if [[ -z "$bin_path" ]]; then
   # Always rebuild so rust-cache / earlier cargo steps cannot leave a stale
   # target/debug/rho that captures a different screen than the checked-out source.
+  # This build drops workspace dev-dependency features, so after
+  # `cargo test --workspace` it recompiles rho-coding-agent; callers that just
+  # ran those tests pass --bin target/debug/rho instead.
   echo "==> Build debug rho for matrix mode"
   cargo build -j "$jobs" -p rho-coding-agent --bin rho --locked
   bin_path="$root/target/debug/rho"

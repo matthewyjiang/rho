@@ -141,7 +141,7 @@ VALIDATION_LOG=$(mktemp /tmp/rho-validation-full.XXXXXX.log)
 python3 scripts/validate.py full >"$VALIDATION_LOG" 2>&1
 ```
 
-Full mode runs policy and script checks, Clippy for all workspace targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. Do not precede it with a separate workspace `cargo check`; Clippy and tests already provide that compile coverage. Do not add `--all-targets` to the normal workspace test command; Clippy, platform CI, and the dedicated benchmark job cover examples and benchmarks.
+Full mode runs policy and script checks, Clippy for all workspace targets and features, normal workspace tests, the docs TUI proof-plate PTY check against the `rho` binary those tests built, a `rho` check without dev-dependency features, documentation tests, and SDK feature and downstream checks. Do not precede it with a separate workspace `cargo check`; Clippy and tests already provide that compile coverage. Do not add `--all-targets` to the normal workspace test command; Clippy, platform CI, and the dedicated benchmark job cover examples and benchmarks.
 
 Do not raise architecture line budgets merely to pass. Extract cohesive modules instead. Full mode includes the architecture self-test, so run that self-test separately only when changing the checker and not running full mode.
 

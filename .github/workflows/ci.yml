@@ -55,7 +55,8 @@ jobs:
           path: ${{ runner.temp }}/rho-pty-native-artifacts/
           if-no-files-found: ignore
       - name: Check docs TUI proof plate
-        run: bash scripts/check_docs_ui_demo.sh --check
+        # Reuses the binary the workspace tests refreshed; see --bin in the script.
+        run: bash scripts/check_docs_ui_demo.sh --check --bin target/debug/rho
       - name: Run documentation tests
         run: cargo test --workspace --doc --all-features --locked
       - name: Check rho-tools document features independently

@@ -7,6 +7,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -118,6 +119,26 @@ def full_plan() -> tuple[Step, ...]:
             "Run workspace tests",
             ("cargo", "test", "--workspace", "--locked"),
         ),
+        # Must directly follow the workspace tests: they refresh
+        # target/debug/rho, and the script's own build would recompile
+        # rho-coding-agent (see --bin in check_docs_ui_demo.sh).
+        Step(
+            "Check docs TUI proof plate",
+            (
+                "bash",
+                "scripts/check_docs_ui_demo.sh",
+                "--check",
+                "--bin",
+                "target/debug/rho",
+            ),
+        ),
+        # Every other cargo step enables workspace dev-dependency features, so
+        # this is the only local check that rho compiles as `cargo install`
+        # and release builds see it.
+        Step(
+            "Check rho without dev-dependency features",
+            ("cargo", "check", "-p", "rho-coding-agent", "--bin", "rho", "--locked"),
+        ),
         Step(
             "Run documentation tests",
             (
@@ -136,10 +157,6 @@ def full_plan() -> tuple[Step, ...]:
         Step(
             "Check downstream SDK fixtures",
             ("python3", "scripts/check_sdk_compatibility.py", "--test-downstream"),
-        ),
-        Step(
-            "Check docs TUI proof plate",
-            ("bash", "scripts/check_docs_ui_demo.sh", "--check"),
         ),
     )
 
@@ -176,7 +193,7 @@ def rustc_min_stack(value: str | None) -> str:
 
 
 def run_plan(steps: Sequence[Step]) -> None:
-    """Run steps in order and stop at the first failure."""
+    """Run steps in order, stop at the first failure, and report step timings."""
     environment = os.environ.copy()
     environment["CARGO_BUILD_JOBS"] = capped_cargo_jobs(
         environment.get("CARGO_BUILD_JOBS")
@@ -186,10 +203,21 @@ def run_plan(steps: Sequence[Step]) -> None:
     )
     print(f"Cargo jobs: {environment['CARGO_BUILD_JOBS']}", flush=True)
 
-    for step in steps:
-        print(f"\n==> {step.label}", flush=True)
-        print(f"+ {' '.join(step.command)}", flush=True)
-        subprocess.run(step.command, cwd=ROOT, env=environment, check=True)
+    timings: list[tuple[str, float]] = []
+    try:
+        for step in steps:
+            print(f"\n==> {step.label}", flush=True)
+            print(f"+ {' '.join(step.command)}", flush=True)
+            started = time.monotonic()
+            try:
+                subprocess.run(step.command, cwd=ROOT, env=environment, check=True)
+            finally:
+                timings.append((step.label, time.monotonic() - started))
+    finally:
+        print("\n==> Step timings", flush=True)
+        for label, seconds in timings:
+            print(f"{seconds:8.1f}s  {label}", flush=True)
+        print(f"{sum(s for _, s in timings):8.1f}s  total", flush=True)
 
 
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:

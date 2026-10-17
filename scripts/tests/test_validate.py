@@ -63,9 +63,15 @@ class FullPlanTests(unittest.TestCase):
         )
         self.assertIn("Test SDK feature modes", commands)
         self.assertIn("Check downstream SDK fixtures", commands)
+
+    def test_proof_plate_reuses_the_binary_the_workspace_tests_just_built(self) -> None:
+        plan = validate.full_plan()
+        labels = [step.label for step in plan]
+        plate = labels.index("Check docs TUI proof plate")
+
         self.assertEqual(
-            commands["Check docs TUI proof plate"],
-            ("bash", "scripts/check_docs_ui_demo.sh", "--check"),
+            (plan[plate - 1].label, plan[plate].command[-2:]),
+            ("Run workspace tests", ("--bin", "target/debug/rho")),
         )
 
 
