@@ -458,15 +458,19 @@ pub(crate) fn user_plugins_root(home: &Path) -> PathBuf {
     plugins_root_at(home)
 }
 
-pub(crate) fn project_plugins_root(cwd: &Path) -> PathBuf {
-    plugins_root_at(&project_root(cwd))
-}
-
-/// Whether the project plugins root for `cwd` is the user plugins root, as when
-/// the project root is `$HOME` (no repository, or a dotfiles repository).
-/// Project scope then has no packages of its own; that folder is user scope.
-pub(crate) fn project_root_is_user_root(cwd: &Path, home: &Path) -> bool {
-    same_location(&project_plugins_root(cwd), &user_plugins_root(home))
+/// Project plugins root for `cwd`, or `None` when it is the user plugins root,
+/// as when the project root is `$HOME` (no repository, or a dotfiles
+/// repository). Project scope then has no packages of its own; that folder is
+/// user scope.
+///
+/// The directories are compared too because the plugins roots usually do not
+/// exist before a first install, and `cwd` is physical while `$HOME` may pass
+/// through a symlink (`/home` -> `/var/home`).
+pub(crate) fn project_plugins_root(cwd: &Path, home: &Path) -> Option<PathBuf> {
+    let project = project_root(cwd);
+    let root = plugins_root_at(&project);
+    let aliased = same_location(&project, home) || same_location(&root, &user_plugins_root(home));
+    (!aliased).then_some(root)
 }
 
 /// Whether `a` and `b` name the same location, compared as given and then

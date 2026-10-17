@@ -62,8 +62,9 @@ and linked packages use these same roots.
 
 Outside a repository the project root is the current directory, so running
 from your home directory (or inside a repository rooted there, such as a
-dotfiles repository) makes the project root `~/.agents/plugins` itself. Rho
-then treats that folder as user scope only and lists each package once.
+dotfiles repository) makes the project root your home directory and its
+plugins root `~/.agents/plugins` itself. Rho then treats that folder as user
+scope only and lists each package once.
 
 Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are

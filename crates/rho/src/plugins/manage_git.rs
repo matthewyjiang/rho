@@ -13,9 +13,7 @@ use super::{
 };
 use crate::plugins::{
     git_source::{self, Checkout, GitSource},
-    state::{
-        project_root_is_user_root, same_location, InstallRecord, PluginScope, PluginStateStore,
-    },
+    state::{project_plugins_root, same_location, InstallRecord, PluginScope, PluginStateStore},
     ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
 };
 
@@ -130,7 +128,8 @@ pub(crate) fn update(
 /// package twice and misreport it as untrusted. A `RHO_HOME` inside the
 /// project root shares the state file without sharing the plugins root.
 fn update_scopes(state: &PluginStateStore, cwd: &Path, home: &Path) -> Vec<PluginScope> {
-    if same_location(&state.project_path, &state.user_path) || project_root_is_user_root(cwd, home)
+    if same_location(&state.project_path, &state.user_path)
+        || project_plugins_root(cwd, home).is_none()
     {
         vec![PluginScope::User]
     } else {

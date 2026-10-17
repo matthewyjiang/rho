@@ -180,30 +180,53 @@ fn install_conflict_requires_force() {
     .unwrap();
 }
 
-// Covers: project scope is refused when its root is the user root ($HOME
-// outside a repository), before anything is written to either scope.
+// Covers: project scope is refused when its project root is $HOME, before
+// anything is written to either scope, including a first install where $HOME
+// is spelled through a symlink but cwd is physical.
 // Owner: plugin install scope policy.
 #[test]
-fn project_install_from_home_outside_repository_is_refused() {
-    let home = TempDir::new().unwrap();
-    let rho_home = TempDir::new().unwrap();
-    let source_root = TempDir::new().unwrap();
-    let source = write_source(source_root.path(), "demo");
+fn project_install_from_home_is_refused() {
+    // (label, home is a git repository, cwd relative to home, $HOME via symlink)
+    let cases = [
+        ("no repository", false, "", false),
+        ("dotfiles repository", true, "notes", false),
+        #[cfg(unix)]
+        ("symlinked home", false, "", true),
+    ];
+    for (label, repository, relative_cwd, symlinked) in cases {
+        let physical = TempDir::new().unwrap();
+        let rho_home = TempDir::new().unwrap();
+        let source_root = TempDir::new().unwrap();
+        let source = write_source(source_root.path(), "demo");
+        if repository {
+            std::fs::create_dir(physical.path().join(".git")).unwrap();
+        }
+        let cwd = physical.path().join(relative_cwd);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let alias = TempDir::new().unwrap();
+        let home = if symlinked {
+            let link = alias.path().join("home");
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(physical.path(), &link).unwrap();
+            link
+        } else {
+            physical.path().to_path_buf()
+        };
 
-    let error = install(
-        &source,
-        PluginScope::Project,
-        InstallMode::Copy,
-        /* force */ false,
-        home.path(),
-        home.path(),
-        Some(rho_home.path()),
-    )
-    .unwrap_err();
+        let result = install(
+            &source,
+            PluginScope::Project,
+            InstallMode::Copy,
+            /* force */ false,
+            &cwd,
+            &home,
+            Some(rho_home.path()),
+        );
 
-    assert!(error.to_string().contains("--scope user"), "{error}");
-    assert!(!home.path().join(".agents").exists());
-    assert!(!home.path().join(".rho").exists());
+        assert!(result.is_err(), "{label}");
+        assert!(!physical.path().join(".agents").exists(), "{label}");
+        assert!(!physical.path().join(".rho").exists(), "{label}");
+    }
 }
 
 // Covers: link creates a managed symlink and records link origin.

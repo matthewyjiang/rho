@@ -14,8 +14,8 @@ use super::{
     contain, discovery_roots,
     manifest::{self, PluginManifest},
     state::{
-        project_plugins_root, project_root_is_user_root, user_plugins_root, InstallRecord,
-        PluginOrigin, PluginScope, PluginStateStore,
+        project_plugins_root, user_plugins_root, InstallRecord, PluginOrigin, PluginScope,
+        PluginStateStore,
     },
 };
 
@@ -285,16 +285,12 @@ fn package_at(
 fn managed_root(scope: PluginScope, cwd: &Path, home: &Path) -> anyhow::Result<PathBuf> {
     match scope {
         PluginScope::User => Ok(user_plugins_root(home)),
-        PluginScope::Project => {
-            let root = project_plugins_root(cwd);
-            if project_root_is_user_root(cwd, home) {
-                anyhow::bail!(
-                    "project scope is unavailable here: {} is the user plugins root; use --scope user",
-                    crate::paths::display(&root)
-                );
-            }
-            Ok(root)
-        }
+        PluginScope::Project => project_plugins_root(cwd, home).ok_or_else(|| {
+            anyhow::anyhow!(
+                "project scope is unavailable here: {} is the user plugins root; use --scope user",
+                crate::paths::display(&user_plugins_root(home))
+            )
+        }),
     }
 }
 
