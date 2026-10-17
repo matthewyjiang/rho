@@ -272,10 +272,14 @@ impl SessionTree {
         self.active_leaf_id.as_ref()
     }
 
-    /// Materialized state of the active leaf. A saved delta node leaves it
-    /// pending, so call [`Self::ensure_active_state`] first on a tree that has
-    /// been saved to since it was loaded.
+    /// Materialized state of the active leaf, as after [`Self::load`]. A saved
+    /// delta node leaves it pending; cached-tree readers use
+    /// [`Self::state_for`] instead.
     pub(crate) fn active_state(&self) -> Option<&PersistedSessionState> {
+        debug_assert!(
+            self.active_replay.is_none(),
+            "active_state() read on a pending replay; call ensure_active_state first"
+        );
         self.active_state.as_ref()
     }
 

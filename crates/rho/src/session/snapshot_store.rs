@@ -189,7 +189,11 @@ impl Session {
 
     #[cfg(test)]
     pub(crate) fn session_tree(&self) -> anyhow::Result<SessionTree> {
-        self.with_session_tree(|tree| Ok(tree.clone()))
+        self.with_session_tree(|tree| {
+            let mut tree = tree.clone();
+            tree.ensure_active_state()?;
+            Ok(tree)
+        })
     }
 
     /// Adopts a tree parsed elsewhere (e.g. session open) as the cache seed.
@@ -201,45 +205,21 @@ impl Session {
         cursor.seed_loaded_tree(tree, &self.path);
     }
 
-    /// Runs `visit` on the cached tree with the active leaf's full state
-    /// materialized. Reloads from disk when another writer changed the
+    /// Runs `visit` on the cached tree when the file still matches the state
+    /// it was parsed from. Reloads from disk when another writer changed the
     /// transcript.
+    ///
+    /// After a save the active leaf is a pending replay, so `active_state()`
+    /// is unavailable; read full state with [`SessionTree::state_for`].
     pub(crate) fn with_session_tree<R>(
         &self,
-        visit: impl FnOnce(&SessionTree) -> anyhow::Result<R>,
-    ) -> anyhow::Result<R> {
-        self.visit_cached_tree(ActiveState::Materialized, visit)
-    }
-
-    /// Like [`Self::with_session_tree`] for readers of node structure, facts,
-    /// and metadata only. Saves leave the active state pending, so
-    /// `active_state()` may be `None` here; materializing it would deep-copy
-    /// the whole history.
-    pub(crate) fn with_session_tree_nodes<R>(
-        &self,
-        visit: impl FnOnce(&SessionTree) -> anyhow::Result<R>,
-    ) -> anyhow::Result<R> {
-        self.visit_cached_tree(ActiveState::AsIs, visit)
-    }
-
-    fn visit_cached_tree<R>(
-        &self,
-        active_state: ActiveState,
         visit: impl FnOnce(&SessionTree) -> anyhow::Result<R>,
     ) -> anyhow::Result<R> {
         let mut cursor = self
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut tree = match cursor.take_tree(&self.path) {
-            Some(tree) => tree,
-            None => SessionTree::load(&self.path)?,
-        };
-        match active_state {
-            // On failure the tree is dropped and the next reader reloads it.
-            ActiveState::Materialized => tree.ensure_active_state()?,
-            ActiveState::AsIs => {}
-        }
+        let tree = load_cached_tree(&mut cursor, &self.path)?;
         let result = visit(&tree);
         cursor.store_tree(tree, &self.path);
         result
@@ -247,11 +227,11 @@ impl Session {
 
     #[cfg(test)]
     pub(crate) fn tree_facts(&self) -> anyhow::Result<SessionTreeFacts> {
-        self.with_session_tree_nodes(|tree| Ok(tree.facts()))
+        self.with_session_tree(|tree| Ok(tree.facts()))
     }
 
     pub(crate) fn tree_items(&self) -> anyhow::Result<Vec<super::tree::SessionTreeItem>> {
-        self.with_session_tree_nodes(SessionTree::items)
+        self.with_session_tree(SessionTree::items)
     }
 
     pub(crate) fn histories_for_node(
@@ -322,7 +302,7 @@ impl Session {
     /// Session-scoped metadata: `key` as last saved, independent of the
     /// active leaf. See [`SessionTree::newest_node_metadata`].
     pub(crate) fn session_metadata(&self, key: &str) -> anyhow::Result<Option<String>> {
-        self.with_session_tree_nodes(|tree| Ok(tree.newest_node_metadata(key).map(str::to_owned)))
+        self.with_session_tree(|tree| Ok(tree.newest_node_metadata(key).map(str::to_owned)))
     }
 
     pub(crate) fn snapshot_for_resume(
@@ -335,7 +315,10 @@ impl Session {
     }
 
     fn active_persisted_state(&self) -> anyhow::Result<PersistedSessionState> {
-        self.with_session_tree(|tree| Ok(tree.active_state().cloned().unwrap_or_default()))
+        self.with_session_tree(|tree| match tree.active_leaf_id() {
+            Some(id) => tree.state_for(id),
+            None => Ok(PersistedSessionState::default()),
+        })
     }
 
     /// Applies a tree-mutating entry and keeps the in-memory tree only when the
@@ -448,13 +431,6 @@ impl rho_sdk::SessionStore for Session {
                 .map_err(persistence_error)
         })
     }
-}
-
-/// Whether a cached-tree reader needs the active leaf's full state.
-#[derive(Clone, Copy)]
-enum ActiveState {
-    Materialized,
-    AsIs,
 }
 
 fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {

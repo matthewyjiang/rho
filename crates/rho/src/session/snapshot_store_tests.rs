@@ -11,12 +11,21 @@ use super::super::tree::{
 use super::super::Session;
 
 fn snapshot(session: &Session, revision: u64, history: Vec<Message>) -> SessionSnapshot {
+    compacted_snapshot(session, revision, history, CompactionState::default())
+}
+
+fn compacted_snapshot(
+    session: &Session,
+    revision: u64,
+    history: Vec<Message>,
+    compaction: CompactionState,
+) -> SessionSnapshot {
     SessionSnapshot::new(
         SessionId::from_string(session.id().to_owned()).unwrap(),
         Revision::from_u64(revision),
         history,
         ModelIdentity::new("provider", "api", "model"),
-        CompactionState::default(),
+        compaction,
     )
     .with_prompt_cache_key(format!("rho:{}", session.id()))
 }
@@ -87,14 +96,8 @@ fn sequential_saves_match_fresh_reload() {
         Some(Revision::from_u64(6)),
     );
     let at = |revision: u64, history: &[&str], compaction: &CompactionState| {
-        SessionSnapshot::new(
-            SessionId::from_string(session.id().to_owned()).unwrap(),
-            Revision::from_u64(revision),
-            history.iter().copied().map(Message::user_text).collect(),
-            ModelIdentity::new("provider", "api", "model"),
-            compaction.clone(),
-        )
-        .with_prompt_cache_key(format!("rho:{}", session.id()))
+        let history = history.iter().copied().map(Message::user_text).collect();
+        compacted_snapshot(&session, revision, history, compaction.clone())
     };
     let resume = || {
         session

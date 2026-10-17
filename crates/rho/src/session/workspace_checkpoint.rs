@@ -441,7 +441,7 @@ pub(crate) use tracker::WorkspaceCheckpointTracker;
 
 impl Session {
     pub(crate) fn active_checkpoint_target(&self) -> anyhow::Result<Option<(NodeId, Revision)>> {
-        self.with_session_tree_nodes(|tree| {
+        self.with_session_tree(|tree| {
             Ok(tree
                 .active_leaf_id()
                 .and_then(|id| tree.node(id).map(|node| (id.clone(), node.revision()))))

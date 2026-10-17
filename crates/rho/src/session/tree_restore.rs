@@ -163,8 +163,9 @@ impl super::SessionTree {
     }
 
     /// The active leaf's complete snapshot as the base for the next delta,
-    /// whether materialized or still a pending replay. `None` when the leaf has
-    /// no complete snapshot (message-only v1 state) or there is no leaf.
+    /// whether materialized or still a pending replay. `None` when there is no
+    /// leaf, the leaf has no complete snapshot (message-only v1 state), or a
+    /// `set_leaf` left it unmaterialized; saves then write a full snapshot.
     pub(in crate::session) fn active_delta_base(&self) -> Option<SnapshotDeltaBase<'_>> {
         if let Some(replay) = &self.active_replay {
             return Some(replay.snapshot.delta_base());
@@ -185,16 +186,25 @@ impl super::SessionTree {
         }
     }
 
-    /// Restores one node's full state. The active leaf is materialized after
-    /// load; a pending `set_leaf` or a leaf a save left as a pending replay
-    /// reconstructs on demand.
+    /// Restores one node's full state. The active leaf copies its
+    /// materialized state or the pending replay a save left; a pending
+    /// `set_leaf` or another node reconstructs from stored transitions.
     pub(crate) fn state_for(&self, id: &NodeId) -> anyhow::Result<PersistedSessionState> {
         if self.active_leaf_id.as_ref() == Some(id) {
             if let Some(state) = self.active_state.clone() {
                 return Ok(state);
             }
+            if let Some(replay) = &self.active_replay {
+                return self.state_from_replay(replay.clone());
+            }
         }
         self.reconstruct_state(id)
+    }
+
+    fn state_from_replay(&self, replay: ReplayState) -> anyhow::Result<PersistedSessionState> {
+        let mut state = self.state_from_snapshot(replay.snapshot.into_snapshot(), &[])?;
+        state.display = replay.display;
+        Ok(state)
     }
 
     pub(super) fn reconstruct_state(
@@ -222,9 +232,7 @@ impl super::SessionTree {
         };
         if self.active_state.is_none() {
             self.active_state = Some(if let Some(replay) = self.active_replay.take() {
-                let mut state = self.state_from_snapshot(replay.snapshot.into_snapshot(), &[])?;
-                state.display = replay.display;
-                state
+                self.state_from_replay(replay)?
             } else {
                 self.reconstruct_state(&id)?
             });
