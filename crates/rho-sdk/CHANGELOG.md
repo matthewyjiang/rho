@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.11.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.11.0...rho-sdk-v5.11.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **acp:** show file diffs for edit and write calls ([e528ee3](https://github.com/matthewyjiang/rho/commit/e528ee3e297581341b387c4e01c55ddbd04d523b))
+
 ## [5.11.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.10.0...rho-sdk-v5.11.0) (2026-10-16)
 
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.24.0...rho-coding-agent-v2.25.0) (2026-10-17)
+
+
+### Features
+
+* **acp:** enable provider sign-in through host terminals ([#1517](https://github.com/matthewyjiang/rho/issues/1517)) ([aaeb660](https://github.com/matthewyjiang/rho/commit/aaeb6604a02b43e01daf2359f5b9cd95f01706dc))
+* **agents:** allow per-call model selection ([#1527](https://github.com/matthewyjiang/rho/issues/1527)) ([590d636](https://github.com/matthewyjiang/rho/commit/590d6367efe8388bbc94afbc7065040c415ee7cb))
+* **agents:** let the reviewer run git and tests to verify changes ([#1525](https://github.com/matthewyjiang/rho/issues/1525)) ([64f3f87](https://github.com/matthewyjiang/rho/commit/64f3f8703259c9989949a6346bafc8f8a8742791))
+* **plugins:** install plugins straight from GitHub links and keep them updated ([#1526](https://github.com/matthewyjiang/rho/issues/1526)) ([ca85d27](https://github.com/matthewyjiang/rho/commit/ca85d27ddcb0cfa17352e5a5a7991efebe21da01))
+* **plugins:** load rho agents from plugin extension directory ([#1528](https://github.com/matthewyjiang/rho/issues/1528)) ([f83a899](https://github.com/matthewyjiang/rho/commit/f83a8994bac8f560abc48afe720884eb464a5a0c))
+* **skills:** load skill instructions without yaml frontmatter ([#1529](https://github.com/matthewyjiang/rho/issues/1529)) ([70b0bb4](https://github.com/matthewyjiang/rho/commit/70b0bb4aee63fc98fa43987f3b97e905053399c1))
+
+
+### Bug Fixes
+
+* **acp:** keep host model and command menus in sync ([#1521](https://github.com/matthewyjiang/rho/issues/1521)) ([698c1c7](https://github.com/matthewyjiang/rho/commit/698c1c774b785beae47ab3e4c0ac51f4b42b5483))
+* **acp:** let T3 derive subagent launch titles ([#1523](https://github.com/matthewyjiang/rho/issues/1523)) ([59a85c6](https://github.com/matthewyjiang/rho/commit/59a85c67a6823962823cdf567ae87262d35dd063))
+* **acp:** restore tool calls and results in loaded sessions ([#1520](https://github.com/matthewyjiang/rho/issues/1520)) ([2e5877b](https://github.com/matthewyjiang/rho/commit/2e5877b12ebe4721f2fa0b96ebcfa8de3e14c014))
+* **acp:** show file diffs for edit and write calls ([e528ee3](https://github.com/matthewyjiang/rho/commit/e528ee3e297581341b387c4e01c55ddbd04d523b))
+* **tools:** load searched tools for direct calls ([#1519](https://github.com/matthewyjiang/rho/issues/1519)) ([596f7f4](https://github.com/matthewyjiang/rho/commit/596f7f4e487b4959d9ad0a5951caf5985eecfa41))
+
+
+### Performance Improvements
+
+* **providers:** shrink long conversation uploads with gzip ([#1524](https://github.com/matthewyjiang/rho/issues/1524)) ([2cb78f1](https://github.com/matthewyjiang/rho/commit/2cb78f13261651a0080051bdaa8f63a5b4db01d8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.12.0 to 5.11.1
+    * rho-providers bumped from 2.18.0 to 2.19.0
+
 ## [2.24.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.23.0...rho-coding-agent-v2.24.0) (2026-10-16)
 
 
