@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use crate::{
     model::{ContentBlock, Message},
-    session::SessionCore,
+    session::{CommitMark, SessionCore},
     tool::{ToolInvocationSource, ToolOrigin, ToolSecurity},
     CapabilityKind, Error,
 };
@@ -18,22 +18,51 @@ use super::{
     Rho,
 };
 
-/// Commits the working history and saves it to the session's checkpoint store.
+/// A run's step checkpoints: what the session holds of its working history,
+/// and whether the checkpoint store holds it too.
 ///
-/// The loop calls this before each provider request, after each model reply,
-/// and after recording a host batch, in both cases before the tool calls
+/// The loop saves before each provider request, after each model reply, and
+/// after recording a host batch, in the last two cases before the tool calls
 /// start. A restored snapshot therefore names every call that may have
-/// started. Without a store this does nothing.
-pub(super) async fn save(
-    core: &SessionCore,
-    runtime: &Rho,
-    history: &[Message],
-) -> Result<(), Error> {
-    let Some(store) = &runtime.checkpoint_store else {
-        return Ok(());
-    };
-    core.commit(history.to_vec())?;
-    store.save(core.persistence_snapshot()).await
+/// started. Tool results appended since the last save are saved before the
+/// next request, so a run killed while the model streams keeps them. A save
+/// is skipped only when nothing changed since the last durable one.
+pub(super) struct Checkpoints {
+    committed: CommitMark,
+    saved: bool,
+}
+
+impl Checkpoints {
+    /// Starts from the commit the run copied its working history from. The
+    /// store may not hold it, so the first save always runs.
+    pub(super) fn new(committed: CommitMark) -> Self {
+        Self {
+            committed,
+            saved: false,
+        }
+    }
+
+    /// Commits the working history and saves it to the session's checkpoint
+    /// store. Without a store this does nothing.
+    pub(super) async fn save(
+        &mut self,
+        core: &SessionCore,
+        runtime: &Rho,
+        history: &[Message],
+    ) -> Result<(), Error> {
+        let Some(store) = &runtime.checkpoint_store else {
+            return Ok(());
+        };
+        if self.saved && core.holds_unchanged(self.committed, history) {
+            return Ok(());
+        }
+        // A failed commit or save leaves the store behind the session.
+        self.saved = false;
+        self.committed = core.commit_checkpoint(history, self.committed)?;
+        store.save(core.persistence_snapshot()).await?;
+        self.saved = true;
+        Ok(())
+    }
 }
 
 /// Settles tool calls that an interrupted run left without results.

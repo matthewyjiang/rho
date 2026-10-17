@@ -16,10 +16,13 @@ use crate::{
     Error, Revision, RunId, SessionId,
 };
 
+#[path = "session_checkpoint.rs"]
+mod checkpoint;
 #[path = "session_context.rs"]
 mod context;
 #[path = "session_request.rs"]
 mod request;
+pub(crate) use checkpoint::CommitMark;
 pub use request::SessionRequestPrefix;
 
 /// Validated user input accepted by a session run.
@@ -164,6 +167,24 @@ struct SessionData {
     last_compaction_decision: Option<crate::CompactionDecision>,
 }
 
+impl SessionData {
+    fn next_revision(&self) -> Result<Revision, Error> {
+        self.revision
+            .checked_next()
+            .ok_or_else(|| Error::Persistence {
+                message: "session revision is exhausted".into(),
+            })
+    }
+}
+
+/// How a commit updates context accounting.
+enum ContextCommit {
+    /// The new history extends the committed one.
+    Append,
+    /// The new history replaces the committed one, as compaction does.
+    Replace,
+}
+
 pub(crate) struct HistoryMetrics {
     message_count: usize,
     estimated_tokens: u64,
@@ -245,19 +266,46 @@ impl SessionCore {
     }
 
     pub(crate) fn prompt_cache_key(&self) -> Option<String> {
+        self.lock_data().prompt_cache_key.clone()
+    }
+
+    pub(crate) fn committed_history(&self) -> Vec<Message> {
+        self.lock_data().history.clone()
+    }
+
+    pub(crate) fn revision(&self) -> Revision {
+        self.lock_data().revision
+    }
+
+    fn lock_data(&self) -> MutexGuard<'_, SessionData> {
         self.data
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .prompt_cache_key
-            .clone()
     }
 
-    pub(crate) fn snapshot(&self) -> (Vec<Message>, Revision) {
-        let data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        (data.history.clone(), data.revision)
+    /// Locks the session for a commit of `history`: takes the next revision,
+    /// then updates context accounting while `data.history` still holds the
+    /// previous commit. The caller writes the history and the revision.
+    fn begin_commit(
+        &self,
+        history: &[Message],
+        accounting: ContextCommit,
+    ) -> Result<(MutexGuard<'_, SessionData>, Revision), Error> {
+        let runtime = self.runtime();
+        let tools = runtime.advertised_tool_specs();
+        let identity = runtime.provider.identity();
+        let source = runtime.context_messages(self.id());
+        let mut data = self.lock_data();
+        let revision = data.next_revision()?;
+        match accounting {
+            ContextCommit::Append => {
+                context::commit_context(&mut data, history, &source, &tools, &identity);
+            }
+            ContextCommit::Replace => {
+                context::commit_replacement(&mut data, history, &source, &tools, &identity);
+            }
+        }
+        Ok((data, revision))
     }
 
     /// Publishes the run's working history for the duration of a tool batch.
@@ -288,16 +336,13 @@ impl SessionCore {
             .clone();
         match in_flight {
             Some(history) => history.as_ref().clone(),
-            None => self.snapshot().0,
+            None => self.committed_history(),
         }
     }
 
     pub(crate) fn persistence_snapshot(&self) -> crate::SessionSnapshot {
         let (history, revision, compaction, metadata, prompt_cache_key) = {
-            let data = self
-                .data
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let data = self.lock_data();
             (
                 data.history.clone(),
                 data.revision,
@@ -323,21 +368,7 @@ impl SessionCore {
     }
 
     pub(crate) fn commit(&self, history: Vec<Message>) -> Result<Revision, Error> {
-        let runtime = self.runtime();
-        let tools = runtime.advertised_tool_specs();
-        let identity = runtime.provider.identity();
-        let source = runtime.context_messages(self.id());
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let revision = data
-            .revision
-            .checked_next()
-            .ok_or_else(|| Error::Persistence {
-                message: "session revision is exhausted".into(),
-            })?;
-        context::commit_context(&mut data, &history, &source, &tools, &identity);
+        let (mut data, revision) = self.begin_commit(&history, ContextCommit::Append)?;
         data.history = history;
         data.revision = revision;
         Ok(revision)
@@ -350,20 +381,10 @@ impl SessionCore {
         usage: crate::model::ModelUsage,
         metadata: std::collections::BTreeMap<String, String>,
     ) -> Result<crate::CompactionOutcome, Error> {
-        let runtime = self.runtime();
-        let tools = runtime.advertised_tool_specs();
-        let identity = runtime.provider.identity();
-        let source = runtime.context_messages(self.id());
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let revision = data
-            .revision
-            .checked_next()
-            .ok_or_else(|| Error::Persistence {
-                message: "session revision is exhausted".into(),
-            })?;
+        // Validate the measured prefix against the replacement.
+        // An unchanged compactor output must not discard a valid provider count;
+        // rewriting the measured prefix invalidates it through that same check.
+        let (mut data, revision) = self.begin_commit(&history, ContextCommit::Replace)?;
         // Count the history that was actually compacted. Automatic compaction
         // may include uncommitted in-flight messages that are not yet in the
         // persisted session history.
@@ -376,10 +397,6 @@ impl SessionCore {
             usage.cost_usd_micros,
             revision,
         );
-        // Validate the measured prefix against the replacement.
-        // An unchanged compactor output must not discard a valid provider count;
-        // rewriting the measured prefix invalidates it through that same check.
-        context::commit_replacement(&mut data, &history, &source, &tools, &identity);
         data.history = history;
         data.metadata.extend(metadata);
         data.revision = revision;
@@ -429,10 +446,7 @@ impl SessionCore {
             return;
         }
         *active_run = None;
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .working_context = None;
+        self.lock_data().working_context = None;
         *self
             .in_flight
             .write()
@@ -493,11 +507,11 @@ impl Session {
     }
 
     pub fn revision(&self) -> Revision {
-        self.core.snapshot().1
+        self.core.revision()
     }
 
     pub fn history(&self) -> Vec<Message> {
-        self.core.snapshot().0
+        self.core.committed_history()
     }
 
     /// Conversation as the run currently sees it, including the turn in flight.
@@ -609,9 +623,12 @@ impl Session {
     ///
     /// With a store, each run commits its working history and saves the session
     /// snapshot before every provider request and again after each model reply
-    /// or host tool-call batch, before those calls start. A process that dies mid-run can
-    /// restore the last saved snapshot and call [`Session::continue_history`].
-    /// A failed save fails the run.
+    /// or host tool-call batch, before those calls start. Before a provider
+    /// request whose history and revision are unchanged since the last save,
+    /// the store is not called and the revision does not advance, so host
+    /// state a store adds to each snapshot waits for the next save. A process
+    /// that dies mid-run can restore the last saved snapshot and call
+    /// [`Session::continue_history`]. A failed save fails the run.
     pub fn set_checkpoint_store(
         &self,
         store: Option<Arc<dyn crate::SessionStore>>,
@@ -833,22 +850,13 @@ impl Session {
             crate::SystemPrompt::Custom(prompt) => Some(Message::System(prompt.clone())),
             crate::SystemPrompt::None => None,
         };
-        let mut data = self
-            .core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.core.lock_data();
         data.history = system_prompt.into_iter().collect();
         data.context = crate::context_estimate::ContextAccounting::new(&data.history, &tools);
         data.working_context = None;
         data.last_compaction_decision = None;
         data.compaction = crate::CompactionState::default();
-        data.revision = data
-            .revision
-            .checked_next()
-            .ok_or_else(|| Error::Persistence {
-                message: "session revision is exhausted".into(),
-            })?;
+        data.revision = data.next_revision()?;
         Ok(())
     }
 

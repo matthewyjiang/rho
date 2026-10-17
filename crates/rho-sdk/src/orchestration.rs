@@ -117,7 +117,9 @@ async fn execute_turn_loop(
     mut commands: mpsc::Receiver<RunCommand>,
     hooks: &RunHooks,
 ) -> Result<RunOutcome, Error> {
-    let (mut history, revision) = core.snapshot();
+    let (mut history, committed) = core.snapshot_for_run();
+    let revision = committed.revision();
+    let mut checkpoints = checkpoint::Checkpoints::new(committed);
     if let RunStart::User(input) | RunStart::WithToolCalls { input, .. } = &start {
         history.push(Message::User(input.blocks().to_vec()));
     }
@@ -173,7 +175,7 @@ async fn execute_turn_loop(
         // Like a model reply, a host batch is saved before its calls start,
         // so a restored snapshot names every call that may have started.
         if tool_turn.is_host_requested() {
-            if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+            if let Err(error) = checkpoints.save(&core, &runtime, &history).await {
                 tool_turn.interrupt_unstarted(&mut history);
                 return control.terminate(core, history, error).await;
             }
@@ -315,7 +317,7 @@ async fn execute_turn_loop(
             }
         }
 
-        if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+        if let Err(error) = checkpoints.save(&core, &runtime, &history).await {
             return control.terminate(core, history, error).await;
         }
         let mut overflow_recovered = false;
@@ -425,7 +427,7 @@ async fn execute_turn_loop(
         };
         history.push(Message::assistant(assistant));
         core.append_context_estimate(history.last().expect("assistant was appended"));
-        if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+        if let Err(error) = checkpoints.save(&core, &runtime, &history).await {
             history.extend(
                 tool_calls
                     .iter()

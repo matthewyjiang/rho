@@ -11,12 +11,7 @@ impl Session {
     /// Unlike a policy decision, this records completed operations, including
     /// unchanged results. It survives snapshot restore and does not copy history.
     pub fn compaction_state(&self) -> crate::CompactionState {
-        self.core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .compaction
-            .clone()
+        self.core.lock_data().compaction.clone()
     }
 
     /// Current committed context when idle, or the latest in-flight history boundary.
@@ -31,11 +26,7 @@ impl Session {
         let tools = runtime.advertised_tool_specs();
         let source = (!self.is_running()).then(|| runtime.context_messages(self.id()));
         let identity = runtime.provider.identity();
-        let mut data = self
-            .core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.core.lock_data();
         let data = &mut *data;
         if let Some(context) = &mut data.working_context {
             context.current(&tools, &identity)
@@ -73,11 +64,7 @@ impl Session {
         let tools = runtime.advertised_tool_specs();
         let source = runtime.context_messages(self.id());
         let identity = runtime.provider.identity();
-        let data = self
-            .core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let data = self.core.lock_data();
         let estimate = data
             .context
             .estimate(&data.history, &source, &tools, &identity);
@@ -86,11 +73,7 @@ impl Session {
 
     /// Latest automatic policy check, including skipped checks. Not persisted.
     pub fn last_compaction_decision(&self) -> Option<CompactionDecision> {
-        self.core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .last_compaction_decision
+        self.core.lock_data().last_compaction_decision
     }
 }
 
@@ -104,10 +87,7 @@ impl SessionCore {
         let runtime = self.runtime();
         let source = runtime.context_messages(self.id());
         let identity = runtime.provider.identity();
-        let data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let data = self.lock_data();
         data.working_context
             .as_ref()
             .unwrap_or(&data.context)
@@ -149,10 +129,7 @@ impl SessionCore {
     ) -> ContextEstimate {
         let runtime = self.runtime();
         let identity = runtime.provider.identity();
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.lock_data();
         working_context(&mut data).advance(history, source, tools, &identity)
     }
 
@@ -165,10 +142,7 @@ impl SessionCore {
         request_estimate: ContextEstimate,
     ) {
         let identity = self.runtime().provider.identity();
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.lock_data();
         working_context(&mut data).record(
             history,
             source,
@@ -180,37 +154,25 @@ impl SessionCore {
     }
 
     pub(crate) fn invalidate_working_context(&self) {
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.lock_data();
         working_context(&mut data).invalidate();
     }
 
     /// Drops in-flight accounting without touching the committed baseline.
     /// Only for callers that hold the session inactive.
     pub(crate) fn discard_working_context(&self) {
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .working_context = None;
+        self.lock_data().working_context = None;
     }
 
     pub(crate) fn append_context_estimate(&self, message: &Message) {
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.lock_data();
         if let Some(context) = &mut data.working_context {
             context.append(message);
         }
     }
 
     pub(crate) fn invalidate_context(&self) {
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.lock_data();
         data.context.invalidate();
         data.working_context = None;
         data.last_compaction_decision = None;
@@ -226,10 +188,7 @@ impl SessionCore {
             skip_reason = ?decision.skip_reason(),
             "automatic compaction policy check"
         );
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .last_compaction_decision = Some(decision);
+        self.lock_data().last_compaction_decision = Some(decision);
     }
 }
 
