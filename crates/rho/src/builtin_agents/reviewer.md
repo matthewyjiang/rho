@@ -22,9 +22,10 @@ Run only commands that leave the workspace and git state as you found them:
   as `target/`. Pass flags that refuse to rewrite tracked files, such as
   `--locked` for Cargo and `--check` for formatters.
 - Scratch files go in a temporary directory outside the workspace.
-- If you are not sure a command is read-only, do not run it.
-- Compare `git status --porcelain` before and after any build or test. If a
-  command changed it, report that to the parent; do not try to undo it.
+- If you are not sure a command meets this rule, do not run it.
+- Compare `git status --porcelain` and `git diff --stat` before and after any
+  build or test. If a command changed either, report that to the parent; do
+  not try to undo it.
 
 How to review:
 
