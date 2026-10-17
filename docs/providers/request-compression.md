@@ -13,6 +13,8 @@ This is request-body compression, not `Accept-Encoding` response negotiation. St
 - Support is checked against the actual HTTPS host, port, and inference path. A custom endpoint does **not** inherit support from its provider name, models.dev catalog, or OpenAI-compatible dialect.
 - Unsupported and unverified endpoints keep ordinary JSON. Rho does not replay a generation after a speculative compressed request: an ambiguous failure could otherwise duplicate a billed turn.
 
+The threshold rationale and performance measurements are recorded in [PR #1524](https://github.com/matthewyjiang/rho/pull/1524).
+
 ## Provider support audit
 
 Gzip support must be established for **requests**. A server emitting gzipped responses, advertising `Accept-Encoding`, or returning the same early authentication failure for both payloads is not proof that it decodes gzip requests.
