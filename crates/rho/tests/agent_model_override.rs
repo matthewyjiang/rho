@@ -15,7 +15,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 const CLI_EXIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Covers: selections reach the actual delegated wire request (including slash
-// IDs), while omission stays on the parent and reviewers cannot gain write tools.
+// IDs), while omission stays on the parent and model selection cannot change
+// the selected reviewer's permitted tools.
 // Owner: native delegation integration, not catalog policy or TUI rendering.
 #[tokio::test]
 async fn native_agent_model_override_reaches_child_provider() {
@@ -196,26 +197,24 @@ credential_store = "file"
                 return None;
             }
             tools.sort_unstable();
-            assert_eq!(
-                tools,
-                [
-                    "codemode",
-                    "glob",
-                    "grep",
-                    "list_dir",
-                    "message_parent",
-                    "read_file",
-                    "request_parent_action",
-                    "skill",
-                    "tool_search"
-                ]
-            );
-            Some((route.as_str(), request["model"].as_str().unwrap()))
+            Some((route.as_str(), request["model"].as_str().unwrap(), tools))
         })
         .collect::<Vec<_>>();
+    // The omitted call is the control: both explicit forms must preserve its
+    // agent tool policy, including whichever shell this platform provides.
+    let (_, _, default_tools) = reviewers
+        .iter()
+        .find(|(route, _, _)| *route == "/parent/v1/chat/completions")
+        .expect("omitted selection must launch the default reviewer");
+    for (_, _, tools) in &reviewers {
+        assert_eq!(tools, default_tools);
+    }
     reviewers.sort_unstable();
     assert_eq!(
-        reviewers,
+        reviewers
+            .iter()
+            .map(|(route, model, _)| (*route, *model))
+            .collect::<Vec<_>>(),
         [
             ("/child/v1/chat/completions", "vendor/review"),
             ("/child/v1/chat/completions", "vendor/review"),
