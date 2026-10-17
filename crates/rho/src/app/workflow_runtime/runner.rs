@@ -114,7 +114,9 @@ impl WorkflowRunner {
             })?;
             match resolved {
                 ResolvedNode::Agent(agent) => {
-                    if agent.trust_required && !self.security.project_trusted {
+                    if (agent.trust_required && !self.security.project_trusted)
+                        || (agent.plugin_trust_required && !self.security.project_plugins_trusted)
+                    {
                         return Err(RuntimeError::TrustRemoved {
                             node: node.id.clone(),
                         });

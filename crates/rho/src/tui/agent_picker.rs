@@ -82,14 +82,14 @@ pub(super) enum AgentModelDefault {
 
 /// The agent an open model or reasoning picker configures.
 #[derive(Clone, Debug)]
-pub(super) struct InternalAgentModelTarget {
+pub(super) struct AgentModelTarget {
     pub(super) id: String,
     pub(super) origin: InternalAgentModelPickerOrigin,
     pub(super) default: AgentModelDefault,
 }
 
 /// Picker inputs for one agent's current model.
-struct InternalAgentPickerModel {
+struct AgentPickerModel {
     current: InternalAgentSelection,
     fallback: FallbackModelRow,
 }
@@ -166,12 +166,14 @@ impl AgentAccess {
             AgentOrigin::RhoHome | AgentOrigin::Project => Self::Editable,
             AgentOrigin::Internal => Self::Internal,
             // Only Rho agents take a model override at bind.
-            AgentOrigin::Plugin => match entry.definition.runtime {
-                AgentRuntimeSpec::Rho { .. } => Self::ModelOnly,
-                AgentRuntimeSpec::ClaudeCli(_)
-                | AgentRuntimeSpec::Cursor(_)
-                | AgentRuntimeSpec::Antigravity(_) => Self::ReadOnly,
-            },
+            AgentOrigin::UserPlugin | AgentOrigin::ProjectPlugin => {
+                match entry.definition.runtime {
+                    AgentRuntimeSpec::Rho { .. } => Self::ModelOnly,
+                    AgentRuntimeSpec::ClaudeCli(_)
+                    | AgentRuntimeSpec::Cursor(_)
+                    | AgentRuntimeSpec::Antigravity(_) => Self::ReadOnly,
+                }
+            }
             AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
                 Self::ReadOnly
             }
@@ -224,7 +226,7 @@ fn agent_section(origin: AgentOrigin) -> (u8, &'static str) {
         AgentOrigin::RhoHome | AgentOrigin::Project => (0, "YOURS"),
         AgentOrigin::Workflow => (1, "WORKFLOW"),
         AgentOrigin::AgentsHome => (2, "SHARED"),
-        AgentOrigin::Plugin => (3, "PLUGIN"),
+        AgentOrigin::UserPlugin | AgentOrigin::ProjectPlugin => (3, "PLUGIN"),
         AgentOrigin::BuiltIn => (4, "BUILT IN"),
         AgentOrigin::Internal => (5, "INTERNAL"),
     }
@@ -305,12 +307,24 @@ fn agent_model_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> 
             .with_note("conversation model"),
         };
     }
-    // Bind applies the entry to whichever catalog agent holds the id.
-    if let Some(selection) = configured {
-        return DetailField::new("Model", selection.display_reference(), DetailTone::Normal)
-            .with_note("override");
+    let policy = definition.model_policy();
+    let model_override = match crate::agent::model_override(definition, models.internal_agents) {
+        Ok(model_override) => model_override,
+        // Bind refuses this agent until the entry goes, so say so here.
+        Err(_) => {
+            let reference = configured.map_or_else(String::new, |entry| entry.display_reference());
+            return DetailField::new("Model", reference, DetailTone::Warning)
+                .with_note("override cannot apply");
+        }
+    };
+    if let Some(model_override) = model_override {
+        let name = model_override
+            .model
+            .selection()
+            .map_or_else(String::new, model_name);
+        return DetailField::new("Model", name, DetailTone::Normal).with_note("override");
     }
-    match definition.model_policy().as_ref() {
+    match policy.as_ref() {
         ModelPolicy::Inherit => DetailField::new("Model", "inherit", DetailTone::Muted),
         ModelPolicy::Prefer(selection) => {
             DetailField::new("Model", model_name(selection), DetailTone::Normal).with_note("prefer")
@@ -329,16 +343,23 @@ fn agent_reasoning_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>)
     let definition = &entry.definition;
     let configured = models.internal_agents.get(definition.id.as_str());
     let level = match configured {
-        Some(selection) if entry.metadata.origin == AgentOrigin::Internal => {
-            Some(effective_internal_agent_reasoning(definition.id.as_str(), selection).to_string())
+        Some(selection) if entry.metadata.origin == AgentOrigin::Internal => Some(
+            effective_internal_agent_reasoning(definition.id.as_str(), selection),
+        ),
+        _ => {
+            let model_override = crate::agent::model_override(definition, models.internal_agents)
+                .ok()
+                .flatten();
+            let policy = definition.model_policy();
+            crate::agent::effective_rho_model(
+                &policy,
+                definition.reasoning(),
+                model_override.as_ref(),
+            )
+            .1
         }
-        // Catalog agents keep the file's reasoning unless the entry sets one,
-        // as bind does.
-        configured => configured
-            .and_then(|selection| selection.reasoning)
-            .or(definition.reasoning())
-            .map(|level| level.to_string()),
-    };
+    }
+    .map(|level| level.to_string());
     match level {
         Some(level) => DetailField::new("Reasoning", level, DetailTone::Normal),
         None => DetailField::new("Reasoning", "inherit", DetailTone::Muted),
@@ -449,10 +470,7 @@ impl super::App {
     /// records what a selection means. Callers place the picker themselves,
     /// because the agents and config pickers open it as a child while
     /// `/advisor` opens it alone.
-    pub(super) fn internal_agent_model_picker(
-        &mut self,
-        target: InternalAgentModelTarget,
-    ) -> UiPicker {
+    pub(super) fn internal_agent_model_picker(&mut self, target: AgentModelTarget) -> UiPicker {
         self.refresh_available_auths();
         let id = target.id.as_str();
         let current = match &target.default {
@@ -478,10 +496,10 @@ impl super::App {
 
     /// Model shown as selected in an internal agent's picker, and whether the
     /// conversation-model row belongs there.
-    fn internal_agent_picker_model(&self, id: &str) -> InternalAgentPickerModel {
+    fn internal_agent_picker_model(&self, id: &str) -> AgentPickerModel {
         let requires_model = internal_agent_requires_model(id);
         match self.info.runtime.internal_agents.get(id) {
-            Some(selection) => InternalAgentPickerModel {
+            Some(selection) => AgentPickerModel {
                 current: configured_selection(selection),
                 fallback: if requires_model {
                     FallbackModelRow::Omitted
@@ -489,11 +507,11 @@ impl super::App {
                     FallbackModelRow::Conversation { selected: false }
                 },
             },
-            None if requires_model => InternalAgentPickerModel {
+            None if requires_model => AgentPickerModel {
                 current: InternalAgentSelection::Unset,
                 fallback: FallbackModelRow::Omitted,
             },
-            None => InternalAgentPickerModel {
+            None => AgentPickerModel {
                 current: InternalAgentSelection::RhoModel {
                     provider: self.info.runtime.provider.clone(),
                     model: self.info.runtime.model.clone(),
@@ -506,11 +524,7 @@ impl super::App {
     /// Model shown as selected in a read-only catalog agent's picker: the
     /// override, else the model its file names, which the fallback row
     /// restores.
-    fn catalog_agent_picker_model(
-        &self,
-        id: &str,
-        model: &ModelPolicy,
-    ) -> InternalAgentPickerModel {
+    fn catalog_agent_picker_model(&self, id: &str, model: &ModelPolicy) -> AgentPickerModel {
         let configured = self.info.runtime.internal_agents.get(id);
         let selected = configured.is_none();
         let (fallback, default_current) = match model.selection() {
@@ -535,7 +549,7 @@ impl super::App {
                 },
             ),
         };
-        InternalAgentPickerModel {
+        AgentPickerModel {
             current: configured.map_or(default_current, configured_selection),
             fallback,
         }
@@ -550,7 +564,7 @@ impl super::App {
         id: &str,
         origin: InternalAgentModelPickerOrigin,
     ) -> bool {
-        self.open_agent_model_picker(InternalAgentModelTarget {
+        self.open_agent_model_picker(AgentModelTarget {
             id: id.to_string(),
             origin,
             default: AgentModelDefault::Internal,
@@ -559,7 +573,7 @@ impl super::App {
 
     /// Opens the model picker for `target`, placed as
     /// [`Self::open_internal_agent_model_picker`] describes.
-    fn open_agent_model_picker(&mut self, target: InternalAgentModelTarget) -> bool {
+    fn open_agent_model_picker(&mut self, target: AgentModelTarget) -> bool {
         let origin = target.origin;
         let picker = self.internal_agent_model_picker(target);
         if picker.items.is_empty() {
@@ -576,9 +590,7 @@ impl super::App {
     }
 
     pub(super) fn open_selected_internal_agent_model_picker(&mut self, id: &str) -> bool {
-        let internal = crate::agent::internal_definitions()
-            .iter()
-            .any(|definition| definition.id.as_str() == id);
+        let internal = crate::agent::is_internal_agent_id(id);
         if internal {
             self.open_internal_agent_model_picker(id, InternalAgentModelPickerOrigin::AgentsPicker);
         }
@@ -588,7 +600,7 @@ impl super::App {
     /// Enter on a model-only agent in `/agents`: pick the model that
     /// overrides its file's.
     pub(super) fn open_catalog_agent_model_picker(&mut self, entry: &AgentCatalogEntry) {
-        self.open_agent_model_picker(InternalAgentModelTarget {
+        self.open_agent_model_picker(AgentModelTarget {
             id: entry.definition.id.to_string(),
             origin: InternalAgentModelPickerOrigin::AgentsPicker,
             default: AgentModelDefault::Definition(entry.definition.model_policy().into_owned()),

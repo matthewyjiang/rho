@@ -629,7 +629,7 @@ struct App {
     /// Explicit all/pinned choice from the scope-toggle key. `None` means
     /// prefer pinned, falling back to all when no pin has auth.
     model_picker_scope_override: Option<model_picker::ModelPickerScope>,
-    internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
+    internal_agent_model_target: Option<agent_picker::AgentModelTarget>,
     /// Set when the user dismisses the startup Auto classifier picker. The next
     /// idle reconcile demotes Auto → Supervised so cancel stays sync and never
     /// needs an optional runtime handle on shared picker Esc paths.

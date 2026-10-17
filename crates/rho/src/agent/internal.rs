@@ -163,10 +163,10 @@ pub(crate) fn internal_definition(id: &str) -> &'static AgentDefinition {
         .expect("registered internal agent definition")
 }
 
-pub(crate) fn is_internal_agent_id(id: &AgentId) -> bool {
+pub(crate) fn is_internal_agent_id(id: &str) -> bool {
     internal_definitions()
         .iter()
-        .any(|definition| definition.id == *id)
+        .any(|definition| definition.id.as_str() == id)
 }
 
 /// Reasoning levels a selection can take.

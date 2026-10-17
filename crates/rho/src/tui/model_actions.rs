@@ -441,10 +441,7 @@ impl App {
         id: &str,
         config: Option<crate::config::InternalAgentModelConfig>,
     ) -> anyhow::Result<()> {
-        let internal = crate::agent::internal_definitions()
-            .iter()
-            .any(|definition| definition.id.as_str() == id);
-        let (subject, fallback) = if internal {
+        let (subject, fallback) = if crate::agent::is_internal_agent_id(id) {
             (format!("internal agent {id}"), "conversation model")
         } else {
             (format!("agent {id}"), "its default model")
@@ -492,7 +489,7 @@ impl App {
 
     pub(in crate::tui) async fn finish_internal_agent_model_flow(
         &mut self,
-        target: super::agent_picker::InternalAgentModelTarget,
+        target: super::agent_picker::AgentModelTarget,
         selected: bool,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {

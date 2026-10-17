@@ -191,6 +191,7 @@ pub(super) fn test_workflow() -> FrozenWorkflow {
                 runtime: AgentRuntime::Rho,
                 source_origin: "builtin".into(),
                 trust_required: false,
+                plugin_trust_required: false,
                 prompt_policy: "review".into(),
                 provider: None,
                 model: None,
@@ -334,6 +335,7 @@ pub(super) fn runner<
         workspace.to_owned(),
         RuntimeSecurity {
             project_trusted: true,
+            project_plugins_trusted: true,
             permission_mode: crate::permission::PermissionMode::Auto,
         },
         executor.clone(),

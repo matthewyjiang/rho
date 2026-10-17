@@ -166,6 +166,9 @@ impl NodeExecutionResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RuntimeSecurity {
     pub(crate) project_trusted: bool,
+    /// Project plugin trust (`RHO_TRUST_PROJECT_PLUGINS`), which project
+    /// plugin agents need.
+    pub(crate) project_plugins_trusted: bool,
     pub(crate) permission_mode: crate::permission::PermissionMode,
 }
 

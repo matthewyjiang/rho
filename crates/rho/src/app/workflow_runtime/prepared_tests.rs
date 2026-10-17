@@ -37,6 +37,7 @@ fn agent_leaf() -> (Node, ResolvedNode) {
         runtime: AgentRuntime::Rho,
         source_origin: "builtin".into(),
         trust_required: false,
+        plugin_trust_required: false,
         prompt_policy: "review".into(),
         provider: None,
         model: None,

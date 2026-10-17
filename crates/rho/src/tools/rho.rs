@@ -88,10 +88,12 @@ fn respond(
         return diagnostics.response(action);
     }
     let cwd = cwd.ok_or("rho agents action requires a workspace")?;
+    let home = crate::paths::home_dir();
     let report = crate::agent::check_agents(
         cwd,
-        crate::paths::home_dir().as_deref(),
+        home.as_deref(),
         crate::workspace::ProjectTrust::from_agents_env(),
+        &crate::plugins::agent_tiers(cwd, home.as_deref()),
     );
     serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
 }

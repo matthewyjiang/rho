@@ -1,14 +1,14 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use rho_providers::credentials::CredentialStore;
 
 use crate::{
     agent::{
         AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntimeSpec,
-        AntigravityTool, CursorTool, ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel,
-        ToolCapability, ToolPolicy,
+        AntigravityTool, CursorTool, ModelPolicy, PromptPolicy, ReasoningLevel, ToolCapability,
+        ToolPolicy,
     },
-    config::{Config, InternalAgentTarget},
+    config::Config,
 };
 
 #[path = "agent_binding_acp.rs"]
@@ -382,7 +382,10 @@ impl AgentBinder {
         store: &dyn CredentialStore,
     ) -> anyhow::Result<BoundAgent> {
         let fingerprint = definition.fingerprint();
-        let model_override = configured_model_override(&definition, host_config)?;
+        // Only Rho agents take an override; an entry for any other runtime
+        // fails here instead of being ignored.
+        let model_override =
+            crate::agent::model_override(&definition, &host_config.internal_agents)?;
         let runtime = match &definition.runtime {
             AgentRuntimeSpec::Rho {
                 tools,
@@ -390,15 +393,10 @@ impl AgentBinder {
                 reasoning,
             } => {
                 let (model, reasoning) =
-                    ModelOverride::or_definition(model_override, model, *reasoning);
-                let mut config = bind_rho_config(
-                    definition.id.as_str(),
-                    &model,
-                    reasoning,
-                    host_config,
-                    store,
-                )?;
-                apply_fast_mode(&definition.id, &model, invocation.role, &mut config)?;
+                    crate::agent::effective_rho_model(model, *reasoning, model_override.as_ref());
+                let mut config =
+                    bind_rho_config(definition.id.as_str(), model, reasoning, host_config, store)?;
+                apply_fast_mode(&definition.id, model, invocation.role, &mut config)?;
                 BoundRuntime::Rho {
                     capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
                     config: Box::new(config),
@@ -655,84 +653,20 @@ pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config
     else {
         return host_config.clone();
     };
-    let Ok(model_override) = configured_model_override(definition, host_config) else {
+    let Ok(model_override) = crate::agent::model_override(definition, &host_config.internal_agents)
+    else {
         return host_config.clone();
     };
-    let (model, reasoning) = ModelOverride::or_definition(model_override, model, *reasoning);
+    let (model, reasoning) =
+        crate::agent::effective_rho_model(model, *reasoning, model_override.as_ref());
     bind_rho_config(
         definition.id.as_str(),
-        &model,
+        model,
         reasoning,
         host_config,
         &crate::credential_store::AppCredentialStore,
     )
     .unwrap_or_else(|_| host_config.clone())
-}
-
-/// A model chosen in `/agents` for a catalog agent that ships read-only,
-/// such as a plugin agent.
-struct ModelOverride {
-    model: ModelPolicy,
-    reasoning: Option<ReasoningLevel>,
-}
-
-impl ModelOverride {
-    /// The model and reasoning to bind: the override's when there is one,
-    /// keeping the definition's reasoning unless the override names its own.
-    fn or_definition(
-        model_override: Option<Self>,
-        model: &ModelPolicy,
-        reasoning: Option<ReasoningLevel>,
-    ) -> (Cow<'_, ModelPolicy>, Option<ReasoningLevel>) {
-        match model_override {
-            Some(chosen) => (Cow::Owned(chosen.model), chosen.reasoning.or(reasoning)),
-            None => (Cow::Borrowed(model), reasoning),
-        }
-    }
-}
-
-/// The `[internal_agents.<id>]` entry that replaces a catalog agent's model.
-///
-/// `/agents` writes it for plugin agents, whose files are not editable. The
-/// entry is keyed by id, so it applies to whichever definition holds the id.
-/// Internal agents read their entries where they run, so they never take it
-/// here. Only Rho agents can take an override, and only onto a Rho model:
-/// switching runtime would change the agent's tools, so either mismatch fails
-/// instead of being ignored.
-fn configured_model_override(
-    definition: &AgentDefinition,
-    host_config: &Config,
-) -> anyhow::Result<Option<ModelOverride>> {
-    let id = &definition.id;
-    if crate::agent::is_internal_agent_id(id) {
-        return Ok(None);
-    }
-    let Some(entry) = host_config.internal_agent_model(id.as_str()) else {
-        return Ok(None);
-    };
-    match &definition.runtime {
-        AgentRuntimeSpec::Rho { .. } => {}
-        AgentRuntimeSpec::ClaudeCli(_)
-        | AgentRuntimeSpec::Cursor(_)
-        | AgentRuntimeSpec::Antigravity(_) => anyhow::bail!(
-            "agent '{id}' runs on {}, so [internal_agents.{id}] cannot set its model; remove the entry",
-            definition.runtime.runtime()
-        ),
-    }
-    match &entry.target {
-        InternalAgentTarget::Rho(rho) => Ok(Some(ModelOverride {
-            model: ModelPolicy::Select(ModelSelection {
-                provider: Some(rho.provider.clone()),
-                model: rho.model.clone(),
-                auth: Some(rho.auth.clone()),
-                fast: false,
-            }),
-            reasoning: entry.reasoning,
-        })),
-        InternalAgentTarget::ClaudeCli { .. } => anyhow::bail!(
-            "agent '{id}': [internal_agents.{id}] selects Claude Code, but only internal agents can switch runtime; name a Rho provider and model"
-        ),
-    }
 }
 
 fn bind_rho_config(

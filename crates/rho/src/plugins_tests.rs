@@ -317,13 +317,13 @@ fn untrusted_project_plugin_activates_no_components() {
     assert!(discovery.skills.is_empty());
     assert!(!discovery.mcp.has_enabled_servers());
     assert!(discovery.mcp.servers.is_empty());
-    assert!(discovery.agents.is_empty());
+    assert_eq!(discovery.agents, super::PluginAgentTiers::default());
     let entry = report_entry(&discovery, "risky");
     assert_eq!(entry.status, PluginStatus::Untrusted);
     assert!(entry.enabled);
     assert_eq!(entry.skill_count, 1);
     assert_eq!(entry.mcp_server_count, 1);
-    assert_eq!(entry.agent_names, ["leaky-agent"]);
+    assert_eq!(entry.agent_files, ["leaky-agent.md"]);
     assert!(entry.problems.is_empty());
     assert_eq!(discovery.report.summary().untrusted, 1);
     assert_eq!(discovery.report.summary().problems, 0);
@@ -540,8 +540,9 @@ fn skill_md_symlink_escaping_root_is_skipped() {
     assert!(entry.problems.iter().any(|p| p.contains("escape-skill")));
 }
 
-// Covers: an agents-only plugin is a usable package, and an agent file
-// symlinked outside the plugin root is skipped while siblings load (spec 4.1).
+// Covers: an agents-only plugin is a usable package, an agent file symlinked
+// outside the plugin root is skipped while siblings load (spec 4.1), and a
+// contained link keeps its own name, which the catalog derives the id from.
 // Owner: plugin path containment.
 #[cfg(unix)]
 #[test]
@@ -557,21 +558,27 @@ fn plugin_agents_load_contained_files_only() {
     let outside = env.home.path().join("outside-agent.md");
     std::fs::write(&outside, "---\ndescription: outside\n---\nprompt\n").unwrap();
     std::os::unix::fs::symlink(&outside, inside.with_file_name("escape-agent.md")).unwrap();
+    std::os::unix::fs::symlink(&inside, inside.with_file_name("linked-agent.md")).unwrap();
 
     let discovery = discover_env(&env);
 
     let agents_dir = std::fs::canonicalize(inside.parent().unwrap()).unwrap();
     pretty_assertions::assert_eq!(
         discovery.agents,
-        [super::PluginAgentFiles {
-            scope: PluginScope::User,
-            files: vec![agents_dir.join("inside-agent.md")],
-            dir: agents_dir,
-        }]
+        super::PluginAgentTiers {
+            user: vec![super::PluginAgentFiles {
+                files: vec![
+                    agents_dir.join("inside-agent.md"),
+                    agents_dir.join("linked-agent.md"),
+                ],
+                dir: agents_dir,
+            }],
+            project: Vec::new(),
+        }
     );
     let entry = report_entry(&discovery, "agentic");
     assert_eq!(entry.status, PluginStatus::Loaded);
-    assert_eq!(entry.agent_names, ["inside-agent"]);
+    assert_eq!(entry.agent_files, ["inside-agent.md", "linked-agent.md"]);
     assert_eq!(entry.problems.len(), 1, "{:?}", entry.problems);
     assert!(entry.problems[0].contains("escape-agent.md"));
 }

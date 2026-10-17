@@ -373,6 +373,11 @@ pub(crate) struct ResolvedAgent {
     pub(crate) runtime: AgentRuntime,
     pub(crate) source_origin: String,
     pub(crate) trust_required: bool,
+    /// The agent came from a project Agent Plugin, so running the plan needs
+    /// project plugin trust (`RHO_TRUST_PROJECT_PLUGINS`) again. Omitted when
+    /// off so plans frozen before this field existed keep loading and hashing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) plugin_trust_required: bool,
     pub(crate) prompt_policy: String,
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,

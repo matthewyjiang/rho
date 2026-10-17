@@ -650,7 +650,7 @@ fn internal_agent_runtime_key(
         Some(crate::config::CLAUDE_CLI_RUNTIME_KEY) => (
             crate::config::CLAUDE_CLI_RUNTIME_KEY,
             format!(
-                "\"{}\" with the conversation selection; internal agent '{id}' cannot delegate",
+                "\"{}\" with the conversation selection; agent '{id}' cannot delegate",
                 crate::config::RHO_RUNTIME_KEY
             ),
         ),

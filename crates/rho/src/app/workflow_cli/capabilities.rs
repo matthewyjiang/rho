@@ -97,27 +97,40 @@ impl AppWorkflowToolService {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
         // Plugin discovery already applied enable state, trust, and
-        // containment; each directory read is still authorized here.
-        for plugin in crate::plugins::agents_by_precedence(&self.cwd, home.as_deref()) {
-            let loaded = self.authorized_agent_sources(context, &plugin.dir).await?;
-            match plugin.scope {
-                crate::plugins::PluginScope::User => sources.user_plugins.extend(loaded),
-                crate::plugins::PluginScope::Project => sources.project_plugins.extend(loaded),
+        // containment; each read is still authorized here, and only the files
+        // discovery kept are read, so an escaping file is skipped as it is
+        // everywhere else.
+        let plugins = crate::plugins::agent_tiers(&self.cwd, home.as_deref());
+        for (tier, loaded) in [
+            (&plugins.user, &mut sources.user_plugins),
+            (&plugins.project, &mut sources.project_plugins),
+        ] {
+            for plugin in tier {
+                let files = AgentFiles::Discovered(&plugin.files);
+                loaded.extend(
+                    self.authorized_agent_sources(context, &plugin.dir, files)
+                        .await?,
+                );
             }
         }
         if let Some(home) = home.as_deref() {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
-            sources.agents_home = self.authorized_agent_sources(context, &agents_home).await?;
-            sources.rho_home = self.authorized_agent_sources(context, &rho_home).await?;
+            sources.agents_home = self
+                .authorized_agent_sources(context, &agents_home, AgentFiles::AllMarkdown)
+                .await?;
+            sources.rho_home = self
+                .authorized_agent_sources(context, &rho_home, AgentFiles::AllMarkdown)
+                .await?;
         }
         if project_agent_catalogs_trusted() {
             for root in crate::workspace::project_ancestor_dirs(&self.cwd)
                 .into_iter()
                 .map(|path| path.join(".agents/agents"))
             {
-                sources
-                    .project
-                    .push(self.authorized_agent_sources(context, &root).await?);
+                sources.project.push(
+                    self.authorized_agent_sources(context, &root, AgentFiles::AllMarkdown)
+                        .await?,
+                );
             }
         }
         let workflow_agents = {
@@ -129,7 +142,7 @@ impl AppWorkflowToolService {
             }
         };
         sources.workflow = self
-            .authorized_agent_sources(context, &workflow_agents)
+            .authorized_agent_sources(context, &workflow_agents, AgentFiles::AllMarkdown)
             .await?;
         crate::agent::AgentCatalog::from_authorized_sources(sources).map_err(Into::into)
     }
@@ -138,6 +151,7 @@ impl AppWorkflowToolService {
         &self,
         context: &ToolContext,
         root: &Path,
+        files: AgentFiles<'_>,
     ) -> anyhow::Result<Vec<(PathBuf, String)>> {
         let scope = path_scope(&self.cwd, root);
         self.authorize_read(context, root, scope.clone()).await?;
@@ -153,15 +167,26 @@ impl AppWorkflowToolService {
         self.authorize_opened_identity(context, &opened_root.identity)
             .await?;
         let mut names = crate::workflow::opened_directory_names(&opened_root)?;
+        let canonical_root = Path::new(&opened_root.identity.canonical_path);
         names.retain(|name| {
-            Path::new(name)
+            let markdown = Path::new(name)
                 .extension()
-                .is_some_and(|extension| extension == "md")
+                .is_some_and(|extension| extension == "md");
+            markdown
+                && match files {
+                    AgentFiles::AllMarkdown => true,
+                    AgentFiles::Discovered(kept) => {
+                        let path = canonical_root.join(name);
+                        kept.contains(&path)
+                            && !std::fs::symlink_metadata(&path)
+                                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                    }
+                }
         });
         names.sort();
         let mut sources = Vec::new();
         for name in names {
-            let path = Path::new(&opened_root.identity.canonical_path).join(&name);
+            let path = canonical_root.join(&name);
             self.authorize_read(context, &path, scope.clone()).await?;
             let opened = crate::workflow::open_verified_file_in_directory(
                 &opened_root,
@@ -358,4 +383,15 @@ impl AppWorkflowToolService {
             .map(|_| ())
             .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
+}
+
+/// Which `*.md` entries of an agents directory the workflow catalog reads.
+#[derive(Clone, Copy)]
+enum AgentFiles<'a> {
+    /// Every Markdown file, for agent directories the user owns.
+    AllMarkdown,
+    /// Only the resolved files plugin discovery kept. A file it left out
+    /// (one escaping the plugin root, or a symlink, which workflow reads do
+    /// not follow) is skipped rather than failing the whole catalog.
+    Discovered(&'a [PathBuf]),
 }

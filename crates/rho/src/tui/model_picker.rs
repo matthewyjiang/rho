@@ -127,9 +127,12 @@ pub(super) fn model_picker_during_run(
     .into_models()
 }
 
-/// Label of the conversation-model row, and the row value of every row that
-/// clears an agent's model override (see [`FallbackModelRow`]).
+/// Label of the conversation-model row.
 pub(super) const USE_CONVERSATION_MODEL: &str = "Use conversation model";
+
+/// Row value of every row that clears an agent's model override, whatever it
+/// falls back to (see [`FallbackModelRow`] and "Same as classifier").
+const CLEAR_MODEL_OVERRIDE: &str = "clear-override";
 
 /// Separates the runtime key from the pass-through model in a Claude Code row
 /// value.
@@ -142,8 +145,9 @@ const CLAUDE_CODE_ROW_MODEL_SEPARATOR: char = ':';
 /// What a selected internal-agent model row asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum InternalAgentModelRow {
-    /// Clear the override and follow the conversation model.
-    Conversation,
+    /// Clear the override: the agent falls back to the conversation model,
+    /// its own file's model, or (for the permission screen) the classifier.
+    ClearOverride,
     /// Delegate to the Claude Code CLI. `None` omits `--model`.
     ClaudeCode { model: Option<String> },
     /// A Rho `provider/model` reference to resolve against the catalog.
@@ -174,8 +178,8 @@ fn claude_code_row_value(model: Option<&str>) -> String {
 }
 
 pub(super) fn parse_internal_agent_model_row(value: &str) -> InternalAgentModelRow {
-    if value == USE_CONVERSATION_MODEL {
-        return InternalAgentModelRow::Conversation;
+    if value == CLEAR_MODEL_OVERRIDE {
+        return InternalAgentModelRow::ClearOverride;
     }
     if let Some((provider, model)) = value
         .strip_prefix(DECISION_ROW_PREFIX)
@@ -198,8 +202,8 @@ pub(super) fn parse_internal_agent_model_row(value: &str) -> InternalAgentModelR
 }
 
 /// The row that clears an agent's model override, named for what the agent
-/// falls back to. Every variant's row carries [`USE_CONVERSATION_MODEL`] as
-/// its value, which parses to [`InternalAgentModelRow::Conversation`].
+/// falls back to. Every variant's row carries [`CLEAR_MODEL_OVERRIDE`] as
+/// its value, which parses to [`InternalAgentModelRow::ClearOverride`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum FallbackModelRow {
     /// The agent follows the conversation model when it has no own model.
@@ -236,9 +240,9 @@ impl InternalAgentSelection {
     /// when nothing is configured.
     ///
     /// Encode half of the row vocabulary; [`parse_internal_agent_model_row`] is
-    /// the decode half. The conversation row is not here because no selection
+    /// the decode half. The fallback row is not here because no selection
     /// names it: the caller offers it, so the caller asks for it by
-    /// [`USE_CONVERSATION_MODEL`].
+    /// [`CLEAR_MODEL_OVERRIDE`].
     fn row_value(&self) -> Option<String> {
         match self {
             Self::RhoModel { provider, model } => {
@@ -309,7 +313,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
     // A selected fallback row outranks `current`, which then still carries
     // the fallback model and so may also name a catalog row.
     let wanted_value = if fallback_selected {
-        Some(USE_CONVERSATION_MODEL.to_string())
+        Some(CLEAR_MODEL_OVERRIDE.to_string())
     } else {
         current.row_value()
     };
@@ -393,7 +397,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
         ),
         badge: selected_badge(current == ScreenSelection::Classifier),
         allow_filter_completion: false,
-        ..PickerItem::new("Same as classifier".into(), USE_CONVERSATION_MODEL.into())
+        ..PickerItem::new("Same as classifier".into(), CLEAR_MODEL_OVERRIDE.into())
     }];
     leading.extend(decision_models.iter().map(|(provider, model)| {
         let selected = matches!(
@@ -414,7 +418,7 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
     }));
     catalog.items.splice(0..0, leading);
     let wanted = match &current {
-        ScreenSelection::Classifier => USE_CONVERSATION_MODEL.to_string(),
+        ScreenSelection::Classifier => CLEAR_MODEL_OVERRIDE.to_string(),
         ScreenSelection::Decision { provider, model } => decision_row_value(provider, model),
         ScreenSelection::Text { provider, model } => {
             rho_providers::provider::model_reference(provider, model)
@@ -462,7 +466,7 @@ fn conversation_model_row(selected: bool) -> PickerItem {
             tone: PickerBadgeTone::Selected,
         }),
         allow_filter_completion: false,
-        ..PickerItem::new(USE_CONVERSATION_MODEL.into(), USE_CONVERSATION_MODEL.into())
+        ..PickerItem::new(USE_CONVERSATION_MODEL.into(), CLEAR_MODEL_OVERRIDE.into())
     }
 }
 
@@ -474,7 +478,7 @@ fn agent_default_row(model: &str, selected: bool) -> PickerItem {
             tone: PickerBadgeTone::Selected,
         }),
         allow_filter_completion: false,
-        ..PickerItem::new("Use agent default".into(), USE_CONVERSATION_MODEL.into())
+        ..PickerItem::new("Use agent default".into(), CLEAR_MODEL_OVERRIDE.into())
     }
 }
 

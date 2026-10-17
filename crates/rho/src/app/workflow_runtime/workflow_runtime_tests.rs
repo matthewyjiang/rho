@@ -518,6 +518,7 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
         workspace.path().to_owned(),
         RuntimeSecurity {
             project_trusted: true,
+            project_plugins_trusted: true,
             permission_mode: crate::permission::PermissionMode::Auto,
         },
         Arc::new(SuccessfulExecutor),
@@ -594,6 +595,7 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
         workspace.path().to_owned(),
         RuntimeSecurity {
             project_trusted: true,
+            project_plugins_trusted: true,
             permission_mode: crate::permission::PermissionMode::Auto,
         },
         Arc::new(SuccessfulExecutor),
@@ -688,4 +690,49 @@ async fn checkout_gate_lock_wait_honors_cancellation() {
     };
     assert!(matches!(result, Err(RuntimeError::Cancelled)));
     FileExt::unlock(&contender).unwrap();
+}
+
+// Covers: a plan frozen with a project plugin agent must not run once plugin
+// trust is gone, the same way project agents need project agent trust.
+// Owner: durable workflow runner; plan-time trust cannot see later runs.
+#[tokio::test]
+async fn frozen_agent_trust_is_rechecked_per_trust_kind() {
+    // (project agent, project plugin agent, agents trusted, plugins trusted, refused)
+    let cases = [
+        (true, false, false, true, true),
+        (false, true, true, false, true),
+        (false, true, false, true, false),
+    ];
+    for (trust_required, plugin_trust_required, project_trusted, plugins_trusted, refused) in cases
+    {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let mut workflow = test_workflow();
+        for resolved in workflow.resolved_nodes.values_mut() {
+            if let ResolvedNode::Agent(agent) = resolved {
+                agent.trust_required = trust_required;
+                agent.plugin_trust_required = plugin_trust_required;
+            }
+        }
+        workflow.program_digest = program_digest(&workflow).unwrap();
+        let run = create_run_with_workflow(home.path(), workspace.path(), workflow);
+        let result = WorkflowRunner::new(
+            home.path().to_owned(),
+            workspace.path().to_owned(),
+            RuntimeSecurity {
+                project_trusted,
+                project_plugins_trusted: plugins_trusted,
+                permission_mode: crate::permission::PermissionMode::Auto,
+            },
+            Arc::new(SuccessfulExecutor),
+            Arc::new(SuccessfulExecutor),
+        )
+        .drive(run.manifest.run_id, RecoveryDecision::NormalResume, None)
+        .await;
+        assert_eq!(
+            matches!(result, Err(RuntimeError::TrustRemoved { .. })),
+            refused,
+            "agent trust {trust_required}, plugin trust {plugin_trust_required}"
+        );
+    }
 }

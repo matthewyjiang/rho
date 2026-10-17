@@ -150,7 +150,7 @@ fn each_row_value_routes_to_its_runtime() {
         .map(|item| parse_internal_agent_model_row(&item.value))
         .collect::<Vec<_>>();
 
-    let expected_rows = std::iter::once(InternalAgentModelRow::Conversation)
+    let expected_rows = std::iter::once(InternalAgentModelRow::ClearOverride)
         .chain(std::iter::once(InternalAgentModelRow::ClaudeCode {
             model: None,
         }))
@@ -255,7 +255,7 @@ fn screen_picker_opens_on_the_configured_row_and_routes_it_back() {
     let cases = [
         (
             ScreenSelection::Classifier,
-            InternalAgentModelRow::Conversation,
+            InternalAgentModelRow::ClearOverride,
         ),
         // Not listed: the host listed nothing or is logged out.
         (

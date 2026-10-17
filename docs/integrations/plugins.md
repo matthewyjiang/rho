@@ -128,7 +128,8 @@ project .agents/agents > ~/.rho/agents > ~/.agents/agents > project plugins > us
 ```
 
 A plugin agent cannot use a built-in agent ID (`default`, `explorer`,
-`reviewer`, `worker`) or an internal agent ID. Rho skips such a file and
+`reviewer`, `worker`), an internal agent ID, or an ID Rho uses elsewhere
+(`side`, `permission-classifier-screen`). Rho skips such a file and
 reports it; the built-in stays available. Two plugins at the same scope that
 ship the same agent ID make that ID unavailable at that level until one is
 removed or disabled.
@@ -151,9 +152,11 @@ auth = "api-key"
 The entry replaces the file's model and `fast` setting. Its optional
 `reasoning` key replaces the file's reasoning; without one the file's
 reasoning stays. The entry is keyed by agent ID, so it also applies to an
-agent file of yours that takes over the same ID. Rho refuses to launch the
-agent when the entry names `runtime = "claude-cli"` or the agent runs on
-another runtime, since either would switch runtime rather than model.
+agent file of yours that takes over the same ID; built-in agents never take
+one. Rho refuses to launch the agent when it runs on another runtime, since
+the entry would switch runtime rather than model, and `/agents` marks such an
+entry as unable to apply. Config load already turns a `runtime = "claude-cli"`
+entry into the conversation model, with a warning.
 
 ## MCP servers
 

@@ -554,9 +554,8 @@ model = "opus"
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"claude-cli\"".into(),
-            to:
-                "\"rho\" with the conversation selection; internal agent 'goal-judge' cannot delegate"
-                    .into(),
+            to: "\"rho\" with the conversation selection; agent 'goal-judge' cannot delegate"
+                .into(),
         }]
     );
 }

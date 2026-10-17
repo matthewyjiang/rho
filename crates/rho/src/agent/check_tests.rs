@@ -37,7 +37,12 @@ fn reports_loaded_agents_and_skipped_files() {
     );
 
     assert_eq!(
-        check_agents(cwd.path(), Some(home.path()), ProjectTrust::Untrusted),
+        check_agents(
+            cwd.path(),
+            Some(home.path()),
+            ProjectTrust::Untrusted,
+            &crate::plugins::PluginAgentTiers::default(),
+        ),
         AgentCheckReport {
             dirs: dirs(home.path()),
             agents: vec![CheckedAgent {
@@ -54,7 +59,12 @@ fn reports_loaded_agents_and_skipped_files() {
         "broken.md",
         "---\ndescription: broken\nruntime: antigravity\ntools: all\n---\nBody.\n",
     );
-    let report = check_agents(cwd.path(), Some(home.path()), ProjectTrust::Untrusted);
+    let report = check_agents(
+        cwd.path(),
+        Some(home.path()),
+        ProjectTrust::Untrusted,
+        &crate::plugins::PluginAgentTiers::default(),
+    );
     let skipped = report
         .invalid
         .iter()

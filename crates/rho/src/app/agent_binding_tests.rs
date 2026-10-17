@@ -219,6 +219,7 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
         runtime: crate::workflow::AgentRuntime::Rho,
         source_origin: "project".into(),
         trust_required: true,
+        plugin_trust_required: false,
         prompt_policy: "replace:frozen".into(),
         provider: Some("anthropic".into()),
         model: Some("claude-sonnet-4-6".into()),
@@ -269,6 +270,7 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
         runtime: crate::workflow::AgentRuntime::ClaudeCli,
         source_origin: "project".into(),
         trust_required: true,
+        plugin_trust_required: false,
         prompt_policy: "replace:frozen".into(),
         provider: None,
         model: Some("opus".into()),
@@ -1136,6 +1138,7 @@ fn cursor_frozen_bind_narrows_plan_to_read_only_tools() {
         runtime: crate::workflow::AgentRuntime::Cursor,
         source_origin: "project".into(),
         trust_required: true,
+        plugin_trust_required: false,
         prompt_policy: "extend:frozen".into(),
         provider: None,
         model: Some("composer-2.5".into()),
@@ -1194,6 +1197,7 @@ fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
         runtime: crate::workflow::AgentRuntime::Cursor,
         source_origin: "project".into(),
         trust_required: true,
+        plugin_trust_required: false,
         prompt_policy: "extend:frozen".into(),
         provider: None,
         model: Some("composer-2.5".into()),
@@ -1422,4 +1426,46 @@ fn configured_model_override_refuses_a_runtime_switch() {
         );
         assert!(result.is_err(), "{} bound with a runtime switch", agent.id);
     }
+}
+
+// Covers: a stray `[internal_agents.<built-in id>]` entry must not change a
+// built-in agent's model; only plugin-style catalog agents take overrides.
+// Owner: agent binding
+#[test]
+fn configured_model_override_skips_built_in_agents() {
+    let explorer = Arc::new(AgentDefinition {
+        id: AgentId::new("explorer").unwrap(),
+        ..definition_with_model(ModelPolicy::Select(ModelSelection {
+            provider: Some("openai-codex".into()),
+            model: "gpt-5.5".into(),
+            auth: Some("codex".into()),
+            fast: false,
+        }))
+        .as_ref()
+        .clone()
+    });
+    let mut host = Config::default();
+    host.set_internal_agent_model_config(
+        "explorer",
+        crate::config::InternalAgentModelConfig::new(
+            "xai".into(),
+            "grok-4.7".into(),
+            "xai-api-key".into(),
+        ),
+    );
+    let bound = AgentBinder::bind_with_credentials(
+        explorer,
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+        &credentials(&["codex", "xai-api-key"]),
+    )
+    .expect("bind");
+    let config = bound.rho_config().expect("rho config");
+    assert_eq!(
+        (config.provider.as_str(), config.model.as_str()),
+        ("openai-codex", "gpt-5.5")
+    );
 }

@@ -11,7 +11,7 @@ use super::{
     internal::{internal_definitions, is_internal_agent_id},
     parser::parse_definition,
 };
-use crate::plugins::{PluginAgentFiles, PluginScope};
+use crate::plugins::PluginAgentTiers;
 use crate::workspace::ProjectTrust;
 
 /// The built-in root agent. It is never offered for delegation.
@@ -32,8 +32,12 @@ const BUILTINS: &[(&str, &str)] = &[
 pub enum AgentOrigin {
     Internal,
     BuiltIn,
-    /// Agents an active Agent Plugin ships in Rho's extension directory.
-    Plugin,
+    /// Agents an active user Agent Plugin (`~/.agents/plugins`) ships in
+    /// Rho's extension directory.
+    UserPlugin,
+    /// Agents an active, trusted project Agent Plugin ships; frozen workflows
+    /// re-check plugin trust before running them.
+    ProjectPlugin,
     AgentsHome,
     RhoHome,
     Project,
@@ -47,11 +51,25 @@ impl AgentOrigin {
         match self {
             Self::Internal => "internal",
             Self::BuiltIn => "built_in",
-            Self::Plugin => "plugin",
+            Self::UserPlugin => "user_plugin",
+            Self::ProjectPlugin => "project_plugin",
             Self::AgentsHome => "agents_home",
             Self::RhoHome => "rho_home",
             Self::Project => "project",
             Self::Workflow => "workflow",
+        }
+    }
+
+    /// Whether an Agent Plugin, of either scope, shipped the agent.
+    pub fn is_plugin(self) -> bool {
+        match self {
+            Self::UserPlugin | Self::ProjectPlugin => true,
+            Self::Internal
+            | Self::BuiltIn
+            | Self::AgentsHome
+            | Self::RhoHome
+            | Self::Project
+            | Self::Workflow => false,
         }
     }
 }
@@ -123,30 +141,38 @@ impl AgentCatalog {
     pub fn discover(cwd: &Path) -> Result<Self, AgentCatalogError> {
         let home = crate::paths::home_dir();
         let trust = ProjectTrust::from_agents_env();
-        Self::discover_with_home_and_trust(cwd, home.as_deref(), trust)
+        let plugins = crate::plugins::agent_tiers(cwd, home.as_deref());
+        Self::discover_with_home_and_trust(cwd, home.as_deref(), trust, &plugins)
     }
 
     #[cfg(test)]
     pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Result<Self, AgentCatalogError> {
-        Self::discover_with_home_and_trust(cwd, home, ProjectTrust::Trusted)
+        Self::discover_with_home_and_trust(
+            cwd,
+            home,
+            ProjectTrust::Trusted,
+            &PluginAgentTiers::default(),
+        )
     }
 
-    /// `project_trust` gates project `.agents/agents` files. Project plugin
-    /// agents follow plugin trust (`RHO_TRUST_PROJECT_PLUGINS`) instead, as
-    /// every other component of that plugin does.
+    /// `project_trust` gates project `.agents/agents` files. `plugins` holds
+    /// the active plugins' agent files (see [`crate::plugins::agent_tiers`]),
+    /// which already follow plugin enable state and plugin trust, as every
+    /// other component of a plugin does.
     pub fn discover_with_home_and_trust(
         cwd: &Path,
         home: Option<&Path>,
         project_trust: ProjectTrust,
+        plugins: &PluginAgentTiers,
     ) -> Result<Self, AgentCatalogError> {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
-        let plugin_agents = crate::plugins::agents_by_precedence(cwd, home);
-        for scope in [PluginScope::User, PluginScope::Project] {
-            catalog.load_paths(
-                AgentOrigin::Plugin,
-                plugin_agent_paths(&plugin_agents, scope),
-            );
+        for (origin, tier) in [
+            (AgentOrigin::UserPlugin, &plugins.user),
+            (AgentOrigin::ProjectPlugin, &plugins.project),
+        ] {
+            let paths = tier.iter().flat_map(|plugin| plugin.files.iter().cloned());
+            catalog.load_paths(origin, paths.collect());
         }
         if let Some(home) = home {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
@@ -170,8 +196,9 @@ impl AgentCatalog {
         workflow_entry: &Path,
         home: Option<&Path>,
         project_trust: ProjectTrust,
+        plugins: &PluginAgentTiers,
     ) -> Result<Self, AgentCatalogError> {
-        let mut catalog = Self::discover_with_home_and_trust(cwd, home, project_trust)?;
+        let mut catalog = Self::discover_with_home_and_trust(cwd, home, project_trust, plugins)?;
         catalog.load_tier(
             AgentOrigin::Workflow,
             &[workflow_local_agents_root(workflow_entry)],
@@ -185,8 +212,8 @@ impl AgentCatalog {
     ) -> Result<Self, AgentCatalogError> {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
-        catalog.load_sources(AgentOrigin::Plugin, sources.user_plugins);
-        catalog.load_sources(AgentOrigin::Plugin, sources.project_plugins);
+        catalog.load_sources(AgentOrigin::UserPlugin, sources.user_plugins);
+        catalog.load_sources(AgentOrigin::ProjectPlugin, sources.project_plugins);
         catalog.load_sources(AgentOrigin::AgentsHome, sources.agents_home);
         catalog.load_sources(AgentOrigin::RhoHome, sources.rho_home);
         for tier in sources.project {
@@ -356,28 +383,20 @@ impl TierLoad {
                 return;
             }
         };
-        if is_internal_agent_id(&definition.id) {
-            let error = AgentCatalogError::at_field(
-                path,
-                "id",
-                format!(
-                    "agent ID '{}' is reserved for an internal agent and cannot be overridden",
-                    definition.id
+        if let Some(reserved) = reserved_id(self.origin, &definition.id) {
+            let id = &definition.id;
+            let message = match reserved {
+                ReservedId::Internal => format!(
+                    "agent ID '{id}' is reserved for an internal agent and cannot be overridden"
                 ),
-            );
-            self.skip(None, error);
-            return;
-        }
-        if self.origin == AgentOrigin::Plugin && is_builtin_id(&definition.id) {
-            let error = AgentCatalogError::at_field(
-                path,
-                "id",
-                format!(
-                    "agent ID '{}' is a built-in Rho agent; plugin agents cannot override built-ins",
-                    definition.id
+                ReservedId::BuiltIn => format!(
+                    "agent ID '{id}' is a built-in Rho agent; plugin agents cannot override built-ins"
                 ),
-            );
-            self.skip(None, error);
+                ReservedId::Host => {
+                    format!("agent ID '{id}' is reserved by Rho; plugin agents cannot use it")
+                }
+            };
+            self.skip(None, AgentCatalogError::at_field(path, "id", message));
             return;
         }
         if let Err(error) = self.insert(definition.clone(), path) {
@@ -423,7 +442,7 @@ impl TierLoad {
     /// a built-in id, since plugins cannot override built-ins.
     fn skip(&mut self, id: Option<AgentId>, error: AgentCatalogError) {
         tracing::warn!(error = %error, "skipping invalid agent definition");
-        let blocks = |id: &AgentId| !(self.origin == AgentOrigin::Plugin && is_builtin_id(id));
+        let blocks = |id: &AgentId| reserved_id(self.origin, id) != Some(ReservedId::BuiltIn);
         if let Some(id) = id.filter(blocks) {
             self.loaded.remove(&id);
             self.blocked.entry(id).or_insert_with(|| error.clone());
@@ -432,17 +451,45 @@ impl TierLoad {
     }
 }
 
-fn is_builtin_id(id: &AgentId) -> bool {
-    BUILTINS.iter().any(|(builtin, _)| *builtin == id.as_str())
+/// An id a tier's files may not define.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReservedId {
+    /// Internal agents, reserved from every tier.
+    Internal,
+    /// Built-in agents, reserved from plugins only.
+    BuiltIn,
+    /// Ids Rho uses outside the catalog, reserved from plugins only.
+    Host,
 }
 
-/// One scope's plugin agent files; the catalog loads each scope as a tier.
-fn plugin_agent_paths(plugins: &[PluginAgentFiles], scope: PluginScope) -> Vec<PathBuf> {
-    plugins
-        .iter()
-        .filter(|plugin| plugin.scope == scope)
-        .flat_map(|plugin| plugin.files.iter().cloned())
-        .collect()
+fn reserved_id(origin: AgentOrigin, id: &AgentId) -> Option<ReservedId> {
+    if is_internal_agent_id(id.as_str()) {
+        return Some(ReservedId::Internal);
+    }
+    if !origin.is_plugin() {
+        return None;
+    }
+    if is_builtin_agent_id(id) {
+        return Some(ReservedId::BuiltIn);
+    }
+    is_host_agent_id(id.as_str()).then_some(ReservedId::Host)
+}
+
+/// Whether Rho uses `id` outside the catalog: the permission screen's
+/// `[internal_agents]` key and the synthetic `/side` agent. Neither takes a
+/// catalog model override, so a plugin agent cannot claim one.
+pub(crate) fn is_host_agent_id(id: &str) -> bool {
+    [
+        crate::permission_classifier::DECISION_SCREEN_ID,
+        crate::app::side_chat::SIDE_AGENT_ID,
+    ]
+    .contains(&id)
+}
+
+/// Whether `id` names one of Rho's built-in agents (`default`, `explorer`,
+/// `reviewer`, `worker`).
+pub(crate) fn is_builtin_agent_id(id: &AgentId) -> bool {
+    BUILTINS.iter().any(|(builtin, _)| *builtin == id.as_str())
 }
 
 /// The agent id a definition file's name claims, when it is a valid id.

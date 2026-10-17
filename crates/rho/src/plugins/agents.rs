@@ -22,20 +22,41 @@ pub(crate) const RHO_EXTENSION_NAMESPACE: &str = "io.github.matthewyjiang.rho";
 /// Agent definition files from one active plugin.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginAgentFiles {
-    pub(crate) scope: PluginScope,
     /// Filesystem-resolved agents directory inside the plugin root.
     pub(crate) dir: PathBuf,
-    /// Contained `*.md` files in name order.
+    /// Contained `*.md` files in name order, each `dir` joined with the
+    /// entry's own name, so a symlinked file keeps its link name (and the id
+    /// it derives). Files resolving outside the plugin root are left out and
+    /// reported as problems.
     pub(crate) files: Vec<PathBuf>,
 }
 
 impl PluginAgentFiles {
-    /// Agent names the files claim by stem, for plugin inventory.
-    pub(super) fn names(&self) -> Vec<String> {
+    /// File names for plugin inventory. The catalog, not the plugin loader,
+    /// parses each file and decides the agent id it defines.
+    pub(super) fn file_names(&self) -> Vec<String> {
         self.files
             .iter()
-            .filter_map(|path| path.file_stem()?.to_str().map(str::to_owned))
+            .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
             .collect()
+    }
+}
+
+/// Active plugins' agent files, grouped as the catalog's two plugin tiers.
+/// Within a tier, nearer project roots come first; order never decides a
+/// winner because a duplicate id within one tier is an error.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PluginAgentTiers {
+    pub(crate) user: Vec<PluginAgentFiles>,
+    pub(crate) project: Vec<PluginAgentFiles>,
+}
+
+impl PluginAgentTiers {
+    pub(super) fn push(&mut self, scope: PluginScope, files: PluginAgentFiles) {
+        match scope {
+            PluginScope::User => self.user.push(files),
+            PluginScope::Project => self.project.push(files),
+        }
     }
 }
 
@@ -43,7 +64,6 @@ impl PluginAgentFiles {
 /// component types do: a wrong-kind or escaping location invalidates only
 /// agents, and an escaping file skips only that file (spec §4.1, §6.2).
 pub(super) fn discover_plugin_agents(
-    scope: PluginScope,
     root: &Path,
     problems: &mut Vec<String>,
 ) -> Option<PluginAgentFiles> {
@@ -80,16 +100,17 @@ pub(super) fn discover_plugin_agents(
 
     let mut files = Vec::new();
     for candidate in candidates {
+        let Some(name) = candidate.file_name() else {
+            continue;
+        };
+        // The resolved path only proves containment; the entry keeps its name.
         match contain::contained_path(root, &candidate) {
-            Ok(path) => files.push(path),
+            Ok(_) => files.push(dir.join(name)),
             Err(error) => {
-                let name = candidate
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                let name = name.to_string_lossy();
                 problems.push(format!("skipping agent file `{name}`: {error}"));
             }
         }
     }
-    Some(PluginAgentFiles { scope, dir, files })
+    Some(PluginAgentFiles { dir, files })
 }

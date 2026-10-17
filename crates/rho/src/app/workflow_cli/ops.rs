@@ -369,6 +369,14 @@ fn recheck_frozen_graph(
                 agent.agent_id
             );
         }
+        if agent.plugin_trust_required
+            && !crate::workspace::ProjectTrust::from_plugins_env().is_trusted()
+        {
+            anyhow::bail!(
+                "workflow plan requires trusted project plugin agent '{}'; plugin trust is not active",
+                agent.agent_id
+            );
+        }
         let current_rank = permission_rank(config.permission_mode.as_str()).ok_or_else(|| {
             anyhow::anyhow!(
                 "current permission mode '{}' is unsupported",
