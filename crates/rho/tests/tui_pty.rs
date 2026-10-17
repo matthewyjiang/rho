@@ -11,6 +11,8 @@ mod acp_e2e;
 mod antigravity_runtime;
 #[path = "support/tui_pty_attach.rs"]
 mod attach;
+#[path = "support/tui_pty_attach_previews.rs"]
+mod attach_previews;
 #[path = "support/claude_e2e.rs"]
 mod claude_e2e;
 #[path = "support/tui_pty_claude_runtime.rs"]

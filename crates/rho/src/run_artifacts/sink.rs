@@ -280,7 +280,7 @@ impl RunArtifactSink {
 
     /// Journal the event and publish status at the cadence its variant earns.
     ///
-    /// Every event is journalled so `rho attach` replay stays complete. Only the
+    /// Durable events are journalled; argument previews replace live state. Only the
     /// high-frequency streaming variants (text and reasoning deltas, streaming
     /// tool card updates) take the throttled publish: at fast token rates or
     /// with a chatty tool, one status write per event floods the writer and
@@ -293,6 +293,7 @@ impl RunArtifactSink {
         let throttled = match &event {
             AttachmentEvent::AssistantTextDelta(_)
             | AttachmentEvent::ReasoningDelta(_)
+            | AttachmentEvent::ToolPreview { .. }
             | AttachmentEvent::ToolUpdated { .. } => true,
             AttachmentEvent::Prompt(_)
             | AttachmentEvent::Message(_)
@@ -603,8 +604,12 @@ fn writer_loop(
                 if let Some(previous) = pending_status.take() {
                     write_status_best_effort(&path, &previous, &status_write_failed);
                 }
-                if let (Some(event), Some(writer)) = (terminal_attachment, attachment.as_mut()) {
-                    if let Err(error) = writer.write_event(&event) {
+                if let Some(writer) = attachment.as_mut() {
+                    let result = match terminal_attachment {
+                        Some(event) => writer.write_event(&event),
+                        None => writer.flush_previews(),
+                    };
+                    if let Err(error) = result {
                         record_attachment_error(&attachment_error, error);
                     }
                 }

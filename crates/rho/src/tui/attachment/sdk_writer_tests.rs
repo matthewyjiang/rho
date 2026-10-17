@@ -201,15 +201,15 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
 
     assert_eq!(
         first,
-        Some(AttachmentEvent::ToolStarted {
-            key: Some("preview:0".into()),
+        Some(AttachmentEvent::ToolPreview {
+            key: "preview:0".into(),
             card: preview.into(),
         })
     );
     assert_eq!(
         second,
-        Some(AttachmentEvent::ToolStarted {
-            key: Some("preview:0".into()),
+        Some(AttachmentEvent::ToolPreview {
+            key: "preview:0".into(),
             card: with_id.clone().into(),
         })
     );

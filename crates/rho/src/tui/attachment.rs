@@ -1,4 +1,4 @@
-//! Read-only observation of persisted subagent presentation events.
+//! Read-only observation of subagent history and replaceable live previews.
 //!
 //! Journal types live in [`crate::run_artifacts`]. This module owns the attach
 //! TUI and the Rho SDK event translator.

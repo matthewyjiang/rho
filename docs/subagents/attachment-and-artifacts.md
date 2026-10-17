@@ -37,7 +37,9 @@ Parentless runs, including delegated work started by `rho run`, remain under `~/
 Each run directory can contain:
 
 - `result.json` - live status, agent ID, runtime (`rho`, `claude-cli`, `cursor`, or `antigravity`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id` (Claude, Cursor, and Antigravity share this field until the next major; for Cursor and Antigravity it is the ACP session id, with no resume command)
-- `events.jsonl` - display events used by attachment
+- `events.jsonl` - append-only display history used by attachment replay
+- `tool-previews.json` - replaceable live tool-argument cards, when arguments stream;
+  attach combines these with the journal without retaining every growing snapshot
 - `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs, server stderr for `runtime: antigravity` runs
 
 On a slow disk, terminal status can appear before the background writer appends
@@ -45,6 +47,14 @@ its terminal display event. If recording cannot keep up, `attachment_error` in
 `result.json` reports that the journal is incomplete; the writer still appends
 its terminal event when the journal remains writable. Journal errors do not
 change the run's success, failure, or cancellation state.
+
+Complete tool starts, execution progress, results, and terminal outcomes remain in
+the journal. Live argument previews stay responsive, but exact token-by-token
+argument replay is not retained. Orderly interruption saves the latest unfinished
+preview once; after an abrupt exit, attach can still read the last live snapshot.
+Older journals remain readable without a preview file. Existing logs are not rewritten.
+If live preview publication fails, the journal records a notice and continues
+retaining durable events and the latest input at its lifecycle boundary.
 
 Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
 
