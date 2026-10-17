@@ -19,7 +19,7 @@ A run starts from a cloned history and appends user input to a private candidate
 | Tool success or tool-reported failure | Append a tool result to candidate history and continue the model loop |
 | Event-consumer interrupt (nonterminal send failed because the consumer was dropped) | Do not commit uncommitted candidate run history |
 | Reset | Replace history with the configured custom system prompt, if any, and clear compaction state |
-| Step checkpoint (only with a checkpoint store) | Commit the candidate before each provider request and after each model reply or host tool-call batch, before those calls start, then save the snapshot |
+| Step checkpoint (only with a checkpoint store) | Commit the candidate before each provider request and after each model reply or host tool-call batch, before those calls start, then save the snapshot. A provider request whose candidate has not changed since the last save is not saved again |
 
 An automatic compaction is its own immediate commit. If a later step fails, that already successful compaction remains committed, and cooperative terminal failure still commits later recoverable candidate progress. Hosts must not assume every failed run leaves the starting revision unchanged.
 
@@ -127,7 +127,9 @@ By default the SDK does not call a store. The host chooses snapshot timing. A pr
 
 ## Step checkpoints and continuing a run
 
-`Session::set_checkpoint_store` installs a store that a run saves to at each step boundary: before every provider request, and after every model reply or host tool-call batch (`Session::start_with_tool_calls`), before those calls start. A failed save fails the run. A snapshot saved after a reply or host batch names every tool call that may have started.
+`Session::set_checkpoint_store` installs a store that a run saves to at each step boundary: before every provider request, and after every model reply or host tool-call batch (`Session::start_with_tool_calls`), before those calls start. A failed save fails the run. A snapshot saved after a reply or host batch names every tool call that may have started. The save before a request keeps the user's message and the tool results that arrived since the last reply, so a run killed while the model streams does not turn finished tool calls into interrupted ones. When the session's history and revision are unchanged since the last save, for example while only async jobs run, that save is skipped and the store is not called; a store that adds host state to each snapshot saves that state at the next save.
+
+Each save copies into the session only the messages added since the run's last commit, plus the one owned `SessionSnapshot` the store receives. The first save after a compaction or accepted boundary input, which commit history themselves, copies the whole history.
 
 After a crash, restore the last snapshot with `SessionOptions::from_snapshot` and call `Session::continue_history`. It adds no user message. Tool calls without a result are settled first. A built-in tool whose declared capabilities are all `Read` runs again. Every other call gets an interrupted tool result, so the model sees that it may or may not have taken effect. The run then asks the model for the next step.
 

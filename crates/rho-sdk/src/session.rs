@@ -164,6 +164,38 @@ struct SessionData {
     last_compaction_decision: Option<crate::CompactionDecision>,
 }
 
+impl SessionData {
+    fn commit_mark(&self) -> CommitMark {
+        CommitMark {
+            revision: self.revision,
+            history_len: self.history.len(),
+        }
+    }
+
+    fn next_revision(&self) -> Result<Revision, Error> {
+        self.revision
+            .checked_next()
+            .ok_or_else(|| Error::Persistence {
+                message: "session revision is exhausted".into(),
+            })
+    }
+}
+
+/// A committed revision and its history length, minted only by
+/// [`SessionCore`]. A run keeps its last mark so the next checkpoint can tell
+/// whether the session still holds a prefix of the working history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CommitMark {
+    revision: Revision,
+    history_len: usize,
+}
+
+impl CommitMark {
+    pub(crate) fn revision(self) -> Revision {
+        self.revision
+    }
+}
+
 pub(crate) struct HistoryMetrics {
     message_count: usize,
     estimated_tokens: u64,
@@ -260,6 +292,16 @@ impl SessionCore {
         (data.history.clone(), data.revision)
     }
 
+    /// Copies the committed history into a run's working history, with the
+    /// mark its first checkpoint extends.
+    pub(crate) fn snapshot_for_run(&self) -> (Vec<Message>, CommitMark) {
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (data.history.clone(), data.commit_mark())
+    }
+
     /// Publishes the run's working history for the duration of a tool batch.
     ///
     /// Publication copies the whole conversation, so it happens only when a
@@ -331,16 +373,68 @@ impl SessionCore {
             .data
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let revision = data
-            .revision
-            .checked_next()
-            .ok_or_else(|| Error::Persistence {
-                message: "session revision is exhausted".into(),
-            })?;
+        let revision = data.next_revision()?;
         context::commit_context(&mut data, &history, &source, &tools, &identity);
         data.history = history;
         data.revision = revision;
         Ok(revision)
+    }
+
+    /// Whether the session still holds exactly the commit `mark` and
+    /// `history` has not grown since.
+    ///
+    /// Relies on the run's working history only growing between its own
+    /// commits; see [`Self::commit_checkpoint`].
+    pub(crate) fn holds_unchanged(&self, mark: CommitMark, history: &[Message]) -> bool {
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let unchanged = data.commit_mark() == mark && history.len() == mark.history_len;
+        debug_assert!(
+            !unchanged || data.history == history,
+            "working history was rewritten without a commit"
+        );
+        unchanged
+    }
+
+    /// Commits a run's working history at a step checkpoint.
+    ///
+    /// Between a run's commits its working history only grows: compaction,
+    /// the one in-place rewrite, commits its replacement and so moves the
+    /// revision. While the session still holds `previous`, its history is
+    /// therefore `history[..previous.history_len]`, and only the appended
+    /// messages are cloned. Otherwise the whole history is copied.
+    ///
+    /// Context accounting relies on the same invariant: it advances by
+    /// message count from its last measured length.
+    pub(crate) fn commit_checkpoint(
+        &self,
+        history: &[Message],
+        previous: CommitMark,
+    ) -> Result<CommitMark, Error> {
+        let runtime = self.runtime();
+        let tools = runtime.advertised_tool_specs();
+        let identity = runtime.provider.identity();
+        let source = runtime.context_messages(self.id());
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let revision = data.next_revision()?;
+        context::commit_context(&mut data, history, &source, &tools, &identity);
+        match history.get(previous.history_len..) {
+            Some(appended) if data.commit_mark() == previous => {
+                data.history.extend_from_slice(appended);
+                debug_assert!(
+                    data.history == history,
+                    "working history was rewritten without a commit"
+                );
+            }
+            Some(_) | None => data.history = history.to_vec(),
+        }
+        data.revision = revision;
+        Ok(data.commit_mark())
     }
 
     pub(crate) fn commit_compaction(
@@ -358,12 +452,7 @@ impl SessionCore {
             .data
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let revision = data
-            .revision
-            .checked_next()
-            .ok_or_else(|| Error::Persistence {
-                message: "session revision is exhausted".into(),
-            })?;
+        let revision = data.next_revision()?;
         // Count the history that was actually compacted. Automatic compaction
         // may include uncommitted in-flight messages that are not yet in the
         // persisted session history.
@@ -609,9 +698,12 @@ impl Session {
     ///
     /// With a store, each run commits its working history and saves the session
     /// snapshot before every provider request and again after each model reply
-    /// or host tool-call batch, before those calls start. A process that dies mid-run can
-    /// restore the last saved snapshot and call [`Session::continue_history`].
-    /// A failed save fails the run.
+    /// or host tool-call batch, before those calls start. Before a provider
+    /// request whose history and revision are unchanged since the last save,
+    /// the store is not called, so host state a store adds to each snapshot
+    /// waits for the next save. A process that dies mid-run can restore the
+    /// last saved snapshot and call [`Session::continue_history`]. A failed
+    /// save fails the run.
     pub fn set_checkpoint_store(
         &self,
         store: Option<Arc<dyn crate::SessionStore>>,
@@ -843,12 +935,7 @@ impl Session {
         data.working_context = None;
         data.last_compaction_decision = None;
         data.compaction = crate::CompactionState::default();
-        data.revision = data
-            .revision
-            .checked_next()
-            .ok_or_else(|| Error::Persistence {
-                message: "session revision is exhausted".into(),
-            })?;
+        data.revision = data.next_revision()?;
         Ok(())
     }
 
