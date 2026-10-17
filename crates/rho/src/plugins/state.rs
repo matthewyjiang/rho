@@ -161,27 +161,32 @@ impl TryFrom<StoredEntry> for PluginStateEntry {
     type Error = String;
 
     fn try_from(stored: StoredEntry) -> Result<Self, String> {
-        let install =
-            match (stored.origin, stored.link_target, stored.git) {
-                (None, None, None) => None,
-                (Some(PluginOrigin::Install), None, None) => Some(InstallRecord::Copy),
-                (Some(PluginOrigin::Link), Some(target), None) => {
-                    Some(InstallRecord::Link { target })
-                }
-                (Some(PluginOrigin::Git), None, Some(git)) => Some(InstallRecord::Git(git)),
-                (origin, link_target, git) => {
-                    return Err(format!(
-                    "origin {} does not match its recorded fields (link_target: {}, git table: {})",
-                    origin.map_or("(none)", PluginOrigin::as_str),
-                    if link_target.is_some() { "present" } else { "absent" },
-                    if git.is_some() { "present" } else { "absent" },
-                ))
-                }
-            };
+        let install = match (stored.origin, stored.link_target, stored.git) {
+            (None, None, None) => None,
+            (Some(PluginOrigin::Install), None, None) => Some(InstallRecord::Copy),
+            (Some(PluginOrigin::Link), Some(target), None) => Some(InstallRecord::Link { target }),
+            (Some(PluginOrigin::Git), None, Some(git)) => Some(InstallRecord::Git(git)),
+            (origin, link_target, git) => {
+                let origin = origin.map_or("(none)", PluginOrigin::as_str);
+                return Err(format!(
+                    "origin {origin} does not match its fields (link_target: {}, git: {})",
+                    presence(link_target.is_some()),
+                    presence(git.is_some()),
+                ));
+            }
+        };
         Ok(Self {
             enabled: stored.enabled,
             install,
         })
+    }
+}
+
+fn presence(present: bool) -> &'static str {
+    if present {
+        "present"
+    } else {
+        "absent"
     }
 }
 

@@ -87,7 +87,7 @@ pub(crate) fn update(
 ) -> anyhow::Result<UpdateReport> {
     let mut state = PluginStateStore::load(cwd, rho_home)?;
     let mut report = UpdateReport::default();
-    for scope in update_scopes(&state, cwd, home) {
+    for scope in update_scopes(&state) {
         for name in state.git_installed(scope) {
             if matches!(selection, UpdateSelection::Named(wanted) if wanted != name) {
                 continue;
@@ -119,20 +119,17 @@ pub(crate) fn update(
     Ok(report)
 }
 
-/// Scopes to walk, dropping project scope when it aliases user scope.
+/// Scopes to walk, dropping project scope when it reads the user state file.
 ///
 /// Outside a repository, running from the home directory makes the project
-/// root `$HOME`, so project state and roots can be the user ones. Walking both
-/// would update each package twice and misreport it as untrusted.
-fn update_scopes(state: &PluginStateStore, cwd: &Path, home: &Path) -> Vec<PluginScope> {
-    let same = |a: &Path, b: &Path| {
-        a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
-    };
-    let aliased = same(&state.project_path, &state.user_path)
-        || same(
-            &managed_root(PluginScope::Project, cwd, home),
-            &managed_root(PluginScope::User, cwd, home),
-        );
+/// root `$HOME`, so with the default `RHO_HOME` both scopes load
+/// `~/.rho/plugins.toml`. Walking both would update each package twice and
+/// misreport it as untrusted. Distinct state files hold distinct records, so
+/// both are walked even when their package roots coincide.
+fn update_scopes(state: &PluginStateStore) -> Vec<PluginScope> {
+    let (project, user) = (&state.project_path, &state.user_path);
+    let aliased = project == user
+        || matches!((project.canonicalize(), user.canonicalize()), (Ok(a), Ok(b)) if a == b);
     if aliased {
         vec![PluginScope::User]
     } else {

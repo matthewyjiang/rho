@@ -4860,6 +4860,7 @@ dependencies = [
  "keyring",
  "libc",
  "mermaid-rs-renderer",
+ "percent-encoding",
  "portable-pty",
  "pretty_assertions",
  "pulldown-cmark",

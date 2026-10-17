@@ -304,46 +304,70 @@ fn git_install_copies_package_files_only() {
     assert_eq!(demo_status(&env), PluginStatus::Loaded);
 }
 
-// Covers: from a home directory outside any repository, project scope aliases
-// user scope; update must touch each package once and not call it untrusted.
+// Covers: from a home directory outside any repository, project state is the
+// user state file under the default RHO_HOME; update must touch each package
+// once and not call it untrusted. With a separate RHO_HOME the files differ
+// and project records are still walked.
 // Owner: plugin git update selection.
 #[test]
-fn update_from_home_directory_walks_user_scope_once() {
-    let home = TempDir::new().unwrap();
-    let rho_home = home.path().join(".rho");
-    let (repo, commit) = plugin_repo("demo");
-    install_git(
-        &repo_source(repo.path(), Some("plugins/demo")),
-        PluginScope::User,
-        /* force */ false,
-        home.path(),
-        home.path(),
-        Some(&rho_home),
-    )
-    .unwrap();
+fn update_from_home_directory_walks_each_state_file_once() {
+    let cases = [
+        // (separate RHO_HOME, install scope, untrusted skips, updated scope)
+        (
+            false,
+            PluginScope::User,
+            Vec::<&str>::new(),
+            Some(PluginScope::User),
+        ),
+        (true, PluginScope::Project, vec!["demo"], None),
+    ];
+    for (separate_rho_home, scope, untrusted, updated) in cases {
+        let home = TempDir::new().unwrap();
+        let other = TempDir::new().unwrap();
+        let rho_home = if separate_rho_home {
+            other.path().to_path_buf()
+        } else {
+            home.path().join(".rho")
+        };
+        let (repo, commit) = plugin_repo("demo");
+        install_git(
+            &repo_source(repo.path(), Some("plugins/demo")),
+            scope,
+            /* force */ false,
+            home.path(),
+            home.path(),
+            Some(&rho_home),
+        )
+        .unwrap();
 
-    let report = update(
-        UpdateSelection::All,
-        ProjectTrust::Untrusted,
-        home.path(),
-        home.path(),
-        Some(&rho_home),
-    )
-    .unwrap();
-    let results = report
-        .results
-        .into_iter()
-        .map(|(target, result)| (target, result.ok()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        results,
-        [(
-            UpdateTarget {
-                name: "demo".to_string(),
-                scope: PluginScope::User,
-            },
-            Some(UpdateOutcome::UpToDate { commit })
-        )]
-    );
-    assert!(report.untrusted.is_empty());
+        let report = update(
+            UpdateSelection::All,
+            ProjectTrust::Untrusted,
+            home.path(),
+            home.path(),
+            Some(&rho_home),
+        )
+        .unwrap();
+        let results = report
+            .results
+            .into_iter()
+            .map(|(target, result)| (target.scope, result.ok()))
+            .collect::<Vec<_>>();
+        let expected = updated
+            .map(|scope| {
+                (
+                    scope,
+                    Some(UpdateOutcome::UpToDate {
+                        commit: commit.clone(),
+                    }),
+                )
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(results, expected, "separate RHO_HOME: {separate_rho_home}");
+        assert_eq!(
+            report.untrusted, untrusted,
+            "separate RHO_HOME: {separate_rho_home}"
+        );
+    }
 }

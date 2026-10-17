@@ -220,15 +220,16 @@ so your existing credentials, SSH keys, and `insteadOf` rewrites apply to
 private repositories. It then validates and copies the package like a local
 install, without the `.git` directory. Accepted URL schemes are `https://`,
 `http://`, `ssh://`, `git://`, `file://`, and scp-style `git@host:path`.
-Arguments with a URL scheme (or `git@`) are always fetched. A scheme-less
+Arguments with a URL scheme (matched in any case) or a `git@` prefix are
+always treated as remotes, and unsupported schemes are rejected. A scheme-less
 argument such as `github.com/owner/repo` installs locally when that path
 exists, and is treated as a GitHub link otherwise.
 URLs with embedded credentials (`https://user:token@host/...`) are refused,
 because the URL is recorded and printed; use a credential helper or SSH key.
 
-In a GitHub `tree/` link, the first segment after `tree/` is the ref, so
-branch names that contain `/` cannot be expressed that way. Use a tag or
-commit link instead.
+In a GitHub `tree/` link, the first segment after `tree/` is the ref, and
+percent-encoded segments are decoded. A branch whose name contains `/` must
+be written encoded (`tree/feature%2Fx/...`), or use a tag or commit link.
 
 The source URL, ref, package path, and installed commit are recorded in
 `plugins.toml`, and `rho plugins inspect` shows them. `rho plugins update`

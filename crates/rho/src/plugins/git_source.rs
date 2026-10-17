@@ -18,7 +18,7 @@ use std::{
 
 use super::{contain, state::GitRecord};
 
-/// URL prefixes treated as git remotes. Anything else is a local path.
+/// URL prefixes `git` may fetch from. Other schemes are rejected.
 const REMOTE_PREFIXES: &[&str] = &["https://", "http://", "ssh://", "git://", "file://", "git@"];
 
 /// Inherited variables that would point `git` at another repository instead
@@ -46,8 +46,8 @@ pub(crate) enum InstallSource {
 impl InstallSource {
     /// Classify an install argument as a local path or a git source.
     ///
-    /// Arguments with a remote prefix (`https://`, `git@`, ...) are always
-    /// remotes. A scheme-less argument is local when that path exists
+    /// Arguments with a URL scheme (any case) or a `git@` prefix are always
+    /// remotes; unsupported schemes are rejected rather than read as paths. A scheme-less argument is local when that path exists
     /// (relative to `cwd`), so a directory named like `github.com/...` still
     /// installs locally; otherwise it may be a scheme-less GitHub link.
     pub(crate) fn parse(arg: &OsStr, cwd: &Path) -> anyhow::Result<Self> {
@@ -58,19 +58,18 @@ impl InstallSource {
         };
         // Explicit remotes never consult the filesystem, so a planted
         // `https:/...` directory cannot stand in for a URL.
-        if REMOTE_PREFIXES.iter().any(|prefix| arg.starts_with(prefix)) {
-            return match github_link(arg) {
-                Some(link) => parse_github_link(&link).map(Self::Git),
-                None => GitSource::new(arg.to_string(), None, None).map(Self::Git),
-            };
+        if let Some(remote) = remote_spelling(arg) {
+            return github_source(&remote)
+                .unwrap_or_else(|| GitSource::new(remote, None, None))
+                .map(Self::Git);
         }
         if cwd.join(path).exists() {
             return local();
         }
-        match github_link(arg) {
-            Some(link) => parse_github_link(&link).map(Self::Git),
-            None => local(),
+        if let Some(source) = github_source(arg) {
+            return source.map(Self::Git);
         }
+        local()
     }
 }
 
@@ -107,9 +106,7 @@ impl GitSource {
             );
         }
         if embeds_credentials(&url) {
-            anyhow::bail!(
-                "refusing a git URL with embedded credentials; use a git credential helper or SSH key instead"
-            );
+            anyhow::bail!("{CREDENTIALS_REFUSED}");
         }
         if let Some(git_ref) = &git_ref {
             if git_ref.is_empty() || git_ref.starts_with('-') {
@@ -145,10 +142,7 @@ impl GitSource {
 
     /// Whether the URL points at GitHub, where `/tree/<ref>/<path>` links work.
     pub(crate) fn is_github(&self) -> bool {
-        url::Url::parse(&self.url)
-            .ok()
-            .and_then(|url| url.host_str().map(|host| GITHUB_HOSTS.contains(&host)))
-            .unwrap_or(false)
+        url::Url::parse(&self.url).is_ok_and(|url| is_github_web(&url))
     }
 
     /// State record for this source at `commit`.
@@ -191,6 +185,28 @@ impl TryFrom<&GitRecord> for GitSource {
     }
 }
 
+/// `arg` spelled for `git` when it names a remote: a `scheme://` URL with the
+/// scheme lowercased (git matches transports case-sensitively), or an
+/// scp-style `git@host:path`.
+fn remote_spelling(arg: &str) -> Option<String> {
+    if let Some((scheme, rest)) = arg.split_once("://") {
+        let is_scheme = scheme
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        if is_scheme {
+            return Some(format!("{}://{rest}", scheme.to_ascii_lowercase()));
+        }
+    }
+    arg.starts_with("git@").then(|| arg.to_string())
+}
+
+const CREDENTIALS_REFUSED: &str =
+    "refusing a git URL with embedded credentials; use a git credential helper or SSH key instead";
+
 /// Whether `url` carries a password, or any userinfo over HTTP(S) where a
 /// bare username is commonly an access token. `ssh://git@host` stays allowed.
 fn embeds_credentials(url: &str) -> bool {
@@ -202,53 +218,47 @@ fn embeds_credentials(url: &str) -> bool {
         || matches!(parsed.scheme(), "http" | "https") && !parsed.username().is_empty()
 }
 
-/// A GitHub web link: the raw path after the host, before `?` or `#`.
-struct GithubLink {
-    path: String,
-    has_userinfo: bool,
+/// An HTTP(S) URL on a GitHub web host (host match is case-insensitive).
+fn is_github_web(url: &url::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+        && url
+            .host_str()
+            .is_some_and(|host| GITHUB_HOSTS.contains(&host))
 }
 
-/// Recognize `arg` as a GitHub web link, accepting a missing `https://`.
+/// Parse `arg` as a GitHub web link (`https://` optional); `None` when it is
+/// not one.
 ///
-/// `url::Url` decides the scheme and host (case-insensitive). The path is
-/// taken from the raw text instead, because URL parsing would resolve `..`
-/// segments before the package path check could reject them.
-fn github_link(arg: &str) -> Option<GithubLink> {
+/// `url::Url` decides the scheme and host. The path is split from the raw
+/// text instead, because URL parsing resolves `..` segments before the
+/// package path check could reject them. Ref and path segments are
+/// percent-decoded, so links GitHub encodes (`my%20plugin`, `feature%2Fx`)
+/// resolve to the real names.
+///
+/// GitHub shows `/` in ref names unencoded, so in a plain tree link the first
+/// segment after `tree/` is taken as the ref.
+fn github_source(arg: &str) -> Option<anyhow::Result<GitSource>> {
     let with_scheme = if arg.contains("://") {
         arg.to_string()
     } else {
         format!("https://{arg}")
     };
-    let url = url::Url::parse(&with_scheme).ok()?;
-    let is_github = matches!(url.scheme(), "http" | "https")
-        && url
-            .host_str()
-            .is_some_and(|host| GITHUB_HOSTS.contains(&host));
-    if !is_github {
+    if !is_github_web(&url::Url::parse(&with_scheme).ok()?) {
         return None;
     }
-    let after_scheme = with_scheme.split_once("://").map_or("", |(_, rest)| rest);
+    Some(github_source_from(&with_scheme))
+}
+
+fn github_source_from(url: &str) -> anyhow::Result<GitSource> {
+    if embeds_credentials(url) {
+        anyhow::bail!("{CREDENTIALS_REFUSED}");
+    }
+    let after_scheme = url.split_once("://").map_or("", |(_, rest)| rest);
     let path = after_scheme
         .find('/')
         .map_or("", |start| &after_scheme[start..]);
     let path = path.split(['?', '#']).next().unwrap_or_default();
-    Some(GithubLink {
-        path: path.to_string(),
-        has_userinfo: !url.username().is_empty() || url.password().is_some(),
-    })
-}
-
-/// Turn a GitHub web link into a source.
-///
-/// The first segment after `tree/` is the ref, so refs that contain `/` are
-/// not expressible through a tree URL.
-fn parse_github_link(link: &GithubLink) -> anyhow::Result<GitSource> {
-    if link.has_userinfo {
-        anyhow::bail!(
-            "refusing a git URL with embedded credentials; use a git credential helper or SSH key instead"
-        );
-    }
-    let mut segments = link.path.split('/').filter(|segment| !segment.is_empty());
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
     let (Some(owner), Some(repo)) = (segments.next(), segments.next()) else {
         anyhow::bail!("unsupported GitHub URL: expected github.com/<owner>/<repo>");
     };
@@ -259,9 +269,10 @@ fn parse_github_link(link: &GithubLink) -> anyhow::Result<GitSource> {
             let Some(git_ref) = segments.next() else {
                 anyhow::bail!("unsupported GitHub URL: `tree/` needs a ref");
             };
-            let subdir = segments.collect::<Vec<_>>().join("/");
+            let subdir = segments.map(decode_segment).collect::<anyhow::Result<Vec<_>>>()?;
+            let subdir = subdir.join("/");
             (
-                Some(git_ref.to_string()),
+                Some(decode_segment(git_ref)?),
                 (!subdir.is_empty()).then_some(subdir),
             )
         }
@@ -274,6 +285,14 @@ fn parse_github_link(link: &GithubLink) -> anyhow::Result<GitSource> {
         git_ref,
         subdir,
     )
+}
+
+/// Percent-decode one URL path segment.
+fn decode_segment(segment: &str) -> anyhow::Result<String> {
+    percent_encoding::percent_decode_str(segment)
+        .decode_utf8()
+        .map(|decoded| decoded.into_owned())
+        .map_err(|_| anyhow::anyhow!("GitHub URL segment `{segment}` is not valid UTF-8"))
 }
 
 /// A shallow checkout of one commit in a temporary directory.

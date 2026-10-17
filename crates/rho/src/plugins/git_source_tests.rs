@@ -32,6 +32,10 @@ fn parses_install_sources() {
         ("github.com/owner/repo/", git(repo, None, None)),
         ("www.github.com/owner/repo", git(repo, None, None)),
         (
+            "https://github.com/owner/repo/tree/feature%2Fx/plugins/my%20plugin",
+            git(repo, Some("feature/x"), Some("plugins/my plugin")),
+        ),
+        (
             "HTTP://WWW.GitHub.com/owner/repo/tree/main/plugins/demo",
             git(repo, Some("main"), Some("plugins/demo")),
         ),
@@ -50,6 +54,10 @@ fn parses_install_sources() {
         (
             "git@gitlab.com:owner/repo.git",
             git("git@gitlab.com:owner/repo.git", None, None),
+        ),
+        (
+            "SSH://git@example.com/owner/repo.git",
+            git("ssh://git@example.com/owner/repo.git", None, None),
         ),
         (
             "ssh://git@example.com/owner/repo.git",
@@ -89,6 +97,9 @@ fn rejects_unsafe_or_malformed_sources() {
         "https://github.com/owner/repo/tree/--upload-pack=evil",
         "https://github.com/owner/repo/tree/main/../outside",
         "https://github.com/owner/repo/tree/main/./plugin",
+        "https://github.com/owner/repo/tree/main/%2e%2e/outside",
+        "https://github.com/owner/repo/tree/%2Dbad",
+        "ftp://example.com/owner/repo.git",
         "https://user:ghp_secret@github.com/owner/repo",
         "https://ghp_secret@github.com/owner/repo",
         "https://ghp_secret@gitlab.com/owner/repo.git",
@@ -130,10 +141,17 @@ fn local_paths_win_only_without_a_scheme() {
 
     #[cfg(unix)]
     {
-        std::fs::create_dir_all(cwd.path().join("https:/github.com/owner/repo")).unwrap();
-        assert_eq!(
-            InstallSource::parse(OsStr::new("https://github.com/owner/repo"), cwd.path()).unwrap(),
-            git("https://github.com/owner/repo", None, None)
-        );
+        for arg in [
+            "https://github.com/owner/repo",
+            "HTTPS://github.com/owner/repo",
+        ] {
+            let planted = arg.replacen("://", ":/", 1);
+            std::fs::create_dir_all(cwd.path().join(planted)).unwrap();
+            assert_eq!(
+                InstallSource::parse(OsStr::new(arg), cwd.path()).unwrap(),
+                git("https://github.com/owner/repo", None, None),
+                "{arg}"
+            );
+        }
     }
 }
