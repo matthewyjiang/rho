@@ -171,9 +171,18 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         .internal_agents
         .unwrap_or_default()
         .into_iter()
-        .map(|(id, group)| {
+        .filter_map(|(id, group)| {
+            if catalog_entry_lacks_model(&id, &group) {
+                warnings.push(ConfigWarning::Normalized {
+                    key: "internal_agents.model",
+                    from: format!("absent for agent '{id}'"),
+                    to: "no override; an entry for a catalog agent must name provider and model"
+                        .into(),
+                });
+                return None;
+            }
             let selection = internal_agent_selection(&id, group, &cfg, &mut warnings);
-            (id, selection)
+            Some((id, selection))
         })
         .collect();
     if let Some(group) = file.title {
@@ -574,6 +583,20 @@ struct PartialInternalAgentModelConfig {
     /// its limit instead of failing the whole config load.
     allow_threshold_percent: Option<u8>,
     reasoning: Option<ReasoningLevel>,
+}
+
+/// Whether a Rho entry for a catalog agent (one that is neither internal nor
+/// the permission screen) leaves out `provider` or `model`. Such an entry
+/// replaces the model the agent's file names, so filling the gap from the
+/// conversation model would swap models nobody asked to swap.
+fn catalog_entry_lacks_model(id: &str, group: &PartialInternalAgentModelConfig) -> bool {
+    let catalog = !crate::agent::is_internal_agent_id(id)
+        && id != crate::permission_classifier::DECISION_SCREEN_ID;
+    let rho = matches!(
+        group.runtime.as_deref(),
+        None | Some(crate::config::RHO_RUNTIME_KEY)
+    );
+    catalog && rho && (group.provider.is_none() || group.model.is_none())
 }
 
 /// Builds one internal-agent selection, filling Rho defaults from the

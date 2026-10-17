@@ -24,10 +24,9 @@ pub(crate) const RHO_EXTENSION_NAMESPACE: &str = "io.github.matthewyjiang.rho";
 pub(crate) struct PluginAgentFiles {
     /// Filesystem-resolved agents directory inside the plugin root.
     pub(crate) dir: PathBuf,
-    /// Contained `*.md` files in name order, each `dir` joined with the
-    /// entry's own name, so a symlinked file keeps its link name (and the id
-    /// it derives). Files resolving outside the plugin root are left out and
-    /// reported as problems.
+    /// Regular `*.md` files directly in `dir`, in name order. Symlinked files
+    /// are left out and reported as problems, so every reader (including the
+    /// workflow tool, which never follows links) sees the same set.
     pub(crate) files: Vec<PathBuf>,
 }
 
@@ -62,7 +61,7 @@ impl PluginAgentTiers {
 
 /// Locates the plugin's Rho agent files, recording problems the way other
 /// component types do: a wrong-kind or escaping location invalidates only
-/// agents, and an escaping file skips only that file (spec §4.1, §6.2).
+/// agents, and a symlinked file skips only that file (spec §4.1, §6.2).
 pub(super) fn discover_plugin_agents(
     root: &Path,
     problems: &mut Vec<String>,
@@ -103,13 +102,17 @@ pub(super) fn discover_plugin_agents(
         let Some(name) = candidate.file_name() else {
             continue;
         };
-        // The resolved path only proves containment; the entry keeps its name.
-        match contain::contained_path(root, &candidate) {
-            Ok(_) => files.push(dir.join(name)),
-            Err(error) => {
-                let name = name.to_string_lossy();
-                problems.push(format!("skipping agent file `{name}`: {error}"));
-            }
+        // `dir` is resolved inside the root, so a regular file in it is too.
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) if !metadata.file_type().is_symlink() => files.push(dir.join(name)),
+            Ok(_) => problems.push(format!(
+                "skipping agent file `{}`: symlinked agent files are not supported",
+                name.to_string_lossy()
+            )),
+            Err(error) => problems.push(format!(
+                "skipping agent file `{}`: {error}",
+                name.to_string_lossy()
+            )),
         }
     }
     Some(PluginAgentFiles { dir, files })

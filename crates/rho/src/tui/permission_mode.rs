@@ -410,6 +410,9 @@ impl App {
         Ok(())
     }
 
+    /// Hands the runtime this session's `[internal_agents]` entries and
+    /// permission mode, which the classifier and delegated catalog agents
+    /// read from its config.
     pub(super) fn sync_internal_agents_runtime_config(&self, agent: &mut InteractiveRuntime) {
         let mut config = agent.config_snapshot();
         config

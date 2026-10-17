@@ -1397,11 +1397,14 @@ fn configured_model_override_replaces_the_definition_model() {
 // Owner: agent binding
 #[test]
 fn configured_model_override_refuses_a_runtime_switch() {
+    use crate::agent::model_override::ModelOverrideError;
+    let rho = definition(ToolPolicy::All);
     let claude = claude_definition(ModelPolicy::Inherit);
     let cases = [
         (
-            definition(ToolPolicy::All),
+            rho.clone(),
             crate::config::InternalAgentModelConfig::claude_cli(None),
+            ModelOverrideError::ClaudeCodeTarget { id: rho.id.clone() },
         ),
         (
             claude.clone(),
@@ -1410,9 +1413,13 @@ fn configured_model_override_refuses_a_runtime_switch() {
                 "grok-4.7".into(),
                 "xai-api-key".into(),
             ),
+            ModelOverrideError::ExternalRuntime {
+                id: claude.id.clone(),
+                runtime: claude.runtime.runtime().to_string(),
+            },
         ),
     ];
-    for (agent, entry) in cases {
+    for (agent, entry, expected) in cases {
         let mut host = Config::default();
         host.set_internal_agent_model_config(agent.id.as_str(), entry);
         let result = AgentBinder::bind_with_credentials(
@@ -1424,7 +1431,8 @@ fn configured_model_override_refuses_a_runtime_switch() {
             &host,
             &credentials(&["xai-api-key"]),
         );
-        assert!(result.is_err(), "{} bound with a runtime switch", agent.id);
+        let error = result.expect_err("bound with a runtime switch");
+        assert_eq!(error.downcast_ref::<ModelOverrideError>(), Some(&expected));
     }
 }
 

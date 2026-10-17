@@ -496,18 +496,27 @@ impl App {
         let id = target.id.as_str();
         match target.origin {
             InternalAgentModelPickerOrigin::AgentsPicker => {
-                if let super::agent_picker::AgentModelDefault::Definition(_) = target.default {
+                use super::agent_picker::AgentModelDefault;
+                match target.default {
                     // Delegated runs bind catalog agents from the runtime's
                     // copy of the entries.
-                    self.sync_internal_agents_runtime_config(agent);
-                } else if id == ADVISOR_AGENT_ID {
-                    self.sync_advisor_runtime(agent).await;
-                } else if id == PERMISSION_CLASSIFIER_AGENT_ID {
-                    self.sync_internal_agents_runtime_config(agent);
-                } else if selected && id == crate::agent::COMPACTION_AGENT_ID {
+                    AgentModelDefault::Definition(_) => {
+                        self.sync_internal_agents_runtime_config(agent);
+                    }
+                    AgentModelDefault::Internal if id == ADVISOR_AGENT_ID => {
+                        self.sync_advisor_runtime(agent).await;
+                    }
+                    AgentModelDefault::Internal if id == PERMISSION_CLASSIFIER_AGENT_ID => {
+                        self.sync_internal_agents_runtime_config(agent);
+                    }
                     // The compactor reads its summarizer from saved config
                     // the next time the session is idle.
-                    self.compaction_reload_pending = true;
+                    AgentModelDefault::Internal
+                        if selected && id == crate::agent::COMPACTION_AGENT_ID =>
+                    {
+                        self.compaction_reload_pending = true;
+                    }
+                    AgentModelDefault::Internal => {}
                 }
                 let status = self.status().to_string();
                 self.execute_agents_command()?;

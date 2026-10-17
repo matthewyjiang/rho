@@ -451,45 +451,57 @@ impl TierLoad {
     }
 }
 
-/// An id a tier's files may not define.
+/// Id the synthetic `/side` agent binds under.
+pub(crate) const SIDE_AGENT_ID: &str = "side";
+
+/// An id Rho owns, so catalog files and model overrides cannot take it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReservedId {
     /// Internal agents, reserved from every tier.
     Internal,
     /// Built-in agents, reserved from plugins only.
     BuiltIn,
-    /// Ids Rho uses outside the catalog, reserved from plugins only.
+    /// Ids Rho uses outside the catalog (the permission screen's
+    /// `[internal_agents]` key and the `/side` agent), reserved from plugins
+    /// only.
     Host,
 }
 
+impl ReservedId {
+    fn of(id: &AgentId) -> Option<Self> {
+        let id = id.as_str();
+        if is_internal_agent_id(id) {
+            Some(Self::Internal)
+        } else if BUILTINS.iter().any(|(builtin, _)| *builtin == id) {
+            Some(Self::BuiltIn)
+        } else if [
+            crate::permission_classifier::DECISION_SCREEN_ID,
+            SIDE_AGENT_ID,
+        ]
+        .contains(&id)
+        {
+            Some(Self::Host)
+        } else {
+            None
+        }
+    }
+}
+
+/// The reservation that stops a file from `origin` defining `id`. Only
+/// internal ids are reserved from the files users own.
 fn reserved_id(origin: AgentOrigin, id: &AgentId) -> Option<ReservedId> {
-    if is_internal_agent_id(id.as_str()) {
-        return Some(ReservedId::Internal);
+    match ReservedId::of(id)? {
+        ReservedId::Internal => Some(ReservedId::Internal),
+        reserved @ (ReservedId::BuiltIn | ReservedId::Host) => {
+            origin.is_plugin().then_some(reserved)
+        }
     }
-    if !origin.is_plugin() {
-        return None;
-    }
-    if is_builtin_agent_id(id) {
-        return Some(ReservedId::BuiltIn);
-    }
-    is_host_agent_id(id.as_str()).then_some(ReservedId::Host)
 }
 
-/// Whether Rho uses `id` outside the catalog: the permission screen's
-/// `[internal_agents]` key and the synthetic `/side` agent. Neither takes a
-/// catalog model override, so a plugin agent cannot claim one.
-pub(crate) fn is_host_agent_id(id: &str) -> bool {
-    [
-        crate::permission_classifier::DECISION_SCREEN_ID,
-        crate::app::side_chat::SIDE_AGENT_ID,
-    ]
-    .contains(&id)
-}
-
-/// Whether `id` names one of Rho's built-in agents (`default`, `explorer`,
-/// `reviewer`, `worker`).
-pub(crate) fn is_builtin_agent_id(id: &AgentId) -> bool {
-    BUILTINS.iter().any(|(builtin, _)| *builtin == id.as_str())
+/// Whether Rho owns `id`: an internal, built-in, or host agent id. Such ids
+/// never take a catalog model override.
+pub(crate) fn is_reserved_agent_id(id: &AgentId) -> bool {
+    ReservedId::of(id).is_some()
 }
 
 /// The agent id a definition file's name claims, when it is a valid id.

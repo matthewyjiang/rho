@@ -250,17 +250,22 @@ fn agent_detail(
     models: &AgentModelView<'_>,
 ) -> DetailSheet {
     let definition = &entry.definition;
+    let ModelFields {
+        model,
+        reasoning,
+        fast,
+    } = agent_model_fields(entry, models);
     let mut fields = vec![
         DetailField::new(
             "Runtime",
             definition.runtime.runtime().to_string(),
             DetailTone::Normal,
         ),
-        agent_model_field(entry, models),
-        agent_reasoning_field(entry, models),
+        model,
+        reasoning,
         agent_tools_field(definition),
     ];
-    if definition.fast() {
+    if fast {
         fields.push(DetailField::new("Fast", "on", DetailTone::Normal));
     }
     if let AgentRuntimeSpec::ClaudeCli(config) = &definition.runtime {
@@ -286,45 +291,87 @@ fn agent_detail(
     DetailSheet { blocks }
 }
 
-fn agent_model_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> DetailField {
+/// Model, reasoning, and whether the agent runs fast, as bind resolves them.
+struct ModelFields {
+    model: DetailField,
+    reasoning: DetailField,
+    fast: bool,
+}
+
+fn agent_model_fields(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> ModelFields {
     let definition = &entry.definition;
-    let configured = models.internal_agents.get(definition.id.as_str());
     if entry.metadata.origin == AgentOrigin::Internal {
-        return match configured {
-            Some(selection) => {
-                DetailField::new("Model", selection.display_reference(), DetailTone::Normal)
-                    .with_note("override")
-            }
-            None if internal_agent_requires_model(definition.id.as_str()) => {
-                DetailField::new("Model", "not selected", DetailTone::Warning)
-                    .with_note("no conversation fallback")
-            }
-            None => DetailField::new(
-                "Model",
-                rho_providers::provider::model_reference(models.provider, models.model),
-                DetailTone::Muted,
-            )
-            .with_note("conversation model"),
-        };
+        return internal_agent_model_fields(entry, models);
     }
-    let policy = definition.model_policy();
+    let file_policy = definition.model_policy();
     let model_override = match crate::agent::model_override(definition, models.internal_agents) {
         Ok(model_override) => model_override,
         // Bind refuses this agent until the entry goes, so say so here.
         Err(_) => {
-            let reference = configured.map_or_else(String::new, |entry| entry.display_reference());
-            return DetailField::new("Model", reference, DetailTone::Warning)
-                .with_note("override cannot apply");
+            let reference = models
+                .internal_agents
+                .get(definition.id.as_str())
+                .map_or_else(String::new, InternalAgentModelConfig::display_reference);
+            return ModelFields {
+                model: DetailField::new("Model", reference, DetailTone::Warning)
+                    .with_note("override cannot apply"),
+                reasoning: reasoning_field(definition.reasoning()),
+                fast: definition.fast(),
+            };
         }
     };
-    if let Some(model_override) = model_override {
-        let name = model_override
-            .model
-            .selection()
-            .map_or_else(String::new, model_name);
-        return DetailField::new("Model", name, DetailTone::Normal).with_note("override");
+    let (policy, reasoning) = crate::agent::effective_rho_model(
+        &file_policy,
+        definition.reasoning(),
+        model_override.as_ref(),
+    );
+    let model = model_policy_field(policy);
+    ModelFields {
+        model: match model_override {
+            Some(_) => model.with_note("override"),
+            None => model,
+        },
+        reasoning: reasoning_field(reasoning),
+        fast: policy.selection().is_some_and(|selection| selection.fast),
     }
-    match policy.as_ref() {
+}
+
+fn internal_agent_model_fields(
+    entry: &AgentCatalogEntry,
+    models: &AgentModelView<'_>,
+) -> ModelFields {
+    let definition = &entry.definition;
+    let id = definition.id.as_str();
+    let configured = models.internal_agents.get(id);
+    let model = match configured {
+        Some(selection) => {
+            DetailField::new("Model", selection.display_reference(), DetailTone::Normal)
+                .with_note("override")
+        }
+        None if internal_agent_requires_model(id) => {
+            DetailField::new("Model", "not selected", DetailTone::Warning)
+                .with_note("no conversation fallback")
+        }
+        None => DetailField::new(
+            "Model",
+            rho_providers::provider::model_reference(models.provider, models.model),
+            DetailTone::Muted,
+        )
+        .with_note("conversation model"),
+    };
+    let reasoning = match configured {
+        Some(selection) => Some(effective_internal_agent_reasoning(id, selection)),
+        None => definition.reasoning(),
+    };
+    ModelFields {
+        model,
+        reasoning: reasoning_field(reasoning),
+        fast: definition.fast(),
+    }
+}
+
+fn model_policy_field(policy: &ModelPolicy) -> DetailField {
+    match policy {
         ModelPolicy::Inherit => DetailField::new("Model", "inherit", DetailTone::Muted),
         ModelPolicy::Prefer(selection) => {
             DetailField::new("Model", model_name(selection), DetailTone::Normal).with_note("prefer")
@@ -339,29 +386,9 @@ fn agent_model_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> 
     }
 }
 
-fn agent_reasoning_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> DetailField {
-    let definition = &entry.definition;
-    let configured = models.internal_agents.get(definition.id.as_str());
-    let level = match configured {
-        Some(selection) if entry.metadata.origin == AgentOrigin::Internal => Some(
-            effective_internal_agent_reasoning(definition.id.as_str(), selection),
-        ),
-        _ => {
-            let model_override = crate::agent::model_override(definition, models.internal_agents)
-                .ok()
-                .flatten();
-            let policy = definition.model_policy();
-            crate::agent::effective_rho_model(
-                &policy,
-                definition.reasoning(),
-                model_override.as_ref(),
-            )
-            .1
-        }
-    }
-    .map(|level| level.to_string());
+fn reasoning_field(level: Option<crate::agent::ReasoningLevel>) -> DetailField {
     match level {
-        Some(level) => DetailField::new("Reasoning", level, DetailTone::Normal),
+        Some(level) => DetailField::new("Reasoning", level.to_string(), DetailTone::Normal),
         None => DetailField::new("Reasoning", "inherit", DetailTone::Muted),
     }
 }

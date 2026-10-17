@@ -12,8 +12,8 @@ use thiserror::Error;
 use crate::config::{InternalAgentModelConfig, InternalAgentTarget};
 
 use super::{
-    is_builtin_agent_id, is_host_agent_id, is_internal_agent_id, AgentDefinition, AgentId,
-    AgentRuntimeSpec, ModelPolicy, ModelSelection, ReasoningLevel,
+    is_reserved_agent_id, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, ModelSelection,
+    ReasoningLevel,
 };
 
 /// A catalog agent's model as its config entry sets it.
@@ -40,17 +40,17 @@ pub(crate) enum ModelOverrideError {
 
 /// The override `entries` hold for `definition`, if any.
 ///
-/// Internal agents and the ids Rho uses outside the catalog read their
+/// Ids Rho owns never take one: internal agents and host ids read their
 /// entries where they run, and built-ins keep the model they ship with
-/// (plugins cannot claim any of these ids), so none takes one here. Every other id does, so an entry written for a plugin
-/// agent also applies to a user file that takes over the same id.
+/// (plugins cannot claim any of these ids). Every other id does, so an entry
+/// written for a plugin agent also applies to a user file that takes over the
+/// same id.
 pub(crate) fn model_override(
     definition: &AgentDefinition,
     entries: &BTreeMap<String, InternalAgentModelConfig>,
 ) -> Result<Option<ModelOverride>, ModelOverrideError> {
     let id = &definition.id;
-    if is_internal_agent_id(id.as_str()) || is_host_agent_id(id.as_str()) || is_builtin_agent_id(id)
-    {
+    if is_reserved_agent_id(id) {
         return Ok(None);
     }
     let Some(entry) = entries.get(id.as_str()) else {

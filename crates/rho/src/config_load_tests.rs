@@ -624,3 +624,45 @@ fn auto_edit_tool_resolves_preferred_format_for_provider() {
     );
     assert_eq!(config.edit_tool_display_label(), "auto (str_replace)");
 }
+
+// Covers: a catalog (plugin) agent's entry replaces the model its file names,
+// so an entry missing provider or model is dropped with a warning instead of
+// silently pinning the conversation model; internal agents keep filling the
+// gap from the conversation model.
+// Owner: config load
+#[test]
+fn catalog_agent_entries_without_a_model_are_dropped_with_a_warning() {
+    let (config, warnings) = parse_settings(
+        r#"
+[internal_agents.plugin-reviewer]
+reasoning = "high"
+
+[internal_agents.goal-judge]
+reasoning = "high"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        (
+            config.internal_agent_model("plugin-reviewer"),
+            conversation_triple(&config, "goal-judge"),
+        ),
+        (
+            None,
+            (
+                config.provider.clone(),
+                config.model.clone(),
+                config.auth.clone()
+            )
+        )
+    );
+    assert_eq!(
+        warnings,
+        vec![ConfigWarning::Normalized {
+            key: "internal_agents.model",
+            from: "absent for agent 'plugin-reviewer'".into(),
+            to: "no override; an entry for a catalog agent must name provider and model".into(),
+        }]
+    );
+}

@@ -168,21 +168,7 @@ impl AppWorkflowToolService {
             .await?;
         let mut names = crate::workflow::opened_directory_names(&opened_root)?;
         let canonical_root = Path::new(&opened_root.identity.canonical_path);
-        names.retain(|name| {
-            let markdown = Path::new(name)
-                .extension()
-                .is_some_and(|extension| extension == "md");
-            markdown
-                && match files {
-                    AgentFiles::AllMarkdown => true,
-                    AgentFiles::Discovered(kept) => {
-                        let path = canonical_root.join(name);
-                        kept.contains(&path)
-                            && !std::fs::symlink_metadata(&path)
-                                .is_ok_and(|metadata| metadata.file_type().is_symlink())
-                    }
-                }
-        });
+        names.retain(|name| files.reads(name));
         names.sort();
         let mut sources = Vec::new();
         for name in names {
@@ -390,8 +376,26 @@ impl AppWorkflowToolService {
 enum AgentFiles<'a> {
     /// Every Markdown file, for agent directories the user owns.
     AllMarkdown,
-    /// Only the resolved files plugin discovery kept. A file it left out
-    /// (one escaping the plugin root, or a symlink, which workflow reads do
-    /// not follow) is skipped rather than failing the whole catalog.
+    /// Only the files plugin discovery kept, so a symlinked file it already
+    /// reported is skipped here too rather than failing the whole catalog.
     Discovered(&'a [PathBuf]),
 }
+
+impl AgentFiles<'_> {
+    /// Whether the catalog reads the directory entry `name`. Plugin files
+    /// match by name: discovery lists entries of the same directory.
+    fn reads(self, name: &std::ffi::OsStr) -> bool {
+        let markdown = Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension == "md");
+        markdown
+            && match self {
+                Self::AllMarkdown => true,
+                Self::Discovered(kept) => kept.iter().any(|path| path.file_name() == Some(name)),
+            }
+    }
+}
+
+#[cfg(test)]
+#[path = "capabilities_tests.rs"]
+mod tests;

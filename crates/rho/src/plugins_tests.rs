@@ -540,9 +540,9 @@ fn skill_md_symlink_escaping_root_is_skipped() {
     assert!(entry.problems.iter().any(|p| p.contains("escape-skill")));
 }
 
-// Covers: an agents-only plugin is a usable package, an agent file symlinked
-// outside the plugin root is skipped while siblings load (spec 4.1), and a
-// contained link keeps its own name, which the catalog derives the id from.
+// Covers: an agents-only plugin is a usable package, and symlinked agent
+// files, escaping or not, are skipped and reported while siblings load, so
+// workflows (which never follow links) see the same agents (spec 4.1).
 // Owner: plugin path containment.
 #[cfg(unix)]
 #[test]
@@ -567,10 +567,7 @@ fn plugin_agents_load_contained_files_only() {
         discovery.agents,
         super::PluginAgentTiers {
             user: vec![super::PluginAgentFiles {
-                files: vec![
-                    agents_dir.join("inside-agent.md"),
-                    agents_dir.join("linked-agent.md"),
-                ],
+                files: vec![agents_dir.join("inside-agent.md")],
                 dir: agents_dir,
             }],
             project: Vec::new(),
@@ -578,9 +575,8 @@ fn plugin_agents_load_contained_files_only() {
     );
     let entry = report_entry(&discovery, "agentic");
     assert_eq!(entry.status, PluginStatus::Loaded);
-    assert_eq!(entry.agent_files, ["inside-agent.md", "linked-agent.md"]);
-    assert_eq!(entry.problems.len(), 1, "{:?}", entry.problems);
-    assert!(entry.problems[0].contains("escape-agent.md"));
+    assert_eq!(entry.agent_files, ["inside-agent.md"]);
+    assert_eq!(entry.problems.len(), 2, "{:?}", entry.problems);
 }
 
 // Covers: loose skills keep precedence over plugin skills.

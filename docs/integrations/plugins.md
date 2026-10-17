@@ -78,7 +78,7 @@ RHO_TRUST_PROJECT_PLUGINS=1 rho
 This is the same family as `RHO_TRUST_PROJECT_HOOKS` and
 `RHO_TRUST_PROJECT_AGENTS`, so a cloned repository cannot silently run plugin
 commands or agents. Until you grant trust, Rho inventories project plugins.
-Names, manifests, skill names, agent names, and MCP server definitions stay
+Names, manifests, skill names, agent file names, and MCP server definitions stay
 visible in
 `rho plugins list` and `rho plugins inspect`, but no component activates:
 plugin skills do not join skill discovery, plugin agents do not join the agent
@@ -118,6 +118,8 @@ stays portable:
 ```
 
 Each file is an ordinary [agent definition](/subagents/definition-schema).
+Agent files must be regular files: Rho skips a symlinked agent file and
+reports it in `rho plugins inspect`.
 Plugin agents appear in `/agents`, the `agent` tool, `--agent`, workflows, and
 `/agent:<id>` in ACP sessions (including T3 Code delegation) like any other
 agent. Their files stay read-only: `/agents` cannot edit or delete them. They
@@ -131,8 +133,9 @@ A plugin agent cannot use a built-in agent ID (`default`, `explorer`,
 `reviewer`, `worker`), an internal agent ID, or an ID Rho uses elsewhere
 (`side`, `permission-classifier-screen`). Rho skips such a file and
 reports it; the built-in stays available. Two plugins at the same scope that
-ship the same agent ID make that ID unavailable at that level until one is
-removed or disabled.
+ship the same agent ID make that ID unavailable at that level and below
+(project plugin duplicates also hide a user plugin agent with that ID) until
+one is removed or disabled.
 
 ### Plugin agent models
 
@@ -149,8 +152,9 @@ model = "gpt-5.5"
 auth = "api-key"
 ```
 
-The entry replaces the file's model and `fast` setting. Its optional
-`reasoning` key replaces the file's reasoning; without one the file's
+The entry replaces the file's model and `fast` setting, so it must name
+`provider` and `model`; config load drops an entry missing either, with a
+warning, and the file's model stays. Its optional `reasoning` key replaces the file's reasoning; without one the file's
 reasoning stays. The entry is keyed by agent ID, so it also applies to an
 agent file of yours that takes over the same ID; built-in agents never take
 one. Rho refuses to launch the agent when it runs on another runtime, since

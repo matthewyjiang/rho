@@ -12,7 +12,7 @@ mod cursor_tools;
 mod definition;
 mod edit;
 mod internal;
-mod model_override;
+pub(crate) mod model_override;
 mod one_shot;
 mod parser;
 mod serializer;

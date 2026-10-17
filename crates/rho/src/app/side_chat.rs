@@ -26,8 +26,6 @@ use crate::{
 };
 
 pub(crate) const USAGE_PURPOSE: &str = "side";
-/// Id the synthetic `/side` agent binds under.
-pub(crate) const SIDE_AGENT_ID: &str = "side";
 
 pub(crate) const SIDE_CHAT_PROMPT: &str = "\
 You are answering a user aside in a Rho coding session. A frozen snapshot of \
@@ -273,7 +271,7 @@ fn bind_side_agent(host_config: &Config) -> anyhow::Result<BoundAgent> {
         ToolCapability::Glob,
     ]);
     let definition = Arc::new(AgentDefinition {
-        id: AgentId::new(SIDE_AGENT_ID).expect("valid side-chat agent id"),
+        id: AgentId::new(crate::agent::SIDE_AGENT_ID).expect("valid side-chat agent id"),
         description: "User-initiated read-only aside from /side.".into(),
         prompt: PromptPolicy::Replace(SIDE_CHAT_PROMPT.into()),
         runtime: AgentRuntimeSpec::Rho {
