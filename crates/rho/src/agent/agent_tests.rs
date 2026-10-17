@@ -303,13 +303,21 @@ fn project_definitions_require_explicit_trust() {
     )
     .unwrap();
 
-    let untrusted =
-        AgentCatalog::discover_with_home_and_trust(project.path(), None, ProjectTrust::Untrusted)
-            .unwrap();
+    let untrusted = AgentCatalog::discover_with_home_and_trust(
+        project.path(),
+        None,
+        ProjectTrust::Untrusted,
+        &crate::plugins::PluginAgentTiers::default(),
+    )
+    .unwrap();
     assert!(untrusted.find("project").is_err());
-    let trusted =
-        AgentCatalog::discover_with_home_and_trust(project.path(), None, ProjectTrust::Trusted)
-            .unwrap();
+    let trusted = AgentCatalog::discover_with_home_and_trust(
+        project.path(),
+        None,
+        ProjectTrust::Trusted,
+        &crate::plugins::PluginAgentTiers::default(),
+    )
+    .unwrap();
     assert_eq!(
         trusted.find("project").unwrap().metadata.origin,
         AgentOrigin::Project
@@ -332,9 +340,13 @@ fn workflow_entry_loads_local_agents_directory() {
     )
     .unwrap();
 
-    let without =
-        AgentCatalog::discover_with_home_and_trust(root.path(), None, ProjectTrust::Untrusted)
-            .unwrap();
+    let without = AgentCatalog::discover_with_home_and_trust(
+        root.path(),
+        None,
+        ProjectTrust::Untrusted,
+        &crate::plugins::PluginAgentTiers::default(),
+    )
+    .unwrap();
     assert!(without.find("boundary-reviewer").is_err());
 
     let with = AgentCatalog::discover_for_workflow_entry(
@@ -342,6 +354,7 @@ fn workflow_entry_loads_local_agents_directory() {
         &entry,
         None,
         ProjectTrust::Untrusted,
+        &crate::plugins::PluginAgentTiers::default(),
     )
     .unwrap();
     let entry = with.find("boundary-reviewer").unwrap();
@@ -361,4 +374,71 @@ fn workflow_local_agents_root_is_sibling_agents_dir() {
         workflow_local_agents_root(Path::new("workflow.star")),
         PathBuf::from("agents")
     );
+}
+
+// Covers: plugin agents rank above built-ins but below every user file tier,
+// project plugins override user plugins, a plugin file can neither replace
+// nor (when broken) block a built-in agent, and plugins cannot claim ids Rho
+// uses outside the catalog.
+// Owner: agent catalog
+#[test]
+fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
+    let source = |path: &str, description: &str| {
+        AgentSource::read(
+            PathBuf::from(path),
+            format!("---\ndescription: {description}\n---\n"),
+        )
+    };
+    let catalog = AgentCatalog::from_sources(AgentCatalogSources {
+        user_plugins: vec![
+            source("/user-plugin/auditor.md", "user plugin"),
+            source("/user-plugin/reviewer.md", "replaces a built-in"),
+            AgentSource::read(
+                PathBuf::from("/user-plugin/worker.md"),
+                "---\ndescription: broken\ntools: [teleport]\n---\n".into(),
+            ),
+            // An unreadable plugin file skips only itself.
+            AgentSource {
+                path: PathBuf::from("/user-plugin/garbled.md"),
+                contents: Err("stream did not contain valid UTF-8".into()),
+            },
+            source("/user-plugin/shared.md", "user plugin"),
+            source("/user-plugin/side.md", "claims the /side agent"),
+        ],
+        project_plugins: vec![source("/project-plugin/auditor.md", "project plugin")],
+        agents_home: vec![source("/agents-home/shared.md", "agents home")],
+        ..AgentCatalogSources::default()
+    })
+    .unwrap();
+
+    let resolved = |id: &str| {
+        let metadata = &catalog.find(id).unwrap().metadata;
+        (metadata.origin, metadata.path.clone())
+    };
+    pretty_assertions::assert_eq!(
+        ["auditor", "shared", "reviewer", "worker"].map(resolved),
+        [
+            (
+                AgentOrigin::ProjectPlugin,
+                Some(PathBuf::from("/project-plugin/auditor.md"))
+            ),
+            (
+                AgentOrigin::AgentsHome,
+                Some(PathBuf::from("/agents-home/shared.md"))
+            ),
+            (AgentOrigin::BuiltIn, None),
+            (AgentOrigin::BuiltIn, None),
+        ]
+    );
+    let skipped: Vec<_> = catalog.skipped().iter().map(|error| &error.path).collect();
+    pretty_assertions::assert_eq!(
+        skipped,
+        [
+            Path::new("/user-plugin/reviewer.md"),
+            Path::new("/user-plugin/worker.md"),
+            Path::new("/user-plugin/garbled.md"),
+            Path::new("/user-plugin/side.md")
+        ]
+    );
+    assert!(catalog.find("side").is_err());
 }

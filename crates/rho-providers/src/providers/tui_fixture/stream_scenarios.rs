@@ -526,12 +526,16 @@ async fn stream_steering(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
+    // Released by rho-tui-pty/src/scenarios/steering.rs once the steer shows
+    // as pending, so the turn cannot end before the steer is queued.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-steering";
+    super::release::consume_release(RELEASE_MARKER)?;
     events
         .send(ModelEvent::OutputDelta(
             "initial turn waiting for steering".into(),
         ))
         .await?;
-    fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
+    super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
     completed("initial turn waiting for steering")
 }
 

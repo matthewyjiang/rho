@@ -5,7 +5,8 @@ use rho_providers::credentials::CredentialStore;
 use crate::{
     agent::{
         AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntimeSpec,
-        AntigravityTool, CursorTool, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
+        AntigravityTool, CursorTool, ModelPolicy, PromptPolicy, ReasoningLevel, ToolCapability,
+        ToolPolicy,
     },
     config::Config,
 };
@@ -411,21 +412,28 @@ impl AgentBinder {
             );
         }
         let fingerprint = definition.fingerprint();
+        // Only Rho agents take a configured `[internal_agents.<id>]` entry; an
+        // entry for any other runtime fails here instead of being ignored.
+        let configured = crate::agent::configured_model(&definition, &host_config.internal_agents)?;
         let runtime = match &definition.runtime {
             AgentRuntimeSpec::Rho {
                 tools,
                 model,
                 reasoning,
             } => {
+                // The configured entry replaces the definition's model; an
+                // explicit per-call selection still wins over both.
+                let (model, reasoning) =
+                    crate::agent::effective_rho_model(model, *reasoning, configured.as_ref());
                 let mut config = bind_rho_config(
                     definition.id.as_str(),
                     model,
-                    *reasoning,
+                    reasoning,
                     host_config,
                     model_override,
                     store,
                 )?;
-                apply_fast_mode(&definition, invocation.role, &mut config)?;
+                apply_fast_mode(&definition.id, model, invocation.role, &mut config)?;
                 BoundRuntime::Rho {
                     capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
                     config: Box::new(config),
@@ -673,7 +681,8 @@ fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
 }
 
 /// The config a fresh launch of `definition` would run with on top of
-/// `host_config`: its model policy and reasoning applied, as startup does after
+/// `host_config`: its effective model policy and reasoning (its configured
+/// entry, else the file's) applied, as startup does after
 /// CLI overrides. External-runtime and failing definitions keep `host_config`.
 pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config) -> Config {
     let AgentRuntimeSpec::Rho {
@@ -682,10 +691,16 @@ pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config
     else {
         return host_config.clone();
     };
+    let Ok(configured) = crate::agent::configured_model(definition, &host_config.internal_agents)
+    else {
+        return host_config.clone();
+    };
+    let (model, reasoning) =
+        crate::agent::effective_rho_model(model, *reasoning, configured.as_ref());
     bind_rho_config(
         definition.id.as_str(),
         model,
-        *reasoning,
+        reasoning,
         host_config,
         /*model_override*/ None,
         &crate::credential_store::AppCredentialStore,
@@ -696,7 +711,7 @@ pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config
 fn bind_rho_config(
     agent_id: &str,
     model: &ModelPolicy,
-    reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
+    reasoning: Option<ReasoningLevel>,
     host_config: &Config,
     model_override: Option<ModelOverride<'_>>,
     store: &dyn CredentialStore,
@@ -717,16 +732,19 @@ fn bind_rho_config(
 
 /// Settles fast mode for a bound Rho agent.
 ///
-/// Delegated and workflow runs use exactly the definition's `fast` value, so
-/// the parent's `/fast` never leaks into children. Roots keep the user's saved
+/// Delegated and workflow runs use exactly the agent's `fast` value, so the
+/// parent's `/fast` never leaks into children. Roots keep the user's saved
 /// preference and `fast: true` can only turn it on. An explicit request must
-/// be servable by the bound provider, model, and auth.
+/// be servable by the bound provider, model, and auth. `model` is the agent's
+/// effective policy (its configured entry, else the file) and supplies only
+/// `fast`, including when a per-call selection chose the provider and model.
 fn apply_fast_mode(
-    definition: &AgentDefinition,
+    agent_id: &AgentId,
+    model: &ModelPolicy,
     role: AgentRole,
     config: &mut Config,
 ) -> anyhow::Result<()> {
-    let fast = definition.fast();
+    let fast = model.selection().is_some_and(|selection| selection.fast);
     if fast
         && !rho_providers::providers::fast_mode::supports_fast_mode(
             &config.provider,
@@ -735,8 +753,7 @@ fn apply_fast_mode(
         )
     {
         anyhow::bail!(
-            "agent '{}': fast mode is not available for {}/{} with auth '{}'",
-            definition.id,
+            "agent '{agent_id}': fast mode is not available for {}/{} with auth '{}'",
             config.provider,
             config.model,
             config.auth

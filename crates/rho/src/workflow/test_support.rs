@@ -66,6 +66,7 @@ pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
                     runtime: AgentRuntime::Rho,
                     source_origin: "builtin".to_owned(),
                     trust_required: false,
+                    plugin_trust_required: false,
                     prompt_policy: "review".to_owned(),
                     provider: None,
                     model: None,

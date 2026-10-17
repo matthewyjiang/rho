@@ -61,15 +61,14 @@ fn operation_errors_use_nested_model_safe_workflow_diagnostics() {
 #[test]
 fn malformed_agent_catalog_error_redacts_private_absolute_path() {
     let private_path = Path::new("/home/alice/private/agents/worker.md");
-    let catalog =
-        crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
-            rho_home: vec![(
-                private_path.to_owned(),
-                "---\ndescription: demo\nruntime: malformed\n---\n".to_owned(),
-            )],
-            ..Default::default()
-        })
-        .unwrap();
+    let catalog = crate::agent::AgentCatalog::from_sources(crate::agent::AgentCatalogSources {
+        rho_home: vec![crate::agent::AgentSource::read(
+            private_path.to_owned(),
+            "---\ndescription: demo\nruntime: malformed\n---\n".to_owned(),
+        )],
+        ..Default::default()
+    })
+    .unwrap();
     // Discovery skips the file; a plan naming its agent gets the file's error.
     let error = catalog.find("worker").unwrap_err();
     let local_error = anyhow::Error::from(error.clone());
@@ -457,12 +456,11 @@ fn agent_parse_uses_the_authorized_open_file() {
         "---\ndescription: replacement\n---\nreplacement prompt\n",
     );
     let source = opened.read_utf8().unwrap();
-    let catalog =
-        crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
-            rho_home: vec![(path, source)],
-            ..Default::default()
-        })
-        .unwrap();
+    let catalog = crate::agent::AgentCatalog::from_sources(crate::agent::AgentCatalogSources {
+        rho_home: vec![crate::agent::AgentSource::read(path, source)],
+        ..Default::default()
+    })
+    .unwrap();
 
     assert_eq!(
         catalog.find("worker").unwrap().definition.description,
@@ -503,12 +501,14 @@ fn agent_discovery_stays_on_the_authorized_directory_handle() {
     )
     .unwrap();
     let source = opened.read_utf8().unwrap();
-    let catalog =
-        crate::agent::AgentCatalog::from_authorized_sources(crate::agent::AgentCatalogSources {
-            rho_home: vec![(root.join("worker.md"), source)],
-            ..Default::default()
-        })
-        .unwrap();
+    let catalog = crate::agent::AgentCatalog::from_sources(crate::agent::AgentCatalogSources {
+        rho_home: vec![crate::agent::AgentSource::read(
+            root.join("worker.md"),
+            source,
+        )],
+        ..Default::default()
+    })
+    .unwrap();
 
     assert_eq!(
         catalog.find("worker").unwrap().definition.description,
@@ -584,7 +584,7 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
             exports: BTreeMap::new(),
         },
     };
-    let catalog = crate::agent::AgentCatalog::from_authorized_sources(Default::default()).unwrap();
+    let catalog = crate::agent::AgentCatalog::from_sources(Default::default()).unwrap();
     let available_tools = crate::agent::AgentCapabilities::all_host_tools();
     let config = crate::config::Config::default();
     let executables = BTreeMap::from([(executable, identity.clone())]);

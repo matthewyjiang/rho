@@ -60,7 +60,7 @@ pub(crate) use scope_state::{validate_state_shape, ScopeResult, ScopeState, Work
 pub(crate) use secure_fs::{
     ensure_directory_beneath, freeze_directory_identity, freeze_executable_identity,
     freeze_opened_executable, open_executable, open_executable_candidate,
-    open_private_file_beneath, read_source_beneath, verify_directory_identity,
+    open_private_file_beneath, read_resolved_utf8, read_source_beneath, verify_directory_identity,
     verify_executable_identity, write_file_beneath, ContentHash, ExecutableInterpreterRequest,
     OpenedExecutable, VerifiedExecutable, VerifiedPath,
 };

@@ -298,7 +298,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(target) = self.internal_agent_model_target.clone() else {
-            self.set_status("internal agent model selection expired");
+            self.set_status("agent model selection expired");
             return Ok(());
         };
         let id = target.id.as_str();
@@ -310,7 +310,7 @@ impl App {
                 .await;
         }
         let selected = match model_picker::parse_internal_agent_model_row(value) {
-            model_picker::InternalAgentModelRow::Conversation => {
+            model_picker::InternalAgentModelRow::ClearOverride => {
                 self.select_internal_agent_model(id, None)?;
                 true
             }
@@ -320,7 +320,7 @@ impl App {
             }
             // Only the permission screen's picker lists decision models.
             model_picker::InternalAgentModelRow::Decision { .. } => {
-                self.set_status(format!("internal agent {id} cannot use a decision model"));
+                self.set_status(format!("agent {id} cannot use a decision model"));
                 false
             }
             model_picker::InternalAgentModelRow::RhoModel(reference) => {
@@ -333,7 +333,7 @@ impl App {
                     }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
-                        self.set_status("internal agent model switch failed");
+                        self.set_status("agent model switch failed");
                         false
                     }
                 }

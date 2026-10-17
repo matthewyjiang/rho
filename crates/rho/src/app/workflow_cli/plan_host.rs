@@ -47,6 +47,7 @@ impl<'a> DiscoveringPlanHost<'a> {
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
         let trust = crate::workspace::ProjectTrust::from_agents_env();
+        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref());
         Ok(Self {
             workspace,
             config,
@@ -55,6 +56,7 @@ impl<'a> DiscoveringPlanHost<'a> {
                 workflow_entry,
                 home.as_deref(),
                 trust,
+                &plugins,
             )?,
             available_tools,
         })
@@ -236,8 +238,10 @@ fn resolve_agent(
         },
         source_origin,
         // Workflow-local agents ship with the workflow source the user planned.
-        // Project catalog agents still require project trust.
+        // Project catalog agents still require project trust, and project
+        // plugin agents project plugin trust.
         trust_required: entry.metadata.origin == AgentOrigin::Project,
+        plugin_trust_required: entry.metadata.origin == AgentOrigin::ProjectPlugin,
         prompt_policy,
         provider: None,
         model: None,

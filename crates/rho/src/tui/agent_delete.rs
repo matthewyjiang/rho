@@ -24,7 +24,7 @@ pub(super) struct AgentDeleteTarget {
 /// Internal agents are not in `find`, so they are never deletable.
 fn delete_target(catalog: &AgentCatalog, id: &str) -> Option<AgentDeleteTarget> {
     let entry = catalog.find(id).ok()?;
-    let editable = AgentAccess::of(entry.metadata.origin) == AgentAccess::Editable;
+    let editable = AgentAccess::of(entry) == AgentAccess::Editable;
     let path = entry.metadata.path.clone().filter(|_| editable)?;
     Some(AgentDeleteTarget {
         id: id.to_string(),

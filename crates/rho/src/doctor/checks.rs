@@ -588,11 +588,13 @@ pub(super) fn plugins_check(report: &PluginLoadReport) -> DoctorCheck {
         DoctorStatus::Warn
     };
     let mut hint = format!(
-        "{} skill{}, {} MCP server{}; supported: {}",
+        "{} skill{}, {} MCP server{}, {} agent file{}; supported: {}",
         summary.skills,
         plural_suffix(summary.skills),
         summary.mcp_servers,
         plural_suffix(summary.mcp_servers),
+        summary.agent_files,
+        plural_suffix(summary.agent_files),
         crate::plugins::SUPPORTED_COMPONENTS
     );
     if summary.untrusted > 0 {

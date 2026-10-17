@@ -65,6 +65,15 @@ fn write_mcp(plugin_dir: &Path, json: &str) {
     std::fs::write(plugin_dir.join("mcp.json"), json).unwrap();
 }
 
+/// Writes a Rho agent file into the plugin's Rho extension directory.
+fn write_agent(plugin_dir: &Path, id: &str) -> PathBuf {
+    let agents = plugin_dir.join("io.github.matthewyjiang.rho/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let path = agents.join(format!("{id}.md"));
+    std::fs::write(&path, "---\ndescription: plugin agent\n---\nprompt\n").unwrap();
+    path
+}
+
 fn stdio_mcp(command: &str) -> String {
     format!(
         r#"{{"$schema": "{MCP_SCHEMA}", "mcpServers": {{"main": {{"type": "stdio", "command": "{command}"}}}}}}"#
@@ -291,8 +300,8 @@ fn project_plugin_shadows_user_plugin_with_same_name() {
     assert_eq!(shadowed.name, "dup");
 }
 
-// Covers: untrusted project plugins stay inventory-only. Skills and MCP
-// servers, including stdio commands, never join the session.
+// Covers: untrusted project plugins stay inventory-only. Skills, MCP
+// servers (including stdio commands), and agents never join the session.
 // Owner: plugin trust policy.
 #[test]
 fn untrusted_project_plugin_activates_no_components() {
@@ -301,17 +310,20 @@ fn untrusted_project_plugin_activates_no_components() {
     let dir = write_plugin(&project_plugins(&env), "risky", &manifest_json("risky", ""));
     write_skill(&dir, "leaky", "must not reach the session");
     write_mcp(&dir, &stdio_mcp("bash"));
+    write_agent(&dir, "leaky-agent");
 
     let discovery = discover_env_with_trust(&env, ProjectTrust::Untrusted);
 
     assert!(discovery.skills.is_empty());
     assert!(!discovery.mcp.has_enabled_servers());
     assert!(discovery.mcp.servers.is_empty());
+    assert_eq!(discovery.agents, super::PluginAgentTiers::default());
     let entry = report_entry(&discovery, "risky");
     assert_eq!(entry.status, PluginStatus::Untrusted);
     assert!(entry.enabled);
     assert_eq!(entry.skill_count, 1);
     assert_eq!(entry.mcp_server_count, 1);
+    assert_eq!(entry.agent_files, ["leaky-agent.md"]);
     assert!(entry.problems.is_empty());
     assert_eq!(discovery.report.summary().untrusted, 1);
     assert_eq!(discovery.report.summary().problems, 0);
@@ -526,6 +538,44 @@ fn skill_md_symlink_escaping_root_is_skipped() {
     assert_eq!(names, ["inside-skill"]);
     let entry = report_entry(&discovery, "escaper");
     assert!(entry.problems.iter().any(|p| p.contains("escape-skill")));
+}
+
+// Covers: an agents-only plugin is a usable package, and symlinked agent
+// files, escaping or not, are skipped and reported while siblings load, so
+// workflows (which never follow links) see the same agents (spec 4.1).
+// Owner: plugin path containment.
+#[cfg(unix)]
+#[test]
+fn plugin_agents_load_contained_files_only() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    let dir = write_plugin(
+        &user_plugins(&env),
+        "agentic",
+        &manifest_json("agentic", ""),
+    );
+    let inside = write_agent(&dir, "inside-agent");
+    let outside = env.home.path().join("outside-agent.md");
+    std::fs::write(&outside, "---\ndescription: outside\n---\nprompt\n").unwrap();
+    std::os::unix::fs::symlink(&outside, inside.with_file_name("escape-agent.md")).unwrap();
+    std::os::unix::fs::symlink(&inside, inside.with_file_name("linked-agent.md")).unwrap();
+
+    let discovery = discover_env(&env);
+
+    let agents_dir = std::fs::canonicalize(inside.parent().unwrap()).unwrap();
+    pretty_assertions::assert_eq!(
+        discovery.agents,
+        super::PluginAgentTiers {
+            user: vec![super::PluginAgentFiles {
+                files: vec![agents_dir.join("inside-agent.md")],
+            }],
+            project: Vec::new(),
+        }
+    );
+    let entry = report_entry(&discovery, "agentic");
+    assert_eq!(entry.status, PluginStatus::Loaded);
+    assert_eq!(entry.agent_files, ["inside-agent.md"]);
+    assert_eq!(entry.problems.len(), 2, "{:?}", entry.problems);
 }
 
 // Covers: loose skills keep precedence over plugin skills.
@@ -973,5 +1023,55 @@ fn expands_placeholders_single_pass() {
     assert_eq!(
         expand_placeholders("${PLUGIN_ROOT}", "${PLUGIN_DATA}", data),
         "${PLUGIN_DATA}"
+    );
+}
+
+// Covers: a plugin agent file or agents directory swapped for a symlink after
+// discovery must not be read through, since the workflow tool reads plugin
+// agents without the permission gate; untouched files still read.
+// Owner: plugin path containment.
+#[cfg(unix)]
+#[test]
+fn plugin_agent_reads_refuse_symlinks_swapped_in_after_discovery() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    let dir = write_plugin(
+        &user_plugins(&env),
+        "agentic",
+        &manifest_json("agentic", ""),
+    );
+    let kept = write_agent(&dir, "kept");
+    let swapped = write_agent(&dir, "swapped");
+    let outside = env.home.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    for id in ["kept", "swapped"] {
+        std::fs::write(
+            outside.join(format!("{id}.md")),
+            "---\ndescription: outside\n---\noutside prompt\n",
+        )
+        .unwrap();
+    }
+    let discovery = discover_env(&env);
+    let plugin = &discovery.agents.user[0];
+    let readable = |plugin: &super::PluginAgentFiles| {
+        plugin
+            .read_sources()
+            .into_iter()
+            .map(|source| source.contents.is_ok())
+            .collect::<Vec<_>>()
+    };
+
+    std::fs::remove_file(&swapped).unwrap();
+    std::os::unix::fs::symlink(outside.join("swapped.md"), &swapped).unwrap();
+    let after_file_swap = readable(plugin);
+
+    let agents = kept.parent().unwrap();
+    std::fs::rename(agents, dir.join("moved-agents")).unwrap();
+    std::os::unix::fs::symlink(&outside, agents).unwrap();
+    let after_dir_swap = readable(plugin);
+
+    assert_eq!(
+        (after_file_swap, after_dir_swap),
+        (vec![true, false], vec![false, false])
     );
 }

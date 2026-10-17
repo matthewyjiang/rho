@@ -554,9 +554,8 @@ model = "opus"
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"claude-cli\"".into(),
-            to:
-                "\"rho\" with the conversation selection; internal agent 'goal-judge' cannot delegate"
-                    .into(),
+            to: "\"rho\" with the conversation selection; agent 'goal-judge' cannot delegate"
+                .into(),
         }]
     );
 }
@@ -624,4 +623,73 @@ fn auto_edit_tool_resolves_preferred_format_for_provider() {
         rho_tools::EditFormat::ApplyPatch
     );
     assert_eq!(config.edit_tool_display_label(), "auto (str_replace)");
+}
+
+// Covers: a catalog (plugin) agent's entry replaces the model its file names,
+// so an entry missing provider or model (a bare-model alias names no
+// provider; a provider-qualified one names both), or naming another runtime,
+// is dropped with a warning instead of silently pinning the conversation model;
+// internal agents keep filling the gap from the conversation model.
+// Owner: config load
+#[test]
+fn catalog_agent_entries_without_a_model_are_dropped_with_a_warning() {
+    let (config, warnings) = parse_settings(
+        r#"
+[internal_agents.plugin-reviewer]
+reasoning = "high"
+
+[internal_agents.plugin-auditor]
+runtime = "claude-cli"
+model = "opus"
+
+[internal_agents.plugin-fast]
+model = "@fast"
+
+[internal_agents.plugin-deep]
+model = "@deep"
+
+[model.aliases]
+deep = "anthropic/claude-opus-4-8"
+fast = "gpt-5.5-mini"
+
+[internal_agents.goal-judge]
+reasoning = "high"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        (
+            config.internal_agent_model("plugin-reviewer"),
+            config.internal_agent_model("plugin-auditor"),
+            config.internal_agent_model("plugin-fast"),
+            config
+                .internal_agent_model("plugin-deep")
+                .and_then(crate::config::InternalAgentModelConfig::rho)
+                .map(|rho| (rho.provider.as_str(), rho.model.as_str())),
+            conversation_triple(&config, "goal-judge"),
+        ),
+        (
+            None,
+            None,
+            None,
+            Some(("anthropic", "claude-opus-4-8")),
+            (
+                config.provider.clone(),
+                config.model.clone(),
+                config.auth.clone()
+            )
+        )
+    );
+    assert_eq!(
+        warnings,
+        ["plugin-auditor", "plugin-fast", "plugin-reviewer"]
+            .map(|id| ConfigWarning::Normalized {
+                key: "internal_agents",
+                from: format!("for agent '{id}'"),
+                to: "no override; a catalog agent's entry must name a Rho provider and model"
+                    .into(),
+            })
+            .to_vec()
+    );
 }

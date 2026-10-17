@@ -241,6 +241,8 @@ auth = "api-key"
 
 Model aliases work here. Rho still reads the old `[title]` section and flat title settings, and rewrites them as `[internal_agents.session-title]` on the next save.
 
+The same table sets the model of a read-only [plugin agent](/integrations/plugins#plugin-agent-models); `/agents` writes it when you pick one. An entry applies by ID to any Rho agent Rho does not reserve, so it also reaches an agent file of your own with that ID.
+
 ## Edit tool
 
 `edit_tool` under `[behavior]` selects the file edit tool exposed to the model. It defaults to `auto`. Only one edit tool is registered at a time.

@@ -31,9 +31,13 @@ impl App {
                 return Ok(());
             }
         };
-        let editable = crate::tui::agent_picker::AgentAccess::of(entry.metadata.origin)
-            == crate::tui::agent_picker::AgentAccess::Editable
-            && entry.metadata.path.is_some();
+        use crate::tui::agent_picker::AgentAccess;
+        let access = AgentAccess::of(entry);
+        if access == AgentAccess::ModelOnly {
+            self.open_catalog_agent_model_picker(entry);
+            return Ok(());
+        }
+        let editable = access == AgentAccess::Editable && entry.metadata.path.is_some();
         if !editable {
             // Read-only agents open their full prompt; the fact sheet only
             // shows an excerpt.

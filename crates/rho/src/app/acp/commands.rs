@@ -358,6 +358,7 @@ fn agent_catalog(
         scope.cwd,
         scope.home,
         crate::workspace::ProjectTrust::from_agents_env(),
+        &crate::plugins::agent_tiers(scope.cwd, scope.home),
     )
 }
 

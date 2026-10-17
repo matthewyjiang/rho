@@ -2,9 +2,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::{env::IsolatedHome, keys::Key, scenario::Step, PtyHarness};
+use crate::{
+    env::IsolatedHome,
+    keys::Key,
+    scenario::{Scenario, Step},
+    PtyHarness,
+};
 
-use super::{SETTLE, STARTUP, STREAM};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
 /// Model pickers list models only for authenticated providers, so inject a
 /// fixture key the way the advisor scenarios do.
@@ -592,6 +597,100 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "Internal agent that evaluates goal",
         timeout: SETTLE,
     },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
+pub(super) const PLUGIN_AGENT_MODEL_SCENARIO: Scenario = Scenario::new(
+    "plugin_agent_model",
+    "Pick and clear a model override for a read-only plugin agent in the agents picker",
+    DEFAULT_SIZE,
+    PLUGIN_AGENT_MODEL_STEPS,
+    /*smoke*/ false,
+)
+.with_env(OPENAI_AND_XAI_KEY_ENV)
+.with_setup(setup_plugin_agent);
+
+/// A user Agent Plugin shipping one Rho agent that pins `openai/gpt-5.5`.
+fn setup_plugin_agent(home: &IsolatedHome) -> Result<()> {
+    let plugin = home.home.join(".agents/plugins/fixture-plugin");
+    let agents = plugin.join("io.github.matthewyjiang.rho/agents");
+    std::fs::create_dir_all(&agents)?;
+    std::fs::write(
+        plugin.join("plugin.json"),
+        r#"{"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "fixture-plugin"}"#,
+    )?;
+    std::fs::write(
+        agents.join("plugin-fixture.md"),
+        "---\ndescription: plugin fixture agent\nmodel-policy: select\nprovider: openai\nmodel: gpt-5.5\n---\nplugin fixture prompt\n",
+    )?;
+    Ok(())
+}
+
+// Covers: a plugin agent lists under PLUGIN, refuses Delete, and Enter picks
+// a model override instead of opening an editor; the agent-default row then
+// clears the override back to the file's model.
+// Owner: interactive TUI; the picker flow spans catalog, picker, and config.
+const PLUGIN_AGENT_MODEL_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "PLUGIN",
+        timeout: SETTLE,
+    },
+    Step::TypeText("plugin-fixture"),
+    Step::WaitText {
+        text: "● model only",
+        timeout: SETTLE,
+    },
+    Step::AssertText("plugin fixture prompt"),
+    Step::Phase("delete_refused"),
+    Step::Key(Key::Delete),
+    Step::WaitText {
+        text: "only your agents can be deleted",
+        timeout: SETTLE,
+    },
+    Step::Phase("pick_override"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select model for plugin-fixture",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Use agent default"),
+    Step::TypeText("grok-4.6"),
+    Step::WaitText {
+        text: "xai/grok-4.6",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "override",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Loaded agents"),
+    Step::AssertText("xai/grok-4.6"),
+    Step::Phase("clear_override"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select model for plugin-fixture",
+        timeout: SETTLE,
+    },
+    Step::TypeText("agent default"),
+    Step::WaitText {
+        text: "the model the agent's file names",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitTextGone {
+        text: "override",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Loaded agents"),
+    Step::AssertText("openai/gpt-5.5"),
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];

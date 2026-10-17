@@ -195,8 +195,8 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
     let cwd = tempfile::tempdir().unwrap();
     let startup = startup(cwd.path());
     let catalog = || {
-        Ok(AgentCatalog::from_authorized_sources(AgentCatalogSources {
-            rho_home: vec![(
+        Ok(AgentCatalog::from_sources(AgentCatalogSources {
+            rho_home: vec![crate::agent::AgentSource::read(
                 "acp-child.md".into(),
                 "---\ndescription: ACP child\ntools: [read_file, agent, agents, advisor]\n---\nInspect the requested files".into(),
             )],

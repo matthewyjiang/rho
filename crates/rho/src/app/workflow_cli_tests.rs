@@ -271,6 +271,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
         workspace,
         crate::app::workflow_runtime::RuntimeSecurity {
             project_trusted: true,
+            project_plugins_trusted: true,
             permission_mode: crate::permission::PermissionMode::Auto,
         },
         executor.clone(),

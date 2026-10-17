@@ -2,9 +2,10 @@
 
 Rho loads [Agent Plugins](https://agent-plugins.org/specification) 1.0.0
 packages from explicit local roots. A plugin is a directory with a
-`plugin.json` manifest. It contributes skills, MCP servers, or both. Plugin
-skills join the ordinary metadata-first skill flow. Plugin MCP servers run on
-the same native runtime as ordinary `[mcp.servers]` entries.
+`plugin.json` manifest. It contributes skills, MCP servers, Rho agent
+definitions, or any mix. Plugin skills join the ordinary metadata-first skill
+flow. Plugin MCP servers run on the same native runtime as ordinary
+`[mcp.servers]` entries. Plugin agents join the agent catalog.
 
 The Agent Plugins 1.0.0 specification is a Working Draft. Rho selects the
 validation contract from the manifest `$schema` identifier and never fetches
@@ -20,11 +21,15 @@ my-plugin/
 │       ├── SKILL.md
 │       └── references/
 │           └── checklist.md
-└── mcp.json
+├── mcp.json
+└── io.github.matthewyjiang.rho/
+    └── agents/
+        └── auditor.md
 ```
 
-`plugin.json` is required and loads before any component. `skills/` and
-`mcp.json` are optional; a missing location is not an error.
+`plugin.json` is required and loads before any component. `skills/`,
+`mcp.json`, and the Rho extension directory are optional; a missing location
+is not an error.
 
 ```json
 {
@@ -57,7 +62,8 @@ and linked packages use these same roots.
 
 Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are
-skipped per server. Rho implements no client extension namespaces.
+skipped per server. Rho also implements one client extension namespace,
+`io.github.matthewyjiang.rho`, for [agents](#agents).
 
 ## Project plugin trust
 
@@ -71,11 +77,13 @@ RHO_TRUST_PROJECT_PLUGINS=1 rho
 
 This is the same family as `RHO_TRUST_PROJECT_HOOKS` and
 `RHO_TRUST_PROJECT_AGENTS`, so a cloned repository cannot silently run plugin
-commands. Until you grant trust, Rho inventories project plugins. Names,
-manifests, skill names, and MCP server definitions stay visible in
+commands or agents. Until you grant trust, Rho inventories project plugins.
+Names, manifests, skill names, agent file names, and MCP server definitions stay
+visible in
 `rho plugins list` and `rho plugins inspect`, but no component activates:
-plugin skills do not join skill discovery and no MCP server, including stdio
-commands, starts. An untrusted project plugin does not shadow a user plugin
+plugin skills do not join skill discovery, plugin agents do not join the agent
+catalog, and no MCP server, including stdio commands, starts. An untrusted
+project plugin does not shadow a user plugin
 with the same name; enabling or disabling it still records your policy, and
 `rho plugins enable` says when trust is the remaining gate.
 
@@ -96,6 +104,70 @@ built-in > loose user > loose project > project plugins > user plugins
 
 Duplicate skill names across sources keep the higher-precedence copy and log
 the selected and ignored sources.
+
+## Agents
+
+Agent Plugins 1.0.0 standardizes only skills and MCP servers; agents are
+outside the portable format. Rho reads agent definitions from its own client
+extension directory, which the specification reserves for client-specific
+files and requires other clients to ignore, so a plugin that ships Rho agents
+stays portable:
+
+```text
+<plugin>/io.github.matthewyjiang.rho/agents/*.md
+```
+
+Each file is an ordinary [agent definition](/subagents/definition-schema).
+Agent files must be regular files: Rho skips a symlinked agent file and
+reports it in `rho plugins inspect`.
+Plugin agents appear in `/agents`, the `agent` tool, `--agent`, workflows, and
+`/agent:<id>` in ACP sessions (including T3 Code delegation) like any other
+agent. Their files stay read-only: `/agents` cannot edit or delete them. They
+rank above built-ins and below every agent file you own:
+
+```text
+project .agents/agents > ~/.rho/agents > ~/.agents/agents > project plugins > user plugins > built-in
+```
+
+A plugin agent cannot use a built-in agent ID (`default`, `explorer`,
+`reviewer`, `worker`), an internal agent ID, or an ID Rho uses elsewhere
+(`side`, `permission-classifier-screen`). Rho skips such a file and
+reports it; the built-in stays available. Two plugins at the same scope that
+ship the same agent ID make that ID unavailable at that level and below
+(project plugin duplicates also hide a user plugin agent with that ID) until
+one is removed or disabled.
+
+### Plugin agent models
+
+You can still choose the model a Rho-runtime plugin agent runs, the same way
+internal agents allow it. In `/agents`, select the plugin agent and press
+Enter to open its model picker. **Use agent default** removes the override and
+returns to the model the plugin's file names. The choice saves to config at
+once and applies to the next launch of that agent:
+
+```toml
+[internal_agents.plugin-reviewer]
+provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+```
+
+The entry replaces the file's model and `fast` setting, so it must name a Rho
+`provider` and `model` (a `@alias` whose target names a provider counts).
+Config load drops an entry that leaves either out or names another
+`runtime`, with a warning, and the file's model stays; the next config save
+removes the dropped entry. The
+optional `reasoning` key replaces the file's reasoning; without one the file's
+reasoning stays. The entry is keyed by agent ID and applies to any Rho agent
+with that ID, including an agent file of yours (for example one that takes
+over a plugin agent's ID); `/agents` names the entry in that agent's detail
+pane, and only plugin agents get the picker. Built-in, internal-only, and
+reserved IDs never take one. Rho refuses to launch an agent that runs on another runtime while it has
+an entry, since the entry would switch runtime rather than model, and
+`/agents` marks such an entry as unable to apply. An explicit
+[per-call `model`](/subagents#per-call-model-selection) on an `agent` call
+replaces the entry's provider, model, and auth for that call; the entry's
+`reasoning` and its fast mode (off) still apply.
 
 ## MCP servers
 
@@ -155,8 +227,8 @@ adds no MCP startup work.
 Every package-supplied path Rho reads or executes must resolve inside the
 filesystem-resolved plugin root. Symlinks that escape the root are rejected
 at the narrowest boundary: the plugin for `plugin.json`, the component type
-for a fixed location, the skill for a `SKILL.md`, or the server entry for a
-command or working directory.
+for a fixed location, the skill for a `SKILL.md`, the agent for an agent file,
+or the server entry for a command or working directory.
 
 ## Install roots and lifecycle
 
@@ -345,6 +417,7 @@ What comes from Agent Plugins versus Rho policy:
 | Install, link, update, enable, disable, remove commands | Rho policy |
 | Enablement state files and managed install roots | Rho policy |
 | Skill and MCP runtime behavior after load | Rho |
+| `io.github.matthewyjiang.rho/agents` extension directory | Rho client extension |
 
 Package registries and automatic background updates remain unsupported. Git
 installs update only when you run `rho plugins update`.

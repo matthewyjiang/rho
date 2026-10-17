@@ -59,6 +59,7 @@ pub(crate) fn check_agents(
     cwd: &Path,
     home: Option<&Path>,
     project_trust: ProjectTrust,
+    plugins: &crate::plugins::PluginAgentTiers,
 ) -> AgentCheckReport {
     let [agents_home, rho_home] = match home {
         Some(home) => {
@@ -76,7 +77,7 @@ pub(crate) fn check_agents(
         .flatten()
         .map(|root| crate::paths::display(&root.join(".agents/agents")));
     let (agents, invalid) =
-        match AgentCatalog::discover_with_home_and_trust(cwd, home, project_trust) {
+        match AgentCatalog::discover_with_home_and_trust(cwd, home, project_trust, plugins) {
             Ok(catalog) => (
                 catalog
                     .iter()

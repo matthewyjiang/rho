@@ -15,7 +15,7 @@ use rho_providers::{
 };
 
 use super::{
-    agent_picker::{InternalAgentModelPickerOrigin, InternalAgentModelTarget},
+    agent_picker::{AgentModelDefault, AgentModelTarget, InternalAgentModelPickerOrigin},
     model_picker::{self, InternalAgentModelRow, ScreenPickerInputs, ScreenSelection},
     App, ComposerMode, Entry, PickerBadge, PickerBadgeTone, RuntimeModelView, UiPicker,
 };
@@ -65,9 +65,10 @@ impl App {
             scope: self.resolved_model_picker_scope(),
             keybindings: &self.info.runtime.keybindings,
         });
-        self.internal_agent_model_target = Some(InternalAgentModelTarget {
+        self.internal_agent_model_target = Some(AgentModelTarget {
             id: DECISION_SCREEN_ID.into(),
             origin,
+            default: AgentModelDefault::Internal,
         });
         picker
     }
@@ -78,7 +79,7 @@ impl App {
         row: InternalAgentModelRow,
     ) -> anyhow::Result<bool> {
         let selection = match row {
-            InternalAgentModelRow::Conversation => None,
+            InternalAgentModelRow::ClearOverride => None,
             InternalAgentModelRow::Decision { provider, model } => {
                 let auth = self.screen_auth(&provider);
                 let mut selection = InternalAgentModelConfig::new(provider, model, auth);

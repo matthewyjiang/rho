@@ -452,6 +452,8 @@ impl WorkflowRuntime {
         ));
         let security = RuntimeSecurity {
             project_trusted: crate::workspace::ProjectTrust::from_agents_env().is_trusted(),
+            project_plugins_trusted: crate::workspace::ProjectTrust::from_plugins_env()
+                .is_trusted(),
             permission_mode,
         };
         let mut runner = WorkflowRunner::new(

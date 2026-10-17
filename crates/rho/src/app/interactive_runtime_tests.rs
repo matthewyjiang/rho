@@ -379,7 +379,7 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
             std::env::current_dir().unwrap(),
             std::path::PathBuf::new(),
             Some(Arc::new(
-                crate::agent::AgentCatalog::from_authorized_sources(Default::default()).unwrap(),
+                crate::agent::AgentCatalog::from_sources(Default::default()).unwrap(),
             )),
         )),
     );

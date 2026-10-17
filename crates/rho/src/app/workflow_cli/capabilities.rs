@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, path::Path};
 
 use rho_sdk::{tool::ToolContext, CapabilityRequest, CapabilitySource, PathScope};
 
@@ -96,6 +93,16 @@ impl AppWorkflowToolService {
     ) -> anyhow::Result<crate::agent::AgentCatalog> {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
+        // Plugin agent files skip the permission gate; see
+        // `PluginAgentFiles::read_sources`.
+        let plugins = crate::plugins::agent_tiers(&self.cwd, home.as_deref());
+        let read = |tier: &[crate::plugins::PluginAgentFiles]| {
+            tier.iter()
+                .flat_map(crate::plugins::PluginAgentFiles::read_sources)
+                .collect()
+        };
+        sources.user_plugins = read(&plugins.user);
+        sources.project_plugins = read(&plugins.project);
         if let Some(home) = home.as_deref() {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
             sources.agents_home = self.authorized_agent_sources(context, &agents_home).await?;
@@ -122,14 +129,16 @@ impl AppWorkflowToolService {
         sources.workflow = self
             .authorized_agent_sources(context, &workflow_agents)
             .await?;
-        crate::agent::AgentCatalog::from_authorized_sources(sources).map_err(Into::into)
+        crate::agent::AgentCatalog::from_sources(sources).map_err(Into::into)
     }
 
+    /// Reads every `*.md` file in an agents directory the user owns through
+    /// verified handles, asking the permission policy before each read.
     async fn authorized_agent_sources(
         &self,
         context: &ToolContext,
         root: &Path,
-    ) -> anyhow::Result<Vec<(PathBuf, String)>> {
+    ) -> anyhow::Result<Vec<crate::agent::AgentSource>> {
         let scope = path_scope(&self.cwd, root);
         self.authorize_read(context, root, scope.clone()).await?;
         let opened_root = match crate::workflow::open_verified_directory(root) {
@@ -161,8 +170,7 @@ impl AppWorkflowToolService {
             )?;
             self.authorize_opened_identity(context, &opened.identity)
                 .await?;
-            let source = opened.read_utf8()?;
-            sources.push((path, source));
+            sources.push(crate::agent::AgentSource::read(path, opened.read_utf8()?));
         }
         Ok(sources)
     }
