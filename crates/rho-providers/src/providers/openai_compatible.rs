@@ -264,7 +264,7 @@ impl OpenAiCompatibleProvider {
                 );
             }
         }
-        Ok(request.send().await?)
+        super::request_body::send(request).await
     }
 }
 

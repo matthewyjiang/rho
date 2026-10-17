@@ -70,6 +70,13 @@ impl IsolatedHome {
         fs::create_dir_all(&rho_dir)?;
         fs::create_dir_all(&workspace)?;
         fs::create_dir_all(temp.path().join("tmp"))?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(temp.path().join("run"))?;
+        }
         let config_path = rho_dir.join("config.toml");
         fs::write(
             &config_path,
@@ -119,6 +126,13 @@ impl RhoLaunchPlan {
         env.push((
             "TMPDIR".into(),
             home.path().join("tmp").display().to_string(),
+        ));
+        // HOME alone does not isolate the Linux session bus. Without this,
+        // credential-store probes can reach the developer's keyring and block.
+        #[cfg(target_os = "linux")]
+        env.push((
+            "XDG_RUNTIME_DIR".into(),
+            home.path().join("run").display().to_string(),
         ));
         // Windows home/config discovery must not fall back to the real profile.
         #[cfg(windows)]

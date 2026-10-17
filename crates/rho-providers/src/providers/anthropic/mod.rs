@@ -262,12 +262,9 @@ impl AnthropicProvider {
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request, false)?;
-        let response = self
-            .messages_request(&body)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await?;
+        let response =
+            super::request_body::send(self.messages_request(&body).headers(headers).json(&body))
+                .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
@@ -280,12 +277,9 @@ impl AnthropicProvider {
     ) -> Result<ModelResponse, ModelError> {
         let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request, true)?;
-        let response = self
-            .messages_request(&body)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await?;
+        let response =
+            super::request_body::send(self.messages_request(&body).headers(headers).json(&body))
+                .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
     }
