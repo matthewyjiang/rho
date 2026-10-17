@@ -304,8 +304,8 @@ fn agent_model_fields(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) ->
         return internal_agent_model_fields(entry, models);
     }
     let file_policy = definition.model_policy();
-    let model_override = match crate::agent::model_override(definition, models.internal_agents) {
-        Ok(model_override) => model_override,
+    let configured = match crate::agent::configured_model(definition, models.internal_agents) {
+        Ok(configured) => configured,
         // Bind refuses this agent until the entry goes, so say so here.
         Err(_) => {
             let reference = models
@@ -323,13 +323,13 @@ fn agent_model_fields(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) ->
     let (policy, reasoning) = crate::agent::effective_rho_model(
         &file_policy,
         definition.reasoning(),
-        model_override.as_ref(),
+        configured.as_ref(),
     );
     let model = model_policy_field(policy);
     ModelFields {
         // Only plugin agents get the set/clear picker; for a file the user
         // can edit, name the entry that wins over its model.
-        model: match (model_override.is_some(), entry.metadata.origin.is_plugin()) {
+        model: match (configured.is_some(), entry.metadata.origin.is_plugin()) {
             (true, true) => model.with_note("override"),
             (true, false) => {
                 model.with_note(format!("override from [internal_agents.{}]", definition.id))

@@ -107,8 +107,9 @@ agent({
 explicit value replaces its model, provider, and auth pins for **this call only**,
 including `prefer`, `require`, and `select` policies (all three currently pin the
 same way). It does not change the definition, root defaults, prompt, tools, or
-parent permission ceiling. The definition's reasoning and fast-mode policy still
-apply; incompatible fast mode fails the launch rather than being silently disabled.
+parent permission ceiling. The agent's reasoning and fast-mode policy still
+apply (from its [`[internal_agents.<id>]` entry](/integrations/plugins#plugin-agent-models)
+when it has one, otherwise the definition's); incompatible fast mode fails the launch rather than being silently disabled.
 
 References use the same local catalog and [model aliases](/configuration#model-aliases)
 as `/model`: `provider/model`, an unambiguous catalog model ID, or `@alias`.

@@ -1361,18 +1361,22 @@ fn configured_model_override_replaces_the_definition_model() {
         ..definition(ToolPolicy::All).as_ref().clone()
     });
     let store = credentials(&["codex", "xai-api-key"]);
-    // (entry reasoning, per-call selection, expected provider/model/reasoning)
+    // (entry reasoning, per-call selection, expected provider/model/auth/reasoning)
     let cases = [
-        (None, None, ("xai", "grok-4.7", ReasoningLevel::High)),
+        (
+            None,
+            None,
+            ("xai", "grok-4.7", "xai-api-key", ReasoningLevel::High),
+        ),
         (
             Some(ReasoningLevel::Low),
             None,
-            ("xai", "grok-4.7", ReasoningLevel::Low),
+            ("xai", "grok-4.7", "xai-api-key", ReasoningLevel::Low),
         ),
         (
             Some(ReasoningLevel::Low),
             Some("openai-codex/gpt-6.1-sol"),
-            ("openai-codex", "gpt-6.1-sol", ReasoningLevel::Low),
+            ("openai-codex", "gpt-6.1-sol", "codex", ReasoningLevel::Low),
         ),
     ];
     for (configured, per_call, expected) in cases {
@@ -1400,10 +1404,11 @@ fn configured_model_override_replaces_the_definition_model() {
             (
                 config.provider.as_str(),
                 config.model.as_str(),
+                config.auth.as_str(),
                 config.fast_mode,
                 config.reasoning,
             ),
-            (expected.0, expected.1, false, expected.2),
+            (expected.0, expected.1, expected.2, false, expected.3),
             "{configured:?} {per_call:?}"
         );
     }
@@ -1414,14 +1419,14 @@ fn configured_model_override_replaces_the_definition_model() {
 // Owner: agent binding
 #[test]
 fn configured_model_override_refuses_a_runtime_switch() {
-    use crate::agent::model_override::ModelOverrideError;
+    use crate::agent::configured_model::ConfiguredModelError;
     let rho = definition(ToolPolicy::All);
     let claude = claude_definition(ModelPolicy::Inherit);
     let cases = [
         (
             rho.clone(),
             crate::config::InternalAgentModelConfig::claude_cli(None),
-            ModelOverrideError::ClaudeCodeTarget { id: rho.id.clone() },
+            ConfiguredModelError::ClaudeCodeTarget { id: rho.id.clone() },
         ),
         (
             claude.clone(),
@@ -1430,7 +1435,7 @@ fn configured_model_override_refuses_a_runtime_switch() {
                 "grok-4.7".into(),
                 "xai-api-key".into(),
             ),
-            ModelOverrideError::ExternalRuntime {
+            ConfiguredModelError::ExternalRuntime {
                 id: claude.id.clone(),
                 runtime: claude.runtime.runtime().to_string(),
             },
@@ -1450,7 +1455,10 @@ fn configured_model_override_refuses_a_runtime_switch() {
             &credentials(&["xai-api-key"]),
         );
         let error = result.expect_err("bound with a runtime switch");
-        assert_eq!(error.downcast_ref::<ModelOverrideError>(), Some(&expected));
+        assert_eq!(
+            error.downcast_ref::<ConfiguredModelError>(),
+            Some(&expected)
+        );
     }
 }
 

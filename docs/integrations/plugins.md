@@ -165,8 +165,9 @@ pane, and only plugin agents get the picker. Built-in, internal-only, and
 reserved IDs never take one. Rho refuses to launch an agent that runs on another runtime while it has
 an entry, since the entry would switch runtime rather than model, and
 `/agents` marks such an entry as unable to apply. An explicit
-[per-call `model`](/subagents#per-call-model-selection) on an `agent` call still wins over the entry for
-that call.
+[per-call `model`](/subagents#per-call-model-selection) on an `agent` call
+replaces the entry's provider, model, and auth for that call; the entry's
+`reasoning` and its fast mode (off) still apply.
 
 ## MCP servers
 

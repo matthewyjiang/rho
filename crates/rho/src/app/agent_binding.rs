@@ -414,7 +414,7 @@ impl AgentBinder {
         let fingerprint = definition.fingerprint();
         // Only Rho agents take a configured `[internal_agents.<id>]` entry; an
         // entry for any other runtime fails here instead of being ignored.
-        let configured = crate::agent::model_override(&definition, &host_config.internal_agents)?;
+        let configured = crate::agent::configured_model(&definition, &host_config.internal_agents)?;
         let runtime = match &definition.runtime {
             AgentRuntimeSpec::Rho {
                 tools,
@@ -690,12 +690,12 @@ pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config
     else {
         return host_config.clone();
     };
-    let Ok(model_override) = crate::agent::model_override(definition, &host_config.internal_agents)
+    let Ok(configured) = crate::agent::configured_model(definition, &host_config.internal_agents)
     else {
         return host_config.clone();
     };
     let (model, reasoning) =
-        crate::agent::effective_rho_model(model, *reasoning, model_override.as_ref());
+        crate::agent::effective_rho_model(model, *reasoning, configured.as_ref());
     bind_rho_config(
         definition.id.as_str(),
         model,
@@ -731,11 +731,12 @@ fn bind_rho_config(
 
 /// Settles fast mode for a bound Rho agent.
 ///
-/// Delegated and workflow runs use exactly the definition's `fast` value, so
-/// the parent's `/fast` never leaks into children. Roots keep the user's saved
+/// Delegated and workflow runs use exactly the agent's `fast` value, so the
+/// parent's `/fast` never leaks into children. Roots keep the user's saved
 /// preference and `fast: true` can only turn it on. An explicit request must
-/// be servable by the bound provider, model, and auth. `model` is the policy
-/// bound, so a configured model override drops the definition's `fast`.
+/// be servable by the bound provider, model, and auth. `model` is the agent's
+/// effective policy (its configured entry, else the file) and supplies only
+/// `fast`, including when a per-call selection chose the provider and model.
 fn apply_fast_mode(
     agent_id: &AgentId,
     model: &ModelPolicy,
