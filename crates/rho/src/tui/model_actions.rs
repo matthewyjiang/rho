@@ -433,17 +433,26 @@ impl App {
         )
     }
 
-    /// Saves an internal agent's selection, or clears it with `None` so the
-    /// agent falls back to the conversation model.
+    /// Saves an agent's `[internal_agents]` selection, or clears it with
+    /// `None` so the agent falls back: an internal agent to the conversation
+    /// model, a catalog (plugin) agent to the model its file names.
     fn store_internal_agent_model(
         &mut self,
         id: &str,
         config: Option<crate::config::InternalAgentModelConfig>,
     ) -> anyhow::Result<()> {
+        let internal = crate::agent::internal_definitions()
+            .iter()
+            .any(|definition| definition.id.as_str() == id);
+        let (subject, fallback) = if internal {
+            (format!("internal agent {id}"), "conversation model")
+        } else {
+            (format!("agent {id}"), "its default model")
+        };
         let label = config
             .as_ref()
             .map(crate::config::InternalAgentModelConfig::display_reference)
-            .unwrap_or_else(|| "conversation model".into());
+            .unwrap_or_else(|| fallback.into());
         let previous = self.info.runtime.internal_agents.get(id).cloned();
         let save_result = match config {
             Some(mut config) => {
@@ -466,13 +475,11 @@ impl App {
         };
         match save_result {
             Ok(()) => {
-                self.set_status(format!(
-                    "internal agent {id} now uses {label}; saved to config"
-                ));
+                self.set_status(format!("{subject} now uses {label}; saved to config"));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "internal agent {id} now uses {label} for this session, but saving config failed: {err}"
+                    "{subject} now uses {label} for this session, but saving config failed: {err}"
                 )));
                 self.set_status("config save failed");
             }
@@ -492,10 +499,14 @@ impl App {
         let id = target.id.as_str();
         match target.origin {
             InternalAgentModelPickerOrigin::AgentsPicker => {
-                if id == ADVISOR_AGENT_ID {
+                if let super::agent_picker::AgentModelDefault::Definition(_) = target.default {
+                    // Delegated runs bind catalog agents from the runtime's
+                    // copy of the entries.
+                    self.sync_internal_agents_runtime_config(agent);
+                } else if id == ADVISOR_AGENT_ID {
                     self.sync_advisor_runtime(agent).await;
                 } else if id == PERMISSION_CLASSIFIER_AGENT_ID {
-                    self.sync_permission_classifier_runtime_config(agent);
+                    self.sync_internal_agents_runtime_config(agent);
                 } else if selected && id == crate::agent::COMPACTION_AGENT_ID {
                     // The compactor reads its summarizer from saved config
                     // the next time the session is idle.
@@ -569,7 +580,7 @@ impl App {
             | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow => {
                 self.internal_agent_model_target = None;
                 if selected {
-                    self.sync_permission_classifier_runtime_config(agent);
+                    self.sync_internal_agents_runtime_config(agent);
                 }
                 let status = self.status().to_string();
                 self.open_main_config_picker_selected(match target.origin {
@@ -583,7 +594,7 @@ impl App {
             InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
                 self.internal_agent_model_target = None;
                 if selected {
-                    self.sync_permission_classifier_runtime_config(agent);
+                    self.sync_internal_agents_runtime_config(agent);
                 }
             }
             InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
@@ -591,7 +602,7 @@ impl App {
                 if selected
                     && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
                 {
-                    self.sync_permission_classifier_runtime_config(agent);
+                    self.sync_internal_agents_runtime_config(agent);
                 }
                 let status = self.status().to_string();
                 self.open_main_config_picker_selected(

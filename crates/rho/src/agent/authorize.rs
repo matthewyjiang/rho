@@ -67,7 +67,11 @@ fn origin_roots(origin: AgentOrigin, cwd: &Path, home: Option<&Path>) -> Vec<(Pa
                 (base, root)
             })
             .collect(),
-        AgentOrigin::Internal | AgentOrigin::BuiltIn | AgentOrigin::Workflow => Vec::new(),
+        // Plugin agents belong to their package; edit the plugin instead.
+        AgentOrigin::Internal
+        | AgentOrigin::BuiltIn
+        | AgentOrigin::Plugin
+        | AgentOrigin::Workflow => Vec::new(),
     }
 }
 

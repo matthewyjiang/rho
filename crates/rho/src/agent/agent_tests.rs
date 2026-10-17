@@ -362,3 +362,60 @@ fn workflow_local_agents_root_is_sibling_agents_dir() {
         PathBuf::from("agents")
     );
 }
+
+// Covers: plugin agents rank above built-ins but below every user file tier,
+// project plugins override user plugins, and a plugin file can neither
+// replace nor (when broken) block a built-in agent.
+// Owner: agent catalog
+#[test]
+fn plugin_agents_rank_below_user_files_and_cannot_replace_builtins() {
+    let source = |path: &str, description: &str| {
+        (
+            PathBuf::from(path),
+            format!("---\ndescription: {description}\n---\n"),
+        )
+    };
+    let catalog = AgentCatalog::from_authorized_sources(AgentCatalogSources {
+        user_plugins: vec![
+            source("/user-plugin/auditor.md", "user plugin"),
+            source("/user-plugin/reviewer.md", "replaces a built-in"),
+            (
+                PathBuf::from("/user-plugin/worker.md"),
+                "---\ndescription: broken\ntools: [teleport]\n---\n".into(),
+            ),
+            source("/user-plugin/shared.md", "user plugin"),
+        ],
+        project_plugins: vec![source("/project-plugin/auditor.md", "project plugin")],
+        agents_home: vec![source("/agents-home/shared.md", "agents home")],
+        ..AgentCatalogSources::default()
+    })
+    .unwrap();
+
+    let resolved = |id: &str| {
+        let metadata = &catalog.find(id).unwrap().metadata;
+        (metadata.origin, metadata.path.clone())
+    };
+    pretty_assertions::assert_eq!(
+        ["auditor", "shared", "reviewer", "worker"].map(resolved),
+        [
+            (
+                AgentOrigin::Plugin,
+                Some(PathBuf::from("/project-plugin/auditor.md"))
+            ),
+            (
+                AgentOrigin::AgentsHome,
+                Some(PathBuf::from("/agents-home/shared.md"))
+            ),
+            (AgentOrigin::BuiltIn, None),
+            (AgentOrigin::BuiltIn, None),
+        ]
+    );
+    let skipped: Vec<_> = catalog.skipped().iter().map(|error| &error.path).collect();
+    pretty_assertions::assert_eq!(
+        skipped,
+        [
+            Path::new("/user-plugin/reviewer.md"),
+            Path::new("/user-plugin/worker.md")
+        ]
+    );
+}

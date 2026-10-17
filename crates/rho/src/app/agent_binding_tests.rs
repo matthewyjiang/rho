@@ -1330,3 +1330,96 @@ fn keep_host_fast_mode_restores_session_fast_when_servable() {
         );
     }
 }
+
+// Covers: a model picked in `/agents` for a read-only (plugin) agent replaces
+// the file's pinned model and fast flag, and its reasoning wins only when set.
+// Owner: agent binding
+#[test]
+fn configured_model_override_replaces_the_definition_model() {
+    let pinned = Arc::new(AgentDefinition {
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model: ModelPolicy::Select(ModelSelection {
+                provider: Some("openai-codex".into()),
+                model: "gpt-5.5".into(),
+                auth: Some("codex".into()),
+                fast: true,
+            }),
+            reasoning: Some(ReasoningLevel::High),
+        },
+        ..definition(ToolPolicy::All).as_ref().clone()
+    });
+    let store = credentials(&["codex", "xai-api-key"]);
+    // (override reasoning, expected bound reasoning)
+    for (configured, expected) in [
+        (None, ReasoningLevel::High),
+        (Some(ReasoningLevel::Low), ReasoningLevel::Low),
+    ] {
+        let mut host = Config::default();
+        let mut entry = crate::config::InternalAgentModelConfig::new(
+            "xai".into(),
+            "grok-4.7".into(),
+            "xai-api-key".into(),
+        );
+        entry.reasoning = configured;
+        host.set_internal_agent_model_config("test", entry);
+        let bound = AgentBinder::bind_with_credentials(
+            pinned.clone(),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &store,
+        )
+        .expect("bind");
+        let config = bound.rho_config().expect("rho config");
+        assert_eq!(
+            (
+                config.provider.as_str(),
+                config.model.as_str(),
+                config.auth.as_str(),
+                config.fast_mode,
+                config.reasoning,
+            ),
+            ("xai", "grok-4.7", "xai-api-key", false, expected),
+            "{configured:?}"
+        );
+    }
+}
+
+// Covers: an override that would switch runtime fails at bind instead of
+// being ignored, for both a Claude Code entry and a non-Rho definition.
+// Owner: agent binding
+#[test]
+fn configured_model_override_refuses_a_runtime_switch() {
+    let claude = claude_definition(ModelPolicy::Inherit);
+    let cases = [
+        (
+            definition(ToolPolicy::All),
+            crate::config::InternalAgentModelConfig::claude_cli(None),
+        ),
+        (
+            claude.clone(),
+            crate::config::InternalAgentModelConfig::new(
+                "xai".into(),
+                "grok-4.7".into(),
+                "xai-api-key".into(),
+            ),
+        ),
+    ];
+    for (agent, entry) in cases {
+        let mut host = Config::default();
+        host.set_internal_agent_model_config(agent.id.as_str(), entry);
+        let result = AgentBinder::bind_with_credentials(
+            agent.clone(),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &credentials(&["xai-api-key"]),
+        );
+        assert!(result.is_err(), "{} bound with a runtime switch", agent.id);
+    }
+}

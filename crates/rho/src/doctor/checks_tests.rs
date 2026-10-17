@@ -457,8 +457,10 @@ fn plugin(name: &str, status: PluginStatus) -> PluginReportEntry {
         problems: Vec::new(),
         skill_count: 1,
         mcp_server_count: 0,
+        agent_count: 1,
         skill_names: vec!["hello".into()],
         mcp_server_names: Vec::new(),
+        agent_names: vec!["auditor".into()],
     }
 }
 

@@ -171,7 +171,7 @@ use pickers::{
     CYCLE_AND_PINNED_MODEL_PICKER_STEPS, DELETE_USER_AGENT_STEPS, EDIT_USER_AGENT_STEPS,
     EDIT_USER_AGENT_TOOLS_STEPS, INVALID_USER_AGENT_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV,
     OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
-    VIEW_READ_ONLY_AGENT_PROMPT_STEPS,
+    PLUGIN_AGENT_MODEL_SCENARIO, VIEW_READ_ONLY_AGENT_PROMPT_STEPS,
 };
 use process_rail::{
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO, PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO,
@@ -776,6 +776,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_setup(setup_edit_user_agent),
+    PLUGIN_AGENT_MODEL_SCENARIO,
     Scenario::new(
         "view_read_only_agent_prompt",
         "Open a built-in agent's full prompt from the agents picker and return",

@@ -13,6 +13,9 @@
 //! translated into the generic native MCP configuration and share its
 //! transport, lifecycle, permission, and tool-registration path.
 //!
+//! Rho agent definitions, which the portable format does not define, load
+//! from Rho's client extension directory; see `plugins/agents.rs`.
+//!
 //! Enable and disable state is Rho policy stored outside package directories
 //! (`plugins.toml` under the Rho data root and the project `.rho` directory).
 //! Install and link place packages into the explicit roots above.
@@ -21,14 +24,16 @@
 //! `RHO_TRUST_PROJECT_PLUGINS=1` they load inventory-only (manifest and
 //! component metadata, no skill or MCP activation), mirroring the
 //! `RHO_TRUST_PROJECT_HOOKS` / `RHO_TRUST_PROJECT_AGENTS` family so a cloned
-//! repository cannot silently execute plugin commands. User-scope plugins are
-//! the user's own files and are not gated.
+//! repository cannot silently execute plugin commands or agents. User-scope
+//! plugins are the user's own files and are not gated.
 //!
 //! Version handling stays isolated behind `$schema` recognition because the
 //! 1.0.0 specification is a Working Draft.
 //!
 //! Specification: <https://agent-plugins.org/specification>
 
+#[path = "plugins/agents.rs"]
+mod agents;
 #[path = "plugins/contain.rs"]
 mod contain;
 #[path = "plugins/manage.rs"]
@@ -54,10 +59,11 @@ use crate::skills::{Skill, SkillSource};
 use crate::tools::mcp::config::{InvalidMcpServer, McpConfig, McpServerConfig};
 
 pub(crate) use crate::workspace::{ProjectTrust, TRUST_PROJECT_PLUGINS_ENV};
+pub(crate) use agents::PluginAgentFiles;
 pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
 
 pub(crate) const SUPPORTED_COMPONENTS: &str =
-    "skills, mcp (stdio, streamable-http; sse unsupported)";
+    "skills, mcp (stdio, streamable-http; sse unsupported), agents (io.github.matthewyjiang.rho/agents)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,8 +133,11 @@ pub(crate) struct PluginReportEntry {
     pub(crate) problems: Vec<String>,
     pub(crate) skill_count: usize,
     pub(crate) mcp_server_count: usize,
+    pub(crate) agent_count: usize,
     pub(crate) skill_names: Vec<String>,
     pub(crate) mcp_server_names: Vec<String>,
+    /// Agent ids the files claim by name; the catalog validates definitions.
+    pub(crate) agent_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -146,11 +155,14 @@ pub(crate) struct PluginLoadSummary {
     pub(crate) problems: usize,
     pub(crate) skills: usize,
     pub(crate) mcp_servers: usize,
+    pub(crate) agents: usize,
 }
 
 pub(crate) struct PluginDiscovery {
     pub(crate) skills: Vec<Skill>,
     pub(crate) mcp: McpConfig,
+    /// Active plugins' agent files, highest precedence first.
+    pub(crate) agents: Vec<PluginAgentFiles>,
     pub(crate) report: PluginLoadReport,
 }
 
@@ -159,6 +171,7 @@ enum ComponentSelection {
     All,
     SkillsOnly,
     McpOnly,
+    AgentsOnly,
 }
 
 impl ComponentSelection {
@@ -168,6 +181,10 @@ impl ComponentSelection {
 
     const fn loads_mcp(self) -> bool {
         matches!(self, Self::All | Self::McpOnly)
+    }
+
+    const fn loads_agents(self) -> bool {
+        matches!(self, Self::All | Self::AgentsOnly)
     }
 }
 
@@ -181,6 +198,19 @@ pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill
         ProjectTrust::from_plugins_env(),
     )
     .skills
+}
+
+/// Active plugins' Rho agent files, highest precedence first: nearer project
+/// roots, then the user root.
+pub(crate) fn agents_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<PluginAgentFiles> {
+    discover_components(
+        cwd,
+        home,
+        None,
+        ComponentSelection::AgentsOnly,
+        ProjectTrust::from_plugins_env(),
+    )
+    .agents
 }
 
 /// Discover and load plugin packages from the explicit roots.
@@ -227,6 +257,7 @@ fn discover_components(
     let mut discovery = PluginDiscovery {
         skills: Vec::new(),
         mcp: McpConfig::default(),
+        agents: Vec::new(),
         report: PluginLoadReport::default(),
     };
     let state = PluginStateStore::load(cwd, rho_home)
@@ -332,8 +363,10 @@ fn load_candidate(
             problems: vec![reason],
             skill_count: 0,
             mcp_server_count: 0,
+            agent_count: 0,
             skill_names: Vec::new(),
             mcp_server_names: Vec::new(),
+            agent_names: Vec::new(),
         });
     };
 
@@ -384,8 +417,10 @@ fn load_candidate(
             )],
             skill_count: 0,
             mcp_server_count: 0,
+            agent_count: 0,
             skill_names: Vec::new(),
             mcp_server_names: Vec::new(),
+            agent_names: Vec::new(),
         });
         return;
     }
@@ -406,10 +441,21 @@ fn load_candidate(
         (Vec::new(), Vec::new())
     };
 
+    let agents = if components.loads_agents() {
+        agents::discover_plugin_agents(scope, &root, &mut problems)
+    } else {
+        None
+    };
+    let agent_names = agents
+        .as_ref()
+        .map(PluginAgentFiles::names)
+        .unwrap_or_default();
+
     if components == ComponentSelection::All
         && skills.is_empty()
         && mcp_servers.is_empty()
         && invalid_mcp_servers.is_empty()
+        && agent_names.is_empty()
     {
         problems.push("plugin has no usable components".to_string());
     }
@@ -421,6 +467,7 @@ fn load_candidate(
         .collect::<Vec<_>>();
     let skill_count = skills.len();
     let mcp_server_count = mcp_servers.len();
+    let agent_count = agent_names.len();
 
     if status.activates() {
         discovery.skills.extend(skills);
@@ -430,6 +477,7 @@ fn load_candidate(
                 .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
         );
         discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
+        discovery.agents.extend(agents);
     }
 
     discovery.report.plugins.push(PluginReportEntry {
@@ -444,8 +492,10 @@ fn load_candidate(
         problems,
         skill_count,
         mcp_server_count,
+        agent_count,
         skill_names,
         mcp_server_names,
+        agent_names,
     });
 }
 
@@ -634,6 +684,7 @@ pub(crate) fn log(report: &PluginLoadReport) {
                         plugin = %entry.name,
                         skills = entry.skill_count,
                         mcp_servers = entry.mcp_server_count,
+                        agents = entry.agent_count,
                         "loaded Agent Plugin"
                     );
                 }
@@ -655,6 +706,7 @@ impl PluginLoadReport {
                     summary.problems += entry.problems.len();
                     summary.skills += entry.skill_count;
                     summary.mcp_servers += entry.mcp_server_count;
+                    summary.agents += entry.agent_count;
                 }
                 PluginStatus::Disabled => {
                     summary.disabled += 1;

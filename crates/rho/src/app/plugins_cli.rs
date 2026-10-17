@@ -204,13 +204,14 @@ fn print_list(report: &PluginLoadReport, json: bool) -> anyhow::Result<()> {
     for plugin in &report.plugins {
         let version = plugin.version.as_deref().unwrap_or("-");
         println!(
-            "{:<name_width$}  {:<status_width$}  {:<7}  {:<7}  {version:<8}  skills {}  mcp {}  {}",
+            "{:<name_width$}  {:<status_width$}  {:<7}  {:<7}  {version:<8}  skills {}  mcp {}  agents {}  {}",
             plugin.name,
             status_label(plugin.status),
             plugin.scope.as_str(),
             plugin.origin.as_str(),
             plugin.skill_count,
             plugin.mcp_server_count,
+            plugin.agent_count,
             plugin.root,
         );
     }
@@ -259,6 +260,14 @@ fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::R
     } else {
         for server in &plugin.mcp_server_names {
             println!("  {}/{server}", plugin.name);
+        }
+    }
+    println!("agents ({}):", plugin.agent_count);
+    if plugin.agent_names.is_empty() {
+        println!("  (none)");
+    } else {
+        for agent in &plugin.agent_names {
+            println!("  {agent}  (plugin {})", plugin.name);
         }
     }
     if !plugin.problems.is_empty() {

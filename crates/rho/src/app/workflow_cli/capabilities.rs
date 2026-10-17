@@ -96,6 +96,15 @@ impl AppWorkflowToolService {
     ) -> anyhow::Result<crate::agent::AgentCatalog> {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
+        // Plugin discovery already applied enable state, trust, and
+        // containment; each directory read is still authorized here.
+        for plugin in crate::plugins::agents_by_precedence(&self.cwd, home.as_deref()) {
+            let loaded = self.authorized_agent_sources(context, &plugin.dir).await?;
+            match plugin.scope {
+                crate::plugins::PluginScope::User => sources.user_plugins.extend(loaded),
+                crate::plugins::PluginScope::Project => sources.project_plugins.extend(loaded),
+            }
+        }
         if let Some(home) = home.as_deref() {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
             sources.agents_home = self.authorized_agent_sources(context, &agents_home).await?;

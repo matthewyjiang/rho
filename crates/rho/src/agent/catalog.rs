@@ -11,6 +11,7 @@ use super::{
     internal::{internal_definitions, is_internal_agent_id},
     parser::parse_definition,
 };
+use crate::plugins::{PluginAgentFiles, PluginScope};
 use crate::workspace::ProjectTrust;
 
 /// The built-in root agent. It is never offered for delegation.
@@ -31,6 +32,8 @@ const BUILTINS: &[(&str, &str)] = &[
 pub enum AgentOrigin {
     Internal,
     BuiltIn,
+    /// Agents an active Agent Plugin ships in Rho's extension directory.
+    Plugin,
     AgentsHome,
     RhoHome,
     Project,
@@ -44,6 +47,7 @@ impl AgentOrigin {
         match self {
             Self::Internal => "internal",
             Self::BuiltIn => "built_in",
+            Self::Plugin => "plugin",
             Self::AgentsHome => "agents_home",
             Self::RhoHome => "rho_home",
             Self::Project => "project",
@@ -104,6 +108,8 @@ impl DiscoveredAgentCatalog {
 
 #[derive(Default)]
 pub(crate) struct AgentCatalogSources {
+    pub(crate) user_plugins: Vec<(PathBuf, String)>,
+    pub(crate) project_plugins: Vec<(PathBuf, String)>,
     pub(crate) agents_home: Vec<(PathBuf, String)>,
     pub(crate) rho_home: Vec<(PathBuf, String)>,
     pub(crate) project: Vec<Vec<(PathBuf, String)>>,
@@ -111,8 +117,9 @@ pub(crate) struct AgentCatalogSources {
 }
 
 impl AgentCatalog {
-    /// Discovers built-ins and user/project files. Precedence is project,
-    /// `~/.rho/agents`, `~/.agents/agents`, then built-ins.
+    /// Discovers built-ins, plugin agents, and user/project files. Precedence
+    /// is project, `~/.rho/agents`, `~/.agents/agents`, project plugins, user
+    /// plugins, then built-ins. Plugin agents cannot claim built-in ids.
     pub fn discover(cwd: &Path) -> Result<Self, AgentCatalogError> {
         let home = crate::paths::home_dir();
         let trust = ProjectTrust::from_agents_env();
@@ -124,6 +131,9 @@ impl AgentCatalog {
         Self::discover_with_home_and_trust(cwd, home, ProjectTrust::Trusted)
     }
 
+    /// `project_trust` gates project `.agents/agents` files. Project plugin
+    /// agents follow plugin trust (`RHO_TRUST_PROJECT_PLUGINS`) instead, as
+    /// every other component of that plugin does.
     pub fn discover_with_home_and_trust(
         cwd: &Path,
         home: Option<&Path>,
@@ -131,6 +141,13 @@ impl AgentCatalog {
     ) -> Result<Self, AgentCatalogError> {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
+        let plugin_agents = crate::plugins::agents_by_precedence(cwd, home);
+        for scope in [PluginScope::User, PluginScope::Project] {
+            catalog.load_paths(
+                AgentOrigin::Plugin,
+                plugin_agent_paths(&plugin_agents, scope),
+            );
+        }
         if let Some(home) = home {
             let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
             catalog.load_tier(AgentOrigin::AgentsHome, &[agents_home]);
@@ -168,6 +185,8 @@ impl AgentCatalog {
     ) -> Result<Self, AgentCatalogError> {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
+        catalog.load_sources(AgentOrigin::Plugin, sources.user_plugins);
+        catalog.load_sources(AgentOrigin::Plugin, sources.project_plugins);
         catalog.load_sources(AgentOrigin::AgentsHome, sources.agents_home);
         catalog.load_sources(AgentOrigin::RhoHome, sources.rho_home);
         for tier in sources.project {
@@ -209,48 +228,42 @@ impl AgentCatalog {
     }
 
     fn load_builtins(&mut self) -> Result<(), AgentCatalogError> {
-        let mut tier = TierLoad::default();
+        let mut tier = TierLoad::new(AgentOrigin::BuiltIn);
         for (id, contents) in BUILTINS {
             let path = PathBuf::from(format!("<builtin:{id}>"));
             let definition = parse_definition(&path, id, contents)?;
             tier.insert(definition, path)?;
         }
-        self.merge_tier(tier, AgentOrigin::BuiltIn);
+        self.merge_tier(tier);
         Ok(())
     }
 
     fn load_tier(&mut self, origin: AgentOrigin, roots: &[PathBuf]) {
-        let mut tier = TierLoad::default();
+        let mut paths = Vec::new();
+        let mut tier = TierLoad::new(origin);
         for root in roots {
-            let paths = match markdown_paths(root) {
-                Ok(paths) => paths,
-                Err(error) => {
-                    tier.skip(None, error);
-                    continue;
-                }
-            };
-            for path in paths {
-                match std::fs::read_to_string(&path) {
-                    Ok(contents) => tier.load_file(path, &contents),
-                    Err(error) => {
-                        let error = AgentCatalogError::at_path(
-                            path.clone(),
-                            format!("cannot read file: {error}"),
-                        );
-                        tier.skip(stem_id(&path), error);
-                    }
-                }
+            match markdown_paths(root) {
+                Ok(found) => paths.extend(found),
+                Err(error) => tier.skip(None, error),
             }
         }
-        self.merge_tier(tier, origin);
+        tier.read_files(paths);
+        self.merge_tier(tier);
+    }
+
+    /// Loads one tier from files already located (and contained) by the caller.
+    fn load_paths(&mut self, origin: AgentOrigin, paths: Vec<PathBuf>) {
+        let mut tier = TierLoad::new(origin);
+        tier.read_files(paths);
+        self.merge_tier(tier);
     }
 
     fn load_sources(&mut self, origin: AgentOrigin, sources: Vec<(PathBuf, String)>) {
-        let mut tier = TierLoad::default();
+        let mut tier = TierLoad::new(origin);
         for (path, contents) in sources {
             tier.load_file(path, &contents);
         }
-        self.merge_tier(tier, origin);
+        self.merge_tier(tier);
     }
 
     fn load_internals(&mut self) {
@@ -269,7 +282,8 @@ impl AgentCatalog {
         }
     }
 
-    fn merge_tier(&mut self, tier: TierLoad, origin: AgentOrigin) {
+    fn merge_tier(&mut self, tier: TierLoad) {
+        let origin = tier.origin;
         // A skipped file blocks its id from this tier down, unless a valid
         // file in this tier defines it.
         for (id, error) in tier.blocked {
@@ -296,14 +310,38 @@ impl AgentCatalog {
 }
 
 /// One precedence tier while it loads.
-#[derive(Default)]
 struct TierLoad {
+    origin: AgentOrigin,
     loaded: BTreeMap<AgentId, (AgentDefinition, PathBuf)>,
     blocked: BTreeMap<AgentId, AgentCatalogError>,
     skipped: Vec<AgentCatalogError>,
 }
 
 impl TierLoad {
+    fn new(origin: AgentOrigin) -> Self {
+        Self {
+            origin,
+            loaded: BTreeMap::new(),
+            blocked: BTreeMap::new(),
+            skipped: Vec::new(),
+        }
+    }
+
+    fn read_files(&mut self, paths: Vec<PathBuf>) {
+        for path in paths {
+            match std::fs::read_to_string(&path) {
+                Ok(contents) => self.load_file(path, &contents),
+                Err(error) => {
+                    let error = AgentCatalogError::at_path(
+                        path.clone(),
+                        format!("cannot read file: {error}"),
+                    );
+                    self.skip(stem_id(&path), error);
+                }
+            }
+        }
+    }
+
     /// Parses one user file, skipping it when it cannot load.
     fn load_file(&mut self, path: PathBuf, contents: &str) {
         let Some(fallback_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -324,6 +362,18 @@ impl TierLoad {
                 "id",
                 format!(
                     "agent ID '{}' is reserved for an internal agent and cannot be overridden",
+                    definition.id
+                ),
+            );
+            self.skip(None, error);
+            return;
+        }
+        if self.origin == AgentOrigin::Plugin && is_builtin_id(&definition.id) {
+            let error = AgentCatalogError::at_field(
+                path,
+                "id",
+                format!(
+                    "agent ID '{}' is a built-in Rho agent; plugin agents cannot override built-ins",
                     definition.id
                 ),
             );
@@ -369,15 +419,30 @@ impl TierLoad {
     }
 
     /// Records a skipped file. `id` is the agent the file claims, when known;
-    /// it becomes unavailable from this tier down.
+    /// it becomes unavailable from this tier down. A plugin file never blocks
+    /// a built-in id, since plugins cannot override built-ins.
     fn skip(&mut self, id: Option<AgentId>, error: AgentCatalogError) {
         tracing::warn!(error = %error, "skipping invalid agent definition");
-        if let Some(id) = id {
+        let blocks = |id: &AgentId| !(self.origin == AgentOrigin::Plugin && is_builtin_id(id));
+        if let Some(id) = id.filter(blocks) {
             self.loaded.remove(&id);
             self.blocked.entry(id).or_insert_with(|| error.clone());
         }
         self.skipped.push(error);
     }
+}
+
+fn is_builtin_id(id: &AgentId) -> bool {
+    BUILTINS.iter().any(|(builtin, _)| *builtin == id.as_str())
+}
+
+/// One scope's plugin agent files; the catalog loads each scope as a tier.
+fn plugin_agent_paths(plugins: &[PluginAgentFiles], scope: PluginScope) -> Vec<PathBuf> {
+    plugins
+        .iter()
+        .filter(|plugin| plugin.scope == scope)
+        .flat_map(|plugin| plugin.files.iter().cloned())
+        .collect()
 }
 
 /// The agent id a definition file's name claims, when it is a valid id.

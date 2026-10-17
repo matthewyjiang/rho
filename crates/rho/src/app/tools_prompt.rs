@@ -118,14 +118,16 @@ pub(crate) async fn assemble_tools_and_prompt(
     let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
     let delegation_enabled =
         launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
-    // Agent Plugins contribute skills through ordinary skill discovery and
-    // MCP servers through the generic native MCP configuration.
+    // Agent Plugins contribute skills through ordinary skill discovery, MCP
+    // servers through the generic native MCP configuration, and agents
+    // through the agent catalog's own discovery.
     let plugin_discovery =
         crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
     crate::plugins::log(&plugin_discovery.report);
     let crate::plugins::PluginDiscovery {
         skills: plugin_skills,
         mcp: plugin_mcp,
+        agents: _,
         report: plugins_report,
     } = plugin_discovery;
     let mcp_config = mcp_config_for_attach(options.config, plugin_mcp, options.mcp_attach);

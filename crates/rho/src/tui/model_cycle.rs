@@ -75,7 +75,7 @@ impl App {
                 if target.id == crate::permission_classifier::DECISION_SCREEN_ID {
                     self.screen_model_picker(target.origin)
                 } else {
-                    self.internal_agent_model_picker(&target.id, target.origin)
+                    self.internal_agent_model_picker(target)
                 }
             }
             _ => return None,

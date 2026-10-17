@@ -127,6 +127,8 @@ pub(super) fn model_picker_during_run(
     .into_models()
 }
 
+/// Label of the conversation-model row, and the row value of every row that
+/// clears an agent's model override (see [`FallbackModelRow`]).
 pub(super) const USE_CONVERSATION_MODEL: &str = "Use conversation model";
 
 /// Separates the runtime key from the pass-through model in a Claude Code row
@@ -195,11 +197,16 @@ pub(super) fn parse_internal_agent_model_row(value: &str) -> InternalAgentModelR
     }
 }
 
-/// Whether an internal-agent model picker offers the conversation-model row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ConversationModelRow {
+/// The row that clears an agent's model override, named for what the agent
+/// falls back to. Every variant's row carries [`USE_CONVERSATION_MODEL`] as
+/// its value, which parses to [`InternalAgentModelRow::Conversation`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum FallbackModelRow {
     /// The agent follows the conversation model when it has no own model.
-    Offered { selected: bool },
+    Conversation { selected: bool },
+    /// The agent runs the model its own (read-only) file names, shown as a
+    /// `provider/model` reference or a bare model.
+    AgentDefault { model: String, selected: bool },
     /// The agent has no conversation-model fallback, so the row would lie.
     Omitted,
 }
@@ -246,7 +253,7 @@ impl InternalAgentSelection {
 pub(super) struct InternalAgentPickerInputs<'a> {
     pub(super) agent_id: &'a str,
     pub(super) current: InternalAgentSelection,
-    pub(super) conversation_model: ConversationModelRow,
+    pub(super) fallback: FallbackModelRow,
     pub(super) claude_code: ClaudeCodeRows,
     pub(super) favorite_models: &'a [String],
     pub(super) available_auths: &'a [String],
@@ -258,7 +265,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
     let InternalAgentPickerInputs {
         agent_id,
         current,
-        conversation_model,
+        fallback,
         claude_code,
         favorite_models,
         available_auths,
@@ -283,23 +290,28 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
     );
 
     let mut leading = Vec::new();
-    if let ConversationModelRow::Offered { selected } = conversation_model {
-        leading.push(conversation_model_row(selected));
-    }
+    let fallback_selected = match &fallback {
+        FallbackModelRow::Conversation { selected } => {
+            leading.push(conversation_model_row(*selected));
+            *selected
+        }
+        FallbackModelRow::AgentDefault { model, selected } => {
+            leading.push(agent_default_row(model, *selected));
+            *selected
+        }
+        FallbackModelRow::Omitted => false,
+    };
     if claude_code == ClaudeCodeRows::Offered {
         leading.extend(claude_code_rows(&current));
     }
     catalog.items.splice(0..0, leading);
 
-    // A selected conversation row outranks `current`, which then still carries
-    // the conversation model and so also names a catalog row.
-    let wanted_value = match conversation_model {
-        ConversationModelRow::Offered { selected: true } => {
-            Some(USE_CONVERSATION_MODEL.to_string())
-        }
-        ConversationModelRow::Offered { selected: false } | ConversationModelRow::Omitted => {
-            current.row_value()
-        }
+    // A selected fallback row outranks `current`, which then still carries
+    // the fallback model and so may also name a catalog row.
+    let wanted_value = if fallback_selected {
+        Some(USE_CONVERSATION_MODEL.to_string())
+    } else {
+        current.row_value()
     };
     catalog.selected = wanted_value
         .and_then(|value| catalog.items.iter().position(|item| item.value == value))
@@ -451,6 +463,18 @@ fn conversation_model_row(selected: bool) -> PickerItem {
         }),
         allow_filter_completion: false,
         ..PickerItem::new(USE_CONVERSATION_MODEL.into(), USE_CONVERSATION_MODEL.into())
+    }
+}
+
+fn agent_default_row(model: &str, selected: bool) -> PickerItem {
+    PickerItem {
+        detail: Some(format!("Run {model}, the model the agent's file names.").into()),
+        badge: selected.then_some(PickerBadge {
+            text: "selected".into(),
+            tone: PickerBadgeTone::Selected,
+        }),
+        allow_filter_completion: false,
+        ..PickerItem::new("Use agent default".into(), USE_CONVERSATION_MODEL.into())
     }
 }
 

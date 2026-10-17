@@ -24,8 +24,10 @@ fn sample_entry(
         problems: Vec::new(),
         skill_count: 1,
         mcp_server_count: 0,
+        agent_count: 1,
         skill_names: vec!["hello".into()],
         mcp_server_names: Vec::new(),
+        agent_names: vec!["auditor".into()],
     }
 }
 
@@ -62,8 +64,10 @@ fn list_json_includes_inventory_fields() {
             "problems": [],
             "skill_count": 1,
             "mcp_server_count": 0,
+            "agent_count": 1,
             "skill_names": ["hello"],
-            "mcp_server_names": []
+            "mcp_server_names": [],
+            "agent_names": ["auditor"]
         }]
     });
     pretty_assertions::assert_eq!(value, expected);

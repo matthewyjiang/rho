@@ -65,6 +65,15 @@ fn write_mcp(plugin_dir: &Path, json: &str) {
     std::fs::write(plugin_dir.join("mcp.json"), json).unwrap();
 }
 
+/// Writes a Rho agent file into the plugin's Rho extension directory.
+fn write_agent(plugin_dir: &Path, id: &str) -> PathBuf {
+    let agents = plugin_dir.join("io.github.matthewyjiang.rho/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let path = agents.join(format!("{id}.md"));
+    std::fs::write(&path, "---\ndescription: plugin agent\n---\nprompt\n").unwrap();
+    path
+}
+
 fn stdio_mcp(command: &str) -> String {
     format!(
         r#"{{"$schema": "{MCP_SCHEMA}", "mcpServers": {{"main": {{"type": "stdio", "command": "{command}"}}}}}}"#
@@ -291,8 +300,8 @@ fn project_plugin_shadows_user_plugin_with_same_name() {
     assert_eq!(shadowed.name, "dup");
 }
 
-// Covers: untrusted project plugins stay inventory-only. Skills and MCP
-// servers, including stdio commands, never join the session.
+// Covers: untrusted project plugins stay inventory-only. Skills, MCP
+// servers (including stdio commands), and agents never join the session.
 // Owner: plugin trust policy.
 #[test]
 fn untrusted_project_plugin_activates_no_components() {
@@ -301,17 +310,20 @@ fn untrusted_project_plugin_activates_no_components() {
     let dir = write_plugin(&project_plugins(&env), "risky", &manifest_json("risky", ""));
     write_skill(&dir, "leaky", "must not reach the session");
     write_mcp(&dir, &stdio_mcp("bash"));
+    write_agent(&dir, "leaky-agent");
 
     let discovery = discover_env_with_trust(&env, ProjectTrust::Untrusted);
 
     assert!(discovery.skills.is_empty());
     assert!(!discovery.mcp.has_enabled_servers());
     assert!(discovery.mcp.servers.is_empty());
+    assert!(discovery.agents.is_empty());
     let entry = report_entry(&discovery, "risky");
     assert_eq!(entry.status, PluginStatus::Untrusted);
     assert!(entry.enabled);
     assert_eq!(entry.skill_count, 1);
     assert_eq!(entry.mcp_server_count, 1);
+    assert_eq!(entry.agent_names, ["leaky-agent"]);
     assert!(entry.problems.is_empty());
     assert_eq!(discovery.report.summary().untrusted, 1);
     assert_eq!(discovery.report.summary().problems, 0);
@@ -526,6 +538,42 @@ fn skill_md_symlink_escaping_root_is_skipped() {
     assert_eq!(names, ["inside-skill"]);
     let entry = report_entry(&discovery, "escaper");
     assert!(entry.problems.iter().any(|p| p.contains("escape-skill")));
+}
+
+// Covers: an agents-only plugin is a usable package, and an agent file
+// symlinked outside the plugin root is skipped while siblings load (spec 4.1).
+// Owner: plugin path containment.
+#[cfg(unix)]
+#[test]
+fn plugin_agents_load_contained_files_only() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    let dir = write_plugin(
+        &user_plugins(&env),
+        "agentic",
+        &manifest_json("agentic", ""),
+    );
+    let inside = write_agent(&dir, "inside-agent");
+    let outside = env.home.path().join("outside-agent.md");
+    std::fs::write(&outside, "---\ndescription: outside\n---\nprompt\n").unwrap();
+    std::os::unix::fs::symlink(&outside, inside.with_file_name("escape-agent.md")).unwrap();
+
+    let discovery = discover_env(&env);
+
+    let agents_dir = std::fs::canonicalize(inside.parent().unwrap()).unwrap();
+    pretty_assertions::assert_eq!(
+        discovery.agents,
+        [super::PluginAgentFiles {
+            scope: PluginScope::User,
+            files: vec![agents_dir.join("inside-agent.md")],
+            dir: agents_dir,
+        }]
+    );
+    let entry = report_entry(&discovery, "agentic");
+    assert_eq!(entry.status, PluginStatus::Loaded);
+    assert_eq!(entry.agent_names, ["inside-agent"]);
+    assert_eq!(entry.problems.len(), 1, "{:?}", entry.problems);
+    assert!(entry.problems[0].contains("escape-agent.md"));
 }
 
 // Covers: loose skills keep precedence over plugin skills.

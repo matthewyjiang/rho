@@ -15,7 +15,7 @@ use rho_providers::{
 };
 
 use super::{
-    agent_picker::{InternalAgentModelPickerOrigin, InternalAgentModelTarget},
+    agent_picker::{AgentModelDefault, InternalAgentModelPickerOrigin, InternalAgentModelTarget},
     model_picker::{self, InternalAgentModelRow, ScreenPickerInputs, ScreenSelection},
     App, ComposerMode, Entry, PickerBadge, PickerBadgeTone, RuntimeModelView, UiPicker,
 };
@@ -68,6 +68,7 @@ impl App {
         self.internal_agent_model_target = Some(InternalAgentModelTarget {
             id: DECISION_SCREEN_ID.into(),
             origin,
+            default: AgentModelDefault::Internal,
         });
         picker
     }

@@ -11,13 +11,13 @@ fn default_keybindings() -> &'static crate::keybindings::Keybindings {
 
 fn inputs(
     current: InternalAgentSelection,
-    conversation_model: ConversationModelRow,
+    fallback: FallbackModelRow,
     claude_code: ClaudeCodeRows,
 ) -> InternalAgentPickerInputs<'static> {
     InternalAgentPickerInputs {
         agent_id: "advisor",
         current,
-        conversation_model,
+        fallback,
         claude_code,
         favorite_models: &[],
         available_auths: &[],
@@ -46,7 +46,7 @@ fn selected_label(picker: &UiPicker) -> &str {
 fn claude_code_rows_appear_only_when_the_agent_can_delegate() {
     let offered = internal_agent_model_picker(inputs(
         InternalAgentSelection::Unset,
-        ConversationModelRow::Omitted,
+        FallbackModelRow::Omitted,
         ClaudeCodeRows::Offered,
     ));
     let expected_labels = std::iter::once("claude-code/default".to_string())
@@ -66,7 +66,7 @@ fn claude_code_rows_appear_only_when_the_agent_can_delegate() {
 
     let omitted = internal_agent_model_picker(inputs(
         InternalAgentSelection::Unset,
-        ConversationModelRow::Omitted,
+        FallbackModelRow::Omitted,
         ClaudeCodeRows::Omitted,
     ));
     assert_eq!(labels(&omitted), Vec::<&str>::new());
@@ -84,24 +84,24 @@ fn the_picker_opens_on_the_configured_row() {
             InternalAgentSelection::ClaudeCode {
                 model: Some("sonnet".into()),
             },
-            ConversationModelRow::Omitted,
+            FallbackModelRow::Omitted,
             "claude-code/sonnet",
         ),
         (
             InternalAgentSelection::ClaudeCode { model: None },
-            ConversationModelRow::Omitted,
+            FallbackModelRow::Omitted,
             "claude-code/default",
         ),
         (
             InternalAgentSelection::ClaudeCode {
                 model: Some("claude-opus-4-6".into()),
             },
-            ConversationModelRow::Omitted,
+            FallbackModelRow::Omitted,
             "claude-code/claude-opus-4-6",
         ),
         (
             InternalAgentSelection::Unset,
-            ConversationModelRow::Offered { selected: true },
+            FallbackModelRow::Conversation { selected: true },
             USE_CONVERSATION_MODEL,
         ),
         (
@@ -109,17 +109,27 @@ fn the_picker_opens_on_the_configured_row() {
                 provider: "anthropic".into(),
                 model: "claude-fable-5".into(),
             },
-            ConversationModelRow::Omitted,
+            FallbackModelRow::Omitted,
             "claude-code/default",
+        ),
+        // A plugin agent with no override opens on its default row, not on
+        // the catalog row of the same model, so Enter writes no override.
+        (
+            InternalAgentSelection::RhoModel {
+                provider: "anthropic".into(),
+                model: "claude-fable-5".into(),
+            },
+            FallbackModelRow::AgentDefault {
+                model: "anthropic/claude-fable-5".into(),
+                selected: true,
+            },
+            "Use agent default",
         ),
     ];
 
-    for (current, conversation_model, expected) in cases {
-        let picker = internal_agent_model_picker(inputs(
-            current.clone(),
-            conversation_model,
-            ClaudeCodeRows::Offered,
-        ));
+    for (current, fallback, expected) in cases {
+        let picker =
+            internal_agent_model_picker(inputs(current.clone(), fallback, ClaudeCodeRows::Offered));
         assert_eq!(selected_label(&picker), expected, "{current:?}");
     }
 }
@@ -131,7 +141,7 @@ fn the_picker_opens_on_the_configured_row() {
 fn each_row_value_routes_to_its_runtime() {
     let picker = internal_agent_model_picker(inputs(
         InternalAgentSelection::Unset,
-        ConversationModelRow::Offered { selected: true },
+        FallbackModelRow::Conversation { selected: true },
         ClaudeCodeRows::Offered,
     ));
     let rows = picker

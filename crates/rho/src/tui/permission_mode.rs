@@ -299,7 +299,7 @@ impl App {
             InternalAgentModelPickerOrigin::PermissionModeStartup => {
                 // Auto is already active; the picker only stored the model.
                 self.pending_auto_classifier_demote = false;
-                self.sync_permission_classifier_runtime_config(agent);
+                self.sync_internal_agents_runtime_config(agent);
                 self.set_status("permission mode: auto");
             }
             _ => {}
@@ -405,12 +405,12 @@ impl App {
             }
         }
         if self.info.runtime.permission_mode == PermissionMode::Auto {
-            self.sync_permission_classifier_runtime_config(agent);
+            self.sync_internal_agents_runtime_config(agent);
         }
         Ok(())
     }
 
-    pub(super) fn sync_permission_classifier_runtime_config(&self, agent: &mut InteractiveRuntime) {
+    pub(super) fn sync_internal_agents_runtime_config(&self, agent: &mut InteractiveRuntime) {
         let mut config = agent.config_snapshot();
         config
             .internal_agents
@@ -424,7 +424,7 @@ impl App {
     /// each turn starts, so the next classification sees them.
     pub(super) fn apply_pending_classifier_config(&mut self, agent: &mut InteractiveRuntime) {
         if std::mem::take(&mut self.classifier_config_sync_pending) {
-            self.sync_permission_classifier_runtime_config(agent);
+            self.sync_internal_agents_runtime_config(agent);
         }
     }
 
