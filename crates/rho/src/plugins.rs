@@ -428,7 +428,7 @@ fn load_candidate(
     let mut problems: Vec<String> = manifest.warnings.clone();
 
     // Always inventory components so list/inspect stay useful while disabled
-    // or untrusted. Only Loaded packages contribute skills and MCP servers.
+    // or untrusted. Only Loaded packages contribute skills, MCP servers, and agents.
     let skills = if components.loads_skills() {
         discover_plugin_skills(&manifest.name, &root, &mut problems)
     } else {
