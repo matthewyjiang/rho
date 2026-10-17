@@ -266,11 +266,7 @@ impl SessionCore {
     }
 
     pub(crate) fn prompt_cache_key(&self) -> Option<String> {
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .prompt_cache_key
-            .clone()
+        self.lock_data().prompt_cache_key.clone()
     }
 
     pub(crate) fn committed_history(&self) -> Vec<Message> {
@@ -346,10 +342,7 @@ impl SessionCore {
 
     pub(crate) fn persistence_snapshot(&self) -> crate::SessionSnapshot {
         let (history, revision, compaction, metadata, prompt_cache_key) = {
-            let data = self
-                .data
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let data = self.lock_data();
             (
                 data.history.clone(),
                 data.revision,
@@ -453,10 +446,7 @@ impl SessionCore {
             return;
         }
         *active_run = None;
-        self.data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .working_context = None;
+        self.lock_data().working_context = None;
         *self
             .in_flight
             .write()
@@ -636,9 +626,9 @@ impl Session {
     /// or host tool-call batch, before those calls start. Before a provider
     /// request whose history and revision are unchanged since the last save,
     /// the store is not called and the revision does not advance, so host
-    /// state a store adds to each snapshot waits for the next save. A process that dies mid-run can restore the
-    /// last saved snapshot and call [`Session::continue_history`]. A failed
-    /// save fails the run.
+    /// state a store adds to each snapshot waits for the next save. A process
+    /// that dies mid-run can restore the last saved snapshot and call
+    /// [`Session::continue_history`]. A failed save fails the run.
     pub fn set_checkpoint_store(
         &self,
         store: Option<Arc<dyn crate::SessionStore>>,
@@ -860,11 +850,7 @@ impl Session {
             crate::SystemPrompt::Custom(prompt) => Some(Message::System(prompt.clone())),
             crate::SystemPrompt::None => None,
         };
-        let mut data = self
-            .core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut data = self.core.lock_data();
         data.history = system_prompt.into_iter().collect();
         data.context = crate::context_estimate::ContextAccounting::new(&data.history, &tools);
         data.working_context = None;

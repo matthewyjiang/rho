@@ -413,7 +413,11 @@ async fn first_checkpoint_saves_an_unchanged_restored_history() {
     session.set_checkpoint_store(Some(store.clone())).unwrap();
 
     let mut run = session.continue_history().await.unwrap();
-    while run.next_event().await.is_some() {}
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        while run.next_event().await.is_some() {}
+    })
+    .await
+    .expect("run stalled");
     run.outcome().await.unwrap();
 
     assert_eq!(store.saved().first(), Some(&restored));
