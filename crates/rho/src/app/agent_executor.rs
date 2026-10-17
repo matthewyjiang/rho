@@ -40,6 +40,7 @@ pub(crate) struct AgentExecutor {
 
 pub(crate) struct AgentLaunchRequest {
     pub(crate) definition: Arc<AgentDefinition>,
+    pub(crate) model_override: Option<String>,
     pub(crate) prompt: String,
     pub(crate) run_id: String,
     pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
@@ -359,13 +360,17 @@ impl AgentExecutor {
         if questionnaire_target.is_none() {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
-        let bound = AgentBinder::bind(
+        let bound = AgentBinder::bind_with_model_override(
             request.definition,
             AgentInvocation {
                 role: AgentRole::Delegated,
                 available_tools: capabilities,
             },
             &config,
+            request
+                .model_override
+                .as_deref()
+                .map(super::agent_binding::ModelOverride::Reference),
         )?;
 
         self.spawn_bound(BoundLaunchRequest {

@@ -50,6 +50,8 @@ fn structured_run_exposes_result_only_when_done() {
         elapsed: Duration::from_secs(1),
         status: RunStatus {
             state,
+            provider: Some("xai".into()),
+            model: Some("grok-4.7".into()),
             result: Some("found it".into()),
             ..RunStatus::default()
         },
@@ -63,12 +65,22 @@ fn structured_run_exposes_result_only_when_done() {
             )))
             .unwrap(),
             serde_json::to_value(super::AgentRunView::from(&snapshot(RunState::Ok, true))).unwrap(),
+            serde_json::to_value(super::AgentRunView::started_with_identity(&snapshot(
+                RunState::Ok,
+                true
+            )))
+            .unwrap(),
         ],
         [
             serde_json::json!({"id": "run1", "agent_id": "explorer", "state": "running",
+                "provider": "xai", "model": "grok-4.7",
                 "done": false, "result": null, "error": null}),
             serde_json::json!({"id": "run1", "agent_id": "explorer", "state": "ok",
+                "provider": "xai", "model": "grok-4.7",
                 "done": true, "result": "found it", "error": null}),
+            serde_json::json!({"id": "run1", "agent_id": "explorer", "state": "starting",
+                "provider": "xai", "model": "grok-4.7",
+                "done": false, "result": null, "error": null}),
         ]
     );
 }

@@ -127,6 +127,7 @@ impl SessionHost {
             code_mode: self.built.tools.code_mode().clone(),
             prompt: self.built.prompt.clone(),
             added_dirs: self.added_dirs.clone(),
+            auth: self.auth.clone(),
             replaced: Arc::clone(&self.replaced),
             display: Mutex::new(TurnDisplay::new(
                 Message::User(display.blocks().to_vec()),
@@ -187,6 +188,7 @@ impl SessionHost {
             &self.built.tools.todo_state(),
             self.built.tools.code_mode(),
             &self.added_dirs,
+            &self.auth,
             self.built.session.snapshot(),
         )
     }
@@ -198,9 +200,13 @@ fn decorate(
     todo: &TodoState,
     code_mode: &crate::tools::code_mode::CodeModeSurface,
     added_dirs: &AddedDirs,
+    auth: &str,
     snapshot: SessionSnapshot,
 ) -> SessionSnapshot {
-    added_dirs.decorate(todo.decorate(prompt.decorate(code_mode.decorate(snapshot))))
+    super::agent::decorate_model_override(
+        added_dirs.decorate(todo.decorate(prompt.decorate(code_mode.decorate(snapshot)))),
+        auth,
+    )
 }
 
 /// One turn's SDK checkpoint store, installed by
@@ -224,6 +230,7 @@ struct CheckpointStore {
     code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     prompt: ActivePrompt,
     added_dirs: AddedDirs,
+    auth: String,
     replaced: Arc<AtomicBool>,
     display: Mutex<TurnDisplay>,
 }
@@ -244,6 +251,7 @@ impl CheckpointStore {
             &self.todo,
             &self.code_mode,
             &self.added_dirs,
+            &self.auth,
             snapshot,
         );
         let mut display = self.lock_display();

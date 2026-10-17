@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{model::ContentBlock, UserInput};
 use serde_json::json;
 
-use super::{available_commands, resolve, CommandScope, PromptAction};
+use super::{available_commands, resolve, AgentTask, CommandScope, PromptAction};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     config::Config,
@@ -124,6 +124,7 @@ enum Resolved {
     },
     Agent {
         id: String,
+        model_override: Option<String>,
         input: UserInput,
     },
     Wake(String),
@@ -150,8 +151,13 @@ async fn resolved(text: &str, scope: &CommandScope<'_>) -> Resolved {
             file: start.workflow.relative_path,
             inputs: json!(start.inputs),
         },
-        Ok(PromptAction::RunAsAgent { agent_id, input }) => Resolved::Agent {
+        Ok(PromptAction::RunAsAgent(AgentTask {
+            agent_id,
+            model_override,
+            input,
+        })) => Resolved::Agent {
             id: agent_id,
+            model_override,
             input,
         },
         Ok(PromptAction::AwaitWake(signal)) => Resolved::Wake(signal.token().to_owned()),
@@ -260,6 +266,7 @@ async fn resolve_routes_prompts_to_commands() {
             "/agent:acp-rho inspect the parser",
             Resolved::Agent {
                 id: "acp-rho".into(),
+                model_override: None,
                 input: UserInput::text("inspect the parser"),
             },
         ),
@@ -269,6 +276,7 @@ async fn resolve_routes_prompts_to_commands() {
             "/agent:acp-rho\n\nGoal: inspect the parser.\n\nReport findings.\n",
             Resolved::Agent {
                 id: "acp-rho".into(),
+                model_override: None,
                 input: UserInput::text("Goal: inspect the parser.\n\nReport findings."),
             },
         ),
@@ -347,19 +355,73 @@ async fn resolve_keeps_blocks_after_the_command() {
         ),
         (
             "/agent:acp-rho inspect this",
-            PromptAction::RunAsAgent {
+            PromptAction::RunAsAgent(AgentTask {
                 agent_id: "acp-rho".into(),
+                model_override: None,
                 input: UserInput::content(vec![
                     ContentBlock::Text("inspect this".into()),
                     image.clone(),
                 ])
                 .unwrap(),
-            },
+            }),
+        ),
+        (
+            "/agent:acp-rho --model @review -- \nInspect this\n--model is task text\n",
+            PromptAction::RunAsAgent(AgentTask {
+                agent_id: "acp-rho".into(),
+                model_override: Some("@review".into()),
+                input: UserInput::content(vec![
+                    ContentBlock::Text("\nInspect this\n--model is task text\n".into()),
+                    image.clone(),
+                ])
+                .unwrap(),
+            }),
         ),
     ] {
         let input =
             UserInput::content(vec![ContentBlock::Text(command.into()), image.clone()]).unwrap();
         assert_eq!(resolve(input, &fixture.scope()).await.unwrap(), expected);
+    }
+}
+
+// Covers: ACP must reject ambiguous override syntax rather than treating flags
+// as task text, and keep catalog references distinct from the delegated brief.
+// Owner: ACP command parser; catalog resolution belongs to the binder.
+#[tokio::test]
+async fn agent_model_override_requires_a_reference_and_explicit_task_delimiter() {
+    let fixture = Fixture::new();
+    for (args, expected) in [
+        (
+            "-- --model is literal task text",
+            Resolved::Agent {
+                id: "acp-rho".into(),
+                model_override: None,
+                input: UserInput::text("--model is literal task text"),
+            },
+        ),
+        (
+            "--model openai-codex/gpt-6-luna -- inspect --model literally",
+            Resolved::Agent {
+                id: "acp-rho".into(),
+                model_override: Some("openai-codex/gpt-6-luna".into()),
+                input: UserInput::text("inspect --model literally"),
+            },
+        ),
+        ("--model", Resolved::Rejected),
+        ("--model -- inspect", Resolved::Rejected),
+        ("--model @review", Resolved::Rejected),
+        ("--model @review inspect", Resolved::Rejected),
+        ("--model @review --", Resolved::Rejected),
+        ("--model @review -- \n\t", Resolved::Rejected),
+        ("--model @review --model @other -- task", Resolved::Rejected),
+        ("--model @two words -- task", Resolved::Rejected),
+        ("--model=@review -- task", Resolved::Rejected),
+    ] {
+        assert_eq!(
+            resolved(&format!("/agent:acp-rho {args}"), &fixture.scope()).await,
+            expected,
+            "{args}"
+        );
     }
 }
 

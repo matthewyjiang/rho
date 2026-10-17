@@ -85,6 +85,55 @@ For the full value set, constraints, and defaults, see [Agent definition schema]
 
 Every `agent` call starts a background run and returns a six-character run ID immediately. There is no foreground mode or `background` parameter. Independent calls in the same batch run together.
 
+### Per-call model selection
+
+Select a different model without creating a custom agent definition:
+
+```js
+agent({
+  agent_id: "reviewer",
+  model: "openai-codex/gpt-6.1-sol",
+  prompt: "Review the diff for correctness and security. Do not edit files."
+})
+agent({
+  agent_id: "reviewer",
+  model: "@independent-review",
+  prompt: "Review the diff for maintainability. Do not edit files."
+})
+```
+
+`model` is optional. Omit it to preserve the agent's existing model policy. An
+explicit value replaces its model, provider, and auth pins for **this call only**,
+including `prefer`, `require`, and `select` policies (all three currently pin the
+same way). It does not change the definition, root defaults, prompt, tools, or
+parent permission ceiling. The definition's reasoning and fast-mode policy still
+apply; incompatible fast mode fails the launch rather than being silently disabled.
+
+References use the same local catalog and [model aliases](/configuration#model-aliases)
+as `/model`: `provider/model`, an unambiguous catalog model ID, or `@alias`.
+Only the first slash separates provider and model: `myproxy/vendor/model` selects
+`vendor/model` on `myproxy`. A bare alias target keeps the parent's provider.
+Custom/discovered models must already be in the local model cache; refresh model
+lists through `/config` if necessary. Delegation does not discover or invent models.
+
+Compatible available parent auth is preferred; otherwise selection uses an
+available login for the target model/provider. Definition auth pins do not carry
+across an explicit override. Unknown/ambiguous models, undefined aliases, unavailable
+cached models, missing credentials, and provider failures are explicit errors, never
+fallback to the parent or pinned model. An available credential does not guarantee
+the account has access; provider-side auth/access errors still fail the child.
+
+Per-call overrides require `runtime: rho`. Claude CLI, Cursor, and Antigravity use
+different model namespaces and reject this field; their existing definition-based
+selection is unchanged. CLI, TUI, and ACP native delegation use the same binder.
+Under `rho acp --t3code`, the override travels with the child's `/agent:` rebind
+command rather than T3's model picker, so it reaches the actual Rho child.
+
+Native `agent` receipts and `agents` structured status include the bound `provider`
+and `model`; completion/status text and run artifacts also report that selection.
+T3 owns host-managed task receipts and completion metadata; Rho does not label a
+requested model as confirmed before the child's rebind succeeds.
+
 Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. They wait the same way for workflows and for background processes started during the run, except under `rho acp --t3code`, where those [wake the idle thread](/integrations/acp#wake-on-background-results) instead. Side chats still disable delegation.
 
 Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. A CLI run then stops its remaining children; their saved status and artifacts remain available for inspection. An ACP session keeps them running, as the TUI does across cancelled turns, because hosts such as T3 Code cancel the open prompt to send each mid-turn message. The next prompt waits for the children Rho runs and delivers their results. Children that run as T3 threads under `rho acp --t3code` report to the parent through T3 instead and never hold a prompt open. Stop children with the `agents` tool, or by closing or reloading the session.

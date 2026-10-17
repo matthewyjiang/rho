@@ -19,6 +19,9 @@ use tempfile::TempDir;
 #[path = "support/acp_advertisements_tests.rs"]
 mod advertisements;
 
+#[path = "support/acp_agent_model_override.rs"]
+mod agent_model_override;
+
 #[path = "support/acp_file_diffs_tests.rs"]
 mod file_diffs;
 

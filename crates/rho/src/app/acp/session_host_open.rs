@@ -163,6 +163,8 @@ impl SessionHost {
             request.mcp_servers,
         );
         host.load_notice = load_notice;
+        // The restored child may use a different auth family than the process.
+        host.auth = config.auth;
         host.agent = agent;
         let response = LoadSessionResponse::new()
             .modes(mode_state(host.permission.mode))

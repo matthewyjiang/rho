@@ -129,6 +129,16 @@ Right after each `session/new` and `session/load` response, Rho sends an `availa
 
 The session saves the command as typed, not its expansion. Other TUI commands, such as `/model`, fail with an invalid-params error that names the command. Text that names no command, such as `/usr/bin` or an unknown template, reaches the model unchanged.
 
+For a one-call Rho model selection, a fresh session also accepts
+`/agent:<name> --model <reference> -- <task>`. The delimiter is required; the task
+may span paragraphs and retain attached images. This uses the same catalog/alias,
+auth, and permission rules as [`agent.model`](/subagents#per-call-model-selection).
+The effective provider, model, and auth profile survive session reload without
+changing the agent definition or its identity. Adding optional credentials later
+does not replace a saved keyless profile. `/agent:<name> -- <task>` keeps
+option-like task text literal. A later user-driven model switch supersedes the
+saved override immediately, including a reload before the next prompt.
+
 ### Skills
 
 When the active agent has the `skill` tool, the update also lists one `$<name>` command per discovered [skill](/skills), using the skill's description. Hosts such as T3 Code list these in their `$` menu. Rho leaves out names a host would read as amounts, such as `$20k`.
@@ -146,6 +156,11 @@ rho acp --t3code
 Subagents then run as T3 threads, so they appear in T3's subagent panel and keep running after the parent's prompt ends. The `agent` tool starts each child through the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as its first prompt. `agents` maps `status` and `stop` to T3's `task_status` and `task_cancel`. It has no `message` action. T3 delivers a finished child's result to the parent as a new turn, so a waiting child does not hold the parent's prompt open.
 
 T3 derives each child's display title from its task. Rho sends the full task without copying it into T3's separately bounded title field; the local `agents list` label remains the task's first nonempty line.
+
+When `agent.model` is supplied, Rho includes it in that initial `/agent:` command
+and resolves it in the child. It does not send T3's `target.model`, whose model
+picker is a different selection surface. A resolution or auth failure is a failed
+child task, never a successful review on an inherited fallback model.
 
 Only agents with Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected: T3 runs those providers itself, so the model can start one with T3's `delegate_task` tool directly. Workflows still run inside Rho.
 
