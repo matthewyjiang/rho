@@ -295,7 +295,7 @@ impl AgentCatalog {
         self.merge_tier(tier);
     }
 
-    /// Loads one tier from files already located (and contained) by the caller.
+    /// Loads one tier from sources the caller read under its own read policy.
     fn load_sources(&mut self, origin: AgentOrigin, sources: Vec<AgentSource>) {
         let mut tier = TierLoad::new(origin);
         for AgentSource { path, contents } in sources {

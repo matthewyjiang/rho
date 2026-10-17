@@ -374,7 +374,8 @@ fn write_file_in(root: &SecureDirectory, relative: &Path, bytes: &[u8]) -> Workf
 }
 
 /// Reads the UTF-8 file at `path`, an already-resolved absolute path, opening
-/// every component with `O_NOFOLLOW` from the filesystem root. Unlike the
+/// every component from the filesystem root without following links
+/// (`O_NOFOLLOW` on Unix, reparse-point checks on Windows). Unlike the
 /// verified-path helpers it never canonicalizes first, so a component
 /// replaced by a symlink after `path` was resolved fails the read instead of
 /// being followed.

@@ -568,7 +568,6 @@ fn plugin_agents_load_contained_files_only() {
         super::PluginAgentTiers {
             user: vec![super::PluginAgentFiles {
                 files: vec![agents_dir.join("inside-agent.md")],
-                dir: agents_dir,
             }],
             project: Vec::new(),
         }

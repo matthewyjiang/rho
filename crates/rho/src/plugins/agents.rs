@@ -22,11 +22,11 @@ pub(crate) const RHO_EXTENSION_NAMESPACE: &str = "io.github.matthewyjiang.rho";
 /// Agent definition files from one active plugin.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginAgentFiles {
-    /// Filesystem-resolved agents directory inside the plugin root.
-    pub(crate) dir: PathBuf,
-    /// Regular `*.md` files directly in `dir`, in name order. Symlinked files
-    /// are left out and reported as problems, so every reader (including the
-    /// workflow tool, which never follows links) sees the same set.
+    /// Regular `*.md` files directly in the plugin's agents directory, in
+    /// name order. Each is an absolute, filesystem-resolved path (no symlink
+    /// in any component), which [`Self::read_sources`] relies on because it
+    /// refuses to follow links. Symlinked files are left out and reported as
+    /// problems.
     pub(crate) files: Vec<PathBuf>,
 }
 
@@ -134,5 +134,5 @@ pub(super) fn discover_plugin_agents(
             )),
         }
     }
-    Some(PluginAgentFiles { dir, files })
+    Some(PluginAgentFiles { files })
 }
