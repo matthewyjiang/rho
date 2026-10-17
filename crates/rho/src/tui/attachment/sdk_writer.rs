@@ -93,10 +93,7 @@ fn attachment_update(
             card,
         } => {
             let key = adapter.attachment_key_for_preview(index, call_id.as_ref());
-            card.map(|card| AttachmentEvent::ToolStarted {
-                key: Some(key),
-                card,
-            })
+            card.map(|card| AttachmentEvent::ToolPreview { key, card })
         }
         ViewModelEvent::ToolUpdated { call_id, card } => {
             let key = adapter.attachment_key_for_call(&call_id);

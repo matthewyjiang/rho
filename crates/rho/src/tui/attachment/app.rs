@@ -421,6 +421,9 @@ impl AttachmentApp {
                     can_append,
                 );
             }
+            AttachmentEvent::ToolPreview { key, card } => {
+                self.upsert_pending_tool(Some(key), card);
+            }
             AttachmentEvent::ToolStarted { key, card }
             | AttachmentEvent::ToolUpdated { key, card } => {
                 self.upsert_pending_tool(key, card);

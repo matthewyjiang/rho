@@ -395,17 +395,21 @@ fn maps_live_tool_roundtrip_capture() {
         1,
         "tool start"
     );
+    // The captured deltas contain an absolute path outside the init cwd; the
+    // complete envelope must not overwrite input already assembled from them.
     assert_eq!(
-        count_attachments(&effects, |event| {
-            matches!(
-                event,
-                AttachmentEvent::ToolUpdated { card, .. }
-                    if card.header_text().contains("Read")
-                        && card.header_text().contains("note.txt")
-            )
-        }),
-        1,
-        "tool update with path"
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                StreamEffect::Attachment(AttachmentEvent::ToolPreview { card, .. }) =>
+                    Some(card.header.clone()),
+                _ => None,
+            })
+            .next_back(),
+        Some(rho_tools::tool_card::ToolHeader::call(
+            "Read",
+            Some("/tmp/rho-rho-claude-fixture-tool-cwd/note.txt".into()),
+        )),
     );
     assert_eq!(
         count_attachments(&effects, |event| {
@@ -519,7 +523,7 @@ fn input_json_delta_updates_running_card() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolUpdated { card, .. }
+                AttachmentEvent::ToolPreview { card, .. }
                     if card.header
                         == rho_tools::tool_card::ToolHeader::call("Read", Some("note.txt".into()))
             )

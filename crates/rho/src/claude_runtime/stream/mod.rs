@@ -722,7 +722,10 @@ impl StreamMapper {
         if !tool.push_input_json(partial_json) {
             return Vec::new();
         }
-        tool_updated_effects(&tool_id, tool, self.cwd.as_deref())
+        vec![StreamEffect::Attachment(AttachmentEvent::ToolPreview {
+            key: tool_id,
+            card: tool_cards::started_card(tool, self.cwd.as_deref()).into(),
+        })]
     }
 
     fn map_content_block_delta(

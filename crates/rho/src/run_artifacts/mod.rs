@@ -1,10 +1,12 @@
 //! Shared run-artifact contract for delegated agents.
 //!
-//! Owns `result.json` status writes and the `events.jsonl` attachment journal.
+//! Owns `result.json` status writes, the `events.jsonl` attachment journal, and
+//! replaceable `tool-previews.json` live argument cards.
 //! Runtime adapters (Rho SDK, Claude stream-json) translate into this surface;
 //! the TUI only reads and renders it.
 
 mod journal;
+mod previews;
 mod sink;
 
 #[cfg(test)]
