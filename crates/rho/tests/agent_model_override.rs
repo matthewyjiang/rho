@@ -140,6 +140,13 @@ credential_store = "file"
         ])
         .stdin(Stdio::null())
         .kill_on_drop(true);
+    // Winsock needs SystemRoot to load its providers after env_clear(); keep
+    // this OS prerequisite without inheriting credentials or proxy settings.
+    #[cfg(windows)]
+    command.env(
+        "SystemRoot",
+        std::env::var_os("SystemRoot").expect("Windows networking requires SystemRoot"),
+    );
     let output = tokio::time::timeout(CLI_EXIT_TIMEOUT, command.output())
         .await
         .expect("CLI exit timeout exceeded (60s)")
