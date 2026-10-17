@@ -56,6 +56,7 @@ impl Checkpoints {
         if self.saved && core.holds_unchanged(self.committed, history) {
             return Ok(());
         }
+        // A failed commit or save leaves the store behind the session.
         self.saved = false;
         self.committed = core.commit_checkpoint(history, self.committed)?;
         store.save(core.persistence_snapshot()).await?;

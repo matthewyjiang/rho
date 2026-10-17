@@ -1010,7 +1010,10 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
         .expect("worker did not observe the closed event stream")
         .unwrap();
     assert!(matches!(result, Err(Error::Interrupted { .. })));
-    assert_eq!(core.snapshot(), (Vec::new(), Revision::INITIAL));
+    assert_eq!(
+        (core.committed_history(), core.revision()),
+        (Vec::new(), Revision::INITIAL)
+    );
     assert_eq!(core.state(), SessionState::Idle);
 }
 

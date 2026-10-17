@@ -233,8 +233,8 @@ async fn accepted_input_survives_event_consumer_loss() {
         Message::user_text("work"),
         Message::user_text("unseen failure"),
     ];
-    assert_eq!(core.snapshot().0, expected);
-    assert_eq!(core.snapshot().1, Revision::INITIAL.checked_next().unwrap());
+    assert_eq!(core.committed_history(), expected);
+    assert_eq!(core.revision(), Revision::INITIAL.checked_next().unwrap());
     drop(receiver);
     assert!(matches!(
         worker.await.unwrap(),
