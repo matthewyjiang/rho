@@ -297,7 +297,7 @@ pub(super) const VIEW_READ_ONLY_AGENT_PROMPT_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     // Past the three-row excerpt: only the full view reaches this sentence.
-    Step::AssertText("Do not modify files."),
+    Step::AssertText("agent fixes them."),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Loaded agents",

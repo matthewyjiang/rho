@@ -5,7 +5,8 @@
 //! commands that work without the TUI: `/compact`, `/init`, prompt templates
 //! (`/prompt:<name>`), MCP prompts (`/mcp:<server>:<prompt>`), workspace
 //! workflows (`/workflow:<name> [inputs JSON]`, which start without a model
-//! turn), fresh-session agent binding (`/agent:<name> <task>`), and `$skill`
+//! turn), fresh-session agent binding (`/agent:<name> <task>` or
+//! `/agent:<name> --model <reference> -- <task>`), and `$skill`
 //! mentions (see [`super::skills`]). Other prompts,
 //! including unknown `/text`, reach the model unchanged.
 //!
@@ -54,6 +55,14 @@ pub(super) struct CommandScope<'a> {
     pub(super) permission_mode: PermissionMode,
 }
 
+/// A delegated task keeps its per-call selection separate from the definition.
+#[derive(Debug, PartialEq)]
+pub(super) struct AgentTask {
+    pub(super) agent_id: String,
+    pub(super) model_override: Option<String>,
+    pub(super) input: UserInput,
+}
+
 /// What a prompt asks the session to do.
 #[derive(Debug, PartialEq)]
 pub(super) enum PromptAction {
@@ -67,7 +76,7 @@ pub(super) enum PromptAction {
     /// `/workflow:<name>`: start one workspace workflow in the background.
     StartWorkflow(StartCommand),
     /// `/agent:<name>`: bind a fresh session before running the task.
-    RunAsAgent { agent_id: String, input: UserInput },
+    RunAsAgent(AgentTask),
     /// `/rho-wake <token>`: wait for a parent's wake signal, without a model turn.
     AwaitWake(WakeSignal),
 }
@@ -162,8 +171,9 @@ pub(super) async fn resolve(
     // as its task.
     if let Some(rest) = text.strip_prefix("/agent:") {
         let (agent_id, task) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-        let (agent_id, task) = (agent_id.to_owned(), task.trim().to_owned());
-        return run_as_agent(input, &agent_id, task, scope);
+        let agent_id = agent_id.to_owned();
+        let (model_override, task) = agent_task(task)?;
+        return run_as_agent(input, &agent_id, model_override, task, scope);
     }
     match crate::commands::parse_command(text) {
         Ok(None) => Ok(turn(input, &[], scope)),
@@ -198,10 +208,43 @@ fn built_in(
     }
 }
 
-/// `/agent:<id> <task>`: run this fresh session as a Rho agent definition.
+/// The override form requires `--` so task text is never parsed as options.
+/// Consume only its separating whitespace, preserving the forwarded task verbatim.
+fn agent_task(args: &str) -> Result<(Option<String>, String), CommandRejected> {
+    let args = args.trim_start();
+    let (option, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
+    if option == "--" {
+        return Ok((None, rest.to_owned()));
+    }
+    if option != "--model" && !option.starts_with("--model=") {
+        return Ok((None, args.trim().to_owned()));
+    }
+    let usage = || CommandRejected("usage: /agent:<name> --model <reference> -- <task>".into());
+    if option != "--model" {
+        return Err(usage());
+    }
+    let (model, rest) = rest
+        .trim_start()
+        .split_once(char::is_whitespace)
+        .ok_or_else(usage)?;
+    if model.is_empty() || model == "--" {
+        return Err(usage());
+    }
+    let (delimiter, task) = rest
+        .trim_start()
+        .split_once(char::is_whitespace)
+        .ok_or_else(usage)?;
+    if delimiter != "--" || task.trim().is_empty() {
+        return Err(usage());
+    }
+    Ok((Some(model.to_owned()), task.to_owned()))
+}
+
+/// Run this fresh session as a Rho agent definition, optionally changing its model.
 fn run_as_agent(
     input: UserInput,
     agent_id: &str,
+    model_override: Option<String>,
     task: String,
     scope: &CommandScope<'_>,
 ) -> Result<PromptAction, CommandRejected> {
@@ -226,10 +269,11 @@ fn run_as_agent(
             )));
         }
     }
-    Ok(PromptAction::RunAsAgent {
+    Ok(PromptAction::RunAsAgent(AgentTask {
         agent_id: agent_id.to_owned(),
+        model_override,
         input: replace_leading_text(input, task),
-    })
+    }))
 }
 
 async fn dynamic(

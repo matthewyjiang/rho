@@ -12,8 +12,9 @@ use uuid::Uuid;
 #[cfg(test)]
 use rho_providers::model::ContentBlock;
 use rho_providers::model::{Message, ModelIdentity};
+use rho_sdk::SessionSnapshot;
 #[cfg(test)]
-use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
+use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
 mod delete;
@@ -362,13 +363,15 @@ impl Session {
     }
 
     /// Rebinds the session to a delegated child agent, only before any
-    /// history has been persisted. Reload restores it as that child.
+    /// history has been persisted. An initial snapshot is committed atomically
+    /// with the identity so reload cannot observe half of the child binding.
     pub(crate) fn rebind_fresh_delegated_agent(
         &self,
         agent_id: &str,
         fingerprint: &str,
+        initial_snapshot: Option<&SessionSnapshot>,
     ) -> anyhow::Result<()> {
-        self.rewrite_fresh_delegated_identity(agent_id, fingerprint)
+        self.rewrite_fresh_delegated_identity(agent_id, fingerprint, initial_snapshot)
     }
 
     /// The child agent id when the session was rebound as a delegated agent.

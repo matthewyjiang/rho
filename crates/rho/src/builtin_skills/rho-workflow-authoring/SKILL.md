@@ -119,7 +119,7 @@ store. Keep credentials in Rho credential stores or provider authentication.
 def build(inputs):
     inspect = agent(
         name = "inspect",
-        agent = "reviewer",
+        agent = "explorer",
         prompt = template([
             "Inspect ",
             inputs["target"],
@@ -235,9 +235,9 @@ Every node has a portable unique `name`. Every node must set positive
 
 ```starlark
 agent(
-    name = "review",
-    agent = "reviewer",
-    prompt = template(["Review ", inputs["target"]]),
+    name = "inspect",
+    agent = "explorer",
+    prompt = template(["Inspect ", inputs["target"]]),
     access = "read_only",
     needs = [],
     when = None,

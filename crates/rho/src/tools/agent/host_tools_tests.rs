@@ -109,11 +109,17 @@ impl Fixture {
     }
 
     async fn launch(&self, agent_id: &str) -> Result<ToolOutput, ToolError> {
+        self.launch_args(json!({"agent_id": agent_id, "prompt": "Implement the parser"}))
+            .await
+    }
+
+    async fn launch_args(&self, arguments: Value) -> Result<ToolOutput, ToolError> {
+        let args = parse_agent_args(arguments)?;
         self.agent_tool()
             .launch(
                 invocation(json!({})).id().clone(),
-                &self.catalog.find(agent_id).unwrap().definition,
-                "Implement the parser",
+                &self.catalog.find(&args.agent_id).unwrap().definition,
+                &args,
                 context(),
             )
             .await
@@ -124,6 +130,43 @@ fn started_reply() -> ToolOutput {
     ToolOutput::text("host accepted").with_structured_content(json!({
         "taskId": "task-1", "childThreadId": "thread-1", "status": "running",
     }))
+}
+
+// Covers: per-call models must reach the child's rebind, never T3 target.model;
+// the host must not claim an effective selection before that child has bound it.
+// Owner: host agent launch forwarding, including parsed shared tool arguments.
+#[tokio::test]
+async fn model_override_is_forwarded_only_in_the_child_command() {
+    let prompt = "\nInspect the parser\n\n--model is literal task text\n";
+    for model in [None, Some("@review"), Some("openai-codex/gpt-6-luna")] {
+        let fixture = Fixture::new(Ok(started_reply()));
+        let mut arguments = json!({"agent_id": "host-worker", "prompt": prompt});
+        if let Some(model) = model {
+            arguments["model"] = json!(model);
+        }
+        let output = fixture.launch_args(arguments).await.unwrap();
+        let task = match model {
+            Some(model) => format!("/agent:host-worker --model {model} -- {prompt}"),
+            None => format!("/agent:host-worker {prompt}"),
+        };
+        assert_eq!(
+            *fixture.calls.lock().unwrap(),
+            vec![(
+                namespaced_tool_name("t3-code", "delegate_task"),
+                invocation(json!({})).id().clone(),
+                json!({"task": task, "mode": "async"}),
+            )]
+        );
+        assert_eq!(
+            output.structured_content(),
+            Some(
+                &serde_json::to_value(
+                    AgentRunView::started("task-1".into(), "host-worker".into(),)
+                )
+                .unwrap()
+            )
+        );
+    }
 }
 
 // Covers: launch must keep the host task receipt, fail loud on a bad/missing
@@ -248,8 +291,15 @@ async fn external_runtime_is_not_advertised_or_launched() {
         fixture.agent_tool().spec().input_schema["properties"]["agent_id"]["enum"],
         json!(["explorer", "host-worker", "reviewer", "worker"])
     );
-    let error = fixture.launch("external-worker").await.unwrap_err();
-    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+    for model in [None, Some("@review")] {
+        let error = fixture
+            .launch_args(json!({
+                "agent_id": "external-worker", "prompt": "inspect", "model": model,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+    }
     assert_eq!(*fixture.calls.lock().unwrap(), Vec::new());
     assert!(fixture.orchestrator.runs().is_empty());
 }

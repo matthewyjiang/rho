@@ -11,13 +11,13 @@ use crate::plugins::{
 
 const SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 
-struct Env {
-    home: TempDir,
-    project: TempDir,
-    rho_home: TempDir,
+pub(super) struct Env {
+    pub(super) home: TempDir,
+    pub(super) project: TempDir,
+    pub(super) rho_home: TempDir,
 }
 
-fn env() -> Env {
+pub(super) fn env() -> Env {
     let home = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     let rho_home = TempDir::new().unwrap();
@@ -29,7 +29,7 @@ fn env() -> Env {
     }
 }
 
-fn write_source(root: &Path, name: &str) -> PathBuf {
+pub(super) fn write_source(root: &Path, name: &str) -> PathBuf {
     let dir = root.join(name);
     std::fs::create_dir_all(dir.join("skills").join("hello")).unwrap();
     std::fs::write(
@@ -84,6 +84,33 @@ fn install_copies_into_user_root_after_validation() {
     assert_eq!(entry.status, PluginStatus::Loaded);
     assert_eq!(entry.origin, PluginOrigin::Install);
     assert_eq!(entry.skill_names, ["hello"]);
+}
+
+// Covers: relative source paths resolve against the invocation directory.
+// Owner: plugin install source resolution.
+#[test]
+fn relative_source_paths_resolve_against_cwd() {
+    let env = env();
+    write_source(&env.project.path().join("pkg"), "copied");
+    write_source(&env.project.path().join("pkg"), "linked");
+    let cases = [
+        ("pkg/copied", InstallMode::Copy, PluginOrigin::Install),
+        ("pkg/linked", InstallMode::Link, PluginOrigin::Link),
+    ];
+    for (relative, mode, origin) in cases {
+        let package = install(
+            Path::new(relative),
+            PluginScope::User,
+            mode,
+            /* force */ false,
+            env.project.path(),
+            env.home.path(),
+            Some(env.rho_home.path()),
+        )
+        .unwrap();
+        assert_eq!(package.origin, origin, "{relative}");
+        assert!(package.path.join("plugin.json").is_file(), "{relative}");
+    }
 }
 
 // Covers: invalid packages never reach a managed root.

@@ -1,7 +1,8 @@
 //! CLI handlers for `rho plugins` lifecycle commands.
 //!
-//! These commands inspect and manage local packages only. They parse manifests
-//! and component metadata without executing package code or connecting MCP.
+//! These commands inspect and manage packages in managed plugin roots. Install
+//! and update may fetch git repositories. No command executes package code or
+//! connects MCP; they read manifests and component metadata only.
 
 use std::path::Path;
 
@@ -11,7 +12,8 @@ use crate::{
     cli::{Cli, PluginsCommand, PluginsScope},
     plugins::{
         discover_with_trust,
-        manage::{self, InstallMode},
+        git_source::{short_commit, InstallSource},
+        manage::{self, InstallMode, UpdateOutcome, UpdateReport, UpdateSelection},
         PluginLoadReport, PluginScope, PluginStatus, ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
@@ -33,25 +35,24 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
             crate::plugins::log(&discovery.report);
             print_inspect(&discovery.report, name, *json)
         }
-        PluginsCommand::Install { path, scope, force }
-        | PluginsCommand::Link { path, scope, force } => {
+        PluginsCommand::Install {
+            source,
+            scope,
+            force,
+        } => {
             let home = require_home(home.as_deref())?;
-            let mode = match command {
-                PluginsCommand::Install { .. } => InstallMode::Copy,
-                PluginsCommand::Link { .. } => InstallMode::Link,
-                _ => unreachable!("matched install/link only"),
-            };
-            let package = manage::install(
-                path,
-                resolve_scope(*scope),
-                mode,
-                /* force */ *force,
-                &cwd,
-                home,
-                rho_home.as_deref(),
-            )?;
-            match mode {
-                InstallMode::Copy => {
+            let scope = resolve_scope(*scope);
+            match InstallSource::parse(source, &cwd)? {
+                InstallSource::Local(path) => {
+                    let package = manage::install(
+                        &path,
+                        scope,
+                        InstallMode::Copy,
+                        *force,
+                        &cwd,
+                        home,
+                        rho_home.as_deref(),
+                    )?;
                     println!(
                         "installed {} ({}) to {}",
                         package.name,
@@ -59,21 +60,54 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                         crate::paths::display(&package.path)
                     );
                 }
-                InstallMode::Link => {
+                InstallSource::Git(git) => {
+                    eprintln!("fetching {}", git.describe());
+                    let installed =
+                        manage::install_git(&git, scope, *force, &cwd, home, rho_home.as_deref())?;
                     println!(
-                        "linked {} ({}) at {} -> {}",
-                        package.name,
-                        package.scope.as_str(),
-                        crate::paths::display(&package.path),
-                        package
-                            .link_target
-                            .as_ref()
-                            .map(|path| crate::paths::display(path))
-                            .unwrap_or_else(|| crate::paths::display(path))
+                        "installed {} ({}) to {} from {} at {}",
+                        installed.package.name,
+                        installed.package.scope.as_str(),
+                        crate::paths::display(&installed.package.path),
+                        git.url(),
+                        short_commit(&installed.commit)
                     );
                 }
             }
             Ok(())
+        }
+        PluginsCommand::Link { path, scope, force } => {
+            let home = require_home(home.as_deref())?;
+            let package = manage::install(
+                path,
+                resolve_scope(*scope),
+                InstallMode::Link,
+                *force,
+                &cwd,
+                home,
+                rho_home.as_deref(),
+            )?;
+            println!(
+                "linked {} ({}) at {} -> {}",
+                package.name,
+                package.scope.as_str(),
+                crate::paths::display(&package.path),
+                package
+                    .link_target
+                    .as_ref()
+                    .map(|path| crate::paths::display(path))
+                    .unwrap_or_else(|| crate::paths::display(path))
+            );
+            Ok(())
+        }
+        PluginsCommand::Update { name } => {
+            let home = require_home(home.as_deref())?;
+            let selection = match name {
+                Some(name) => UpdateSelection::Named(name),
+                None => UpdateSelection::All,
+            };
+            let report = manage::update(selection, trust, &cwd, home, rho_home.as_deref())?;
+            print_update_report(report)
         }
         PluginsCommand::Enable { name } => {
             let package = manage::set_enabled(
@@ -136,6 +170,48 @@ fn resolve_scope(scope: PluginsScope) -> PluginScope {
         PluginsScope::User => PluginScope::User,
         PluginsScope::Project => PluginScope::Project,
     }
+}
+
+/// Print one line per package; exit nonzero when any update failed.
+fn print_update_report(report: UpdateReport) -> anyhow::Result<()> {
+    if !report.untrusted.is_empty() {
+        println!(
+            "skipped project plugins in an untrusted workspace: {}; set {TRUST_PROJECT_PLUGINS_ENV}=1 to update them",
+            report.untrusted.join(", ")
+        );
+    }
+    if report.results.is_empty() {
+        if report.untrusted.is_empty() {
+            println!("no git-installed plugins to update");
+        }
+        return Ok(());
+    }
+    let total = report.results.len();
+    let mut failed = 0;
+    for (target, result) in report.results {
+        let scope = target.scope.as_str();
+        match result {
+            Ok(UpdateOutcome::Updated { previous, current }) => println!(
+                "updated {} ({scope}) {} -> {}",
+                target.name,
+                short_commit(&previous),
+                short_commit(&current)
+            ),
+            Ok(UpdateOutcome::UpToDate { commit }) => println!(
+                "{} ({scope}) is up to date at {}",
+                target.name,
+                short_commit(&commit)
+            ),
+            Err(error) => {
+                failed += 1;
+                eprintln!("could not update {} ({scope}): {error:#}", target.name);
+            }
+        }
+    }
+    if failed > 0 {
+        anyhow::bail!("{failed} of {total} plugin updates failed");
+    }
+    Ok(())
 }
 
 fn require_home(home: Option<&Path>) -> anyhow::Result<&Path> {
@@ -241,6 +317,16 @@ fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::R
     println!("enabled: {}", plugin.enabled);
     println!("scope: {}", plugin.scope.as_str());
     println!("origin: {}", plugin.origin.as_str());
+    if let Some(git) = &plugin.git {
+        println!("source: {}", git.url);
+        if let Some(git_ref) = &git.git_ref {
+            println!("ref: {git_ref}");
+        }
+        if let Some(subdir) = &git.subdir {
+            println!("path: {subdir}");
+        }
+        println!("commit: {}", git.commit);
+    }
     println!("location: {}", plugin.root);
     println!(
         "supported_components: {}",

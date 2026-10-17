@@ -111,7 +111,9 @@ impl AgentTool {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
 
-        let spawn = self.manager.spawn(&definition, &args.prompt, &cwd);
+        let spawn = self
+            .manager
+            .spawn(&definition, &args.prompt, &cwd, args.model.as_deref());
         tokio::pin!(spawn);
         let (run_id, _log_file) = tokio::select! {
             result = &mut spawn => result.map_err(|error| {
@@ -130,9 +132,13 @@ impl AgentTool {
 
         // Registration is the start receipt; instant failures still reach
         // the parent through automatic completion delivery.
+        let snapshot = self
+            .manager
+            .status(&run_id)
+            .expect("newly registered delegated run");
         rho_tools::Rendered::new(
             format_background_start(&run_id, &definition_id),
-            AgentRunView::started(run_id, definition_id),
+            AgentRunView::started_with_identity(&snapshot),
         )
         .limit_data(self.max_output_bytes)?
         .into_tool_output(agent_metadata())
@@ -143,6 +149,7 @@ impl AgentTool {
 struct AgentArgs {
     agent_id: String,
     prompt: String,
+    model: Option<String>,
 }
 
 impl Tool for AgentTool {
@@ -402,6 +409,10 @@ fn agent_spec(
                 "prompt": {
                     "type": "string",
                     "description": "Self-contained task and all context the agent needs"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional per-call Rho model reference (provider/model, catalog model ID, or @alias). Replaces the definition's model/provider/auth pins for this call only; omitted preserves its policy. Unsupported for external runtimes. Unavailable models or credentials fail without fallback."
                 }
             },
             "required": ["agent_id", "prompt"],
@@ -411,8 +422,19 @@ fn agent_spec(
 }
 
 fn parse_agent_args(arguments: Value) -> Result<AgentArgs, ToolError> {
-    serde_json::from_value(arguments)
-        .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))
+    let args: AgentArgs = serde_json::from_value(arguments)
+        .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))?;
+    if args
+        .model
+        .as_deref()
+        .is_some_and(|model| model.is_empty() || model.contains(char::is_whitespace))
+    {
+        return Err(ToolError::new(
+            ToolErrorKind::InvalidArguments,
+            "model override must be a non-empty model reference without whitespace",
+        ));
+    }
+    Ok(args)
 }
 
 fn parse_agents_args(arguments: Value) -> Result<AgentsArgs, ToolError> {

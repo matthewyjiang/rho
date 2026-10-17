@@ -757,6 +757,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
             available_tools: capabilities(),
         },
         &host,
+        /*model_override*/ None,
         &credentials(&["xai-api-key"]),
     )
     .unwrap();
@@ -788,6 +789,7 @@ fn explicit_auth_pin_overrides_host_auth() {
             available_tools: capabilities(),
         },
         &host,
+        /*model_override*/ None,
         &credentials(&["xai-oauth"]),
     )
     .unwrap();
@@ -871,6 +873,7 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         )
         .unwrap();
@@ -987,6 +990,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         )
         .unwrap();
@@ -1286,6 +1290,7 @@ fn delegated_fast_mode_follows_definition_not_parent() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         );
         let actual = result
@@ -1322,6 +1327,7 @@ fn keep_host_fast_mode_restores_session_fast_when_servable() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &store,
         )
         .expect("bind");
@@ -1336,7 +1342,8 @@ fn keep_host_fast_mode_restores_session_fast_when_servable() {
 }
 
 // Covers: a model picked in `/agents` for a read-only (plugin) agent replaces
-// the file's pinned model and fast flag, and its reasoning wins only when set.
+// the file's pinned model and fast flag, and its reasoning wins only when set;
+// an explicit per-call selection still wins over the configured entry.
 // Owner: agent binding
 #[test]
 fn configured_model_override_replaces_the_definition_model() {
@@ -1354,11 +1361,21 @@ fn configured_model_override_replaces_the_definition_model() {
         ..definition(ToolPolicy::All).as_ref().clone()
     });
     let store = credentials(&["codex", "xai-api-key"]);
-    // (override reasoning, expected bound reasoning)
-    for (configured, expected) in [
-        (None, ReasoningLevel::High),
-        (Some(ReasoningLevel::Low), ReasoningLevel::Low),
-    ] {
+    // (entry reasoning, per-call selection, expected provider/model/reasoning)
+    let cases = [
+        (None, None, ("xai", "grok-4.7", ReasoningLevel::High)),
+        (
+            Some(ReasoningLevel::Low),
+            None,
+            ("xai", "grok-4.7", ReasoningLevel::Low),
+        ),
+        (
+            Some(ReasoningLevel::Low),
+            Some("openai-codex/gpt-6.1-sol"),
+            ("openai-codex", "gpt-6.1-sol", ReasoningLevel::Low),
+        ),
+    ];
+    for (configured, per_call, expected) in cases {
         let mut host = Config::default();
         let mut entry = crate::config::InternalAgentModelConfig::new(
             "xai".into(),
@@ -1374,6 +1391,7 @@ fn configured_model_override_replaces_the_definition_model() {
                 available_tools: capabilities(),
             },
             &host,
+            per_call.map(ModelOverride::Reference),
             &store,
         )
         .expect("bind");
@@ -1382,12 +1400,11 @@ fn configured_model_override_replaces_the_definition_model() {
             (
                 config.provider.as_str(),
                 config.model.as_str(),
-                config.auth.as_str(),
                 config.fast_mode,
                 config.reasoning,
             ),
-            ("xai", "grok-4.7", "xai-api-key", false, expected),
-            "{configured:?}"
+            (expected.0, expected.1, false, expected.2),
+            "{configured:?} {per_call:?}"
         );
     }
 }
@@ -1429,6 +1446,7 @@ fn configured_model_override_refuses_a_runtime_switch() {
                 available_tools: capabilities(),
             },
             &host,
+            /*model_override*/ None,
             &credentials(&["xai-api-key"]),
         );
         let error = result.expect_err("bound with a runtime switch");
@@ -1468,6 +1486,7 @@ fn configured_model_override_skips_built_in_agents() {
             available_tools: capabilities(),
         },
         &host,
+        /*model_override*/ None,
         &credentials(&["codex", "xai-api-key"]),
     )
     .expect("bind");

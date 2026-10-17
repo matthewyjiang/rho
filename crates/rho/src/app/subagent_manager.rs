@@ -191,11 +191,12 @@ impl SubagentManager {
         self.executor.launch_internal_agents()
     }
 
-    pub async fn spawn(
+    pub(crate) async fn spawn(
         &self,
         definition: &AgentDefinition,
         prompt: &str,
         cwd: &Path,
+        model_override: Option<&str>,
     ) -> anyhow::Result<(String, PathBuf)> {
         let placement = self
             .parent_placement
@@ -214,6 +215,7 @@ impl SubagentManager {
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
         let launch = AgentLaunchRequest {
             definition: Arc::new(definition.clone()),
+            model_override: model_override.map(str::to_owned),
             prompt: prompt.to_string(),
             run_id: id.clone(),
             parent_session_id,
@@ -335,8 +337,8 @@ impl SubagentManager {
         );
     }
 
-    #[cfg(test)]
-    pub fn status(&self, id: &str) -> Option<SubagentSnapshot> {
+    /// Read launch metadata without acknowledging a completion notification.
+    pub(crate) fn status(&self, id: &str) -> Option<SubagentSnapshot> {
         let id = crate::subagent::normalize_id(id).ok()?;
         self.inner
             .lock()

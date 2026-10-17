@@ -261,8 +261,9 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho credential-store status` | Print the saved credential backend policy: `unset`, `os`, or `file`. |
 | `rho plugins list [--json]` | List discovered Agent Plugin packages (no package code execution). |
 | `rho plugins inspect <NAME> [--json]` | Show one plugin package, components, and diagnostics. |
-| `rho plugins install <PATH> [--scope user\|project] [--force]` | Copy a local plugin package into a managed root after validation. |
+| `rho plugins install <SOURCE> [--scope user\|project] [--force]` | Copy a plugin package from a local path, GitHub link, or git URL into a managed root after validation. See [plugins](/integrations/plugins#installing-from-git). |
 | `rho plugins link <PATH> [--scope user\|project] [--force]` | Symlink a local plugin package into a managed root after validation. |
+| `rho plugins update [NAME]` | Refetch git-installed plugins and replace any whose ref moved. Omit `NAME` to update all of them. |
 | `rho plugins enable <NAME>` | Enable a plugin for new sessions. |
 | `rho plugins disable <NAME>` | Disable a plugin without deleting package files. |
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |

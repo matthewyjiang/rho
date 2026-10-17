@@ -100,11 +100,19 @@ fn delegation_arguments_route_through_the_child_rebind() {
         long_prompt.as_str(),
     ] {
         assert_eq!(
-            delegate_arguments(&definition, prompt),
+            delegate_arguments(&definition, prompt, /*model_override*/ None),
             json!({
                 "task": format!("/agent:host-worker {prompt}"),
                 "mode": "async",
             })
         );
     }
+    assert_eq!(
+        delegate_arguments(
+            &definition,
+            "--model is literal task text",
+            /*model_override*/ None
+        ),
+        json!({"task": "/agent:host-worker -- --model is literal task text", "mode": "async"}),
+    );
 }
