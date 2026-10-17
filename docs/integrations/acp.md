@@ -133,6 +133,8 @@ For a one-call Rho model selection, a fresh session also accepts
 `/agent:<name> --model <reference> -- <task>`. The delimiter is required; the task
 may span paragraphs and retain attached images. This uses the same catalog/alias,
 auth, and permission rules as [`agent.model`](/subagents#per-call-model-selection).
+The child identity and effective selection are saved together before the first
+model-selection update reaches the host, even before the first provider request.
 The effective provider, model, and auth profile survive session reload without
 changing the agent definition or its identity. Adding optional credentials later
 does not replace a saved keyless profile. `/agent:<name> -- <task>` keeps

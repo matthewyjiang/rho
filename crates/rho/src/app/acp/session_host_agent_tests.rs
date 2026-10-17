@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, future::Future, path::Path, pin::Pin, sync::Arc
 use agent_client_protocol::{
     schema::v1::{
         RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionNotification,
-        StopReason,
+        SessionUpdate, StopReason,
     },
     Error as AcpError,
 };
@@ -45,6 +45,40 @@ impl AcpClientPort for NullPort {
     ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>
     {
         Box::pin(async { Err(AcpError::method_not_found()) })
+    }
+}
+
+/// Read the durable state when the host can first observe the child selection,
+/// before its first turn has written any checkpoints. A restart sees this file.
+struct LaunchPort {
+    stored: StoredSession,
+    expected_override: Option<serde_json::Value>,
+}
+
+impl AcpClientPort for LaunchPort {
+    fn send_session_notification(
+        &self,
+        notification: SessionNotification,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
+        Box::pin(async move {
+            if matches!(notification.update, SessionUpdate::ConfigOptionUpdate(_)) {
+                let saved = self
+                    .stored
+                    .session_metadata(MODEL_OVERRIDE_METADATA)
+                    .unwrap()
+                    .map(|encoded| serde_json::from_str::<serde_json::Value>(&encoded).unwrap());
+                assert_eq!(saved, self.expected_override);
+            }
+            Ok(())
+        })
+    }
+
+    fn request_permission(
+        &self,
+        request: RequestPermissionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>
+    {
+        NullPort.request_permission(request)
     }
 }
 
@@ -153,7 +187,8 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
 
 // Covers: a child must bind its allowlist and delegated role before its first
 // turn, preserving the host's pre-prompt mode, reasoning and session id. A call
-// override must survive the first checkpoint and reload without changing identity.
+// override must be durable before advertising the child, then survive the first
+// checkpoint and reload without changing identity.
 // Owner: ACP session rebind transaction (scripted provider, no credentials).
 #[tokio::test]
 async fn rebind_applies_child_tools_and_current_host_selection() {
@@ -183,6 +218,16 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
         } else {
             "host-selected-model"
         };
+        let port = LaunchPort {
+            stored: host.storage.file().unwrap().clone(),
+            expected_override: model_override.map(|_| {
+                serde_json::json!({
+                    "provider": "test-override",
+                    "model": "call-model",
+                    "auth": "test-auth",
+                })
+            }),
+        };
         // T3 picks a thought level before the child's first prompt; the rebind
         // must keep it because the definition sets none.
         host.built
@@ -199,7 +244,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
                     input: UserInput::text("inspect the parser"),
                 },
                 &startup,
-                &NullPort,
+                &port,
                 |base| {
                     // Catalog/credential resolution is the binder's own test gate.
                     // Inject its resolved selection here to exercise ACP persistence.
@@ -392,6 +437,7 @@ fn load_restores_the_child_binding_or_fails() {
         .rebind_fresh_delegated_agent(
             startup.agent.id().as_str(),
             &definition.fingerprint().to_string(),
+            /*initial_snapshot*/ None,
         )
         .unwrap();
 

@@ -224,9 +224,24 @@ impl SessionHost {
                 }
             }
         }
+        // Publish the concrete selection and delegated identity in one durable
+        // replacement, before teardown or host notifications can suspend us.
+        let initial_snapshot = task.model_override.as_ref().map(|_| {
+            super::persist::decorate(
+                &assembly.built.prompt,
+                &assembly.built.tools.todo_state(),
+                assembly.built.tools.code_mode(),
+                &self.added_dirs,
+                &config.auth,
+                assembly.built.session.snapshot(),
+            )
+        });
         let rebound = self.stored().and_then(|stored| {
-            stored
-                .rebind_fresh_delegated_agent(bound.id().as_str(), &bound.fingerprint().to_string())
+            stored.rebind_fresh_delegated_agent(
+                bound.id().as_str(),
+                &bound.fingerprint().to_string(),
+                initial_snapshot.as_ref(),
+            )
         });
         if let Err(error) = rebound {
             assembly.built.teardown().await;

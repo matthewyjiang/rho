@@ -195,7 +195,7 @@ impl SessionHost {
 }
 
 /// Adds the host state a load restores, including the direct tool loadout.
-fn decorate(
+pub(super) fn decorate(
     prompt: &ActivePrompt,
     todo: &TodoState,
     code_mode: &crate::tools::code_mode::CodeModeSurface,
