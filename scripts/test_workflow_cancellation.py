@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Measure active workflow cancellation across three OS processes."""
+"""Acceptance test for active workflow cancellation across three OS processes.
+
+The command signals readiness over a Unix socket before cancellation begins.
+Deadlines bound acknowledgement, child cleanup, and owner completion; no timing
+samples, baselines, or result files are recorded. Requires Linux pidfd_open and
+rustc on PATH, and accepts an existing rho binary via --rho.
+"""
 
 from __future__ import annotations
 
@@ -14,20 +20,20 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RECEIPT = ROOT / "crates/rho/src/workflow/fixtures/limit_receipt.json"
 WAIT_SOURCE = ROOT / "crates/rho/src/workflow/fixtures/cancellation_wait.rs"
+ACKNOWLEDGEMENT_MILLIS = 2_000
+FINAL_PROCESS_CLEANUP_MILLIS = 2_000
+HOST_CANCELLATION_COMPLETION_MILLIS = 2_500
 
 
-def elapsed_millis(started: int) -> int:
-    return (time.monotonic_ns() - started + 999_999) // 1_000_000
-
-
-def wait_for_pid_exit(descriptor: int, pid: int, timeout_millis: int) -> None:
+def wait_for_pid_exit(descriptor: int, pid: int, deadline: float) -> None:
     poller = select.poll()
     poller.register(descriptor, select.POLLIN)
-    if not poller.poll(timeout_millis):
+    remaining_millis = max(0, int((deadline - time.monotonic()) * 1_000))
+    if not poller.poll(remaining_millis):
         raise SystemExit(
-            f"active command process {pid} survived the {timeout_millis} ms cleanup limit"
+            f"active command process {pid} survived the "
+            f"{FINAL_PROCESS_CLEANUP_MILLIS} ms cleanup limit"
         )
 
 
@@ -55,7 +61,7 @@ def wait_for_ready(server: socket.socket, owner: subprocess.Popen[str]) -> None:
 def fixture_source() -> str:
     return """\
 def build(inputs):
-    return workflow(name = "cancellation_receipt", nodes = [command(
+    return workflow(name = "cancellation_acceptance", nodes = [command(
         name = "active",
         argv = ["./cancellation-wait", "ready.sock", "process.pid"],
         cwd = ".",
@@ -66,8 +72,7 @@ WORKFLOW = define(inputs = {}, build = build)
 """
 
 
-def measure_once(rho: Path, root: Path, limits: dict) -> dict[str, int]:
-    root.mkdir()
+def check_cancellation(rho: Path, root: Path) -> None:
     home = root / "home"
     workspace = root / "workspace"
     home.mkdir()
@@ -126,19 +131,25 @@ def measure_once(rho: Path, root: Path, limits: dict) -> dict[str, int]:
         try:
             pid_descriptor = os.pidfd_open(command_pid)
         except AttributeError as error:
-            raise SystemExit("cancellation measurement needs Linux pidfd_open") from error
+            raise SystemExit("cancellation acceptance test needs Linux pidfd_open") from error
 
         try:
-            started = time.monotonic_ns()
-            cancelled = subprocess.run(
-                [str(rho), "workflow", "cancel", run_ids[0]],
-                cwd=workspace,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            acknowledgement = elapsed_millis(started)
+            started = time.monotonic()
+            try:
+                cancelled = subprocess.run(
+                    [str(rho), "workflow", "cancel", run_ids[0]],
+                    cwd=workspace,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=ACKNOWLEDGEMENT_MILLIS / 1_000,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise SystemExit(
+                    f"cross-process cancel exceeded the {ACKNOWLEDGEMENT_MILLIS} ms "
+                    "acknowledgement limit"
+                ) from error
             if cancelled.returncode != 0:
                 raise SystemExit(f"cross-process cancel failed:\n{cancelled.stderr}")
             result = json.loads(cancelled.stdout)
@@ -148,28 +159,24 @@ def measure_once(rho: Path, root: Path, limits: dict) -> dict[str, int]:
             wait_for_pid_exit(
                 pid_descriptor,
                 command_pid,
-                limits["accepted_final_process_cleanup_millis"],
+                started + FINAL_PROCESS_CLEANUP_MILLIS / 1_000,
             )
         finally:
             os.close(pid_descriptor)
-        cleanup = elapsed_millis(started)
         try:
             owner_stdout, owner_stderr = owner.communicate(
-                timeout=limits["accepted_host_cancellation_completion_millis"] / 1000
+                timeout=max(
+                    0,
+                    started + HOST_CANCELLATION_COMPLETION_MILLIS / 1_000 - time.monotonic(),
+                )
             )
         except subprocess.TimeoutExpired as error:
             raise SystemExit("active workflow owner did not finish after cancellation") from error
-        host_completion = elapsed_millis(started)
         if owner.returncode != 0:
             raise SystemExit(
                 "active workflow owner failed after cancellation:\n"
                 f"stdout:\n{owner_stdout}\nstderr:\n{owner_stderr}"
             )
-        return {
-            "acknowledgement_millis": acknowledgement,
-            "final_process_cleanup_millis": cleanup,
-            "host_cancellation_completion_millis": host_completion,
-        }
     finally:
         server.close()
         if owner.poll() is None:
@@ -181,59 +188,13 @@ def measure_once(rho: Path, root: Path, limits: dict) -> dict[str, int]:
                 owner.wait()
 
 
-def verify(receipt: dict, measured: dict[str, int]) -> None:
-    cancellation = receipt["cancellation"]
-    mappings = {
-        "acknowledgement_millis": (
-            "measured_acknowledgement_millis",
-            "accepted_acknowledgement_millis",
-        ),
-        "final_process_cleanup_millis": (
-            "measured_final_process_cleanup_millis",
-            "accepted_final_process_cleanup_millis",
-        ),
-        "host_cancellation_completion_millis": (
-            "measured_host_cancellation_completion_millis",
-            "accepted_host_cancellation_completion_millis",
-        ),
-    }
-    for name, (baseline_name, limit_name) in mappings.items():
-        actual = measured[name]
-        baseline = cancellation[baseline_name]
-        limit = cancellation[limit_name]
-        if actual > limit:
-            raise SystemExit(f"cancellation {name}: measured {actual} ms exceeds limit {limit} ms")
-        if baseline and actual > baseline * 2:
-            raise SystemExit(
-                f"cancellation {name}: measured {actual} ms exceeds twice the "
-                f"checked baseline {baseline} ms"
-            )
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rho", type=Path, required=True)
-    parser.add_argument("--repeat", type=int, default=5)
-    parser.add_argument("--json-output", type=Path)
     args = parser.parse_args()
-    if args.repeat < 1:
-        raise SystemExit("--repeat must be at least 1")
-    receipt = json.loads(RECEIPT.read_text())
-    limits = receipt["cancellation"]
-    samples = []
     with tempfile.TemporaryDirectory(prefix="rho-workflow-cancel-") as directory:
-        root = Path(directory)
-        for index in range(args.repeat):
-            sample = measure_once(args.rho.resolve(), root / str(index), limits)
-            samples.append(sample)
-            print(f"cancellation sample {index + 1}: {sample}")
-    maxima = {name: max(sample[name] for sample in samples) for name in samples[0]}
-    verify(receipt, maxima)
-    if args.json_output:
-        args.json_output.write_text(
-            json.dumps({"maxima": maxima, "samples": samples}, indent=2) + "\n"
-        )
-    print(f"cross-process cancellation receipt verified: {maxima}")
+        check_cancellation(args.rho.resolve(), Path(directory))
+    print("cross-process workflow cancellation acceptance test passed")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@
 
 <!-- Commands and results. Narrowest tests first. Delete the proof-plate line unless this diff touches Interactive TUI layout or chrome, tool cards, the statusline, version display, the docs demo fixture, or rho-pty-demo. -->
 
+<!-- Benchmarks are ad hoc: put their results only in this PR body. Do not commit benchmark code, harnesses, scripts, results, or measurement receipts. -->
+
 ```text
 ```
 

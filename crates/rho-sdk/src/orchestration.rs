@@ -920,9 +920,5 @@ mod async_tests;
 mod tests;
 
 #[cfg(test)]
-#[path = "orchestration/context_estimate_perf_tests.rs"]
-mod context_estimate_perf_tests;
-
-#[cfg(test)]
 #[path = "orchestration/context_estimate_tests.rs"]
 mod context_estimate_tests;

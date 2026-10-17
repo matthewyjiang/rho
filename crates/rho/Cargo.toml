@@ -124,8 +124,7 @@ bundled-sqlite = ["rusqlite/bundled", "rho-providers/bundled-sqlite"]
 
 # Cargo reads profiles only from the root package. Workspace builds use the
 # copy in the repo-root Cargo.toml; this copy applies when the published crate
-# is the root (`cargo install rho-coding-agent`). Keep both tables in sync; the
-# root copy records the size and speed measurements behind these settings.
+# is the root (`cargo install rho-coding-agent`). Keep both tables in sync.
 # Do not add `panic = "abort"`: the TUI recovers from renderer panics with
 # `catch_unwind` (tui/markdown/math.rs, mermaid.rs).
 [profile.release]

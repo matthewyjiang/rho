@@ -449,13 +449,13 @@ fn record_highlight_call() {
     HIGHLIGHT_LINE_CALLS.with(|cell| cell.set(cell.get().saturating_add(1)));
 }
 
-/// Reset and read the highlight-line counter (tests / benches only).
+/// Reset and read the highlight-line counter for cache regression tests.
 #[cfg(test)]
 pub(in crate::tui) fn take_highlight_line_calls() -> usize {
     HIGHLIGHT_LINE_CALLS.with(|cell| cell.replace(0))
 }
 
-/// Reset the highlight-line counter (benches / tests).
+/// Reset the highlight-line counter for cache regression tests.
 #[cfg(test)]
 pub(in crate::tui) fn reset_highlight_line_calls() {
     HIGHLIGHT_LINE_CALLS.with(|cell| cell.set(0));

@@ -44,7 +44,6 @@ Rho comes with the developer tools you already use, integrated with no configura
 ## Evidence on Hand
 
 - `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo-light.svg` - terminal UI proof plates (dark README + theme-matched site light; regenerated from the PTY harness)
-- `docs/assets/cli-overhead.svg` - CLI startup/memory comparison chart
 - `docs/assets/subagent-panel.png` - subagent panel screenshot
 - README and full guide corpus under `docs/`
 - Live site: https://matthewyjiang.github.io/rho/
@@ -55,7 +54,7 @@ Do not fabricate testimonials, adoption metrics, or competitor claims beyond wha
 ## Product Principles
 
 1. **Clarity over theater** - reading and install paths beat spectacle.
-2. **Prove, don't pitch** - show the TUI and overhead evidence instead of slogans.
+2. **Prove, don't pitch** - show the actual TUI instead of slogans.
 3. **Fast path to first run** - homepage and start docs optimize for install → auth → `rho`.
 4. **Serve three depths** - evaluator, operator, embedder without burying any of them.
 5. **Respect both light and dark** - terminal identity without abandoning light-mode readers.

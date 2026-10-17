@@ -428,7 +428,7 @@ fn workflow_source_read_uses_the_authorized_open_file() {
     std::fs::write(&path, "authorized source").unwrap();
     let opened =
         crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
-    let budget = crate::workflow::Budget::measured("source bytes", 64, "test").unwrap();
+    let budget = crate::workflow::Budget::new("source bytes", 64).unwrap();
 
     replace_opened_file(&path, "replacement source");
     let source = opened.read_utf8_bounded(&budget, 0).unwrap();

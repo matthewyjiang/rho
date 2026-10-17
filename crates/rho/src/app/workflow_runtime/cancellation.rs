@@ -9,12 +9,11 @@ use crate::workflow::{
 
 use super::{journal::RunJournal, RuntimeError};
 
-// Receipt: the cross-process cancellation command measures owner response with
-// this poll interval and checks the accepted acknowledgement limit.
+// Poll for cancellation requested by a separate CLI process.
 pub(super) const CROSS_PROCESS_CANCEL_POLL: std::time::Duration =
     std::time::Duration::from_millis(100);
 
-// Receipt: limit_receipt.json cancellation.accepted_host_cancellation_completion_millis.
+// Bound cleanup after cancelling a workflow's agent task.
 pub(super) const AGENT_CANCELLATION_CLEANUP_MILLIS: u64 = 2_500;
 
 #[derive(Clone)]

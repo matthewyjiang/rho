@@ -49,7 +49,7 @@ Compaction first tries a cheap tier that needs no model request. Rho replaces th
 [elided tool result: read_file path=src/main.rs · ok · 18342 bytes · recall_id=r3f9c0a1b2d4e5f60; fetch the text with the sessions tool, action=recall]
 ```
 
-Oldest results go first, and elision stops once the context reaches the target. Results under 1 KiB stay verbatim; across local sessions they are about 38% of results but only about 5% of tool-result bytes. Tool results inside the recent tail are never elided. Each tool call keeps exactly one result with the same ID, so the history stays valid for every provider. Images attached to an elided result are removed with it, and the stub counts them.
+Oldest results go first, and elision stops once the context reaches the target. Results under 1 KiB stay verbatim. Tool results inside the recent tail are never elided. Each tool call keeps exactly one result with the same ID, so the history stays valid for every provider. Images attached to an elided result are removed with it, and the stub counts them.
 
 If elision alone reaches the target, Rho commits the elided history and makes no model request. Otherwise native or text-summary compaction runs on the elided history, so the summary sees the stubs rather than the original tool output. This keeps a large history from overflowing the summary request. The tradeoff is that summaries describe old tool results only by tool, arguments, and status. Like any compaction, elision invalidates the provider prompt cache from the first changed message on.
 

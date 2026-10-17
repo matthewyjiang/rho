@@ -20,8 +20,6 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::{prepare_child_command, ProcessTree};
 
-// Receipt and its exact timing command: workflow/fixtures/limit_receipt.json.
-// scripts/measure_workflow_limits.py checks the recorded margin arithmetic.
 const FINAL_PROCESS_CLEANUP_MILLIS: u64 = 2_000;
 const HOST_CANCELLATION_COMPLETION_MILLIS: u64 = 2_500;
 

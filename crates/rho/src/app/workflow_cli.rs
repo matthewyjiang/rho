@@ -14,8 +14,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
-        CollectedSources, Diagnostic, InputName, PlanInventoryItem, PlanningLimits,
-        PlanningMeasurements, RunInventoryItem, SourceManifest, StarlarkPlanner, WorkflowError,
+        CollectedSources, Diagnostic, InputName, PlanInventoryItem, PlanningLimitValues,
+        PlanningLimits, RunInventoryItem, SourceManifest, StarlarkPlanner, WorkflowError,
         WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
     },
 };
@@ -64,17 +64,13 @@ pub(crate) use runtime_tui::watch_run;
 pub(super) use tool_service::workflow_tool_service;
 
 const PLANNER_WORKER_ENV: &str = "RHO_WORKFLOW_PLANNER_WORKER";
-// Receipt: a 256-bit bearer token gives the internal one-shot channel 256 bits of entropy.
+// A 256-bit bearer token authenticates the internal one-shot channel.
 const PLANNER_TOKEN_BYTES: usize = 32;
-// Receipts: limit_receipt.json planner_process.request_frame_bytes,
-// response_frame_bytes, stderr_bytes, and address_space_bytes. Reproduce them
-// with scripts/measure_workflow_limits.py.
 const PLANNER_REQUEST_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) const PLANNER_RESPONSE_FRAME_BYTES: u64 = 16 * 1024 * 1024;
 const PLANNER_STDERR_BYTES: usize = 64 * 1024;
 // Coarse OS address-space ceiling (RLIMIT_AS except macOS; Windows job
-// ProcessMemoryLimit). Product memory policy is the planning budgets in the
-// receipt, not this backstop. Receipt: planner_process.address_space_bytes.
+// ProcessMemoryLimit). Product memory policy is the planning budgets, not this backstop.
 #[cfg(any(all(unix, not(target_os = "macos")), windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const WORKFLOW_WIRE_VERSION: u32 = 1;

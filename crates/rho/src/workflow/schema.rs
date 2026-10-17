@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{WorkflowError, WorkflowResult, WorkflowValue};
 
-// Receipt: limit_receipt.json planning.accepted.schema_depth. This matches the
-// planning budget, so stored data cannot bypass the planning contract.
+// Match the planning budget so stored data cannot bypass the planning contract.
 const OUTPUT_SCHEMA_DEPTH_LIMIT: usize = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

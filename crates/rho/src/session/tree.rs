@@ -352,13 +352,6 @@ impl SessionTree {
         self.children.get(id).map_or(&[], Vec::as_slice)
     }
 
-    /// Test-only access to the full child map, used to benchmark the old
-    /// scan-every-child-list approach against the cached `branch_count` field.
-    #[cfg(test)]
-    pub(crate) fn children_map(&self) -> &HashMap<NodeId, Vec<NodeId>> {
-        &self.children
-    }
-
     #[cfg(test)]
     pub(crate) fn nodes_in_storage_order(&self) -> impl Iterator<Item = &RestoredNode> {
         self.order.iter().filter_map(|id| self.nodes.get(id))

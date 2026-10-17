@@ -224,7 +224,6 @@ const sdkSidebar: DefaultTheme.SidebarItem[] = [
     collapsed: true,
     items: [
       { text: 'Compatibility contracts', link: '/sdk/compatibility' },
-      { text: 'Performance acceptance', link: '/sdk/performance' },
       { text: 'SDK changelog', link: '/sdk/changelog' },
     ],
   },

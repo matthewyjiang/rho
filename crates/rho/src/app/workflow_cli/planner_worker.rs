@@ -3,24 +3,7 @@
 use super::*;
 
 pub(crate) fn planning_limits() -> WorkflowResult<PlanningLimits> {
-    PlanningLimits::from_measurements(planning_measurements())
-}
-
-#[derive(Deserialize)]
-struct WorkflowLimitReceipt {
-    cancellation: CancellationLimitReceipt,
-    planning: PlanningLimitReceipt,
-}
-
-#[derive(Deserialize)]
-struct CancellationLimitReceipt {
-    accepted_acknowledgement_millis: u64,
-    poll_millis: u64,
-}
-
-#[derive(Deserialize)]
-struct PlanningLimitReceipt {
-    accepted: PlanningMeasurements,
+    PlanningLimits::from_values(PlanningLimitValues::STANDARD)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,23 +29,12 @@ struct PlannerWorkerResponse {
     error: Option<String>,
 }
 
-fn planning_measurements() -> PlanningMeasurements {
-    workflow_limit_receipt().planning.accepted
-}
-
 pub(super) fn cancellation_acknowledgement_limit_millis() -> u64 {
-    workflow_limit_receipt()
-        .cancellation
-        .accepted_acknowledgement_millis
+    2_000
 }
 
 pub(super) fn cancellation_acknowledgement_poll_millis() -> u64 {
-    workflow_limit_receipt().cancellation.poll_millis
-}
-
-fn workflow_limit_receipt() -> WorkflowLimitReceipt {
-    serde_json::from_str(include_str!("../../workflow/fixtures/limit_receipt.json"))
-        .expect("checked-in workflow limit receipt must match its schema")
+    20
 }
 
 pub(super) async fn run_supervised_planner(
@@ -290,7 +262,9 @@ async fn read_retained(mut input: impl AsyncRead + Unpin, limit: usize) -> io::R
 /// timeout and `kill_on_drop`, not here.
 #[cfg(unix)]
 fn apply_planner_worker_limits() -> io::Result<()> {
-    let cpu_seconds = planning_measurements().worker_wall_millis.div_ceil(1_000);
+    let cpu_seconds = PlanningLimitValues::STANDARD
+        .worker_wall_millis
+        .div_ceil(1_000);
     #[cfg(not(target_os = "macos"))]
     set_resource_limit("RLIMIT_AS", libc::RLIMIT_AS, PLANNER_ADDRESS_SPACE_BYTES)?;
     set_resource_limit("RLIMIT_CPU", libc::RLIMIT_CPU, cpu_seconds)?;
@@ -343,8 +317,10 @@ fn apply_planner_worker_limits() -> io::Result<()> {
         limits.BasicLimitInformation.LimitFlags =
             JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME;
         // Receipt: Windows job CPU time uses 100 ns units, or 10,000,000 units per second.
-        limits.BasicLimitInformation.PerProcessUserTimeLimit =
-            planning_measurements().worker_wall_millis.div_ceil(1_000) as i64 * 10_000_000;
+        limits.BasicLimitInformation.PerProcessUserTimeLimit = PlanningLimitValues::STANDARD
+            .worker_wall_millis
+            .div_ceil(1_000) as i64
+            * 10_000_000;
         limits.ProcessMemoryLimit = PLANNER_ADDRESS_SPACE_BYTES as usize;
         let configured = SetInformationJobObject(
             job,

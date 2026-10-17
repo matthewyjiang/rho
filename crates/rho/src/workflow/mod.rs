@@ -51,7 +51,7 @@ pub(crate) use migration::check_schema_version;
 pub(crate) use model::*;
 pub(crate) use normalization::normalize_workflow;
 pub(crate) use planning_limits::{
-    Budget, FrozenRuntimeLimits, PlanningLimits, PlanningMeasurements,
+    Budget, FrozenRuntimeLimits, PlanningLimitValues, PlanningLimits,
 };
 pub(crate) use program::{ExportName, ScopeDefinition, ScopeDefinitionId, WorkflowProgram};
 pub(crate) use scheduler::next_actions;
