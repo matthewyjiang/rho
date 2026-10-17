@@ -21,6 +21,19 @@ pub(super) async fn intercept(
     _events: &ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
     match prompt {
+        "fixture delegated write input"
+            if tool_result(request, "delegated-write-input").is_none() =>
+        {
+            Some(completed_tool_call(
+                "delegated-write-input",
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": "fixture write input stream",
+                }),
+            ))
+        }
+        "fixture delegated write input" => Some(completed("delegated write dispatched")),
         "fixture two subagents"
             if tool_result(request, super::SUBAGENT_RAIL_AGENT_CALL_ID).is_none()
                 && tool_result(request, SECOND_RAIL_AGENT_CALL_ID).is_none() =>
