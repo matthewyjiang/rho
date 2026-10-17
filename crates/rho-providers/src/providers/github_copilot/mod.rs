@@ -124,11 +124,11 @@ impl GitHubCopilotProvider {
                 auth.chat_endpoint.as_str()
             }
         });
-        Ok(self
-            .apply_headers(self.client.post(endpoint), auth)
-            .json(body)
-            .send()
-            .await?)
+        super::request_body::send(
+            self.apply_headers(self.client.post(endpoint), auth)
+                .json(body),
+        )
+        .await
     }
 
     async fn send_chat_with_retry(

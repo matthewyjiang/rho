@@ -291,7 +291,7 @@ impl<'a> ResponsesHttpTransport<'a> {
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> Result<reqwest::Response, ModelError> {
         let request = self.build_request(endpoint, body, auth);
-        cancel_aware(cancellation, async { Ok(request.send().await?) }).await
+        cancel_aware(cancellation, super::request_body::send(request)).await
     }
 }
 

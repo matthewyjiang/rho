@@ -20,6 +20,9 @@ thiserror = "2"
 toml = "1.1"
 async-trait = "0.1"
 futures-util = "0.3"
+# Match the application's zip-enabled backend so isolated provider benchmarks
+# measure the compressor used by the shipped binary as well.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 rustls = { workspace = true }
 rusqlite = { version = "0.40", features = ["fallible_uint"] }
@@ -55,3 +58,7 @@ tempfile = "3"
 [features]
 default = ["bundled-sqlite"]
 bundled-sqlite = ["rusqlite/bundled"]
+
+[[bench]]
+name = "request_body_gzip"
+harness = false

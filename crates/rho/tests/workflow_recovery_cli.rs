@@ -192,6 +192,9 @@ fn command(root: &TempDir, mode: &str) -> Command {
         .current_dir(root.path())
         .env("HOME", root.path())
         .env("RHO_HOME", root.path().join(".rho"))
+        // Keep credential probes off the developer's session bus as well as HOME.
+        .env("XDG_RUNTIME_DIR", root.path())
+        .env_remove("DBUS_SESSION_BUS_ADDRESS")
         .env(MODE_ENV, mode)
         .env_remove(COMMAND_ENV)
         .env_remove("HERDR_ENV")

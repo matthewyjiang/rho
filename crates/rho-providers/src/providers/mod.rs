@@ -22,6 +22,7 @@ pub(crate) mod native_compaction;
 pub mod openai;
 pub mod openai_compatible;
 mod opencode_go;
+pub(crate) mod request_body;
 mod responses_http;
 pub mod sdk_contract;
 pub mod send_stream;

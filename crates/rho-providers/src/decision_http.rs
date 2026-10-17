@@ -33,15 +33,17 @@ pub(crate) async fn post_json(
         if let Some(api_key) = api_key {
             post = post.bearer_auth(api_key.expose_secret());
         }
-        let response = post.send().await?;
+        let mut request = post.build().map_err(transport_error)?;
+        crate::providers::request_body::encode_request(&mut request)
+            .map_err(|error| DecisionError::Model(Box::new(error)))?;
+        let response = client.execute(request).await.map_err(transport_error)?;
         let status = response.status();
-        let text = response.text().await?;
-        reqwest::Result::Ok((status, text))
+        let text = response.text().await.map_err(transport_error)?;
+        Ok::<_, DecisionError>((status, text))
     };
     let (status, text) = tokio::select! {
         () = cancellation.cancelled() => return Err(DecisionError::Cancelled),
-        response = response => response
-            .map_err(|error| DecisionError::Model(Box::new(error.without_url())))?,
+        response = response => response?,
     };
     if !status.is_success() {
         return Err(DecisionError::Status {
@@ -49,4 +51,8 @@ pub(crate) async fn post_json(
         });
     }
     Ok(text)
+}
+
+fn transport_error(error: reqwest::Error) -> DecisionError {
+    DecisionError::Model(Box::new(error.without_url()))
 }

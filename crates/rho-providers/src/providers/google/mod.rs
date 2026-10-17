@@ -55,13 +55,13 @@ impl GoogleProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request)?;
-        let response = self
-            .client
-            .post(self.url("generateContent")?)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .await?;
+        let response = super::request_body::send(
+            self.client
+                .post(self.url("generateContent")?)
+                .header("x-goog-api-key", &self.api_key)
+                .json(&body),
+        )
+        .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: GenerateContentResponse = response.json().await?;
         let mut collector = ResponseCollector::default();
@@ -85,15 +85,15 @@ impl GoogleProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request)?;
-        let response = self
-            .client
-            .post(self.url("streamGenerateContent")?)
-            .query(&[("alt", "sse")])
-            .header("x-goog-api-key", &self.api_key)
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(&body)
-            .send()
-            .await?;
+        let response = super::request_body::send(
+            self.client
+                .post(self.url("streamGenerateContent")?)
+                .query(&[("alt", "sse")])
+                .header("x-goog-api-key", &self.api_key)
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .json(&body),
+        )
+        .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_stream(response, on_event).await
     }
