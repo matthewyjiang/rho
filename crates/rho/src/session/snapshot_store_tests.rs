@@ -120,7 +120,7 @@ fn sequential_saves_match_fresh_reload() {
     ];
     for (index, snapshot) in saves.iter().enumerate() {
         session.save_snapshot(snapshot, &[]).unwrap();
-        // One materializing read mid-chain; the other saves stay pending.
+        // A mid-chain read must leave the pending replay intact.
         if index == 2 {
             assert_eq!(resume(), *snapshot);
         }

@@ -214,8 +214,8 @@ pub(crate) struct SessionTree {
     /// Full state for `active_leaf_id` only. Other nodes reconstruct on demand.
     /// `None` while `active_replay` holds the leaf's pending state.
     active_state: Option<PersistedSessionState>,
-    /// Sequential delta replay, during load and across saves, defers full
-    /// snapshot materialization until a reader calls `ensure_active_state`.
+    /// Sequential delta replay, during load and across saves. Load, `set_leaf`,
+    /// or a full-snapshot node materializes it; readers copy it via `state_for`.
     /// At most one of `active_state` and `active_replay` is set.
     active_replay: Option<restore::ReplayState>,
 }

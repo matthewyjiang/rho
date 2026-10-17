@@ -92,8 +92,9 @@ impl super::SessionTree {
     }
 
     /// Keep one growable history during JSONL replay and across saves instead
-    /// of copying every prefix. The replay stays pending until a reader needs
-    /// the full state and calls [`Self::ensure_active_state`].
+    /// of copying every prefix. The replay stays pending until load, `set_leaf`,
+    /// or a full-snapshot node materializes it; readers copy it via
+    /// [`Self::state_for`].
     fn insert_delta_node(
         &mut self,
         node: &SessionNode,
