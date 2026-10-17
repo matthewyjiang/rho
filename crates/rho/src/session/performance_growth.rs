@@ -8,7 +8,8 @@ use serde_json::json;
 
 use super::{snapshot, SUMMARIZE_SIZES};
 use crate::session::{
-    persistence::{summarize_session_file, SessionEntry, StoredDisplayMessage, SESSION_VERSION},
+    display_rows::{DisplayRowFormat, StoredDisplayRow},
+    persistence::{summarize_session_file, SessionEntry, SESSION_VERSION},
     snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta},
     tree::{NodeId, SessionNode, SessionNodeKind, SessionTree, StoredStateTransition},
     Session,
@@ -66,6 +67,12 @@ fn perf_audit_session_growing_history() {
                 },
             };
             let id = NodeId::from_string(format!("growth-{index}")).unwrap();
+            let display_messages = StoredDisplayRow::encode(
+                &tail,
+                transition.model_messages(),
+                DisplayRowFormat::for_version(SESSION_VERSION),
+                "1700000000",
+            );
             push_entry(
                 &mut contents,
                 &SessionEntry::Node {
@@ -76,13 +83,7 @@ fn perf_audit_session_growing_history() {
                         kind: SessionNodeKind::Commit,
                         compaction_facts: None,
                         transition,
-                        display_messages: tail
-                            .into_iter()
-                            .map(|message| StoredDisplayMessage {
-                                timestamp: "1700000000".into(),
-                                message,
-                            })
-                            .collect(),
+                        display_messages,
                     },
                 },
             );

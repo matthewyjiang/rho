@@ -6,6 +6,10 @@ use serde_json::json;
 const SESSION_V1: &str = include_str!("session/fixtures/session-v1.jsonl");
 const SESSION_V2: &str = include_str!("session/fixtures/session-v2.jsonl");
 const SESSION_V3: &str = include_str!("session/fixtures/session-v3.jsonl");
+// v4 and v5 store the same transcript: full display rows vs model references.
+const SESSION_V4: &str = include_str!("session/fixtures/session-v4.jsonl");
+const SESSION_V5: &str = include_str!("session/fixtures/session-v5.jsonl");
+const DISPLAY_FIXTURE_ID: &str = "44444444-4444-4444-8444-444444444444";
 
 #[test]
 fn every_supported_application_session_fixture_restores_as_a_snapshot() {
@@ -18,6 +22,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             1,
             1,
             "rho:migrated-v1",
+            2,
             4,
         ),
         (
@@ -28,6 +33,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             1,
             3,
             "rho:fixture-session",
+            2,
             3,
         ),
         (
@@ -39,10 +45,35 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
             0,
             "rho:delta-fixture",
             2,
+            2,
+        ),
+        (
+            4,
+            DISPLAY_FIXTURE_ID,
+            SESSION_V4,
+            3,
+            0,
+            0,
+            "rho:display-fixture",
+            3,
+            4,
+        ),
+        (
+            5,
+            DISPLAY_FIXTURE_ID,
+            SESSION_V5,
+            3,
+            0,
+            0,
+            "rho:display-fixture",
+            3,
+            4,
         ),
     ];
 
-    for (version, id, fixture, revision, compactions, removed, cache_key, display_len) in cases {
+    for (version, id, fixture, revision, compactions, removed, cache_key, model_len, display_len) in
+        cases
+    {
         let (root, cwd, session) = session_from_fixture(id, fixture);
         let first: serde_json::Value =
             serde_json::from_str(fixture.lines().next().unwrap()).unwrap();
@@ -68,7 +99,7 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
         assert_eq!(snapshot.compaction().removed_messages(), removed);
         assert_eq!(snapshot.prompt_cache_key(), Some(cache_key));
         assert_eq!(snapshot.history(), histories.model);
-        assert_eq!(histories.model.len(), 2);
+        assert_eq!(histories.model.len(), model_len);
         assert_eq!(histories.display.len(), display_len);
 
         drop((root, cwd));
@@ -95,6 +126,98 @@ fn v1_session_migrates_on_atomic_snapshot_save_without_losing_display_history() 
             if stored.schema_version() == rho_sdk::SESSION_SNAPSHOT_SCHEMA_VERSION
                 && stored.compaction() == snapshot.compaction())
             && node.display_messages.is_empty()));
+}
+
+// Covers: model references must restore exactly the transcript full rows stored,
+// for tree projection (resume, export, picker) and search evidence alike.
+// Owner: session persistence; the fixtures pin both on-disk formats.
+#[test]
+fn display_row_references_restore_the_same_transcript_as_full_rows() {
+    let restore = |fixture: &str| {
+        let (_root, _cwd, session) = session_from_fixture(DISPLAY_FIXTURE_ID, fixture);
+        let tree = tree::SessionTree::load(session.path()).unwrap();
+        let display = tree
+            .projected_display(tree.active_leaf_id().unwrap())
+            .unwrap();
+        let mut extractor = search_evidence::Extractor::default();
+        let evidence = fixture
+            .lines()
+            .flat_map(|line| extractor.extract(&serde_json::from_str(line).unwrap(), 0))
+            .map(|evidence| (evidence.role, evidence.text))
+            .collect::<Vec<_>>();
+        (serde_json::to_value(display).unwrap(), evidence)
+    };
+
+    let (v4_display, v4_evidence) = restore(SESSION_V4);
+    let (v5_display, v5_evidence) = restore(SESSION_V5);
+
+    pretty_assertions::assert_eq!(v5_display, v4_display);
+    pretty_assertions::assert_eq!(v5_evidence, v4_evidence);
+    // System rows are not search evidence; the referenced answer is.
+    pretty_assertions::assert_eq!(
+        v5_evidence,
+        [
+            ("user".to_owned(), "typed prompt".to_owned()),
+            ("assistant".to_owned(), "fixture answer".to_owned()),
+            (
+                "assistant".to_owned(),
+                "follow-up after a full snapshot".to_owned(),
+            ),
+        ]
+    );
+}
+
+// Covers: resuming a pre-v5 file must not write references an older binary
+// cannot read; new-format files store identical rows as references.
+// Owner: session snapshot store.
+#[test]
+fn saves_follow_the_display_row_format_of_the_file_header() {
+    use display_rows::{DisplayRowFormat, StoredDisplayRow};
+
+    for (id, fixture, format) in [
+        // Legacy files upgrade to explicit tree records, still with full rows.
+        (
+            "33333333-3333-4333-8333-333333333333",
+            SESSION_V3,
+            DisplayRowFormat::Inline,
+        ),
+        (DISPLAY_FIXTURE_ID, SESSION_V4, DisplayRowFormat::Inline),
+        (DISPLAY_FIXTURE_ID, SESSION_V5, DisplayRowFormat::ModelRefs),
+    ] {
+        let (_root, _cwd, session) = session_from_fixture(id, fixture);
+        let restored = session
+            .snapshot_for_resume(
+                ModelIdentity::new("fixture-provider", "fixture-api", "fixture-model"),
+                "rho:fallback".into(),
+            )
+            .unwrap();
+        let mut history = restored.history().to_vec();
+        history.push(Message::assistant_text("next"));
+        let next = SessionSnapshot::new(
+            restored.session_id().clone(),
+            restored.revision().checked_next().unwrap(),
+            history,
+            restored.provider().clone(),
+            restored.compaction().clone(),
+        )
+        .with_prompt_cache_key(restored.prompt_cache_key().unwrap());
+
+        session
+            .save_snapshot(&next, &[Message::assistant_text("next")])
+            .unwrap();
+
+        let Some(SessionEntry::Node { node }) = read_entries(session.path()).unwrap().pop() else {
+            panic!("save appends a node");
+        };
+        let expected = match format {
+            DisplayRowFormat::Inline => StoredDisplayRow::Inline {
+                timestamp: Some(node.timestamp.clone()),
+                message: Message::assistant_text("next"),
+            },
+            DisplayRowFormat::ModelRefs => StoredDisplayRow::Model(0),
+        };
+        pretty_assertions::assert_eq!(node.display_messages, vec![expected], "{id} {format:?}");
+    }
 }
 
 #[test]

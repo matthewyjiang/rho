@@ -260,8 +260,8 @@ fn v4_tree_session_summary_matches_active_display() {
                     transition: StoredStateTransition::Snapshot {
                         snapshot: Box::new(snapshot),
                     },
-                    display_messages: vec![super::persistence::StoredDisplayMessage {
-                        timestamp: "501".into(),
+                    display_messages: vec![super::display_rows::StoredDisplayRow::Inline {
+                        timestamp: Some("501".into()),
                         message: Message::user_text("tree display prompt"),
                     }],
                 },

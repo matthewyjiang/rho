@@ -1,9 +1,10 @@
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
+use super::display_rows::StoredDisplayRow;
 use super::persistence::{
     insert_interrupted_tool_placeholders, timestamp, AppendCursor, PersistedSessionState,
-    SessionEntry, StoredDisplayMessage,
+    SessionEntry,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 #[cfg(test)]
@@ -128,14 +129,12 @@ impl Session {
                 )
         };
         let node_timestamp = timestamp();
-        let display_messages = display_tail
-            .iter()
-            .cloned()
-            .map(|message| StoredDisplayMessage {
-                timestamp: node_timestamp.clone(),
-                message,
-            })
-            .collect();
+        let display_messages = StoredDisplayRow::encode(
+            display_tail,
+            transition.model_messages(),
+            tree.display_row_format(),
+            &node_timestamp,
+        );
 
         let node = SessionNode {
             id: NodeId::new(),

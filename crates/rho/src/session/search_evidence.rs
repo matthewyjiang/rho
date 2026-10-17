@@ -53,12 +53,25 @@ impl Extractor {
                 .get("display_message")
                 .filter(|value| !value.is_null())
                 .unwrap_or(&record["message"])],
-            Some("node" | "snapshot" | "snapshot_delta") => record["display_messages"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|entry| &entry["message"])
-                .collect(),
+            Some("node" | "snapshot" | "snapshot_delta") => {
+                // Version 5 rows may name a message of this record's own
+                // transition instead of repeating it (see `display_rows`).
+                // Search is best effort: a dangling index reads as JSON null
+                // and yields no evidence, while tree loads reject the file.
+                let model = match record["transition"]["type"].as_str() {
+                    Some("snapshot_delta") => &record["transition"]["delta"]["appended_history"],
+                    _ => &record["transition"]["snapshot"]["history"],
+                };
+                record["display_messages"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|entry| match entry["model"].as_u64() {
+                        Some(index) => &model[index as usize],
+                        None => &entry["message"],
+                    })
+                    .collect()
+            }
             _ => Vec::new(),
         };
         messages
