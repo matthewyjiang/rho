@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.19.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.18.0...rho-providers-v2.19.0) (2026-10-17)
+
+
+### Features
+
+* **plugins:** load rho agents from plugin extension directory ([#1528](https://github.com/matthewyjiang/rho/issues/1528)) ([f83a899](https://github.com/matthewyjiang/rho/commit/f83a8994bac8f560abc48afe720884eb464a5a0c))
+
+
+### Bug Fixes
+
+* **acp:** show file diffs for edit and write calls ([e528ee3](https://github.com/matthewyjiang/rho/commit/e528ee3e297581341b387c4e01c55ddbd04d523b))
+
+
+### Performance Improvements
+
+* **providers:** shrink long conversation uploads with gzip ([#1524](https://github.com/matthewyjiang/rho/issues/1524)) ([2cb78f1](https://github.com/matthewyjiang/rho/commit/2cb78f13261651a0080051bdaa8f63a5b4db01d8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.12.0 to 5.11.1
+
 ## [2.18.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.17.0...rho-providers-v2.18.0) (2026-10-16)
 
 

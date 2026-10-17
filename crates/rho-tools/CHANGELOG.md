@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.11.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.11.0...rho-agent-tools-v1.11.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **acp:** show file diffs for edit and write calls ([e528ee3](https://github.com/matthewyjiang/rho/commit/e528ee3e297581341b387c4e01c55ddbd04d523b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.12.0 to 5.11.1
+
 ## [1.11.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.10.0...rho-agent-tools-v1.11.0) (2026-10-16)
 
 
