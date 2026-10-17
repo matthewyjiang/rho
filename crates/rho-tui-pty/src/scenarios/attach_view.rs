@@ -246,20 +246,19 @@ const ATTACH_VIEW_PARENT_APPROVAL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// The parent turn is held open until the release below, so the first Ctrl-C
+// always lands mid-turn and the second always after the turn ends.
 const ATTACH_VIEW_QUIT_RESTORES_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::SubmitText("fixture subagent rail"),
+    Step::Phase("spawn_subagent_in_held_turn"),
+    Step::SubmitText("fixture attach then approval"),
     Step::WaitText {
-        text: "subagent rail fixture dispatched",
+        text: "running in background",
         timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "worker",
-        timeout: SETTLE,
     },
     Step::SubmitText("/attach"),
     Step::WaitText {
@@ -271,7 +270,7 @@ const ATTACH_VIEW_QUIT_RESTORES_STEPS: &[Step] = &[
         text: "q back",
         timeout: SETTLE,
     },
-    Step::Phase("leave_then_quit_from_attach_view"),
+    Step::Phase("leave_attach_view_mid_turn"),
     Step::Key(Key::Ctrl('c')),
     Step::WaitTextGone {
         text: "q back",
@@ -280,6 +279,12 @@ const ATTACH_VIEW_QUIT_RESTORES_STEPS: &[Step] = &[
     Step::WaitText {
         text: "left attach view; press ctrl-c again to quit",
         timeout: SETTLE,
+    },
+    Step::Phase("quit_after_turn_ends"),
+    Step::Custom(release_parent_approval),
+    Step::WaitText {
+        text: "Worked for",
+        timeout: STREAM,
     },
     Step::Key(Key::Ctrl('c')),
     Step::WaitExit { timeout: SETTLE },
@@ -314,7 +319,7 @@ pub(super) const ATTACH_VIEW_PARENT_APPROVAL_SCENARIO: Scenario = Scenario::new(
 
 pub(super) const ATTACH_VIEW_QUIT_RESTORES_SCENARIO: Scenario = Scenario::new(
     "attach_view_quit_restores",
-    "Leave the attach view on Ctrl-C, then quit and restore the terminal",
+    "Leave the attach view on Ctrl-C mid-turn, then quit after the turn ends",
     DEFAULT_SIZE,
     ATTACH_VIEW_QUIT_RESTORES_STEPS,
     /*smoke*/ false,
