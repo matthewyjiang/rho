@@ -1,11 +1,11 @@
-//! `[internal_agents.<id>]` model overrides for catalog agents whose files the
-//! user cannot edit, such as plugin agents.
+//! `[internal_agents.<id>]` model overrides for catalog agents.
 //!
-//! Bind, relaunch, and the `/agents` detail pane all ask this module, so they
-//! agree on which agents take an entry and how it combines with the file. The
-//! entry is keyed by id, so it also applies to an editable file that takes
-//! over a plugin agent's id; `/agents` offers the set/clear picker only for
-//! plugin agents, and the detail pane names the entry for the others.
+//! An entry applies to any Rho catalog agent whose id Rho does not reserve,
+//! whatever tier its file comes from (user files included). It exists for
+//! agents whose files the user cannot edit, so `/agents` offers the set/clear
+//! picker only for plugin agents; for the others the detail pane names the
+//! entry. Bind, relaunch, and that detail pane all ask this module, so they
+//! agree on which agents take an entry and how it combines with the file.
 
 use std::collections::BTreeMap;
 

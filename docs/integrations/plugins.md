@@ -158,9 +158,11 @@ Config load drops an entry that leaves either out or names another
 `runtime`, with a warning, and the file's model stays; the next config save
 removes the dropped entry. The
 optional `reasoning` key replaces the file's reasoning; without one the file's
-reasoning stays. The entry is keyed by agent ID, so it also applies to an
-agent file of yours that takes over the same ID; built-in agents never take
-one. Rho refuses to launch an agent that runs on another runtime while it has
+reasoning stays. The entry is keyed by agent ID and applies to any Rho agent
+with that ID, including an agent file of yours (for example one that takes
+over a plugin agent's ID); `/agents` names the entry in that agent's detail
+pane, and only plugin agents get the picker. Built-in, internal-only, and
+reserved IDs never take one. Rho refuses to launch an agent that runs on another runtime while it has
 an entry, since the entry would switch runtime rather than model, and
 `/agents` marks such an entry as unable to apply.
 
