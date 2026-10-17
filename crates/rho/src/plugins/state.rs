@@ -13,7 +13,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::git_source::GitSource;
 use crate::config_writer;
 
 const STATE_VERSION: u32 = 1;
@@ -74,26 +73,10 @@ pub(crate) struct GitRecord {
     pub(crate) commit: String,
 }
 
-impl GitRecord {
-    pub(crate) fn new(source: &GitSource, commit: String) -> Self {
-        Self {
-            url: source.url.clone(),
-            git_ref: source.git_ref.clone(),
-            subdir: source.subdir.clone(),
-            commit,
-        }
-    }
-
-    pub(crate) fn source(&self) -> GitSource {
-        GitSource {
-            url: self.url.clone(),
-            git_ref: self.git_ref.clone(),
-            subdir: self.subdir.clone(),
-        }
-    }
-}
-
-/// How a fresh install placed a package; decides the recorded origin.
+/// How Rho placed a package into a managed root.
+///
+/// Stored as `origin` plus its payload (`link_target` or a `git` table) in
+/// `plugins.toml`; see [`StoredEntry`] for the on-disk shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InstallRecord {
     Copy,
@@ -107,20 +90,6 @@ impl InstallRecord {
             Self::Copy => PluginOrigin::Install,
             Self::Link { .. } => PluginOrigin::Link,
             Self::Git(_) => PluginOrigin::Git,
-        }
-    }
-
-    pub(crate) fn link_target(&self) -> Option<&str> {
-        match self {
-            Self::Link { target } => Some(target),
-            Self::Copy | Self::Git(_) => None,
-        }
-    }
-
-    pub(crate) fn git(&self) -> Option<&GitRecord> {
-        match self {
-            Self::Git(git) => Some(git),
-            Self::Copy | Self::Link { .. } => None,
         }
     }
 }
@@ -152,28 +121,83 @@ impl Default for PluginStateFile {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "StoredEntry", into = "StoredEntry")]
 pub(crate) struct PluginStateEntry {
     /// Absent means enabled. Explicit `false` disables the package.
-    #[serde(default = "default_enabled", skip_serializing_if = "is_true")]
     pub(crate) enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) origin: Option<PluginOrigin>,
-    /// Absolute path recorded for linked packages (display and inspect only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) link_target: Option<String>,
-    /// Source recorded for git-installed packages; read by `rho plugins update`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) git: Option<GitRecord>,
+    /// How Rho installed the package; `None` for hand-placed packages.
+    pub(crate) install: Option<InstallRecord>,
 }
 
 impl Default for PluginStateEntry {
     fn default() -> Self {
         Self {
             enabled: true,
-            origin: None,
-            link_target: None,
-            git: None,
+            install: None,
+        }
+    }
+}
+
+/// On-disk shape of one `[plugins.<name>]` entry.
+///
+/// Only combinations Rho writes are accepted, so `origin` always agrees with
+/// its payload once parsed into [`PluginStateEntry`].
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredEntry {
+    #[serde(default = "default_enabled", skip_serializing_if = "is_true")]
+    enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<PluginOrigin>,
+    /// Absolute path recorded for linked packages (display and inspect only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    link_target: Option<String>,
+    /// Source recorded for git-installed packages; read by `rho plugins update`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git: Option<GitRecord>,
+}
+
+impl TryFrom<StoredEntry> for PluginStateEntry {
+    type Error = String;
+
+    fn try_from(stored: StoredEntry) -> Result<Self, String> {
+        let install =
+            match (stored.origin, stored.link_target, stored.git) {
+                (None, None, None) => None,
+                (Some(PluginOrigin::Install), None, None) => Some(InstallRecord::Copy),
+                (Some(PluginOrigin::Link), Some(target), None) => {
+                    Some(InstallRecord::Link { target })
+                }
+                (Some(PluginOrigin::Git), None, Some(git)) => Some(InstallRecord::Git(git)),
+                (origin, link_target, git) => {
+                    return Err(format!(
+                    "origin {} does not match its recorded fields (link_target: {}, git table: {})",
+                    origin.map_or("(none)", PluginOrigin::as_str),
+                    if link_target.is_some() { "present" } else { "absent" },
+                    if git.is_some() { "present" } else { "absent" },
+                ))
+                }
+            };
+        Ok(Self {
+            enabled: stored.enabled,
+            install,
+        })
+    }
+}
+
+impl From<PluginStateEntry> for StoredEntry {
+    fn from(entry: PluginStateEntry) -> Self {
+        let (origin, link_target, git) = match entry.install {
+            None => (None, None, None),
+            Some(InstallRecord::Copy) => (Some(PluginOrigin::Install), None, None),
+            Some(InstallRecord::Link { target }) => (Some(PluginOrigin::Link), Some(target), None),
+            Some(InstallRecord::Git(git)) => (Some(PluginOrigin::Git), None, Some(git)),
+        };
+        Self {
+            enabled: entry.enabled,
+            origin,
+            link_target,
+            git,
         }
     }
 }
@@ -225,8 +249,16 @@ impl PluginStateStore {
         self.file(scope).plugins.get(name)
     }
 
+    pub(crate) fn install_record(&self, scope: PluginScope, name: &str) -> Option<&InstallRecord> {
+        self.entry(scope, name)
+            .and_then(|entry| entry.install.as_ref())
+    }
+
     pub(crate) fn git_record(&self, scope: PluginScope, name: &str) -> Option<&GitRecord> {
-        self.entry(scope, name).and_then(|entry| entry.git.as_ref())
+        match self.install_record(scope, name)? {
+            InstallRecord::Git(git) => Some(git),
+            InstallRecord::Copy | InstallRecord::Link { .. } => None,
+        }
     }
 
     /// Names of packages in `scope` that were installed from git.
@@ -234,7 +266,7 @@ impl PluginStateStore {
         self.file(scope)
             .plugins
             .iter()
-            .filter(|(_, entry)| entry.git.is_some())
+            .filter(|(_, entry)| matches!(entry.install, Some(InstallRecord::Git(_))))
             .map(|(name, _)| name.clone())
             .collect()
     }
@@ -245,8 +277,8 @@ impl PluginStateStore {
         name: &str,
         package_path: &Path,
     ) -> PluginOrigin {
-        if let Some(origin) = self.entry(scope, name).and_then(|entry| entry.origin) {
-            return origin;
+        if let Some(record) = self.install_record(scope, name) {
+            return record.origin();
         }
         match std::fs::symlink_metadata(package_path) {
             Ok(metadata) if metadata.file_type().is_symlink() => PluginOrigin::Link,
@@ -275,9 +307,7 @@ impl PluginStateStore {
     ) -> anyhow::Result<()> {
         self.update_scope(scope, |file| {
             let entry = file.plugins.entry(name.to_string()).or_default();
-            entry.origin = Some(record.origin());
-            entry.link_target = record.link_target().map(str::to_string);
-            entry.git = record.git().cloned();
+            entry.install = Some(record);
             // Fresh installs start enabled even if a prior disable entry remained.
             entry.enabled = true;
             Ok(())
@@ -293,8 +323,7 @@ impl PluginStateStore {
     ) -> anyhow::Result<()> {
         self.update_scope(scope, |file| {
             let entry = file.plugins.entry(name.to_string()).or_default();
-            entry.origin = Some(PluginOrigin::Git);
-            entry.git = Some(git);
+            entry.install = Some(InstallRecord::Git(git));
             Ok(())
         })
     }
@@ -447,15 +476,9 @@ pub(crate) fn parse_state_file(text: &str) -> Result<PluginStateFile, String> {
             file.version
         ));
     }
-    for (name, entry) in &file.plugins {
+    for name in file.plugins.keys() {
         super::manifest::validate_plugin_name(name)
             .map_err(|error| format!("invalid plugin key `{name}`: {error}"))?;
-        // `update` reads the git table; origin and table must agree.
-        if (entry.origin == Some(PluginOrigin::Git)) != entry.git.is_some() {
-            return Err(format!(
-                "invalid plugin `{name}`: origin = \"git\" and a [plugins.{name}.git] table must appear together"
-            ));
-        }
     }
     Ok(file)
 }

@@ -5,13 +5,15 @@ use std::{ffi::OsStr, path::PathBuf};
 use pretty_assertions::assert_eq;
 
 use super::{GitSource, InstallSource};
+use crate::plugins::state::GitRecord;
 
 fn git(url: &str, git_ref: Option<&str>, subdir: Option<&str>) -> InstallSource {
-    InstallSource::Git(GitSource {
-        url: url.to_string(),
-        git_ref: git_ref.map(str::to_string),
-        subdir: subdir.map(str::to_string),
-    })
+    let source = GitSource::new(
+        url.to_string(),
+        git_ref.map(str::to_string),
+        subdir.map(str::to_string),
+    );
+    InstallSource::Git(source.unwrap())
 }
 
 /// A cwd with no entries, so URL-shaped arguments never match a local path.
@@ -28,6 +30,11 @@ fn parses_install_sources() {
         ("https://github.com/owner/repo", git(repo, None, None)),
         ("https://github.com/owner/repo.git", git(repo, None, None)),
         ("github.com/owner/repo/", git(repo, None, None)),
+        ("www.github.com/owner/repo", git(repo, None, None)),
+        (
+            "HTTP://WWW.GitHub.com/owner/repo/tree/main/plugins/demo",
+            git(repo, Some("main"), Some("plugins/demo")),
+        ),
         (
             "https://github.com/owner/repo?tab=readme-ov-file",
             git(repo, None, None),
@@ -83,6 +90,7 @@ fn rejects_unsafe_or_malformed_sources() {
         "https://github.com/owner/repo/tree/main/../outside",
         "https://github.com/owner/repo/tree/main/./plugin",
         "https://user:ghp_secret@github.com/owner/repo",
+        "https://ghp_secret@github.com/owner/repo",
         "https://ghp_secret@gitlab.com/owner/repo.git",
         "ssh://git:hunter2@example.com/owner/repo.git",
     ];
@@ -94,22 +102,38 @@ fn rejects_unsafe_or_malformed_sources() {
     }
 
     // Recorded sources from plugins.toml go through the same gate.
-    let recorded = GitSource {
-        url: "ext::sh -c touch% /tmp/pwned".to_string(),
+    let recorded = |url: &str, subdir: Option<&str>| GitRecord {
+        url: url.to_string(),
         git_ref: None,
-        subdir: None,
+        subdir: subdir.map(str::to_string),
+        commit: "0".repeat(40),
     };
-    assert!(recorded.validate().is_err());
+    for record in [
+        recorded("ext::sh -c touch% /tmp/pwned", None),
+        recorded("https://github.com/owner/repo", Some("../escape")),
+    ] {
+        assert!(GitSource::try_from(&record).is_err(), "{record:?}");
+    }
 }
 
-// Covers: an existing local directory wins over URL-shaped parsing.
+// Covers: an existing local directory wins over scheme-less GitHub parsing,
+// but a planted `https:/...` directory never stands in for a real URL.
 // Owner: plugin install source parsing.
 #[test]
-fn existing_local_path_is_never_a_remote() {
+fn local_paths_win_only_without_a_scheme() {
     let cwd = tempfile::TempDir::new().unwrap();
     std::fs::create_dir_all(cwd.path().join("github.com/owner/repo")).unwrap();
     assert_eq!(
         InstallSource::parse(OsStr::new("github.com/owner/repo"), cwd.path()).unwrap(),
         InstallSource::Local(PathBuf::from("github.com/owner/repo"))
     );
+
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(cwd.path().join("https:/github.com/owner/repo")).unwrap();
+        assert_eq!(
+            InstallSource::parse(OsStr::new("https://github.com/owner/repo"), cwd.path()).unwrap(),
+            git("https://github.com/owner/repo", None, None)
+        );
+    }
 }

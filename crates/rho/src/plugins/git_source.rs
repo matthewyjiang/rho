@@ -16,7 +16,7 @@ use std::{
     process::Command,
 };
 
-use super::contain;
+use super::{contain, state::GitRecord};
 
 /// URL prefixes treated as git remotes. Anything else is a local path.
 const REMOTE_PREFIXES: &[&str] = &["https://", "http://", "ssh://", "git://", "file://", "git@"];
@@ -33,13 +33,8 @@ const GIT_LOCATION_ENV: &[&str] = &[
     "GIT_NAMESPACE",
 ];
 
-/// GitHub web prefixes whose path is parsed as `<owner>/<repo>[/tree/<ref>[/<path>]]`.
-const GITHUB_PREFIXES: &[&str] = &[
-    "https://github.com/",
-    "http://github.com/",
-    "https://www.github.com/",
-    "github.com/",
-];
+/// Hosts whose browser links parse as `<owner>/<repo>[/tree/<ref>[/<path>]]`.
+const GITHUB_HOSTS: &[&str] = &["github.com", "www.github.com"];
 
 /// Where `rho plugins install` reads a package from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,72 +46,77 @@ pub(crate) enum InstallSource {
 impl InstallSource {
     /// Classify an install argument as a local path or a git source.
     ///
-    /// An existing path (relative paths resolve against `cwd`) always wins, so
-    /// a directory that happens to be named like `github.com/...` still
-    /// installs locally.
+    /// Arguments with a remote prefix (`https://`, `git@`, ...) are always
+    /// remotes. A scheme-less argument is local when that path exists
+    /// (relative to `cwd`), so a directory named like `github.com/...` still
+    /// installs locally; otherwise it may be a scheme-less GitHub link.
     pub(crate) fn parse(arg: &OsStr, cwd: &Path) -> anyhow::Result<Self> {
         let path = Path::new(arg);
-        let Some(arg) = arg.to_str().filter(|_| !cwd.join(path).exists()) else {
-            return Ok(Self::Local(path.to_path_buf()));
+        let local = || Ok(Self::Local(path.to_path_buf()));
+        let Some(arg) = arg.to_str() else {
+            return local();
         };
-        if let Some(rest) = GITHUB_PREFIXES
-            .iter()
-            .find_map(|prefix| arg.strip_prefix(prefix))
-        {
-            return parse_github_path(rest).map(Self::Git);
-        }
+        // Explicit remotes never consult the filesystem, so a planted
+        // `https:/...` directory cannot stand in for a URL.
         if REMOTE_PREFIXES.iter().any(|prefix| arg.starts_with(prefix)) {
-            let source = GitSource {
-                url: arg.to_string(),
-                git_ref: None,
-                subdir: None,
+            return match github_link(arg) {
+                Some(link) => parse_github_link(&link).map(Self::Git),
+                None => GitSource::new(arg.to_string(), None, None).map(Self::Git),
             };
-            source.validate()?;
-            return Ok(Self::Git(source));
         }
-        Ok(Self::Local(path.to_path_buf()))
+        if cwd.join(path).exists() {
+            return local();
+        }
+        match github_link(arg) {
+            Some(link) => parse_github_link(&link).map(Self::Git),
+            None => local(),
+        }
     }
 }
 
-/// A repository location plus the ref and package directory to install.
+/// A validated repository location plus the ref and package directory to
+/// install.
+///
+/// Fields are private so every instance, including ones rebuilt from
+/// `plugins.toml` (which can arrive with cloned repositories), went through
+/// [`GitSource::new`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GitSource {
-    pub(crate) url: String,
-    /// Branch, tag, or commit to fetch. `None` follows the remote default branch.
-    pub(crate) git_ref: Option<String>,
-    /// Package directory relative to the repository root. `None` is the root.
-    pub(crate) subdir: Option<String>,
+    url: String,
+    git_ref: Option<String>,
+    subdir: Option<String>,
 }
 
 impl GitSource {
-    /// Reject values that could reach `git` as options or escape the checkout.
+    /// Validate and build a source.
     ///
-    /// Runs on parsed arguments and again on sources loaded from
-    /// `plugins.toml`, because project state files arrive with cloned
-    /// repositories. URLs must not embed credentials, because the URL is
-    /// recorded in `plugins.toml` and printed.
-    pub(crate) fn validate(&self) -> anyhow::Result<()> {
-        if !REMOTE_PREFIXES
-            .iter()
-            .any(|prefix| self.url.starts_with(prefix))
-        {
+    /// `git_ref` is a branch, tag, or commit; `None` follows the remote default
+    /// branch. `subdir` is the package directory relative to the repository
+    /// root; `None` is the root. Rejects values that could reach `git` as
+    /// options, escape the checkout, or persist credentials (the URL is
+    /// recorded in `plugins.toml` and printed).
+    pub(crate) fn new(
+        url: String,
+        git_ref: Option<String>,
+        subdir: Option<String>,
+    ) -> anyhow::Result<Self> {
+        if !REMOTE_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) {
             anyhow::bail!(
-                "unsupported git URL `{}`: expected one of {}",
-                self.url,
+                "unsupported git URL `{url}`: expected one of {}",
                 REMOTE_PREFIXES.join(", ")
             );
         }
-        if embeds_credentials(&self.url) {
+        if embeds_credentials(&url) {
             anyhow::bail!(
                 "refusing a git URL with embedded credentials; use a git credential helper or SSH key instead"
             );
         }
-        if let Some(git_ref) = &self.git_ref {
+        if let Some(git_ref) = &git_ref {
             if git_ref.is_empty() || git_ref.starts_with('-') {
                 anyhow::bail!("invalid git ref `{git_ref}`");
             }
         }
-        if let Some(subdir) = &self.subdir {
+        if let Some(subdir) = &subdir {
             let path = Path::new(subdir);
             if subdir.is_empty()
                 || !path
@@ -128,11 +128,37 @@ impl GitSource {
                 );
             }
         }
-        Ok(())
+        Ok(Self {
+            url,
+            git_ref,
+            subdir,
+        })
     }
 
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub(crate) fn subdir(&self) -> Option<&str> {
+        self.subdir.as_deref()
+    }
+
+    /// Whether the URL points at GitHub, where `/tree/<ref>/<path>` links work.
     pub(crate) fn is_github(&self) -> bool {
-        self.url.starts_with("https://github.com/")
+        url::Url::parse(&self.url)
+            .ok()
+            .and_then(|url| url.host_str().map(|host| GITHUB_HOSTS.contains(&host)))
+            .unwrap_or(false)
+    }
+
+    /// State record for this source at `commit`.
+    pub(crate) fn record(&self, commit: String) -> GitRecord {
+        GitRecord {
+            url: self.url.clone(),
+            git_ref: self.git_ref.clone(),
+            subdir: self.subdir.clone(),
+            commit,
+        }
     }
 
     /// Human-readable location, e.g. `https://github.com/o/r (ref main, path plugins/x)`.
@@ -152,6 +178,19 @@ impl GitSource {
     }
 }
 
+impl TryFrom<&GitRecord> for GitSource {
+    type Error = anyhow::Error;
+
+    /// Rebuild a recorded source, re-running every validation rule.
+    fn try_from(record: &GitRecord) -> anyhow::Result<Self> {
+        Self::new(
+            record.url.clone(),
+            record.git_ref.clone(),
+            record.subdir.clone(),
+        )
+    }
+}
+
 /// Whether `url` carries a password, or any userinfo over HTTP(S) where a
 /// bare username is commonly an access token. `ssh://git@host` stays allowed.
 fn embeds_credentials(url: &str) -> bool {
@@ -163,13 +202,53 @@ fn embeds_credentials(url: &str) -> bool {
         || matches!(parsed.scheme(), "http" | "https") && !parsed.username().is_empty()
 }
 
-/// Parse the part of a GitHub web URL after the host.
+/// A GitHub web link: the raw path after the host, before `?` or `#`.
+struct GithubLink {
+    path: String,
+    has_userinfo: bool,
+}
+
+/// Recognize `arg` as a GitHub web link, accepting a missing `https://`.
+///
+/// `url::Url` decides the scheme and host (case-insensitive). The path is
+/// taken from the raw text instead, because URL parsing would resolve `..`
+/// segments before the package path check could reject them.
+fn github_link(arg: &str) -> Option<GithubLink> {
+    let with_scheme = if arg.contains("://") {
+        arg.to_string()
+    } else {
+        format!("https://{arg}")
+    };
+    let url = url::Url::parse(&with_scheme).ok()?;
+    let is_github = matches!(url.scheme(), "http" | "https")
+        && url
+            .host_str()
+            .is_some_and(|host| GITHUB_HOSTS.contains(&host));
+    if !is_github {
+        return None;
+    }
+    let after_scheme = with_scheme.split_once("://").map_or("", |(_, rest)| rest);
+    let path = after_scheme
+        .find('/')
+        .map_or("", |start| &after_scheme[start..]);
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    Some(GithubLink {
+        path: path.to_string(),
+        has_userinfo: !url.username().is_empty() || url.password().is_some(),
+    })
+}
+
+/// Turn a GitHub web link into a source.
 ///
 /// The first segment after `tree/` is the ref, so refs that contain `/` are
 /// not expressible through a tree URL.
-fn parse_github_path(rest: &str) -> anyhow::Result<GitSource> {
-    let path = rest.split(['?', '#']).next().unwrap_or_default();
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+fn parse_github_link(link: &GithubLink) -> anyhow::Result<GitSource> {
+    if link.has_userinfo {
+        anyhow::bail!(
+            "refusing a git URL with embedded credentials; use a git credential helper or SSH key instead"
+        );
+    }
+    let mut segments = link.path.split('/').filter(|segment| !segment.is_empty());
     let (Some(owner), Some(repo)) = (segments.next(), segments.next()) else {
         anyhow::bail!("unsupported GitHub URL: expected github.com/<owner>/<repo>");
     };
@@ -190,36 +269,36 @@ fn parse_github_path(rest: &str) -> anyhow::Result<GitSource> {
             "unsupported GitHub URL segment `{other}`: use github.com/<owner>/<repo>/tree/<ref>/<path>"
         ),
     };
-    let source = GitSource {
-        url: format!("https://github.com/{owner}/{repo}"),
+    GitSource::new(
+        format!("https://github.com/{owner}/{repo}"),
         git_ref,
         subdir,
-    };
-    source.validate()?;
-    Ok(source)
+    )
 }
 
 /// A shallow checkout of one commit in a temporary directory.
 ///
 /// The `.git` directory is removed after checkout so package copies never
-/// carry repository metadata. The directory is deleted on drop.
+/// carry repository metadata. Everything is deleted on drop.
 pub(crate) struct Checkout {
-    dir: tempfile::TempDir,
+    /// Owns `repo` and the empty hooks directory beside it.
+    _dir: tempfile::TempDir,
+    repo: PathBuf,
     pub(crate) commit: String,
 }
 
 impl Checkout {
     /// Package directory inside the checkout, contained after resolving symlinks.
     pub(crate) fn package_dir(&self, source: &GitSource) -> anyhow::Result<PathBuf> {
-        let root = self.dir.path();
-        let Some(subdir) = &source.subdir else {
-            return Ok(root.to_path_buf());
+        let Some(subdir) = source.subdir() else {
+            return Ok(self.repo.clone());
         };
-        let canonical = contain::canonical_root(root).map_err(|error| anyhow::anyhow!(error))?;
+        let canonical =
+            contain::canonical_root(&self.repo).map_err(|error| anyhow::anyhow!(error))?;
         contain::contained_path(&canonical, &canonical.join(subdir)).map_err(|_| {
             anyhow::anyhow!(
                 "path `{subdir}` does not exist in {} at {}",
-                source.url,
+                source.url(),
                 short_commit(&self.commit)
             )
         })
@@ -227,37 +306,47 @@ impl Checkout {
 }
 
 /// Shallow-fetch `source` and check out its commit.
+///
+/// Git runs with an empty template and hooks directory, so user-level
+/// `post-checkout` hooks (which can act on repository config such as
+/// `.pre-commit-config.yaml`) never run against fetched content.
 pub(crate) fn fetch(source: &GitSource) -> anyhow::Result<Checkout> {
-    source.validate()?;
     let dir = tempfile::Builder::new().prefix("rho-plugin-").tempdir()?;
+    let no_hooks = dir.path().join("no-hooks");
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&no_hooks)?;
+    std::fs::create_dir(&repo)?;
+    let git = Git {
+        repo: &repo,
+        no_hooks: &no_hooks,
+    };
+    let template = format!("--template={}", no_hooks.display());
+    git.run(&["init", "--quiet", &template])?;
     let target = source.git_ref.as_deref().unwrap_or("HEAD");
-    run_git(dir.path(), &["init", "--quiet"])?;
-    run_git(
-        dir.path(),
-        &[
-            "fetch",
-            "--quiet",
-            "--depth",
-            "1",
-            "--",
-            &source.url,
-            target,
-        ],
-    )
+    git.run(&[
+        "fetch",
+        "--quiet",
+        "--depth",
+        "1",
+        "--",
+        source.url(),
+        target,
+    ])
     .map_err(|error| anyhow::anyhow!("could not fetch {}: {error}", source.describe()))?;
-    run_git(
-        dir.path(),
-        &[
-            "-c",
-            "advice.detachedHead=false",
-            "checkout",
-            "--quiet",
-            "FETCH_HEAD",
-        ],
-    )?;
-    let commit = run_git(dir.path(), &["rev-parse", "HEAD"])?;
-    std::fs::remove_dir_all(dir.path().join(".git"))?;
-    Ok(Checkout { dir, commit })
+    git.run(&[
+        "-c",
+        "advice.detachedHead=false",
+        "checkout",
+        "--quiet",
+        "FETCH_HEAD",
+    ])?;
+    let commit = git.run(&["rev-parse", "HEAD"])?;
+    std::fs::remove_dir_all(repo.join(".git"))?;
+    Ok(Checkout {
+        _dir: dir,
+        repo,
+        commit,
+    })
 }
 
 /// Abbreviated commit for display.
@@ -265,34 +354,42 @@ pub(crate) fn short_commit(commit: &str) -> &str {
     commit.get(..12).unwrap_or(commit)
 }
 
-/// Run `git -C <dir> <args>` against `dir` only and return trimmed stdout.
-fn run_git(dir: &Path, args: &[&str]) -> anyhow::Result<String> {
-    let mut command = Command::new("git");
-    for name in GIT_LOCATION_ENV {
-        command.env_remove(name);
-    }
-    let output = command
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => {
-                anyhow::anyhow!(
+/// `git` confined to one temporary repository with hooks disabled.
+struct Git<'a> {
+    repo: &'a Path,
+    no_hooks: &'a Path,
+}
+
+impl Git<'_> {
+    /// Run `git -C <repo> <args>` and return trimmed stdout.
+    fn run(&self, args: &[&str]) -> anyhow::Result<String> {
+        let mut command = Command::new("git");
+        for name in GIT_LOCATION_ENV {
+            command.env_remove(name);
+        }
+        let output = command
+            .arg("-C")
+            .arg(self.repo)
+            .arg("-c")
+            .arg(format!("core.hooksPath={}", self.no_hooks.display()))
+            .args(args)
+            .output()
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::NotFound => anyhow::anyhow!(
                     "git is not installed; install git to use repository plugin sources"
-                )
-            }
-            _ => anyhow::anyhow!("could not run git: {error}"),
-        })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "git {} failed: {}",
-            args.first().copied().unwrap_or_default(),
-            stderr.trim()
-        );
+                ),
+                _ => anyhow::anyhow!("could not run git: {error}"),
+            })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "git {} failed: {}",
+                args.first().copied().unwrap_or_default(),
+                stderr.trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(test)]

@@ -14,16 +14,14 @@ use super::{
     contain, discovery_roots,
     manifest::{self, PluginManifest},
     state::{
-        project_plugins_root, user_plugins_root, GitRecord, InstallRecord, PluginOrigin,
-        PluginScope, PluginStateStore,
+        project_plugins_root, user_plugins_root, InstallRecord, PluginOrigin, PluginScope,
+        PluginStateStore,
     },
 };
 
 #[path = "manage_git.rs"]
 mod git;
-pub(crate) use git::{
-    install_git, update, UpdateOutcome, UpdateReport, UpdateSelection, UpdatedPackage,
-};
+pub(crate) use git::{install_git, update, UpdateOutcome, UpdateReport, UpdateSelection};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallMode {
@@ -40,8 +38,6 @@ pub(crate) struct ManagedPackage {
     pub(crate) origin: PluginOrigin,
     pub(crate) path: PathBuf,
     pub(crate) link_target: Option<PathBuf>,
-    /// Recorded source and commit for git-installed packages.
-    pub(crate) git: Option<GitRecord>,
 }
 
 #[derive(Clone, Debug)]
@@ -107,9 +103,9 @@ fn install_validated(
     home: &Path,
     rho_home: Option<&Path>,
 ) -> anyhow::Result<ManagedPackage> {
-    let mode = match record {
-        InstallRecord::Copy | InstallRecord::Git(_) => InstallMode::Copy,
-        InstallRecord::Link { .. } => InstallMode::Link,
+    let (mode, link_target) = match record {
+        InstallRecord::Copy | InstallRecord::Git(_) => (InstallMode::Copy, None),
+        InstallRecord::Link { target } => (InstallMode::Link, Some(PathBuf::from(target))),
     };
     let root = managed_root(scope, cwd, home);
     let destination = place(&source, &root, mode, force)?;
@@ -124,8 +120,7 @@ fn install_validated(
         scope,
         origin: record.origin(),
         path: destination,
-        link_target: record.link_target().map(PathBuf::from),
-        git: record.git().cloned(),
+        link_target,
     })
 }
 
@@ -265,17 +260,12 @@ fn package_at(
 ) -> anyhow::Result<ManagedPackage> {
     let source = inspect_source(path)?;
     let origin = state.origin(scope, &source.manifest.name, path);
-    let git = state.git_record(scope, &source.manifest.name).cloned();
-    let link_target = state
-        .entry(scope, &source.manifest.name)
-        .and_then(|entry| entry.link_target.as_ref().map(PathBuf::from))
-        .or_else(|| {
-            if origin == PluginOrigin::Link {
-                fs::read_link(path).ok()
-            } else {
-                None
-            }
-        });
+    let link_target = match state.install_record(scope, &source.manifest.name) {
+        Some(InstallRecord::Link { target }) => Some(PathBuf::from(target)),
+        Some(InstallRecord::Copy | InstallRecord::Git(_)) => None,
+        None if origin == PluginOrigin::Link => fs::read_link(path).ok(),
+        None => None,
+    };
     Ok(ManagedPackage {
         name: source.manifest.name,
         version: source.manifest.version,
@@ -284,7 +274,6 @@ fn package_at(
         origin,
         path: path.to_path_buf(),
         link_target,
-        git,
     })
 }
 

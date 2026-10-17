@@ -220,7 +220,9 @@ so your existing credentials, SSH keys, and `insteadOf` rewrites apply to
 private repositories. It then validates and copies the package like a local
 install, without the `.git` directory. Accepted URL schemes are `https://`,
 `http://`, `ssh://`, `git://`, `file://`, and scp-style `git@host:path`.
-An argument that names an existing local path always installs locally.
+Arguments with a URL scheme (or `git@`) are always fetched. A scheme-less
+argument such as `github.com/owner/repo` installs locally when that path
+exists, and is treated as a GitHub link otherwise.
 URLs with embedded credentials (`https://user:token@host/...`) are refused,
 because the URL is recorded and printed; use a credential helper or SSH key.
 
@@ -317,10 +319,11 @@ remove act on the higher-precedence match.
   ordinary Rho permissions after a package is enabled and loaded into a session.
 - MCP servers from enabled packages use the same permission, cancellation, and
   output paths as ordinary MCP configuration. Git installs and updates only
-  fetch and copy files. Review a repository before installing it, because its
-  skills and MCP servers become active in new sessions. Package registries,
-  automatic background updates, and package signatures are not implemented
-  yet.
+  fetch and copy files; git runs with hooks and templates disabled, so
+  user-level `post-checkout` hooks never act on fetched content. Review a
+  repository before installing it, because its skills and MCP servers become
+  active in new sessions. Package registries, automatic background updates,
+  and package signatures are not implemented yet.
 - Git sources recorded in a project `plugins.toml` arrive with cloned
   repositories. `rho plugins update` fetches them only in a trusted
   workspace, and checks every recorded source against the same URL scheme,

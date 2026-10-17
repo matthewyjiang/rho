@@ -1,8 +1,8 @@
 //! Plugin activation state store tests.
 
 use super::{
-    parse_state_file, GitRecord, InstallRecord, PluginOrigin, PluginScope, PluginStateEntry,
-    PluginStateFile, PluginStateStore,
+    parse_state_file, GitRecord, InstallRecord, PluginScope, PluginStateEntry, PluginStateFile,
+    PluginStateStore,
 };
 use tempfile::TempDir;
 
@@ -59,9 +59,9 @@ fn records_install_metadata() {
             },
             PluginStateEntry {
                 enabled: true,
-                origin: Some(PluginOrigin::Link),
-                link_target: Some("/tmp/source".into()),
-                git: None,
+                install: Some(InstallRecord::Link {
+                    target: "/tmp/source".into(),
+                }),
             },
         ),
         (
@@ -69,9 +69,7 @@ fn records_install_metadata() {
             InstallRecord::Git(git.clone()),
             PluginStateEntry {
                 enabled: true,
-                origin: Some(PluginOrigin::Git),
-                link_target: None,
-                git: Some(git),
+                install: Some(InstallRecord::Git(git)),
             },
         ),
     ];
@@ -106,6 +104,10 @@ fn rejects_invalid_state_files() {
             "git origin without source",
             "version = 1\n\n[plugins.demo]\norigin = \"git\"\n",
         ),
+        (
+            "git table without git origin",
+            "version = 1\n\n[plugins.demo]\norigin = \"install\"\n\n[plugins.demo.git]\nurl = \"https://github.com/o/r\"\ncommit = \"abc\"\n",
+        ),
     ];
     for (name, text) in cases {
         assert!(parse_state_file(text).is_err(), "{name}");
@@ -129,9 +131,7 @@ origin = "install"
                 "demo".into(),
                 PluginStateEntry {
                     enabled: false,
-                    origin: Some(PluginOrigin::Install),
-                    link_target: None,
-                    git: None,
+                    install: Some(InstallRecord::Copy),
                 }
             )]
             .into_iter()

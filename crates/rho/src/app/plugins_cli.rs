@@ -13,7 +13,7 @@ use crate::{
     plugins::{
         discover_with_trust,
         git_source::{short_commit, InstallSource},
-        manage::{self, InstallMode, UpdateOutcome, UpdateReport, UpdateSelection, UpdatedPackage},
+        manage::{self, InstallMode, UpdateOutcome, UpdateReport, UpdateSelection},
         PluginLoadReport, PluginScope, PluginStatus, ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
@@ -62,16 +62,15 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 }
                 InstallSource::Git(git) => {
                     eprintln!("fetching {}", git.describe());
-                    let package =
+                    let installed =
                         manage::install_git(&git, scope, *force, &cwd, home, rho_home.as_deref())?;
-                    let commit = package.git.as_ref().map_or("-", |git| git.commit.as_str());
                     println!(
                         "installed {} ({}) to {} from {} at {}",
-                        package.name,
-                        package.scope.as_str(),
-                        crate::paths::display(&package.path),
-                        git.url,
-                        short_commit(commit)
+                        installed.package.name,
+                        installed.package.scope.as_str(),
+                        crate::paths::display(&installed.package.path),
+                        git.url(),
+                        short_commit(&installed.commit)
                     );
                 }
             }
@@ -192,19 +191,17 @@ fn print_update_report(report: UpdateReport) -> anyhow::Result<()> {
     for (target, result) in report.results {
         let scope = target.scope.as_str();
         match result {
-            Ok(UpdatedPackage { package, outcome }) => match outcome {
-                UpdateOutcome::Updated { previous, current } => println!(
-                    "updated {} ({scope}) {} -> {}",
-                    package.name,
-                    short_commit(&previous),
-                    short_commit(&current)
-                ),
-                UpdateOutcome::UpToDate { commit } => println!(
-                    "{} ({scope}) is up to date at {}",
-                    package.name,
-                    short_commit(&commit)
-                ),
-            },
+            Ok(UpdateOutcome::Updated { previous, current }) => println!(
+                "updated {} ({scope}) {} -> {}",
+                target.name,
+                short_commit(&previous),
+                short_commit(&current)
+            ),
+            Ok(UpdateOutcome::UpToDate { commit }) => println!(
+                "{} ({scope}) is up to date at {}",
+                target.name,
+                short_commit(&commit)
+            ),
             Err(error) => {
                 failed += 1;
                 eprintln!("could not update {} ({scope}): {error:#}", target.name);
@@ -320,7 +317,13 @@ fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::R
     println!("scope: {}", plugin.scope.as_str());
     println!("origin: {}", plugin.origin.as_str());
     if let Some(git) = &plugin.git {
-        println!("source: {}", git.source().describe());
+        println!("source: {}", git.url);
+        if let Some(git_ref) = &git.git_ref {
+            println!("ref: {git_ref}");
+        }
+        if let Some(subdir) = &git.subdir {
+            println!("path: {subdir}");
+        }
         println!("commit: {}", git.commit);
     }
     println!("location: {}", plugin.root);
