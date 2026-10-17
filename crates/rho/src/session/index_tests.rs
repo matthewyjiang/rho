@@ -8,7 +8,7 @@ use super::{
     validate_index_columns, INDEX_SCHEMA_VERSION,
 };
 
-/// Commits one minimal session row, enough to make SQLite write the WAL.
+/// Commits one minimal session row, to force a WAL write or seed a migration.
 pub(super) fn insert_placeholder_session(connection: &Connection, id: &str) {
     connection
         .execute(
