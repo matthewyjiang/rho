@@ -134,37 +134,31 @@ pub(crate) fn load(home: Option<&Path>, model: &PromptModel) -> Result<Option<Mo
 }
 
 pub(super) fn parse(path: &Path, source: &str) -> Result<(Frontmatter, ModelPrompt)> {
-    let mut lines = source.split_inclusive('\n');
-    if lines.next().map(|line| line.trim_end_matches(['\r', '\n'])) != Some("---") {
-        bail!("required YAML frontmatter must begin with --- on the first line");
-    }
-    let start = source
-        .find('\n')
-        .context("missing closing YAML frontmatter delimiter")?
-        + 1;
-    let mut end = start;
-    for line in lines {
-        if line.trim_end_matches(['\r', '\n']) == "---" {
-            let frontmatter = serde_yaml_ng::from_str::<Frontmatter>(&source[start..end])
-                .context("invalid YAML frontmatter")?;
-            let body = &source[end + line.len()..];
-            if body.trim().is_empty() {
-                bail!("model prompt body must not be empty");
-            }
-            let mode = frontmatter.mode;
-            return Ok((
-                frontmatter,
-                ModelPrompt {
-                    path: path.to_owned(),
-                    mode,
-                    body: body.to_owned(),
-                    sha256: hex::encode(Sha256::digest(source.as_bytes())),
-                },
-            ));
+    use crate::frontmatter::FrontmatterError;
+    let split = match crate::frontmatter::split(source) {
+        Ok(split) => split,
+        Err(FrontmatterError::MissingOpening) => {
+            bail!("required YAML frontmatter must begin with --- on the first line")
         }
-        end += line.len();
+        Err(FrontmatterError::MissingClosing) => {
+            bail!("missing closing YAML frontmatter delimiter")
+        }
+    };
+    let frontmatter =
+        serde_yaml_ng::from_str::<Frontmatter>(split.yaml).context("invalid YAML frontmatter")?;
+    if split.body.trim().is_empty() {
+        bail!("model prompt body must not be empty");
     }
-    bail!("missing closing YAML frontmatter delimiter")
+    let mode = frontmatter.mode;
+    Ok((
+        frontmatter,
+        ModelPrompt {
+            path: path.to_owned(),
+            mode,
+            body: split.body.to_owned(),
+            sha256: hex::encode(Sha256::digest(source.as_bytes())),
+        },
+    ))
 }
 
 #[cfg(test)]

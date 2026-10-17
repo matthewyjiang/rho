@@ -187,6 +187,16 @@ fn read_builtin_skill(contents: &str) -> anyhow::Result<Skill> {
     parse_skill(contents, SkillSource::BuiltIn, None)
 }
 
+/// The SKILL.md instructions the model sees: the document after its YAML
+/// frontmatter. Name and description already appear in the skill listing,
+/// and the remaining fields are client metadata, so loading omits them.
+/// Documents without valid frontmatter are returned unchanged.
+pub(crate) fn instructions(contents: &str) -> &str {
+    crate::frontmatter::split(contents).map_or(contents, |split| {
+        split.body.trim_start_matches(['\n', '\r'])
+    })
+}
+
 /// Parse and validate one SKILL.md document.
 ///
 /// `skill_path` enables the Agent Skills rule that `name` must match the
@@ -196,8 +206,7 @@ pub(crate) fn parse_skill(
     source: SkillSource,
     skill_path: Option<&Path>,
 ) -> anyhow::Result<Skill> {
-    let block = frontmatter_block(contents)?;
-    let frontmatter: SkillFrontmatter = serde_yaml_ng::from_str(&block)
+    let frontmatter: SkillFrontmatter = serde_yaml_ng::from_str(frontmatter_yaml(contents)?)
         .map_err(|error| anyhow::anyhow!("invalid SKILL.md frontmatter: {error}"))?;
     validate_frontmatter(&frontmatter)?;
     if let Some(path) = skill_path {
@@ -223,20 +232,21 @@ pub(crate) fn parse_skill(
     })
 }
 
-/// The YAML block between the opening and closing `---` frontmatter fences.
-fn frontmatter_block(contents: &str) -> anyhow::Result<String> {
-    let mut lines = contents.lines();
-    if lines.next() != Some("---") {
-        anyhow::bail!("SKILL.md must start with YAML frontmatter");
-    }
-    let mut block = Vec::new();
-    for line in lines {
-        if line == "---" {
-            return Ok(block.join("\n"));
+/// The YAML between the frontmatter fences, without the final line
+/// terminator so a trailing block scalar (`description: >`) does not gain a
+/// newline that would leak into listings and the 1024-character limit.
+fn frontmatter_yaml(contents: &str) -> anyhow::Result<&str> {
+    use crate::frontmatter::FrontmatterError;
+    match crate::frontmatter::split(contents) {
+        Ok(split) => Ok(split
+            .yaml
+            .strip_suffix('\n')
+            .map_or(split.yaml, |yaml| yaml.strip_suffix('\r').unwrap_or(yaml))),
+        Err(FrontmatterError::MissingOpening) => {
+            anyhow::bail!("SKILL.md must start with YAML frontmatter")
         }
-        block.push(line.to_string());
+        Err(FrontmatterError::MissingClosing) => anyhow::bail!("unterminated YAML frontmatter"),
     }
-    anyhow::bail!("unterminated YAML frontmatter")
 }
 
 /// Typed Agent Skills frontmatter plus Rho's `disable-model-invocation`
@@ -596,6 +606,15 @@ description: "a \"quoted\" description"
                 }),
             },
             Case {
+                name: "clip-chomped description as last key",
+                frontmatter: "name: quote-skill\ndescription: >\n  folded\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "folded",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
                 name: "nested metadata and optional fields",
                 frontmatter: "name: quote-skill\ndescription: desc\nlicense: MIT\ncompatibility: needs git\nmetadata:\n  author: example-org\n  version: 1.0\n  requires:\n    bins: [\"bitbucket-cli\"]\nallowed-tools: Bash(git:*) Read\n",
                 expected: Ok(Expected {
@@ -678,6 +697,26 @@ description: "a \"quoted\" description"
         );
         let error = parse_skill(&contents, SkillSource::BuiltIn, None).unwrap_err();
         assert!(error.to_string().contains("compatibility"));
+    }
+
+    // Covers: loaded skill instructions omit frontmatter and leading blank
+    // lines, and leave documents without complete frontmatter untouched.
+    // Owner: skill loading.
+    #[test]
+    fn instructions_strip_frontmatter() {
+        for (contents, expected) in [
+            (
+                "---\nname: a\ndescription: d\n---\n\n# Body\nrules\n",
+                "# Body\nrules\n",
+            ),
+            ("# No frontmatter\n", "# No frontmatter\n"),
+            (
+                "---\nname: a\n# unterminated\n",
+                "---\nname: a\n# unterminated\n",
+            ),
+        ] {
+            assert_eq!(instructions(contents), expected, "{contents:?}");
+        }
     }
 
     /// Asserts the discovered skills are exactly the built-ins, minus the one
