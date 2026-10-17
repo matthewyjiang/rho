@@ -212,8 +212,11 @@ pub(crate) struct SessionTree {
     /// `insert_restored_node` so `facts()` avoids scanning every child list.
     branch_count: usize,
     /// Full state for `active_leaf_id` only. Other nodes reconstruct on demand.
+    /// `None` while `active_replay` holds the leaf's pending state.
     active_state: Option<PersistedSessionState>,
-    /// Sequential delta replay defers full snapshot materialization until needed.
+    /// Sequential delta replay, during load and across saves. Load, `set_leaf`,
+    /// or a full-snapshot node materializes it; readers copy it via `state_for`.
+    /// At most one of `active_state` and `active_replay` is set.
     active_replay: Option<restore::ReplayState>,
 }
 
@@ -269,7 +272,14 @@ impl SessionTree {
         self.active_leaf_id.as_ref()
     }
 
+    /// Materialized state of the active leaf, as after [`Self::load`]. A saved
+    /// delta node leaves it pending; cached-tree readers use
+    /// [`Self::state_for`] instead.
     pub(crate) fn active_state(&self) -> Option<&PersistedSessionState> {
+        debug_assert!(
+            self.active_replay.is_none(),
+            "active_state() read on a pending replay; use state_for, or ensure_active_state on an owned tree"
+        );
         self.active_state.as_ref()
     }
 
@@ -493,8 +503,9 @@ impl SessionTree {
         if let Some(ts) = parse_timestamp(&node.timestamp) {
             self.observe_timestamp(ts);
         }
-        self.insert_explicit_node(node)?;
-        self.ensure_active_state()
+        // A delta node leaves its state as a pending replay: materializing
+        // here would deep-copy the whole history on every save.
+        self.insert_explicit_node(node)
     }
 
     pub(crate) fn apply_set_leaf(
@@ -555,17 +566,15 @@ impl SessionTree {
         }
 
         let (message_count, first_user_message, last_user_message) =
-            if let Some(state) = self.active_state() {
-                let first = state
-                    .display
+            if let Some(display) = self.active_display() {
+                let first = display
                     .iter()
                     .find_map(|entry| super::persistence::user_message_text(&entry.message));
-                let last = state
-                    .display
+                let last = display
                     .iter()
                     .rev()
                     .find_map(|entry| super::persistence::user_message_text(&entry.message));
-                (state.display.len() as u64, first, last)
+                (display.len() as u64, first, last)
             } else {
                 (0, None, None)
             };

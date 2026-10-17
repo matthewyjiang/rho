@@ -5,7 +5,7 @@ use super::persistence::{
     insert_interrupted_tool_placeholders, timestamp, AppendCursor, PersistedSessionState,
     SessionEntry, StoredDisplayMessage,
 };
-use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
+use super::snapshot_delta::StoredSnapshotDelta;
 #[cfg(test)]
 use super::tree::SessionTreeFacts;
 use super::tree::{
@@ -82,11 +82,12 @@ impl Session {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut tree = load_cached_tree(&mut cursor, &self.path)?;
         let parent_id = tree.active_leaf_id().cloned();
-        let parent_snapshot = tree
-            .active_state()
-            .and_then(|state| state.snapshot.as_ref());
-        let compaction_changed =
-            parent_snapshot.is_some_and(|parent| parent.compaction() != snapshot.compaction());
+        // Borrowed from the cached tree, which after a previous save is still a
+        // pending replay: building the base copies no history.
+        let parent = tree.active_delta_base();
+        let compaction_changed = parent
+            .as_ref()
+            .is_some_and(|parent| parent.compaction() != snapshot.compaction());
         let kind = if compaction_changed {
             SessionNodeKind::Compaction
         } else {
@@ -94,7 +95,7 @@ impl Session {
         };
         let compaction_facts = compaction_changed.then(|| {
             supplied_compaction_facts.unwrap_or_else(|| StoredCompactionFacts {
-                previous_messages: parent_snapshot.map_or(0, |parent| parent.history().len()),
+                previous_messages: parent.as_ref().map_or(0, |parent| parent.history_len()),
                 current_messages: snapshot.history().len(),
                 previous_tokens: snapshot
                     .compaction()
@@ -115,10 +116,8 @@ impl Session {
                 snapshot: Box::new(snapshot.clone()),
             }
         } else {
-            parent_snapshot
-                .and_then(|parent| {
-                    StoredSnapshotDelta::after(&SnapshotDeltaBase::from_snapshot(parent), snapshot)
-                })
+            parent
+                .and_then(|parent| StoredSnapshotDelta::after(&parent, snapshot))
                 .map_or_else(
                     || StoredStateTransition::Snapshot {
                         snapshot: Box::new(snapshot.clone()),
@@ -190,7 +189,11 @@ impl Session {
 
     #[cfg(test)]
     pub(crate) fn session_tree(&self) -> anyhow::Result<SessionTree> {
-        self.with_session_tree(|tree| Ok(tree.clone()))
+        self.with_session_tree(|tree| {
+            let mut tree = tree.clone();
+            tree.ensure_active_state()?;
+            Ok(tree)
+        })
     }
 
     /// Adopts a tree parsed elsewhere (e.g. session open) as the cache seed.
@@ -205,6 +208,9 @@ impl Session {
     /// Runs `visit` on the cached tree when the file still matches the state
     /// it was parsed from. Reloads from disk when another writer changed the
     /// transcript.
+    ///
+    /// After a save the active leaf is a pending replay, so `active_state()`
+    /// is unavailable; read full state with [`SessionTree::state_for`].
     pub(crate) fn with_session_tree<R>(
         &self,
         visit: impl FnOnce(&SessionTree) -> anyhow::Result<R>,
@@ -213,12 +219,7 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(tree) = cursor.take_tree(&self.path) {
-            let result = visit(&tree);
-            cursor.store_tree(tree, &self.path);
-            return result;
-        }
-        let tree = SessionTree::load(&self.path)?;
+        let tree = load_cached_tree(&mut cursor, &self.path)?;
         let result = visit(&tree);
         cursor.store_tree(tree, &self.path);
         result
@@ -314,7 +315,10 @@ impl Session {
     }
 
     fn active_persisted_state(&self) -> anyhow::Result<PersistedSessionState> {
-        self.with_session_tree(|tree| Ok(tree.active_state().cloned().unwrap_or_default()))
+        self.with_session_tree(|tree| match tree.active_leaf_id() {
+            Some(id) => tree.state_for(id),
+            None => Ok(PersistedSessionState::default()),
+        })
     }
 
     /// Applies a tree-mutating entry and keeps the in-memory tree only when the

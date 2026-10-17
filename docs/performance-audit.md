@@ -5,9 +5,10 @@ rendering, and an unused raw-reasoning buffer. It also shares cached web respons
 and avoids counting context twice when automatic compaction leaves history unchanged.
 
 Session replay accumulates deltas before materializing the active snapshot. Saves
-still compare the complete history prefix and retain separate model/snapshot
-histories; they are not constant-time. COPY payloads for open code fences are
-materialized when requested, rather than after every streamed fragment.
+still compare the complete history prefix, so they are not constant-time, but
+they keep the active state as the pending replay instead of copying the whole
+history into a separate model/snapshot pair. COPY payloads for open code fences
+are materialized when requested, rather than after every streamed fragment.
 
 The web-cache changes also prevent storage I/O from publishing into a different
 session after a rebind. Its existing payload budget now includes serialized

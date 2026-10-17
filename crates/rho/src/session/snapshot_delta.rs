@@ -23,6 +23,14 @@ impl<'a> SnapshotDeltaBase<'a> {
             compaction: snapshot.compaction(),
         }
     }
+
+    pub(super) fn compaction(&self) -> &'a CompactionState {
+        self.compaction
+    }
+
+    pub(super) fn history_len(&self) -> usize {
+        self.history.len()
+    }
 }
 
 /// The changing snapshot fields plus only the history appended since a base snapshot.
@@ -65,6 +73,17 @@ impl SnapshotReplay {
         Self { header, history }
     }
 
+    /// The replayed state as a base for the next delta, without materializing
+    /// a second history copy.
+    pub(super) fn delta_base(&self) -> SnapshotDeltaBase<'_> {
+        SnapshotDeltaBase {
+            session_id: self.header.session_id(),
+            revision: self.header.revision(),
+            history: &self.history,
+            compaction: self.header.compaction(),
+        }
+    }
+
     pub(super) fn into_snapshot(self) -> SessionSnapshot {
         let mut snapshot = SessionSnapshot::new(
             self.header.session_id().clone(),
@@ -88,6 +107,10 @@ impl StoredSnapshotDelta {
         &self.metadata
     }
 
+    /// The delta from `base` to `current`, or `None` unless `current` extends
+    /// `base` exactly. The prefix check reads every base message: `current` is
+    /// the caller's independent copy, so nothing cheaper proves its prefix is
+    /// unchanged, and a wrong append-only answer would corrupt restore.
     pub(super) fn after(base: &SnapshotDeltaBase<'_>, current: &SessionSnapshot) -> Option<Self> {
         if base.session_id != current.session_id()
             || base.revision > current.revision()
