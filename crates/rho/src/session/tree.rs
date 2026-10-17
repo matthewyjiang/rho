@@ -278,7 +278,7 @@ impl SessionTree {
     pub(crate) fn active_state(&self) -> Option<&PersistedSessionState> {
         debug_assert!(
             self.active_replay.is_none(),
-            "active_state() read on a pending replay; call ensure_active_state first"
+            "active_state() read on a pending replay; use state_for, or ensure_active_state on an owned tree"
         );
         self.active_state.as_ref()
     }
