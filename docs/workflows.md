@@ -255,7 +255,7 @@ cancelled.
 rho workflow cancel 0190...
 ```
 
-The command waits up to the measured cancellation acknowledgement limit for the
+The command waits up to the cancellation acknowledgement limit for the
 exact request ID. An `acknowledged` result means the owner stopped active work
 before it wrote that request's acknowledgement. A `pending` result includes the
 request ID and means the bound expired. It does not claim that active work has

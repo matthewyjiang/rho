@@ -16,8 +16,6 @@ use super::{Session, SessionIndexRecord, SessionSummary};
 
 #[path = "index_connection.rs"]
 mod connection;
-#[cfg(test)]
-pub(super) use connection::clear_index_connection_cache_for_test;
 pub(super) use connection::{open_index, sync_committed_writes};
 #[path = "index_list.rs"]
 mod list;
