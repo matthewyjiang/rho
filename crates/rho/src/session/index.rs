@@ -485,14 +485,13 @@ fn update_title(
     params: impl rusqlite::Params,
 ) -> anyhow::Result<usize> {
     let connection = open_index(session_root)?;
-    let updated = connection
+    let connection = connection
         .lock()
-        .expect("session index connection poisoned")
-        .execute(sql, params)?;
-    // The guard is already released: the fsync must not block saves.
+        .expect("session index connection poisoned");
+    let updated = connection.execute(sql, params)?;
     if updated > 0 {
         // The title is already visible; say so rather than imply it was lost.
-        sync_committed_writes(session_root)
+        sync_committed_writes(connection)
             .map_err(|error| error.context("title saved but could not be flushed to disk"))?;
     }
     Ok(updated)

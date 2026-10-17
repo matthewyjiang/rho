@@ -8,7 +8,7 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 use rusqlite::Connection;
@@ -40,13 +40,15 @@ pub(in crate::session) fn clear_index_connection_cache_for_test() {
 /// read.
 /// Committed frames are either in the WAL or were checkpointed into the
 /// database file, which SQLite syncs after each completed checkpoint.
-pub(in crate::session) fn sync_committed_writes(session_root: &Path) -> anyhow::Result<()> {
-    let connection = open_index(session_root)?;
-    let Some(wal) = wal_path(
-        &connection
-            .lock()
-            .expect("session index connection poisoned"),
-    ) else {
+///
+/// Takes the caller's guard and releases it before the fsync, so saves on
+/// other threads are not blocked behind the flush.
+pub(in crate::session) fn sync_committed_writes(
+    connection: MutexGuard<'_, Connection>,
+) -> anyhow::Result<()> {
+    let wal = wal_path(&connection);
+    drop(connection);
+    let Some(wal) = wal else {
         return Ok(());
     };
     // Only the WAL may be opened behind SQLite's back: unix SQLite holds no
