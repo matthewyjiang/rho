@@ -9,7 +9,7 @@ Rho uses one agent definition model for interactive sessions, `rho run`, and del
 - `reviewer` - code review and verification; it can run shell commands (diffs, targeted tests) but is instructed never to change code or repository state
 - `worker` - independent implementation
 
-The reviewer's shell commands follow the [permission mode](/configuration/permissions). A delegated run cannot ask for approval, so Auto sends each command to the classifier, and Allow edits, Supervised, and Plan deny them; the reviewer then falls back to its read tools. Because it has a shell, `reviewer` cannot back a `read_only` workflow node; use `explorer` or a workflow-local agent there.
+The reviewer's shell commands follow the [permission mode](/configuration/permissions). Bypass runs them unchecked, so only the reviewer's instructions keep it from changing code or repository state. A delegated run cannot ask for approval, so Auto sends each command to the classifier, and Allow edits, Supervised, and Plan deny them; the reviewer then falls back to its read tools. Because it has a shell, `reviewer` cannot back a `read_only` workflow node; use `explorer` or a workflow-local agent there.
 
 Select an agent at startup:
 
