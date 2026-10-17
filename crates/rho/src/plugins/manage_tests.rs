@@ -239,6 +239,39 @@ fn project_install_from_home_is_refused() {
     }
 }
 
+// Covers: in a repository rooted at $HOME, a nested project root keeps its
+// activation state even though the repository root itself is user scope.
+// Owner: plugin state store for a project that shares the user plugins root.
+#[test]
+fn dotfiles_nested_project_plugin_disable_applies() {
+    let home = TempDir::new().unwrap();
+    let rho_home = TempDir::new().unwrap();
+    std::fs::create_dir(home.path().join(".git")).unwrap();
+    let cwd = home.path().join("notes");
+    write_source(&cwd.join(".agents/plugins"), "nested");
+    let status = || {
+        let discovery = discover_with_trust(
+            &cwd,
+            Some(home.path()),
+            Some(rho_home.path()),
+            ProjectTrust::Trusted,
+        );
+        let entry = discovery.report.find("nested").unwrap();
+        (entry.scope, entry.status)
+    };
+
+    set_enabled(
+        "nested",
+        /* enabled */ false,
+        &cwd,
+        Some(home.path()),
+        Some(rho_home.path()),
+    )
+    .unwrap();
+
+    assert_eq!(status(), (PluginScope::Project, PluginStatus::Disabled));
+}
+
 // Covers: from $HOME with a separate RHO_HOME, project state that older builds
 // wrote there keeps its disables until `enable`, and an unreadable copy is
 // ignored instead of failing user-scope commands.

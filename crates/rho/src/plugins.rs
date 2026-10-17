@@ -303,15 +303,12 @@ fn plugin_roots(cwd: &Path, home: Option<&Path>) -> Vec<RootSpec> {
 
 /// Shared project/user root enumeration used by discovery and management.
 ///
-/// Project ancestors are reversed so nearer roots win during first-match walks
-/// that prefer the front of the list. An ancestor that shares the user plugins
-/// root (`$HOME` outside a repository, or a repository rooted at `$HOME`) is
-/// dropped so that folder is listed once, as user scope.
+/// Project roots come first, nearest first, so nearer roots win during
+/// first-match walks that prefer the front of the list. The user root, once,
+/// comes last (see [`state::project_plugin_dirs`]).
 pub(crate) fn discovery_roots(cwd: &Path, home: Option<&Path>) -> Vec<(PluginScope, PathBuf)> {
-    let mut roots: Vec<(PluginScope, PathBuf)> = crate::workspace::project_ancestor_dirs(cwd)
+    let mut roots: Vec<(PluginScope, PathBuf)> = state::project_plugin_dirs(cwd, home)
         .into_iter()
-        .rev()
-        .filter(|dir| home.is_none_or(|home| !state::shares_user_plugins_root(dir, home)))
         .map(|dir| (PluginScope::Project, state::plugins_root_at(&dir)))
         .collect();
     if let Some(home) = home {
