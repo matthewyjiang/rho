@@ -209,7 +209,12 @@ fn git_install_then_update_follows_recorded_ref() {
     assert!(std::fs::read_to_string(&manifest)
         .unwrap()
         .contains("2.0.0"));
-    let state = PluginStateStore::load(env.project.path(), Some(env.rho_home.path())).unwrap();
+    let state = PluginStateStore::load(
+        env.project.path(),
+        Some(env.home.path()),
+        Some(env.rho_home.path()),
+    )
+    .unwrap();
     assert_eq!(
         state.git_record(PluginScope::User, "demo").unwrap().commit,
         second
@@ -331,7 +336,8 @@ fn update_from_home_directory_walks_each_state_file_once() {
         )
         .unwrap();
         if separate_rho_home {
-            let mut state = PluginStateStore::load(home.path(), Some(&rho_home)).unwrap();
+            let mut state =
+                PluginStateStore::load(home.path(), /* home */ None, Some(&rho_home)).unwrap();
             let record = state
                 .install_record(PluginScope::User, "demo")
                 .cloned()

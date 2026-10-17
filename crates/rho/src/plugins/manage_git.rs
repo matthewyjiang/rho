@@ -68,10 +68,11 @@ pub(crate) fn install_git(
     rho_home: Option<&Path>,
 ) -> anyhow::Result<GitInstall> {
     let root = managed_root(scope, cwd, home)?;
+    let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     let checkout = git_source::fetch(source)?;
     let package = inspect_checkout(&checkout, source)?;
     let record = InstallRecord::Git(source.record(checkout.commit.clone()));
-    let package = install_validated(package, &record, scope, &root, force, cwd, rho_home)?;
+    let package = install_validated(package, &record, scope, &root, force, &mut state)?;
     Ok(GitInstall {
         package,
         commit: checkout.commit,
@@ -89,7 +90,7 @@ pub(crate) fn update(
     home: &Path,
     rho_home: Option<&Path>,
 ) -> anyhow::Result<UpdateReport> {
-    let mut state = PluginStateStore::load(cwd, rho_home)?;
+    let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     let mut report = UpdateReport::default();
     for (scope, root) in update_scopes(&state, cwd, home) {
         for name in state.git_installed(scope) {

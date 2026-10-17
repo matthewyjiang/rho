@@ -266,7 +266,7 @@ fn discover_components(
         agents: PluginAgentTiers::default(),
         report: PluginLoadReport::default(),
     };
-    let state = PluginStateStore::load(cwd, rho_home)
+    let state = PluginStateStore::load(cwd, home, rho_home)
         .unwrap_or_else(|_| PluginStateStore::empty(cwd, rho_home));
 
     for root in plugin_roots(cwd, home) {

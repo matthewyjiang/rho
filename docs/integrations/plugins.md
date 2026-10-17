@@ -341,6 +341,11 @@ $RHO_HOME/plugins.toml          user scope (default `~/.rho/plugins.toml`)
 <repository>/.rho/plugins.toml  project scope
 ```
 
+When the project root is your home directory, there is no project scope. With
+a separate `RHO_HOME`, older Rho builds recorded `disable` from there in
+`~/.rho/plugins.toml`; those disables still apply to the matching user plugin
+until you run `rho plugins enable` or `rho plugins remove` for it.
+
 A missing file means every discovered plugin is enabled. Disabling writes
 `enabled = false` for that package name in the matching scope file. Package
 contents are never modified. Git installs also record their source here:

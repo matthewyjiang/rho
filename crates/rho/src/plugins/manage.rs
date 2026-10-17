@@ -83,6 +83,7 @@ pub(crate) fn install(
     rho_home: Option<&Path>,
 ) -> anyhow::Result<ManagedPackage> {
     let root = managed_root(scope, cwd, home)?;
+    let mut state = PluginStateStore::load(cwd, Some(home), rho_home)?;
     // Relative CLI paths resolve against the invocation directory.
     let source = inspect_source(&cwd.join(source))?;
     let record = match mode {
@@ -91,27 +92,24 @@ pub(crate) fn install(
             target: crate::paths::display(&source.path),
         },
     };
-    install_validated(source, &record, scope, &root, force, cwd, rho_home)
+    install_validated(source, &record, scope, &root, force, &mut state)
 }
 
 /// Place a validated package into `root` (the [`managed_root`] for `scope`)
-/// as `record` describes, then record it in state.
+/// as `record` describes, then record it in `state`.
 fn install_validated(
     source: SourcePackage,
     record: &InstallRecord,
     scope: PluginScope,
     root: &Path,
     force: bool,
-    cwd: &Path,
-    rho_home: Option<&Path>,
+    state: &mut PluginStateStore,
 ) -> anyhow::Result<ManagedPackage> {
     let (mode, link_target) = match record {
         InstallRecord::Copy | InstallRecord::Git(_) => (InstallMode::Copy, None),
         InstallRecord::Link { target } => (InstallMode::Link, Some(PathBuf::from(target))),
     };
     let destination = place(&source, root, mode, force)?;
-
-    let mut state = PluginStateStore::load(cwd, rho_home)?;
     state.record_install(scope, &source.manifest.name, record.clone())?;
 
     Ok(ManagedPackage {
@@ -164,7 +162,7 @@ pub(crate) fn set_enabled(
     rho_home: Option<&Path>,
 ) -> anyhow::Result<ManagedPackage> {
     let resolved = resolve_named_package(name, cwd, home, rho_home)?;
-    let mut state = PluginStateStore::load(cwd, rho_home)?;
+    let mut state = PluginStateStore::load(cwd, home, rho_home)?;
     // State keys follow the manifest name used by discovery.
     state.set_enabled(resolved.package.scope, &resolved.package.name, enabled)?;
     Ok(resolved.package)
@@ -191,7 +189,7 @@ pub(crate) fn remove(
         );
     }
 
-    let mut state = PluginStateStore::load(cwd, rho_home)?;
+    let mut state = PluginStateStore::load(cwd, home, rho_home)?;
     state.clear_package_record(resolved.package.scope, &resolved.package.name)?;
     Ok(resolved.package)
 }
@@ -230,7 +228,7 @@ fn resolve_named_package(
         }
     }
 
-    let state = PluginStateStore::load(cwd, rho_home)
+    let state = PluginStateStore::load(cwd, home, rho_home)
         .unwrap_or_else(|_| PluginStateStore::empty(cwd, rho_home));
     let Some((scope, path, root)) = matches.first() else {
         anyhow::bail!("no plugin named `{name}` in the managed plugin roots");

@@ -239,6 +239,60 @@ fn project_install_from_home_is_refused() {
     }
 }
 
+// Covers: from $HOME with a separate RHO_HOME, project state that older builds
+// wrote there keeps its disables until `enable`, and an unreadable copy is
+// ignored instead of failing user-scope commands.
+// Owner: plugin state store for a project that shares the user plugins root.
+#[test]
+fn home_project_state_from_older_builds() {
+    // (label, $HOME/.rho/plugins.toml, status before enable)
+    let cases = [
+        (
+            "disable kept",
+            "version = 1\n[plugins.demo]\nenabled = false\n",
+            PluginStatus::Disabled,
+        ),
+        ("unreadable ignored", "not toml [", PluginStatus::Loaded),
+    ];
+    for (label, legacy, before) in cases {
+        let home = TempDir::new().unwrap();
+        let rho_home = TempDir::new().unwrap();
+        write_source(&home.path().join(".agents/plugins"), "demo");
+        let legacy_path = home.path().join(".rho/plugins.toml");
+        std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_path, legacy).unwrap();
+        let status = || {
+            let discovery = discover_with_trust(
+                home.path(),
+                Some(home.path()),
+                Some(rho_home.path()),
+                ProjectTrust::Untrusted,
+            );
+            let entry = discovery.report.find("demo").unwrap();
+            (entry.scope, entry.status)
+        };
+
+        let initial = status();
+        set_enabled(
+            "demo",
+            /* enabled */ true,
+            home.path(),
+            Some(home.path()),
+            Some(rho_home.path()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            (initial, status()),
+            (
+                (PluginScope::User, before),
+                (PluginScope::User, PluginStatus::Loaded)
+            ),
+            "{label}"
+        );
+    }
+}
+
 // Covers: link creates a managed symlink and records link origin.
 // Owner: plugin link policy.
 #[cfg(unix)]

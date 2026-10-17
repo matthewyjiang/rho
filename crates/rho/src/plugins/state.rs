@@ -7,7 +7,7 @@
 //! git worktree). Missing files mean every discovered plugin is enabled.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -100,6 +100,9 @@ pub(crate) struct PluginStateStore {
     pub(crate) project: PluginStateFile,
     pub(crate) user_path: PathBuf,
     pub(crate) project_path: PathBuf,
+    /// User plugins disabled by an older Rho in the project state file of a
+    /// project that shares the user plugins root; see [`Self::load`].
+    home_disables: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,15 +224,28 @@ fn is_true(value: &bool) -> bool {
 
 impl PluginStateStore {
     /// Load user and project state for `cwd`. Missing files are empty defaults.
-    pub(crate) fn load(cwd: &Path, rho_home: Option<&Path>) -> anyhow::Result<Self> {
-        let user_path = user_state_path(rho_home)?;
-        let project_path = project_state_path(cwd);
-        Ok(Self {
-            user: load_file(&user_path)?,
-            project: load_file(&project_path)?,
-            user_path,
-            project_path,
-        })
+    ///
+    /// When the project shares the user plugins root ([`project_plugins_root`]
+    /// is `None`), project scope does not exist and its state file is not
+    /// loaded as one. With a separate `RHO_HOME`, older builds recorded
+    /// `disable` from `$HOME` there; those disables are read leniently and keep
+    /// the user plugin off until `enable` or `remove` clears them.
+    pub(crate) fn load(
+        cwd: &Path,
+        home: Option<&Path>,
+        rho_home: Option<&Path>,
+    ) -> anyhow::Result<Self> {
+        let mut store = Self {
+            user_path: user_state_path(rho_home)?,
+            ..Self::empty(cwd, rho_home)
+        };
+        store.user = load_file(&store.user_path)?;
+        if home.is_none_or(|home| project_plugins_root(cwd, home).is_some()) {
+            store.project = load_file(&store.project_path)?;
+        } else if !same_location(&store.project_path, &store.user_path) {
+            store.home_disables = disabled_names(&store.project_path);
+        }
+        Ok(store)
     }
 
     /// Empty store with paths resolved for `cwd` (tests and fallback loads).
@@ -239,15 +255,17 @@ impl PluginStateStore {
             project: PluginStateFile::default(),
             user_path: user_state_path(rho_home).unwrap_or_else(|_| PathBuf::from("plugins.toml")),
             project_path: project_state_path(cwd),
+            home_disables: BTreeSet::new(),
         }
     }
 
     pub(crate) fn is_enabled(&self, scope: PluginScope, name: &str) -> bool {
-        self.file(scope)
+        let recorded = self
+            .file(scope)
             .plugins
             .get(name)
-            .map(|entry| entry.enabled)
-            .unwrap_or(true)
+            .is_none_or(|entry| entry.enabled);
+        recorded && !(scope == PluginScope::User && self.home_disables.contains(name))
     }
 
     pub(crate) fn entry(&self, scope: PluginScope, name: &str) -> Option<&PluginStateEntry> {
@@ -301,7 +319,11 @@ impl PluginStateStore {
             let entry = file.plugins.entry(name.to_string()).or_default();
             entry.enabled = enabled;
             Ok(())
-        })
+        })?;
+        if enabled {
+            self.clear_home_disable(scope, name)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn record_install(
@@ -316,7 +338,8 @@ impl PluginStateStore {
             // Fresh installs start enabled even if a prior disable entry remained.
             entry.enabled = true;
             Ok(())
-        })
+        })?;
+        self.clear_home_disable(scope, name)
     }
 
     /// Record a new commit for a git-installed package, keeping enablement.
@@ -341,7 +364,22 @@ impl PluginStateStore {
         self.update_scope(scope, |file| {
             file.plugins.remove(name);
             Ok(())
-        })
+        })?;
+        self.clear_home_disable(scope, name)
+    }
+
+    /// Drop a user plugin's older-build disable from the project state file.
+    fn clear_home_disable(&mut self, scope: PluginScope, name: &str) -> anyhow::Result<()> {
+        if scope != PluginScope::User || !self.home_disables.remove(name) {
+            return Ok(());
+        }
+        // Project scope does not exist here, so the store keeps no copy of it.
+        self.update_scope(PluginScope::Project, |file| {
+            file.plugins.remove(name);
+            Ok(())
+        })?;
+        self.project = PluginStateFile::default();
+        Ok(())
     }
 
     fn file(&self, scope: PluginScope) -> &PluginStateFile {
@@ -492,6 +530,27 @@ fn load_file(path: &Path) -> anyhow::Result<PluginStateFile> {
             Ok(PluginStateFile::default())
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+/// Names disabled in the state file at `path`. Unreadable files only warn:
+/// the caller reads them for compatibility, not as a scope it manages.
+fn disabled_names(path: &Path) -> BTreeSet<String> {
+    match load_file(path) {
+        Ok(file) => file
+            .plugins
+            .into_iter()
+            .filter(|(_, entry)| !entry.enabled)
+            .map(|(name, _)| name)
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                path = %crate::paths::display(path),
+                %error,
+                "ignoring unreadable plugin state"
+            );
+            BTreeSet::new()
+        }
     }
 }
 
