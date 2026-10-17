@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashSet};
 
 use rho_sdk::SessionSnapshot;
 
-use super::super::snapshot_delta::SnapshotReplay;
+use super::super::snapshot_delta::{SnapshotDeltaBase, SnapshotReplay};
 
 use super::{
     snapshot_less_parent_state_changed, NodeId, PersistedSessionState, SessionNode,
@@ -91,8 +91,9 @@ impl super::SessionTree {
         self.insert_restored_node(node, state)
     }
 
-    /// Keep one growable history during JSONL replay instead of copying every
-    /// prefix. Save callers materialize the result before publishing the cache.
+    /// Keep one growable history during JSONL replay and across saves instead
+    /// of copying every prefix. The replay stays pending until a reader needs
+    /// the full state and calls [`Self::ensure_active_state`].
     fn insert_delta_node(
         &mut self,
         node: &SessionNode,
@@ -161,8 +162,32 @@ impl super::SessionTree {
         Ok(())
     }
 
-    /// Restores one node's full state. The active leaf is already materialized
-    /// after load; a pending `set_leaf` reconstructs on demand.
+    /// The active leaf's complete snapshot as the base for the next delta,
+    /// whether materialized or still a pending replay. `None` when the leaf has
+    /// no complete snapshot (message-only v1 state) or there is no leaf.
+    pub(in crate::session) fn active_delta_base(&self) -> Option<SnapshotDeltaBase<'_>> {
+        if let Some(replay) = &self.active_replay {
+            return Some(replay.snapshot.delta_base());
+        }
+        self.active_state
+            .as_ref()?
+            .snapshot
+            .as_ref()
+            .map(SnapshotDeltaBase::from_snapshot)
+    }
+
+    /// The active leaf's display rows, whether materialized or pending.
+    pub(super) fn active_display(&self) -> Option<&[StoredDisplayMessage]> {
+        match (&self.active_replay, &self.active_state) {
+            (Some(replay), _) => Some(&replay.display),
+            (None, Some(state)) => Some(&state.display),
+            (None, None) => None,
+        }
+    }
+
+    /// Restores one node's full state. The active leaf is materialized after
+    /// load; a pending `set_leaf` or a leaf a save left as a pending replay
+    /// reconstructs on demand.
     pub(crate) fn state_for(&self, id: &NodeId) -> anyhow::Result<PersistedSessionState> {
         if self.active_leaf_id.as_ref() == Some(id) {
             if let Some(state) = self.active_state.clone() {

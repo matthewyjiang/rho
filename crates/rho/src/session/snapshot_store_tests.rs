@@ -5,7 +5,9 @@ use pretty_assertions::assert_eq;
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 
-use super::super::tree::{SessionTree, SessionTreeItemKind};
+use super::super::tree::{
+    SessionNodeKind, SessionTree, SessionTreeItemKind, StoredStateTransition,
+};
 use super::super::Session;
 
 fn snapshot(session: &Session, revision: u64, history: Vec<Message>) -> SessionSnapshot {
@@ -68,25 +70,58 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
     Ok(())
 }
 
-// Covers: a second save must parent on the in-memory tree, matching a fresh
-// reload, without depending on a stale disk parse.
+// Covers: saves leave the cached active state as a pending replay. Deltas,
+// rewritten prefixes, and compactions built on it, and readers after it, must
+// match a fresh reload, without depending on a stale disk parse.
 // Owner: session persistence
 #[test]
 fn sequential_saves_match_fresh_reload() {
     let (_root, _cwd, session) = create_session();
-    let first = snapshot(&session, 1, vec![Message::user_text("root")]);
-    session.save_snapshot(&first, first.history()).unwrap();
-    let second = snapshot(
-        &session,
-        2,
-        vec![Message::user_text("root"), Message::assistant_text("tail")],
+    let compacted = CompactionState::from_accounting(
+        1,
+        3,
+        30,
+        0,
+        Some(40),
+        Some(10),
+        Some(Revision::from_u64(6)),
     );
-    session
-        .save_snapshot(
-            &second,
-            std::slice::from_ref(second.history().last().unwrap()),
+    let at = |revision: u64, history: &[&str], compaction: &CompactionState| {
+        SessionSnapshot::new(
+            SessionId::from_string(session.id().to_owned()).unwrap(),
+            Revision::from_u64(revision),
+            history.iter().copied().map(Message::user_text).collect(),
+            ModelIdentity::new("provider", "api", "model"),
+            compaction.clone(),
         )
-        .unwrap();
+        .with_prompt_cache_key(format!("rho:{}", session.id()))
+    };
+    let resume = || {
+        session
+            .snapshot_for_resume(
+                ModelIdentity::new("unused", "unused", "unused"),
+                "unused".into(),
+            )
+            .unwrap()
+    };
+    let none = CompactionState::default();
+    let saves = [
+        at(1, &["u1"], &none),
+        at(2, &["u1", "a1"], &none),
+        at(3, &["u1", "a1", "u2"], &none),
+        at(4, &["u1", "a1", "u2", "a2"], &none),
+        at(5, &["u1", "a1", "u2", "a2", "u3"], &none),
+        at(6, &["summary"], &compacted),
+        at(7, &["summary", "a3"], &compacted),
+        at(8, &["edited", "a3", "u4"], &compacted),
+    ];
+    for (index, snapshot) in saves.iter().enumerate() {
+        session.save_snapshot(snapshot, &[]).unwrap();
+        // One materializing read mid-chain; the other saves stay pending.
+        if index == 2 {
+            assert_eq!(resume(), *snapshot);
+        }
+    }
 
     let cached = session.session_tree().unwrap();
     let reloaded = SessionTree::load(session.path()).unwrap();
@@ -95,14 +130,30 @@ fn sequential_saves_match_fresh_reload() {
         cached.active_state().map(|state| state.model.clone()),
         reloaded.active_state().map(|state| state.model.clone())
     );
+    assert_eq!(resume(), saves[saves.len() - 1]);
+    let transitions: Vec<_> = reloaded
+        .nodes_in_storage_order()
+        .map(|node| {
+            let stored = match node.transition() {
+                StoredStateTransition::Snapshot { .. } => "snapshot",
+                StoredStateTransition::SnapshotDelta { .. } => "delta",
+            };
+            let previous_messages = node.compaction_facts().map(|facts| facts.previous_messages);
+            (node.kind(), stored, previous_messages)
+        })
+        .collect();
     assert_eq!(
-        session
-            .snapshot_for_resume(
-                ModelIdentity::new("unused", "unused", "unused"),
-                "unused".into(),
-            )
-            .unwrap(),
-        second
+        transitions,
+        [
+            (SessionNodeKind::Commit, "snapshot", None),
+            (SessionNodeKind::Commit, "delta", None),
+            (SessionNodeKind::Commit, "delta", None),
+            (SessionNodeKind::Commit, "delta", None),
+            (SessionNodeKind::Commit, "delta", None),
+            (SessionNodeKind::Compaction, "snapshot", Some(5)),
+            (SessionNodeKind::Commit, "delta", None),
+            (SessionNodeKind::Commit, "snapshot", None),
+        ]
     );
 }
 
