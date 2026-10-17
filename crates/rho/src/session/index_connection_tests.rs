@@ -36,6 +36,7 @@ fn migration_lock_contention_is_retryable() {
 fn durability_flush_targets_the_live_wal() {
     use std::path::PathBuf;
 
+    use super::super::tests::insert_placeholder_session;
     use super::{open_index, wal_path};
 
     let temp = tempfile::TempDir::new().unwrap();
@@ -61,14 +62,7 @@ fn durability_flush_targets_the_live_wal() {
         .map(|(root, _)| {
             let connection = open_index(root).unwrap();
             let connection = connection.lock().unwrap();
-            connection
-                .execute(
-                    "insert into sessions (
-                        workspace_key, cwd, id, path, created_at, updated_at, message_count
-                     ) values ('ws', '/tmp/ws', 'id', '/tmp/ws/id.jsonl', 1, 1, 0)",
-                    [],
-                )
-                .unwrap();
+            insert_placeholder_session(&connection, "id");
             let wal = wal_path(&connection).unwrap();
             let exists = wal.exists();
             (wal, exists)

@@ -8,6 +8,18 @@ use super::{
     validate_index_columns, INDEX_SCHEMA_VERSION,
 };
 
+/// Commits one minimal session row, enough to make SQLite write the WAL.
+pub(super) fn insert_placeholder_session(connection: &Connection, id: &str) {
+    connection
+        .execute(
+            "insert into sessions (
+                workspace_key, cwd, id, path, created_at, updated_at, message_count
+             ) values ('ws', '/tmp/ws', ?1, '/tmp/ws/' || ?1 || '.jsonl', 1, 1, 0)",
+            [id],
+        )
+        .unwrap();
+}
+
 const INDEX_V0: &str = include_str!("fixtures/index-v0.sql");
 const INDEX_V1: &str = include_str!("fixtures/index-v1.sql");
 
@@ -163,14 +175,7 @@ fn existing_rollback_journal_index_reopens_in_wal_with_rows_intact() {
     {
         let mut legacy = Connection::open(&path).unwrap();
         migrate_index(&mut legacy).unwrap();
-        legacy
-            .execute(
-                "insert into sessions (
-                    workspace_key, cwd, id, path, created_at, updated_at, message_count
-                 ) values ('ws', '/tmp/ws', 'legacy-id', '/tmp/ws/legacy.jsonl', 1, 1, 3)",
-                [],
-            )
-            .unwrap();
+        insert_placeholder_session(&legacy, "legacy-id");
         let mode: String = legacy
             .query_row("pragma journal_mode", [], |row| row.get(0))
             .unwrap();
@@ -207,16 +212,7 @@ fn index_and_wal_sidecars_are_owner_only() {
 
     let root = TempDir::new().unwrap();
     let connection = open_index(root.path()).unwrap();
-    connection
-        .lock()
-        .unwrap()
-        .execute(
-            "insert into sessions (
-                workspace_key, cwd, id, path, created_at, updated_at, message_count
-             ) values ('ws', '/tmp/ws', 'id', '/tmp/ws/id.jsonl', 1, 1, 0)",
-            [],
-        )
-        .unwrap();
+    insert_placeholder_session(&connection.lock().unwrap(), "id");
 
     let modes = ["index.sqlite3", "index.sqlite3-wal", "index.sqlite3-shm"].map(|name| {
         let mode = fs::metadata(root.path().join(name))
