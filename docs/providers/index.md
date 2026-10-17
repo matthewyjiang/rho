@@ -24,7 +24,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 
 User-defined OpenAI-compatible hosts can be created from `/login` (**Custom · Chat Completions** or **Custom · Responses**) or by adding `[providers.custom.<name>]` with a `base_url`. They default to Chat Completions; set `api = "responses"` in config, or choose **Custom · Responses** in `/login`, to use the Responses API. An API key is optional. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-Large inference requests are automatically gzipped at verified endpoints. See [request compression](/providers/request-compression) for the provider support audit and reproducible size/latency measurements.
+Large inference requests are automatically gzipped at verified endpoints. See [request compression](/providers/request-compression) for eligibility and the provider support audit.
 
 ## Recommended next steps
 
