@@ -964,7 +964,7 @@ fn attach_view_badges_a_parent_approval_until_return() {
     assert_pass("attach_view_parent_approval");
 }
 
-// Covers: quitting from inside the attach view must restore the terminal.
+// Covers: a Ctrl-C armed mid-turn (leaving attach) still quits after the turn ends, and restores the terminal.
 // Owner: interactive TUI
 #[test]
 fn attach_view_quit_restores_the_terminal() {

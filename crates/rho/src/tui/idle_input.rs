@@ -178,8 +178,10 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                self.submit(terminal, agent).await?;
+                // Reset first: submit runs the whole turn, and a Ctrl-C streak
+                // armed during it (leaving attach or peek) must survive.
                 self.ctrl_c_streak = 0;
+                self.submit(terminal, agent).await?;
             }
             _ => {
                 self.input_ui.clear_paste_burst();

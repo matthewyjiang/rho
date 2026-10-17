@@ -11,7 +11,8 @@ use super::{completed, completed_tool_call, last_user_text, tool_result};
 const SECOND_RAIL_AGENT_CALL_ID: &str = "tui-fixture-subagent-rail-agent-b";
 const ATTACH_THEN_APPROVAL_AGENT_CALL_ID: &str = "tui-fixture-attach-then-approval-agent";
 const ATTACH_THEN_APPROVAL_BASH_CALL_ID: &str = "tui-fixture-attach-then-approval-bash";
-/// Must match the marker released by the `attach_view_parent_approval` scenario.
+/// Must match the marker released by the `attach_view_parent_approval` and
+/// `attach_view_quit_restores` scenarios.
 const APPROVAL_RELEASE: &str = ".rho-fixture-release-attach-approval";
 
 pub(super) async fn intercept(
@@ -61,8 +62,8 @@ pub(super) async fn intercept(
         "fixture attach then approval"
             if tool_result(request, ATTACH_THEN_APPROVAL_BASH_CALL_ID).is_none() =>
         {
-            // The PTY scenario releases this once the user is inside the attach
-            // view, so the approval always arrives mid-attach.
+            // The PTY scenarios release this once the user is inside (or just
+            // left) the attach view, so the parent turn is still running then.
             if let Err(error) =
                 super::release::wait_for_release_or_cancel(APPROVAL_RELEASE, &request.cancellation)
                     .await
