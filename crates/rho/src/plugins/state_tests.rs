@@ -1,7 +1,7 @@
 //! Plugin activation state store tests.
 
 use super::{
-    parse_state_file, PluginOrigin, PluginScope, PluginStateEntry, PluginStateFile,
+    parse_state_file, GitRecord, InstallRecord, PluginScope, PluginStateEntry, PluginStateFile,
     PluginStateStore,
 };
 use tempfile::TempDir;
@@ -38,34 +38,55 @@ fn persists_enablement_outside_package_tree() {
     assert!(!project.path().join(".rho/plugins.toml").exists());
 }
 
-// Covers: install metadata and link targets round-trip through plugins.toml.
+// Covers: link targets and git sources round-trip through plugins.toml.
 // Owner: plugin state store.
 #[test]
 fn records_install_metadata() {
     let home = TempDir::new().unwrap();
     let project = TempDir::new().unwrap();
     std::fs::create_dir(project.path().join(".git")).unwrap();
-
-    let mut store = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
-    store
-        .record_install(
-            PluginScope::Project,
+    let git = GitRecord {
+        url: "https://github.com/owner/repo".into(),
+        git_ref: Some("main".into()),
+        subdir: Some("plugins/demo".into()),
+        commit: "0123456789abcdef0123456789abcdef01234567".into(),
+    };
+    let cases = [
+        (
             "linked",
-            PluginOrigin::Link,
-            Some("/tmp/source".into()),
-        )
-        .unwrap();
+            InstallRecord::Link {
+                target: "/tmp/source".into(),
+            },
+            PluginStateEntry {
+                enabled: true,
+                install: Some(InstallRecord::Link {
+                    target: "/tmp/source".into(),
+                }),
+            },
+        ),
+        (
+            "fetched",
+            InstallRecord::Git(git.clone()),
+            PluginStateEntry {
+                enabled: true,
+                install: Some(InstallRecord::Git(git)),
+            },
+        ),
+    ];
 
-    let reloaded = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
-    let entry = reloaded.entry(PluginScope::Project, "linked").unwrap();
-    assert_eq!(
-        entry,
-        &PluginStateEntry {
-            enabled: true,
-            origin: Some(PluginOrigin::Link),
-            link_target: Some("/tmp/source".into()),
-        }
-    );
+    for (name, record, expected) in cases {
+        let mut store = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+        store
+            .record_install(PluginScope::Project, name, record)
+            .unwrap();
+
+        let reloaded = PluginStateStore::load(project.path(), Some(home.path())).unwrap();
+        assert_eq!(
+            reloaded.entry(PluginScope::Project, name),
+            Some(&expected),
+            "{name}"
+        );
+    }
 }
 
 // Covers: unsupported state versions and invalid keys fail closed.
@@ -79,6 +100,14 @@ fn rejects_invalid_state_files() {
             "version = 1\n\n[plugins.Bad_Name]\nenabled = false\n",
         ),
         ("unknown field", "version = 1\nunexpected = true\n"),
+        (
+            "git origin without source",
+            "version = 1\n\n[plugins.demo]\norigin = \"git\"\n",
+        ),
+        (
+            "git table without git origin",
+            "version = 1\n\n[plugins.demo]\norigin = \"install\"\n\n[plugins.demo.git]\nurl = \"https://github.com/o/r\"\ncommit = \"abc\"\n",
+        ),
     ];
     for (name, text) in cases {
         assert!(parse_state_file(text).is_err(), "{name}");
@@ -102,8 +131,7 @@ origin = "install"
                 "demo".into(),
                 PluginStateEntry {
                     enabled: false,
-                    origin: Some(PluginOrigin::Install),
-                    link_target: None,
+                    install: Some(InstallRecord::Copy),
                 }
             )]
             .into_iter()

@@ -642,11 +642,12 @@ pub enum PluginsCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Copy a local plugin package into a managed plugins root.
+    /// Copy a plugin package from a local path or git repository into a managed plugins root.
     Install {
-        /// Path to a directory that contains `plugin.json`.
-        #[arg(value_name = "PATH")]
-        path: PathBuf,
+        /// Local directory with `plugin.json`, a GitHub link
+        /// (`https://github.com/<owner>/<repo>[/tree/<ref>/<path>]`), or a git URL.
+        #[arg(value_name = "SOURCE")]
+        source: std::ffi::OsString,
         /// Install under the user or project plugins root.
         #[arg(long, value_enum, default_value_t = PluginsScope::User)]
         scope: PluginsScope,
@@ -665,6 +666,12 @@ pub enum PluginsCommand {
         /// Replace an existing package at the destination.
         #[arg(long)]
         force: bool,
+    },
+    /// Refetch git-installed plugins and replace them when their ref moved.
+    Update {
+        /// Plugin package name; omit to update every git-installed plugin.
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
     },
     /// Enable a discovered plugin for new sessions.
     Enable {
