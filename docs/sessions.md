@@ -42,6 +42,8 @@ Rho still opens legacy flat transcripts directly:
 
 For those legacy files, web-access blobs use a sibling companion directory named `<created-at>_<session-id>.web/` when needed. Session discovery accepts either the folder transcript path or the legacy `.jsonl` file path.
 
+`~/.rho/sessions/index.sqlite3` is the session catalog behind listing, resume-by-id, and titles. It is an owner-only SQLite cache in WAL mode, so `index.sqlite3-wal` and `index.sqlite3-shm` appear beside it while Rho runs. Listing reconciles catalog rows against transcript size and modification time, so rows that lose their latest writes (for example, after a power loss) repair themselves. Session titles live only in the catalog and are written durably. To rebuild the catalog, stop every Rho process, then delete `index.sqlite3`, `index.sqlite3-wal`, and `index.sqlite3-shm` together; this drops titles. Copy or move the three files together too, never `index.sqlite3` alone. Like Rho's other SQLite stores, WAL requires `~/.rho` on a local filesystem, not a network home directory shared by several machines.
+
 ## Creating a session
 
 Starting `rho` opens the [interactive TUI](/interactive-tui). Rho creates a new session folder only after you send the first message.

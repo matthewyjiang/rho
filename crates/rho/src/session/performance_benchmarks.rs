@@ -54,7 +54,9 @@ fn run_hot_path_benchmarks() {
     let cold_timing = measure(samples, || {
         // Drop cached connections before unlinking so the next open is a cold file.
         super::index::clear_index_connection_cache_for_test();
-        let _ = fs::remove_file(list_fixture.root.path().join("index.sqlite3"));
+        for file in ["index.sqlite3", "index.sqlite3-wal", "index.sqlite3-shm"] {
+            let _ = fs::remove_file(list_fixture.root.path().join(file));
+        }
         Session::list_in_root(list_fixture.root.path(), list_fixture.cwd.path())
             .expect("timed list_in_root cold")
     });

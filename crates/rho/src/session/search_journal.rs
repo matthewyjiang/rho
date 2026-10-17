@@ -57,6 +57,9 @@ pub(super) fn since(root: &Path, cursor: i64) -> anyhow::Result<Changes> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     transaction.commit()?;
+    drop(connection);
+    // The caller persists `through` as its cursor; make it crash-durable first.
+    super::index::sync_committed_writes(root)?;
     Ok(Changes {
         identity,
         through,

@@ -152,3 +152,85 @@ fn matching_sessions_any_workspace_dedupes_same_path_across_cwds() {
         "one path with differing indexed cwds must resolve as a single match"
     );
 }
+
+// Covers: an index written by an older Rho (rollback journal) keeps its rows
+// and is switched to WAL + synchronous=NORMAL for the per-save upsert.
+// Owner: session index
+#[test]
+fn existing_rollback_journal_index_reopens_in_wal_with_rows_intact() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("index.sqlite3");
+    {
+        let mut legacy = Connection::open(&path).unwrap();
+        migrate_index(&mut legacy).unwrap();
+        legacy
+            .execute(
+                "insert into sessions (
+                    workspace_key, cwd, id, path, created_at, updated_at, message_count
+                 ) values ('ws', '/tmp/ws', 'legacy-id', '/tmp/ws/legacy.jsonl', 1, 1, 3)",
+                [],
+            )
+            .unwrap();
+        let mode: String = legacy
+            .query_row("pragma journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "delete");
+    }
+
+    let connection = open_index(root.path()).unwrap();
+    let connection = connection.lock().unwrap();
+    let settings: (String, i64, Vec<String>) = (
+        connection
+            .query_row("pragma journal_mode", [], |row| row.get(0))
+            .unwrap(),
+        connection
+            .query_row("pragma synchronous", [], |row| row.get(0))
+            .unwrap(),
+        connection
+            .prepare("select id from sessions")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap(),
+    );
+    assert_eq!(settings, ("wal".into(), 1, vec!["legacy-id".into()]));
+}
+
+// Covers: WAL sidecars hold uncheckpointed index rows, so they must be as
+// private as the index itself.
+// Owner: session index
+#[cfg(unix)]
+#[test]
+fn index_and_wal_sidecars_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().unwrap();
+    let connection = open_index(root.path()).unwrap();
+    connection
+        .lock()
+        .unwrap()
+        .execute(
+            "insert into sessions (
+                workspace_key, cwd, id, path, created_at, updated_at, message_count
+             ) values ('ws', '/tmp/ws', 'id', '/tmp/ws/id.jsonl', 1, 1, 0)",
+            [],
+        )
+        .unwrap();
+
+    let modes = ["index.sqlite3", "index.sqlite3-wal", "index.sqlite3-shm"].map(|name| {
+        let mode = fs::metadata(root.path().join(name))
+            .unwrap()
+            .permissions()
+            .mode();
+        (name, mode & 0o777)
+    });
+    assert_eq!(
+        modes,
+        [
+            ("index.sqlite3", 0o600),
+            ("index.sqlite3-wal", 0o600),
+            ("index.sqlite3-shm", 0o600),
+        ]
+    );
+}

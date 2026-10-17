@@ -2,33 +2,23 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
 };
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 const INDEX_SCHEMA_VERSION: u32 = 2;
 
-static INDEX_CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> =
-    OnceLock::new();
-
-#[cfg(test)]
-pub(super) fn clear_index_connection_cache_for_test() {
-    if let Some(connections) = INDEX_CONNECTIONS.get() {
-        connections
-            .lock()
-            .expect("session index cache poisoned")
-            .clear();
-    }
-}
-
 use super::persistence::{
     clamp_u64_to_i64, read_session_cwd, session_dir_in_root, session_file_stats,
-    session_id_from_path, set_private_dir_permissions, summarize_session_file, workspace_key,
-    SessionUnit,
+    session_id_from_path, summarize_session_file, workspace_key, SessionUnit,
 };
 use super::{Session, SessionIndexRecord, SessionSummary};
 
+#[path = "index_connection.rs"]
+mod connection;
+#[cfg(test)]
+pub(super) use connection::clear_index_connection_cache_for_test;
+pub(super) use connection::{open_index, sync_committed_writes};
 #[path = "index_list.rs"]
 mod list;
 pub(super) use list::{list_all_sessions, summaries_matching_id_prefix};
@@ -432,20 +422,16 @@ pub(super) fn set_title(
     title: &str,
 ) -> anyhow::Result<()> {
     let paths = matching_session_paths(session_root, cwd, id_prefix)?;
-    let connection = open_index(session_root)?;
-    let connection = connection
-        .lock()
-        .expect("session index connection poisoned");
-    let workspace_key = workspace_key(cwd);
     match paths.as_slice() {
         [] => anyhow::bail!("no session found matching '{id_prefix}'"),
         [path] => {
             let id = session_id_from_path(path).ok_or_else(|| {
                 anyhow::anyhow!("session file has invalid name: {}", path.display())
             })?;
-            connection.execute(
+            update_title(
+                session_root,
                 "update sessions set title = ?3 where workspace_key = ?1 and id = ?2",
-                params![workspace_key, id, title.trim()],
+                params![workspace_key(cwd), id, title.trim()],
             )?;
             Ok(())
         }
@@ -479,11 +465,8 @@ pub(super) fn set_title_if_absent(
     id: &str,
     title: &str,
 ) -> anyhow::Result<bool> {
-    let connection = open_index(session_root)?;
-    let connection = connection
-        .lock()
-        .expect("session index connection poisoned");
-    let updated = connection.execute(
+    let updated = update_title(
+        session_root,
         "update sessions
          set title = ?3
          where workspace_key = ?1
@@ -492,6 +475,27 @@ pub(super) fn set_title_if_absent(
         params![workspace_key(cwd), id, title.trim()],
     )?;
     Ok(updated > 0)
+}
+
+/// Runs one title write and makes it durable. Titles cannot be rebuilt from
+/// transcripts, so every title writer goes through here. Returns rows updated.
+fn update_title(
+    session_root: &Path,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> anyhow::Result<usize> {
+    let connection = open_index(session_root)?;
+    let updated = connection
+        .lock()
+        .expect("session index connection poisoned")
+        .execute(sql, params)?;
+    // The guard is already released: the fsync must not block saves.
+    if updated > 0 {
+        // The title is already visible; say so rather than imply it was lost.
+        sync_committed_writes(session_root)
+            .map_err(|error| error.context("title saved but could not be flushed to disk"))?;
+    }
+    Ok(updated)
 }
 
 pub(super) fn record_snapshot_record(
@@ -505,27 +509,6 @@ pub(super) fn record_snapshot_record(
     upsert_record(&connection, &session.workspace_key, record)
 }
 
-pub(super) fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
-    let path = session_root.join("index.sqlite3");
-    let connections = INDEX_CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut connections = connections.lock().expect("session index cache poisoned");
-    if let Some(connection) = connections.get(&path) {
-        return Ok(Arc::clone(connection));
-    }
-    fs::create_dir_all(session_root)?;
-    set_private_dir_permissions(session_root)?;
-    let mut connection = Connection::open(&path)?;
-    // sqlite's default page cache is 2 MB per connection (cache_size -2000).
-    // Index connections are cached for the whole process, so cap the cache at
-    // 512 KB; reconciliation touches a handful of pages per session.
-    connection.pragma_update(None, "cache_size", -512)?;
-    set_private_file_permissions(&path)?;
-    migrate_index(&mut connection)?;
-    let connection = Arc::new(Mutex::new(connection));
-    connections.insert(path, Arc::clone(&connection));
-    Ok(connection)
-}
-
 fn migrate_index(connection: &mut Connection) -> anyhow::Result<()> {
     migrate_index_with_hook(connection, |_| Ok(()))
 }
@@ -534,14 +517,16 @@ fn migrate_index_with_hook(
     connection: &mut Connection,
     before_commit: impl FnOnce(&Transaction<'_>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let version: u32 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    // IMMEDIATE waits on the busy handler for other writers (a deferred
+    // transaction upgrading to a write fails at once with BUSY_SNAPSHOT in
+    // WAL), and reading the version under it serializes the migration decision.
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let version: u32 = transaction.query_row("pragma user_version", [], |row| row.get(0))?;
     if version > INDEX_SCHEMA_VERSION {
         anyhow::bail!(
             "unsupported session index schema {version} (maximum supported: {INDEX_SCHEMA_VERSION})"
         );
     }
-
-    let transaction = connection.transaction()?;
     if version > 0 {
         validate_legacy_index_columns(&transaction)?;
     }
@@ -669,19 +654,6 @@ fn session_table_columns(connection: &Connection) -> anyhow::Result<HashSet<Stri
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<rusqlite::Result<HashSet<_>>>()?;
     Ok(columns)
-}
-
-fn set_private_file_permissions(path: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
