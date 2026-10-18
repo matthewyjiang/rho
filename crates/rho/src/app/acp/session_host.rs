@@ -455,15 +455,20 @@ impl SessionHost {
         let current = self.current_model();
         let previous_context_window = model_context_window(&current.provider, &current.model);
         let context_window = model_context_window(&config.provider, &config.model);
+        let prompt_model =
+            crate::model_identity::PromptModel::from_sdk_identity(&provider.identity());
+        // The prompt depends only on the model, so an auth-only change (such
+        // as renewed credentials) keeps the one the session already has.
+        let model_changed = prompt_model
+            != crate::model_identity::PromptModel::from_sdk_identity(
+                &self.built.provider.identity(),
+            );
         let prepared_prompt = self
             .built
             .prompt_template
             .as_ref()
-            .map(|template| {
-                template.build(&crate::model_identity::PromptModel::from_sdk_identity(
-                    &provider.identity(),
-                ))
-            })
+            .filter(|_| model_changed)
+            .map(|template| template.build(&prompt_model))
             .transpose()
             .map_err(host_apply_error)?;
         // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.

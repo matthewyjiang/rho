@@ -104,10 +104,10 @@ impl CredentialFailure {
         let message = match self {
             Self::Missing(message) => message,
             Self::Unreadable => "could not read the stored credentials; sign in again",
-            // A 403 can also mean the account lacks access, which signing in
-            // cannot fix, and the SDK no longer tells it apart from a 401.
+            // After SDK conversion a 401, a 403 (which can mean the account
+            // lacks access), and a store failure look alike.
             Self::Refused => {
-                "the provider rejected the credentials; sign in again or check the account's access"
+                "could not authenticate with the provider; sign in again or check the account's access"
             }
         };
         AcpError::new(i32::from(ErrorCode::AuthRequired), message)

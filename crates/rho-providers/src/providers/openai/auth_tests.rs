@@ -43,7 +43,7 @@ async fn token_endpoint() -> String {
 
 // Covers: a refresh token the endpoint refuses (expired or revoked) must read
 // as missing credentials, the error hosts answer with a sign-in prompt, while
-// an endpoint outage stays a transient provider failure.
+// an endpoint outage or proxy block stays an HTTP failure.
 // Owner: Codex OAuth refresh, over real HTTP.
 #[tokio::test]
 async fn refused_refresh_grants_report_missing_credentials() {
@@ -56,7 +56,7 @@ async fn refused_refresh_grants_report_missing_credentials() {
         account_id: None,
     };
     let missing = crate::model::registry::missing_credentials_error("codex").to_string();
-    for (status, refused) in [(400, true), (401, true), (403, true), (503, false)] {
+    for (status, refused) in [(400, true), (401, true), (403, false), (503, false)] {
         let error = refresh_codex_token_at(
             &client,
             &MemoryCredentialStore::default(),
@@ -66,8 +66,7 @@ async fn refused_refresh_grants_report_missing_credentials() {
             &format!("{base}/{status}"),
         )
         .await
-        .err()
-        .expect("refresh fails");
+        .expect_err("refresh fails");
         let reported =
             matches!(&error, ModelError::MissingCredentials(_)).then(|| error.to_string());
         assert_eq!(reported, refused.then(|| missing.clone()), "HTTP {status}");
