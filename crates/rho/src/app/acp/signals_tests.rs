@@ -100,7 +100,7 @@ async fn finished_tools_send_the_checklist_only_when_it_changed() {
     ];
     for (label, next, expected) in steps {
         todo.replace(next);
-        let plan = match signals.observe(&tool_finished()) {
+        let plan = match signals.observe(&tool_finished()).await {
             Some(SessionUpdate::Plan(plan)) => Some(plan.entries),
             None => None,
             Some(other) => panic!("{label}: expected a plan, got {other:?}"),
@@ -121,7 +121,7 @@ async fn usage_reports_the_known_window_or_zero() {
             step: 1,
             estimated_context_tokens: 0,
         };
-        match signals.observe(&step) {
+        match signals.observe(&step).await {
             Some(SessionUpdate::UsageUpdate(update)) => {
                 assert_eq!(update.size, size, "{window:?}");
                 assert!(update.used > 0, "a non-empty session has context");

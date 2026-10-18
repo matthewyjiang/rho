@@ -51,6 +51,8 @@ struct Row {
     purpose: &'static str,
     at_ms: i64,
     reported: Option<u64>,
+    session: Option<&'static str>,
+    parent: Option<&'static str>,
 }
 
 fn row(provider: &'static str, model: &'static str, at_ms: i64) -> Row {
@@ -60,6 +62,8 @@ fn row(provider: &'static str, model: &'static str, at_ms: i64) -> Row {
         purpose: "agent",
         at_ms,
         reported: None,
+        session: None,
+        parent: None,
     }
 }
 
@@ -81,6 +85,8 @@ fn write_ledger(directory: &TempDir, rows: &[Row]) -> std::path::PathBuf {
             },
         );
         event.occurred_at_ms = row.at_ms;
+        event.session_id = row.session.map(str::to_owned);
+        event.parent_session_id = row.parent.map(str::to_owned);
         recorder.record(&event).unwrap();
     }
     path
@@ -273,6 +279,75 @@ fn load_is_read_only_and_rejects_newer_schemas() {
         UsageLedgerError::UnsupportedSchema { found, supported }
             if found == SCHEMA_VERSION + 1 && supported == SCHEMA_VERSION
     ));
+}
+
+// Covers: a session's running total counts its own requests of every
+// purpose and all of its direct children's, including child rows that do
+// not name the parent, each priced like /spend, never another session's;
+// and it stays unpriced, not $0, until something has a price.
+// Owner: usage report
+#[test]
+fn session_spend_counts_the_session_and_its_children_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let in_session = |purpose, reported| Row {
+        purpose,
+        reported,
+        session: Some("main"),
+        ..row("xai", "grok-4.6", NOW_MS)
+    };
+    let path = write_ledger(
+        &directory,
+        &[
+            in_session("agent", Some(1_500_000)),
+            in_session("compaction", None),
+            Row {
+                session: Some("main"),
+                ..row("cliproxyapi", "anthropic/claude-opus-5-5", NOW_MS)
+            },
+            // A subagent's request, on a proxy route that borrows the
+            // catalog price of the session's own grok-4.6 route.
+            Row {
+                purpose: "subagent",
+                session: Some("child"),
+                parent: Some("main"),
+                ..row("cliproxyapi", "x-ai/grok-4.6", NOW_MS)
+            },
+            // The child's permission classifier records no parent.
+            Row {
+                purpose: "permission-classifier-screen",
+                reported: Some(100_000),
+                session: Some("child"),
+                ..row("xai", "grok-4.6", NOW_MS)
+            },
+            Row {
+                session: Some("other"),
+                ..row("xai", "grok-4.6", NOW_MS)
+            },
+            Row {
+                session: Some("unpriced"),
+                ..row("cliproxyapi", "anthropic/claude-opus-5-5", NOW_MS)
+            },
+        ],
+    );
+
+    let spend = |session_id| load_session_spend(&path, session_id, pricing).unwrap();
+    assert_eq!(
+        [spend("main"), spend("unpriced"), spend("none")]
+            .map(|totals| (totals, totals.valuation())),
+        [
+            (
+                totals(5, 1_600_000, 400_000, 0, 1),
+                Valuation::Usd(2_000_000)
+            ),
+            (totals(1, 0, 0, 0, 1), Valuation::Unpriced),
+            (SpendTotals::default(), Valuation::Unpriced),
+        ]
+    );
+    let missing = directory.path().join("missing.sqlite3");
+    assert_eq!(
+        load_session_spend(&missing, "main", pricing).unwrap(),
+        SpendTotals::default()
+    );
 }
 
 // Covers: built-in Ollama is local, and other routes are priced only from a

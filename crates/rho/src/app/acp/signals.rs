@@ -1,17 +1,20 @@
 //! Session state mirrored to ACP clients alongside the event stream.
 //!
-//! Context fill goes out as `usage_update` and the todo checklist as `plan`.
-//! Neither is a run event: both are read from session-owned state when an
-//! event says it may have moved.
+//! Context fill and cumulative cost go out as `usage_update` and the todo
+//! checklist as `plan`. None is a run event: each is read from session-owned
+//! state, or the usage ledger, when an event says it may have moved.
 
 use agent_client_protocol::schema::v1::{
-    Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionId, SessionNotification,
+    Cost, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionId, SessionNotification,
     SessionUpdate, UsageUpdate,
 };
 use rho_sdk::RunEvent;
 
 use super::AcpClientPort;
-use crate::tools::todo::{TodoItem, TodoState, TodoStatus};
+use crate::{
+    tools::todo::{TodoItem, TodoState, TodoStatus},
+    usage::report::Valuation,
+};
 
 /// Tracks one prompt's context fill and checklist for a session.
 ///
@@ -45,27 +48,37 @@ impl SessionSignals {
     }
 
     /// The update a run event triggers, if any. A new step or a compaction
-    /// moves context fill; a finished tool may have replaced the checklist,
-    /// whether it ran directly or inside code mode.
-    pub(super) fn observe(&mut self, event: &RunEvent) -> Option<SessionUpdate> {
+    /// moves context fill, and the requests before it moved cost; a finished
+    /// tool may have replaced the checklist, whether it ran directly or inside
+    /// code mode.
+    pub(super) async fn observe(&mut self, event: &RunEvent) -> Option<SessionUpdate> {
         match event {
             RunEvent::StepStarted { .. } | RunEvent::CompactionCompleted { .. } => {
-                Some(self.usage())
+                Some(self.usage().await)
             }
             RunEvent::ToolFinished { .. } => self.plan_change(),
             _ => None,
         }
     }
 
-    /// Current context fill. ACP's `size` is required; 0 means the window is
-    /// unknown, which clients render as no maximum.
-    pub(super) fn usage(&self) -> SessionUpdate {
+    /// Current context fill and cumulative cost. ACP's `size` is required; 0
+    /// means the window is unknown, which clients render as no maximum.
+    ///
+    /// `cost` is the session's whole ledger total, so it already includes
+    /// turns from before a restart or `session/load` and never double counts
+    /// them. It is omitted, never sent as 0, while no request has a price;
+    /// an all-local session omits it too, as the TUI statusline does.
+    pub(super) async fn usage(&self) -> SessionUpdate {
         let estimate = self.session.context_estimate();
         let size = self
             .context_window
             .or(estimate.reported_context_window())
             .unwrap_or(0);
-        SessionUpdate::UsageUpdate(UsageUpdate::new(estimate.tokens(), size))
+        let cost = match crate::usage::session_valuation(self.session.id()).await {
+            Valuation::Usd(micros) => Some(Cost::new(micros as f64 / 1_000_000.0, "USD")),
+            Valuation::Local | Valuation::Unpriced => None,
+        };
+        SessionUpdate::UsageUpdate(UsageUpdate::new(estimate.tokens(), size).cost(cost))
     }
 
     /// Sends the checklist before the run starts if it differs from what the
@@ -82,7 +95,7 @@ impl SessionSignals {
 
     /// Sends current context fill at turn end, outside the event stream.
     pub(super) async fn send_usage(&self, session_id: &SessionId, client: &dyn AcpClientPort) {
-        send(session_id, client, self.usage()).await;
+        send(session_id, client, self.usage().await).await;
     }
 
     /// The checklist the client last saw, for the next prompt's tracker.

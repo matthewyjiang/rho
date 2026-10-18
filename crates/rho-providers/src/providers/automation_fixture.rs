@@ -6,8 +6,10 @@ use std::{
 };
 
 use rho_sdk::{
-    model::{ContentBlock, ModelIdentity, ModelRequest, ModelResponse, ToolCall},
-    provider::{ModelProvider, ProviderFuture},
+    model::{
+        ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage, ToolCall,
+    },
+    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
     ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -15,6 +17,8 @@ const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const RESPONSE_ENV: &str = "RHO_AUTOMATION_TEST_RESPONSE";
 const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 const PATH_ENV: &str = "RHO_AUTOMATION_TEST_PATH";
+/// When set, every response reports this provider cost in USD micros.
+const COST_ENV: &str = "RHO_AUTOMATION_TEST_COST_USD_MICROS";
 
 pub(super) fn from_env(
     provider: &str,
@@ -27,9 +31,17 @@ pub(super) fn from_env(
         .into_string()
         .map_err(|_| format!("{MODE_ENV} must be valid UTF-8"))?;
     let mode = Mode::parse(&mode)?;
+    let cost_usd_micros = std::env::var_os(COST_ENV)
+        .map(|cost| {
+            cost.to_str()
+                .and_then(|cost| cost.parse::<u64>().ok())
+                .ok_or_else(|| format!("{COST_ENV} must be a whole number of USD micros"))
+        })
+        .transpose()?;
     Ok(Some(std::sync::Arc::new(AutomationFixtureProvider {
         identity: ModelIdentity::new(provider, "automation-test-fixture", model),
         mode,
+        cost_usd_micros,
         turn: AtomicUsize::new(0),
     })))
 }
@@ -73,6 +85,7 @@ impl Mode {
 struct AutomationFixtureProvider {
     identity: ModelIdentity,
     mode: Mode,
+    cost_usd_micros: Option<u64>,
     turn: AtomicUsize,
 }
 
@@ -168,6 +181,39 @@ impl ModelProvider for AutomationFixtureProvider {
                 ),
                 Mode::ProcessThenDelay => delayed(request).await,
             }
+        })
+    }
+
+    /// The SDK default stream, plus one usage report when a cost is set.
+    /// Deltas go through the public `send`, so unlike the default they carry
+    /// observation times; fixture turns have no meaningful timing either way.
+    fn send_turn_stream<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let cancellation = request.cancellation.clone();
+            let response = tokio::select! {
+                response = self.send_turn(request) => response?,
+                () = cancellation.cancelled() => {
+                    return Err(ProviderError::interrupted("provider request cancelled"));
+                }
+            };
+            let ModelResponse::Assistant(blocks) = &response;
+            for block in blocks {
+                if let ContentBlock::Text(text) = block {
+                    events.send(ModelEvent::OutputDelta(text.clone())).await?;
+                }
+            }
+            if let Some(cost_usd_micros) = self.cost_usd_micros {
+                let usage = ModelUsage {
+                    cost_usd_micros: Some(cost_usd_micros),
+                    ..ModelUsage::default()
+                };
+                events.send(ModelEvent::Usage(usage)).await?;
+            }
+            Ok(response)
         })
     }
 }
