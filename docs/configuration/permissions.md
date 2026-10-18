@@ -22,7 +22,7 @@ These reads are allowed in every checked mode, including Plan: workspace-scoped 
 
 The status line shows **Bypass** in warning style. The other modes appear dim.
 
-## Plan → execute handoff
+## Plan → execute handoff {#plan-execute-handoff}
 
 In the interactive TUI, Plan mode offers `exit_plan_mode` when questionnaire input is available. Rho submits its complete markdown plan and asks how to continue. Choose **Approve → allow edits**, **Approve → supervised**, or **Approve → bypass**. **Approve → auto** is offered only when a permission classifier model is configured. Choose **Keep planning** to revise the plan without changing mode. A separate optional **Feedback** question accepts free text under **Other**; feedback never grants permission.
 

@@ -102,7 +102,7 @@ Successful login normally stores credentials only. It does not switch the active
 
 `/logout` opens a provider picker containing only providers with stored credentials that can be deleted. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
 
-`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts such as T3 Code can use this same flow through [terminal authentication](/integrations/acp#authentication).
+`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts such as T3 Code can use this same flow through [terminal authentication](/integrations/acp#sign-in).
 
 ### Claude Code runtime sign-in
 

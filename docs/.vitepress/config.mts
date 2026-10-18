@@ -124,7 +124,15 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'RTK', link: '/integrations/rtk' },
           { text: 'Model Context Protocol', link: '/integrations/mcp' },
           { text: 'Computer use', link: '/integrations/computer-use' },
-          { text: 'Agent Client Protocol', link: '/integrations/acp' },
+          {
+            text: 'Agent Client Protocol',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/integrations/acp' },
+              { text: 'T3 Code', link: '/integrations/acp/t3-code' },
+              { text: 'Host reference', link: '/integrations/acp/reference' },
+            ],
+          },
           { text: 'Agent Plugins', link: '/integrations/plugins' },
           { text: 'Community', link: '/integrations/community' },
         ],

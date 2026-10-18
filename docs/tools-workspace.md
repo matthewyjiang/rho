@@ -46,7 +46,7 @@ Additional tools:
 | `todo` | Replace the session task checklist shown in the transcript and `/todo` |
 | `sessions` | Search and read prior session evidence without resuming it |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
-| `exit_plan_mode` | Present a markdown plan for approval and [hand off to execution](/configuration/permissions#plan--execute-handoff) in interactive Plan mode |
+| `exit_plan_mode` | Present a markdown plan for approval and [hand off to execution](/configuration/permissions#plan-execute-handoff) in interactive Plan mode |
 
 The `bash` tool and the [inline shell](/inline-shell) (bash or zsh) run a login shell (`-lc`), so `~/.profile` installs (cargo, nvm, pyenv) are available. Login init on Debian/Ubuntu (`/etc/profile`) and macOS (`path_helper`) resets or reorders `PATH` before user dotfiles run, so Rho re-prepends the `PATH` it inherited from the launching terminal after login init. Tools activated only in `~/.zshrc` or `~/.bashrc` (mise, nix, direnv, conda) keep working, with the parent entries taking precedence. The child sees the parent value as `RHO_PARENT_PATH`.
 
@@ -86,7 +86,7 @@ For session storage separate from the workspace, see [sessions](/sessions). For 
 
 ## Additional workspace directories
 
-Add another directory to the workspace scope with `--add-dir <path>` at launch (repeatable, also works with `rho run` and `rho acp`) or `/add-dir <path>` in the [interactive TUI](/interactive-tui#commands). Relative paths resolve against the current directory and `~` expands to home; the path must be an existing directory. A directory already inside the workspace or inside another added directory is reported as already in scope. ACP hosts add their extra workspace roots the same way; see [ACP workspace roots](/integrations/acp#workspace-roots).
+Add another directory to the workspace scope with `--add-dir <path>` at launch (repeatable, also works with `rho run` and `rho acp`) or `/add-dir <path>` in the [interactive TUI](/interactive-tui#commands). Relative paths resolve against the current directory and `~` expands to home; the path must be an existing directory. A directory already inside the workspace or inside another added directory is reported as already in scope. ACP hosts add their extra workspace roots the same way; see [ACP workspace roots](/integrations/acp/reference#workspace-roots).
 
 In checked [permission modes](/configuration/permissions), reads under an added directory are free in every mode, including `plan`. `auto` and `allow_edits` also allow writes to git-tracked files there, the same as in the main workspace; `supervised` asks before those writes and `plan` denies them. Each added directory also loads its own `AGENTS.md` chain, from its git root down to the directory. `/add-dir` tells the running session about the directory and any new instruction files without rebuilding the system prompt.
 

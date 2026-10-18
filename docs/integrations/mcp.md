@@ -309,7 +309,7 @@ A server may interrupt a tool call with `elicitation/create` to ask the user som
 
 Rho declines rather than failing the request, because a decline is a first-class MCP answer that lets the server carry on without the information.
 
-Under [`rho acp`](/integrations/acp#questions), the editor host draws the form. Its `decline` and `cancel` reach the server as `decline` and `cancel`, and the turn continues.
+Under [`rho acp`](/integrations/acp/reference#questions), the editor host draws the form. Its `decline` and `cancel` reach the server as `decline` and `cancel`, and the turn continues.
 
 **Fidelity limit.** Rho's questionnaire is choice-only: every question is a list of values, optionally with free text, and every answer arrives as text. An elicitation schema is richer than that, so the mapping is lossy in one direction:
 
