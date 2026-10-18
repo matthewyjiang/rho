@@ -107,7 +107,8 @@ pub(super) struct RhoAcpAgent {
     /// this lock.
     install_gate: tokio::sync::RwLock<()>,
     /// One lock per session ID. Replacements of the same ID stay ordered;
-    /// different IDs publish and tear down independently.
+    /// different IDs publish and tear down independently. Generated titles
+    /// wait on it too, so none is sent while a load of its session runs.
     install_locks: tokio::sync::Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
     closed: AtomicBool,
 }

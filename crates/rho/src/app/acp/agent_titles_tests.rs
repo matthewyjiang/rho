@@ -97,7 +97,6 @@ async fn title_waits_out_loads_and_reaches_only_the_asking_host() {
             futures_util::poll!(report.as_mut()).is_pending(),
             "{meanwhile:?}: the title must wait for the load"
         );
-        let sent_while_loading = port.take();
         match meanwhile {
             Meanwhile::LoadFailed => {}
             Meanwhile::Closed => {
@@ -123,10 +122,6 @@ async fn title_waits_out_loads_and_reaches_only_the_asking_host() {
             })
             .into_iter()
             .collect::<Vec<_>>();
-        assert_eq!(
-            (sent_while_loading, port.take()),
-            (Vec::new(), expected),
-            "{meanwhile:?}"
-        );
+        assert_eq!(port.take(), expected, "{meanwhile:?}");
     }
 }

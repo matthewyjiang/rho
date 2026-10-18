@@ -25,7 +25,12 @@ pub(in crate::app::acp) struct PendingTitle {
     pub(in crate::app::acp) session_id: SessionId,
     /// The asking host's prompt gate, which its published slot shares, so
     /// the agent can tell that host from a successor with the same ID.
-    pub(in crate::app::acp) host: Arc<PromptGate>,
+    pub(in crate::app::acp) asking_gate: Arc<PromptGate>,
+    pub(in crate::app::acp) job: TitleJob,
+}
+
+/// What the title agent needs to name one session.
+pub(in crate::app::acp) struct TitleJob {
     model: TitleModel,
     /// The first exchange, as the title agent reads it.
     input: String,
@@ -34,7 +39,7 @@ pub(in crate::app::acp) struct PendingTitle {
     cwd: PathBuf,
 }
 
-impl PendingTitle {
+impl TitleJob {
     /// Generates and saves the title. Yields it only when this request
     /// saved it: a title someone else set first wins and is not resent.
     pub(in crate::app::acp) async fn generate(self) -> Option<String> {
@@ -44,7 +49,6 @@ impl PendingTitle {
             sdk_session_id,
             stored_id,
             cwd,
-            ..
         } = self;
         if StoredSession::title_is_set(&cwd, &stored_id).unwrap_or(false) {
             return None;
@@ -86,19 +90,23 @@ impl SessionHost {
         self.title_requested = true;
         self.pending_title = Some(PendingTitle {
             session_id: self.acp_session_id.clone(),
-            host: Arc::clone(&self.prompt_gate),
-            model: crate::title::title_model_from_config(&model_scoped_config(
-                &self.current_model(),
-                process_config,
-            )),
-            input: crate::title::first_turn_input(&text_of(user.blocks()), &text_of(reply)),
-            sdk_session_id: self.built.session.id().clone(),
-            stored_id: stored.id().to_owned(),
-            cwd: self.storage.cwd().to_path_buf(),
+            asking_gate: Arc::clone(&self.prompt_gate),
+            job: TitleJob {
+                model: crate::title::title_model_from_config(&model_scoped_config(
+                    &self.current_model(),
+                    process_config,
+                )),
+                input: crate::title::first_turn_input(&text_of(user.blocks()), &text_of(reply)),
+                sdk_session_id: self.built.session.id().clone(),
+                stored_id: stored.id().to_owned(),
+                cwd: self.storage.cwd().to_path_buf(),
+            },
         });
     }
 
-    /// The title the last prompt asked for, which the caller must run.
+    /// The title the last prompt asked for. The prompt stores it as its last
+    /// step, so a prompt dropped mid-await never strands one, and the agent
+    /// takes it as soon as the prompt returns.
     pub(in crate::app::acp) fn take_title(&mut self) -> Option<PendingTitle> {
         self.pending_title.take()
     }

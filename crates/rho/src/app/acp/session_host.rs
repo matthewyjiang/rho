@@ -316,9 +316,6 @@ impl SessionHost {
         let completed = result.as_ref().is_ok_and(|response| {
             response.stop_reason == agent_client_protocol::schema::v1::StopReason::EndTurn
         });
-        if names_session && completed {
-            self.request_title(&startup.config, &input);
-        }
         let _ = self
             .herdr
             .report_state(
@@ -329,6 +326,10 @@ impl SessionHost {
                 )),
             )
             .await;
+        // Last, with no await after it, so the agent always takes the request.
+        if names_session && completed {
+            self.request_title(&startup.config, &input);
+        }
         result
     }
 
