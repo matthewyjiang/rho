@@ -79,6 +79,7 @@ pub(super) use convert::RejectedDirectory;
 use mode::SessionPermission;
 use persist::{HostStorage, TurnCheckpoint};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
+pub(super) use title::PendingTitle;
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
@@ -98,6 +99,8 @@ pub(super) struct SessionHost {
     completed_runs: u64,
     /// Whether this host asked the title agent to name the session.
     title_requested: bool,
+    /// The title the last prompt asked for, until the agent takes it.
+    pending_title: Option<PendingTitle>,
     permission_placeholders: AtomicU64,
     replaced: Arc<AtomicBool>,
     /// Set when a compaction rewrote live state but could not be saved.
@@ -314,7 +317,7 @@ impl SessionHost {
             response.stop_reason == agent_client_protocol::schema::v1::StopReason::EndTurn
         });
         if names_session && completed {
-            self.spawn_title(&startup.config, &input);
+            self.request_title(&startup.config, &input);
         }
         let _ = self
             .herdr
@@ -530,6 +533,7 @@ impl SessionHost {
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             title_requested: false,
+            pending_title: None,
             permission_placeholders: AtomicU64::new(0),
             replaced: Arc::new(AtomicBool::new(false)),
             unsaved_compaction: false,
