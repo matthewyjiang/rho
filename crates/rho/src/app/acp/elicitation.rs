@@ -193,11 +193,15 @@ fn add_t3_question(schema: ElicitationSchema, question: &HostQuestion) -> Elicit
         }
         Field::Select(selection) | Field::SelectOrOther(selection) => selection,
     };
-    let hint = (selection == SelectionMode::Many)
-        .then_some("Pick one or more; separate several with commas.");
+    let hint = (selection == SelectionMode::Many).then(|| {
+        format!(
+            "Pick one or more; separate several with {}.",
+            Separator::for_question(question).name()
+        )
+    });
     let description = match (description, hint) {
         (Some(text), Some(hint)) => Some(format!("{text}\n\n{hint}")),
-        (text, hint) => text.or(hint.map(str::to_owned)),
+        (text, hint) => text.or(hint),
     };
     let labels = question
         .choices()
@@ -351,39 +355,67 @@ fn answers(
     response
 }
 
+/// What a T3 Code multiple choice is typed with: the first of these that
+/// no choice label contains, so a typed list splits back into exactly the
+/// choices the user listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Separator {
+    Comma,
+    Semicolon,
+    Bar,
+    NewLine,
+}
+
+impl Separator {
+    fn for_question(question: &HostQuestion) -> Self {
+        [Self::Comma, Self::Semicolon, Self::Bar]
+            .into_iter()
+            .find(|separator| {
+                question
+                    .choices()
+                    .iter()
+                    .all(|choice| !choice.label().contains(separator.char()))
+            })
+            .unwrap_or(Self::NewLine)
+    }
+
+    fn char(self) -> char {
+        match self {
+            Self::Comma => ',',
+            Self::Semicolon => ';',
+            Self::Bar => '|',
+            Self::NewLine => '\n',
+        }
+    }
+
+    /// The separator as the form's hint names it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Comma => "commas",
+            Self::Semicolon => "semicolons",
+            Self::Bar => "\"|\"",
+            Self::NewLine => "new lines",
+        }
+    }
+}
+
 /// T3 Code answers with a chosen label or typed text; a multiple choice
-/// types several, separated by commas.
+/// types several, split by the question's [`Separator`].
 fn t3_choices(
     question: &HostQuestion,
     selection: SelectionMode,
     values: Vec<String>,
 ) -> Vec<String> {
+    let separator = Separator::for_question(question).char();
     let pieces = values.into_iter().flat_map(|value| match selection {
-        SelectionMode::Many => split_choices(question, &value),
+        SelectionMode::Many => value
+            .split(separator)
+            .map(|piece| piece.trim().to_owned())
+            .filter(|piece| !piece.is_empty())
+            .collect(),
         _ => vec![value],
     });
     dedup(pieces.map(|value| choice_value(question, value)))
-}
-
-/// Splits a comma-separated list, keeping a choice whose label contains
-/// commas whole: at each piece, the longest run of pieces that names a
-/// choice is one entry.
-fn split_choices(question: &HostQuestion, text: &str) -> Vec<String> {
-    let pieces = text.split(',').collect::<Vec<_>>();
-    let mut entries = Vec::new();
-    let mut start = 0;
-    while start < pieces.len() {
-        let end = (start + 1..=pieces.len())
-            .rev()
-            .find(|&end| find_choice(question, pieces[start..end].join(",").trim()).is_some())
-            .unwrap_or(start + 1);
-        let entry = pieces[start..end].join(",").trim().to_owned();
-        if !entry.is_empty() {
-            entries.push(entry);
-        }
-        start = end;
-    }
-    entries
 }
 
 /// The choice `text` names: its exact displayed label first, since T3 Code

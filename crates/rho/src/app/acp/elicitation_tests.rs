@@ -329,9 +329,10 @@ fn free_text_companions_do_not_collide_with_question_ids() {
     );
 }
 
-// Covers: T3 Code answers with displayed labels, possibly several joined by
-// commas; an exact label wins over another choice's value or a case-folded
-// label, and a label containing commas stays one choice in a list
+// Covers: T3 Code answers with displayed labels, several joined by a
+// separator no label contains; an exact label wins over another choice's
+// value or a case-folded label, and a list splits into exactly the choices
+// listed even when a label contains commas
 // Owner: ACP elicitation mapping
 #[test]
 fn t3_code_labels_resolve_to_their_own_choices() {
@@ -361,22 +362,22 @@ fn t3_code_labels_resolve_to_their_own_choices() {
             vec!["Z"],
         ),
         (
-            "comma label alone",
+            "a comma label switches the list to semicolons",
             choices(
                 SelectionMode::Many,
-                &[("docs", "Docs, API"), ("tests", "Tests")],
+                &[("a", "A"), ("b", "B"), ("c", "C"), ("ab", "A, B")],
             ),
-            "Docs, API",
-            vec!["docs"],
+            "A; B; C",
+            vec!["a", "b", "c"],
         ),
         (
-            "comma label with another choice",
+            "the comma label in a semicolon list",
             choices(
                 SelectionMode::Many,
-                &[("docs", "Docs, API"), ("tests", "Tests")],
+                &[("a", "A"), ("b", "B"), ("c", "C"), ("ab", "A, B")],
             ),
-            "Tests, Docs, API",
-            vec!["tests", "docs"],
+            "A, B; C",
+            vec!["ab", "c"],
         ),
     ];
     for (label, question, typed, expected) in cases {
@@ -385,6 +386,44 @@ fn t3_code_labels_resolve_to_their_own_choices() {
             host_answer(&request, accept(json!({"q": typed})), FormDialect::T3Code),
             Ok(HostInputResponse::new().answer("q", expected)),
             "{label}"
+        );
+    }
+}
+
+// Covers: the form's hint names the separator a typed multiple choice must
+// use, so the user can type a list that splits back unambiguously
+// Owner: ACP elicitation mapping
+#[test]
+fn t3_code_multiple_choice_hint_names_a_separator_no_label_contains() {
+    let hint = |labels: &[&str]| {
+        let question = HostQuestion::new(
+            "q",
+            "Pick",
+            labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| HostChoice::new(format!("v{index}"), *label))
+                .collect(),
+            SelectionMode::Many,
+        )
+        .unwrap();
+        let request = HostInputRequest::questionnaire("Pick", vec![question]).unwrap();
+        let form = elicitation_request(&request, &SessionId::new("s"), None, FormDialect::T3Code);
+        serde_json::to_value(form).unwrap()["requestedSchema"]["properties"]["q"]["description"]
+            .clone()
+    };
+    for (labels, expected) in [
+        (&["A", "B"][..], "commas"),
+        (&["A, B", "C"][..], "semicolons"),
+        (&["A, B", "C; D"][..], "\"|\""),
+        (&["A, B", "C; D", "E | F"][..], "new lines"),
+    ] {
+        assert_eq!(
+            hint(labels),
+            json!(format!(
+                "Pick one or more; separate several with {expected}."
+            )),
+            "{labels:?}"
         );
     }
 }
