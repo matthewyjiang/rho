@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.12.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.11.1...rho-sdk-v5.12.0) (2026-10-18)
+
+
+### Features
+
+* **acp:** let editors answer rho's questions and approve plans to leave plan mode ([#1546](https://github.com/matthewyjiang/rho/issues/1546)) ([7183e5f](https://github.com/matthewyjiang/rho/commit/7183e5f0229a7f5021c8c785eb04114df205a5d7))
+
+
+### Performance Improvements
+
+* **sdk:** halve step checkpoint cost on long sessions ([#1534](https://github.com/matthewyjiang/rho/issues/1534)) ([f882dce](https://github.com/matthewyjiang/rho/commit/f882dce1a0c1c8f8c4e8d5bc99789dfc1b09347c))
+
 ## [5.11.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.11.0...rho-sdk-v5.11.1) (2026-10-17)
 
 

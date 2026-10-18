@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.20.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.19.0...rho-providers-v2.20.0) (2026-10-18)
+
+
+### Features
+
+* **acp:** let editors answer rho's questions and approve plans to leave plan mode ([#1546](https://github.com/matthewyjiang/rho/issues/1546)) ([7183e5f](https://github.com/matthewyjiang/rho/commit/7183e5f0229a7f5021c8c785eb04114df205a5d7))
+* **acp:** show cumulative session cost in editors ([#1545](https://github.com/matthewyjiang/rho/issues/1545)) ([40dc0ec](https://github.com/matthewyjiang/rho/commit/40dc0ecbd65474e54859e99076b9251dabb86356))
+
+
+### Bug Fixes
+
+* **acp:** ask editors to sign in when provider credentials are missing or revoked ([#1547](https://github.com/matthewyjiang/rho/issues/1547)) ([78236fc](https://github.com/matthewyjiang/rho/commit/78236fc6de38ea88dd9f94faea792f456d88b014))
+* **attach:** stop retaining growing tool argument previews ([#1541](https://github.com/matthewyjiang/rho/issues/1541)) ([9c8ff8a](https://github.com/matthewyjiang/rho/commit/9c8ff8ae08f316f7f6971c62a360ff4ad10636f0))
+* **tui:** keep the ctrl-c quit armed when a turn ends after leaving attach ([#1533](https://github.com/matthewyjiang/rho/issues/1533)) ([299dcc5](https://github.com/matthewyjiang/rho/commit/299dcc57bd7c4887df89046a29ecbec8aec706dd))
+
 ## [2.19.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.18.0...rho-providers-v2.19.0) (2026-10-17)
 
 

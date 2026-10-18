@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.26.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.25.0...rho-coding-agent-v2.26.0) (2026-10-18)
+
+
+### Features
+
+* **acp:** let editors answer rho's questions and approve plans to leave plan mode ([#1546](https://github.com/matthewyjiang/rho/issues/1546)) ([7183e5f](https://github.com/matthewyjiang/rho/commit/7183e5f0229a7f5021c8c785eb04114df205a5d7))
+* **acp:** show compaction progress in editors that support acp compaction updates ([#1542](https://github.com/matthewyjiang/rho/issues/1542)) ([d94459f](https://github.com/matthewyjiang/rho/commit/d94459f966d61db7a8efa16bb8467da4bcf7295f))
+* **acp:** show cumulative session cost in editors ([#1545](https://github.com/matthewyjiang/rho/issues/1545)) ([40dc0ec](https://github.com/matthewyjiang/rho/commit/40dc0ecbd65474e54859e99076b9251dabb86356))
+* **acp:** show generated session titles in editor thread lists ([#1544](https://github.com/matthewyjiang/rho/issues/1544)) ([b412ab8](https://github.com/matthewyjiang/rho/commit/b412ab8026850f7edb6418906f65c5d606be2f23))
+
+
+### Bug Fixes
+
+* **acp:** ask editors to sign in when provider credentials are missing or revoked ([#1547](https://github.com/matthewyjiang/rho/issues/1547)) ([78236fc](https://github.com/matthewyjiang/rho/commit/78236fc6de38ea88dd9f94faea792f456d88b014))
+* **attach:** stop retaining growing tool argument previews ([#1541](https://github.com/matthewyjiang/rho/issues/1541)) ([9c8ff8a](https://github.com/matthewyjiang/rho/commit/9c8ff8ae08f316f7f6971c62a360ff4ad10636f0))
+* **plugins:** list home-directory plugins once ([#1531](https://github.com/matthewyjiang/rho/issues/1531)) ([f1eec80](https://github.com/matthewyjiang/rho/commit/f1eec80056f74a38d06f4341debc0c85a8f338d1))
+* **tui:** keep the ctrl-c quit armed when a turn ends after leaving attach ([#1533](https://github.com/matthewyjiang/rho/issues/1533)) ([299dcc5](https://github.com/matthewyjiang/rho/commit/299dcc57bd7c4887df89046a29ecbec8aec706dd))
+
+
+### Performance Improvements
+
+* **session:** cut per-save index cost 20x by moving the session catalog to WAL ([#1539](https://github.com/matthewyjiang/rho/issues/1539)) ([da83e23](https://github.com/matthewyjiang/rho/commit/da83e23c045c474773db4a8d67faf6801b5fed8a))
+* **session:** cut session file size and save writes by 44% by deduplicating display rows ([#1538](https://github.com/matthewyjiang/rho/issues/1538)) ([b66e0c5](https://github.com/matthewyjiang/rho/commit/b66e0c52ee29ec883f1451627eddf3d893599424))
+* **session:** stop copying the whole history on every snapshot save ([#1535](https://github.com/matthewyjiang/rho/issues/1535)) ([1c1c1ce](https://github.com/matthewyjiang/rho/commit/1c1c1cee0769fead5cf7951c9647360d5f5e5f3c))
+
 ## [2.25.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.24.0...rho-coding-agent-v2.25.0) (2026-10-17)
 
 
