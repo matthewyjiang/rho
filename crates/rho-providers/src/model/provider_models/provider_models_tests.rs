@@ -875,9 +875,9 @@ fn cli_provider_models_round_trip_without_canonicalizing_ids() {
     let _ = fs::remove_dir_all(cache);
 }
 
-// Covers: OpenCode Zen lists free models it serves only to the OpenCode client;
-// discovery must drop rows models.dev prices at $0 and keep paid or uncatalogued
-// ids
+// Covers: OpenCode Zen lists free models it serves only to the OpenCode client
+// and Jev decision models that cannot chat; discovery must drop both and keep
+// paid or uncatalogued chat ids
 // Owner: OpenAI-compatible paid-only discovery
 #[tokio::test]
 async fn opencode_refresh_drops_catalog_free_models() {
@@ -893,7 +893,7 @@ async fn opencode_refresh_drops_catalog_free_models() {
         let (mut stream, _) = listener.accept().await.unwrap();
         let request = read_http_request(&mut stream).await;
         assert_eq!(request_target(&request), "GET /zen/v1/models HTTP/1.1");
-        let body = r#"{"data":[{"id":"big-pickle"},{"id":"claude-sonnet-5"},{"id":"new-model"},{"id":"cheap-input-only"}]}"#;
+        let body = r#"{"data":[{"id":"big-pickle"},{"id":"claude-sonnet-5"},{"id":"new-model"},{"id":"cheap-input-only"},{"id":"jev-1.13"}]}"#;
         stream
             .write_all(http_json_response("200 OK", body).as_bytes())
             .await

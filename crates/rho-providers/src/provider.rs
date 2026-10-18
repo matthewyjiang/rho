@@ -155,7 +155,7 @@ const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId:
 const SHARED_API_KEY_AUTHS: &[&[&str]] = &[&["opencode-api-key", "opencode-go-api-key"]];
 
 /// Other auth profiles whose API key also works for `auth`.
-pub fn shared_api_key_auths(auth: &str) -> impl Iterator<Item = &'static str> + '_ {
+pub(crate) fn shared_api_key_auths(auth: &str) -> impl Iterator<Item = &'static str> + '_ {
     SHARED_API_KEY_AUTHS
         .iter()
         .filter(move |group| group.contains(&auth))

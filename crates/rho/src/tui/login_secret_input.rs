@@ -1,17 +1,34 @@
 //! Secret API-key collection for interactive provider login.
 
-use rho_providers::{
-    auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore,
-    model::catalog::LoginTarget, provider::AuthMode,
-};
+use rho_providers::{model::catalog::LoginTarget, provider::AuthMode};
 
 use super::{
     composer_chrome,
     line_editor::LineEditor,
     line_editor_view::EditorPresentation,
-    login::ApiKeySubmission,
     view_composer::{editor_frame, ComposerFrame},
 };
+
+/// What Enter in the API-key overlay resolved to.
+///
+/// Blank on an optional field means "do not write a new key": keep a
+/// reachable key (store or env), otherwise run keyless. `/logout` is the
+/// wipe path. Blank on a field offering a sibling's key copies that key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ApiKeySubmission {
+    /// Store this key for the target's auth mode.
+    Save { target: LoginTarget, key: String },
+    /// No new key. Keep a reachable key, or run keyless when none exists.
+    LeaveUnset { target: LoginTarget },
+    /// Store the key already saved for `source`, an auth profile sharing keys
+    /// with the target.
+    Reuse {
+        target: LoginTarget,
+        source: AuthMode,
+    },
+    /// Blank, but this target requires a key.
+    Rejected,
+}
 
 /// What Enter on a blank API-key field means.
 #[derive(Clone, Copy, Debug)]
@@ -42,30 +59,12 @@ impl SecretInput {
 
     /// For hosts that also run keyless, where blank means "do not set a new key".
     pub(super) fn optional(target: LoginTarget) -> Self {
-        Self {
-            blank: BlankKey::LeaveUnset,
-            ..Self::new(target)
-        }
+        Self::with_blank(target, BlankKey::LeaveUnset)
     }
 
-    /// The API-key field for a provider login. Blank reuses a sibling
-    /// profile's stored key when one exists, so one OpenCode console key logs
-    /// in to Zen and Go without pasting it twice.
-    pub(super) fn for_provider_login(
-        target: LoginTarget,
-        keyless_host: bool,
-        store: &dyn CredentialStore,
-    ) -> Self {
-        if keyless_host {
-            return Self::optional(target);
-        }
-        // Reuse is a shortcut. If the store cannot be read, asking for the
-        // key still works, and saving it reports the store error.
-        let source = ProviderAuthentication::reusable_api_key_source(store, &target.auth)
-            .ok()
-            .flatten();
+    pub(super) fn with_blank(target: LoginTarget, blank: BlankKey) -> Self {
         Self {
-            blank: source.map_or(BlankKey::Reject, BlankKey::Reuse),
+            blank,
             ..Self::new(target)
         }
     }
@@ -92,10 +91,7 @@ impl SecretInput {
         match self.blank {
             BlankKey::Reject => ApiKeySubmission::Rejected,
             BlankKey::LeaveUnset => ApiKeySubmission::LeaveUnset { target },
-            BlankKey::Reuse(source) => ApiKeySubmission::Reuse {
-                target,
-                source: source.id,
-            },
+            BlankKey::Reuse(source) => ApiKeySubmission::Reuse { target, source },
         }
     }
 }

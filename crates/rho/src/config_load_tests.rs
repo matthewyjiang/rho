@@ -693,3 +693,48 @@ reasoning = "high"
             .to_vec()
     );
 }
+
+// Covers: a custom host configured before Rho shipped a built-in of the same
+// name (OpenCode Zen as `opencode`) loads with a warning when it points at the
+// built-in's API base, and fails loudly for any other base
+// Owner: config load
+#[test]
+fn custom_provider_shadowed_by_a_builtin_is_skipped_with_a_warning() {
+    let (config, warnings) = parse_settings(
+        r#"
+[providers.custom.opencode]
+base_url = "https://opencode.ai/zen/v1/"
+
+[providers.custom.composer]
+base_url = "http://127.0.0.1:8787/v1"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.providers.custom.keys().collect::<Vec<_>>(),
+        ["composer"]
+    );
+    assert_eq!(
+        warnings,
+        vec![ConfigWarning::ShadowedCustomProvider {
+            name: "opencode".into()
+        }]
+    );
+
+    // Another gateway must not hand its stored key to opencode.ai, and the Go
+    // route on the same host must not silently become Zen billing.
+    for base_url in [
+        "https://private-gateway.example/v1",
+        "https://opencode.ai/inference/go/v1",
+    ] {
+        let error = parse_settings(&format!(
+            "[providers.custom.opencode]\nbase_url = \"{base_url}\"\n"
+        ))
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("conflicts with the built-in opencode provider"),
+            "{base_url}: {error:#}"
+        );
+    }
+}

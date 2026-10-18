@@ -16,33 +16,14 @@ use {
     rho_providers::provider,
 };
 
-pub(super) use super::login_secret_input::{secret_input_frame, SecretInput};
+pub(super) use super::login_secret_input::{
+    secret_input_frame, ApiKeySubmission, BlankKey, SecretInput,
+};
 
 /// A finished interactive login task and the target it signed in to.
 pub(super) struct FinishedInteractiveLogin {
     target: LoginTarget,
     result: Result<Result<CompletedAuthentication, String>, tokio::task::JoinError>,
-}
-
-/// What Enter in the API-key overlay resolved to.
-///
-/// Blank on an optional field means "do not write a new key": keep a
-/// reachable key (store or env), otherwise run keyless. `/logout` is the
-/// wipe path. Blank on a field offering a sibling's key copies that key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum ApiKeySubmission {
-    /// Store this key for the target's auth mode.
-    Save { target: LoginTarget, key: String },
-    /// No new key. Keep a reachable key, or run keyless when none exists.
-    LeaveUnset { target: LoginTarget },
-    /// Store the key already saved for `source`, an auth profile sharing keys
-    /// with the target.
-    Reuse {
-        target: LoginTarget,
-        source: &'static str,
-    },
-    /// Blank, but this target requires a key.
-    Rejected,
 }
 
 /// Blank optional key: keep a reachable key, otherwise run keyless. Never deletes.
@@ -426,11 +407,15 @@ impl App {
             AuthenticationMethod::ApiKey { .. } => {
                 let keyless_host = provider::provider_descriptor(&target.provider)
                     .is_some_and(|descriptor| descriptor.has_none_auth());
-                let secret = SecretInput::for_provider_login(
-                    target,
-                    keyless_host,
-                    self.credential_store.as_ref(),
-                );
+                let store = self.credential_store.as_ref();
+                // Reuse is a shortcut: if the store cannot be read, ask for the key.
+                let blank =
+                    match ProviderAuthentication::reusable_api_key_source(store, &target.auth) {
+                        _ if keyless_host => BlankKey::LeaveUnset,
+                        Ok(Some(source)) => BlankKey::Reuse(source),
+                        Ok(None) | Err(_) => BlankKey::Reject,
+                    };
+                let secret = SecretInput::with_blank(target, blank);
                 self.set_status(secret.prompt());
                 self.input_ui
                     .set_composer(ComposerMode::SecretInput(secret));
@@ -495,24 +480,23 @@ impl App {
                 self.persist_api_key_and_finish(target, key, terminal, agent)
                     .await
             }
+            // A reusable key means a store was already chosen, so no store choice.
             ApiKeySubmission::Reuse { target, source } => {
                 let store = self.credential_store.as_ref();
-                match ProviderAuthentication::shared_api_key(store, source, &target.auth) {
-                    Ok(Some(key)) => {
-                        self.persist_api_key_and_finish(target, key, terminal, agent)
-                            .await
-                    }
-                    unusable => {
-                        let detail = unusable
-                            .err()
-                            .map_or_else(|| "it is no longer stored".into(), |err| err.to_string());
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not reuse {source} key: {detail}"
-                        )));
-                        self.set_status("login failed");
-                        Ok(())
-                    }
-                }
+                let detail =
+                    match ProviderAuthentication::shared_api_key(store, source, &target.auth) {
+                        Ok(Some(key)) => {
+                            return self
+                                .persist_api_key_and_finish(target, key, terminal, agent)
+                                .await;
+                        }
+                        Ok(None) => "it is no longer stored".to_string(),
+                        Err(err) => err.to_string(),
+                    };
+                let label = source.login_label;
+                self.insert_entry(&Entry::Error(format!("could not reuse {label}: {detail}")));
+                self.set_status("login failed");
+                Ok(())
             }
         }
     }

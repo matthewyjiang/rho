@@ -29,7 +29,7 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
     let mut warnings = Vec::new();
 
     if let Some(providers) = file.providers {
-        cfg.providers.apply(providers)?;
+        cfg.providers.apply(providers, &mut warnings)?;
     }
 
     if let Some(v) = file.prompt_templates {

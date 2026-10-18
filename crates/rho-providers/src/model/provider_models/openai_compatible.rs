@@ -76,7 +76,8 @@ pub(super) async fn fetch(
     .await
 }
 
-/// [`fetch`] minus models that models.dev prices at $0 for input and output.
+/// [`fetch`] minus models that models.dev prices at $0 for input and output,
+/// and minus Jev decision models, which serve System One rather than chat.
 ///
 /// See [`ProviderModelRefreshKind::OpenAiCompatiblePaid`]. A model without a
 /// catalog row (cold cache, offline, or newer than models.dev) stays listed.
@@ -89,11 +90,12 @@ pub(super) async fn fetch_paid(
     let mut models = fetch(descriptor, auth, api_base, store).await?;
     models_dev::ensure_models_dev_catalog().await;
     models.retain(|model| {
-        !models_dev::cached_model_metadata(descriptor.name, &model.model)
-            .and_then(|metadata| metadata.cost_default)
-            .is_some_and(|cost| {
-                cost.input_micros_per_m == Some(0) && cost.output_micros_per_m == Some(0)
-            })
+        !model.model.starts_with("jev-")
+            && !models_dev::cached_model_metadata(descriptor.name, &model.model)
+                .and_then(|metadata| metadata.cost_default)
+                .is_some_and(|cost| {
+                    cost.input_micros_per_m == Some(0) && cost.output_micros_per_m == Some(0)
+                })
     });
     Ok(models)
 }

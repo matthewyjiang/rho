@@ -369,12 +369,17 @@ impl ProviderAuthentication {
     /// First auth profile sharing keys with `auth` that has a stored API key,
     /// so login can offer it instead of asking for the same key again.
     ///
+    /// Nothing is offered when `auth` already has its own stored key, so a
+    /// blank Enter cannot replace it with a different workspace's key.
     /// Environment overrides are not offered: reusing one would persist a
     /// secret the user only exported.
     pub fn reusable_api_key_source(
         store: &dyn CredentialStore,
         auth: &str,
     ) -> CredentialResult<Option<AuthMode>> {
+        if credentials::auth_has_stored_credentials(store, auth)? {
+            return Ok(None);
+        }
         for sibling in provider::shared_api_key_auths(auth) {
             if credentials::auth_has_stored_credentials(store, sibling)? {
                 return Ok(provider::resolve_auth_mode(sibling).map(|(_, mode)| mode));
@@ -388,14 +393,17 @@ impl ProviderAuthentication {
     /// `None` when the profiles do not share keys or `source` has no stored key.
     pub fn shared_api_key(
         store: &dyn CredentialStore,
-        source: &str,
+        source: AuthMode,
         auth: &str,
     ) -> CredentialResult<Option<String>> {
-        if !provider::shared_api_key_auths(auth).any(|sibling| sibling == source) {
-            return Ok(None);
-        }
-        match provider::resolve_auth_mode(source).map(|(_, mode)| mode.auth_kind) {
-            Some(ProviderAuthKind::ApiKey { account, .. }) => store.get_secret(account),
+        match source.auth_kind {
+            ProviderAuthKind::ApiKey { account, .. }
+                if provider::shared_api_key_auths(auth).any(|sibling| sibling == source.id) =>
+            {
+                Ok(store
+                    .get_secret(account)?
+                    .filter(|key| !key.trim().is_empty()))
+            }
             _ => Ok(None),
         }
     }
