@@ -1,5 +1,6 @@
 use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionId, SessionUpdate, StopReason, ToolCallStatus, ToolKind,
+    CompactionStatus, CompactionUpdate, ContentBlock, SessionId, SessionUpdate, StopReason,
+    ToolCallStatus, ToolKind,
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -9,7 +10,9 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{map_sdk_stop_reason, EventMapper, PROVIDER_STREAM_RESET_NOTICE};
+use super::{
+    map_sdk_stop_reason, EventMapper, HostUpdates, RunEnding, PROVIDER_STREAM_RESET_NOTICE,
+};
 
 fn session_id() -> SessionId {
     SessionId::new("session-1")
@@ -23,7 +26,7 @@ fn only_update(mapper: &mut EventMapper, event: RunEvent) -> SessionUpdate {
 
 /// A mapper that has already sent the host a `tool_call` for `call-1`.
 fn mapper_with_started_call() -> EventMapper {
-    let mut mapper = EventMapper::new();
+    let mut mapper = EventMapper::new(HostUpdates::default());
     only_update(
         &mut mapper,
         RunEvent::ToolStarted {
@@ -47,7 +50,7 @@ fn text_of(block: &ContentBlock) -> &str {
 #[test]
 fn assistant_delta_maps_to_agent_message_chunk() {
     let update = only_update(
-        &mut EventMapper::new(),
+        &mut EventMapper::new(HostUpdates::default()),
         RunEvent::AssistantTextDelta { text: "hi".into() },
     );
     match update {
@@ -68,7 +71,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
             text: "think".into(),
         },
     ] {
-        let update = only_update(&mut EventMapper::new(), event);
+        let update = only_update(&mut EventMapper::new(HostUpdates::default()), event);
         match update {
             SessionUpdate::AgentThoughtChunk(chunk) => assert_eq!(text_of(&chunk.content), "think"),
             other => panic!("expected AgentThoughtChunk, got {other:?}"),
@@ -80,7 +83,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
 // Owner: acp event mapper
 #[test]
 fn proposed_started_finished_map_kind_and_status() {
-    let mut mapper = EventMapper::new();
+    let mut mapper = EventMapper::new(HostUpdates::default());
     let call_id = ToolCallId::from_string("call-1").unwrap();
     let proposed = mapper.map_event(
         &session_id(),
@@ -146,7 +149,7 @@ fn proposed_started_finished_map_kind_and_status() {
 #[test]
 fn provider_stream_reset_emits_discard_thought() {
     let update = only_update(
-        &mut EventMapper::new(),
+        &mut EventMapper::new(HostUpdates::default()),
         RunEvent::ProviderStreamReset {
             reason: ProviderStreamResetReason::InvalidResponse,
             detail: "retry".into(),
@@ -160,11 +163,12 @@ fn provider_stream_reset_emits_discard_thought() {
     }
 }
 
-// Covers: run events ACP has no session update for must not become session updates
+// Covers: run events ACP has no session update for must not become session
+// updates, including compaction for a host that did not advertise it
 // Owner: acp event mapper
 #[test]
 fn ignored_events_emit_nothing() {
-    let mut mapper = EventMapper::new();
+    let mut mapper = EventMapper::new(HostUpdates::default());
     let ignored = [
         RunEvent::Started {
             run_id: RunId::from_string("run-1").unwrap(),
@@ -208,9 +212,83 @@ fn ignored_events_emit_nothing() {
             name: "x_search".into(),
             detail: "hit".into(),
         },
+        RunEvent::CompactionStarted {
+            trigger: rho_sdk::CompactionTrigger::Automatic,
+            message_count: 2,
+        },
     ];
     for event in ignored {
         assert_eq!(mapper.map_event(&session_id(), &event), Vec::new());
+    }
+}
+
+// Covers: a compaction card still open when the run ends must close with
+// the run's ending and error, never stay in progress on the host
+// Owner: acp event mapper
+#[test]
+fn compaction_open_at_run_end_closes_with_the_ending() {
+    let compaction_host = HostUpdates {
+        compaction: true,
+        notices: false,
+    };
+    for (label, ending, status, error) in [
+        (
+            "cancelled",
+            Some(RunEvent::Cancelled {
+                revision: Revision::INITIAL,
+            }),
+            CompactionStatus::Cancelled,
+            None,
+        ),
+        (
+            "failed",
+            Some(RunEvent::Failed {
+                message: "boom".into(),
+                retryability: rho_sdk::Retryability::Permanent,
+                revision: Revision::INITIAL,
+            }),
+            CompactionStatus::Failed,
+            Some("boom"),
+        ),
+        (
+            "stream ended",
+            None,
+            CompactionStatus::Failed,
+            Some("compaction ended without a result"),
+        ),
+    ] {
+        let mut mapper = EventMapper::new(compaction_host);
+        let SessionUpdate::CompactionUpdate(opened) = only_update(
+            &mut mapper,
+            RunEvent::CompactionStarted {
+                trigger: rho_sdk::CompactionTrigger::Automatic,
+                message_count: 2,
+            },
+        ) else {
+            panic!("{label}: expected a compaction card");
+        };
+        let closing = match ending {
+            Some(event) => mapper.map_event(&session_id(), &event),
+            None => mapper.close_unfinished(&session_id(), RunEnding::WithoutResult),
+        };
+        let mut expected = CompactionUpdate::new(opened.compaction_id, status);
+        if let Some(error) = error {
+            expected = expected.error(error.to_owned());
+        }
+        let closed = closing
+            .into_iter()
+            .map(|notification| notification.update)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            closed,
+            vec![SessionUpdate::CompactionUpdate(expected)],
+            "{label}"
+        );
+        assert_eq!(
+            mapper.close_unfinished(&session_id(), RunEnding::WithoutResult),
+            Vec::new(),
+            "{label}: closes once"
+        );
     }
 }
 

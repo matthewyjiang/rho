@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, Diff, SessionId, SessionNotification, SessionUpdate, StopReason,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind,
+    ContentBlock, ContentChunk, Diff, Notice, NoticeSeverity, SessionId, SessionNotification,
+    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use rho_sdk::{
     tool::{OperationKind, ToolMetadata, ToolOutput},
@@ -11,6 +11,10 @@ use rho_sdk::{
 };
 use serde_json::Value;
 
+use super::{
+    compaction_card::{self, CompactionCard},
+    HostUpdates,
+};
 use crate::{
     display_transcript::{DisplayRow, DisplayTranscript},
     presentation::NotificationTone,
@@ -34,9 +38,14 @@ mod replay;
 /// starting, such as a call to a tool that does not exist. When the run ends,
 /// calls still open are closed as failed, since the SDK does not finish calls
 /// that a cancel interrupts and ACP has no cancelled tool status.
+///
+/// Hosts that advertise compaction see each compaction the run performs as
+/// a card; one still open when the run ends is closed the same way.
 pub(super) struct EventMapper {
+    updates: HostUpdates,
     proposed: HashMap<String, rho_sdk::model::ToolCall>,
     announced: BTreeMap<String, CallState>,
+    compaction: Option<CompactionCard>,
 }
 
 /// Whether the host may still be waiting for a call's final status.
@@ -46,11 +55,22 @@ enum CallState {
     Finished,
 }
 
+/// How a run ended, for closing what it left open.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum RunEnding<'a> {
+    Cancelled,
+    Failed(&'a str),
+    /// It completed, or its event stream ended without a terminal event.
+    WithoutResult,
+}
+
 impl EventMapper {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(updates: HostUpdates) -> Self {
         Self {
+            updates,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
+            compaction: None,
         }
     }
 
@@ -106,9 +126,25 @@ impl EventMapper {
                     PROVIDER_STREAM_RESET_NOTICE,
                 )))
             }
-            RunEvent::Completed { .. } | RunEvent::Cancelled { .. } | RunEvent::Failed { .. } => {
-                self.proposed.clear();
-                return self.close_open_calls(session_id);
+            RunEvent::CompactionStarted { .. } if self.updates.compaction => {
+                let card = CompactionCard::new();
+                let update = card.in_progress();
+                self.compaction = Some(card);
+                Some(update)
+            }
+            RunEvent::CompactionCompleted { .. } if self.updates.compaction => {
+                // A first update with a terminal status still creates the card.
+                let card = self.compaction.take().unwrap_or_else(CompactionCard::new);
+                Some(card.completed())
+            }
+            RunEvent::Cancelled { .. } => {
+                return self.close_unfinished(session_id, RunEnding::Cancelled);
+            }
+            RunEvent::Failed { message, .. } => {
+                return self.close_unfinished(session_id, RunEnding::Failed(message));
+            }
+            RunEvent::Completed { .. } => {
+                return self.close_unfinished(session_id, RunEnding::WithoutResult);
             }
             RunEvent::Started { .. }
             | RunEvent::StepStarted { .. }
@@ -136,11 +172,26 @@ impl EventMapper {
             .collect()
     }
 
-    /// Final `failed` updates for calls the host saw start but never saw
-    /// finish. The run's terminal event closes them; the pump calls this again
-    /// when the event stream ends, for a run that ended without one.
-    pub(super) fn close_open_calls(&mut self, session_id: &SessionId) -> Vec<SessionNotification> {
-        self.announced
+    /// Final updates for the compaction and calls the host saw start but
+    /// never saw finish: calls close `failed`, the compaction with `ending`.
+    /// The run's terminal event closes them; the pump calls this again when
+    /// the event stream ends, for a run that ended without one.
+    pub(super) fn close_unfinished(
+        &mut self,
+        session_id: &SessionId,
+        ending: RunEnding<'_>,
+    ) -> Vec<SessionNotification> {
+        self.proposed.clear();
+        let compaction = self.compaction.take().map(|card| {
+            let update = match ending {
+                RunEnding::Cancelled => card.cancelled(),
+                RunEnding::Failed(message) => card.failed(message),
+                RunEnding::WithoutResult => card.failed(compaction_card::UNFINISHED),
+            };
+            notify(session_id, update)
+        });
+        let calls = self
+            .announced
             .iter_mut()
             .filter(|(_, state)| **state == CallState::Open)
             .map(|(call_id, state)| {
@@ -152,8 +203,8 @@ impl EventMapper {
                         ToolCallUpdateFields::new().status(ToolCallStatus::Failed),
                     )),
                 )
-            })
-            .collect()
+            });
+        compaction.into_iter().chain(calls).collect()
     }
 
     /// A progress or result update for a call, sent as a full `tool_call`
@@ -209,6 +260,23 @@ impl EventMapper {
             session_id,
             SessionUpdate::AgentMessageChunk(text_chunk(text)),
         )
+    }
+
+    /// Information for the user that is not part of the conversation: an ACP
+    /// `notice` when the host shows them, else an agent message.
+    pub(super) fn info_notice(
+        session_id: &SessionId,
+        updates: HostUpdates,
+        text: &str,
+    ) -> SessionNotification {
+        if updates.notices {
+            notify(
+                session_id,
+                SessionUpdate::Notice(Notice::new(NoticeSeverity::Info, text)),
+            )
+        } else {
+            Self::agent_notice(session_id, text)
+        }
     }
 
     /// Background results the model was given, one finished tool call card

@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{DeleteSessionRequest, DeleteSessionResponse},
+    schema::v1::{ClientCapabilities, DeleteSessionRequest, DeleteSessionResponse},
     Error as AcpError,
 };
 use futures_util::{
@@ -14,7 +14,7 @@ use futures_util::{
     FutureExt,
 };
 
-use super::agent::RhoAcpAgent;
+use super::{agent::RhoAcpAgent, host_updates::NegotiatedUpdates};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
@@ -28,6 +28,7 @@ pub(super) struct LazyAgent {
     // so a concurrently finishing startup cannot load a session being deleted.
     publication: tokio::sync::Mutex<()>,
     closed: AtomicBool,
+    host_updates: Arc<NegotiatedUpdates>,
 }
 
 impl LazyAgent {
@@ -38,8 +39,11 @@ impl LazyAgent {
             .load()?
             .providers
             .activate()?;
+        let host_updates = Arc::new(NegotiatedUpdates::default());
+        let negotiated = Arc::clone(&host_updates);
+        // Polled first by a session request, which follows `initialize`.
         let pending = async move {
-            bootstrap::prepare_acp(cli)
+            bootstrap::prepare_acp(cli, negotiated.get())
                 .await
                 .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
                 .map_err(|error| Arc::<str>::from(format!("{error:#}")))
@@ -50,7 +54,13 @@ impl LazyAgent {
             pending,
             publication: tokio::sync::Mutex::new(()),
             closed: AtomicBool::new(false),
+            host_updates,
         })
+    }
+
+    /// Records the session updates the host advertised at `initialize`.
+    pub(super) fn record_client(&self, capabilities: &ClientCapabilities) {
+        self.host_updates.record(capabilities);
     }
 
     pub(super) async fn ready(&self) -> Result<Arc<RhoAcpAgent>, AcpError> {

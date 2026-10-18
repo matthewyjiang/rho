@@ -1,10 +1,12 @@
 mod agent;
 mod auth;
 mod commands;
+mod compaction_card;
 mod config_options;
 mod events;
 mod fast_mode;
 mod host_mcp;
+mod host_updates;
 mod permission;
 mod session_host;
 mod session_list;
@@ -31,6 +33,7 @@ use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporte
 
 use super::agent_binding::BoundAgent;
 use agent::RhoAcpAgent;
+pub(super) use host_updates::HostUpdates;
 
 /// The ACP client Rho integrates with, chosen at launch rather than inferred
 /// from the tools a host happens to offer.
@@ -66,6 +69,8 @@ pub(super) struct AcpStartup {
     pub(super) herdr: HerdrReporter,
     /// `--add-dir` directories granted to every ACP session.
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
+    /// Optional session updates the host advertised at `initialize`.
+    pub(super) host_updates: HostUpdates,
 }
 
 #[cfg(test)]
@@ -110,6 +115,7 @@ impl AcpStartup {
             agent,
             herdr: HerdrReporter::default(),
             added_dirs: Default::default(),
+            host_updates: HostUpdates::default(),
         }
     }
 }
@@ -165,8 +171,12 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
         .builder()
         .name("rho")
         .on_receive_request(
-            async move |request: InitializeRequest, responder, _cx| {
-                responder.respond(RhoAcpAgent::initialize(&request))
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: InitializeRequest, responder, _cx| {
+                    agent.record_client(&request.client_capabilities);
+                    responder.respond(RhoAcpAgent::initialize(&request))
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )

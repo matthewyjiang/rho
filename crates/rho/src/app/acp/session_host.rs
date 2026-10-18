@@ -23,7 +23,7 @@ use rho_sdk::{ApprovalRequestReceiver, CancellationToken, UserInput};
 use super::{
     commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
-    events::EventMapper,
+    events::{EventMapper, RunEnding},
     fast_mode, permission,
     signals::SessionSignals,
     t3_wake::T3Wake,
@@ -115,6 +115,8 @@ pub(super) struct SessionHost {
     /// T3 Code's wake watcher (`--t3code`): background work that outlives a
     /// prompt wakes the idle thread instead of holding the prompt open.
     t3_wake: Option<T3Wake>,
+    /// Optional session updates the host advertised at `initialize`.
+    host_updates: super::HostUpdates,
 }
 
 /// Carries cancellation for the session's current prompt. The agent already
@@ -535,6 +537,7 @@ impl SessionHost {
             sent_plan: Vec::new(),
             load_notice: None,
             held_notices: None,
+            host_updates: startup.host_updates,
             t3_wake: match startup.host {
                 AcpHost::Generic => None,
                 AcpHost::T3Code => match super::t3_wake::signal_dir() {
@@ -593,7 +596,7 @@ impl SessionHost {
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         if let Some(notice) = self.load_notice.take() {
-            let notice = EventMapper::agent_notice(&self.acp_session_id, &notice);
+            let notice = EventMapper::info_notice(&self.acp_session_id, self.host_updates, &notice);
             if let Err(error) = send_notification(client, notice).await {
                 tracing::debug!(%error, "could not send ACP load notice");
             }
@@ -631,7 +634,7 @@ impl SessionHost {
         };
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
-        let mut mapper = EventMapper::new();
+        let mut mapper = EventMapper::new(self.host_updates);
         let mut signals = self.signals();
         signals.send_plan_change(&self.acp_session_id, client).await;
         let pump_result = self
@@ -651,6 +654,15 @@ impl SessionHost {
         if let Err(error) = pump_result {
             run.cancel();
             let _ = run.outcome().await;
+            // Best effort: the host may already be gone, and the pump error
+            // is the one the prompt reports.
+            for notification in
+                mapper.close_unfinished(&self.acp_session_id, RunEnding::Failed(&error.to_string()))
+            {
+                if send_notification(client, notification).await.is_err() {
+                    break;
+                }
+            }
             self.persist_failed_turn(checkpoint);
             self.dispatch_failed(&error.to_string());
             return Err(error);

@@ -21,6 +21,7 @@ async fn disconnect_during_startup_rejects_the_waiting_request() {
         .shared(),
         publication: tokio::sync::Mutex::new(()),
         closed: AtomicBool::new(false),
+        host_updates: Default::default(),
     });
     let waiting = tokio::spawn({
         let lazy = Arc::clone(&lazy);

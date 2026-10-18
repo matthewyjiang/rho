@@ -123,6 +123,7 @@ fn startup(cwd: &Path) -> AcpStartup {
         agent,
         herdr: HerdrReporter::default(),
         added_dirs: Default::default(),
+        host_updates: Default::default(),
     }
 }
 
