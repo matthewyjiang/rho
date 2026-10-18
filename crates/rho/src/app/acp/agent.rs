@@ -563,8 +563,13 @@ fn prompt_error(error: anyhow::Error) -> AcpError {
     }
 }
 
+/// Missing or refused provider credentials are the user's to fix by signing
+/// in; anything else is internal.
 fn host_error(error: anyhow::Error) -> AcpError {
-    AcpError::internal_error().data(error.to_string())
+    match super::auth::CredentialFailure::find(&error) {
+        Some(failure) => failure.into_acp(),
+        None => AcpError::internal_error().data(error.to_string()),
+    }
 }
 
 /// A lifecycle request naming a root the session cannot grant is the

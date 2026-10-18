@@ -58,6 +58,8 @@ mod build;
 mod compact;
 #[path = "session_host_convert.rs"]
 mod convert;
+#[path = "session_host_credentials.rs"]
+mod credentials;
 #[path = "session_host_mode.rs"]
 mod mode;
 #[path = "session_host_open.rs"]
@@ -76,6 +78,7 @@ mod workflow;
 use build::{build_session, session_config};
 use convert::user_input_from_prompt;
 pub(super) use convert::RejectedDirectory;
+use credentials::SessionCredentials;
 use mode::SessionPermission;
 use persist::{HostStorage, TurnCheckpoint};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
@@ -95,6 +98,7 @@ pub(super) struct SessionHost {
     added_dirs: crate::added_dirs::AddedDirs,
     permission: SessionPermission,
     auth: String,
+    credentials: SessionCredentials,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     /// Whether this host asked the title agent to name the session.
@@ -253,6 +257,7 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
+        self.renew_stale_credentials(&startup.config).await?;
         self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
         let _ = self
@@ -307,6 +312,7 @@ impl SessionHost {
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
+        self.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
         self.wake_prompt_ended(
             result.as_ref().ok().map(|response| response.stop_reason),
@@ -479,6 +485,7 @@ impl SessionHost {
         )
         .map_err(host_apply_error)?;
         self.built.provider = provider;
+        self.credentials = SessionCredentials::Current;
         if let Some(prompt) = prepared_prompt {
             self.built.prompt.adopt(
                 crate::app::active_prompt::ActivePrompt::from_prepared(prompt),
@@ -531,6 +538,7 @@ impl SessionHost {
             added_dirs,
             permission,
             auth: startup.config.auth.clone(),
+            credentials: SessionCredentials::Current,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             title_requested: false,

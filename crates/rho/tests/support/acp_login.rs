@@ -9,8 +9,9 @@ use serde_json::json;
 use super::{AcpServer, Workspace, REPLY_TIMEOUT};
 
 // Covers: a cold-cache provider whose model discovery requires credentials
-// must still advertise login, and a failed session startup must not kill ACP
-// or block history deletion, which needs no model or credentials.
+// must still advertise login, its session startup must answer auth_required
+// so hosts show sign-in, and that failure must not kill ACP or block history
+// deletion, which needs no model or credentials.
 // Owner: ACP process startup; no model/credential fixtures mask discovery here.
 #[test]
 fn unauthenticated_cold_start_can_discover_login() {
@@ -68,9 +69,11 @@ fn unauthenticated_cold_start_can_discover_login() {
         "session/new",
         json!({"cwd": workspace.project, "mcpServers": []}),
     );
+    let failure = session.expect_err("credentials are still required for a session");
     assert_eq!(
-        session.expect_err("credentials are still required for a session")["code"],
-        json!(-32603)
+        (failure["code"].clone(), failure.get("data")),
+        (json!(-32000), None),
+        "missing credentials ask the host to sign in: {failure}"
     );
     let (after_failure, _) = server.request("initialize", initialize);
     assert_eq!(after_failure.unwrap(), initialized);

@@ -2,28 +2,34 @@
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, PoisonError,
 };
 
 use agent_client_protocol::{
     schema::v1::{ClientCapabilities, DeleteSessionRequest, DeleteSessionResponse},
-    Error as AcpError,
+    Error as AcpError, ErrorCode,
 };
 use futures_util::{
     future::{BoxFuture, Shared},
     FutureExt,
 };
 
-use super::{agent::RhoAcpAgent, host_updates::NegotiatedUpdates};
+use super::{agent::RhoAcpAgent, auth::CredentialFailure, host_updates::NegotiatedUpdates};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
 };
 
+/// One run of deferred startup. Shared owns the suspended initializer even if
+/// one waiting request is cancelled.
+type Startup = Shared<BoxFuture<'static, Result<Arc<RhoAcpAgent>, AcpError>>>;
+
 pub(super) struct LazyAgent {
-    // Shared owns the suspended initializer even if one waiting request is
-    // cancelled. Startup failures remain stable until the host reconnects.
-    pending: Shared<BoxFuture<'static, Result<Arc<RhoAcpAgent>, Arc<str>>>>,
+    // Startup failures remain stable until the host reconnects, except
+    // `auth_required`: the host's sign-in runs a terminal login and then asks
+    // again on this connection, so that failure starts a fresh run.
+    pending: std::sync::Mutex<Startup>,
+    start: Box<dyn Fn() -> Startup + Send + Sync>,
     // Store-only deletes must finish before ready hands out the first agent,
     // so a concurrently finishing startup cannot load a session being deleted.
     publication: tokio::sync::Mutex<()>,
@@ -42,20 +48,34 @@ impl LazyAgent {
         let host_updates = Arc::new(NegotiatedUpdates::default());
         let negotiated = Arc::clone(&host_updates);
         // Polled first by a session request, which follows `initialize`.
-        let pending = async move {
-            bootstrap::prepare_acp(cli, negotiated.get())
-                .await
-                .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
-                .map_err(|error| Arc::<str>::from(format!("{error:#}")))
-        }
-        .boxed()
-        .shared();
-        Ok(Self {
-            pending,
+        let start = move || {
+            let (cli, negotiated) = (cli.clone(), Arc::clone(&negotiated));
+            async move {
+                bootstrap::prepare_acp(cli, negotiated.get())
+                    .await
+                    .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
+                    .map_err(|error| match CredentialFailure::find(&error) {
+                        Some(failure) => failure.into_acp(),
+                        None => AcpError::internal_error().data(format!("{error:#}")),
+                    })
+            }
+            .boxed()
+            .shared()
+        };
+        Ok(Self::starting_with(start, host_updates))
+    }
+
+    fn starting_with(
+        start: impl Fn() -> Startup + Send + Sync + 'static,
+        host_updates: Arc<NegotiatedUpdates>,
+    ) -> Self {
+        Self {
+            pending: std::sync::Mutex::new(start()),
+            start: Box::new(start),
             publication: tokio::sync::Mutex::new(()),
             closed: AtomicBool::new(false),
             host_updates,
-        })
+        }
     }
 
     /// Records the session updates the host advertised at `initialize`.
@@ -67,11 +87,17 @@ impl LazyAgent {
         if self.closed.load(Ordering::Acquire) {
             return Err(AcpError::invalid_request().data("ACP connection is closed"));
         }
-        let agent = self
-            .pending
-            .clone()
-            .await
-            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+        let startup = self.current();
+        let agent = startup.clone().await.inspect_err(|error| {
+            if error.code == ErrorCode::AuthRequired {
+                // Concurrent waiters saw the same failure; only the first
+                // replaces it, so one sign-in starts one new run.
+                let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+                if pending.ptr_eq(&startup) {
+                    *pending = (self.start)();
+                }
+            }
+        })?;
         let _publication = self.publication.lock().await;
         // Close must not start a cold initializer, but an initializer already
         // in flight must not publish a live session after the connection closes.
@@ -91,7 +117,6 @@ impl LazyAgent {
             return Err(AcpError::invalid_request().data("ACP connection is closed"));
         }
         if let Some(agent) = self.started() {
-            let agent = Arc::clone(agent);
             // The live agent owns per-session retirement/install locking.
             // Do not serialize unrelated live requests behind a deletion.
             drop(publication);
@@ -104,8 +129,17 @@ impl LazyAgent {
         }
     }
 
-    pub(super) fn started(&self) -> Option<&Arc<RhoAcpAgent>> {
-        self.pending.peek().and_then(|result| result.as_ref().ok())
+    pub(super) fn started(&self) -> Option<Arc<RhoAcpAgent>> {
+        self.current()
+            .peek()
+            .and_then(|result| result.as_ref().ok().cloned())
+    }
+
+    fn current(&self) -> Startup {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub(super) async fn shutdown(&self) {

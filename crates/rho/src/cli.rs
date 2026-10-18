@@ -60,7 +60,7 @@ pub enum WorkflowRunFormat {
     Jsonl,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[command(name = "rho", version)]
 pub struct Cli {
     #[arg(long)]
@@ -122,7 +122,7 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum ModelPromptCommand {
     /// Open custom system instructions for a model in $VISUAL or $EDITOR.
     #[command(after_help = "Examples:
@@ -169,7 +169,7 @@ Scope:
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum Command {
     /// Run one non-interactive automation prompt and print the final answer.
     Run {
@@ -307,7 +307,7 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
 }
 
 /// Options for `rho acp`.
-#[derive(clap::Args, Debug, Default)]
+#[derive(clap::Args, Clone, Debug, Default)]
 pub struct AcpArgs {
     /// Integrate with T3 Code: subagents run as T3 child threads through its
     /// `t3-code` MCP server. Sessions fail to start if those tools are missing.
@@ -321,7 +321,7 @@ pub struct AcpArgs {
 
 /// Inputs for the debug-only scripted ACP agent.
 #[cfg(debug_assertions)]
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Clone, Debug)]
 pub struct AcpFixtureAgentArgs {
     /// Script JSON: handshake outcomes, session modes, and per-turn steps.
     #[arg(long, value_name = "PATH")]
@@ -333,7 +333,7 @@ pub struct AcpFixtureAgentArgs {
 
 /// Settings for one permission classifier eval run. Cases come from labeled
 /// case files, saved sessions, or both.
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Clone, Debug)]
 pub struct ClassifierEvalArgs {
     /// Labeled case file (JSON Lines).
     #[arg(long = "cases", value_name = "PATH", conflicts_with = "batched")]
@@ -381,7 +381,7 @@ pub struct ClassifierEvalArgs {
 /// Settings for one compaction eval run. Unset compaction settings come from
 /// the loaded config; root `--provider`/`--model`/`--auth`/`--reasoning`
 /// choose the session model that compacts.
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Clone, Debug)]
 pub struct CompactionEvalArgs {
     /// Saved session transcript (`session.jsonl`) or its session folder.
     #[arg(long = "session", value_name = "PATH", required = true)]
@@ -436,7 +436,7 @@ pub enum CompactionEvalTiers {
 /// Argv entry for the internal supervised planner worker process.
 pub const WORKFLOW_PLANNER_WORKER_COMMAND: &str = "__workflow_planner_worker";
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum WorkflowCommand {
     /// List saved workflow plans and runs for the current workspace.
     List {
@@ -522,7 +522,7 @@ pub enum WorkflowCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum SessionsCommand {
     /// List saved sessions for the current workspace (or all projects).
     List {
@@ -590,7 +590,7 @@ pub enum SessionsCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum McpCommand {
     /// List configured MCP servers from the selected config and plugins.
     List {
@@ -625,7 +625,7 @@ pub enum PluginsScope {
     Project,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum PluginsCommand {
     /// List discovered Agent Plugin packages.
     List {
@@ -696,7 +696,7 @@ pub enum PluginsCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum CredentialStoreCommand {
     /// Test a credential backend by writing and deleting a temporary secret.
     Probe {
@@ -718,7 +718,7 @@ pub enum CredentialStoreCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum ComputerCommand {
     /// Detect the driver without starting it or inspecting the desktop.
     Status {
