@@ -22,6 +22,7 @@ pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
 pub const META_MUSE_TOKENS_ACCOUNT: &str = "provider:meta:muse";
 pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
+pub const OPENCODE_API_KEY_ACCOUNT: &str = "provider:opencode:api-key";
 pub const MINIMAX_API_KEY_ACCOUNT: &str = "provider:minimax:api-key";
 pub const TYPESAFE_API_KEY_ACCOUNT: &str = "provider:typesafe:api-key";
 
@@ -43,6 +44,9 @@ pub const META_API_BASE: &str = "https://api.meta.ai/v1";
 /// `generateContent`, `/models`). The older `/zen/go/v1` base serves the first
 /// three but returns 404 for Gemini.
 pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/inference/go/v1";
+/// OpenCode Zen pay-as-you-go base (Chat Completions, Responses, Messages,
+/// Gemini `generateContent`, `/models`).
+pub const OPENCODE_API_BASE: &str = "https://opencode.ai/zen/v1";
 /// MiniMax Anthropic-compatible base (`/messages` and `/models`).
 pub const MINIMAX_API_BASE: &str = "https://api.minimax.io/anthropic/v1";
 /// TypeSafe System One base (`/systemone`), which serves the Jev decision models.
@@ -170,6 +174,7 @@ pub enum ProviderId {
     QwenTokenPlan,
     Meta,
     OpenCodeGo,
+    OpenCode,
     MiniMax,
     TypeSafe,
     OpenAiCompatible,
@@ -250,6 +255,10 @@ pub(crate) enum ProviderModelRefreshKind {
     Google,
     GithubCopilot,
     OpenAiCompatible,
+    /// [`Self::OpenAiCompatible`] minus models models.dev prices at $0 for
+    /// input and output. OpenCode Zen lists its free models to everyone but
+    /// serves them only to the OpenCode client (`403 FreeTierError`).
+    OpenAiCompatiblePaid,
     /// Anthropic `/models` against the descriptor's resolved API base.
     ///
     /// Unlike [`Self::Anthropic`], this does not pin `api.anthropic.com` or
@@ -262,7 +271,10 @@ pub(crate) enum ProviderModelRefreshKind {
 impl ProviderModelRefreshKind {
     /// True when `/doctor` and health probes hit `/v1/models`.
     pub(crate) fn probes_openai_compatible_models(self) -> bool {
-        matches!(self, Self::OpenAiCompatible | Self::Ollama)
+        matches!(
+            self,
+            Self::OpenAiCompatible | Self::OpenAiCompatiblePaid | Self::Ollama
+        )
     }
 }
 
@@ -648,6 +660,7 @@ impl ProviderDescriptor {
             | ProviderId::QwenTokenPlan
             | ProviderId::Meta
             | ProviderId::OpenCodeGo
+            | ProviderId::OpenCode
             | ProviderId::MiniMax
             | ProviderId::TypeSafe => UnknownEffortPolicy::Omit,
         }

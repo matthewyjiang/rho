@@ -21,7 +21,7 @@ pub mod image_input;
 pub(crate) mod native_compaction;
 pub mod openai;
 pub mod openai_compatible;
-mod opencode_go;
+mod opencode;
 pub(crate) mod request_body;
 mod responses_http;
 pub mod sdk_contract;

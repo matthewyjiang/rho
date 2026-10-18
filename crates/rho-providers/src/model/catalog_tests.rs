@@ -616,13 +616,24 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(meta.methods[1].target.auth, "meta-muse");
     assert_eq!(meta.methods[1].prompt, "Subscription");
 
-    let opencode_go = groups
+    // Both OpenCode gateways take an API key, so the group names each method.
+    let opencode = groups
         .iter()
-        .find(|group| group.id == "opencode-go")
-        .expect("opencode-go login group");
-    assert_eq!(opencode_go.prompt, "OpenCode Go");
-    assert_eq!(opencode_go.methods.len(), 1);
-    assert_eq!(opencode_go.methods[0].target.auth, "opencode-go-api-key");
+        .find(|group| group.id == "opencode")
+        .expect("opencode login group");
+    assert_eq!(opencode.prompt, "OpenCode");
+    assert_eq!(
+        opencode
+            .methods
+            .iter()
+            .map(|method| (method.prompt.as_str(), method.target.auth.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("Zen pay-as-you-go", "opencode-api-key"),
+            ("Go subscription", "opencode-go-api-key"),
+        ]
+    );
+    assert!(groups.iter().all(|group| group.id != "opencode-go"));
 
     let ollama = groups
         .iter()

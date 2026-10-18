@@ -103,27 +103,61 @@ pub fn locally_known_models() -> Vec<ModelCatalogEntry> {
 struct CrossProviderLoginGroup {
     id: &'static str,
     prompt: &'static str,
-    auths: &'static [&'static str],
+    methods: &'static [CrossProviderLoginMethod],
+}
+
+struct CrossProviderLoginMethod {
+    auth: &'static str,
+    /// Row text when the auth kind's generic prompt ("API Key", "OAuth") would
+    /// not tell this group's methods apart. `None` uses the generic prompt.
+    prompt: Option<&'static str>,
+}
+
+impl CrossProviderLoginMethod {
+    const fn generic(auth: &'static str) -> Self {
+        Self { auth, prompt: None }
+    }
+
+    const fn named(auth: &'static str, prompt: &'static str) -> Self {
+        Self {
+            auth,
+            prompt: Some(prompt),
+        }
+    }
 }
 
 /// Cross-provider login groups that attach foreign auth modes under one picker entry.
 ///
 /// Single-provider groups are derived from [`provider::providers`]; only groupings that
-/// span providers (OpenAI+Codex, Moonshot+Kimi) need an explicit spec.
+/// span providers (OpenAI+Codex, Moonshot+Kimi, OpenCode Go+Zen) need an explicit spec.
 ///
 /// Auth prompts are derived from registry metadata so `ApiKey`/`OAuth` wording stays
 /// consistent with the provider descriptor. Each group lists auth profile ids; the
-/// prompt comes from the descriptor at build time.
+/// prompt comes from the descriptor at build time unless a method names its own.
 const CROSS_PROVIDER_LOGIN_GROUPS: &[CrossProviderLoginGroup] = &[
     CrossProviderLoginGroup {
         id: "openai",
         prompt: "OpenAI",
-        auths: &["api-key", "codex"],
+        methods: &[
+            CrossProviderLoginMethod::generic("api-key"),
+            CrossProviderLoginMethod::generic("codex"),
+        ],
     },
     CrossProviderLoginGroup {
         id: "moonshot",
         prompt: "Moonshot AI",
-        auths: &["moonshot-api-key", "kimi-oauth"],
+        methods: &[
+            CrossProviderLoginMethod::generic("moonshot-api-key"),
+            CrossProviderLoginMethod::generic("kimi-oauth"),
+        ],
+    },
+    CrossProviderLoginGroup {
+        id: "opencode",
+        prompt: "OpenCode",
+        methods: &[
+            CrossProviderLoginMethod::named("opencode-api-key", "Zen pay-as-you-go"),
+            CrossProviderLoginMethod::named("opencode-go-api-key", "Go subscription"),
+        ],
     },
 ];
 
@@ -133,14 +167,17 @@ pub fn login_groups() -> Vec<LoginGroup> {
 
     for group in CROSS_PROVIDER_LOGIN_GROUPS {
         let methods = group
-            .auths
+            .methods
             .iter()
-            .map(|auth| {
-                claimed_auths.insert(*auth);
-                let (descriptor, mode) = provider::resolve_auth_mode(auth)
+            .map(|method| {
+                claimed_auths.insert(method.auth);
+                let (descriptor, mode) = provider::resolve_auth_mode(method.auth)
                     .expect("login group targets must reference registered auth profiles");
                 LoginMethod {
-                    prompt: login_method_prompt(mode.auth_kind).to_string(),
+                    prompt: method
+                        .prompt
+                        .unwrap_or_else(|| login_method_prompt(mode.auth_kind))
+                        .to_string(),
                     target: LoginTarget {
                         provider: descriptor.name.into(),
                         auth: mode.id.into(),
@@ -201,6 +238,14 @@ fn login_method_prompt(auth_kind: ProviderAuthKind) -> &'static str {
         | ProviderAuthKind::KimiOAuth { .. } => "OAuth",
         ProviderAuthKind::MetaOAuth { .. } => "Subscription",
     }
+}
+
+/// Generic prompt for an auth profile's kind ("API Key", "OAuth"), even when
+/// a login group shows that method under its own name.
+///
+/// Search uses it to drop auth words from a method's login label.
+pub fn generic_login_method_prompt(auth: &str) -> Option<&'static str> {
+    provider::resolve_auth_mode(auth).map(|(_, mode)| login_method_prompt(mode.auth_kind))
 }
 
 pub fn login_group(id: &str) -> Option<LoginGroup> {

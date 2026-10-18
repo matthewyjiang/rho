@@ -4,7 +4,7 @@ use crate::{
     auth::meta_oauth::API_KEY_MINT_URL,
     auth::meta_token::{ensure_fresh, env_api_key, refresh_locked},
     credentials::{load_meta_tokens, CredentialStore},
-    model::{registry::missing_credentials_error, ModelError, ReasoningCapabilities},
+    model::{models_dev, registry::missing_credentials_error, ModelError, ReasoningCapabilities},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
     provider_backend::http_error,
 };
@@ -74,6 +74,28 @@ pub(super) async fn fetch(
         muse_env_key,
     )
     .await
+}
+
+/// [`fetch`] minus models that models.dev prices at $0 for input and output.
+///
+/// See [`ProviderModelRefreshKind::OpenAiCompatiblePaid`]. A model without a
+/// catalog row (cold cache, offline, or newer than models.dev) stays listed.
+pub(super) async fn fetch_paid(
+    descriptor: &provider::ProviderDescriptor,
+    auth: provider::AuthMode,
+    api_base: &Url,
+    store: &dyn CredentialStore,
+) -> Result<Vec<ProviderModel>, ModelError> {
+    let mut models = fetch(descriptor, auth, api_base, store).await?;
+    models_dev::ensure_models_dev_catalog().await;
+    models.retain(|model| {
+        !models_dev::cached_model_metadata(descriptor.name, &model.model)
+            .and_then(|metadata| metadata.cost_default)
+            .is_some_and(|cost| {
+                cost.input_micros_per_m == Some(0) && cost.output_micros_per_m == Some(0)
+            })
+    });
+    Ok(models)
 }
 
 async fn fetch_with_mint(

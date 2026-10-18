@@ -17,7 +17,7 @@ Subscribe in the [OpenCode Zen console](https://opencode.ai/auth), copy the API 
 
 ## Interactive login
 
-In the TUI, run:
+In the TUI, run `/login` and choose **OpenCode**, then **Go subscription**, or skip the picker:
 
 ```text
 /login opencode-go

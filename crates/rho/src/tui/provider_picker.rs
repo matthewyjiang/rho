@@ -36,13 +36,16 @@ pub(super) fn login_group_picker() -> UiPicker {
 ///
 /// A catalog method contributes the distinctive words of its login label: the
 /// label minus its generic auth prompt, so "Gemini API key" under "API Key"
-/// yields `gemini`. A delegated runtime contributes its label, value, and
-/// aliases. Auth ids stay out, since their `api-key` and `oauth` stems would
-/// match nearly every group.
+/// yields `gemini`, and "OpenCode Zen API key" shown as "Zen pay-as-you-go"
+/// still yields `opencode zen`. A delegated runtime contributes its label,
+/// value, and aliases. Auth ids stay out, since their `api-key` and `oauth`
+/// stems would match nearly every group.
 fn login_group_search_terms(group: &catalog::LoginGroup) -> Vec<String> {
     let mut terms = Vec::new();
     for method in &group.methods {
-        let generic = method.prompt.to_lowercase();
+        let generic = catalog::generic_login_method_prompt(&method.target.auth)
+            .unwrap_or(&method.prompt)
+            .to_lowercase();
         let generic = generic.split_whitespace().collect::<Vec<_>>();
         terms.extend(
             method
@@ -306,6 +309,7 @@ mod tests {
             ("claude-code", vec!["anthropic"]),
             ("kimi", vec!["moonshot"]),
             ("muse", vec!["meta"]),
+            ("zen", vec!["opencode"]),
             ("delegation", vec!["anthropic", "google", "xai"]),
             ("api", [custom_hosts.as_slice(), &["meta"]].concat()),
             ("key", custom_hosts.clone()),
