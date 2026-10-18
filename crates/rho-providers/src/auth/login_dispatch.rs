@@ -329,6 +329,32 @@ impl ProviderAuthentication {
         }
     }
 
+    /// Records a login that finished as [`InteractiveLoginCompletion::Unconfirmed`].
+    ///
+    /// The provider sends no completion callback, so Rho trusts the user's
+    /// approval. Call this when presenting the unconfirmed instruction; it makes
+    /// the mode usable again after an earlier logout.
+    pub fn accept_unconfirmed_login(
+        store: &dyn CredentialStore,
+        provider_or_auth: &str,
+    ) -> CredentialResult<()> {
+        // Unknown ids could not have started a login, so there is nothing to record.
+        let Ok(profile) = resolve_login_profile(provider_or_auth) else {
+            return Ok(());
+        };
+        match profile.auth_kind() {
+            ProviderAuthKind::OllamaDeviceKey { .. } => credentials::sign_in_ollama_device(store),
+            ProviderAuthKind::None
+            | ProviderAuthKind::ApiKey { .. }
+            | ProviderAuthKind::CodexOAuth { .. }
+            | ProviderAuthKind::GithubCopilotDevice { .. }
+            | ProviderAuthKind::XaiOAuth { .. }
+            | ProviderAuthKind::BearerCredential { .. }
+            | ProviderAuthKind::KimiOAuth { .. }
+            | ProviderAuthKind::MetaOAuth { .. } => Ok(()),
+        }
+    }
+
     /// True when the auth profile or any mode on the provider has credentials.
     ///
     /// Auth profile ids check one mode. Provider names check any mode (doctor).

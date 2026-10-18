@@ -568,6 +568,12 @@ impl App {
         let completion = match login.completion {
             InteractiveLoginCompletion::Confirm(completion) => completion,
             InteractiveLoginCompletion::Unconfirmed { instruction } => {
+                if let Err(err) = ProviderAuthentication::accept_unconfirmed_login(
+                    self.credential_store.as_ref(),
+                    &target.auth,
+                ) {
+                    self.insert_entry(&Entry::Error(format!("could not record login: {err}")));
+                }
                 self.insert_entry(&Entry::Notice(instruction.into()));
                 self.input_ui
                     .set_composer(ComposerMode::InteractivePending(pending));

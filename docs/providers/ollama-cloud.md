@@ -63,7 +63,7 @@ Choose **Device Key**. Rho always shows the Ollama connect URL, and opens a brow
 /model ollama-cloud/<hosted-model>
 ```
 
-`/logout` for the device mode clears Rho's session marker. It does not delete `~/.ollama/id_ed25519` or disconnect the key from ollama.com.
+`/logout` for the device mode signs Rho out: Rho stops using the key and hides Ollama Cloud device models until you choose **Device Key** in `/login ollama-cloud` again. It does not delete `~/.ollama/id_ed25519`, which the Ollama CLI shares, or disconnect the key from ollama.com.
 
 ## Environment and automation
 
