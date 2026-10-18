@@ -193,12 +193,14 @@ fn add_t3_question(schema: ElicitationSchema, question: &HostQuestion) -> Elicit
         }
         Field::Select(selection) | Field::SelectOrOther(selection) => selection,
     };
-    let hint = (selection == SelectionMode::Many).then(|| {
-        format!(
+    let hint = match (selection, Separator::for_question(question)) {
+        (SelectionMode::Many, Some(separator)) => Some(format!(
             "Pick one or more; separate several with {}.",
-            Separator::for_question(question).name()
-        )
-    });
+            separator.name()
+        )),
+        (SelectionMode::Many, None) => Some("Pick one.".to_owned()),
+        _ => None,
+    };
     let description = match (description, hint) {
         (Some(text), Some(hint)) => Some(format!("{text}\n\n{hint}")),
         (text, hint) => text.or(hint),
@@ -358,13 +360,13 @@ fn answers(
 /// What a T3 Code multiple choice is typed with: a character no choice
 /// label contains, so a typed list splits back into exactly the choices
 /// the user listed. Common punctuation comes first; past it, the first free
-/// visible character from Unicode's arrow-to-symbol blocks; finite
-/// labels cannot use them all.
+/// visible character from Unicode's arrow-to-symbol blocks. Labels that use
+/// every one leave none, and the question then takes a single typed choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Separator(char);
 
 impl Separator {
-    fn for_question(question: &HostQuestion) -> Self {
+    fn for_question(question: &HostQuestion) -> Option<Self> {
         let labels = question.choices().iter().map(HostChoice::label);
         let free = |c: &char| labels.clone().all(|label| !label.contains(*c));
         [',', ';', '|', '/', '+', '•']
@@ -372,7 +374,6 @@ impl Separator {
             .chain('\u{2190}'..='\u{2BFF}')
             .find(free)
             .map(Self)
-            .expect("labels cannot contain every symbol character")
     }
 
     /// The separator as the form's hint names it.
@@ -386,21 +387,23 @@ impl Separator {
 }
 
 /// T3 Code answers with a chosen label or typed text; a multiple choice
-/// types several, split by the question's [`Separator`].
+/// types several, split by the question's [`Separator`] when it has one.
 fn t3_choices(
     question: &HostQuestion,
     selection: SelectionMode,
     values: Vec<String>,
 ) -> Vec<String> {
-    let Separator(separator) = Separator::for_question(question);
-    let pieces = values.into_iter().flat_map(|value| match selection {
-        SelectionMode::Many => value
-            .split(separator)
-            .map(|piece| piece.trim().to_owned())
-            .filter(|piece| !piece.is_empty())
-            .collect(),
-        _ => vec![value],
-    });
+    let separator = Separator::for_question(question);
+    let pieces = values
+        .into_iter()
+        .flat_map(|value| match (selection, separator) {
+            (SelectionMode::Many, Some(Separator(separator))) => value
+                .split(separator)
+                .map(|piece| piece.trim().to_owned())
+                .filter(|piece| !piece.is_empty())
+                .collect(),
+            _ => vec![value],
+        });
     dedup(pieces.map(|value| choice_value(question, value)))
 }
 

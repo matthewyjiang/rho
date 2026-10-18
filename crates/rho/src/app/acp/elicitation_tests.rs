@@ -405,7 +405,8 @@ fn t3_code_labels_resolve_to_their_own_choices() {
 }
 
 // Covers: the form's hint names the separator a typed multiple choice must
-// use, so the user can type a list that splits back unambiguously
+// use, so the user can type a list that splits back unambiguously; labels
+// that leave no separator get a single choice instead of a panic
 // Owner: ACP elicitation mapping
 #[test]
 fn t3_code_multiple_choice_hint_names_a_separator_no_label_contains() {
@@ -440,4 +441,29 @@ fn t3_code_multiple_choice_hint_names_a_separator_no_label_contains() {
             "{labels:?}"
         );
     }
+    // A label using every candidate leaves no separator: one typed choice,
+    // never a split, and no panic.
+    let every = ",;|/+•"
+        .chars()
+        .chain('\u{2190}'..='\u{2BFF}')
+        .collect::<String>();
+    assert_eq!(hint(&[every.as_str(), "B"]), json!("Pick one."));
+    let request = HostInputRequest::questionnaire(
+        "Pick",
+        vec![HostQuestion::new(
+            "q",
+            "Pick",
+            vec![
+                HostChoice::new("all", every.as_str()),
+                HostChoice::new("b", "B"),
+            ],
+            SelectionMode::Many,
+        )
+        .unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        host_answer(&request, accept(json!({"q": every})), FormDialect::T3Code),
+        Ok(HostInputResponse::new().answer("q", ["all"]))
+    );
 }
