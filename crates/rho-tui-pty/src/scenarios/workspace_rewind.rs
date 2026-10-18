@@ -104,6 +104,9 @@ fn assert_no_checkpoint_journal(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+// Shell steps print their marker in two pieces, because the transcript echoes
+// the command line: a marker spelled out in the command would match before
+// the command ran.
 const WORKSPACE_REWIND_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -137,14 +140,14 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::SubmitText(
-        "!test \"$(cat .rho-tui-fixture-output.txt)\" = 'deterministic tool output' && echo cancel-preserved",
+        "!test \"$(cat .rho-tui-fixture-output.txt)\" = 'deterministic tool output' && printf '%s-%s\\n' cancel preserved",
     ),
     Step::WaitText {
         text: "cancel-preserved",
         timeout: SETTLE,
     },
     Step::Phase("show_conflict"),
-    Step::SubmitText("!printf external > .rho-tui-fixture-output.txt && echo external-ready"),
+    Step::SubmitText("!printf external > .rho-tui-fixture-output.txt && printf '%s-%s\\n' external ready"),
     Step::WaitText {
         text: "external-ready",
         timeout: STREAM,
@@ -165,7 +168,7 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::SubmitText(
-        "!test \"$(cat .rho-tui-fixture-output.txt)\" = external && echo conflict-preserved",
+        "!test \"$(cat .rho-tui-fixture-output.txt)\" = external && printf '%s-%s\\n' conflict preserved",
     ),
     Step::WaitText {
         text: "conflict-preserved",
@@ -173,7 +176,7 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
     },
     Step::Phase("restore_expected_state"),
     Step::SubmitText(
-        "!printf 'deterministic tool output\\n' > .rho-tui-fixture-output.txt && echo reset-ready",
+        "!printf 'deterministic tool output\\n' > .rho-tui-fixture-output.txt && printf '%s-%s\\n' reset ready",
     ),
     Step::WaitText {
         text: "reset-ready",
@@ -204,7 +207,7 @@ const WORKSPACE_REWIND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::SubmitText(
-        "!test ! -e .rho-tui-fixture-output.txt && echo rewind-delete-confirmed",
+        "!test ! -e .rho-tui-fixture-output.txt && printf '%s-%s\\n' rewind delete-confirmed",
     ),
     Step::WaitText {
         text: "rewind-delete-confirmed",
