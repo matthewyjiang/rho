@@ -14,22 +14,23 @@ use futures_util::{
     FutureExt,
 };
 
-use super::{agent::RhoAcpAgent, auth::CredentialFailure, host_updates::NegotiatedUpdates};
+use super::{agent::RhoAcpAgent, auth, host_updates::NegotiatedUpdates};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
 };
 
+type StartupRun = BoxFuture<'static, Result<Arc<RhoAcpAgent>, AcpError>>;
 /// One run of deferred startup. Shared owns the suspended initializer even if
 /// one waiting request is cancelled.
-type Startup = Shared<BoxFuture<'static, Result<Arc<RhoAcpAgent>, AcpError>>>;
+type Startup = Shared<StartupRun>;
 
 pub(super) struct LazyAgent {
     // Startup failures remain stable until the host reconnects, except
     // `auth_required`: the host's sign-in runs a terminal login and then asks
     // again on this connection, so that failure starts a fresh run.
     pending: std::sync::Mutex<Startup>,
-    start: Box<dyn Fn() -> Startup + Send + Sync>,
+    start: Box<dyn Fn() -> StartupRun + Send + Sync>,
     // Store-only deletes must finish before ready hands out the first agent,
     // so a concurrently finishing startup cannot load a session being deleted.
     publication: tokio::sync::Mutex<()>,
@@ -54,23 +55,19 @@ impl LazyAgent {
                 bootstrap::prepare_acp(cli, negotiated.get())
                     .await
                     .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
-                    .map_err(|error| match CredentialFailure::find(&error) {
-                        Some(failure) => failure.into_acp(),
-                        None => AcpError::internal_error().data(format!("{error:#}")),
-                    })
+                    .map_err(|error| auth::request_error(&error, || format!("{error:#}")))
             }
             .boxed()
-            .shared()
         };
         Ok(Self::starting_with(start, host_updates))
     }
 
     fn starting_with(
-        start: impl Fn() -> Startup + Send + Sync + 'static,
+        start: impl Fn() -> StartupRun + Send + Sync + 'static,
         host_updates: Arc<NegotiatedUpdates>,
     ) -> Self {
         Self {
-            pending: std::sync::Mutex::new(start()),
+            pending: std::sync::Mutex::new(start().shared()),
             start: Box::new(start),
             publication: tokio::sync::Mutex::new(()),
             closed: AtomicBool::new(false),
@@ -88,16 +85,20 @@ impl LazyAgent {
             return Err(AcpError::invalid_request().data("ACP connection is closed"));
         }
         let startup = self.current();
-        let agent = startup.clone().await.inspect_err(|error| {
-            if error.code == ErrorCode::AuthRequired {
-                // Concurrent waiters saw the same failure; only the first
-                // replaces it, so one sign-in starts one new run.
-                let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-                if pending.ptr_eq(&startup) {
-                    *pending = (self.start)();
+        let agent = match startup.clone().await {
+            Ok(agent) => agent,
+            Err(error) => {
+                if error.code == ErrorCode::AuthRequired {
+                    // Concurrent waiters saw the same failure; only the first
+                    // replaces it, so one sign-in starts one new run.
+                    let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+                    if pending.ptr_eq(&startup) {
+                        *pending = (self.start)().shared();
+                    }
                 }
+                return Err(error);
             }
-        })?;
+        };
         let _publication = self.publication.lock().await;
         // Close must not start a cold initializer, but an initializer already
         // in flight must not publish a live session after the connection closes.

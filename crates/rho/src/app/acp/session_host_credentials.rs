@@ -38,10 +38,9 @@ impl SessionHost {
         let provider =
             build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                 .await?;
-        // Same model and auth, so the history and prompt need no handoff.
-        self.built.session.replace_provider(Arc::clone(&provider))?;
-        self.built.provider = provider;
-        self.credentials = SessionCredentials::Current;
+        // The model switch path also rebinds the compactor, which holds its
+        // own provider. The model is unchanged, so no switch notice is saved.
+        self.switch_provider(provider, &config)?;
         Ok(())
     }
 

@@ -22,7 +22,6 @@ async fn disconnect_during_startup_rejects_the_waiting_request() {
                 Ok(Arc::new(RhoAcpAgent::new(startup)))
             }
             .boxed()
-            .shared()
         },
         Default::default(),
     ));
@@ -77,7 +76,7 @@ async fn only_auth_required_startup_failures_run_startup_again() {
                             &cwd,
                         )))),
                     };
-                    async move { result }.boxed().shared()
+                    async move { result }.boxed()
                 }
             },
             Default::default(),

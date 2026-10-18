@@ -85,9 +85,12 @@ impl SessionHost {
             joined = &mut task => joined,
         };
         let outcome = match joined {
-            Ok(outcome) => {
-                outcome.map_err(|error| anyhow::anyhow!("could not compact context: {error}"))?
-            }
+            // Keep the typed error in the chain, so a refused credential
+            // still asks the host to sign in.
+            Ok(outcome) => outcome.map_err(|error| {
+                let message = format!("could not compact context: {error}");
+                anyhow::Error::new(error).context(message)
+            })?,
             Err(error) if error.is_cancelled() => return Ok(None),
             Err(error) => return Err(anyhow::anyhow!("could not compact context: {error}")),
         };

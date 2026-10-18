@@ -115,7 +115,7 @@ pub(crate) async fn refresh_codex_token_at(
     previous: &CodexTokens,
     token_url: &str,
 ) -> Result<CodexTokens, ModelError> {
-    let response: RefreshResponse = client
+    let response = client
         .post(token_url)
         .form(&[
             ("client_id", "app_EMoamEEZ73f0CkXaXp7hrann"),
@@ -123,10 +123,9 @@ pub(crate) async fn refresh_codex_token_at(
             ("refresh_token", refresh_token),
         ])
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    crate::auth::reject_refused_refresh(response.status(), "codex")?;
+    let response: RefreshResponse = response.error_for_status()?.json().await?;
 
     let access_token = response.access_token.ok_or_else(|| {
         ModelError::InvalidResponse("refresh response missing access_token".into())
@@ -148,3 +147,7 @@ pub(crate) async fn refresh_codex_token_at(
 
     Ok(refreshed)
 }
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod tests;

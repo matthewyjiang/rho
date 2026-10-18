@@ -443,9 +443,10 @@ impl SessionHost {
         Ok(self.config_options(process_config))
     }
 
-    /// Installs an already-resolved provider while the ACP host slot is held.
-    /// Kept separate from credential discovery so the session transaction can
-    /// be exercised with a scripted provider.
+    /// Installs an already-resolved provider while the ACP host slot is held,
+    /// for a model switch or renewed credentials. Kept separate from credential
+    /// discovery so the session transaction can be exercised with a scripted
+    /// provider.
     fn switch_provider(
         &mut self,
         provider: Arc<dyn rho_sdk::provider::ModelProvider>,

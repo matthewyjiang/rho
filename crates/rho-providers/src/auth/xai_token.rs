@@ -168,6 +168,7 @@ pub async fn refresh_xai_tokens(
         ])
         .send()
         .await?;
+    crate::auth::reject_refused_refresh(response.status(), "xai-oauth")?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();

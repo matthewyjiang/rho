@@ -2,8 +2,9 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 // Covers: which typed failures ask the host to sign in, wherever they sit in
-// the cause chain, and that the reply carries no credential or provider
-// diagnostic. Store failures and other provider errors stay internal.
+// the cause chain, before (startup) or after (prompt) the provider layer
+// converts them for the SDK, and that the reply carries no credential or
+// provider diagnostic. Other provider errors stay internal.
 // Owner: ACP auth classification; hosts render only code and message.
 #[test]
 fn credential_failures_map_to_auth_required_without_diagnostics() {
@@ -19,6 +20,11 @@ fn credential_failures_map_to_auth_required_without_diagnostics() {
                 .with_diagnostic(SECRET),
         )
     };
+    let converted = |error| {
+        rho_sdk::Error::Provider(
+            rho_providers::providers::sdk_contract::provider_error_from_model_error(error),
+        )
+    };
     let missing = "missing OpenAI API key; run /login openai";
     let cases: Vec<(anyhow::Error, Option<CredentialFailure>)> = vec![
         (
@@ -26,22 +32,35 @@ fn credential_failures_map_to_auth_required_without_diagnostics() {
                 .context("could not start session"),
             Some(CredentialFailure::Missing(missing)),
         ),
-        (refused(401).into(), Some(CredentialFailure::Rejected)),
-        (refused(403).into(), Some(CredentialFailure::Rejected)),
+        (refused(401).into(), Some(CredentialFailure::Refused)),
+        (refused(403).into(), Some(CredentialFailure::Refused)),
         (refused(500).into(), None),
         (
             provider(rho_sdk::ProviderErrorKind::Authentication).into(),
-            Some(CredentialFailure::Rejected),
+            Some(CredentialFailure::Refused),
         ),
         (
             rho_sdk::Error::Authentication {
                 message: SECRET.into(),
             }
             .into(),
-            Some(CredentialFailure::Rejected),
+            Some(CredentialFailure::Refused),
         ),
         (provider(rho_sdk::ProviderErrorKind::RateLimit).into(), None),
-        (ModelError::credentials("keyring locked").into(), None),
+        (
+            ModelError::credentials("keyring locked").into(),
+            Some(CredentialFailure::Unreadable),
+        ),
+        // Prompt-time failures arrive already converted.
+        (
+            converted(ModelError::credentials("keyring locked")).into(),
+            Some(CredentialFailure::Refused),
+        ),
+        (
+            converted(refused(401)).into(),
+            Some(CredentialFailure::Refused),
+        ),
+        (converted(refused(429)).into(), None),
         // Wording alone never classifies: only typed causes count.
         (anyhow::anyhow!("missing OpenAI API key; HTTP 401"), None),
     ];

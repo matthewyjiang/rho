@@ -39,21 +39,21 @@ pub(super) fn methods(capabilities: &ClientCapabilities) -> Vec<AuthMethod> {
         .collect()
 }
 
-/// Shown when the provider refused credentials it was given. Provider
-/// messages and diagnostics may quote the request, so none reach the host.
-const REJECTED_MESSAGE: &str = "the provider rejected the saved credentials; sign in again";
-
-/// A failure that signing in can fix: the selected auth profile has no
-/// credentials, or the provider refused the ones it had.
+/// A failure that signing in can fix. This follows the provider layer, which
+/// files each of these under `ProviderErrorKind::Authentication` when it
+/// converts them for the SDK, so startup and prompt failures agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CredentialFailure {
     /// Nothing is saved or set in the environment for the selected auth. The
     /// message comes from the provider descriptor table, never from a
     /// credential, and names the provider and how to sign in.
     Missing(&'static str),
+    /// The credential store failed to read or refresh the saved credentials;
+    /// signing in again saves a fresh copy.
+    Unreadable,
     /// The provider answered 401/403 or reported an authentication failure:
     /// an expired, revoked, or wrong token or key.
-    Rejected,
+    Refused,
 }
 
 impl CredentialFailure {
@@ -67,13 +67,11 @@ impl CredentialFailure {
         if let Some(error) = cause.downcast_ref::<ModelError>() {
             return match error {
                 ModelError::MissingCredentials(message) => Some(Self::Missing(message)),
+                ModelError::Credentials(_) => Some(Self::Unreadable),
                 ModelError::HttpStatus { status, .. } if matches!(status.as_u16(), 401 | 403) => {
-                    Some(Self::Rejected)
+                    Some(Self::Refused)
                 }
-                // A credential store that cannot be read is broken, not
-                // signed out; a fresh login would hit the same store.
-                ModelError::Credentials(_)
-                | ModelError::Request(_)
+                ModelError::Request(_)
                 | ModelError::HttpStatus { .. }
                 | ModelError::Io(_)
                 | ModelError::Interrupted
@@ -86,27 +84,42 @@ impl CredentialFailure {
                 | ModelError::UnsupportedProvider(_) => None,
             };
         }
+        // The SDK error no longer says which credential failure it was.
         // `rho_sdk::Error` is non-exhaustive; other variants are not
         // credential failures.
         match cause.downcast_ref::<rho_sdk::Error>()? {
-            rho_sdk::Error::Authentication { .. } => Some(Self::Rejected),
+            rho_sdk::Error::Authentication { .. } => Some(Self::Refused),
             rho_sdk::Error::Provider(error)
                 if error.kind() == rho_sdk::ProviderErrorKind::Authentication =>
             {
-                Some(Self::Rejected)
+                Some(Self::Refused)
             }
             _ => None,
         }
     }
 
-    /// ACP `auth_required` with a Rho-owned message and no data, so neither
-    /// a credential nor a provider auth diagnostic reaches the host.
-    pub(super) fn into_acp(self) -> AcpError {
+    /// ACP `auth_required` with a Rho-owned message and no data. Provider
+    /// messages and diagnostics may quote the request, so none reach the host.
+    fn into_acp(self) -> AcpError {
         let message = match self {
             Self::Missing(message) => message,
-            Self::Rejected => REJECTED_MESSAGE,
+            Self::Unreadable => "could not read the stored credentials; sign in again",
+            // A 403 can also mean the account lacks access, which signing in
+            // cannot fix, and the SDK no longer tells it apart from a 401.
+            Self::Refused => {
+                "the provider rejected the credentials; sign in again or check the account's access"
+            }
         };
         AcpError::new(i32::from(ErrorCode::AuthRequired), message)
+    }
+}
+
+/// Maps a failed session request for the host: `auth_required` when signing
+/// in can fix it, otherwise `internal_error` carrying `detail`.
+pub(super) fn request_error(error: &anyhow::Error, detail: impl FnOnce() -> String) -> AcpError {
+    match CredentialFailure::find(error) {
+        Some(failure) => failure.into_acp(),
+        None => AcpError::internal_error().data(detail()),
     }
 }
 
