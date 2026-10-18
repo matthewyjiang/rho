@@ -1,5 +1,6 @@
 use agent_client_protocol::schema::v1::{
-    CompactionStatus, ContentBlock, SessionId, SessionUpdate, StopReason, ToolCallStatus, ToolKind,
+    CompactionStatus, CompactionUpdate, ContentBlock, SessionId, SessionUpdate, StopReason,
+    ToolCallStatus, ToolKind,
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -9,7 +10,9 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{map_sdk_stop_reason, EventMapper, HostUpdates, PROVIDER_STREAM_RESET_NOTICE};
+use super::{
+    map_sdk_stop_reason, EventMapper, HostUpdates, RunEnding, PROVIDER_STREAM_RESET_NOTICE,
+};
 
 fn session_id() -> SessionId {
     SessionId::new("session-1")
@@ -220,7 +223,7 @@ fn ignored_events_emit_nothing() {
 }
 
 // Covers: a compaction card still open when the run ends must close with
-// the run's ending, never stay in progress on the host
+// the run's ending and error, never stay in progress on the host
 // Owner: acp event mapper
 #[test]
 fn compaction_open_at_run_end_closes_with_the_ending() {
@@ -228,13 +231,14 @@ fn compaction_open_at_run_end_closes_with_the_ending() {
         compaction: true,
         notices: false,
     };
-    for (label, ending, status) in [
+    for (label, ending, status, error) in [
         (
             "cancelled",
             Some(RunEvent::Cancelled {
                 revision: Revision::INITIAL,
             }),
             CompactionStatus::Cancelled,
+            None,
         ),
         (
             "failed",
@@ -244,8 +248,14 @@ fn compaction_open_at_run_end_closes_with_the_ending() {
                 revision: Revision::INITIAL,
             }),
             CompactionStatus::Failed,
+            Some("boom"),
         ),
-        ("stream ended", None, CompactionStatus::Failed),
+        (
+            "stream ended",
+            None,
+            CompactionStatus::Failed,
+            Some("compaction ended without a result"),
+        ),
     ] {
         let mut mapper = EventMapper::new(compaction_host);
         let SessionUpdate::CompactionUpdate(opened) = only_update(
@@ -259,18 +269,23 @@ fn compaction_open_at_run_end_closes_with_the_ending() {
         };
         let closing = match ending {
             Some(event) => mapper.map_event(&session_id(), &event),
-            None => mapper.close_open_calls(&session_id()),
+            None => mapper.close_unfinished(&session_id(), RunEnding::WithoutResult),
         };
+        let mut expected = CompactionUpdate::new(opened.compaction_id, status);
+        if let Some(error) = error {
+            expected = expected.error(error.to_owned());
+        }
         let closed = closing
             .into_iter()
-            .map(|notification| match notification.update {
-                SessionUpdate::CompactionUpdate(update) => (update.compaction_id, update.status),
-                other => panic!("{label}: expected a compaction card, got {other:?}"),
-            })
+            .map(|notification| notification.update)
             .collect::<Vec<_>>();
-        assert_eq!(closed, vec![(opened.compaction_id, status)], "{label}");
         assert_eq!(
-            mapper.close_open_calls(&session_id()),
+            closed,
+            vec![SessionUpdate::CompactionUpdate(expected)],
+            "{label}"
+        );
+        assert_eq!(
+            mapper.close_unfinished(&session_id(), RunEnding::WithoutResult),
             Vec::new(),
             "{label}: closes once"
         );

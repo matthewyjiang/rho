@@ -55,6 +55,15 @@ enum CallState {
     Finished,
 }
 
+/// How a run ended, for closing what it left open.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum RunEnding<'a> {
+    Cancelled,
+    Failed(&'a str),
+    /// It completed, or its event stream ended without a terminal event.
+    WithoutResult,
+}
+
 impl EventMapper {
     pub(super) fn new(updates: HostUpdates) -> Self {
         Self {
@@ -129,19 +138,13 @@ impl EventMapper {
                 Some(card.completed(outcome))
             }
             RunEvent::Cancelled { .. } => {
-                self.proposed.clear();
-                let cancelled = self
-                    .compaction
-                    .take()
-                    .map(|card| notify(session_id, card.cancelled()));
-                return cancelled
-                    .into_iter()
-                    .chain(self.close_open_calls(session_id))
-                    .collect();
+                return self.close_unfinished(session_id, RunEnding::Cancelled);
             }
-            RunEvent::Completed { .. } | RunEvent::Failed { .. } => {
-                self.proposed.clear();
-                return self.close_open_calls(session_id);
+            RunEvent::Failed { message, .. } => {
+                return self.close_unfinished(session_id, RunEnding::Failed(message));
+            }
+            RunEvent::Completed { .. } => {
+                return self.close_unfinished(session_id, RunEnding::WithoutResult);
             }
             RunEvent::Started { .. }
             | RunEvent::StepStarted { .. }
@@ -169,15 +172,24 @@ impl EventMapper {
             .collect()
     }
 
-    /// Final `failed` updates for the compaction and calls the host saw start
-    /// but never saw finish. The run's terminal event closes them; the pump
-    /// calls this again when the event stream ends, for a run that ended
-    /// without one.
-    pub(super) fn close_open_calls(&mut self, session_id: &SessionId) -> Vec<SessionNotification> {
-        let compaction = self
-            .compaction
-            .take()
-            .map(|card| notify(session_id, card.failed(compaction_card::UNFINISHED)));
+    /// Final updates for the compaction and calls the host saw start but
+    /// never saw finish: calls close `failed`, the compaction with `ending`.
+    /// The run's terminal event closes them; the pump calls this again when
+    /// the event stream ends, for a run that ended without one.
+    pub(super) fn close_unfinished(
+        &mut self,
+        session_id: &SessionId,
+        ending: RunEnding<'_>,
+    ) -> Vec<SessionNotification> {
+        self.proposed.clear();
+        let compaction = self.compaction.take().map(|card| {
+            let update = match ending {
+                RunEnding::Cancelled => card.cancelled(),
+                RunEnding::Failed(message) => card.failed(message),
+                RunEnding::WithoutResult => card.failed(compaction_card::UNFINISHED),
+            };
+            notify(session_id, update)
+        });
         let calls = self
             .announced
             .iter_mut()

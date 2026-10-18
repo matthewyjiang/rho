@@ -2,8 +2,9 @@
 //!
 //! ACP lets an agent send `compaction_update` and `notice` only to clients
 //! that advertise `clientCapabilities.session.compaction` and `.notices`.
-//! Other hosts keep the baseline updates: compaction reported as an agent
-//! message, notices as agent messages.
+//! Other hosts keep the baseline updates: `/compact` replies with an agent
+//! message, automatic compaction shows only in `usage_update`, and notices
+//! are agent messages.
 
 use std::sync::OnceLock;
 

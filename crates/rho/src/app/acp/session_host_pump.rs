@@ -9,7 +9,12 @@ use rho_sdk::{ApprovalRequestReceiver, CancellationToken, PendingApproval, RunEv
 
 use super::{persist::TurnCheckpoint, send_notification};
 use crate::app::{
-    acp::{events::EventMapper, permission, signals::SessionSignals, AcpClientPort},
+    acp::{
+        events::{EventMapper, RunEnding},
+        permission,
+        signals::SessionSignals,
+        AcpClientPort,
+    },
     headless_delegation::OfferedDisplays,
 };
 
@@ -126,7 +131,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
 
             event = events.next() => {
                 let Some(event) = event else {
-                    for notification in mapper.close_open_calls(session_id) {
+                    for notification in mapper.close_unfinished(session_id, RunEnding::WithoutResult) {
                         send_notification(client, notification).await?;
                     }
                     while inflight.next().await.is_some() {}

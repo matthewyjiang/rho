@@ -29,7 +29,8 @@ impl SessionHost {
         let report = match (card, &result) {
             (Some(card), Ok(Some(outcome))) => Some(card.completed(outcome)),
             (Some(card), Ok(None)) => Some(card.cancelled()),
-            (Some(card), Err(error)) => Some(card.failed(format!("{error:#}"))),
+            // Same text as the prompt's error reply.
+            (Some(card), Err(error)) => Some(card.failed(error.to_string())),
             (None, Ok(Some(outcome))) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
                 ContentBlock::from(outcome_summary(outcome)),
             ))),
@@ -37,7 +38,16 @@ impl SessionHost {
             (None, Ok(None) | Err(_)) => None,
         };
         if let Some(report) = report {
-            self.send_update(client, report).await?;
+            let sent = self.send_update(client, report).await;
+            match (&result, sent) {
+                (Ok(Some(_)), sent) => sent?,
+                // The prompt's error reply or cancelled stop is the answer
+                // that matters; a lost closing card must not replace it.
+                (Ok(None) | Err(_), Err(error)) => {
+                    tracing::debug!(%error, "could not send closing compaction card");
+                }
+                (Ok(None) | Err(_), Ok(())) => {}
+            }
         }
         let stop = match result? {
             Some(_) => StopReason::EndTurn,
