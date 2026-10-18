@@ -345,13 +345,16 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         .ok_or_else(|| missing_credential_error(missing_message))
 }
 
+/// `ollama signin` cannot undo a Rho logout, so this message names only the Rho login.
+const OLLAMA_DEVICE_SIGNED_OUT_MESSAGE: &str = "signed out of the Ollama Cloud device key; run /login ollama-cloud in the TUI and choose Device Key";
+
 /// Loads the `~/.ollama` device key unless Rho logged it out.
 pub(crate) fn load_ollama_device_key(
     store: &dyn CredentialStore,
     missing_message: &'static str,
 ) -> Result<OllamaDeviceKey, ModelError> {
-    if !crate::credentials::ollama_device_signed_in(store)? {
-        return Err(missing_credential_error(missing_message));
+    if crate::credentials::ollama_device_signed_out(store)? {
+        return Err(missing_credential_error(OLLAMA_DEVICE_SIGNED_OUT_MESSAGE));
     }
     load_ollama_device_key_from(OllamaDeviceKey::load_default, missing_message)
 }

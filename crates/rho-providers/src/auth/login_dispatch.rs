@@ -331,9 +331,15 @@ impl ProviderAuthentication {
 
     /// Records a login that finished as [`InteractiveLoginCompletion::Unconfirmed`].
     ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-providers): carry an acceptance handle on InteractiveLoginCompletion::Unconfirmed (mirroring CompletedAuthentication::save) and remove accept_unconfirmed_login
+    ///
     /// The provider sends no completion callback, so Rho trusts the user's
-    /// approval. Call this when presenting the unconfirmed instruction; it makes
-    /// the mode usable again after an earlier logout.
+    /// approval. Hosts must call this when they present the unconfirmed
+    /// instruction; without it, a mode the user logged out of (the Ollama Cloud
+    /// device key) stays signed out. The mode is usable as soon as this returns,
+    /// even if the user then dismisses the prompt without approving.
     pub fn accept_unconfirmed_login(
         store: &dyn CredentialStore,
         provider_or_auth: &str,

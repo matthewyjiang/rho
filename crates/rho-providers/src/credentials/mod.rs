@@ -316,21 +316,30 @@ fn delete_auth_kind_credentials(
     store.delete_secret(account)
 }
 
+/// True when Rho logged out of the `~/.ollama` device key.
+///
+/// An unavailable store cannot hold a logout, so users without a working
+/// keyring keep reusing their Ollama sign-in as before the flag existed.
+pub(crate) fn ollama_device_signed_out(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    match store.get_secret(OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT) {
+        Ok(flag) => Ok(flag.is_some()),
+        Err(CredentialError::StoreUnavailable(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 /// True when a usable `~/.ollama` device key exists and Rho has not logged it out.
-pub(crate) fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    Ok(store
-        .get_secret(OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT)?
-        .is_none()
+fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    Ok(!ollama_device_signed_out(store)?
         && crate::auth::ollama_device::ollama_device_credentials_available())
 }
 
-/// Returns false when Rho was not signed in to the device key.
+/// Always records the logout, so a key that appears later stays unused.
+/// Returns whether Rho was signed in to the device key.
 fn sign_out_ollama_device(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    if !ollama_device_signed_in(store)? {
-        return Ok(false);
-    }
+    let was_signed_in = ollama_device_signed_in(store)?;
     store.set_secret(OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT, "1")?;
-    Ok(true)
+    Ok(was_signed_in)
 }
 
 pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialResult<()> {
