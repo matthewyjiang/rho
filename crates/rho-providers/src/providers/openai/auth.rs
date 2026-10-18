@@ -124,7 +124,7 @@ pub(crate) async fn refresh_codex_token_at(
         ])
         .send()
         .await?;
-    crate::auth::reject_refused_refresh(response.status(), "codex")?;
+    let response = crate::auth::reject_refused_refresh(response, "codex").await?;
     let response: RefreshResponse = response.error_for_status()?.json().await?;
 
     let access_token = response.access_token.ok_or_else(|| {
