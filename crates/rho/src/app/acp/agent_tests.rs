@@ -84,7 +84,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
         diagnostics: RuntimeDiagnostics::new(&config),
         herdr: HerdrReporter::default(),
         added_dirs: Default::default(),
-        host_updates: Default::default(),
+        host_features: Default::default(),
     }))
 }
 

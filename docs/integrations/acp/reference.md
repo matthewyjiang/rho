@@ -28,6 +28,7 @@ Rho reads these host capabilities:
 | `clientCapabilities.auth.terminal` | Terminal sign-in methods. See [Authentication](#authentication). |
 | `clientCapabilities.session.compaction` | `compaction_update` cards. |
 | `clientCapabilities.session.notices` | Non-conversation information as `notice`. |
+| `clientCapabilities.session.configOptions.boolean` | `fast_mode` as a boolean switch. See [Fast mode](#fast-mode). |
 | `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation. See [Questions](#questions). |
 | `clientInfo.name` `t3-code` | T3 Code's [question form shape](#t3-code-forms). |
 
@@ -120,14 +121,14 @@ A title that lands after the session was closed, or replaced by a `session/load`
 
 ## Config options
 
-`session/new` and `session/load` advertise these `configOptions` selects. Hosts change any of them with `session/set_config_option`.
+`session/new` and `session/load` advertise these `configOptions`, all selects except `fast_mode` on hosts that support boolean options. Hosts change any of them with `session/set_config_option`.
 
 | ID | Category | Values | Present when |
 | --- | --- | --- | --- |
 | `mode` | `mode` | `bypass`, `auto`, `allow_edits`, `plan`, `supervised` | Always, as the first entry |
 | `model` | `model` | `provider/model` | Always |
 | `thought_level` | `thought_level` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, filtered to the model | The model has configurable reasoning |
-| `fast_mode` | `model_config` | `on` (Fast), `off` (Normal) | The model supports fast mode |
+| `fast_mode` | `model_config` | `on` (Fast), `off` (Normal); `true`/`false` on boolean hosts | The model supports fast mode |
 
 Every change applies to later prompts in that ACP session and keeps the conversation. None rewrites `config.toml`. `session/load` starts from the process defaults from config and flags, not values chosen earlier in the session; see [Load and replay](#load-and-replay) for `/agent:` sessions.
 
@@ -153,7 +154,9 @@ Value IDs are Rho reasoning IDs, filtered to what the current model advertises. 
 
 ### Fast mode
 
-`fast_mode` is the ACP counterpart of the TUI's `/fast`: `on` sends later turns on the priority service tier, and `off` uses the standard tier. It is a select rather than a boolean because ACP only allows boolean options for clients that advertise them. Selecting `on` for a model without fast mode is rejected. Typed `/fast` is not an ACP command.
+`fast_mode` is the ACP counterpart of the TUI's `/fast`: on sends later turns on the priority service tier, and off uses the standard tier. Turning it on for a model without fast mode is rejected. Typed `/fast` is not an ACP command.
+
+Its shape depends on the host, because ACP only allows boolean options for clients that advertise them. A host that advertises `clientCapabilities.session.configOptions.boolean` at `initialize`, such as Zed, gets a `boolean` option and sets it with `"type": "boolean"` and a boolean `value`. Other hosts, such as T3 Code, get a select with values `on` (named Fast) and `off` (named Normal). A value in the other shape is rejected with invalid params.
 
 A model switch keeps the setting, as in the TUI. Switching to a model without fast mode drops `fast_mode` from the list and the tier has no effect there; switching back advertises it again with the same value. `session/load` starts from `fast_mode` in `config.toml`.
 

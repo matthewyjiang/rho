@@ -26,10 +26,10 @@ use super::{
     advertised_config_options,
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
     pump_sources, ApprovalSource, CurrentModel, CurrentSettings, EventMapper, EventSource,
-    PromptGate,
+    PromptGate, Toggles,
 };
 use crate::{
-    app::acp::{AcpClientPort, HostUpdates},
+    app::acp::{AcpClientPort, HostFeatures},
     config::Config,
     permission::PermissionMode,
 };
@@ -266,7 +266,7 @@ async fn permission_request_does_not_block_event_drain() {
     let pump = tokio::spawn(async move {
         let session_id = SessionId::new("session-1");
         let cancel = CancellationToken::new();
-        let mut mapper = EventMapper::new(HostUpdates::default());
+        let mut mapper = EventMapper::new(HostFeatures::default());
         let placeholders = AtomicU64::new(0);
         pump_sources(super::PumpSources {
             session_id: &session_id,
@@ -279,7 +279,7 @@ async fn permission_request_does_not_block_event_drain() {
             approvals: &mut ApprovalSource::Channel(&mut approval_rx),
             approvals_open: true,
             plan_approvals: None,
-            host_updates: HostUpdates::default(),
+            host_features: HostFeatures::default(),
             displays: None,
         })
         .await
@@ -359,7 +359,7 @@ fn advertised_options_merge_model_with_per_model_options() {
             reasoning: ReasoningLevel::High,
             service_tier: Some(rho_sdk::model::ServiceTier::Priority),
         };
-        let options = advertised_config_options(&current, &config, settings);
+        let options = advertised_config_options(&current, &config, settings, Toggles::Select);
         let ids = options
             .iter()
             .map(|option| option.id.0.as_ref())

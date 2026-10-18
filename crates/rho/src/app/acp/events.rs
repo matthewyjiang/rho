@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use super::{
     compaction_card::{self, CompactionCard},
-    HostUpdates,
+    HostFeatures,
 };
 use crate::{
     display_transcript::{DisplayRow, DisplayTranscript},
@@ -42,7 +42,7 @@ mod replay;
 /// Hosts that advertise compaction see each compaction the run performs as
 /// a card; one still open when the run ends is closed the same way.
 pub(super) struct EventMapper {
-    updates: HostUpdates,
+    features: HostFeatures,
     proposed: HashMap<String, rho_sdk::model::ToolCall>,
     announced: BTreeMap<String, CallState>,
     compaction: Option<CompactionCard>,
@@ -65,9 +65,9 @@ pub(super) enum RunEnding<'a> {
 }
 
 impl EventMapper {
-    pub(super) fn new(updates: HostUpdates) -> Self {
+    pub(super) fn new(features: HostFeatures) -> Self {
         Self {
-            updates,
+            features,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
             compaction: None,
@@ -126,13 +126,13 @@ impl EventMapper {
                     PROVIDER_STREAM_RESET_NOTICE,
                 )))
             }
-            RunEvent::CompactionStarted { .. } if self.updates.compaction => {
+            RunEvent::CompactionStarted { .. } if self.features.compaction => {
                 let card = CompactionCard::new();
                 let update = card.in_progress();
                 self.compaction = Some(card);
                 Some(update)
             }
-            RunEvent::CompactionCompleted { .. } if self.updates.compaction => {
+            RunEvent::CompactionCompleted { .. } if self.features.compaction => {
                 // A first update with a terminal status still creates the card.
                 let card = self.compaction.take().unwrap_or_else(CompactionCard::new);
                 Some(card.completed())
@@ -266,10 +266,10 @@ impl EventMapper {
     /// `notice` when the host shows them, else an agent message.
     pub(super) fn info_notice(
         session_id: &SessionId,
-        updates: HostUpdates,
+        features: HostFeatures,
         text: &str,
     ) -> SessionNotification {
-        if updates.notices {
+        if features.notices {
             notify(
                 session_id,
                 SessionUpdate::Notice(Notice::new(NoticeSeverity::Info, text)),

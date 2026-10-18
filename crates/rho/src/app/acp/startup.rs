@@ -14,7 +14,7 @@ use futures_util::{
     FutureExt,
 };
 
-use super::{agent::RhoAcpAgent, auth, host_updates::NegotiatedUpdates};
+use super::{agent::RhoAcpAgent, auth, host_features::NegotiatedFeatures};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
@@ -38,7 +38,7 @@ pub(super) struct LazyAgent {
     // so a concurrently finishing startup cannot load a session being deleted.
     publication: tokio::sync::Mutex<()>,
     closed: AtomicBool,
-    host_updates: Arc<NegotiatedUpdates>,
+    host_features: Arc<NegotiatedFeatures>,
 }
 
 impl LazyAgent {
@@ -49,8 +49,8 @@ impl LazyAgent {
             .load()?
             .providers
             .activate()?;
-        let host_updates = Arc::new(NegotiatedUpdates::default());
-        let negotiated = Arc::clone(&host_updates);
+        let host_features = Arc::new(NegotiatedFeatures::default());
+        let negotiated = Arc::clone(&host_features);
         // Polled first by a session request, which follows `initialize`.
         let start = move || {
             let (cli, negotiated) = (cli.clone(), Arc::clone(&negotiated));
@@ -64,25 +64,25 @@ impl LazyAgent {
             }
             .boxed()
         };
-        Ok(Self::starting_with(start, host_updates))
+        Ok(Self::starting_with(start, host_features))
     }
 
     fn starting_with(
         start: impl Fn() -> StartupRun + Send + Sync + 'static,
-        host_updates: Arc<NegotiatedUpdates>,
+        host_features: Arc<NegotiatedFeatures>,
     ) -> Self {
         Self {
             pending: std::sync::Mutex::new(start().shared()),
             start: Box::new(start),
             publication: tokio::sync::Mutex::new(()),
             closed: AtomicBool::new(false),
-            host_updates,
+            host_features,
         }
     }
 
     /// Records the optional features the host advertised at `initialize`.
     pub(super) fn record_client(&self, request: &InitializeRequest) {
-        self.host_updates.record(request);
+        self.host_features.record(request);
     }
 
     pub(super) async fn ready(&self) -> Result<Arc<RhoAcpAgent>, AcpError> {

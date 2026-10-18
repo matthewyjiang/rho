@@ -29,7 +29,7 @@ use rho_sdk::{
 };
 
 use super::{mode::SessionPermission, PromptGate, SessionHost};
-use crate::app::acp::host_updates::{FormDialect, Forms};
+use crate::app::acp::host_features::{FormDialect, Forms};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
     config::Config,
@@ -258,7 +258,7 @@ async fn host(
         diagnostics: RuntimeDiagnostics::new(&config),
     };
     let mut startup = AcpStartup::for_tests(config.clone(), home);
-    startup.host_updates.forms = forms;
+    startup.host_features.forms = forms;
     // Switching into `mode` builds the runtime with the tools, the way
     // `session/set_mode` does, so the host starts in another mode.
     let initial = if mode == PermissionMode::Plan {

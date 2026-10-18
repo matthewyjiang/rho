@@ -24,7 +24,9 @@ use super::{
     commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
     events::{EventMapper, RunEnding},
-    fast_mode, permission,
+    fast_mode,
+    host_features::Toggles,
+    permission,
     signals::SessionSignals,
     t3_wake::T3Wake,
     thought_level, AcpClientPort, AcpHost, AcpStartup,
@@ -124,8 +126,8 @@ pub(super) struct SessionHost {
     /// T3 Code's wake watcher (`--t3code`): background work that outlives a
     /// prompt wakes the idle thread instead of holding the prompt open.
     t3_wake: Option<T3Wake>,
-    /// Optional session updates the host advertised at `initialize`.
-    host_updates: super::HostUpdates,
+    /// Optional features the host advertised at `initialize`.
+    host_features: super::HostFeatures,
 }
 
 /// Carries cancellation for the session's current prompt. The agent already
@@ -380,7 +382,8 @@ impl SessionHost {
                 )?;
             }
             fast_mode::FAST_MODE_ID => {
-                let enabled = fast_mode::parse_fast_mode_request(&request)?;
+                let enabled =
+                    fast_mode::parse_fast_mode_request(&request, self.host_features.toggles)?;
                 fast_mode::apply_fast_mode(&self.built.session, &self.current_model(), enabled)?;
             }
             _ => {
@@ -425,6 +428,7 @@ impl SessionHost {
                 reasoning: self.built.session.reasoning_level(),
                 service_tier: self.built.session.service_tier(),
             },
+            self.host_features.toggles,
         )
     }
 
@@ -578,7 +582,7 @@ impl SessionHost {
             sent_plan: Vec::new(),
             load_notice: None,
             held_notices: None,
-            host_updates: startup.host_updates,
+            host_features: startup.host_features,
             t3_wake: match startup.host {
                 AcpHost::Generic => None,
                 AcpHost::T3Code => match super::t3_wake::signal_dir() {
@@ -637,7 +641,8 @@ impl SessionHost {
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         if let Some(notice) = self.load_notice.take() {
-            let notice = EventMapper::info_notice(&self.acp_session_id, self.host_updates, &notice);
+            let notice =
+                EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
             if let Err(error) = send_notification(client, notice).await {
                 tracing::debug!(%error, "could not send ACP load notice");
             }
@@ -675,7 +680,7 @@ impl SessionHost {
         };
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
-        let mut mapper = EventMapper::new(self.host_updates);
+        let mut mapper = EventMapper::new(self.host_features);
         let mut signals = self.signals();
         signals.send_plan_change(&self.acp_session_id, client).await;
         let pump_result = self
@@ -766,7 +771,7 @@ impl SessionHost {
             approvals: &mut ApprovalSource::Receiver(approval_receiver),
             approvals_open,
             plan_approvals: plan_approvals.as_mut(),
-            host_updates: self.host_updates,
+            host_features: self.host_features,
             displays: Some(displays),
         })
         .await;
@@ -813,6 +818,7 @@ fn advertised_config_options(
     current: &CurrentModel,
     process_config: &Config,
     settings: CurrentSettings,
+    toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
     let available_auths = available_auth_modes(&AppCredentialStore);
     let mut options = vec![permission::mode_config_option(settings.permission_mode)];
@@ -825,7 +831,11 @@ fn advertised_config_options(
         &model_scoped_config(current, process_config),
         settings.reasoning,
     ));
-    options.extend(fast_mode::config_options(current, settings.service_tier));
+    options.extend(fast_mode::config_options(
+        current,
+        settings.service_tier,
+        toggles,
+    ));
     options
 }
 

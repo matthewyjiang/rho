@@ -80,7 +80,7 @@ impl SessionHost {
     }
 
     async fn plan_notice(&self, text: &str, client: &dyn AcpClientPort) {
-        let notice = EventMapper::info_notice(&self.acp_session_id, self.host_updates, text);
+        let notice = EventMapper::info_notice(&self.acp_session_id, self.host_features, text);
         if let Err(error) = send_notification(client, notice).await {
             tracing::debug!(%error, "could not send ACP plan notice");
         }
