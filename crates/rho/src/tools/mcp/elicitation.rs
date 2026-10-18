@@ -122,6 +122,11 @@ impl McpElicitationService {
             // Dismissing the form cancels the turn, so cancelling the whole
             // operation is exactly what happened.
             Err(rho_sdk::Error::Cancelled) => Ok(ElicitResult::new(ElicitationAction::Cancel)),
+            // A host that answers without answers (ACP) says which of the
+            // two the user meant, and MCP has the same pair.
+            Err(rho_sdk::Error::HostInputRefused {
+                refusal: rho_sdk::HostInputRefusal::Dismissed,
+            }) => Ok(ElicitResult::new(ElicitationAction::Cancel)),
             Err(error) => Ok(self.decline(error.to_string())),
         }
     }

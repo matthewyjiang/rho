@@ -66,6 +66,8 @@ mod mode;
 mod open;
 #[path = "session_host_persist.rs"]
 mod persist;
+#[path = "session_host_plan_exit.rs"]
+mod plan_exit;
 #[path = "session_host_pump.rs"]
 mod pump;
 #[path = "session_host_title.rs"]
@@ -178,8 +180,15 @@ impl PromptGate {
     fn activate(&self, token: CancellationToken) {
         let mut slot = self.slot();
         let closed = matches!(&*slot, PromptGateState::Closed);
+        // A prompt can run more than one turn (plan approval runs the
+        // implementation turn), so a cancel that hit the previous turn's
+        // token after it ended still cancels this one.
         if closed
-            || matches!(&*slot, PromptGateState::Starting(starting) if starting.is_cancelled())
+            || matches!(
+                &*slot,
+                PromptGateState::Starting(previous) | PromptGateState::Active(previous)
+                    if previous.is_cancelled()
+            )
         {
             token.cancel();
         }
@@ -312,6 +321,8 @@ impl SessionHost {
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
+        // After the plan handoff, so the implementation turn's failure counts.
+        let result = self.finish_plan_exit(result, &startup.config, client).await;
         self.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
         self.wake_prompt_ended(
@@ -653,6 +664,7 @@ impl SessionHost {
         };
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
+        let mut plan_approvals = self.built.tools.take_plan_permission_requests();
         let mut mapper = EventMapper::new(self.host_updates);
         let mut signals = self.signals();
         signals.send_plan_change(&self.acp_session_id, client).await;
@@ -663,6 +675,7 @@ impl SessionHost {
                 &mut signals,
                 client,
                 approval_receiver.as_mut(),
+                plan_approvals.as_mut(),
                 AppliedDisplays {
                     offered: displays,
                     checkpoint,
@@ -670,6 +683,9 @@ impl SessionHost {
             )
             .await;
         self.built.approval_receiver = approval_receiver;
+        self.built
+            .tools
+            .restore_plan_permission_requests(plan_approvals);
         if let Err(error) = pump_result {
             run.cancel();
             let _ = run.outcome().await;
@@ -727,6 +743,7 @@ impl SessionHost {
         signals: &mut SessionSignals,
         client: &dyn AcpClientPort,
         approval_receiver: Option<&mut ApprovalRequestReceiver>,
+        plan_approvals: Option<&mut crate::tools::plan_exit::PlanPermissionReceiver>,
         displays: AppliedDisplays<'_>,
     ) -> anyhow::Result<()> {
         let approvals_open = approval_receiver.is_some();
@@ -740,6 +757,8 @@ impl SessionHost {
             events: &mut EventSource::Run(run),
             approvals: &mut ApprovalSource::Receiver(approval_receiver),
             approvals_open,
+            plan_approvals,
+            host_updates: self.host_updates,
             displays: Some(displays),
         })
         .await
@@ -942,3 +961,7 @@ mod delegation_tests;
 #[cfg(test)]
 #[path = "session_host_tool_lifecycle_tests.rs"]
 mod tool_lifecycle_tests;
+
+#[cfg(test)]
+#[path = "session_host_questions_tests.rs"]
+mod questions_tests;

@@ -1,22 +1,26 @@
-//! Optional session updates the host opted into at `initialize`.
+//! Optional host features the host opted into at `initialize`.
 //!
 //! ACP lets an agent send `compaction_update` and `notice` only to clients
-//! that advertise `clientCapabilities.session.compaction` and `.notices`.
-//! Other hosts keep the baseline updates: `/compact` replies with an agent
-//! message, automatic compaction shows only in `usage_update`, and notices
-//! are agent messages.
+//! that advertise `clientCapabilities.session.compaction` and `.notices`,
+//! and `elicitation/create` in form mode only to clients that advertise
+//! `clientCapabilities.elicitation.form`. Other hosts keep the baseline:
+//! `/compact` replies with an agent message, automatic compaction shows only
+//! in `usage_update`, notices are agent messages, and Rho offers no
+//! questionnaire tool and declines MCP elicitation.
 
 use std::sync::OnceLock;
 
 use agent_client_protocol::schema::v1::ClientCapabilities;
 
-/// Session updates beyond the ACP baseline that the connected host accepts.
+/// Features beyond the ACP baseline that the connected host accepts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::app) struct HostUpdates {
     /// Compaction lifecycle cards (`compaction_update`).
     pub(super) compaction: bool,
     /// Live, dismissible user notices (`notice`).
     pub(super) notices: bool,
+    /// Form-mode `elicitation/create`: questions put to the user.
+    pub(super) form_elicitation: bool,
 }
 
 impl HostUpdates {
@@ -25,6 +29,10 @@ impl HostUpdates {
         Self {
             compaction: session.is_some_and(|session| session.compaction.is_some()),
             notices: session.is_some_and(|session| session.notices.is_some()),
+            form_elicitation: capabilities
+                .elicitation
+                .as_ref()
+                .is_some_and(|elicitation| elicitation.form.is_some()),
         }
     }
 }

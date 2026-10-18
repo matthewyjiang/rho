@@ -58,6 +58,9 @@ enum Mode {
     ReadFile,
     ReadPath,
     WritePath,
+    /// A prompt that is a JSON tool call makes that call, then replies with
+    /// its result; any other prompt, such as a host follow-up, gets the
+    /// fixed response.
     ToolCall,
     ProcessThenDelay,
 }
@@ -166,9 +169,10 @@ impl ModelProvider for AutomationFixtureProvider {
                             _ => None,
                         })
                         .expect("tool-call fixture needs a user message");
-                    let call: ToolCall = serde_json::from_str(text)
-                        .expect("tool-call fixture prompt must be a JSON tool call");
-                    completed_tool_call(&call.id, &call.name, call.arguments)
+                    match serde_json::from_str::<ToolCall>(text) {
+                        Ok(call) => completed_tool_call(&call.id, &call.name, call.arguments),
+                        Err(_) => completed(fixed_response()),
+                    }
                 }
                 Mode::ToolCall => completed(last_tool_result(&request)?),
                 Mode::ProcessThenDelay if turn == 0 => completed_tool_call(

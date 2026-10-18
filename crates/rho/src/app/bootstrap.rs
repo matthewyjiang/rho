@@ -733,7 +733,10 @@ pub(super) fn host_capabilities(
         tools.remove(&ToolCapability::Agent);
         tools.remove(&ToolCapability::Agents);
     }
-    if role != AgentRole::InteractiveRoot {
+    // ACP sessions decide per host: they offer it only when the host draws
+    // forms (`elicitation.form`).
+    let acp = matches!(cli.command, Some(Command::Acp(_)));
+    if role != AgentRole::InteractiveRoot && !acp {
         tools.remove(&ToolCapability::Questionnaire);
     }
     #[cfg(debug_assertions)]

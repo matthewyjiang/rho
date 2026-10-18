@@ -46,6 +46,7 @@ fn answers_map_to_approval_or_revision() {
 async fn unavailable_host_reports_plan_without_requesting_input() {
     let tool = PlanExitTool {
         slot: None,
+        prompt: PlanExitPrompt::Questionnaire,
         classifier_configured: Arc::new(AtomicBool::new(false)),
     };
     let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);

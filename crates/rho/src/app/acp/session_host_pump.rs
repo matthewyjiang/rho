@@ -1,21 +1,30 @@
-//! The event pump for one prompt: SDK run events, approval requests, and
-//! applied background results, forwarded to the host in arrival order.
+//! The event pump for one prompt: SDK run events, approval requests,
+//! questions for the user, and applied background results, forwarded to the
+//! host in arrival order.
 
 use std::{future::Future, pin::Pin, sync::atomic::AtomicU64};
 
 use agent_client_protocol::schema::v1::{RequestPermissionOutcome, SessionId, SessionNotification};
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use rho_sdk::{ApprovalRequestReceiver, CancellationToken, PendingApproval, RunEvent, UserInput};
+use rho_sdk::{
+    ApprovalRequestReceiver, CancellationToken, HostInputId, HostInputRefusal, HostInputRequest,
+    HostInputResponse, PendingApproval, RunEvent, ToolCallId, UserInput,
+};
 
 use super::{persist::TurnCheckpoint, send_notification};
-use crate::app::{
-    acp::{
-        events::{EventMapper, RunEnding},
-        permission,
-        signals::SessionSignals,
-        AcpClientPort,
+use crate::{
+    app::{
+        acp::{
+            elicitation,
+            events::{EventMapper, RunEnding},
+            host_updates::HostUpdates,
+            permission,
+            signals::SessionSignals,
+            AcpClientPort,
+        },
+        headless_delegation::OfferedDisplays,
     },
-    headless_delegation::OfferedDisplays,
+    tools::plan_exit::{PlanPermissionReceiver, PlanPermissionRequest},
 };
 
 pub(super) enum EventSource<'a> {
@@ -40,7 +49,28 @@ impl EventSource<'_> {
             Self::Channel(_) => {}
         }
     }
+
+    /// Answers a host input request. The run acknowledges asynchronously;
+    /// nothing waits for it, because a request the run no longer holds
+    /// (its tool finished or was cancelled) has nobody left to tell.
+    fn answer(&mut self, id: HostInputId, answer: HostInputAnswer) {
+        match self {
+            Self::Run(run) => {
+                let queued = match answer {
+                    Ok(response) => run.request_respond(id, response).map(drop),
+                    Err(refusal) => run.request_refuse(id, refusal).map(drop),
+                };
+                if let Err(error) = queued {
+                    tracing::warn!(%error, "could not answer an ACP host input request");
+                }
+            }
+            #[cfg(test)]
+            Self::Channel(_) => {}
+        }
+    }
 }
+
+type HostInputAnswer = Result<HostInputResponse, HostInputRefusal>;
 
 pub(super) enum ApprovalSource<'a> {
     Receiver(Option<&'a mut ApprovalRequestReceiver>),
@@ -71,6 +101,11 @@ pub(super) struct PumpSources<'a> {
     pub(super) events: &'a mut EventSource<'a>,
     pub(super) approvals: &'a mut ApprovalSource<'a>,
     pub(super) approvals_open: bool,
+    /// Plan approvals from `exit_plan_mode`; `None` when the session has no
+    /// plan handoff.
+    pub(super) plan_approvals: Option<&'a mut PlanPermissionReceiver>,
+    /// Whether questions reach the user as form elicitation.
+    pub(super) host_updates: HostUpdates,
     /// Background results offered to the run; tests of the event and
     /// approval plumbing pass `None`.
     pub(super) displays: Option<AppliedDisplays<'a>>,
@@ -115,11 +150,18 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
         events,
         approvals,
         mut approvals_open,
+        mut plan_approvals,
+        host_updates,
         mut displays,
     } = sources;
     let mut run_cancelled = cancel.is_cancelled();
     let mut inflight: FuturesUnordered<Pin<Box<dyn Future<Output = ()> + Send + '_>>> =
         FuturesUnordered::new();
+    // Questions wait on the user, not on the run, so unlike approvals they
+    // are dropped when the run ends, which withdraws them from the host.
+    let mut questions: FuturesUnordered<
+        Pin<Box<dyn Future<Output = Option<(HostInputId, HostInputAnswer)>> + Send + '_>>,
+    > = FuturesUnordered::new();
     loop {
         tokio::select! {
             biased;
@@ -131,6 +173,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
 
             event = events.next() => {
                 let Some(event) = event else {
+                    drop(questions);
                     for notification in mapper.close_unfinished(session_id, RunEnding::WithoutResult) {
                         send_notification(client, notification).await?;
                     }
@@ -153,6 +196,28 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
                     let notification = SessionNotification::new(session_id.clone(), update);
                     send_notification(client, notification).await?;
                 }
+                let asked = match event {
+                    RunEvent::HostInputRequested { request } => Some((request, None)),
+                    RunEvent::ToolHostInputRequested { call_id, request } => {
+                        Some((request, Some(call_id)))
+                    }
+                    _ => None,
+                };
+                if let Some((request, call_id)) = asked {
+                    if host_updates.form_elicitation {
+                        questions.push(Box::pin(ask_user(
+                            session_id.clone(),
+                            request,
+                            call_id,
+                            client,
+                            cancel.clone(),
+                        )));
+                    } else {
+                        // Rho offers no asking tools to such hosts; anything
+                        // that asks anyway must not wait forever.
+                        events.answer(request.id().clone(), Err(HostInputRefusal::Declined));
+                    }
+                }
             }
 
             pending = approvals.next(), if approvals_open => {
@@ -169,9 +234,86 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
                 )));
             }
 
+            request = next_plan_approval(plan_approvals.as_deref_mut()) => {
+                match request {
+                    Some(request) => questions.push(Box::pin(answer_plan_approval(
+                        session_id.clone(),
+                        request,
+                        client,
+                        cancel.clone(),
+                    ))),
+                    None => plan_approvals = None,
+                }
+            }
+
             Some(()) = inflight.next(), if !inflight.is_empty() => {}
+
+            Some(answered) = questions.next(), if !questions.is_empty() => {
+                if let Some((id, answer)) = answered {
+                    events.answer(id, answer);
+                }
+            }
         }
     }
+}
+
+async fn next_plan_approval(
+    approvals: Option<&mut PlanPermissionReceiver>,
+) -> Option<PlanPermissionRequest> {
+    match approvals {
+        Some(approvals) => approvals.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Puts a host input request to the user as a form. A cancelled prompt
+/// withdraws the form and leaves the run's cancellation to end the request.
+async fn ask_user(
+    session_id: SessionId,
+    request: HostInputRequest,
+    call_id: Option<ToolCallId>,
+    client: &dyn AcpClientPort,
+    cancel: CancellationToken,
+) -> Option<(HostInputId, HostInputAnswer)> {
+    let form = elicitation::elicitation_request(&request, &session_id, call_id.as_ref());
+    let answer = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return None,
+        response = client.create_elicitation(form) => match response {
+            Ok(response) => elicitation::host_answer(&request, response),
+            Err(error) => {
+                tracing::warn!(%error, "ACP host failed an elicitation request");
+                Err(HostInputRefusal::Dismissed)
+            }
+        },
+    };
+    Some((request.id().clone(), answer))
+}
+
+/// Asks the host to approve a plan. A cancelled prompt, or a tool that
+/// stopped waiting, withdraws the prompt.
+async fn answer_plan_approval(
+    session_id: SessionId,
+    mut request: PlanPermissionRequest,
+    client: &dyn AcpClientPort,
+    cancel: CancellationToken,
+) -> Option<(HostInputId, HostInputAnswer)> {
+    let prompt = permission::plan_approval_request(&session_id, &request);
+    let outcome = tokio::select! {
+        biased;
+        () = cancel.cancelled() => return None,
+        () = request.reply.closed() => return None,
+        response = client.request_permission(prompt) => match response {
+            Ok(response) => response.outcome,
+            Err(error) => {
+                tracing::warn!(%error, "ACP host failed a plan approval prompt");
+                RequestPermissionOutcome::Cancelled
+            }
+        },
+    };
+    let answer = permission::plan_answer_for(&outcome, &request.targets);
+    let _ = request.reply.send(answer);
+    None
 }
 
 async fn answer_approval(

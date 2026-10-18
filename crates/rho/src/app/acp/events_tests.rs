@@ -229,7 +229,7 @@ fn ignored_events_emit_nothing() {
 fn compaction_open_at_run_end_closes_with_the_ending() {
     let compaction_host = HostUpdates {
         compaction: true,
-        notices: false,
+        ..HostUpdates::default()
     };
     for (label, ending, status, error) in [
         (

@@ -332,6 +332,20 @@ pub enum HostInputSource {
     TimeoutFallback,
 }
 
+/// Why a host answered a host input request without answers.
+///
+/// Hosts send one through [`crate::Run::request_refuse`]; the asking tool
+/// receives [`crate::Error::HostInputRefused`] and decides how to carry on,
+/// for example by failing its call so the model can continue without it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostInputRefusal {
+    /// The user explicitly declined to answer.
+    Declined,
+    /// The user dismissed the request without choosing.
+    Dismissed,
+}
+
 /// Structured host answers keyed by question ID, with their origin.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostInputResponse {

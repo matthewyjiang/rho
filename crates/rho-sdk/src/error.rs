@@ -8,17 +8,33 @@ use crate::{floor_char_boundary, DIAGNOSTIC_TRUNCATION_MARKER};
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    InvalidConfiguration { message: String },
-    Authentication { message: String },
+    InvalidConfiguration {
+        message: String,
+    },
+    Authentication {
+        message: String,
+    },
     Provider(ProviderError),
     Tool(ToolError),
-    Persistence { message: String },
-    PolicyDenied { message: String },
+    Persistence {
+        message: String,
+    },
+    PolicyDenied {
+        message: String,
+    },
     RuntimeShutdown,
     SessionBusy,
     Cancelled,
-    Interrupted { message: String },
-    InvalidHostResponse { message: String },
+    Interrupted {
+        message: String,
+    },
+    InvalidHostResponse {
+        message: String,
+    },
+    /// The host answered a host input request without answers.
+    HostInputRefused {
+        refusal: crate::HostInputRefusal,
+    },
 }
 
 impl Error {
@@ -50,6 +66,14 @@ impl fmt::Display for Error {
             Self::InvalidHostResponse { message } => {
                 write!(formatter, "invalid host response: {message}")
             }
+            Self::HostInputRefused { refusal } => match refusal {
+                crate::HostInputRefusal::Declined => {
+                    formatter.write_str("the user declined to answer")
+                }
+                crate::HostInputRefusal::Dismissed => {
+                    formatter.write_str("the user dismissed the question without answering")
+                }
+            },
         }
     }
 }
@@ -67,7 +91,8 @@ impl std::error::Error for Error {
             | Self::SessionBusy
             | Self::Cancelled
             | Self::Interrupted { .. }
-            | Self::InvalidHostResponse { .. } => None,
+            | Self::InvalidHostResponse { .. }
+            | Self::HostInputRefused { .. } => None,
         }
     }
 }
