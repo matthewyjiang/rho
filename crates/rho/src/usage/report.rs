@@ -21,7 +21,7 @@ use std::{
 
 use chrono::{Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use rho_providers::model::{ModelMetadata, ModelUsage};
-use rusqlite::{Connection, OpenFlags, Row, Rows, Statement};
+use rusqlite::{Connection, OpenFlags, Row};
 
 use super::{migrations::SCHEMA_VERSION, pricing::catalog_cost_usd_micros, UsageLedgerError};
 use crate::sqlite_support::BUSY_TIMEOUT;
@@ -180,7 +180,7 @@ pub(crate) fn load_spend_reports<Tz: TimeZone>(
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             // A timestamp chrono cannot represent has no local day to land on.
-            let Some(at) = local_date(row.get(PRICED_COLUMN_COUNT)?) else {
+            let Some(at) = local_date(row.get("occurred_at_ms")?) else {
                 continue;
             };
             let priced = priced_row(row, &pricing)?;
@@ -188,7 +188,7 @@ pub(crate) fn load_spend_reports<Tz: TimeZone>(
                 at,
                 provider: priced.provider,
                 model: model_leaf(priced.model),
-                purpose: text_column(row, PRICED_COLUMN_COUNT + 1)?,
+                purpose: text_column(row, "purpose")?,
                 totals: priced.totals,
             });
         }
@@ -199,7 +199,10 @@ pub(crate) fn load_spend_reports<Tz: TimeZone>(
 /// Spend of session `session_id` across every purpose (agent turns,
 /// compaction, titles, advisor, classifier) plus the requests of sessions it
 /// started directly, such as subagents. Each request is priced as
-/// [`load_spend_reports`] prices it. A missing ledger has no spend.
+/// [`load_spend_reports`] prices it, except that a route without its own
+/// price borrows only from the session's routes: pricing every route in the
+/// ledger costs a full scan, too slow for each model step. A missing ledger
+/// has no spend.
 pub(crate) fn load_session_spend(
     path: &Path,
     session_id: &str,
@@ -214,7 +217,7 @@ pub(crate) fn load_session_spend(
         "SELECT {PRICED_COLUMNS} FROM usage_events{}",
         scope.filter()
     ))?;
-    let mut rows = scope.query(&mut statement)?;
+    let mut rows = statement.query(scope.params())?;
     let mut totals = SpendTotals::default();
     while let Some(row) = rows.next()? {
         totals += priced_row(row, &pricing)?.totals;
@@ -247,32 +250,37 @@ fn open_ledger(path: &Path) -> Result<Option<Connection>, UsageLedgerError> {
 #[derive(Clone, Copy)]
 enum LedgerRows<'a> {
     All,
-    /// One session's requests and those of sessions it started. Both
-    /// columns are indexed, so this stays cheap as the ledger grows.
+    /// One session's requests and every request of sessions it started.
+    /// A child is found by any row naming the session as its parent; its
+    /// other rows, such as permission-classifier calls, may not. Both lookups
+    /// are indexed, so this stays cheap as the ledger grows.
     Session(&'a str),
 }
 
-impl LedgerRows<'_> {
+impl<'a> LedgerRows<'a> {
     fn filter(self) -> &'static str {
         match self {
             Self::All => "",
-            Self::Session(_) => " WHERE session_id = ?1 OR parent_session_id = ?1",
+            Self::Session(_) => {
+                " WHERE session_id = ?1 OR session_id IN
+                    (SELECT session_id FROM usage_events WHERE parent_session_id = ?1)"
+            }
         }
     }
 
-    /// Runs `statement`, which ends in [`Self::filter`].
-    fn query<'s>(self, statement: &'s mut Statement<'_>) -> rusqlite::Result<Rows<'s>> {
-        match self {
-            Self::All => statement.query([]),
-            Self::Session(session_id) => statement.query([session_id]),
-        }
+    /// Parameters for a statement that ends in [`Self::filter`].
+    fn params(self) -> rusqlite::ParamsFromIter<Option<&'a str>> {
+        let session_id = match self {
+            Self::All => None,
+            Self::Session(session_id) => Some(session_id),
+        };
+        rusqlite::params_from_iter(session_id)
     }
 }
 
-/// Columns [`priced_row`] reads, first in every priced `SELECT`.
+/// Columns [`priced_row`] reads by name, in every priced `SELECT`.
 const PRICED_COLUMNS: &str = "provider, model, input_tokens, output_tokens, cache_read_tokens,
     cache_write_tokens, total_tokens, cost_usd_micros";
-const PRICED_COLUMN_COUNT: usize = 8;
 
 /// One ledger row's route and priced totals, borrowed from the row.
 struct PricedRow<'r> {
@@ -283,24 +291,24 @@ struct PricedRow<'r> {
 
 type RoutePrices = HashMap<String, HashMap<String, RoutePricing>>;
 
-/// Prices a row that starts with [`PRICED_COLUMNS`]: the reported cost when
+/// Prices a row that selected [`PRICED_COLUMNS`]: the reported cost when
 /// present, else the route's catalog price.
 fn priced_row<'r>(row: &'r Row<'_>, pricing: &RoutePrices) -> rusqlite::Result<PricedRow<'r>> {
-    let count = |index: usize| -> rusqlite::Result<Option<u64>> {
+    let count = |column: &str| -> rusqlite::Result<Option<u64>> {
         Ok(row
-            .get::<_, Option<i64>>(index)?
+            .get::<_, Option<i64>>(column)?
             .and_then(|value| u64::try_from(value).ok()))
     };
     let usage = ModelUsage {
-        input_tokens: count(2)?,
-        output_tokens: count(3)?,
-        cache_read_tokens: count(4)?,
-        cache_write_tokens: count(5)?,
-        total_tokens: count(6)?,
+        input_tokens: count("input_tokens")?,
+        output_tokens: count("output_tokens")?,
+        cache_read_tokens: count("cache_read_tokens")?,
+        cache_write_tokens: count("cache_write_tokens")?,
+        total_tokens: count("total_tokens")?,
         ..ModelUsage::default()
     };
-    let (provider, model) = (text_column(row, 0)?, text_column(row, 1)?);
-    let cost = match count(7)? {
+    let (provider, model) = (text_column(row, "provider")?, text_column(row, "model")?);
+    let cost = match count("cost_usd_micros")? {
         Some(micros) => RowCost::Actual(micros),
         None => match pricing.get(provider).and_then(|models| models.get(model)) {
             Some(RoutePricing::Local) => RowCost::Local,
@@ -316,8 +324,8 @@ fn priced_row<'r>(row: &'r Row<'_>, pricing: &RoutePrices) -> rusqlite::Result<P
     })
 }
 
-fn text_column<'r>(row: &'r Row<'_>, index: usize) -> rusqlite::Result<&'r str> {
-    Ok(row.get_ref(index)?.as_str()?)
+fn text_column<'r>(row: &'r Row<'_>, column: &str) -> rusqlite::Result<&'r str> {
+    Ok(row.get_ref(column)?.as_str()?)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -569,11 +577,11 @@ fn resolve_route_pricing(
         "SELECT DISTINCT provider, model FROM usage_events{} ORDER BY provider, model",
         scope.filter()
     ))?;
-    let mut rows = scope.query(&mut statement)?;
-    let mut routes = Vec::new();
-    while let Some(row) = rows.next()? {
-        routes.push((row.get::<_, String>(0)?, row.get::<_, String>(1)?));
-    }
+    let routes = statement
+        .query_map(scope.params(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     let resolved: Vec<_> = routes
         .into_iter()
         .map(|(provider, model)| {

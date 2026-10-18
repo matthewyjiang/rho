@@ -185,6 +185,8 @@ impl ModelProvider for AutomationFixtureProvider {
     }
 
     /// The SDK default stream, plus one usage report when a cost is set.
+    /// Deltas go through the public `send`, so unlike the default they carry
+    /// observation times; fixture turns have no meaningful timing either way.
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,

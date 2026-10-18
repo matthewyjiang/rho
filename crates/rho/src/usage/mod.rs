@@ -16,7 +16,7 @@ pub(crate) use model_request::{
     send_recorded, send_recorded_observing, send_recorded_with, RecordedRequest,
 };
 pub(crate) use sdk::default_recording;
-pub(crate) use session_cost::session_cost_usd_micros;
+pub(crate) use session_cost::session_valuation;
 
 pub use event::{RequestOutcome, UsageEvent};
 pub use recorder::{RecordOutcome, UsageRecorder};

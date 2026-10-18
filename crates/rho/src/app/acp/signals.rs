@@ -11,7 +11,10 @@ use agent_client_protocol::schema::v1::{
 use rho_sdk::RunEvent;
 
 use super::AcpClientPort;
-use crate::tools::todo::{TodoItem, TodoState, TodoStatus};
+use crate::{
+    tools::todo::{TodoItem, TodoState, TodoStatus},
+    usage::report::Valuation,
+};
 
 /// Tracks one prompt's context fill and checklist for a session.
 ///
@@ -63,16 +66,18 @@ impl SessionSignals {
     ///
     /// `cost` is the session's whole ledger total, so it already includes
     /// turns from before a restart or `session/load` and never double counts
-    /// them. It is omitted, never sent as 0, while no request has a price.
+    /// them. It is omitted, never sent as 0, while no request has a price;
+    /// an all-local session omits it too, as the TUI statusline does.
     pub(super) async fn usage(&self) -> SessionUpdate {
         let estimate = self.session.context_estimate();
         let size = self
             .context_window
             .or(estimate.reported_context_window())
             .unwrap_or(0);
-        let cost = crate::usage::session_cost_usd_micros(self.session.id())
-            .await
-            .map(|micros| Cost::new(micros as f64 / 1_000_000.0, "USD"));
+        let cost = match crate::usage::session_valuation(self.session.id()).await {
+            Valuation::Usd(micros) => Some(Cost::new(micros as f64 / 1_000_000.0, "USD")),
+            Valuation::Local | Valuation::Unpriced => None,
+        };
         SessionUpdate::UsageUpdate(UsageUpdate::new(estimate.tokens(), size).cost(cost))
     }
 

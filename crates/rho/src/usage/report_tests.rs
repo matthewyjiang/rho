@@ -282,8 +282,9 @@ fn load_is_read_only_and_rejects_newer_schemas() {
 }
 
 // Covers: a session's running total counts its own requests of every
-// purpose and its direct children's, each priced like /spend, never another
-// session's; and it stays unpriced, not $0, until something has a price.
+// purpose and all of its direct children's, including child rows that do
+// not name the parent, each priced like /spend, never another session's;
+// and it stays unpriced, not $0, until something has a price.
 // Owner: usage report
 #[test]
 fn session_spend_counts_the_session_and_its_children_once() {
@@ -311,6 +312,13 @@ fn session_spend_counts_the_session_and_its_children_once() {
                 parent: Some("main"),
                 ..row("cliproxyapi", "x-ai/grok-4.6", NOW_MS)
             },
+            // The child's permission classifier records no parent.
+            Row {
+                purpose: "permission-classifier-screen",
+                reported: Some(100_000),
+                session: Some("child"),
+                ..row("xai", "grok-4.6", NOW_MS)
+            },
             Row {
                 session: Some("other"),
                 ..row("xai", "grok-4.6", NOW_MS)
@@ -328,8 +336,8 @@ fn session_spend_counts_the_session_and_its_children_once() {
             .map(|totals| (totals, totals.valuation())),
         [
             (
-                totals(4, 1_500_000, 400_000, 0, 1),
-                Valuation::Usd(1_900_000)
+                totals(5, 1_600_000, 400_000, 0, 1),
+                Valuation::Usd(2_000_000)
             ),
             (totals(1, 0, 0, 0, 1), Valuation::Unpriced),
             (SpendTotals::default(), Valuation::Unpriced),

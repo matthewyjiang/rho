@@ -45,18 +45,25 @@ fn server(home: &TempDir, cost: Option<&str>) -> AcpServer {
     server
 }
 
-/// The `cost` of every `usage_update` one prompt sent, in order.
-fn prompt_costs(server: &mut AcpServer, session_id: &str) -> Vec<Value> {
+/// The `cost` of the turn-end `usage_update` one prompt sent last. Earlier
+/// updates race the provider: the pump may forward `StepStarted` after the
+/// step's request was already recorded.
+fn turn_end_cost(server: &mut AcpServer, session_id: &str) -> Value {
     let (reply, updates) = server.request(
         "session/prompt",
         json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "hello"}]}),
     );
     assert_eq!(reply.unwrap()["stopReason"], "end_turn");
-    updates
+    let costs: Vec<_> = updates
         .iter()
         .filter(|update| update["sessionUpdate"] == "usage_update")
         .map(|update| update["cost"].clone())
-        .collect()
+        .collect();
+    assert!(
+        costs.iter().all(|cost| cost["amount"] != json!(0.0)),
+        "never a fake 0: {costs:#?}"
+    );
+    costs.last().cloned().expect("a turn-end usage_update")
 }
 
 fn usd(amount: f64) -> Value {
@@ -65,8 +72,8 @@ fn usd(amount: f64) -> Value {
 
 // Covers: `usage_update.cost` is the session's cumulative cost; after a
 // server restart and `session/load` it continues from the saved turns
-// instead of resetting or counting them twice; and it is omitted, never a
-// fake 0, while no request has a price.
+// instead of resetting (0.00125) or counting them twice (0.00375); and it is
+// omitted, never a fake 0, while no request has a price.
 // Owner: ACP session signals, over the real stdio server
 #[test]
 fn usage_updates_report_cumulative_session_cost_across_load() {
@@ -74,16 +81,10 @@ fn usage_updates_report_cumulative_session_cost_across_load() {
         (
             "priced",
             Some(RESPONSE_COST_USD_MICROS),
-            // Step start (nothing spent yet), then turn end.
-            vec![Value::Null, usd(0.00125)],
-            vec![usd(0.00125), usd(0.0025)],
+            usd(0.00125),
+            usd(0.0025),
         ),
-        (
-            "unpriced",
-            None,
-            vec![Value::Null, Value::Null],
-            vec![Value::Null, Value::Null],
-        ),
+        ("unpriced", None, Value::Null, Value::Null),
     ] {
         let home = home();
         let project = home.path().join("project");
@@ -93,7 +94,7 @@ fn usage_updates_report_cumulative_session_cost_across_load() {
             .0
             .unwrap();
         let session_id = created["sessionId"].as_str().unwrap().to_owned();
-        assert_eq!(prompt_costs(&mut server, &session_id), first, "{label}");
+        assert_eq!(turn_end_cost(&mut server, &session_id), first, "{label}");
 
         drop(server);
         let mut server = self::server(&home, cost);
@@ -105,7 +106,7 @@ fn usage_updates_report_cumulative_session_cost_across_load() {
             .0
             .unwrap();
         assert_eq!(
-            prompt_costs(&mut server, &session_id),
+            turn_end_cost(&mut server, &session_id),
             after_load,
             "{label}"
         );
