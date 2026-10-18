@@ -34,6 +34,9 @@ mod login;
 #[path = "support/acp_session_titles_tests.rs"]
 mod session_titles;
 
+#[path = "support/acp_usage_cost_tests.rs"]
+mod usage_cost;
+
 /// Failure bound for one reply; the fixture answers without network.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 

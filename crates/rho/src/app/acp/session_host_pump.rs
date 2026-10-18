@@ -145,7 +145,10 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
                 for notification in mapper.map_event(session_id, &event) {
                     send_notification(client, notification).await?;
                 }
-                let signal = signals.as_deref_mut().and_then(|signals| signals.observe(&event));
+                let signal = match signals.as_deref_mut() {
+                    Some(signals) => signals.observe(&event).await,
+                    None => None,
+                };
                 if let Some(update) = signal {
                     let notification = SessionNotification::new(session_id.clone(), update);
                     send_notification(client, notification).await?;

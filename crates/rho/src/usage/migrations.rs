@@ -77,6 +77,16 @@ CREATE INDEX compaction_events_occurred_at
     ON compaction_events (occurred_at_ms);
 "#;
 
+/// Lets a session's running total find the requests of sessions it started
+/// (subagents) without scanning the ledger. Created on every open instead of
+/// in a numbered migration: an index changes no row, so older Rho builds,
+/// which refuse any `user_version` newer than theirs, keep sharing the ledger.
+const PARENT_SESSION_INDEX: &str = r#"
+CREATE INDEX IF NOT EXISTS usage_events_parent_session
+    ON usage_events (parent_session_id)
+    WHERE parent_session_id IS NOT NULL;
+"#;
+
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), UsageLedgerError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     // Read the version after obtaining the write lock. Two processes may both
@@ -97,6 +107,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), UsageLedgerErro
         transaction.execute_batch(MIGRATION_2)?;
         transaction.pragma_update(None, "user_version", 2)?;
     }
+    transaction.execute_batch(PARENT_SESSION_INDEX)?;
     transaction.commit()?;
     Ok(())
 }

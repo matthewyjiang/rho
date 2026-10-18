@@ -8,6 +8,7 @@ pub(crate) mod pricing;
 mod recorder;
 pub(crate) mod report;
 mod sdk;
+mod session_cost;
 mod sqlite;
 
 pub(crate) use compaction::{save_compaction, save_compaction_inline};
@@ -15,6 +16,7 @@ pub(crate) use model_request::{
     send_recorded, send_recorded_observing, send_recorded_with, RecordedRequest,
 };
 pub(crate) use sdk::default_recording;
+pub(crate) use session_cost::session_cost_usd_micros;
 
 pub use event::{RequestOutcome, UsageEvent};
 pub use recorder::{RecordOutcome, UsageRecorder};
