@@ -125,7 +125,7 @@ Each question becomes one property keyed by its id:
 
 A short question header becomes the property `title` and the full question its `description`. Pre-selected defaults are sent as `default`. Properties go out in id order, which hosts such as Zed follow, not in the order the questions were asked.
 
-T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value; an exact label wins. A multiple choice is typed as a list separated by commas, or, when a choice label contains commas, by the first of semicolons, `|`, or new lines that no label contains; the form's description names the separator. Free text for a question that accepts only its listed choices counts as `decline`.
+T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value; an exact label wins. A multiple choice is typed as a list separated by commas, or, when a choice label contains commas, by another character that no label contains (semicolons first); the form's description names the separator. Free text for a question that accepts only its listed choices counts as `decline`.
 
 The host's answer maps to the asking tool:
 

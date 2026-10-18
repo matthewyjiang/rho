@@ -371,6 +371,20 @@ fn t3_code_labels_resolve_to_their_own_choices() {
             vec!["a", "b", "c"],
         ),
         (
+            "labels with every common separator and a new line",
+            choices(
+                SelectionMode::Many,
+                &[
+                    ("a", "A"),
+                    ("b", "B"),
+                    ("ab", "A\nB"),
+                    ("mix", "A, B; C | D / E + F"),
+                ],
+            ),
+            "A\nB • A",
+            vec!["ab", "a"],
+        ),
+        (
             "the comma label in a semicolon list",
             choices(
                 SelectionMode::Many,
@@ -416,7 +430,7 @@ fn t3_code_multiple_choice_hint_names_a_separator_no_label_contains() {
         (&["A", "B"][..], "commas"),
         (&["A, B", "C"][..], "semicolons"),
         (&["A, B", "C; D"][..], "\"|\""),
-        (&["A, B", "C; D", "E | F"][..], "new lines"),
+        (&["A, B", "C; D | E / F + G"][..], "\"•\""),
     ] {
         assert_eq!(
             hint(labels),

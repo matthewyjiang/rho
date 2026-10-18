@@ -355,46 +355,32 @@ fn answers(
     response
 }
 
-/// What a T3 Code multiple choice is typed with: the first of these that
-/// no choice label contains, so a typed list splits back into exactly the
-/// choices the user listed.
+/// What a T3 Code multiple choice is typed with: a character no choice
+/// label contains, so a typed list splits back into exactly the choices
+/// the user listed. Common punctuation comes first; past it, the first free
+/// visible character from Unicode's arrow-to-symbol blocks; finite
+/// labels cannot use them all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Separator {
-    Comma,
-    Semicolon,
-    Bar,
-    NewLine,
-}
+struct Separator(char);
 
 impl Separator {
     fn for_question(question: &HostQuestion) -> Self {
-        [Self::Comma, Self::Semicolon, Self::Bar]
+        let labels = question.choices().iter().map(HostChoice::label);
+        let free = |c: &char| labels.clone().all(|label| !label.contains(*c));
+        [',', ';', '|', '/', '+', '•']
             .into_iter()
-            .find(|separator| {
-                question
-                    .choices()
-                    .iter()
-                    .all(|choice| !choice.label().contains(separator.char()))
-            })
-            .unwrap_or(Self::NewLine)
-    }
-
-    fn char(self) -> char {
-        match self {
-            Self::Comma => ',',
-            Self::Semicolon => ';',
-            Self::Bar => '|',
-            Self::NewLine => '\n',
-        }
+            .chain('\u{2190}'..='\u{2BFF}')
+            .find(free)
+            .map(Self)
+            .expect("labels cannot contain every symbol character")
     }
 
     /// The separator as the form's hint names it.
-    fn name(self) -> &'static str {
-        match self {
-            Self::Comma => "commas",
-            Self::Semicolon => "semicolons",
-            Self::Bar => "\"|\"",
-            Self::NewLine => "new lines",
+    fn name(self) -> String {
+        match self.0 {
+            ',' => "commas".to_owned(),
+            ';' => "semicolons".to_owned(),
+            c => format!("\"{c}\""),
         }
     }
 }
@@ -406,7 +392,7 @@ fn t3_choices(
     selection: SelectionMode,
     values: Vec<String>,
 ) -> Vec<String> {
-    let separator = Separator::for_question(question).char();
+    let Separator(separator) = Separator::for_question(question);
     let pieces = values.into_iter().flat_map(|value| match selection {
         SelectionMode::Many => value
             .split(separator)
