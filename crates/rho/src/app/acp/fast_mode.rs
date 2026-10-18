@@ -63,18 +63,14 @@ pub(super) fn parse_fast_mode_request(
             .value
             .as_bool()
             .ok_or_else(|| AcpError::invalid_params().data("fast_mode requires a boolean value")),
-        Toggles::Select => {
-            let Some(value) = request.value.as_value_id() else {
-                return Err(AcpError::invalid_params().data("fast_mode requires a select value id"));
-            };
-            match value.0.as_ref() {
-                ON => Ok(true),
-                OFF => Ok(false),
-                other => {
-                    Err(AcpError::invalid_params().data(format!("unknown fast_mode '{other}'")))
-                }
+        Toggles::Select => match request.value.as_value_id().map(|id| id.0.as_ref()) {
+            Some(ON) => Ok(true),
+            Some(OFF) => Ok(false),
+            Some(other) => {
+                Err(AcpError::invalid_params().data(format!("unknown fast_mode '{other}'")))
             }
-        }
+            None => Err(AcpError::invalid_params().data("fast_mode requires a select value id")),
+        },
     }
 }
 

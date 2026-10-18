@@ -109,7 +109,8 @@ pub(super) struct PumpSources<'a> {
     /// Plan approvals from `exit_plan_mode`; `None` when the session has no
     /// plan handoff.
     pub(super) plan_approvals: Option<&'a mut PlanPermissionReceiver>,
-    /// Whether questions reach the user as form elicitation.
+    /// Host features; the pump reads whether questions reach the user as
+    /// form elicitation.
     pub(super) host_features: HostFeatures,
     /// Background results offered to the run; tests of the event and
     /// approval plumbing pass `None`.

@@ -33,7 +33,7 @@ fn current(provider: &str, model: &str, auth: &str) -> CurrentModel {
 // option uses it).
 // Owner: acp session config mapper
 #[test]
-fn advertises_fast_mode_only_for_fast_capable_models() {
+fn advertises_fast_mode_in_the_host_shape_only_for_fast_capable_models() {
     let codex = current("openai-codex", "gpt-5.5", "codex");
     let priority = Some(ServiceTier::Priority);
     let cases = [

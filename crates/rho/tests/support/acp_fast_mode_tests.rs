@@ -82,11 +82,9 @@ fn fast_mode_is_a_switch_only_for_hosts_that_advertise_boolean_options() {
             .unwrap();
         let session_id = created["sessionId"].clone();
         let mut set = |value: &Value| {
-            let mut params = json!({"sessionId": session_id, "configId": "fast_mode"});
-            params
-                .as_object_mut()
-                .unwrap()
-                .extend(value.as_object().unwrap().clone());
+            let mut params = value.clone();
+            params["sessionId"] = session_id.clone();
+            params["configId"] = json!("fast_mode");
             server.request("session/set_config_option", params).0
         };
         let turned_on = set(&turn_on).unwrap();
