@@ -44,7 +44,10 @@ async fn plan_exit_registration_and_one_shot_decision() {
             ToolSetOptions::new(AgentCapabilities::new(capabilities.into_iter().collect())),
         );
         agent.tools = if interactive_host {
-            tools.with_plan_exit_host(&config)
+            tools.with_plan_exit_host(
+                &config,
+                crate::tools::plan_exit::PlanExitHost::Questionnaire,
+            )
         } else {
             tools
         };

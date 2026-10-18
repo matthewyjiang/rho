@@ -61,39 +61,54 @@ impl SessionHost {
                 session_writes: writes.clone(),
             },
         );
-        let workspace = WorkspaceOptions {
-            root: self.permission.workspace_root.clone(),
+        // `exit_plan_mode` is offered only in plan mode; the rebuilt runtime
+        // must see the tool list of the mode it serves.
+        self.built.tools.set_plan_exit_registered(mode);
+        let rebuilt = async {
+            let workspace = WorkspaceOptions {
+                root: self.permission.workspace_root.clone(),
+            }
+            .build_workspace(&self.added_dirs)
+            .map_err(host_apply_error)?;
+            let runtime = build_runtime(RuntimeBuildOptions {
+                provider: std::sync::Arc::clone(&self.built.provider),
+                tools: &self.built.tools,
+                workspace,
+                workspace_policy: AppPolicy::for_mode(mode, writes.clone()),
+                approval_session: channel.handler.map(ApprovalSession::from_shared),
+                system_prompt: self.built.prompt.system.clone(),
+                reasoning: self.built.session.reasoning_level(),
+                service_tier: self.built.session.service_tier(),
+                compaction: CompactionConfig::from(&config),
+                context_window: model_context_window(&config.provider, &config.model),
+                usage_purpose: "agent",
+                usage_parent_session_id: None,
+                usage_recording: self.built.runtime.usage_recording(),
+                hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+                hooks: self.built.hooks.as_ref(),
+                diagnostics: self.built.diagnostics.clone(),
+                recall: self.built.tools.recall_store(),
+            })
+            .map_err(host_apply_error)?;
+            match runtime
+                .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
+                .await
+            {
+                Ok(session) => Ok((runtime, session)),
+                Err(error) => {
+                    runtime.shutdown();
+                    Err(host_apply_error(error))
+                }
+            }
         }
-        .build_workspace(&self.added_dirs)
-        .map_err(host_apply_error)?;
-        let runtime = build_runtime(RuntimeBuildOptions {
-            provider: std::sync::Arc::clone(&self.built.provider),
-            tools: &self.built.tools,
-            workspace,
-            workspace_policy: AppPolicy::for_mode(mode, writes.clone()),
-            approval_session: channel.handler.map(ApprovalSession::from_shared),
-            system_prompt: self.built.prompt.system.clone(),
-            reasoning: self.built.session.reasoning_level(),
-            service_tier: self.built.session.service_tier(),
-            compaction: CompactionConfig::from(&config),
-            context_window: model_context_window(&config.provider, &config.model),
-            usage_purpose: "agent",
-            usage_parent_session_id: None,
-            usage_recording: self.built.runtime.usage_recording(),
-            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            hooks: self.built.hooks.as_ref(),
-            diagnostics: self.built.diagnostics.clone(),
-            recall: self.built.tools.recall_store(),
-        })
-        .map_err(host_apply_error)?;
-        let session = match runtime
-            .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
-            .await
-        {
-            Ok(session) => session,
+        .await;
+        let (runtime, session) = match rebuilt {
+            Ok(rebuilt) => rebuilt,
             Err(error) => {
-                runtime.shutdown();
-                return Err(host_apply_error(error));
+                self.built
+                    .tools
+                    .set_plan_exit_registered(self.permission.mode);
+                return Err(error);
             }
         };
 

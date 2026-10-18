@@ -769,14 +769,18 @@ fn handle_command(
                 let _ = accepted.send(Err("host input request is not pending".into()));
                 return;
             };
-            if let Err(error) = request.request.validate(&response) {
+            if let Err(error) = response
+                .as_ref()
+                .map_or(Ok(()), |response| request.request.validate(response))
+            {
                 let _ = accepted.send(Err(error.to_string()));
                 return;
             }
+            let response = response.map_err(|refusal| Error::HostInputRefused { refusal });
             let (_, request) = pending
                 .remove(&request_id)
                 .expect("pending request was checked");
-            let delivered = request.response.send(Ok(response)).is_ok();
+            let delivered = request.response.send(response).is_ok();
             let _ = accepted.send(if delivered {
                 Ok(())
             } else {

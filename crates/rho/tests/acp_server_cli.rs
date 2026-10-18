@@ -34,6 +34,9 @@ mod file_diffs;
 #[path = "support/acp_login.rs"]
 mod login;
 
+#[path = "support/acp_questions_tests.rs"]
+mod questions;
+
 #[path = "support/acp_session_titles_tests.rs"]
 mod session_titles;
 

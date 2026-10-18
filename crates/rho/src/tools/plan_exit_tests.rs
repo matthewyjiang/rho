@@ -31,11 +31,58 @@ fn answers_map_to_approval_or_revision() {
         ),
     ] {
         assert_eq!(
-            decision(answer, feedback, classifier_configured),
+            decision(answer, feedback, &approval_targets(classifier_configured)),
             PlanExitDecision {
                 target,
                 feedback: feedback.map(str::to_owned),
             }
+        );
+    }
+}
+
+// Covers: approval may switch modes only after the proposing turn completed
+// while the session is still in plan mode; every other case keeps the mode
+// Owner: plan-exit answer policy.
+#[test]
+fn decisions_apply_only_after_a_completed_turn_in_plan_mode() {
+    let approve = PlanExitDecision {
+        target: PermissionMode::AllowEdits,
+        feedback: None,
+    };
+    let keep = PlanExitDecision {
+        target: PermissionMode::Plan,
+        feedback: None,
+    };
+    for (decision, turn, current, expected) in [
+        (
+            &approve,
+            ProposalTurn::Completed,
+            PermissionMode::Plan,
+            PlanExitResolution::Apply(PermissionMode::AllowEdits),
+        ),
+        (
+            &approve,
+            ProposalTurn::Unfinished,
+            PermissionMode::Plan,
+            PlanExitResolution::Keep("plan approval discarded; turn did not complete"),
+        ),
+        (
+            &approve,
+            ProposalTurn::Completed,
+            PermissionMode::Supervised,
+            PlanExitResolution::Keep("plan approval discarded; session is no longer in plan mode"),
+        ),
+        (
+            &keep,
+            ProposalTurn::Completed,
+            PermissionMode::Plan,
+            PlanExitResolution::Keep("plan not approved; permission mode stays plan"),
+        ),
+    ] {
+        assert_eq!(
+            decision.resolve(turn, current),
+            expected,
+            "{turn:?} {current:?}"
         );
     }
 }
@@ -46,6 +93,7 @@ fn answers_map_to_approval_or_revision() {
 async fn unavailable_host_reports_plan_without_requesting_input() {
     let tool = PlanExitTool {
         slot: None,
+        prompt: PlanExitPrompt::Questionnaire,
         classifier_configured: Arc::new(AtomicBool::new(false)),
     };
     let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);

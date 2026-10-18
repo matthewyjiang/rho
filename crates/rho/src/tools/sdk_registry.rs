@@ -154,6 +154,9 @@ struct PlanExitTools {
     slot: super::plan_exit::PlanExitSlot,
     classifier_configured: Arc<std::sync::atomic::AtomicBool>,
     registration: HostToolRegistration,
+    /// Approvals the tool asks a permission-prompt host, between the host's
+    /// prompts. A running prompt takes it to answer them.
+    permission_requests: Option<super::plan_exit::PlanPermissionReceiver>,
 }
 
 struct ComputerTools {
@@ -523,26 +526,61 @@ impl AppToolSet {
             .mutate(|tools| advisor.registration.set_registered(tools, registered))
     }
 
-    /// Installs plan handoff only for an interactive host that can answer questions.
-    pub(crate) fn with_plan_exit_host(mut self, config: &Config) -> Self {
-        if self.contains("questionnaire") {
-            let slot = super::plan_exit::PlanExitSlot::default();
-            let classifier_configured = Arc::new(std::sync::atomic::AtomicBool::new(
-                config
-                    .internal_agents
-                    .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
-            ));
-            self.plan_exit = Some(PlanExitTools {
-                registration: HostToolRegistration::new(Arc::new(super::plan_exit::PlanExitTool {
-                    slot: Some(slot.clone()),
-                    classifier_configured: classifier_configured.clone(),
-                })),
-                slot,
-                classifier_configured,
-            });
-            self.set_plan_exit_registered(config.permission_mode);
-        }
+    /// Installs plan handoff for an interactive host that can ask the user.
+    /// A questionnaire host needs the questionnaire tool, which exists only
+    /// when the host can draw questionnaires.
+    pub(crate) fn with_plan_exit_host(
+        mut self,
+        config: &Config,
+        host: super::plan_exit::PlanExitHost,
+    ) -> Self {
+        use super::plan_exit::{PlanExitHost, PlanExitPrompt};
+
+        let (prompt, permission_requests) = match host {
+            PlanExitHost::Questionnaire if self.contains("questionnaire") => {
+                (PlanExitPrompt::Questionnaire, None)
+            }
+            PlanExitHost::Questionnaire => return self,
+            PlanExitHost::Permission => {
+                let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+                (PlanExitPrompt::Permission(sender), Some(receiver))
+            }
+        };
+        let slot = super::plan_exit::PlanExitSlot::default();
+        let classifier_configured = Arc::new(std::sync::atomic::AtomicBool::new(
+            config
+                .internal_agents
+                .contains_key(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID),
+        ));
+        self.plan_exit = Some(PlanExitTools {
+            registration: HostToolRegistration::new(Arc::new(super::plan_exit::PlanExitTool {
+                slot: Some(slot.clone()),
+                prompt,
+                classifier_configured: classifier_configured.clone(),
+            })),
+            slot,
+            classifier_configured,
+            permission_requests,
+        });
+        self.set_plan_exit_registered(config.permission_mode);
         self
+    }
+
+    /// Takes the plan approvals a permission-prompt host answers, for one
+    /// prompt; [`Self::restore_plan_permission_requests`] hands them back.
+    pub(crate) fn take_plan_permission_requests(
+        &mut self,
+    ) -> Option<super::plan_exit::PlanPermissionReceiver> {
+        self.plan_exit.as_mut()?.permission_requests.take()
+    }
+
+    pub(crate) fn restore_plan_permission_requests(
+        &mut self,
+        requests: Option<super::plan_exit::PlanPermissionReceiver>,
+    ) {
+        if let (Some(plan_exit), Some(requests)) = (self.plan_exit.as_mut(), requests) {
+            plan_exit.permission_requests = Some(requests);
+        }
     }
 
     pub(crate) fn set_plan_exit_registered(

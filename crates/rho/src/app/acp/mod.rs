@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 mod compaction_card;
 mod config_options;
+mod elicitation;
 mod events;
 mod fast_mode;
 mod host_mcp;
@@ -21,10 +22,10 @@ use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 use agent_client_protocol::schema::v1::{DeleteSessionRequest, ListSessionsRequest};
 use agent_client_protocol::{
     schema::v1::{
-        AuthenticateRequest, CancelNotification, CloseSessionRequest, InitializeRequest,
-        LoadSessionRequest, NewSessionRequest, PromptRequest, RequestPermissionRequest,
-        RequestPermissionResponse, SessionNotification, SetSessionConfigOptionRequest,
-        SetSessionModeRequest,
+        AuthenticateRequest, CancelNotification, CloseSessionRequest, CreateElicitationRequest,
+        CreateElicitationResponse, InitializeRequest, LoadSessionRequest, NewSessionRequest,
+        PromptRequest, RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
+        SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
     Agent, Client, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role, Stdio,
 };
@@ -122,8 +123,10 @@ impl AcpStartup {
 
 /// Outbound ACP host port used by session hosts and tests.
 ///
-/// Implementors deliver session updates and permission prompts to the editor
-/// host. Keep the trait object-safe so tests can inject fakes.
+/// Implementors deliver session updates, permission prompts, and questions to
+/// the editor host. Keep the trait object-safe so tests can inject fakes.
+/// Dropping a returned request future before it resolves abandons the
+/// request; the connection port then sends `$/cancel_request`.
 pub(super) trait AcpClientPort: Send + Sync {
     fn send_session_notification(
         &self,
@@ -134,6 +137,17 @@ pub(super) trait AcpClientPort: Send + Sync {
         &self,
         request: RequestPermissionRequest,
     ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>;
+
+    /// `elicitation/create`. Session hosts send it only to hosts that
+    /// advertised the request's mode; fakes that never see one keep this
+    /// default.
+    fn create_elicitation(
+        &self,
+        _request: CreateElicitationRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<CreateElicitationResponse, AcpError>> + Send + '_>>
+    {
+        Box::pin(async { Err(AcpError::method_not_found()) })
+    }
 }
 
 /// ACP connection adapter. Session hosts talk to this instead of the crate
@@ -163,6 +177,14 @@ impl AcpClientPort for ConnectionPort {
     {
         Box::pin(async move { self.cx.send_request(request).block_task().await })
     }
+
+    fn create_elicitation(
+        &self,
+        request: CreateElicitationRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<CreateElicitationResponse, AcpError>> + Send + '_>>
+    {
+        Box::pin(async move { self.cx.send_request(request).block_task().await })
+    }
 }
 
 pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
@@ -174,7 +196,7 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
             {
                 let agent = Arc::clone(&agent);
                 async move |request: InitializeRequest, responder, _cx| {
-                    agent.record_client(&request.client_capabilities);
+                    agent.record_client(&request);
                     responder.respond(RhoAcpAgent::initialize(&request))
                 }
             },

@@ -579,6 +579,7 @@ pub(crate) fn error_label(error: &crate::Error) -> &'static str {
         crate::Error::Cancelled => "cancelled",
         crate::Error::Interrupted { .. } => "interrupted",
         crate::Error::InvalidHostResponse { .. } => "invalid_host_response",
+        crate::Error::HostInputRefused { .. } => "host_input_refused",
     }
 }
 

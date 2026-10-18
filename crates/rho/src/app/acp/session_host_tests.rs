@@ -184,6 +184,21 @@ fn cancel_before_the_next_prompt_does_not_leak_into_it() {
     assert!(!token.is_cancelled());
 }
 
+// Covers: a cancel that lands between two turns of one prompt (plan approval
+// runs the implementation turn) must cancel the second turn too
+// Owner: acp session host
+#[test]
+fn cancel_between_turns_of_one_prompt_cancels_the_next_turn() {
+    let gate = PromptGate::new();
+    gate.begin();
+    let first = rho_sdk::CancellationToken::new();
+    gate.activate(first.clone());
+    gate.cancel();
+    let second = rho_sdk::CancellationToken::new();
+    gate.activate(second.clone());
+    assert!(second.is_cancelled());
+}
+
 struct HoldingPermissionPort {
     entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
@@ -263,6 +278,8 @@ async fn permission_request_does_not_block_event_drain() {
             events: &mut EventSource::Channel(&mut event_rx),
             approvals: &mut ApprovalSource::Channel(&mut approval_rx),
             approvals_open: true,
+            plan_approvals: None,
+            host_updates: HostUpdates::default(),
             displays: None,
         })
         .await

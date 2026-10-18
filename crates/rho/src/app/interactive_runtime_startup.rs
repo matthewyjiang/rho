@@ -124,7 +124,7 @@ pub(super) async fn initialize(
         );
         tools
             .with_computer_use(computer)
-            .with_plan_exit_host(config)
+            .with_plan_exit_host(config, crate::tools::plan_exit::PlanExitHost::Questionnaire)
     } else {
         tools
     };

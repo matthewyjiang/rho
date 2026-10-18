@@ -101,6 +101,42 @@ When a tool needs approval, Rho asks the host. The host choices map to allow onc
 
 `rho acp` can prompt the host for approvals. Headless `rho run` cannot.
 
+### Leaving plan mode
+
+In `plan` mode the model gets the `exit_plan_mode` tool, as in the TUI. It sends the finished plan to the host as a `session/request_permission` on the tool's card, with kind `switch_mode` and the plan as content. The options approve into a mode, with the mode ids as option ids: `allow_edits`, `supervised`, `bypass`, and `auto` when a classifier model is configured. A final `keep_planning` option rejects. Every ACP host answers permission prompts, so leaving plan mode does not need [questions](#questions). A host that cancels the prompt, or fails it, keeps the session planning.
+
+Hosts draw this prompt in their own way. Zed lists every option. T3 Code shows its usual approve, approve for session, and decline buttons, and picks the first option of the matching kind: `supervised` (allow once), `allow_edits` (allow always), or `keep_planning`. `bypass` and `auto` cannot be chosen there. A host's own approval policy may also answer for the user: a T3 thread in full access approves without showing the plan, and one in a sandboxed mode may reject every time, in which case switch the session's mode by hand.
+
+An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, the approval is dropped with a notice. A `session/cancel` that arrives after the turn ends but before the switch drops it too, and the prompt ends `cancelled`. To give feedback instead, choose keep planning and reply in your next message.
+
+## Questions
+
+When the host advertises `clientCapabilities.elicitation.form`, as Zed and T3 Code do, Rho can ask the user questions. The model gets the `questionnaire` tool, MCP servers may [ask through Rho](/integrations/mcp#questions-from-a-server), and each question goes to the host as a form-mode `elicitation/create` scoped to the session and to the asking tool call. Hosts that do not advertise it get no `questionnaire` tool, and Rho declares no MCP `elicitation` capability, so nothing waits on a form the host cannot draw.
+
+Each question becomes one property keyed by its id:
+
+| Question | Property |
+| --- | --- |
+| Single choice | `string` with both `enum` and titled `oneOf` |
+| Multiple choice | `array` of titled choices |
+| Yes/no | `boolean` |
+| Free text | `string` |
+| Choice that also accepts free text | the choice, plus an optional `string` property `<id>.other`. A typed answer replaces a single choice and joins a multiple choice. |
+
+A short question header becomes the property `title` and the full question its `description`. Pre-selected defaults are sent as `default`. Properties go out in id order, which hosts such as Zed follow, not in the order the questions were asked.
+
+T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value; an exact label wins. A multiple choice is typed as a list separated by commas, or, when a choice label contains commas, by another character that no label contains (semicolons first); the form's description names the separator. If the labels leave no such character, the question takes one typed choice. Free text for a question that accepts only its listed choices counts as `decline`.
+
+The host's answer maps to the asking tool:
+
+| Host response | Result |
+| --- | --- |
+| `accept` | The answers. Content that does not answer the questions, such as a missing required answer or an unknown choice, counts as `decline`. |
+| `decline` | The tool call fails with "the user declined to answer"; the model continues. |
+| `cancel` | The tool call fails with "the user dismissed the question without answering"; the model continues. |
+
+`session/cancel` withdraws an open form with `$/cancel_request` and ends the prompt `cancelled`.
+
 ## Model
 
 `session/new` and `session/load` advertise a `configOptions` select with id `model` and category `model`. Options are the same catalog list the TUI picker uses: favorites first, value ids `provider/model`. Labels stay short so host pickers do not truncate them: the catalog name when one is known (`GPT-6 Sol`), else the bare model id. When two rows would share a label, each gets its provider appended (`Grok 4.7 (xai)`). When one provider gives several models the same name, those rows show their model ids instead (`gpt-5.6-sol`, `gpt-5.6-sol-pro`). The full `provider/model` id is the option description.
@@ -193,6 +229,7 @@ Rho starts MCP servers from its own config, plus the `mcpServers` the host sends
 - HTTP servers connect over Streamable HTTP with the host's headers. The URL must be HTTPS or a loopback address.
 - SSE servers are skipped with a warning. `initialize` advertises `mcpCapabilities.http` and not `sse`.
 - Host servers cannot request sampling.
+- Servers may ask the user questions only when the host advertises form elicitation; see [Questions](#questions).
 - An entry with an invalid name, empty command, repeated environment variable or header, or unsafe URL is reported as an invalid server instead of connected. An invalid host entry still claims its name: a config server with that name stays disconnected for the session rather than connecting with the config's endpoint and credentials.
 
 `rho acp` is not itself an MCP server. See [Model Context Protocol](/integrations/mcp).

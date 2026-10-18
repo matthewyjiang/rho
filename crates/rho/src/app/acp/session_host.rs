@@ -66,6 +66,8 @@ mod mode;
 mod open;
 #[path = "session_host_persist.rs"]
 mod persist;
+#[path = "session_host_plan_exit.rs"]
+mod plan_exit;
 #[path = "session_host_pump.rs"]
 mod pump;
 #[path = "session_host_title.rs"]
@@ -178,8 +180,15 @@ impl PromptGate {
     fn activate(&self, token: CancellationToken) {
         let mut slot = self.slot();
         let closed = matches!(&*slot, PromptGateState::Closed);
+        // A prompt can run more than one turn (plan approval runs the
+        // implementation turn), so a cancel that hit the previous turn's
+        // token after it ended still cancels this one.
         if closed
-            || matches!(&*slot, PromptGateState::Starting(starting) if starting.is_cancelled())
+            || matches!(
+                &*slot,
+                PromptGateState::Starting(previous) | PromptGateState::Active(previous)
+                    if previous.is_cancelled()
+            )
         {
             token.cancel();
         }
@@ -210,6 +219,17 @@ impl PromptGate {
             token.cancel();
         }
         *slot = PromptGateState::Closed;
+    }
+
+    /// Whether the running prompt was cancelled, or the session is closing.
+    pub(super) fn is_cancelled(&self) -> bool {
+        match &*self.slot() {
+            PromptGateState::Idle => false,
+            PromptGateState::Closed => true,
+            PromptGateState::Starting(token) | PromptGateState::Active(token) => {
+                token.is_cancelled()
+            }
+        }
     }
 
     pub(super) fn is_closed(&self) -> bool {
@@ -312,6 +332,8 @@ impl SessionHost {
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
+        // After the plan handoff, so the implementation turn's failure counts.
+        let result = self.finish_plan_exit(result, &startup.config, client).await;
         self.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
         self.wake_prompt_ended(
@@ -730,7 +752,10 @@ impl SessionHost {
         displays: AppliedDisplays<'_>,
     ) -> anyhow::Result<()> {
         let approvals_open = approval_receiver.is_some();
-        pump_sources(PumpSources {
+        // Plan approvals belong to the tool set, which outlives this prompt
+        // and is swapped by an agent rebind, so they are handed back after.
+        let mut plan_approvals = self.built.tools.take_plan_permission_requests();
+        let result = pump_sources(PumpSources {
             session_id: &self.acp_session_id,
             cancel: run.cancellation_handle(),
             mapper,
@@ -740,9 +765,15 @@ impl SessionHost {
             events: &mut EventSource::Run(run),
             approvals: &mut ApprovalSource::Receiver(approval_receiver),
             approvals_open,
+            plan_approvals: plan_approvals.as_mut(),
+            host_updates: self.host_updates,
             displays: Some(displays),
         })
-        .await
+        .await;
+        self.built
+            .tools
+            .restore_plan_permission_requests(plan_approvals);
+        result
     }
 
     /// Signal tracking for the next prompt, starting from the checklist the
@@ -942,3 +973,7 @@ mod delegation_tests;
 #[cfg(test)]
 #[path = "session_host_tool_lifecycle_tests.rs"]
 mod tool_lifecycle_tests;
+
+#[cfg(test)]
+#[path = "session_host_questions_tests.rs"]
+mod questions_tests;

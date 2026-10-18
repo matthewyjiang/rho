@@ -17,7 +17,8 @@ pub(crate) enum RunCommand {
     },
     Respond {
         request_id: crate::HostInputId,
-        response: crate::HostInputResponse,
+        /// The answers, or why the host gave none.
+        response: Result<crate::HostInputResponse, crate::HostInputRefusal>,
         accepted: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
 }
@@ -208,7 +209,7 @@ impl Run {
         self.commands
             .send(RunCommand::Respond {
                 request_id,
-                response,
+                response: Ok(response),
                 accepted,
             })
             .await
@@ -231,6 +232,25 @@ impl Run {
         &self,
         request_id: crate::HostInputId,
         response: crate::HostInputResponse,
+    ) -> Result<impl Future<Output = Result<(), Error>> + Send + 'static, Error> {
+        self.queue_response(request_id, Ok(response))
+    }
+
+    /// Starts answering a host input request with no answers, like
+    /// [`Run::request_respond`]. The asking tool receives
+    /// [`Error::HostInputRefused`] with `refusal` and the run continues.
+    pub fn request_refuse(
+        &self,
+        request_id: crate::HostInputId,
+        refusal: crate::HostInputRefusal,
+    ) -> Result<impl Future<Output = Result<(), Error>> + Send + 'static, Error> {
+        self.queue_response(request_id, Err(refusal))
+    }
+
+    fn queue_response(
+        &self,
+        request_id: crate::HostInputId,
+        response: Result<crate::HostInputResponse, crate::HostInputRefusal>,
     ) -> Result<impl Future<Output = Result<(), Error>> + Send + 'static, Error> {
         let (accepted, receipt) = tokio::sync::oneshot::channel();
         self.commands

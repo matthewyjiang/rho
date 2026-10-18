@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{ClientCapabilities, DeleteSessionRequest, DeleteSessionResponse},
+    schema::v1::{DeleteSessionRequest, DeleteSessionResponse, InitializeRequest},
     Error as AcpError, ErrorCode,
 };
 use futures_util::{
@@ -80,9 +80,9 @@ impl LazyAgent {
         }
     }
 
-    /// Records the session updates the host advertised at `initialize`.
-    pub(super) fn record_client(&self, capabilities: &ClientCapabilities) {
-        self.host_updates.record(capabilities);
+    /// Records the optional features the host advertised at `initialize`.
+    pub(super) fn record_client(&self, request: &InitializeRequest) {
+        self.host_updates.record(request);
     }
 
     pub(super) async fn ready(&self) -> Result<Arc<RhoAcpAgent>, AcpError> {

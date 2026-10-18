@@ -113,6 +113,26 @@ async fn answering_the_form_produces_the_matching_action() {
     });
     assert_eq!(cancelled.unwrap().action, ElicitationAction::Cancel);
 
+    // A host that answers without answers (ACP) passes the user's choice on.
+    for (refusal, action) in [
+        (
+            rho_sdk::HostInputRefusal::Dismissed,
+            ElicitationAction::Cancel,
+        ),
+        (
+            rho_sdk::HostInputRefusal::Declined,
+            ElicitationAction::Decline,
+        ),
+    ] {
+        let (refused, ()) = tokio::join!(service.elicit(colour_request()), async {
+            let question = questions.recv().await.expect("the form reached the caller");
+            let _ = question
+                .reply
+                .send(Err(rho_sdk::Error::HostInputRefused { refusal }));
+        });
+        assert_eq!(refused.unwrap().action, action, "{refusal:?}");
+    }
+
     // Decline: the call ended, so there is nobody left to ask.
     drop(registration);
     let declined = service.elicit(colour_request()).await.unwrap();
