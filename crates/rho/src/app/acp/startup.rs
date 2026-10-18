@@ -20,7 +20,9 @@ use crate::{
     cli::Cli,
 };
 
+/// Builds the agent, or answers the error every waiting request gets.
 type StartupRun = BoxFuture<'static, Result<Arc<RhoAcpAgent>, AcpError>>;
+
 /// One run of deferred startup. Shared owns the suspended initializer even if
 /// one waiting request is cancelled.
 type Startup = Shared<StartupRun>;

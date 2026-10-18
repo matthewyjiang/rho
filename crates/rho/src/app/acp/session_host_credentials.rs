@@ -40,7 +40,13 @@ impl SessionHost {
                 .await?;
         // The model switch path also rebinds the compactor, which holds its
         // own provider. The model is unchanged, so no switch notice is saved.
-        self.switch_provider(provider, &config)?;
+        self.switch_provider(provider, &config)
+            .map_err(|error| match error.data {
+                Some(serde_json::Value::String(detail)) => {
+                    anyhow::anyhow!("could not renew credentials: {detail}")
+                }
+                _ => anyhow::anyhow!("could not renew credentials: {}", error.message),
+            })?;
         Ok(())
     }
 
