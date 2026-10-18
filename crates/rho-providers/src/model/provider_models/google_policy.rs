@@ -51,15 +51,6 @@ pub(crate) enum ThinkingPolicy {
     None,
 }
 
-impl ThinkingPolicy {
-    pub(crate) fn allows(self, level: ReasoningLevel) -> bool {
-        match self {
-            Self::Level { levels } | Self::Budget { levels, .. } => levels.contains(&level),
-            Self::None => level == ReasoningLevel::Off,
-        }
-    }
-}
-
 pub(crate) fn thinking_policy(model: &str) -> ThinkingPolicy {
     match family(model) {
         Family::Gemini3(variant) => ThinkingPolicy::Level {

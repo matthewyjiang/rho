@@ -427,6 +427,18 @@ fn build_openai_compatible_provider(
         (CatalogSdkAdapter::AnthropicMessages, _) => Err(ModelError::InvalidResponse(format!(
             "provider '{provider_name}' Anthropic Messages requires an API key"
         ))),
+        (CatalogSdkAdapter::GeminiGenerateContent, CompatibleAuth::ApiKey(key)) => {
+            Ok(Arc::new(GoogleProvider::new_with_identity(
+                model,
+                key,
+                build.client,
+                build.api_base,
+                provider_name,
+            )))
+        }
+        (CatalogSdkAdapter::GeminiGenerateContent, _) => Err(ModelError::InvalidResponse(format!(
+            "provider '{provider_name}' Gemini generateContent requires an API key"
+        ))),
         // Chat Completions is the descriptor's declared runtime, so it is also
         // the fallback when the catalog has no row yet (cold cache before the
         // first hydrate) or names an unrecognized package. OpenAiResponses

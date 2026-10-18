@@ -1,7 +1,8 @@
 use crate::{
     model::{
+        models_dev::known_reasoning_capabilities,
         provider_models::{thinking_policy, ThinkingPolicy},
-        ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse,
+        ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ReasoningCapabilities,
     },
     protocol::gemini_generate_content::{
         build_request, collect_stream, GenerateContentResponse, ResponseCollector, ThinkingConfig,
@@ -16,21 +17,43 @@ pub struct GoogleProvider {
     client: reqwest::Client,
     api_key: String,
     api_base: String,
+    identity_provider: &'static str,
     model: String,
+    thinking: GeminiThinking,
+    session_headers: super::opencode_go::SessionHeaders,
 }
 
 impl GoogleProvider {
+    /// First-party Gemini API.
     pub(crate) fn new_with_transport(
         model: String,
         api_key: String,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
+        Self::new_with_identity(model, api_key, client, api_base, "google")
+    }
+
+    /// Hosted Gemini `generateContent` adapter registered under `identity_provider`.
+    pub(crate) fn new_with_identity(
+        model: String,
+        api_key: String,
+        client: reqwest::Client,
+        api_base: String,
+        identity_provider: &'static str,
+    ) -> Self {
+        let model = model.strip_prefix("models/").unwrap_or(&model).to_string();
         Self {
             client,
             api_key,
             api_base,
-            model: model.strip_prefix("models/").unwrap_or(&model).to_string(),
+            identity_provider,
+            thinking: GeminiThinking::resolve(
+                thinking_policy(&model),
+                known_reasoning_capabilities(identity_provider, &model),
+            ),
+            model,
+            session_headers: super::opencode_go::SessionHeaders::new(identity_provider),
         }
     }
 
@@ -42,22 +65,34 @@ impl GoogleProvider {
             request.messages,
             request.tools,
             &self.model_identity(),
-            thinking_config(&self.model, request.reasoning_level)?,
+            self.thinking
+                .config(request.reasoning_level)
+                .map_err(|UnsupportedLevel| ModelError::UnsupportedReasoning {
+                    provider: self.identity_provider,
+                    model: self.model.clone(),
+                    requested: request.reasoning_level,
+                })?,
         )
     }
 
     pub(crate) fn model_identity(&self) -> ModelIdentity {
-        ModelIdentity::new("google", "gemini-generate-content", &self.model)
+        ModelIdentity::new(
+            self.identity_provider,
+            "gemini-generate-content",
+            &self.model,
+        )
     }
 
     pub(crate) async fn complete_turn(
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
+        let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request)?;
         let response = super::request_body::send(
             self.client
                 .post(self.url("generateContent")?)
+                .headers(headers)
                 .header("x-goog-api-key", &self.api_key)
                 .json(&body),
         )
@@ -84,11 +119,13 @@ impl GoogleProvider {
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
+        let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request)?;
         let response = super::request_body::send(
             self.client
                 .post(self.url("streamGenerateContent")?)
                 .query(&[("alt", "sse")])
+                .headers(headers)
                 .header("x-goog-api-key", &self.api_key)
                 .header(reqwest::header::ACCEPT, "text/event-stream")
                 .json(&body),
@@ -112,62 +149,86 @@ impl GoogleProvider {
     }
 }
 
-fn thinking_config(
-    model: &str,
-    level: ReasoningLevel,
-) -> Result<Option<ThinkingConfig>, ModelError> {
-    let policy = thinking_policy(model);
-    if !policy.allows(level) {
-        return Err(ModelError::UnsupportedReasoning {
-            provider: "google",
-            model: model.to_string(),
-            requested: level,
-        });
+/// The model does not accept the requested reasoning level.
+#[derive(Debug, PartialEq, Eq)]
+struct UnsupportedLevel;
+
+/// Thinking controls for one Gemini model, resolved when the provider is built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum GeminiThinking {
+    /// Gemini 2.5: a token budget per level, from the model-id table.
+    Budget {
+        levels: &'static [ReasoningLevel],
+        flash_cap: bool,
+    },
+    /// A named `thinkingLevel` per request. These models always think, so
+    /// `Off` is rejected rather than silently running at the default level.
+    Levels(Vec<ReasoningLevel>),
+    /// No thinking controls: only `Off`, sent without a `thinkingConfig`.
+    Fixed,
+}
+
+impl GeminiThinking {
+    /// Gemini 2.5 keeps its budget table. Everything else uses the known
+    /// levels for the provider, the same ones pickers offer (models.dev for
+    /// gateways; first-party Google's discovered list wins once refreshed),
+    /// else the model-id table, which predates ids like `gemini-4-*`.
+    fn resolve(policy: ThinkingPolicy, catalog: ReasoningCapabilities) -> Self {
+        match (policy, catalog) {
+            (ThinkingPolicy::Budget { levels, flash_cap }, _) => Self::Budget { levels, flash_cap },
+            (_, ReasoningCapabilities::Levels(levels)) => Self::Levels(levels.into_levels()),
+            (ThinkingPolicy::Level { levels }, _) => Self::Levels(levels.to_vec()),
+            (ThinkingPolicy::None, _) => Self::Fixed,
+        }
     }
-    let include_thoughts = level != ReasoningLevel::Off;
-    match policy {
-        ThinkingPolicy::Level { .. } => {
-            let thinking_level = match level {
-                ReasoningLevel::Minimal => ThinkingLevel::Minimal,
-                ReasoningLevel::Low => ThinkingLevel::Low,
-                ReasoningLevel::Medium => ThinkingLevel::Medium,
-                ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => {
-                    ThinkingLevel::High
+
+    /// The request's `thinkingConfig`; `Ok(None)` sends none.
+    fn config(&self, level: ReasoningLevel) -> Result<Option<ThinkingConfig>, UnsupportedLevel> {
+        let include_thoughts = level != ReasoningLevel::Off;
+        match self {
+            Self::Budget { levels, flash_cap } => {
+                if !levels.contains(&level) {
+                    return Err(UnsupportedLevel);
                 }
-                ReasoningLevel::Off => {
-                    return Err(ModelError::UnsupportedReasoning {
-                        provider: "google",
-                        model: model.to_string(),
-                        requested: level,
-                    });
-                }
-            };
-            Ok(Some(ThinkingConfig {
-                thinking_budget: None,
-                thinking_level: Some(thinking_level),
-                include_thoughts,
-            }))
-        }
-        ThinkingPolicy::Budget { flash_cap, .. } => {
-            let mut budget = match level {
-                ReasoningLevel::Off => 0,
-                ReasoningLevel::Minimal => 1_024,
-                ReasoningLevel::Low => 2_048,
-                ReasoningLevel::Medium => 8_192,
-                ReasoningLevel::High => 16_384,
-                ReasoningLevel::Xhigh => 24_576,
-                ReasoningLevel::Max => 32_768,
-            };
-            if flash_cap {
-                budget = budget.min(24_576);
+                let budget = match level {
+                    ReasoningLevel::Off => 0,
+                    ReasoningLevel::Minimal => 1_024,
+                    ReasoningLevel::Low => 2_048,
+                    ReasoningLevel::Medium => 8_192,
+                    ReasoningLevel::High => 16_384,
+                    ReasoningLevel::Xhigh => 24_576,
+                    ReasoningLevel::Max => 32_768,
+                };
+                Ok(Some(ThinkingConfig {
+                    thinking_budget: Some(if *flash_cap {
+                        budget.min(24_576)
+                    } else {
+                        budget
+                    }),
+                    thinking_level: None,
+                    include_thoughts,
+                }))
             }
-            Ok(Some(ThinkingConfig {
-                thinking_budget: Some(budget),
-                thinking_level: None,
-                include_thoughts,
-            }))
+            Self::Levels(levels) => {
+                let thinking_level = match level {
+                    _ if !levels.contains(&level) => return Err(UnsupportedLevel),
+                    ReasoningLevel::Off => return Err(UnsupportedLevel),
+                    ReasoningLevel::Minimal => ThinkingLevel::Minimal,
+                    ReasoningLevel::Low => ThinkingLevel::Low,
+                    ReasoningLevel::Medium => ThinkingLevel::Medium,
+                    ReasoningLevel::High | ReasoningLevel::Xhigh | ReasoningLevel::Max => {
+                        ThinkingLevel::High
+                    }
+                };
+                Ok(Some(ThinkingConfig {
+                    thinking_budget: None,
+                    thinking_level: Some(thinking_level),
+                    include_thoughts,
+                }))
+            }
+            Self::Fixed if level == ReasoningLevel::Off => Ok(None),
+            Self::Fixed => Err(UnsupportedLevel),
         }
-        ThinkingPolicy::None => Ok(None),
     }
 }
 

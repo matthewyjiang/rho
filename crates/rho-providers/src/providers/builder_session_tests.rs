@@ -33,6 +33,11 @@ async fn opencode_go_session_headers_reach_every_adapter() {
         ("opencode-go", "@ai-sdk/openai", "/responses"),
         ("opencode-go", "@ai-sdk/anthropic", "/messages"),
         (
+            "opencode-go",
+            "@ai-sdk/google",
+            "/models/routing-test:streamGenerateContent?alt=sse",
+        ),
+        (
             "openrouter",
             "@ai-sdk/openai-compatible",
             "/chat/completions",

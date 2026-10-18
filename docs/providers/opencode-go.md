@@ -13,7 +13,7 @@ Rho supports [OpenCode Go](https://opencode.ai/docs/go/) as a first-party provid
 | Model source | OpenCode Go `/models` |
 | Metadata | [models.dev `opencode-go`](https://models.dev/providers/opencode-go) |
 
-Subscribe in the [OpenCode Zen console](https://opencode.ai/auth), copy the API key, and store it with Rho. Rho sends the key as a Bearer token for Chat Completions and Responses, and as `x-api-key` for Anthropic Messages. Do not put the key in `config.toml`.
+Subscribe in the [OpenCode Zen console](https://opencode.ai/auth), copy the API key, and store it with Rho. Rho sends the key as a Bearer token for Chat Completions and Responses, as `x-api-key` for Anthropic Messages, and as `x-goog-api-key` for Gemini. Do not put the key in `config.toml`.
 
 ## Interactive login
 
@@ -51,11 +51,11 @@ rho --provider opencode-go \
 
 Use `/config` and choose **Refresh model lists** to fetch the current Go catalog. Rho does not ship a baked default model; the first cached `/models` id is used until you pick one.
 
-Cost, context, and reasoning controls come from models.dev under `opencode-go`. The same catalog names the AI SDK package for each model. Rho uses that package to choose Chat Completions, OpenAI Responses, or Anthropic Messages. New Go models work after a models.dev refresh without a Rho update, as long as they use one of those packages.
+Cost, context, and reasoning controls come from models.dev under `opencode-go`. The same catalog names the AI SDK package for each model. Rho uses that package to choose Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini `generateContent`. New Go models work after a models.dev refresh without a Rho update, as long as they use one of those packages.
 
-For Chat Completions models that advertise only a reasoning toggle (such as `qwen3.6-plus` and `qwen3.7-max`), `off` sends `reasoning_effort: "none"`; `max` enables reasoning using the backend default without sending an unadvertised effort value. Models with explicit effort values, or a `supported_reasoning_levels` override in `models.toml`, still send the selected effort. Anthropic Messages thinking budgets are unchanged.
+For Chat Completions models that advertise only a reasoning toggle (such as `qwen3.6-plus` and `qwen3.7-max`), `off` sends `reasoning_effort: "none"`; `max` enables reasoning using the backend default without sending an unadvertised effort value. Models with explicit effort values, or a `supported_reasoning_levels` override in `models.toml`, still send the selected effort. Anthropic Messages thinking budgets are unchanged. Gemini models send the advertised level as `thinkingLevel`.
 
-All three adapters send Rho's user agent and the required `x-opencode-session` routing header. Rho uses the conversation's prompt cache key to keep routing stable across turns and resumed sessions. SDK callers without a prompt cache key get a stable ID per provider instance; supply a distinct `prompt_cache_key` for each conversation when sharing a provider.
+All four adapters send Rho's user agent and the required `x-opencode-session` routing header. Rho uses the conversation's prompt cache key to keep routing stable across turns and resumed sessions. SDK callers without a prompt cache key get a stable ID per provider instance; supply a distinct `prompt_cache_key` for each conversation when sharing a provider.
 
 Use [`/limits`](/interactive-tui#commands) to inspect the rolling 5-hour, weekly, and monthly usage windows when you are logged in.
 
