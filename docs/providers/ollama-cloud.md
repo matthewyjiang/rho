@@ -47,7 +47,7 @@ and choose the API key credential if more than one Ollama Cloud mode is stored.
 
 Ollama's local install keeps an Ed25519 device key at `~/.ollama/id_ed25519`. After that public key is registered with your ollama.com account, Rho can sign Cloud API requests the same way the Ollama CLI does.
 
-1. Prefer the Rho login flow:
+1. Sign in through Rho:
 
 ```text
 /login ollama-cloud
@@ -55,15 +55,15 @@ Ollama's local install keeps an Ed25519 device key at `~/.ollama/id_ed25519`. Af
 
 Choose **Device Key**. Rho always shows the Ollama connect URL, and opens a browser when one can appear. Approve the device, then use an Ollama Cloud model. Config keeps `provider = "ollama-cloud"` with `auth = "ollama-cloud-device"`.
 
-2. Or reuse an existing Ollama sign-in. If you already ran `ollama signin` and `~/.ollama/id_ed25519` is registered, Rho can use that key without creating an API key.
+Rho does not use a device key until you sign in this way, even if `~/.ollama/id_ed25519` already exists. If you already ran `ollama signin`, Rho reuses that registered key rather than creating a new one.
 
-3. Select a model the same way:
+2. Select a model the same way:
 
 ```text
 /model ollama-cloud/<hosted-model>
 ```
 
-`/logout` for the device mode signs Rho out: Rho stops using the key and hides Ollama Cloud device models until you choose **Device Key** in `/login ollama-cloud` again. It does not delete `~/.ollama/id_ed25519`, which the Ollama CLI shares, or disconnect the key from ollama.com.
+`/logout` for the device mode signs Rho out: Rho stops using the key and hides Ollama Cloud device models until you sign in again. It does not delete `~/.ollama/id_ed25519`, which the Ollama CLI shares, or disconnect the key from ollama.com.
 
 ## Environment and automation
 

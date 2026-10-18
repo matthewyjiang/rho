@@ -83,7 +83,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             id: "ollama-cloud-device",
             login_label: "Ollama Cloud device key",
             auth_kind: ProviderAuthKind::OllamaDeviceKey {
-                missing_message: "missing Ollama Cloud device key; run /login ollama-cloud in the TUI and choose Device Key, or sign in with `ollama signin` so ~/.ollama/id_ed25519 is registered",
+                missing_message: "not signed in to the Ollama Cloud device key; run /login ollama-cloud in the TUI and choose Device Key",
             },
         }
         ],

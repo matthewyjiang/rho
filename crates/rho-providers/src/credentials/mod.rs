@@ -54,10 +54,10 @@ const WEB_SEARCH_OPENAI_API_KEY_ACCOUNT: &str = "web-search:openai:api-key";
 const WEB_SEARCH_EXA_API_KEY_ACCOUNT: &str = "web-search:exa:api-key";
 const WEB_SEARCH_BRAVE_API_KEY_ACCOUNT: &str = "web-search:brave:api-key";
 const WEB_SEARCH_FIRECRAWL_API_KEY_ACCOUNT: &str = "web-search:firecrawl:api-key";
-/// Ollama device keys live in `~/.ollama`, which Rho must not delete because
-/// the Ollama CLI shares them. Logout records this flag instead, so Rho stops
-/// using the key; the next device login clears it.
-const OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT: &str = "provider:ollama-cloud:device-signed-out";
+/// Ollama device keys live in `~/.ollama`, which the Ollama CLI shares, so a
+/// key on disk does not mean the user signed in to Rho. Device login sets this
+/// flag and logout deletes it; the key itself is never removed.
+const OLLAMA_DEVICE_SIGNED_IN_ACCOUNT: &str = "provider:ollama-cloud:device-signed-in";
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CodexTokens {
@@ -308,7 +308,7 @@ fn delete_auth_kind_credentials(
     auth_kind: ProviderAuthKind,
 ) -> CredentialResult<bool> {
     if matches!(auth_kind, ProviderAuthKind::OllamaDeviceKey { .. }) {
-        return sign_out_ollama_device(store);
+        return store.delete_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT);
     }
     let Some(account) = auth_kind.account() else {
         return Ok(false);
@@ -316,35 +316,19 @@ fn delete_auth_kind_credentials(
     store.delete_secret(account)
 }
 
-/// True when Rho logged out of the `~/.ollama` device key.
-///
-/// An unavailable store cannot hold a logout, so users without a working
-/// keyring keep reusing their Ollama sign-in as before the flag existed.
-pub(crate) fn ollama_device_signed_out(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    match store.get_secret(OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT) {
-        Ok(flag) => Ok(flag.is_some()),
-        Err(CredentialError::StoreUnavailable(_)) => Ok(false),
-        Err(error) => Err(error),
-    }
+/// True when the user completed a Rho device login and has not logged out.
+pub(crate) fn ollama_device_login_recorded(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    Ok(store.get_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT)?.is_some())
 }
 
-/// True when a usable `~/.ollama` device key exists and Rho has not logged it out.
+/// True when Rho is signed in and a usable `~/.ollama` device key exists.
 fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    Ok(!ollama_device_signed_out(store)?
+    Ok(ollama_device_login_recorded(store)?
         && crate::auth::ollama_device::ollama_device_credentials_available())
 }
 
-/// Always records the logout, so a key that appears later stays unused.
-/// Returns whether Rho was signed in to the device key.
-fn sign_out_ollama_device(store: &dyn CredentialStore) -> CredentialResult<bool> {
-    let was_signed_in = ollama_device_signed_in(store)?;
-    store.set_secret(OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT, "1")?;
-    Ok(was_signed_in)
-}
-
 pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialResult<()> {
-    store.delete_secret(OLLAMA_DEVICE_SIGNED_OUT_ACCOUNT)?;
-    Ok(())
+    store.set_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT, "1")
 }
 
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
