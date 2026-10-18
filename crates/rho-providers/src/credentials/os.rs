@@ -37,6 +37,16 @@ impl OsCredentialStore {
         }
     }
 
+    /// Drops every cached read, including cached misses, so the next read of
+    /// each account goes to the keyring. Reads are cached for the life of the
+    /// process; call this when another process, such as a terminal login,
+    /// may have written the keyring since.
+    pub fn forget_cached_secrets() {
+        if let Ok(mut cache) = Self::secret_cache().lock() {
+            cache.clear();
+        }
+    }
+
     fn entry(account: &str) -> CredentialResult<keyring::Entry> {
         keyring::Entry::new(SERVICE, account)
             .map_err(|err| CredentialError::StoreUnavailable(err.to_string()))

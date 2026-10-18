@@ -1,7 +1,8 @@
 //! Conversation-model change on an assembled SDK session.
 //!
 //! Interactive TUI wraps this with display history, MCP sampling, and run
-//! transition. ACP calls it directly. Both keep provider, reasoning,
+//! transition. ACP calls it directly, also to install a same-model provider
+//! rebuilt with renewed credentials. Both keep provider, reasoning,
 //! compaction, the switch notice, and delegated selection on one path.
 
 use std::sync::Arc;

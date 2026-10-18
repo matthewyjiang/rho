@@ -22,6 +22,9 @@ mod advertisements;
 #[path = "support/acp_agent_model_override.rs"]
 mod agent_model_override;
 
+#[path = "support/acp_auth_required.rs"]
+mod auth_required;
+
 #[path = "support/acp_compaction_cards_tests.rs"]
 mod compaction_cards;
 

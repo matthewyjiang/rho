@@ -19,6 +19,7 @@ use crate::{
         tools_prompt::McpSamplingSupport,
     },
     config::Config,
+    credential_store::AppCredentialStore,
     permission::PermissionMode,
 };
 
@@ -34,6 +35,9 @@ pub(super) async fn build_session(
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<SessionAssembly> {
     ensure_headless_auto_classifier_model(config)?;
+    // A session request can follow a terminal login another process saved,
+    // even when startup itself succeeded without credentials.
+    AppCredentialStore::reread_external_logins();
     let mut host_tools: anyhow::Result<()> = Ok(());
     let assembly = assemble_session(SessionAssemblyOptions {
         config,
