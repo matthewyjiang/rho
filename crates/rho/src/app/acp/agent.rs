@@ -32,6 +32,9 @@ use agent_client_protocol::{
 mod publication;
 use publication::PublicationGuard;
 
+#[path = "agent_titles.rs"]
+mod titles;
+
 /// A published `session/new` or `session/load` result. `commands` is sent
 /// after `response`, once the client knows the session. The guard keeps new
 /// requests out until both have been enqueued.
@@ -104,7 +107,8 @@ pub(super) struct RhoAcpAgent {
     /// this lock.
     install_gate: tokio::sync::RwLock<()>,
     /// One lock per session ID. Replacements of the same ID stay ordered;
-    /// different IDs publish and tear down independently.
+    /// different IDs publish and tear down independently. Generated titles
+    /// wait on it too, so none is sent while a load of its session runs.
     install_locks: tokio::sync::Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
     closed: AtomicBool,
 }
@@ -276,20 +280,26 @@ impl RhoAcpAgent {
         })
     }
 
+    /// Runs one prompt. A title the prompt asks for is generated in the
+    /// background and sent through `port`, which is why it is owned.
     pub(super) async fn prompt(
         self: &Arc<Self>,
         request: PromptRequest,
-        port: &dyn AcpClientPort,
+        port: Arc<dyn AcpClientPort>,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
         match self
             .lock_session_host(&session_id, HostWait::Prompt)
             .await?
         {
-            SessionHostLock::Ready(mut host) => host
-                .prompt(request, port, &self.startup)
-                .await
-                .map_err(prompt_error),
+            SessionHostLock::Ready(mut host) => {
+                let result = host.prompt(request, &*port, &self.startup).await;
+                if let Some(title) = host.take_title() {
+                    let agent = Arc::clone(self);
+                    tokio::spawn(async move { agent.report_title(title, &*port).await });
+                }
+                result.map_err(prompt_error)
+            }
             // A closing session ends a prompt that waited for its host as
             // `session/cancel` would, rather than failing it.
             SessionHostLock::Closed => Ok(PromptResponse::new(StopReason::Cancelled)),

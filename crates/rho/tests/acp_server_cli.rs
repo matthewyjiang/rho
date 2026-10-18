@@ -31,6 +31,9 @@ mod file_diffs;
 #[path = "support/acp_login.rs"]
 mod login;
 
+#[path = "support/acp_session_titles_tests.rs"]
+mod session_titles;
+
 /// Failure bound for one reply; the fixture answers without network.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -46,6 +49,11 @@ impl AcpServer {
     /// Starts `rho acp` in `cwd` with the fixture provider in `mode`;
     /// `path` is the file the fixture's tool call targets.
     fn spawn(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Self {
+        Self::from_command(&mut Self::command(home, cwd, mode, path))
+    }
+
+    /// The command [`Self::spawn`] runs, for tests that add to it.
+    fn command(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
         command
             .current_dir(cwd)
@@ -62,7 +70,7 @@ impl AcpServer {
             .arg("--config")
             .arg(home.join("config.toml"))
             .arg("acp");
-        Self::from_command(&mut command)
+        command
     }
 
     fn from_command(command: &mut Command) -> Self {
@@ -150,6 +158,17 @@ impl AcpServer {
             .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
             .filter_map(|update| update["content"]["text"].as_str())
             .collect()
+    }
+
+    /// The next `session/update` the agent sends without a pending request,
+    /// such as a title that lands after the turn it names.
+    fn next_notification(&mut self) -> Value {
+        let message = self
+            .messages
+            .recv_timeout(REPLY_TIMEOUT)
+            .unwrap_or_else(|error| panic!("no session/update: {error}"));
+        assert_eq!(message["method"], "session/update", "{message}");
+        message["params"].clone()
     }
 }
 

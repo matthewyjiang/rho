@@ -169,7 +169,10 @@ async fn missing_session_prompt_and_load_return_errors() {
     let missing = SessionId::new("missing");
 
     let prompt = agent
-        .prompt(PromptRequest::new(missing.clone(), Vec::new()), &port)
+        .prompt(
+            PromptRequest::new(missing.clone(), Vec::new()),
+            Arc::new(NullPort),
+        )
         .await
         .expect_err("missing prompt session");
     assert_eq!(prompt.code, ErrorCode::ResourceNotFound);
@@ -372,8 +375,10 @@ async fn prompt_queued_during_replacement_moves_to_the_successor() {
     let held = previous.host.lock().await;
     let successor_held = replacement.host.lock().await;
 
-    let port = NullPort;
-    let prompt = agent.prompt(PromptRequest::new(session_id.clone(), Vec::new()), &port);
+    let prompt = agent.prompt(
+        PromptRequest::new(session_id.clone(), Vec::new()),
+        Arc::new(NullPort),
+    );
     tokio::pin!(prompt);
     assert!(futures_util::poll!(&mut prompt).is_pending());
 
@@ -759,7 +764,8 @@ async fn close_cancels_the_running_prompt_saves_it_and_frees_the_session() {
 
     let prompt_agent = Arc::clone(&agent);
     let request = text_prompt(&session_id, "the codeword is zebra");
-    let prompt = tokio::spawn(async move { prompt_agent.prompt(request, &NullPort).await });
+    let prompt =
+        tokio::spawn(async move { prompt_agent.prompt(request, Arc::new(NullPort)).await });
     tokio::time::timeout(Duration::from_secs(5), started.notified())
         .await
         .expect("the turn should reach the model");
@@ -806,7 +812,7 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
     live.cancel.cancel();
     let held = live.host.lock().await;
 
-    let prompt = agent.prompt(text_prompt(&session_id, "steer"), &NullPort);
+    let prompt = agent.prompt(text_prompt(&session_id, "steer"), Arc::new(NullPort));
     tokio::pin!(prompt);
     assert!(futures_util::poll!(&mut prompt).is_pending());
     let change = agent.set_config_option(

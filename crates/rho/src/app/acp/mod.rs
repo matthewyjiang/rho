@@ -210,9 +210,9 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: PromptRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
-                    let port = ConnectionPort::new(cx.clone());
+                    let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort::new(cx.clone()));
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.prompt(request, &port).await
+                        agent.ready().await?.prompt(request, port).await
                     })
                 }
             },

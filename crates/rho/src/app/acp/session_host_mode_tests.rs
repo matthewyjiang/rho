@@ -315,7 +315,7 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
             let agent = Arc::clone(&agent);
             let port = Arc::clone(&port);
             let request = prompt("hold");
-            async move { agent.prompt(request, &*port).await }
+            async move { agent.prompt(request, port).await }
         });
         started.recv().await.expect("the turn reaches its tool");
         if cancel {
@@ -345,7 +345,10 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
         assert_eq!((stop, change.await), (expected_stop, Ok(())), "{label}");
 
         port.take();
-        agent.prompt(prompt("write"), &*port).await.unwrap();
+        agent
+            .prompt(prompt("write"), Arc::clone(&port) as _)
+            .await
+            .unwrap();
         assert_eq!(
             port.take(),
             (0, vec![ToolCallStatus::Failed]),
@@ -390,11 +393,11 @@ async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
         // As after a failed load, the session stays published; it must still
         // be supervised, so the write asks the host.
         replaced.store(false, std::sync::atomic::Ordering::Release);
-        let port = ApprovingPort::default();
+        let port = Arc::new(ApprovingPort::default());
         agent
             .prompt(
                 PromptRequest::new(session_id.clone(), vec!["write".into()]),
-                &port,
+                Arc::clone(&port) as _,
             )
             .await
             .unwrap();
