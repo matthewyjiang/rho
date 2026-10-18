@@ -467,3 +467,30 @@ fn t3_code_multiple_choice_hint_names_a_separator_no_label_contains() {
         Ok(HostInputResponse::new().answer("q", ["all"]))
     );
 }
+
+// Covers: a default names its choice by value even when that value is
+// another choice's label; a default given as a label still selects it
+// Owner: ACP elicitation mapping
+#[test]
+fn defaults_prefer_a_choice_value_over_another_label() {
+    let default_for = |default: &str| {
+        let question = HostQuestion::new(
+            "q",
+            "Pick",
+            vec![
+                HostChoice::new("first", "second"),
+                HostChoice::new("second", "Other"),
+            ],
+            SelectionMode::One,
+        )
+        .unwrap()
+        .default_value(json!(default));
+        let request = HostInputRequest::questionnaire("Pick", vec![question]).unwrap();
+        let form = elicitation_request(&request, &SessionId::new("s"), None, FormDialect::Standard);
+        serde_json::to_value(form).unwrap()["requestedSchema"]["properties"]["q"]["default"].clone()
+    };
+    assert_eq!(
+        [default_for("second"), default_for("other")],
+        [json!("second"), json!("second")]
+    );
+}

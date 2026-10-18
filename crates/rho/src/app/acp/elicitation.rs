@@ -270,12 +270,14 @@ fn selected_defaults(question: &HostQuestion) -> Vec<String> {
             serde_json::Value::Number(value) => Some(value.to_string()),
             _ => None,
         })
-        // A default that names a choice by its label still means that choice.
+        // A default names a choice by value; one that names it by label
+        // still means that choice.
         .map(|value| {
-            question
-                .choices()
+            let choices = question.choices();
+            choices
                 .iter()
-                .find(|choice| choice.label().eq_ignore_ascii_case(&value))
+                .find(|choice| choice.value() == value)
+                .or_else(|| find_choice(question, &value))
                 .map_or(value, |choice| choice.value().to_owned())
         })
         .collect()
