@@ -107,7 +107,7 @@ In `plan` mode the model gets the `exit_plan_mode` tool, as in the TUI. It sends
 
 Hosts draw this prompt in their own way. Zed lists every option. T3 Code shows its usual approve, approve for session, and decline buttons, and picks the first option of the matching kind: `supervised` (allow once), `allow_edits` (allow always), or `keep_planning`. `bypass` and `auto` cannot be chosen there. A host's own approval policy may also answer for the user: a T3 thread in full access approves without showing the plan, and one in a sandboxed mode may reject every time, in which case switch the session's mode by hand.
 
-An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, or `session/cancel` arrives before the switch, the approval is dropped with a notice and the prompt ends `cancelled`. To give feedback instead, choose keep planning and reply in your next message.
+An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, the approval is dropped with a notice. A `session/cancel` that arrives after the turn ends but before the switch drops it too, and the prompt ends `cancelled`. To give feedback instead, choose keep planning and reply in your next message.
 
 ## Questions
 
