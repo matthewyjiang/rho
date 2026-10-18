@@ -21,7 +21,7 @@ use rho_sdk::{
     HostQuestion, SelectionMode,
 };
 
-use super::host_updates::FormDialect;
+use super::host_features::FormDialect;
 
 /// Suffix of the free-text property beside a choice question that also
 /// accepts its own answer, on hosts that draw the standard schema.

@@ -29,7 +29,7 @@ use super::{
     PromptGate,
 };
 use crate::{
-    app::acp::{AcpClientPort, HostUpdates},
+    app::acp::{AcpClientPort, HostFeatures},
     config::Config,
     permission::PermissionMode,
 };
@@ -266,7 +266,7 @@ async fn permission_request_does_not_block_event_drain() {
     let pump = tokio::spawn(async move {
         let session_id = SessionId::new("session-1");
         let cancel = CancellationToken::new();
-        let mut mapper = EventMapper::new(HostUpdates::default());
+        let mut mapper = EventMapper::new(HostFeatures::default());
         let placeholders = AtomicU64::new(0);
         pump_sources(super::PumpSources {
             session_id: &session_id,
@@ -279,7 +279,7 @@ async fn permission_request_does_not_block_event_drain() {
             approvals: &mut ApprovalSource::Channel(&mut approval_rx),
             approvals_open: true,
             plan_approvals: None,
-            host_updates: HostUpdates::default(),
+            host_features: HostFeatures::default(),
             displays: None,
         })
         .await

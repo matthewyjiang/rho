@@ -14,7 +14,7 @@ use agent_client_protocol::schema::v1::InitializeRequest;
 
 /// Features beyond the ACP baseline that the connected host accepts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::app) struct HostUpdates {
+pub(in crate::app) struct HostFeatures {
     /// Compaction lifecycle cards (`compaction_update`).
     pub(super) compaction: bool,
     /// Live, dismissible user notices (`notice`).
@@ -44,7 +44,7 @@ pub(super) enum FormDialect {
     T3Code,
 }
 
-impl HostUpdates {
+impl HostFeatures {
     pub(super) fn from_initialize(request: &InitializeRequest) -> Self {
         let capabilities = &request.client_capabilities;
         let session = capabilities.session.as_ref();
@@ -69,16 +69,16 @@ impl HostUpdates {
 /// The host's choice, recorded by `initialize` and read when the first
 /// session starts. A host that skips `initialize` gets the baseline.
 #[derive(Default)]
-pub(super) struct NegotiatedUpdates(OnceLock<HostUpdates>);
+pub(super) struct NegotiatedFeatures(OnceLock<HostFeatures>);
 
-impl NegotiatedUpdates {
+impl NegotiatedFeatures {
     /// Keeps the first `initialize`; ACP negotiates capabilities once per
     /// connection.
     pub(super) fn record(&self, request: &InitializeRequest) {
-        let _ = self.0.set(HostUpdates::from_initialize(request));
+        let _ = self.0.set(HostFeatures::from_initialize(request));
     }
 
-    pub(super) fn get(&self) -> HostUpdates {
+    pub(super) fn get(&self) -> HostFeatures {
         self.0.get().copied().unwrap_or_default()
     }
 }

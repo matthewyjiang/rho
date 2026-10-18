@@ -11,7 +11,7 @@ use rho_sdk::{
 use serde_json::json;
 
 use super::{
-    map_sdk_stop_reason, EventMapper, HostUpdates, RunEnding, PROVIDER_STREAM_RESET_NOTICE,
+    map_sdk_stop_reason, EventMapper, HostFeatures, RunEnding, PROVIDER_STREAM_RESET_NOTICE,
 };
 
 fn session_id() -> SessionId {
@@ -26,7 +26,7 @@ fn only_update(mapper: &mut EventMapper, event: RunEvent) -> SessionUpdate {
 
 /// A mapper that has already sent the host a `tool_call` for `call-1`.
 fn mapper_with_started_call() -> EventMapper {
-    let mut mapper = EventMapper::new(HostUpdates::default());
+    let mut mapper = EventMapper::new(HostFeatures::default());
     only_update(
         &mut mapper,
         RunEvent::ToolStarted {
@@ -50,7 +50,7 @@ fn text_of(block: &ContentBlock) -> &str {
 #[test]
 fn assistant_delta_maps_to_agent_message_chunk() {
     let update = only_update(
-        &mut EventMapper::new(HostUpdates::default()),
+        &mut EventMapper::new(HostFeatures::default()),
         RunEvent::AssistantTextDelta { text: "hi".into() },
     );
     match update {
@@ -71,7 +71,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
             text: "think".into(),
         },
     ] {
-        let update = only_update(&mut EventMapper::new(HostUpdates::default()), event);
+        let update = only_update(&mut EventMapper::new(HostFeatures::default()), event);
         match update {
             SessionUpdate::AgentThoughtChunk(chunk) => assert_eq!(text_of(&chunk.content), "think"),
             other => panic!("expected AgentThoughtChunk, got {other:?}"),
@@ -83,7 +83,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
 // Owner: acp event mapper
 #[test]
 fn proposed_started_finished_map_kind_and_status() {
-    let mut mapper = EventMapper::new(HostUpdates::default());
+    let mut mapper = EventMapper::new(HostFeatures::default());
     let call_id = ToolCallId::from_string("call-1").unwrap();
     let proposed = mapper.map_event(
         &session_id(),
@@ -149,7 +149,7 @@ fn proposed_started_finished_map_kind_and_status() {
 #[test]
 fn provider_stream_reset_emits_discard_thought() {
     let update = only_update(
-        &mut EventMapper::new(HostUpdates::default()),
+        &mut EventMapper::new(HostFeatures::default()),
         RunEvent::ProviderStreamReset {
             reason: ProviderStreamResetReason::InvalidResponse,
             detail: "retry".into(),
@@ -168,7 +168,7 @@ fn provider_stream_reset_emits_discard_thought() {
 // Owner: acp event mapper
 #[test]
 fn ignored_events_emit_nothing() {
-    let mut mapper = EventMapper::new(HostUpdates::default());
+    let mut mapper = EventMapper::new(HostFeatures::default());
     let ignored = [
         RunEvent::Started {
             run_id: RunId::from_string("run-1").unwrap(),
@@ -227,9 +227,9 @@ fn ignored_events_emit_nothing() {
 // Owner: acp event mapper
 #[test]
 fn compaction_open_at_run_end_closes_with_the_ending() {
-    let compaction_host = HostUpdates {
+    let compaction_host = HostFeatures {
         compaction: true,
-        ..HostUpdates::default()
+        ..HostFeatures::default()
     };
     for (label, ending, status, error) in [
         (

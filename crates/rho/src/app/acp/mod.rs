@@ -6,8 +6,8 @@ mod config_options;
 mod elicitation;
 mod events;
 mod fast_mode;
+mod host_features;
 mod host_mcp;
-mod host_updates;
 mod permission;
 mod session_host;
 mod session_list;
@@ -34,7 +34,7 @@ use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporte
 
 use super::agent_binding::BoundAgent;
 use agent::RhoAcpAgent;
-pub(super) use host_updates::HostUpdates;
+pub(super) use host_features::HostFeatures;
 
 /// The ACP client Rho integrates with, chosen at launch rather than inferred
 /// from the tools a host happens to offer.
@@ -70,8 +70,8 @@ pub(super) struct AcpStartup {
     pub(super) herdr: HerdrReporter,
     /// `--add-dir` directories granted to every ACP session.
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
-    /// Optional session updates the host advertised at `initialize`.
-    pub(super) host_updates: HostUpdates,
+    /// Optional features the host advertised at `initialize`.
+    pub(super) host_features: HostFeatures,
 }
 
 #[cfg(test)]
@@ -116,7 +116,7 @@ impl AcpStartup {
             agent,
             herdr: HerdrReporter::default(),
             added_dirs: Default::default(),
-            host_updates: HostUpdates::default(),
+            host_features: HostFeatures::default(),
         }
     }
 }
