@@ -55,6 +55,9 @@ During a session, Rho also sends:
 - `plan` with the full `todo` checklist whenever it differs from the last one the host received. A checklist restored by `session/load` goes out when the next prompt starts. An empty `entries` list means the checklist was cleared, per ACP v1; T3 Code currently ignores empty plans and keeps showing the last one.
 - `config_option_update` with the complete config option list when it changes, including after `/agent:<name>` selects a different model or tool set, and after either settings API applies a change. Hosts replace their previous options, so controls that no longer apply disappear.
 - `available_commands_update` with the complete command list when it changes. Rho checks both menus before and after each prompt and immediately after an agent rebind; skills, prompt templates, workflows, and agent definitions added between prompts or by a turn's tools appear on the next check. Unchanged menus are not resent, and Rho does not watch the filesystem while idle.
+- `compaction_update` for each compaction, automatic or `/compact`, when the host advertises `clientCapabilities.session.compaction`, as Zed does. A card opens `in_progress` and ends `completed` with the before and after counts as its summary, or `failed` or `cancelled`. A card still open when its prompt ends closes the same way. Each compaction gets a new random ID, so hosts that keep their transcript across reconnects never update an earlier card. Hosts that do not advertise compaction see automatic compaction only as the drop in `usage_update`.
+
+When the host advertises `clientCapabilities.session.notices`, information that is not part of the conversation goes out as a `notice` instead of an agent message. Today that is the model-prompt change notice found at load.
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A model-prompt change notice found at load is sent when the next prompt starts.
 
@@ -120,7 +123,7 @@ Right after each `session/new` and `session/load` response, Rho sends an `availa
 
 | Command | Effect |
 | --- | --- |
-| `/compact [instructions]` | Compacts older context between turns, optionally saying what to keep, and replies with the before and after counts. Cancel stops it before it commits. If the compacted session cannot be saved, later prompts fail until the host loads the session again. |
+| `/compact [instructions]` | Compacts older context between turns, optionally saying what to keep, and replies with the before and after counts: as a compaction card on hosts that advertise compaction, else as an agent message. Cancel stops it before it commits. If the compacted session cannot be saved, later prompts fail until the host loads the session again. |
 | `/init` | Surveys the repository and writes `AGENTS.md` through the `rho-init` skill, as in the TUI. Refused in `plan` mode or without the skill, write, and file-edit tools. |
 | `/prompt:<name> [args]` | Expands a [prompt template](/configuration#prompt-templates) and runs it as the turn. |
 | `/mcp:<server>:<prompt> [args]` | Fetches an MCP server prompt and runs it as the turn. Arguments follow the TUI rules. |

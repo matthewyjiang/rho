@@ -28,7 +28,11 @@ use super::{
     pump_sources, ApprovalSource, CurrentModel, CurrentSettings, EventMapper, EventSource,
     PromptGate,
 };
-use crate::{app::acp::AcpClientPort, config::Config, permission::PermissionMode};
+use crate::{
+    app::acp::{AcpClientPort, HostUpdates},
+    config::Config,
+    permission::PermissionMode,
+};
 use rho_providers::reasoning::ReasoningLevel;
 
 // Covers: session/new and session/load must refuse a non-workspace cwd
@@ -247,7 +251,7 @@ async fn permission_request_does_not_block_event_drain() {
     let pump = tokio::spawn(async move {
         let session_id = SessionId::new("session-1");
         let cancel = CancellationToken::new();
-        let mut mapper = EventMapper::new();
+        let mut mapper = EventMapper::new(HostUpdates::default());
         let placeholders = AtomicU64::new(0);
         pump_sources(super::PumpSources {
             session_id: &session_id,
