@@ -5,9 +5,13 @@
 //! which consumes it. Each compaction gets a fresh random ID: hosts such as
 //! T3 Code keep their transcript across reconnects, so an ID that restarts
 //! per process would patch an earlier card in place.
+//!
+//! Cards carry no `summary`: ACP reserves it for retained summary content,
+//! not status text such as the before and after counts, which hosts get
+//! from `usage_update`.
 
 use agent_client_protocol::schema::v1::{
-    CompactionId, CompactionStatus, CompactionUpdate, ContentBlock, SessionUpdate,
+    CompactionId, CompactionStatus, CompactionUpdate, SessionUpdate,
 };
 
 /// Error for a compaction the run ended before it reported a result.
@@ -30,12 +34,8 @@ impl CompactionCard {
         self.update(CompactionStatus::InProgress)
     }
 
-    /// The finished card, summarized with the before and after counts.
-    pub(super) fn completed(self, outcome: &rho_sdk::CompactionOutcome) -> SessionUpdate {
-        SessionUpdate::CompactionUpdate(
-            CompactionUpdate::new(self.id, CompactionStatus::Completed)
-                .summary(vec![ContentBlock::from(outcome_summary(outcome))]),
-        )
+    pub(super) fn completed(self) -> SessionUpdate {
+        self.update(CompactionStatus::Completed)
     }
 
     pub(super) fn failed(self, error: impl Into<String>) -> SessionUpdate {

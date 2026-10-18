@@ -27,7 +27,7 @@ impl SessionHost {
         }
         let result = self.run_compaction(instructions, client).await;
         let report = match (card, &result) {
-            (Some(card), Ok(Some(outcome))) => Some(card.completed(outcome)),
+            (Some(card), Ok(Some(_))) => Some(card.completed()),
             (Some(card), Ok(None)) => Some(card.cancelled()),
             // Same text as the prompt's error reply.
             (Some(card), Err(error)) => Some(card.failed(error.to_string())),

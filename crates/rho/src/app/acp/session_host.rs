@@ -23,7 +23,7 @@ use rho_sdk::{ApprovalRequestReceiver, CancellationToken, UserInput};
 use super::{
     commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
-    events::EventMapper,
+    events::{EventMapper, RunEnding},
     fast_mode, permission,
     signals::SessionSignals,
     t3_wake::T3Wake,
@@ -654,6 +654,15 @@ impl SessionHost {
         if let Err(error) = pump_result {
             run.cancel();
             let _ = run.outcome().await;
+            // Best effort: the host may already be gone, and the pump error
+            // is the one the prompt reports.
+            for notification in
+                mapper.close_unfinished(&self.acp_session_id, RunEnding::Failed(&error.to_string()))
+            {
+                if send_notification(client, notification).await.is_err() {
+                    break;
+                }
+            }
             self.persist_failed_turn(checkpoint);
             self.dispatch_failed(&error.to_string());
             return Err(error);

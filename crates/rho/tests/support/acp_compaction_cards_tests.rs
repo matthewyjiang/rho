@@ -83,7 +83,7 @@ fn card_lifecycle(updates: &[Value]) -> Vec<(String, bool)> {
         .map(|card| {
             (
                 card["status"].as_str().unwrap().to_owned(),
-                card["summary"].is_array(),
+                !card["summary"].is_null(),
             )
         })
         .collect()
@@ -98,8 +98,8 @@ fn agent_text(updates: &[Value]) -> Vec<&str> {
 }
 
 // Covers: `/compact` must report as one compaction card that opens in
-// progress and completes with its summary when the host advertised
-// compaction, and as the agent message otherwise (ACP forbids the card
+// progress and completes, with no status text posing as the retained
+// summary, when the host advertised compaction, and as the agent message otherwise (ACP forbids the card
 // then), so the capability negotiated at initialize reaches the session.
 // Owner: ACP session updates, over the real stdio server
 #[test]
@@ -110,7 +110,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
             json!({"session": {"compaction": {}}}),
             vec![
                 ("in_progress".to_owned(), false),
-                ("completed".to_owned(), true),
+                ("completed".to_owned(), false),
             ],
             0,
         ),
@@ -145,7 +145,7 @@ fn automatic_compaction_reports_a_card() {
     assert!(
         lifecycles.contains(&vec![
             ("in_progress".to_owned(), false),
-            ("completed".to_owned(), true)
+            ("completed".to_owned(), false)
         ]),
         "{lifecycles:#?}"
     );

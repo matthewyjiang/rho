@@ -132,10 +132,10 @@ impl EventMapper {
                 self.compaction = Some(card);
                 Some(update)
             }
-            RunEvent::CompactionCompleted { outcome, .. } if self.updates.compaction => {
+            RunEvent::CompactionCompleted { .. } if self.updates.compaction => {
                 // A first update with a terminal status still creates the card.
                 let card = self.compaction.take().unwrap_or_else(CompactionCard::new);
-                Some(card.completed(outcome))
+                Some(card.completed())
             }
             RunEvent::Cancelled { .. } => {
                 return self.close_unfinished(session_id, RunEnding::Cancelled);
