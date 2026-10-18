@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     schema::v1::{
-        SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue, SessionId,
+        SessionConfigOptionCategory, SessionConfigOptionValue, SessionId,
         SetSessionConfigOptionRequest,
     },
     ErrorCode,
@@ -13,9 +13,10 @@ use rho_sdk::{
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     SessionOptions,
 };
+use serde_json::json;
 
 use super::{apply_fast_mode, config_options, parse_fast_mode_request, FAST_MODE_ID};
-use crate::app::acp::config_options::CurrentModel;
+use crate::app::acp::{config_options::CurrentModel, host_features::Toggles};
 
 fn current(provider: &str, model: &str, auth: &str) -> CurrentModel {
     CurrentModel {
@@ -26,84 +27,126 @@ fn current(provider: &str, model: &str, auth: &str) -> CurrentModel {
 }
 
 // Covers: fast_mode must appear only for models that implement fast mode,
-// report the session's tier as its current value, and stay out of the `mode`
-// category (T3 hides its permission-mode picker when any option uses it).
+// report the session's tier as its current value in the shape the host
+// accepts (a boolean only for hosts that advertise boolean options), and stay
+// out of the `mode` category (T3 hides its permission-mode picker when any
+// option uses it).
 // Owner: acp session config mapper
 #[test]
 fn advertises_fast_mode_only_for_fast_capable_models() {
+    let codex = current("openai-codex", "gpt-5.5", "codex");
+    let priority = Some(ServiceTier::Priority);
     let cases = [
         (
-            current("openai-codex", "gpt-5.5", "codex"),
+            &codex,
             None,
-            Some("off"),
+            Toggles::Select,
+            Some(json!(["select", "off"])),
         ),
         (
-            current("openai-codex", "gpt-5.5", "codex"),
-            Some(ServiceTier::Priority),
-            Some("on"),
+            &codex,
+            priority,
+            Toggles::Select,
+            Some(json!(["select", "on"])),
         ),
         (
-            current("xai", "grok-4.7", "xai-oauth"),
-            Some(ServiceTier::Priority),
-            Some("on"),
+            &codex,
+            None,
+            Toggles::Boolean,
+            Some(json!(["boolean", false])),
         ),
         (
-            current("xai", "grok-4.7", "api-key"),
-            Some(ServiceTier::Priority),
+            &codex,
+            priority,
+            Toggles::Boolean,
+            Some(json!(["boolean", true])),
+        ),
+        (
+            &current("xai", "grok-4.7", "xai-oauth"),
+            priority,
+            Toggles::Select,
+            Some(json!(["select", "on"])),
+        ),
+        (
+            &current("xai", "grok-4.7", "api-key"),
+            priority,
+            Toggles::Boolean,
             None,
         ),
         (
-            current("openai-codex", "gpt-5.4", "codex"),
-            Some(ServiceTier::Priority),
+            &current("openai-codex", "gpt-5.4", "codex"),
+            priority,
+            Toggles::Select,
             None,
         ),
     ];
-    for (model, tier, expected) in cases {
-        let options = config_options(&model, tier);
+    for (model, tier, toggles, expected) in cases {
+        let options = config_options(model, tier, toggles);
         let advertised = options.first().map(|option| {
             assert_eq!(option.id.0.as_ref(), FAST_MODE_ID);
             assert_eq!(
                 option.category,
                 Some(SessionConfigOptionCategory::ModelConfig)
             );
-            match &option.kind {
-                SessionConfigKind::Select(select) => select.current_value.0.to_string(),
-                other => panic!("fast_mode must be a select, got {other:?}"),
-            }
+            let wire = serde_json::to_value(option).unwrap();
+            json!([wire["type"], wire["currentValue"]])
         });
         assert_eq!(
-            advertised.as_deref(),
-            expected,
-            "{}/{} via {}",
-            model.provider,
-            model.model,
-            model.auth
+            advertised, expected,
+            "{}/{} via {} as {toggles:?}",
+            model.provider, model.model, model.auth
         );
     }
 }
 
-// Covers: hosts must get InvalidParams for a value other than on/off instead
-// of a silent no-op.
+// Covers: hosts must get InvalidParams for a value other than on/off, or for
+// a value whose shape differs from the option they were offered, instead of
+// a silent no-op.
 // Owner: acp session config mapper
 #[test]
-fn parse_fast_mode_accepts_only_on_and_off() {
+fn parse_fast_mode_accepts_only_the_offered_shape() {
     let session = SessionId::new("sess");
     let cases = [
-        (SessionConfigOptionValue::from("on"), Ok(true)),
-        (SessionConfigOptionValue::from("off"), Ok(false)),
         (
+            Toggles::Select,
+            SessionConfigOptionValue::from("on"),
+            Ok(true),
+        ),
+        (
+            Toggles::Select,
+            SessionConfigOptionValue::from("off"),
+            Ok(false),
+        ),
+        (
+            Toggles::Select,
             SessionConfigOptionValue::from("ludicrous"),
             Err(ErrorCode::InvalidParams),
         ),
         (
+            Toggles::Select,
             SessionConfigOptionValue::boolean(true),
             Err(ErrorCode::InvalidParams),
         ),
+        (
+            Toggles::Boolean,
+            SessionConfigOptionValue::boolean(true),
+            Ok(true),
+        ),
+        (
+            Toggles::Boolean,
+            SessionConfigOptionValue::boolean(false),
+            Ok(false),
+        ),
+        (
+            Toggles::Boolean,
+            SessionConfigOptionValue::from("on"),
+            Err(ErrorCode::InvalidParams),
+        ),
     ];
-    for (value, expected) in cases {
+    for (toggles, value, expected) in cases {
         let request = SetSessionConfigOptionRequest::new(session.clone(), FAST_MODE_ID, value);
-        let parsed = parse_fast_mode_request(&request).map_err(|error| error.code);
-        assert_eq!(parsed, expected, "{:?}", request.value);
+        let parsed = parse_fast_mode_request(&request, toggles).map_err(|error| error.code);
+        assert_eq!(parsed, expected, "{toggles:?} {:?}", request.value);
     }
 }
 

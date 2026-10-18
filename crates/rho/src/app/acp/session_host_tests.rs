@@ -26,7 +26,7 @@ use super::{
     advertised_config_options,
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
     pump_sources, ApprovalSource, CurrentModel, CurrentSettings, EventMapper, EventSource,
-    PromptGate,
+    PromptGate, Toggles,
 };
 use crate::{
     app::acp::{AcpClientPort, HostFeatures},
@@ -359,7 +359,7 @@ fn advertised_options_merge_model_with_per_model_options() {
             reasoning: ReasoningLevel::High,
             service_tier: Some(rho_sdk::model::ServiceTier::Priority),
         };
-        let options = advertised_config_options(&current, &config, settings);
+        let options = advertised_config_options(&current, &config, settings, Toggles::Select);
         let ids = options
             .iter()
             .map(|option| option.id.0.as_ref())

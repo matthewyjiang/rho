@@ -24,7 +24,9 @@ use super::{
     commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
     events::{EventMapper, RunEnding},
-    fast_mode, permission,
+    fast_mode,
+    host_features::Toggles,
+    permission,
     signals::SessionSignals,
     t3_wake::T3Wake,
     thought_level, AcpClientPort, AcpHost, AcpStartup,
@@ -380,7 +382,8 @@ impl SessionHost {
                 )?;
             }
             fast_mode::FAST_MODE_ID => {
-                let enabled = fast_mode::parse_fast_mode_request(&request)?;
+                let enabled =
+                    fast_mode::parse_fast_mode_request(&request, self.host_features.toggles)?;
                 fast_mode::apply_fast_mode(&self.built.session, &self.current_model(), enabled)?;
             }
             _ => {
@@ -425,6 +428,7 @@ impl SessionHost {
                 reasoning: self.built.session.reasoning_level(),
                 service_tier: self.built.session.service_tier(),
             },
+            self.host_features.toggles,
         )
     }
 
@@ -814,6 +818,7 @@ fn advertised_config_options(
     current: &CurrentModel,
     process_config: &Config,
     settings: CurrentSettings,
+    toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
     let available_auths = available_auth_modes(&AppCredentialStore);
     let mut options = vec![permission::mode_config_option(settings.permission_mode)];
@@ -826,7 +831,11 @@ fn advertised_config_options(
         &model_scoped_config(current, process_config),
         settings.reasoning,
     ));
-    options.extend(fast_mode::config_options(current, settings.service_tier));
+    options.extend(fast_mode::config_options(
+        current,
+        settings.service_tier,
+        toggles,
+    ));
     options
 }
 

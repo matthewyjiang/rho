@@ -2,11 +2,14 @@
 //!
 //! ACP lets an agent send `compaction_update` and `notice` only to clients
 //! that advertise `clientCapabilities.session.compaction` and `.notices`,
-//! and `elicitation/create` in form mode only to clients that advertise
+//! `type: "boolean"` config options only to clients that advertise
+//! `clientCapabilities.session.configOptions.boolean`, and
+//! `elicitation/create` in form mode only to clients that advertise
 //! `clientCapabilities.elicitation.form`. Other hosts keep the baseline:
 //! `/compact` replies with an agent message, automatic compaction shows only
-//! in `usage_update`, notices are agent messages, and Rho offers no
-//! questionnaire tool and declines MCP elicitation.
+//! in `usage_update`, notices are agent messages, on/off options are
+//! two-value selects, and Rho offers no questionnaire tool and declines MCP
+//! elicitation.
 
 use std::sync::OnceLock;
 
@@ -19,8 +22,20 @@ pub(in crate::app) struct HostFeatures {
     pub(super) compaction: bool,
     /// Live, dismissible user notices (`notice`).
     pub(super) notices: bool,
+    /// How on/off session config options are drawn.
+    pub(super) toggles: Toggles,
     /// Form-mode `elicitation/create`: questions put to the user.
     pub(super) forms: Forms,
+}
+
+/// The shape of an on/off session config option, such as `fast_mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Toggles {
+    /// The ACP baseline: a two-value `select`.
+    #[default]
+    Select,
+    /// `type: "boolean"`, which the host draws as a switch.
+    Boolean,
 }
 
 /// Whether, and how, the host draws form-mode elicitations.
@@ -48,6 +63,13 @@ impl HostFeatures {
     pub(super) fn from_initialize(request: &InitializeRequest) -> Self {
         let capabilities = &request.client_capabilities;
         let session = capabilities.session.as_ref();
+        let toggles = match session
+            .and_then(|session| session.config_options.as_ref())
+            .and_then(|options| options.boolean.as_ref())
+        {
+            Some(_) => Toggles::Boolean,
+            None => Toggles::Select,
+        };
         let advertises_forms = capabilities
             .elicitation
             .as_ref()
@@ -61,6 +83,7 @@ impl HostFeatures {
         Self {
             compaction: session.is_some_and(|session| session.compaction.is_some()),
             notices: session.is_some_and(|session| session.notices.is_some()),
+            toggles,
             forms,
         }
     }

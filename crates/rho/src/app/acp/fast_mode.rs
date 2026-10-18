@@ -11,15 +11,16 @@ use agent_client_protocol::{
 use rho_providers::providers::fast_mode::{supports_fast_mode, GROK_4_7};
 use rho_sdk::model::ServiceTier;
 
-use super::config_options::CurrentModel;
+use super::{config_options::CurrentModel, host_features::Toggles};
 
 pub(super) const FAST_MODE_ID: &str = "fast_mode";
 const ON: &str = "on";
 const OFF: &str = "off";
 
-/// A two-value select rather than a boolean: ACP only allows boolean options
-/// for clients that advertise them, and T3 Code does not. Choice names read
-/// on their own because hosts such as T3 show only the current choice.
+/// A boolean for hosts that advertise boolean options (Zed), else a
+/// two-value select (T3 Code), since ACP forbids booleans to the rest.
+/// Select choice names read on their own because hosts such as T3 show only
+/// the current choice.
 ///
 /// Advertised only when the current model supports fast mode. The tier stays
 /// on the session across a model switch, like the TUI, so the option shows
@@ -27,35 +28,53 @@ const OFF: &str = "off";
 pub(super) fn config_options(
     current: &CurrentModel,
     service_tier: Option<ServiceTier>,
+    toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
     if !supports_fast_mode(&current.provider, &current.model, &current.auth) {
         return Vec::new();
     }
-    let value = if is_fast(service_tier) { ON } else { OFF };
-    vec![SessionConfigOption::select(
-        FAST_MODE_ID,
-        "Fast mode",
-        value,
-        vec![
-            SessionConfigSelectOption::new(OFF, "Normal"),
-            SessionConfigSelectOption::new(ON, "Fast"),
-        ],
-    )
-    .description("Faster responses at a higher credit rate.")
-    .category(SessionConfigOptionCategory::ModelConfig)]
+    let fast = is_fast(service_tier);
+    let option = match toggles {
+        Toggles::Boolean => SessionConfigOption::boolean(FAST_MODE_ID, "Fast mode", fast),
+        Toggles::Select => SessionConfigOption::select(
+            FAST_MODE_ID,
+            "Fast mode",
+            if fast { ON } else { OFF },
+            vec![
+                SessionConfigSelectOption::new(OFF, "Normal"),
+                SessionConfigSelectOption::new(ON, "Fast"),
+            ],
+        ),
+    };
+    vec![option
+        .description("Faster responses at a higher credit rate.")
+        .category(SessionConfigOptionCategory::ModelConfig)]
 }
 
-/// Parses a `fast_mode` value into whether fast mode should be on.
+/// Parses a `fast_mode` value into whether fast mode should be on. The value
+/// must have the shape the host was offered: a boolean, or an `on`/`off`
+/// value id.
 pub(super) fn parse_fast_mode_request(
     request: &SetSessionConfigOptionRequest,
+    toggles: Toggles,
 ) -> Result<bool, AcpError> {
-    let Some(value) = request.value.as_value_id() else {
-        return Err(AcpError::invalid_params().data("fast_mode requires a select value id"));
-    };
-    match value.0.as_ref() {
-        ON => Ok(true),
-        OFF => Ok(false),
-        other => Err(AcpError::invalid_params().data(format!("unknown fast_mode '{other}'"))),
+    match toggles {
+        Toggles::Boolean => request
+            .value
+            .as_bool()
+            .ok_or_else(|| AcpError::invalid_params().data("fast_mode requires a boolean value")),
+        Toggles::Select => {
+            let Some(value) = request.value.as_value_id() else {
+                return Err(AcpError::invalid_params().data("fast_mode requires a select value id"));
+            };
+            match value.0.as_ref() {
+                ON => Ok(true),
+                OFF => Ok(false),
+                other => {
+                    Err(AcpError::invalid_params().data(format!("unknown fast_mode '{other}'")))
+                }
+            }
+        }
     }
 }
 
