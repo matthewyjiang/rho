@@ -5,7 +5,7 @@ use std::{
 
 use rho_providers::credentials::{
     open_credential_store, probe_credential_store, CredentialError, CredentialResult,
-    CredentialStore, CredentialStoreBackend, CredentialStoreProbe,
+    CredentialStore, CredentialStoreBackend, CredentialStoreProbe, OsCredentialStore,
 };
 
 use crate::config::Config;
@@ -77,6 +77,15 @@ impl StoreChoiceRequest {
             CredentialStoreBackend::Os => self.os.detail.as_str(),
             CredentialStoreBackend::File => self.file.detail.as_str(),
         }
+    }
+}
+
+impl AppCredentialStore {
+    /// Makes the next reads see logins saved by another process, such as a
+    /// terminal login an editor ran. The OS store caches reads, including
+    /// misses, for the life of the process; the file store always rereads.
+    pub(crate) fn reread_external_logins() {
+        OsCredentialStore::forget_cached_secrets();
     }
 }
 

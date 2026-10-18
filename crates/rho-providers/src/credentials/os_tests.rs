@@ -51,3 +51,23 @@ fn chunk_manifest_supports_legacy_and_current_chunks() {
         }
     );
 }
+
+// Covers: after a login from another process, cached reads (a cached miss or
+// a replaced secret) must not hide the keyring's new value.
+// Owner: OS credential read cache; the keyring itself is out of scope.
+#[test]
+fn forgetting_cached_secrets_rereads_misses_and_replaced_secrets() {
+    let (missing, replaced) = ("test:forget:missing", "test:forget:replaced");
+    OsCredentialStore::remember_secret(missing, None);
+    OsCredentialStore::remember_secret(replaced, Some("old".into()));
+
+    OsCredentialStore::forget_cached_secrets();
+
+    assert_eq!(
+        (
+            OsCredentialStore::cached_secret(missing),
+            OsCredentialStore::cached_secret(replaced)
+        ),
+        (None, None)
+    );
+}

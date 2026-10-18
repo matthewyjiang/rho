@@ -35,6 +35,9 @@ impl SessionHost {
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.reasoning = self.built.session.reasoning_level();
+        // The login that fixes it ran in another process, such as the
+        // editor's terminal login.
+        AppCredentialStore::reread_external_logins();
         let provider =
             build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                 .await?;

@@ -18,6 +18,7 @@ use super::{agent::RhoAcpAgent, auth, host_updates::NegotiatedUpdates};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
+    credential_store::AppCredentialStore,
 };
 
 /// Builds the agent, or answers the error every waiting request gets.
@@ -54,6 +55,8 @@ impl LazyAgent {
         let start = move || {
             let (cli, negotiated) = (cli.clone(), Arc::clone(&negotiated));
             async move {
+                // A retry follows a terminal login, which another process saved.
+                AppCredentialStore::reread_external_logins();
                 bootstrap::prepare_acp(cli, negotiated.get())
                     .await
                     .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
