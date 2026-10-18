@@ -664,7 +664,6 @@ impl SessionHost {
         };
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
-        let mut plan_approvals = self.built.tools.take_plan_permission_requests();
         let mut mapper = EventMapper::new(self.host_updates);
         let mut signals = self.signals();
         signals.send_plan_change(&self.acp_session_id, client).await;
@@ -675,7 +674,6 @@ impl SessionHost {
                 &mut signals,
                 client,
                 approval_receiver.as_mut(),
-                plan_approvals.as_mut(),
                 AppliedDisplays {
                     offered: displays,
                     checkpoint,
@@ -683,9 +681,6 @@ impl SessionHost {
             )
             .await;
         self.built.approval_receiver = approval_receiver;
-        self.built
-            .tools
-            .restore_plan_permission_requests(plan_approvals);
         if let Err(error) = pump_result {
             run.cancel();
             let _ = run.outcome().await;
@@ -743,11 +738,13 @@ impl SessionHost {
         signals: &mut SessionSignals,
         client: &dyn AcpClientPort,
         approval_receiver: Option<&mut ApprovalRequestReceiver>,
-        plan_approvals: Option<&mut crate::tools::plan_exit::PlanPermissionReceiver>,
         displays: AppliedDisplays<'_>,
     ) -> anyhow::Result<()> {
         let approvals_open = approval_receiver.is_some();
-        pump_sources(PumpSources {
+        // Plan approvals belong to the tool set, which outlives this prompt
+        // and is swapped by an agent rebind, so they are handed back after.
+        let mut plan_approvals = self.built.tools.take_plan_permission_requests();
+        let result = pump_sources(PumpSources {
             session_id: &self.acp_session_id,
             cancel: run.cancellation_handle(),
             mapper,
@@ -757,11 +754,15 @@ impl SessionHost {
             events: &mut EventSource::Run(run),
             approvals: &mut ApprovalSource::Receiver(approval_receiver),
             approvals_open,
-            plan_approvals,
+            plan_approvals: plan_approvals.as_mut(),
             host_updates: self.host_updates,
             displays: Some(displays),
         })
-        .await
+        .await;
+        self.built
+            .tools
+            .restore_plan_permission_requests(plan_approvals);
+        result
     }
 
     /// Signal tracking for the next prompt, starting from the checklist the

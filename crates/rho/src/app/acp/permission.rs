@@ -10,7 +10,7 @@ use agent_client_protocol::Error as AcpError;
 
 use crate::{
     permission::PermissionMode,
-    tools::plan_exit::{PlanPermissionAnswer, PlanPermissionRequest},
+    tools::plan_exit::{self, PlanPermissionAnswer, PlanPermissionRequest},
 };
 use rho_sdk::CapabilityKind;
 
@@ -165,7 +165,7 @@ pub(super) fn plan_approval_request(
                 }
                 PermissionMode::Plan => PermissionOptionKind::RejectOnce,
             };
-            PermissionOption::new(mode.as_str(), format!("Approve → {}", mode.label()), kind)
+            PermissionOption::new(mode.as_str(), plan_exit::approval_label(mode), kind)
         })
         .collect::<Vec<_>>();
     options.push(PermissionOption::new(
@@ -186,23 +186,16 @@ pub(super) fn plan_approval_request(
     )
 }
 
-/// The user's plan decision. Anything but an offered mode, including a
-/// cancelled prompt, keeps planning.
-pub(super) fn plan_answer_for(
-    outcome: &RequestPermissionOutcome,
-    targets: &[PermissionMode],
-) -> PlanPermissionAnswer {
+/// The user's plan decision; the tool checks the mode was offered. A
+/// cancelled prompt or any other option keeps planning.
+pub(super) fn plan_answer_for(outcome: &RequestPermissionOutcome) -> PlanPermissionAnswer {
     let RequestPermissionOutcome::Selected(selected) = outcome else {
         return PlanPermissionAnswer::KeepPlanning;
     };
-    targets
-        .iter()
-        .copied()
-        .find(|mode| mode.as_str() == selected.option_id.0.as_ref())
-        .map_or(
-            PlanPermissionAnswer::KeepPlanning,
-            PlanPermissionAnswer::Approve,
-        )
+    parse_mode_id(selected.option_id.0.as_ref()).map_or(
+        PlanPermissionAnswer::KeepPlanning,
+        PlanPermissionAnswer::Approve,
+    )
 }
 
 #[cfg(test)]

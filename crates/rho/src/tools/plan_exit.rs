@@ -23,6 +23,45 @@ pub(crate) struct PlanExitDecision {
     pub(crate) feedback: Option<String>,
 }
 
+/// How the turn that proposed a plan ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProposalTurn {
+    Completed,
+    Unfinished,
+}
+
+/// What a host does with a decision once the proposing turn ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlanExitResolution {
+    /// Switch to this mode, then run the implementation turn.
+    Apply(PermissionMode),
+    /// Leave the mode alone and tell the user why.
+    Keep(&'static str),
+}
+
+impl PlanExitDecision {
+    /// The one policy every host applies: approval switches modes only when
+    /// the proposing turn completed while the session is still in plan mode.
+    pub(crate) fn resolve(
+        &self,
+        turn: ProposalTurn,
+        current: PermissionMode,
+    ) -> PlanExitResolution {
+        if turn == ProposalTurn::Unfinished {
+            return PlanExitResolution::Keep("plan approval discarded; turn did not complete");
+        }
+        if self.target == PermissionMode::Plan {
+            return PlanExitResolution::Keep("plan not approved; permission mode stays plan");
+        }
+        if current != PermissionMode::Plan {
+            return PlanExitResolution::Keep(
+                "plan approval discarded; session is no longer in plan mode",
+            );
+        }
+        PlanExitResolution::Apply(self.target)
+    }
+}
+
 /// A one-shot intent shared by the tool and its interactive host, never a policy grant.
 #[derive(Clone, Default)]
 pub(crate) struct PlanExitSlot(Arc<Mutex<Option<PlanExitDecision>>>);
@@ -96,14 +135,19 @@ fn approval_targets(classifier_configured: bool) -> Vec<PermissionMode> {
     targets
 }
 
-fn decision(answer: &str, feedback: Option<&str>, classifier_configured: bool) -> PlanExitDecision {
-    let target = match answer {
-        "allow_edits" => PermissionMode::AllowEdits,
-        "supervised" => PermissionMode::Supervised,
-        "bypass" => PermissionMode::Bypass,
-        "auto" if classifier_configured => PermissionMode::Auto,
-        _ => PermissionMode::Plan,
-    };
+/// The label of the choice that approves into `mode`, shared by every host.
+pub(crate) fn approval_label(mode: PermissionMode) -> String {
+    format!("Approve → {}", mode.label().to_lowercase())
+}
+
+/// The decision for a questionnaire answer. Only an offered mode approves;
+/// anything else, including "keep_planning", stays in plan mode.
+fn decision(answer: &str, feedback: Option<&str>, targets: &[PermissionMode]) -> PlanExitDecision {
+    let target = targets
+        .iter()
+        .copied()
+        .find(|mode| mode.as_str() == answer)
+        .unwrap_or(PermissionMode::Plan);
     PlanExitDecision {
         target,
         feedback: feedback
@@ -120,7 +164,7 @@ fn decision_output(decision: &PlanExitDecision) -> ToolOutput {
         ))
     } else {
         let mut output = format!(
-            "Plan approved. After this turn the host switches to {} and re-prompts you to implement the approved plan. The mode lasts until Rho exits; it is not saved, and the next launch starts in your saved mode. End this turn now with a brief acknowledgement and no more tool calls.",
+            "Plan approved. After this turn the host switches to {} and re-prompts you to implement the approved plan. The mode is not saved; a later session starts in the saved mode. End this turn now with a brief acknowledgement and no more tool calls.",
             decision.target.as_str()
         );
         if let Some(feedback) = &decision.feedback {
@@ -141,16 +185,10 @@ fn host_error(error: rho_sdk::Error) -> ToolError {
 async fn ask_questionnaire(
     context: &ToolContext,
     targets: &[PermissionMode],
-    classifier_configured: bool,
 ) -> Result<PlanExitDecision, ToolError> {
     let mut choices = targets
         .iter()
-        .map(|mode| {
-            HostChoice::new(
-                mode.as_str(),
-                format!("Approve → {}", mode.label().to_lowercase()),
-            )
-        })
+        .map(|&mode| HostChoice::new(mode.as_str(), approval_label(mode)))
         .collect::<Vec<_>>();
     choices.push(HostChoice::new("keep_planning", "Keep planning"));
     let question = HostQuestion::new(
@@ -191,11 +229,7 @@ async fn ask_questionnaire(
         .answers()
         .get("feedback")
         .and_then(|answers| answers.first());
-    Ok(decision(
-        answer,
-        feedback.map(String::as_str),
-        classifier_configured,
-    ))
+    Ok(decision(answer, feedback.map(String::as_str), targets))
 }
 
 /// Asks a permission-prompt host, which offers no feedback field: the user
@@ -226,6 +260,7 @@ async fn ask_permission(
         () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
         answer = answer => answer.map_err(|_| ToolError::cancelled())?,
     };
+    // The one check that an answer names an offered mode.
     let target = match answer {
         PlanPermissionAnswer::Approve(mode) if targets.contains(&mode) => mode,
         PlanPermissionAnswer::Approve(_) | PlanPermissionAnswer::KeepPlanning => {
@@ -272,12 +307,9 @@ impl Tool for PlanExitTool {
             };
             // A revision supersedes earlier intent, even if its new question is cancelled.
             slot.take();
-            let classifier_configured = self.classifier_configured.load(Ordering::Relaxed);
-            let targets = approval_targets(classifier_configured);
+            let targets = approval_targets(self.classifier_configured.load(Ordering::Relaxed));
             let decision = match &self.prompt {
-                PlanExitPrompt::Questionnaire => {
-                    ask_questionnaire(&context, &targets, classifier_configured).await?
-                }
+                PlanExitPrompt::Questionnaire => ask_questionnaire(&context, &targets).await?,
                 PlanExitPrompt::Permission(sender) => {
                     ask_permission(sender, call_id, plan, targets, &context).await?
                 }

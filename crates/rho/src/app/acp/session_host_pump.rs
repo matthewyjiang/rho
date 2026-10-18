@@ -72,6 +72,11 @@ impl EventSource<'_> {
 
 type HostInputAnswer = Result<HostInputResponse, HostInputRefusal>;
 
+/// A question waiting on the host. It resolves with the run's answer, or
+/// `None` when the prompt was cancelled.
+type Question<'a> =
+    Pin<Box<dyn Future<Output = Option<(HostInputId, HostInputAnswer)>> + Send + 'a>>;
+
 pub(super) enum ApprovalSource<'a> {
     Receiver(Option<&'a mut ApprovalRequestReceiver>),
     #[cfg(test)]
@@ -159,9 +164,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
         FuturesUnordered::new();
     // Questions wait on the user, not on the run, so unlike approvals they
     // are dropped when the run ends, which withdraws them from the host.
-    let mut questions: FuturesUnordered<
-        Pin<Box<dyn Future<Output = Option<(HostInputId, HostInputAnswer)>> + Send + '_>>,
-    > = FuturesUnordered::new();
+    let mut questions: FuturesUnordered<Question<'_>> = FuturesUnordered::new();
     loop {
         tokio::select! {
             biased;
@@ -236,7 +239,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
 
             request = next_plan_approval(plan_approvals.as_deref_mut()) => {
                 match request {
-                    Some(request) => questions.push(Box::pin(answer_plan_approval(
+                    Some(request) => inflight.push(Box::pin(answer_plan_approval(
                         session_id.clone(),
                         request,
                         client,
@@ -290,19 +293,19 @@ async fn ask_user(
     Some((request.id().clone(), answer))
 }
 
-/// Asks the host to approve a plan. A cancelled prompt, or a tool that
-/// stopped waiting, withdraws the prompt.
+/// Asks the host to approve a plan and answers the waiting tool. A
+/// cancelled prompt, or a tool that stopped waiting, withdraws the prompt.
 async fn answer_plan_approval(
     session_id: SessionId,
     mut request: PlanPermissionRequest,
     client: &dyn AcpClientPort,
     cancel: CancellationToken,
-) -> Option<(HostInputId, HostInputAnswer)> {
+) {
     let prompt = permission::plan_approval_request(&session_id, &request);
     let outcome = tokio::select! {
         biased;
-        () = cancel.cancelled() => return None,
-        () = request.reply.closed() => return None,
+        () = cancel.cancelled() => return,
+        () = request.reply.closed() => return,
         response = client.request_permission(prompt) => match response {
             Ok(response) => response.outcome,
             Err(error) => {
@@ -311,9 +314,7 @@ async fn answer_plan_approval(
             }
         },
     };
-    let answer = permission::plan_answer_for(&outcome, &request.targets);
-    let _ = request.reply.send(answer);
-    None
+    let _ = request.reply.send(permission::plan_answer_for(&outcome));
 }
 
 async fn answer_approval(
