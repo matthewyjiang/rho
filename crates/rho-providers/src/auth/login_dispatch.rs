@@ -335,11 +335,10 @@ impl ProviderAuthentication {
     ///
     /// NEXT_MAJOR(rho-providers): carry an acceptance handle on InteractiveLoginCompletion::Unconfirmed (mirroring CompletedAuthentication::save) and remove accept_unconfirmed_login
     ///
-    /// The provider sends no completion callback, so Rho trusts the user's
-    /// approval. Hosts must call this when they present the unconfirmed
-    /// instruction; without it, the mode (the Ollama Cloud device key) never
-    /// becomes signed in. The mode is usable as soon as this returns, even if
-    /// the user then dismisses the prompt without approving.
+    /// The provider sends no completion callback, so Rho trusts the user.
+    /// Interactive hosts should call this once the user confirms they approved;
+    /// hosts that cannot ask may call it after showing the instruction. Without
+    /// it, the mode (the Ollama Cloud device key) never becomes signed in.
     pub fn accept_unconfirmed_login(
         store: &dyn CredentialStore,
         provider_or_auth: &str,

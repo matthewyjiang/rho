@@ -561,34 +561,39 @@ impl App {
         for line in super::login_presentation::notice_lines(provider_label, &login.prompt) {
             self.insert_entry(&Entry::Notice(line));
         }
-        let pending = PendingLoginComposer {
-            target: target.clone(),
-            prompt: login.prompt.clone(),
-        };
         let completion = match login.completion {
             InteractiveLoginCompletion::Confirm(completion) => completion,
             InteractiveLoginCompletion::Unconfirmed { instruction } => {
-                if let Err(err) = ProviderAuthentication::accept_unconfirmed_login(
-                    self.credential_store.as_ref(),
-                    &target.auth,
-                ) {
-                    self.insert_entry(&Entry::Error(format!("could not record login: {err}")));
-                }
+                // Nothing is recorded until Enter, so Esc stays a real cancel.
+                let finish = PendingLoginFinish::UserConfirms;
                 self.insert_entry(&Entry::Notice(instruction.into()));
-                self.input_ui
-                    .set_composer(ComposerMode::InteractivePending(pending));
-                self.refresh_available_auths();
+                self.set_status(format!(
+                    "waiting for {provider_label} approval · {}",
+                    super::login_presentation::login_key_hint(finish)
+                ));
+                self.input_ui.set_composer(ComposerMode::InteractivePending(
+                    PendingLoginComposer {
+                        target,
+                        prompt: login.prompt,
+                        finish,
+                    },
+                ));
                 self.report_resting_herdr_state().await;
                 return Ok(());
             }
         };
+        let finish = PendingLoginFinish::ProviderCallback;
         let flow = if device_flow { " device" } else { "" };
         self.set_status(format!(
             "waiting for {provider_label}{flow} login · {}",
-            super::login_presentation::LOGIN_KEY_HINT
+            super::login_presentation::login_key_hint(finish)
         ));
         self.input_ui
-            .set_composer(ComposerMode::InteractivePending(pending));
+            .set_composer(ComposerMode::InteractivePending(PendingLoginComposer {
+                target: target.clone(),
+                prompt: login.prompt,
+                finish,
+            }));
         self.tasks.spawn(
             TaskId::InteractiveLogin,
             async move { completion.await.map_err(|err| err.to_string()) },
@@ -597,6 +602,30 @@ impl App {
             },
         );
         Ok(())
+    }
+
+    /// Enter on a login the provider cannot confirm: the user says they approved.
+    pub(super) async fn confirm_pending_login(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let ComposerMode::InteractivePending(pending) = self.input_ui.composer() else {
+            return Ok(());
+        };
+        let target = pending.target.clone();
+        self.cancel_limits_command().await;
+        self.cancel_doctor_command().await;
+        self.input_ui.set_composer(ComposerMode::Input);
+        if let Err(err) = ProviderAuthentication::accept_unconfirmed_login(
+            self.credential_store.as_ref(),
+            &target.auth,
+        ) {
+            self.insert_entry(&Entry::Error(format!("could not record login: {err}")));
+            self.set_status("login failed");
+            return Ok(());
+        }
+        self.finish_login(target, terminal, agent).await
     }
 
     pub(super) fn interactive_login_pending(&self) -> bool {

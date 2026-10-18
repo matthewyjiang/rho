@@ -11,10 +11,16 @@ use super::{
     markdown::copyable_header_line,
     render::{styled_line, truncate_one_line, LineFill},
     theme::Theme,
-    PendingLoginComposer,
+    PendingLoginComposer, PendingLoginFinish,
 };
 
-pub(super) const LOGIN_KEY_HINT: &str = "c copy  Esc cancel";
+/// Key hint for a pending login; only user-confirmed logins take Enter.
+pub(super) fn login_key_hint(finish: PendingLoginFinish) -> &'static str {
+    match finish {
+        PendingLoginFinish::ProviderCallback => "c copy  Esc cancel",
+        PendingLoginFinish::UserConfirms => "Enter done  c copy  Esc cancel",
+    }
+}
 
 pub(super) struct LoginComposerView {
     pub lines: Vec<Line<'static>>,
@@ -26,12 +32,19 @@ pub(super) fn login_composer_view(
     width: usize,
     hovered: bool,
 ) -> LoginComposerView {
-    prompt_composer_view(&pending.target.label, &pending.prompt, width, hovered)
+    prompt_composer_view(
+        &pending.target.label,
+        &pending.prompt,
+        login_key_hint(pending.finish),
+        width,
+        hovered,
+    )
 }
 
 fn prompt_composer_view(
     label: &str,
     prompt: &LoginPrompt,
+    key_hint: &str,
     width: usize,
     hovered: bool,
 ) -> LoginComposerView {
@@ -66,7 +79,7 @@ fn prompt_composer_view(
         LineFill::Natural,
     ));
     lines.push(styled_line(
-        truncate_one_line(LOGIN_KEY_HINT, width),
+        truncate_one_line(key_hint, width),
         width,
         Theme::dim(),
         LineFill::Natural,

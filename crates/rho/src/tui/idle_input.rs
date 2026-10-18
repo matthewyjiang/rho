@@ -12,7 +12,7 @@ use super::{
     goal_command,
     send_confirm::{SendAuthorization, SendPayload, SendSubmission},
     skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, InputSubmissionMode,
-    InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
+    InteractiveRuntime, PasteSegment, PendingLoginFinish, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
 /// A turn held until MCP connect settles.
@@ -60,6 +60,14 @@ impl App {
     ) -> anyhow::Result<bool> {
         match self.input_ui.composer() {
             ComposerMode::Input => Ok(false),
+            ComposerMode::InteractivePending(pending)
+                if pending.finish == PendingLoginFinish::UserConfirms
+                    && key.code == KeyCode::Enter
+                    && key.modifiers.is_empty() =>
+            {
+                self.confirm_pending_login(terminal, agent).await?;
+                Ok(true)
+            }
             ComposerMode::InteractivePending(_) => self.handle_interactive_pending_key(key),
             ComposerMode::InlineChoice(_) => {
                 self.handle_inline_choice_key(key, terminal, agent).await

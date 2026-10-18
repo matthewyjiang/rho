@@ -3,7 +3,7 @@ use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 use rho_providers::auth::login_prompt::LoginPrompt;
 use rho_providers::model::catalog::LoginTarget;
 
-use super::super::{theme::Theme, ComposerMode, PendingLoginComposer};
+use super::super::{theme::Theme, ComposerMode, PendingLoginComposer, PendingLoginFinish};
 use super::login_composer_view;
 use crate::tui::tests::test_app;
 
@@ -15,6 +15,7 @@ fn pending(prompt: LoginPrompt) -> PendingLoginComposer {
             label: "Codex".into(),
         },
         prompt,
+        finish: PendingLoginFinish::ProviderCallback,
     }
 }
 
