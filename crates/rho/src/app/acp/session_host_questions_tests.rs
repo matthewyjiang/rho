@@ -28,7 +28,7 @@ use rho_sdk::{
     HostChoice, HostInputRequest, HostQuestion, SelectionMode, SessionOptions,
 };
 
-use super::{mode::SessionPermission, SessionHost};
+use super::{mode::SessionPermission, PromptGate, SessionHost};
 use crate::app::acp::host_updates::{FormDialect, Forms};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
@@ -94,10 +94,16 @@ enum FormReply {
     },
 }
 
-/// Host that answers questions from a script, keeps planning at every plan
-/// approval, and records every session update.
+/// Host that answers questions from a script, picks `plan_answer` at every
+/// plan approval, and records every session update.
 struct AskingPort {
     form: FormReply,
+    plan_answer: &'static str,
+    /// Cancels this prompt at the run's final usage update, sent after the
+    /// run settled: the second after the plan prompt, which follows the
+    /// proposing step's start.
+    cancel_at_final_usage: Option<Arc<PromptGate>>,
+    usage_after_plan_prompt: Mutex<usize>,
     updates: Mutex<Vec<SessionUpdate>>,
     plan_prompts: Mutex<usize>,
 }
@@ -106,6 +112,9 @@ impl AskingPort {
     fn new(form: FormReply) -> Self {
         Self {
             form,
+            plan_answer: "keep_planning",
+            cancel_at_final_usage: None,
+            usage_after_plan_prompt: Mutex::default(),
             updates: Mutex::default(),
             plan_prompts: Mutex::default(),
         }
@@ -137,6 +146,17 @@ impl super::AcpClientPort for AskingPort {
         &self,
         notification: SessionNotification,
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
+        if let (Some(gate), SessionUpdate::UsageUpdate(_)) =
+            (&self.cancel_at_final_usage, &notification.update)
+        {
+            if *self.plan_prompts.lock().unwrap() > 0 {
+                let mut seen = self.usage_after_plan_prompt.lock().unwrap();
+                *seen += 1;
+                if *seen == 2 {
+                    gate.cancel();
+                }
+            }
+        }
         self.updates.lock().unwrap().push(notification.update);
         Box::pin(async { Ok(()) })
     }
@@ -147,9 +167,10 @@ impl super::AcpClientPort for AskingPort {
     ) -> Pin<Box<dyn Future<Output = Result<RequestPermissionResponse, AcpError>> + Send + '_>>
     {
         *self.plan_prompts.lock().unwrap() += 1;
-        Box::pin(async {
+        let answer = self.plan_answer;
+        Box::pin(async move {
             Ok(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("keep_planning")),
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(answer)),
             ))
         })
     }
@@ -426,6 +447,46 @@ async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
             provider.recorded_requests().len(),
         ),
         (StopReason::EndTurn, 1, PermissionMode::Plan, Vec::new(), 2)
+    );
+    host.shutdown().await;
+}
+
+// Covers: a cancel that lands after the proposing turn settled but before the
+// plan handoff (here, during its final usage update) discards the approval:
+// the session stays in plan mode, no mode update is sent, the implementation
+// turn never runs, and the prompt ends cancelled
+// Owner: ACP plan exit
+#[tokio::test]
+async fn a_cancel_before_the_handoff_keeps_plan_mode() {
+    let home = tempfile::tempdir().unwrap();
+    let turns = vec![
+        call(
+            "plan",
+            "exit_plan_mode",
+            serde_json::json!({"plan": "1. do it"}),
+        ),
+        text("proposed"),
+        text("implemented"),
+    ];
+    let (mut host, startup, provider) =
+        host(home.path(), PermissionMode::Plan, Forms::Unavailable, turns).await;
+    let mut port = AskingPort::new(FormReply::Respond(ElicitationAction::Decline));
+    port.plan_answer = "allow_edits";
+    port.cancel_at_final_usage = Some(host.cancel_handle());
+
+    let response = host
+        .prompt(prompt(&host, "plan it"), &port, &startup)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (
+            response.stop_reason,
+            host.permission.mode,
+            port.mode_updates(),
+            provider.recorded_requests().len(),
+        ),
+        (StopReason::Cancelled, PermissionMode::Plan, Vec::new(), 2)
     );
     host.shutdown().await;
 }

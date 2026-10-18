@@ -352,31 +352,53 @@ fn answers(
 }
 
 /// T3 Code answers with a chosen label or typed text; a multiple choice
-/// types several, separated by commas, unless the whole text is one choice.
+/// types several, separated by commas.
 fn t3_choices(
     question: &HostQuestion,
     selection: SelectionMode,
     values: Vec<String>,
 ) -> Vec<String> {
-    let pieces = values.into_iter().flat_map(|value| {
-        if selection == SelectionMode::Many && find_choice(question, &value).is_none() {
-            value
-                .split(',')
-                .map(|piece| piece.trim().to_owned())
-                .filter(|piece| !piece.is_empty())
-                .collect()
-        } else {
-            vec![value]
-        }
+    let pieces = values.into_iter().flat_map(|value| match selection {
+        SelectionMode::Many => split_choices(question, &value),
+        _ => vec![value],
     });
     dedup(pieces.map(|value| choice_value(question, value)))
 }
 
+/// Splits a comma-separated list, keeping a choice whose label contains
+/// commas whole: at each piece, the longest run of pieces that names a
+/// choice is one entry.
+fn split_choices(question: &HostQuestion, text: &str) -> Vec<String> {
+    let pieces = text.split(',').collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    let mut start = 0;
+    while start < pieces.len() {
+        let end = (start + 1..=pieces.len())
+            .rev()
+            .find(|&end| find_choice(question, pieces[start..end].join(",").trim()).is_some())
+            .unwrap_or(start + 1);
+        let entry = pieces[start..end].join(",").trim().to_owned();
+        if !entry.is_empty() {
+            entries.push(entry);
+        }
+        start = end;
+    }
+    entries
+}
+
+/// The choice `text` names: its exact displayed label first, since T3 Code
+/// answers with labels, then its value, then its label in any case.
 fn find_choice<'a>(question: &'a HostQuestion, text: &str) -> Option<&'a HostChoice> {
-    question
-        .choices()
+    let choices = question.choices();
+    choices
         .iter()
-        .find(|choice| choice.value() == text || choice.label().eq_ignore_ascii_case(text))
+        .find(|choice| choice.label() == text)
+        .or_else(|| choices.iter().find(|choice| choice.value() == text))
+        .or_else(|| {
+            choices
+                .iter()
+                .find(|choice| choice.label().eq_ignore_ascii_case(text))
+        })
 }
 
 /// The value of the choice `text` names by value or label, or `text` itself

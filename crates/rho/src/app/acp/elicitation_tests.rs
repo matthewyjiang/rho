@@ -328,3 +328,63 @@ fn free_text_companions_do_not_collide_with_question_ids() {
             .answer("x.other", ["note"]))
     );
 }
+
+// Covers: T3 Code answers with displayed labels, possibly several joined by
+// commas; an exact label wins over another choice's value or a case-folded
+// label, and a label containing commas stays one choice in a list
+// Owner: ACP elicitation mapping
+#[test]
+fn t3_code_labels_resolve_to_their_own_choices() {
+    let choices = |selection, pairs: &[(&str, &str)]| {
+        HostQuestion::new(
+            "q",
+            "Pick",
+            pairs
+                .iter()
+                .map(|(value, label)| HostChoice::new(*value, *label))
+                .collect(),
+            selection,
+        )
+        .unwrap()
+    };
+    let cases = [
+        (
+            "exact label over a case-folded one",
+            choices(SelectionMode::One, &[("lower", "foo"), ("upper", "FOO")]),
+            "FOO",
+            vec!["upper"],
+        ),
+        (
+            "exact label over another choice's value",
+            choices(SelectionMode::One, &[("X", "Y"), ("Z", "X")]),
+            "X",
+            vec!["Z"],
+        ),
+        (
+            "comma label alone",
+            choices(
+                SelectionMode::Many,
+                &[("docs", "Docs, API"), ("tests", "Tests")],
+            ),
+            "Docs, API",
+            vec!["docs"],
+        ),
+        (
+            "comma label with another choice",
+            choices(
+                SelectionMode::Many,
+                &[("docs", "Docs, API"), ("tests", "Tests")],
+            ),
+            "Tests, Docs, API",
+            vec!["tests", "docs"],
+        ),
+    ];
+    for (label, question, typed, expected) in cases {
+        let request = HostInputRequest::questionnaire("Pick", vec![question]).unwrap();
+        assert_eq!(
+            host_answer(&request, accept(json!({"q": typed})), FormDialect::T3Code),
+            Ok(HostInputResponse::new().answer("q", expected)),
+            "{label}"
+        );
+    }
+}

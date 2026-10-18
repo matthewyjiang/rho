@@ -107,7 +107,7 @@ In `plan` mode the model gets the `exit_plan_mode` tool, as in the TUI. It sends
 
 Hosts draw this prompt in their own way. Zed lists every option. T3 Code shows its usual approve, approve for session, and decline buttons, and picks the first option of the matching kind: `supervised` (allow once), `allow_edits` (allow always), or `keep_planning`. `bypass` and `auto` cannot be chosen there. A host's own approval policy may also answer for the user: a T3 thread in full access approves without showing the plan, and one in a sandboxed mode may reject every time, in which case switch the session's mode by hand.
 
-An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, the approval is dropped with a notice. To give feedback instead, choose keep planning and reply in your next message.
+An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, or `session/cancel` arrives before the switch, the approval is dropped with a notice and the prompt ends `cancelled`. To give feedback instead, choose keep planning and reply in your next message.
 
 ## Questions
 
@@ -125,7 +125,7 @@ Each question becomes one property keyed by its id:
 
 A short question header becomes the property `title` and the full question its `description`. Pre-selected defaults are sent as `default`. Properties go out in id order, which hosts such as Zed follow, not in the order the questions were asked.
 
-T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value. A multiple choice is typed as a comma-separated list. Free text for a question that accepts only its listed choices counts as `decline`.
+T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value; an exact label wins. A multiple choice is typed as a comma-separated list, in which a label that itself contains commas still counts as one choice. Free text for a question that accepts only its listed choices counts as `decline`.
 
 The host's answer maps to the asking tool:
 

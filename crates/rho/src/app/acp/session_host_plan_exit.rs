@@ -26,6 +26,16 @@ impl SessionHost {
         let Some(decision) = self.built.tools.take_plan_exit_decision() else {
             return result;
         };
+        // A cancel that lands after the proposal settled, such as during its
+        // final usage update, still cancels the handoff. Checked right before
+        // the switch commits; a later cancel stops only the implementation.
+        let cancelled = self.prompt_gate.is_cancelled();
+        let result = result.map(|mut response| {
+            if cancelled {
+                response.stop_reason = StopReason::Cancelled;
+            }
+            response
+        });
         let turn = match &result {
             Ok(response) if response.stop_reason == StopReason::EndTurn => ProposalTurn::Completed,
             Ok(_) | Err(_) => ProposalTurn::Unfinished,

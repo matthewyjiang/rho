@@ -221,6 +221,17 @@ impl PromptGate {
         *slot = PromptGateState::Closed;
     }
 
+    /// Whether the running prompt was cancelled, or the session is closing.
+    pub(super) fn is_cancelled(&self) -> bool {
+        match &*self.slot() {
+            PromptGateState::Idle => false,
+            PromptGateState::Closed => true,
+            PromptGateState::Starting(token) | PromptGateState::Active(token) => {
+                token.is_cancelled()
+            }
+        }
+    }
+
     pub(super) fn is_closed(&self) -> bool {
         matches!(&*self.slot(), PromptGateState::Closed)
     }
