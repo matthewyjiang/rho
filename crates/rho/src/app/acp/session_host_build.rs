@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use agent_client_protocol::schema::v1::SessionModeState;
 use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
 
-use super::super::{permission, AcpHost, AcpStartup};
+use super::super::{host_updates::Forms, permission, AcpHost, AcpStartup};
 use crate::{
     added_dirs::AddedDirs,
     app::{
@@ -43,7 +43,7 @@ pub(super) async fn build_session(
     // Questions reach a person only through form elicitation, so a host
     // without it gets neither the questionnaire tool nor the MCP capability,
     // which Rho would then have to decline every time.
-    let questions = startup.host_updates.form_elicitation;
+    let questions = matches!(startup.host_updates.forms, Forms::Available(_));
     let assembly = assemble_session(SessionAssemblyOptions {
         config,
         config_path: startup.config_path.clone(),

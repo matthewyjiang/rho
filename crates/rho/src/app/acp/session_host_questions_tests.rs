@@ -29,6 +29,7 @@ use rho_sdk::{
 };
 
 use super::{mode::SessionPermission, SessionHost};
+use crate::app::acp::host_updates::{FormDialect, Forms};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
     config::Config,
@@ -193,10 +194,12 @@ fn text(text: &str) -> ScriptedTurn {
 
 /// A session host on `turns`, in `mode`, for a host that does or does not
 /// draw forms.
+const STANDARD_FORMS: Forms = Forms::Available(FormDialect::Standard);
+
 async fn host(
     home: &std::path::Path,
     mode: PermissionMode,
-    form_elicitation: bool,
+    forms: Forms,
     turns: Vec<ScriptedTurn>,
 ) -> (SessionHost, AcpStartup, Arc<ScriptedProvider>) {
     let config = Config {
@@ -234,7 +237,7 @@ async fn host(
         diagnostics: RuntimeDiagnostics::new(&config),
     };
     let mut startup = AcpStartup::for_tests(config.clone(), home);
-    startup.host_updates.form_elicitation = form_elicitation;
+    startup.host_updates.forms = forms;
     // Switching into `mode` builds the runtime with the tools, the way
     // `session/set_mode` does, so the host starts in another mode.
     let initial = if mode == PermissionMode::Plan {
@@ -299,7 +302,7 @@ async fn tool_questions_follow_the_hosts_answer() {
     let cases = [
         (
             "accept",
-            true,
+            STANDARD_FORMS,
             accept(&[("color", "blue")]),
             ToolResult {
                 id: "ask".into(),
@@ -309,7 +312,7 @@ async fn tool_questions_follow_the_hosts_answer() {
         ),
         (
             "decline",
-            true,
+            STANDARD_FORMS,
             ElicitationAction::Decline,
             ToolResult {
                 id: "ask".into(),
@@ -319,7 +322,7 @@ async fn tool_questions_follow_the_hosts_answer() {
         ),
         (
             "cancel",
-            true,
+            STANDARD_FORMS,
             ElicitationAction::Cancel,
             ToolResult {
                 id: "ask".into(),
@@ -329,7 +332,7 @@ async fn tool_questions_follow_the_hosts_answer() {
         ),
         (
             "no forms",
-            false,
+            Forms::Unavailable,
             accept(&[("color", "blue")]),
             ToolResult {
                 id: "ask".into(),
@@ -364,7 +367,7 @@ async fn cancelling_the_prompt_withdraws_an_open_question() {
     let home = tempfile::tempdir().unwrap();
     let turns = vec![call("ask", ASK, serde_json::json!({}))];
     let (mut host, startup, _provider) =
-        host(home.path(), PermissionMode::Bypass, true, turns).await;
+        host(home.path(), PermissionMode::Bypass, STANDARD_FORMS, turns).await;
     let (asked_tx, mut asked) = tokio::sync::mpsc::unbounded_channel();
     let withdrawn = Arc::new(AtomicBool::new(false));
     let port = AskingPort::new(FormReply::Hold {
@@ -405,7 +408,8 @@ async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
         text("proposed"),
         text("implemented"),
     ];
-    let (mut host, startup, provider) = host(home.path(), PermissionMode::Plan, false, turns).await;
+    let (mut host, startup, provider) =
+        host(home.path(), PermissionMode::Plan, Forms::Unavailable, turns).await;
     let port = AskingPort::new(FormReply::Respond(ElicitationAction::Decline));
 
     let response = host

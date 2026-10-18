@@ -17,7 +17,7 @@ use crate::{
         acp::{
             elicitation,
             events::{EventMapper, RunEnding},
-            host_updates::HostUpdates,
+            host_updates::{FormDialect, Forms, HostUpdates},
             permission,
             signals::SessionSignals,
             AcpClientPort,
@@ -207,18 +207,19 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
                     _ => None,
                 };
                 if let Some((request, call_id)) = asked {
-                    if host_updates.form_elicitation {
-                        questions.push(Box::pin(ask_user(
+                    match host_updates.forms {
+                        Forms::Available(dialect) => questions.push(Box::pin(ask_user(
                             session_id.clone(),
                             request,
                             call_id,
+                            dialect,
                             client,
                             cancel.clone(),
-                        )));
-                    } else {
+                        ))),
                         // Rho offers no asking tools to such hosts; anything
                         // that asks anyway must not wait forever.
-                        events.answer(request.id().clone(), Err(HostInputRefusal::Declined));
+                        Forms::Unavailable => events
+                            .answer(request.id().clone(), Err(HostInputRefusal::Declined)),
                     }
                 }
             }
@@ -275,15 +276,16 @@ async fn ask_user(
     session_id: SessionId,
     request: HostInputRequest,
     call_id: Option<ToolCallId>,
+    dialect: FormDialect,
     client: &dyn AcpClientPort,
     cancel: CancellationToken,
 ) -> Option<(HostInputId, HostInputAnswer)> {
-    let form = elicitation::elicitation_request(&request, &session_id, call_id.as_ref());
+    let form = elicitation::elicitation_request(&request, &session_id, call_id.as_ref(), dialect);
     let answer = tokio::select! {
         biased;
         () = cancel.cancelled() => return None,
         response = client.create_elicitation(form) => match response {
-            Ok(response) => elicitation::host_answer(&request, response),
+            Ok(response) => elicitation::host_answer(&request, response, dialect),
             Err(error) => {
                 tracing::warn!(%error, "ACP host failed an elicitation request");
                 Err(HostInputRefusal::Dismissed)

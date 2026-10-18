@@ -8,7 +8,7 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{elicitation_request, host_answer};
+use super::{elicitation_request, host_answer, FormDialect};
 
 /// One question of each form control.
 fn request() -> HostInputRequest {
@@ -65,9 +65,9 @@ fn request() -> HostInputRequest {
     HostInputRequest::questionnaire("Before I start", questions).unwrap()
 }
 
-// Covers: the form must carry every question in a shape both T3 Code (reads
-// `enum`, `title`, `description`) and Zed (prefers titled `oneOf`) can draw,
-// scoped to the asking tool call, with selected defaults
+// Covers: the standard form carries every question in the ACP schema (titled
+// `oneOf`, string arrays, a free-text companion), scoped to the asking tool
+// call, with selected defaults
 // Owner: ACP elicitation mapping
 #[test]
 fn questions_become_one_form_scoped_to_the_tool_call() {
@@ -75,6 +75,7 @@ fn questions_become_one_form_scoped_to_the_tool_call() {
         &request(),
         &SessionId::new("session-1"),
         Some(&ToolCallId::from_string("call-1").unwrap()),
+        FormDialect::Standard,
     );
 
     assert_eq!(
@@ -126,6 +127,45 @@ fn questions_become_one_form_scoped_to_the_tool_call() {
     );
 }
 
+// Covers: T3 Code reads only `enum`, `title`, and `description` and lets any
+// question take free text, so each question is one string property listing
+// choice labels, with no free-text companion
+// Owner: ACP elicitation mapping
+#[test]
+fn t3_code_gets_one_labelled_string_per_question() {
+    let form = elicitation_request(
+        &request(),
+        &SessionId::new("session-1"),
+        None,
+        FormDialect::T3Code,
+    );
+
+    assert_eq!(
+        serde_json::to_value(form).unwrap()["requestedSchema"],
+        json!({
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "type": "string",
+                    "title": "Which checks?",
+                    "description": "Pick one or more; separate several with commas.",
+                    "enum": ["Format", "Test"],
+                },
+                "name": {"type": "string", "title": "Branch name?", "enum": ["main"]},
+                "notes": {"type": "string", "title": "Anything else?"},
+                "scope": {
+                    "type": "string",
+                    "title": "Scope",
+                    "description": "Which scope should the change cover?\n\nPick the narrowest that works.",
+                    "enum": ["One crate", "Workspace"],
+                },
+                "ship": {"type": "boolean", "title": "Open a PR?"},
+            },
+            "required": ["scope", "ship", "name"],
+        })
+    );
+}
+
 fn accept(content: serde_json::Value) -> CreateElicitationResponse {
     let content = serde_json::from_value(content).unwrap();
     CreateElicitationResponse::new(ElicitationAction::Accept(
@@ -149,6 +189,7 @@ fn host_responses_become_answers_or_refusals() {
     let cases = [
         (
             "every control",
+            FormDialect::Standard,
             accept(json!({
                 "scope": "crate",
                 "checks": ["fmt", "test"],
@@ -156,10 +197,11 @@ fn host_responses_become_answers_or_refusals() {
                 "ship": true,
                 "name.other": "feat/forms",
             })),
-            Ok(answered),
+            Ok(answered.clone()),
         ),
         (
             "text answers and blanks",
+            FormDialect::Standard,
             accept(json!({
                 "scope": "workspace",
                 "notes": "  ",
@@ -173,27 +215,116 @@ fn host_responses_become_answers_or_refusals() {
                 .answer("name", ["main"])),
         ),
         (
+            "a typed answer replaces a selection the host cannot clear",
+            FormDialect::Standard,
+            accept(
+                json!({"scope": "crate", "ship": true, "name": "main", "name.other": "feat/forms"}),
+            ),
+            Ok(HostInputResponse::new()
+                .answer("scope", ["crate"])
+                .answer("ship", ["yes"])
+                .answer("name", ["feat/forms"])),
+        ),
+        (
+            "t3 code answers with labels, comma lists, and free text",
+            FormDialect::T3Code,
+            accept(json!({
+                "scope": "One crate",
+                "checks": "Format, test",
+                "notes": "ship it",
+                "ship": "true",
+                "name": "feat/forms",
+            })),
+            Ok(answered),
+        ),
+        (
+            "t3 code free text for a closed choice",
+            FormDialect::T3Code,
+            accept(
+                json!({"scope": "galaxy", "checks": "fmt", "notes": "x", "ship": "true", "name": "main"}),
+            ),
+            Err(HostInputRefusal::Declined),
+        ),
+        (
             "missing required answer",
+            FormDialect::Standard,
             accept(json!({"scope": "crate", "ship": true})),
             Err(HostInputRefusal::Declined),
         ),
         (
             "unknown choice",
+            FormDialect::Standard,
             accept(json!({"scope": "galaxy", "ship": true, "name": "main"})),
             Err(HostInputRefusal::Declined),
         ),
         (
             "decline",
+            FormDialect::Standard,
             CreateElicitationResponse::new(ElicitationAction::Decline),
             Err(HostInputRefusal::Declined),
         ),
         (
             "cancel",
+            FormDialect::T3Code,
             CreateElicitationResponse::new(ElicitationAction::Cancel),
             Err(HostInputRefusal::Dismissed),
         ),
     ];
-    for (label, response, expected) in cases {
-        assert_eq!(host_answer(&request(), response), expected, "{label}");
+    for (label, dialect, response, expected) in cases {
+        assert_eq!(
+            host_answer(&request(), response, dialect),
+            expected,
+            "{label}"
+        );
     }
+}
+
+// Covers: MCP property names may contain `.`, so a free-text companion key
+// must not collide with another question's property
+// Owner: ACP elicitation mapping
+#[test]
+fn free_text_companions_do_not_collide_with_question_ids() {
+    let request = HostInputRequest::questionnaire(
+        "Server form",
+        vec![
+            HostQuestion::new(
+                "x",
+                "X?",
+                vec![HostChoice::new("a", "A")],
+                SelectionMode::One,
+            )
+            .unwrap()
+            .allow_other(),
+            HostQuestion::new(
+                "x.other",
+                "Note?",
+                vec![HostChoice::new("other", "Other")],
+                SelectionMode::One,
+            )
+            .unwrap()
+            .allow_other(),
+        ],
+    )
+    .unwrap();
+    let form = elicitation_request(&request, &SessionId::new("s"), None, FormDialect::Standard);
+    let schema = serde_json::to_value(form).unwrap()["requestedSchema"]["properties"].clone();
+    let mut keys = schema
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort();
+
+    assert_eq!(keys, ["x", "x.other", "x.other_"]);
+    assert_eq!(
+        host_answer(
+            &request,
+            accept(json!({"x.other_": "mine", "x.other": "note"})),
+            FormDialect::Standard,
+        ),
+        Ok(HostInputResponse::new()
+            .answer("x", ["mine"])
+            .answer("x.other", ["note"]))
+    );
 }

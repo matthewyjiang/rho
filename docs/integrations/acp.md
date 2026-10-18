@@ -105,6 +105,8 @@ When a tool needs approval, Rho asks the host. The host choices map to allow onc
 
 In `plan` mode the model gets the `exit_plan_mode` tool, as in the TUI. It sends the finished plan to the host as a `session/request_permission` on the tool's card, with kind `switch_mode` and the plan as content. The options approve into a mode, with the mode ids as option ids: `allow_edits`, `supervised`, `bypass`, and `auto` when a classifier model is configured. A final `keep_planning` option rejects. Every ACP host answers permission prompts, so leaving plan mode does not need [questions](#questions). A host that cancels the prompt, or fails it, keeps the session planning.
 
+Hosts draw this prompt in their own way. Zed lists every option. T3 Code shows its usual approve, approve for session, and decline buttons, and picks the first option of the matching kind: `supervised` (allow once), `allow_edits` (allow always), or `keep_planning`. `bypass` and `auto` cannot be chosen there. A host's own approval policy may also answer for the user: a T3 thread in full access approves without showing the plan, and one in a sandboxed mode may reject every time, in which case switch the session's mode by hand.
+
 An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, the approval is dropped with a notice. To give feedback instead, choose keep planning and reply in your next message.
 
 ## Questions
@@ -115,13 +117,15 @@ Each question becomes one property keyed by its id:
 
 | Question | Property |
 | --- | --- |
-| Single choice | `string` with both `enum` and titled `oneOf`, since hosts read one or the other |
+| Single choice | `string` with both `enum` and titled `oneOf` |
 | Multiple choice | `array` of titled choices |
 | Yes/no | `boolean` |
 | Free text | `string` |
-| Choice that also accepts free text | the choice, plus an optional `string` property `<id>.other` |
+| Choice that also accepts free text | the choice, plus an optional `string` property `<id>.other`. A typed answer replaces a single choice and joins a multiple choice. |
 
 A short question header becomes the property `title` and the full question its `description`. Pre-selected defaults are sent as `default`. Properties go out in id order, which hosts such as Zed follow, not in the order the questions were asked.
+
+T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value. A multiple choice is typed as a comma-separated list. Free text for a question that accepts only its listed choices counts as `decline`.
 
 The host's answer maps to the asking tool:
 

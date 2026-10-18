@@ -35,14 +35,15 @@ provider = "disabled"
     (home, server)
 }
 
-fn start_session(server: &mut AcpServer, capabilities: Value, home: &TempDir) -> String {
-    server
-        .request(
-            "initialize",
-            json!({"protocolVersion": 1, "clientCapabilities": capabilities}),
-        )
-        .0
-        .unwrap();
+/// Initializes with `client` (the host's `clientCapabilities` and
+/// `clientInfo`) and opens a session.
+fn start_session(server: &mut AcpServer, client: Value, home: &TempDir) -> String {
+    let mut initialize = json!({"protocolVersion": 1});
+    initialize
+        .as_object_mut()
+        .unwrap()
+        .extend(client.as_object().unwrap().clone());
+    server.request("initialize", initialize).0.unwrap();
     let created = server
         .request(
             "session/new",
@@ -126,16 +127,26 @@ fn ask_color() -> Value {
 }
 
 // Covers: a host advertising form elicitation gets the questionnaire as an
-// `elicitation/create` form on the tool's card, and its accepted answer
-// reaches the model. A host without it is never asked.
+// `elicitation/create` form on the tool's card, shaped for the host it named
+// at `initialize`, and its accepted answer reaches the model. A host without
+// it is never asked.
 // Owner: ACP questions
 #[test]
 fn questionnaire_asks_through_form_elicitation_only_when_advertised() {
     let (home, mut server) = fixture_server("bypass");
-    let session_id = start_session(&mut server, json!({"elicitation": {"form": {}}}), &home);
+    let t3_code = json!({
+        "clientCapabilities": {"elicitation": {"form": {}}},
+        "clientInfo": {"name": "t3-code", "version": "0.0.0"},
+    });
+    let session_id = start_session(&mut server, t3_code, &home);
     let exchange = prompt_answering(&mut server, &session_id, &ask_color(), |request| {
         let property = &request["params"]["requestedSchema"]["properties"]["color"];
-        // Answer as T3 Code does: with the last `enum` value.
+        // Answer as T3 Code does: with the last `enum` value, a label.
+        // T3 Code's shape lists labels and leaves out the titled `oneOf`.
+        assert_eq!(
+            (&property["enum"], property.get("oneOf")),
+            (&json!(["Red", "Blue"]), None)
+        );
         let choice = property["enum"].as_array().unwrap().last().unwrap().clone();
         json!({"action": "accept", "content": {"color": choice}})
     });

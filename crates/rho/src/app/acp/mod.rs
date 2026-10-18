@@ -196,7 +196,7 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
             {
                 let agent = Arc::clone(&agent);
                 async move |request: InitializeRequest, responder, _cx| {
-                    agent.record_client(&request.client_capabilities);
+                    agent.record_client(&request);
                     responder.respond(RhoAcpAgent::initialize(&request))
                 }
             },
