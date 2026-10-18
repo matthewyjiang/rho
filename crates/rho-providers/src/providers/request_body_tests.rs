@@ -40,7 +40,7 @@ fn compression_support_is_scoped_to_verified_endpoints() {
         ("https://inference.poolside.ai/v1/chat/completions", false),
         ("https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions", false),
         ("https://api.meta.ai/v1/chat/completions", false),
-        ("https://opencode.ai/zen/go/v1/messages", false),
+        ("https://opencode.ai/inference/go/v1/messages", false),
         ("https://api.minimax.io/anthropic/v1/messages", false),
         ("https://api.typesafe.ai/v1/chat/completions", false),
         ("https://api.typesafe.ai/v1/systemone", true),
