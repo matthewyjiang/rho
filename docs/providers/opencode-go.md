@@ -23,6 +23,8 @@ In the TUI, run `/login` and choose **OpenCode**, then **Go subscription**, or s
 /login opencode-go
 ```
 
+If you already logged in to [OpenCode Zen](/providers/opencode-zen), leave the field blank and press Enter to reuse that key.
+
 Rho stores the key and refreshes the models available on the Go gateway. Select one with `/model`, for example:
 
 ```text

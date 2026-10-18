@@ -146,6 +146,23 @@ impl ProviderRuntime {
 /// `catalog::CROSS_PROVIDER_LOGIN_GROUPS` exists.
 const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId::OpenAiCodex]];
 
+/// API-key auth profiles that one key unlocks. OpenCode's console issues a
+/// single key for Zen and Go.
+///
+/// Login offers a sibling's stored key instead of asking for it again. Each
+/// profile still stores its own copy, so a provider's models appear only
+/// after the user logs in to that provider.
+const SHARED_API_KEY_AUTHS: &[&[&str]] = &[&["opencode-api-key", "opencode-go-api-key"]];
+
+/// Other auth profiles whose API key also works for `auth`.
+pub fn shared_api_key_auths(auth: &str) -> impl Iterator<Item = &'static str> + '_ {
+    SHARED_API_KEY_AUTHS
+        .iter()
+        .filter(move |group| group.contains(&auth))
+        .flat_map(|group| group.iter().copied())
+        .filter(move |sibling| *sibling != auth)
+}
+
 /// Stable provider identity.
 ///
 /// Config-defined OpenAI-compatible hosts share [`Self::OpenAiCompatible`].

@@ -28,13 +28,19 @@ pub(super) struct FinishedInteractiveLogin {
 ///
 /// Blank on an optional field means "do not write a new key": keep a
 /// reachable key (store or env), otherwise run keyless. `/logout` is the
-/// wipe path.
-#[derive(Clone, Debug)]
+/// wipe path. Blank on a field offering a sibling's key copies that key.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ApiKeySubmission {
     /// Store this key for the target's auth mode.
     Save { target: LoginTarget, key: String },
     /// No new key. Keep a reachable key, or run keyless when none exists.
     LeaveUnset { target: LoginTarget },
+    /// Store the key already saved for `source`, an auth profile sharing keys
+    /// with the target.
+    Reuse {
+        target: LoginTarget,
+        source: &'static str,
+    },
     /// Blank, but this target requires a key.
     Rejected,
 }
@@ -417,21 +423,17 @@ impl App {
                 self.report_login_not_required(&target.provider);
                 Ok(())
             }
-            AuthenticationMethod::ApiKey { entry_label } => {
-                // A host that also runs keyless accepts a blank key as "do not write a new key".
-                let optional = provider::provider_descriptor(&target.provider)
+            AuthenticationMethod::ApiKey { .. } => {
+                let keyless_host = provider::provider_descriptor(&target.provider)
                     .is_some_and(|descriptor| descriptor.has_none_auth());
-                let (secret, status) = if optional {
-                    (
-                        SecretInput::optional(target),
-                        "enter API key or leave blank".to_string(),
-                    )
-                } else {
-                    (SecretInput::new(target), format!("enter {entry_label}"))
-                };
+                let secret = SecretInput::for_provider_login(
+                    target,
+                    keyless_host,
+                    self.credential_store.as_ref(),
+                );
+                self.set_status(secret.prompt());
                 self.input_ui
                     .set_composer(ComposerMode::SecretInput(secret));
-                self.set_status(status);
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
@@ -492,6 +494,25 @@ impl App {
                 }
                 self.persist_api_key_and_finish(target, key, terminal, agent)
                     .await
+            }
+            ApiKeySubmission::Reuse { target, source } => {
+                let store = self.credential_store.as_ref();
+                match ProviderAuthentication::shared_api_key(store, source, &target.auth) {
+                    Ok(Some(key)) => {
+                        self.persist_api_key_and_finish(target, key, terminal, agent)
+                            .await
+                    }
+                    unusable => {
+                        let detail = unusable
+                            .err()
+                            .map_or_else(|| "it is no longer stored".into(), |err| err.to_string());
+                        self.insert_entry(&Entry::Error(format!(
+                            "could not reuse {source} key: {detail}"
+                        )));
+                        self.set_status("login failed");
+                        Ok(())
+                    }
+                }
             }
         }
     }

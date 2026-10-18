@@ -8,7 +8,7 @@ Rho supports [OpenCode Zen](https://opencode.ai/docs/zen/) as a first-party prov
 | --- | --- |
 | Provider | `opencode` |
 | Auth | `opencode-api-key` |
-| Environment override | `OPENCODE_API_KEY` |
+| Environment override | `OPENCODE_ZEN_API_KEY` |
 | API base | `https://opencode.ai/zen/v1` |
 | Model source | OpenCode Zen `/models`, minus free models |
 | Metadata | [models.dev `opencode`](https://models.dev/providers/opencode) |
@@ -22,6 +22,8 @@ In the TUI, run `/login` and choose **OpenCode**, then **Zen pay-as-you-go**. Yo
 ```text
 /login opencode
 ```
+
+If you already logged in to OpenCode Go, leave the field blank and press Enter to reuse that key. Type a different key to store it instead. Each login keeps its own copy, so Zen models appear only after you log in to Zen, and logging out of one leaves the other signed in.
 
 Rho stores the key and refreshes the models available on Zen. Select one with `/model`, for example:
 
@@ -37,10 +39,10 @@ Remove the stored key with:
 
 ## Environment and automation
 
-For CI or development, set `OPENCODE_API_KEY`. It overrides a stored key for both `opencode` and `opencode-go`.
+For CI or development, set `OPENCODE_ZEN_API_KEY`. It overrides a stored Zen key. Go reads `OPENCODE_API_KEY`, so you can export one without listing the other gateway's models.
 
 ```bash
-export OPENCODE_API_KEY="<api-key>"
+export OPENCODE_ZEN_API_KEY="<api-key>"
 rho --provider opencode \
   --auth opencode-api-key \
   --model opencode/claude-sonnet-5 \

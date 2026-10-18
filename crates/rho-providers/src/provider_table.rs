@@ -470,10 +470,12 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             id: "opencode-api-key",
             login_label: "OpenCode Zen API key",
             auth_kind: ProviderAuthKind::ApiKey {
-                env_var: "OPENCODE_API_KEY",
+                // Go already owns OPENCODE_API_KEY. A separate variable keeps
+                // one export from listing both gateways' models.
+                env_var: "OPENCODE_ZEN_API_KEY",
                 account: OPENCODE_API_KEY_ACCOUNT,
                 entry_label: "OpenCode Zen API key",
-                missing_message: "missing OpenCode Zen API key; run /login opencode in the TUI or set OPENCODE_API_KEY as a CI/dev override",
+                missing_message: "missing OpenCode Zen API key; run /login opencode in the TUI or set OPENCODE_ZEN_API_KEY as a CI/dev override",
             },
         }],
         model_source: ProviderModelSource::CachedProviderModels,
