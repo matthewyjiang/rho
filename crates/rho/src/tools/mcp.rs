@@ -13,7 +13,7 @@ use std::{
 
 use rho_sdk::tool::Tool;
 
-use super::sdk_registry::ToolBundle;
+use super::{code_mode::ContextExposure, sdk_registry::ToolBundle};
 use config::{McpConfig, McpServerConfig};
 
 pub(crate) mod catalog;
@@ -292,6 +292,12 @@ impl McpBundle {
 impl ToolBundle for McpBundle {
     fn tools(&self) -> &[Arc<dyn Tool>] {
         &self.tools
+    }
+
+    /// Servers can export hundreds of tools, so none cost context until
+    /// `tool_search` loads them.
+    fn context_exposure(&self) -> ContextExposure {
+        ContextExposure::Hidden
     }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {

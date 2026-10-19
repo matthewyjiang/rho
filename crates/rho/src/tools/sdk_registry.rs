@@ -17,6 +17,7 @@ use crate::{
 use super::{
     advisor::AdvisorSessionStore,
     agent::{DelegationBundleOptions, DelegationToolSelection, SubagentManager},
+    code_mode::ContextExposure,
 };
 
 /// A feature-owned group of tools and any resources they need.
@@ -25,6 +26,12 @@ use super::{
 /// boxed future is `Send` so callers can shut bundles down from async runtimes.
 pub(crate) trait ToolBundle: Send + Sync {
     fn tools(&self) -> &[Arc<dyn Tool>];
+
+    /// How every tool in this bundle reaches model context. Owners of large
+    /// generated catalogs return [`ContextExposure::Hidden`].
+    fn context_exposure(&self) -> ContextExposure {
+        ContextExposure::Direct
+    }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async {})
@@ -359,7 +366,7 @@ impl AppToolSet {
         let orchestration = tool_set.code_mode().orchestration_tools();
         tool_set
             .inventory
-            .mutate(|tools| tools.extend(orchestration));
+            .extend(&orchestration, ContextExposure::Direct);
 
         tool_set
     }
@@ -382,7 +389,7 @@ impl AppToolSet {
     /// Registers a bundle so nested calls and discovery see its tools immediately.
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.inventory
-            .mutate(|tools| tools.extend(bundle.tools().iter().cloned()));
+            .extend(bundle.tools(), bundle.context_exposure());
         self.bundles.push(Box::new(bundle));
     }
 

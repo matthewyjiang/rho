@@ -19,10 +19,23 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     permission::PermissionMode,
     tools::{
-        code_mode::{CODEMODE_TOOL_NAME, TOOL_SEARCH_NAME},
-        sdk_registry::{AppToolSet, StaticToolBundle, ToolSetOptions},
+        code_mode::{ContextExposure, CODEMODE_TOOL_NAME, TOOL_SEARCH_NAME},
+        sdk_registry::{AppToolSet, ToolBundle, ToolSetOptions},
     },
 };
+
+/// Tools their owner keeps out of model context, whatever their names.
+struct HiddenBundle(Vec<Arc<dyn rho_sdk::tool::Tool>>);
+
+impl ToolBundle for HiddenBundle {
+    fn tools(&self) -> &[Arc<dyn rho_sdk::tool::Tool>] {
+        &self.0
+    }
+
+    fn context_exposure(&self) -> ContextExposure {
+        ContextExposure::Hidden
+    }
+}
 
 fn runtime_for(
     config: &Config,
@@ -69,7 +82,8 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn
 }
 
 // Covers: modes and descriptions are resolved for every request of ONE live
-// runtime; changing mode must neither rebuild it nor leak unsearched MCP schemas.
+// runtime; changing mode must neither rebuild it nor leak unsearched schemas of
+// a bundle its owner hid from context, whatever the tool's name.
 // Owner: app runtime builder + SDK visibility snapshot.
 #[tokio::test]
 async fn codemode_mode_selects_each_live_provider_request() {
@@ -80,9 +94,9 @@ async fn codemode_mode_selects_each_live_provider_request() {
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::default(),
     );
-    tools.add_bundle(StaticToolBundle::new(vec![Arc::new(ScriptedTool::new(
+    tools.add_bundle(HiddenBundle(vec![Arc::new(ScriptedTool::new(
         ToolSpec {
-            name: "mcp__docs__lookup".into(),
+            name: "openapi__docs__lookup".into(),
             description: "documentation".into(),
             input_schema: json!({"type": "object"}),
         },
@@ -104,7 +118,7 @@ async fn codemode_mode_selects_each_live_provider_request() {
         TOOL_SEARCH_NAME,
         "read_file",
         "write",
-        "mcp__docs__lookup",
+        "openapi__docs__lookup",
     ];
     let cases = [
         (On, [true, true, true, true, false]),
@@ -222,7 +236,7 @@ async fn tool_search_loads_mcp_hits_for_direct_calls() {
             "required": ["threadId"],
             "additionalProperties": false,
         });
-        tools.add_bundle(StaticToolBundle::new(
+        tools.add_bundle(HiddenBundle(
             [&found, &deferred]
                 .into_iter()
                 .map(|name| {

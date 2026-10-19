@@ -22,7 +22,10 @@ use super::{
     tool::{call_remote_tool, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
     McpImageDelivery,
 };
-use crate::tools::sdk_registry::ToolBundle;
+use crate::{
+    config::CodemodeMode,
+    tools::sdk_registry::{AppToolSet, ToolBundle},
+};
 #[cfg(unix)]
 use rho_sdk::{
     tool::{ToolContext, ToolErrorKind},
@@ -434,13 +437,22 @@ async fn streamable_http_discovery() {
         invalid_servers: Vec::new(),
     };
     let outcome = McpBundle::connect(&config, test_options()).await;
-    let bundle = outcome.bundle.unwrap();
-    assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
     assert_eq!(
         outcome.report.servers[0].status(),
         McpServerStatus::Connected
     );
-    bundle.shutdown().await;
+    // Discovered tools are callable but stay out of codemode `on` context.
+    let tools = AppToolSet::disabled().with_mcp(outcome);
+    tools.code_mode().set_mode(CodemodeMode::On);
+    let exported = "mcp__remote__remote_echo";
+    assert_eq!(
+        (
+            tools.contains(exported),
+            tools.specs().iter().any(|spec| spec.name == exported),
+        ),
+        (true, false)
+    );
+    tools.shutdown().await;
     server.await.unwrap();
 }
 
