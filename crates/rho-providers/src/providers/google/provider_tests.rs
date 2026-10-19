@@ -18,6 +18,89 @@ fn sample_tool() -> ToolSpec {
     }
 }
 
+// Covers: catalog-advertised levels (what pickers offer) gate thinkingLevel for
+// Gemini ids the model-id table predates or reads too broadly; Gemini 2.5 keeps
+// its budget table.
+// Owner: Gemini thinking-config policy
+#[test]
+fn thinking_follows_catalog_levels() {
+    use crate::model::{provider_models::thinking_policy, ReasoningLevelSet};
+    use crate::protocol::gemini_generate_content::{ThinkingConfig, ThinkingLevel};
+
+    let catalog = ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+        ReasoningLevel::Low,
+        ReasoningLevel::Medium,
+        ReasoningLevel::High,
+    ]));
+    let level = |thinking_level| {
+        Ok(Some(ThinkingConfig {
+            thinking_budget: None,
+            thinking_level: Some(thinking_level),
+            include_thoughts: true,
+        }))
+    };
+    for (model, catalog, requested, expected) in [
+        // The name table predates gemini-4; the catalog unlocks its levels.
+        (
+            "gemini-4-argon",
+            catalog.clone(),
+            ReasoningLevel::High,
+            level(ThinkingLevel::High),
+        ),
+        // Gemini 3+ always thinks: Off is rejected, not sent as the default.
+        (
+            "gemini-4-argon",
+            catalog.clone(),
+            ReasoningLevel::Off,
+            Err(UnsupportedLevel),
+        ),
+        (
+            "gemini-3.7-flash",
+            catalog.clone(),
+            ReasoningLevel::Low,
+            level(ThinkingLevel::Low),
+        ),
+        // The name table allows minimal for every 3.x flash; the catalog narrows it.
+        (
+            "gemini-3.7-flash",
+            catalog.clone(),
+            ReasoningLevel::Minimal,
+            Err(UnsupportedLevel),
+        ),
+        // Without catalog levels the name table still gates.
+        (
+            "gemini-3.7-flash",
+            ReasoningCapabilities::Unknown,
+            ReasoningLevel::Minimal,
+            level(ThinkingLevel::Minimal),
+        ),
+        (
+            "gemini-4-argon",
+            ReasoningCapabilities::Unknown,
+            ReasoningLevel::Off,
+            Ok(None),
+        ),
+        // Gemini 2.5 keeps its budget table whatever the catalog lists.
+        (
+            "gemini-2.5-flash",
+            catalog.clone(),
+            ReasoningLevel::Off,
+            Ok(Some(ThinkingConfig {
+                thinking_budget: Some(0),
+                thinking_level: None,
+                include_thoughts: false,
+            })),
+        ),
+    ] {
+        let thinking = GeminiThinking::resolve(thinking_policy(model), catalog);
+        pretty_assertions::assert_eq!(
+            thinking.config(requested),
+            expected,
+            "{model} {requested:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn complete_turn_uses_google_header_and_generate_content_endpoint() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

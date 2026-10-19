@@ -874,3 +874,71 @@ fn cli_provider_models_round_trip_without_canonicalizing_ids() {
     });
     let _ = fs::remove_dir_all(cache);
 }
+
+// Covers: OpenCode Zen lists free models it serves only to the OpenCode client
+// and Jev decision models that cannot chat; discovery must drop both and keep
+// paid or uncatalogued chat ids
+// Owner: OpenAI-compatible paid-only discovery
+#[tokio::test]
+async fn opencode_refresh_drops_catalog_free_models() {
+    use crate::model::models_dev::{
+        mark_catalog_snapshot_current_for_tests, write_cached_model_metadata_for_tests, ModelCost,
+        ModelMetadata, ModelsDevCacheDirGuard,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base =
+        Url::parse(&format!("http://{}/zen/v1", listener.local_addr().unwrap())).unwrap();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request(&mut stream).await;
+        assert_eq!(request_target(&request), "GET /zen/v1/models HTTP/1.1");
+        let body = r#"{"data":[{"id":"big-pickle"},{"id":"claude-sonnet-5"},{"id":"new-model"},{"id":"cheap-input-only"},{"id":"jev-1.13"}]}"#;
+        stream
+            .write_all(http_json_response("200 OK", body).as_bytes())
+            .await
+            .unwrap();
+    });
+    let models_dev_cache = tempfile::tempdir().unwrap();
+    let _models_dev = ModelsDevCacheDirGuard::new(models_dev_cache.path().to_path_buf());
+    let priced = |input, output| ModelMetadata {
+        cost_default: Some(ModelCost {
+            input_micros_per_m: Some(input),
+            output_micros_per_m: Some(output),
+            ..ModelCost::default()
+        }),
+        ..ModelMetadata::default()
+    };
+    write_cached_model_metadata_for_tests("opencode", "big-pickle", &priced(0, 0));
+    write_cached_model_metadata_for_tests(
+        "opencode",
+        "claude-sonnet-5",
+        &priced(2_000_000, 10_000_000),
+    );
+    write_cached_model_metadata_for_tests("opencode", "cheap-input-only", &priced(0, 500_000));
+    // A current snapshot keeps discovery off the network.
+    mark_catalog_snapshot_current_for_tests();
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+    let store = MemoryCredentialStore::default();
+    save_provider_api_key(&store, "opencode-api-key", "zen-secret").unwrap();
+
+    let models = refresh_provider_models_with_store(
+        "opencode",
+        "opencode-api-key",
+        &store,
+        ProviderModelEndpoint::OpenAiCompatible(&api_base),
+    )
+    .await
+    .unwrap()
+    .models;
+
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.model.as_str())
+            .collect::<Vec<_>>(),
+        ["cheap-input-only", "claude-sonnet-5", "new-model"]
+    );
+}

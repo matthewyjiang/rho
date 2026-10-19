@@ -53,7 +53,7 @@ pub struct AnthropicProvider {
     /// Per-conversation prefix effort and later shifts, keyed by prompt cache
     /// key, so a mid-session change does not rewrite top-level effort.
     per_message_effort: Mutex<per_message_effort::PerMessageEffortState>,
-    session_headers: super::opencode_go::SessionHeaders,
+    session_headers: super::opencode::SessionHeaders,
 }
 
 impl AnthropicProvider {
@@ -72,7 +72,7 @@ impl AnthropicProvider {
             cold_max_tokens: ANTHROPIC_COLD_CATALOG_MAX_TOKENS,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
-            session_headers: super::opencode_go::SessionHeaders::new("anthropic"),
+            session_headers: super::opencode::SessionHeaders::new("anthropic"),
             thinking_budget_ceiling: OnceLock::new(),
             per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
@@ -141,7 +141,7 @@ impl AnthropicProvider {
             cold_max_tokens,
             max_tokens_override: None,
             thinking_override: None,
-            session_headers: super::opencode_go::SessionHeaders::new(identity_provider),
+            session_headers: super::opencode::SessionHeaders::new(identity_provider),
             thinking_budget_ceiling: OnceLock::new(),
             per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }

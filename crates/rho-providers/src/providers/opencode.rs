@@ -1,7 +1,10 @@
-//! OpenCode Go routing headers, shared by its three wire adapters.
+//! OpenCode gateway routing headers, shared by the four wire adapters that
+//! OpenCode Go and OpenCode Zen models construct.
 
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use sha2::{Digest, Sha256};
+
+use crate::provider::{provider_descriptor, ProviderId};
 
 pub(crate) struct SessionHeaders {
     fallback: Option<String>,
@@ -9,11 +12,15 @@ pub(crate) struct SessionHeaders {
 
 impl SessionHeaders {
     pub(crate) fn new(provider: &str) -> Self {
+        // Go rejects requests without `x-opencode-session`. Zen does not
+        // require it; send it anyway so both gateways see one conversation id.
+        let routes_by_session = provider_descriptor(provider).is_some_and(|descriptor| {
+            matches!(descriptor.id, ProviderId::OpenCodeGo | ProviderId::OpenCode)
+        });
         Self {
             // One random 128-bit identity per provider instance for SDK callers
             // without a conversation key. Never rotate it between turns/retries.
-            fallback: (provider == "opencode-go")
-                .then(|| format!("rho:{:032x}", rand::random::<u128>())),
+            fallback: routes_by_session.then(|| format!("rho:{:032x}", rand::random::<u128>())),
         }
     }
 

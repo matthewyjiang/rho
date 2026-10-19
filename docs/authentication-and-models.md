@@ -35,6 +35,7 @@ Rho's implemented providers are:
 | `meta` | `meta-api-key`, `meta-muse` | [Meta Model API](/providers/meta) |
 | `minimax` | `minimax-api-key` | [MiniMax](/providers/minimax) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
+| `opencode` | `opencode-api-key` | [OpenCode Zen](/providers/opencode-zen) |
 | `typesafe` | `typesafe-api-key` | [TypeSafe](/providers/typesafe), decision models only |
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
@@ -102,7 +103,7 @@ Successful login normally stores credentials only. It does not switch the active
 
 `/logout` opens a provider picker containing only providers with stored credentials that can be deleted. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
 
-`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts such as T3 Code can use this same flow through [terminal authentication](/integrations/acp#authentication).
+`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts such as T3 Code can use this same flow through [terminal authentication](/integrations/acp#sign-in).
 
 ### Claude Code runtime sign-in
 

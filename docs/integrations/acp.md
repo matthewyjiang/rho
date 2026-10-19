@@ -2,238 +2,118 @@
 
 Parent: [Integrations](/integrations).
 
-`rho acp` is a stdio JSON-RPC [Agent Client Protocol](https://agentclientprotocol.com/) agent. An editor host such as Zed starts the process and drives sessions over ACP.
+`rho acp` runs Rho inside an editor or desktop app that speaks the [Agent Client Protocol](https://agentclientprotocol.com/) (ACP), such as Zed or T3 Code. The host starts the process, shows the conversation, and asks you for approvals. Rho still runs the model, tools, sessions, and config it uses in the TUI.
 
 ```mermaid
 flowchart TD
     host[Editor host] -->|stdio JSON-RPC| acp["rho acp"]
     acp --> store["~/.rho/sessions"]
-    acp --> model[Process model and provider]
+    acp --> model[Model and provider from config]
 ```
 
-## Launch
+This page covers setup and day-to-day use. Host-specific behavior lives on [T3 Code](/integrations/acp/t3-code). Protocol details for people building or debugging a host are in the [ACP host reference](/integrations/acp/reference).
+
+## Set up a host
+
+Every host launches the same command:
 
 ```bash
 rho acp
 ```
 
-The process uses the model, provider, and other flags from the command line and config. Host-specific integrations are opt-in flags; see [T3 Code](#t3-code).
+It uses the model, provider, permission mode, and other flags from the command line and `~/.rho/config.toml`, the same as the TUI. Sign in to your provider before the first session; see [Sign in](#sign-in).
 
-stdout is protocol only. Logs go to stderr. Do not write other text to stdout, and do not point a logger at stdout while a host is connected.
+### Zed
 
-Rho speaks ACP protocol version 1. The `initialize` response always answers `1`, whatever version the host asked for; a host that cannot speak v1 should disconnect.
+Add Rho as a custom agent in Zed's `settings.json` (**Agent Settings → External Agents → Add Agent → Add Custom Agent**):
 
-The `initialize` response also carries `agentInfo` with `name: "rho"`, `title: "Rho"`, and `version` set to the same version `rho --version` prints, so hosts can show which Rho release they are talking to.
+```json
+{
+  "agent_servers": {
+    "Rho": {
+      "type": "custom",
+      "command": "rho",
+      "args": ["acp"]
+    }
+  }
+}
+```
 
-## Authentication
+Start a Rho thread from the Agent Panel's new-thread menu. Zed lists saved Rho sessions in its thread history, uses Rho's generated titles as thread names, and shows compaction progress. To see the messages Zed and Rho exchange, run `dev: open acp logs`.
 
-When the host advertises `clientCapabilities.auth.terminal: true`, Rho returns terminal authentication methods for its provider auth profiles, including API keys and OAuth. Each method appends `--login <auth-profile>` to the configured agent invocation. For example, T3 Code can launch `rho acp --t3code --login codex` in its sign-in terminal. This runs login instead of the ACP server; it does not require a working model or T3 MCP connection. Model discovery and agent binding wait until the host requests a session, so even a configured provider with no credentials or cached models can advertise login. A startup failure is returned to the session request; reconnect after fixing it to retry startup. Credential failures are the exception, described below.
+### T3 Code
 
-API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Rho asks where to store credentials when no credential backend has been selected. Credentials stay in Rho's configured store, not in ACP messages. Cancelled, failed, and unconfirmed terminal logins exit nonzero.
+Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The `--t3code` flag runs Rho subagents as T3 threads and lets background results wake an idle thread. See [T3 Code](/integrations/acp/t3-code).
 
-When the selected provider has no credentials, the credential store cannot read them, or the provider refuses them, the request fails with ACP `auth_required` (`-32000`) instead of an internal error. A refusal covers a revoked API key and an OAuth session whose refresh token expired or was revoked. This applies to `session/new` and `session/load`, and to a `session/prompt` turn or `/compact` that the provider rejects mid-session. Zed answers with its sign-in screen and the advertised terminal methods. T3 Code reports that the agent needs terminal authentication. The error message comes from Rho, such as the provider's missing-credential hint. Rho never puts the credential or the provider's raw response in the error. After a successful login, no reconnect is needed, whichever credential store holds it. The next session request runs startup again, and the next prompt in a session whose credentials were refused reloads them from the credential store for turns and compaction.
+### Other hosts
 
-Login does not switch the configured provider/model. Sign in to the configured provider before starting a session; additional provider credentials become available through Rho's model options after reconnecting. Hosts without terminal-auth support receive no authentication methods: run `rho login <provider>` separately in the same user/environment. Terminal method IDs must not be passed to ACP `authenticate`, which Rho does not implement.
+Point the host at `rho acp`. Rho speaks ACP protocol version 1 over stdio. stdout carries only protocol messages and logs go to stderr, so do not wrap the command in anything that prints to stdout.
 
-Ollama Cloud device-key setup is not advertised because it cannot confirm browser authorization. Complete `rho login ollama-cloud-device` separately and reconnect, or use the advertised Ollama Cloud API-key method.
+## Sign in
 
-## Sessions
+Hosts that support terminal sign-in, such as Zed and T3 Code, offer one sign-in method per Rho provider login, covering API keys and OAuth. Picking one opens a terminal that runs the same flow as `rho login <provider>`. API-key input stays hidden. Credentials go to Rho's own credential store and never travel over ACP.
 
-ACP sessions persist under `~/.rho/sessions`. They appear in `rho sessions list` and you can resume them with `rho -R`. See [Sessions](/sessions).
+When credentials are missing, unreadable, or refused by the provider (a revoked key or an expired OAuth session), Rho tells the host that sign-in is needed instead of failing with an internal error. Zed opens its sign-in screen. After you sign in, keep going. You do not need to reconnect.
 
-Rho advertises `sessionCapabilities.list` and `sessionCapabilities.delete`, so hosts can show saved Rho sessions as history and reopen them. Zed builds its agent thread history from this.
+- Signing in does not change the configured provider or model. Sign in to the provider your config selects. Credentials for other providers show up in the model picker after you reconnect.
+- On a host without terminal sign-in, run `rho login <provider>` in a terminal as the same user and in the same environment, then connect.
+- Ollama Cloud device-key login is not offered in the host. Run `rho login ollama-cloud-device` yourself and reconnect, or use the Ollama Cloud API-key method.
 
-Listing and deleting saved history do not start model discovery or require provider credentials, even after a session startup failure.
+## What works in the host
 
-- `session/list` returns saved sessions newest first: those of `cwd` when the request names one, else those of every workspace. It lists the same sessions `/resume` offers, so sessions with nothing saved yet are left out, and so are sessions whose workspace directory no longer exists, which `session/load` cannot open. Each entry has the session's `cwd`, its title (or, when untitled, its first message on one line), and `updatedAt`. Pages hold 100 sessions; pass `nextCursor` back as `cursor` for the next page. Every listed `sessionId` opens with `session/load`.
-- `session/delete` deletes a saved session the same way `rho sessions rm` does, including its delegated-agent runs. A session open on the same connection is closed first, as `session/close` would close it, since hosts such as Zed may delete a thread from history without closing it. It refuses a session another Rho process has open and one whose delegated runs are still running; such a refusal can come after the session was closed, and `session/load` reopens it.
-
-`session/load` replays the saved conversation as message chunks and tool calls/updates marked with `_meta.isReplay: true`. Hosts that keep their own transcript can skip these notifications; hosts that rebuild the transcript from the replay can ignore the marker. Tool cards retain their saved names, arguments, success/failure status, output, and tool-owned images. Each replayed call gets a fresh ACP identity so provider IDs reused across turns do not collapse distinct cards; stored/provider-facing IDs stay unchanged. A result updates its corresponding replayed tool call, and an interrupted or superseded call without a saved result is marked failed rather than left running. Execution metadata that is not saved in history (such as tool kind and affected file locations) is not reconstructed.
-
-During a session, Rho also sends:
-
-- `tool_call` when a tool call starts, then `tool_call_update` with its progress and a final `completed` or `failed` status. A call to a tool that does not exist arrives as a single `failed` `tool_call`. Calls still running when a prompt ends, such as after `session/cancel`, get a final `failed` update before the prompt response, since ACP v1 has no cancelled tool status.
-- `usage_update` with the estimated context fill (`used`) and the model's context window (`size`, `0` when unknown). It goes out at each model step and compaction, and when a prompt ends.
-  It also carries the session's cumulative `cost` in `USD`. Rho reads this total from its usage ledger, the same record `/spend` reports. The total covers every provider request the session made, including retries, compaction, titles, advisor calls, and the session's direct subagents. Each request is priced like `/spend`: Rho uses the cost the provider reported, or else the cached models.dev price. Because the total comes from the ledger, it carries across Rho restarts and `session/load`, and no request is counted twice. Rho omits `cost` until at least one request has a price, so unpriced and local models never show a made-up `0`. Once some requests have a price, `cost` is the sum of those requests, as in the TUI statusline. Requests on unpriced models add nothing to it. A proxy route without its own catalog price borrows the price of another route for the same model only when this session also used that route, so the total can differ slightly from `/spend`.
-- `plan` with the full `todo` checklist whenever it differs from the last one the host received. A checklist restored by `session/load` goes out when the next prompt starts. An empty `entries` list means the checklist was cleared, per ACP v1; T3 Code currently ignores empty plans and keeps showing the last one.
-- `config_option_update` with the complete config option list when it changes, including after `/agent:<name>` selects a different model or tool set, and after either settings API applies a change. Hosts replace their previous options, so controls that no longer apply disappear.
-- `available_commands_update` with the complete command list when it changes. Rho checks both menus before and after each prompt and immediately after an agent rebind; skills, prompt templates, workflows, and agent definitions added between prompts or by a turn's tools appear on the next check. Unchanged menus are not resent, and Rho does not watch the filesystem while idle.
-- `compaction_update` for each compaction, automatic or `/compact`, when the host advertises `clientCapabilities.session.compaction`, as Zed does. A card opens `in_progress` and ends `completed`, `failed` with the error, or `cancelled`. A card still open when its prompt ends, including one whose prompt fails, closes the same way. Cards carry no `summary`, which ACP reserves for retained summary content; the before and after token counts arrive in `usage_update`. Each compaction gets a new random ID, so hosts that keep their transcript across reconnects never update an earlier card. Hosts that do not advertise compaction see automatic compaction only as the drop in `usage_update`.
-- `session_info_update` with the session's `title` once Rho names it. As in the TUI, Rho asks its title model for a short title after the first turn a session completes, unless the session already has one, and saves it for `session/list`, `/resume`, and `rho sessions`. The update goes out once the title model answers, usually after that prompt's response; a failed title sends nothing, and the session stays listed by its first message. Zed shows the title as the thread name; T3 Code records it. A title that lands after the session was closed or replaced by a `session/load` of the same ID is saved but not sent, and none goes out while Rho is loading the session. `session/load` does not resend a stored title: hosts get it from `session/list` and from their own thread state. Rho does not send `updatedAt`; `session/list` reports it.
-
-When the host advertises `clientCapabilities.session.notices`, information that is not part of the conversation goes out as a `notice` instead of an agent message. Today that is the model-prompt change notice found at load.
-
-Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A model-prompt change notice found at load is sent when the next prompt starts.
-
-Successful `write` and edit-tool calls include ACP `diff` content with an absolute `path` and the complete `oldText` and `newText`, so editors can show file changes. New files omit `oldText`; deletions use empty `newText`. Moves appear as a deletion of the source and creation of the destination. The normal text result stays alongside the diffs. If a write cannot read the existing file as UTF-8, it keeps the text notice instead of inventing original contents. Tools that supply only a unified patch still send that patch as text, not as `newText`.
-
-`initialize` advertises `sessionCapabilities.close`, so hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the session's prompt as `session/cancel` would, and a prompt waiting behind it also ends `cancelled`. The cancelled turn is saved, then the session's MCP servers, background processes, and the delegated agents Rho runs stop. The saved session stays on disk, so `session/load` can open it again. Closing an ID with no live session, including one already closed, fails with `resource_not_found` (`-32002`), the same error other session methods return for an unknown ID.
-
-### Settings during a prompt
-
-As ACP allows, hosts can send `session/set_mode` and `session/set_config_option` at any time, including while a prompt runs. A running prompt keeps the mode, model, reasoning, and fast mode it started with. A change sent while a prompt is running, or while a cancelled prompt winds down, waits for that prompt to end, then applies and responds; it takes effect from the next prompt. Changes apply in the order they arrive, and a `session/prompt` sent after `session/cancel` queues behind them. Hosts that interrupt to send a message with new settings, such as T3 Code, keep those settings this way. A change still waiting when `session/load` replaces the session fails with invalid request instead of applying to the reloaded session, which starts from the process defaults. One still waiting when `session/close` closes the session fails with `resource_not_found`.
-
-## Workspace roots
-
-`initialize` advertises `sessionCapabilities.additionalDirectories`, so hosts with several workspace roots, such as a Zed multi-root workspace, send the extra roots with `session/new` and `session/load` as `additionalDirectories`. `cwd` stays the primary workspace. Each extra root joins the session as an [added directory](/tools-workspace#additional-workspace-directories), the same as `--add-dir`: reads there count as workspace reads in every permission mode, and its `AGENTS.md` chain loads. Directories passed to `rho acp --add-dir` apply to every session on top of the host's roots.
-
-Each entry must be an absolute path to an existing directory. A request with an empty, relative, missing, or non-directory entry fails with invalid params and no session starts. As with `--add-dir`, a root inside `cwd` or inside another root adds nothing, since it is already in scope. A `null` list counts as empty, but an entry that is not a string, such as `null`, fails the request with invalid params, following the ACP schema.
-
-The roots are saved with the session, so `rho -R` restores them. `session/load` does not: per ACP, the roots it sends are the session's complete list, and a load that sends none drops roots the session had before.
-
-## Background work
-
-Background processes, workflows, and delegated agents report back much as they do in the TUI. ACP v1 gives an agent no way to start a turn on its own, so Rho keeps the prompt open instead of waking an idle session:
-
-- A result that arrives while a prompt is running reaches the model at its next step.
-- If the model ends its turn while a delegated agent Rho runs, or a workflow or background process started during that prompt, is still running, the prompt stays open. The model continues in the same prompt once that work finishes. Those agents hold the prompt open whichever prompt started them. Processes left over from earlier prompts, such as a dev server, do not hold a prompt open; their results arrive at the next prompt. Under `--t3code`, agents that run as T3 threads, workflows, and background processes never hold a prompt open; see [T3 Code](#t3-code).
-- Cancelling stops the wait, not the work. Delegated agents and background processes keep running. The next prompt waits for the agents Rho runs and delivers their results; processes report in it too. Stop agents with the `agents` tool, or by closing or reloading the session. A `session/prompt` sent right after `session/cancel` waits for the cancelled prompt to finish instead of failing as busy, so hosts that steer by cancelling and resending, such as T3 Code, can interrupt a waiting prompt without losing its agents.
-
-Each result that reaches the model is also shown to the host as a finished tool call card, the same notification card the TUI shows: a process's outcome, command, run time, and output tail, a delegated agent's result, or a workflow's outcome. A failed process or agent marks its card `failed`. The card's `content` is markdown, with process output in a code fence; its `rawOutput` is the same text as a plain string with the output unfenced, for hosts such as T3 Code that show tool output as is. These cards are saved with the session, so `session/load` replays them too. A background process has no live card while it runs; its card appears once its result is delivered.
-
-## Permissions
-
-New sessions advertise Rho permission modes: `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. The starting mode comes from config and flags. The modes go out twice with the same ids: as the legacy `modes` field, and as the first `configOptions` entry, a select with id `mode` and category `mode`. Per ACP, hosts that support config options ignore `modes` and use the `mode` option; older hosts use `modes`.
-
-Hosts switch modes with `session/set_mode` or `session/set_config_option` on `mode`; both change the same state. The new mode applies to later prompts in that ACP session and keeps the conversation. Write grants carry over the same way they do in the TUI. A switch sent during a prompt waits for it to end; see [Settings during a prompt](#settings-during-a-prompt). Switching to `auto` fails with invalid params unless a classifier model is configured, the same check headless startup applies. The change does not rewrite `config.toml`, and `session/load` starts from the process default again.
-
-When a tool needs approval, Rho asks the host. The host choices map to allow once, allow for this session, and reject.
-
-`rho acp` can prompt the host for approvals. Headless `rho run` cannot.
-
-### Leaving plan mode
-
-In `plan` mode the model gets the `exit_plan_mode` tool, as in the TUI. It sends the finished plan to the host as a `session/request_permission` on the tool's card, with kind `switch_mode` and the plan as content. The options approve into a mode, with the mode ids as option ids: `allow_edits`, `supervised`, `bypass`, and `auto` when a classifier model is configured. A final `keep_planning` option rejects. Every ACP host answers permission prompts, so leaving plan mode does not need [questions](#questions). A host that cancels the prompt, or fails it, keeps the session planning.
-
-Hosts draw this prompt in their own way. Zed lists every option. T3 Code shows its usual approve, approve for session, and decline buttons, and picks the first option of the matching kind: `supervised` (allow once), `allow_edits` (allow always), or `keep_planning`. `bypass` and `auto` cannot be chosen there. A host's own approval policy may also answer for the user: a T3 thread in full access approves without showing the plan, and one in a sandboxed mode may reject every time, in which case switch the session's mode by hand.
-
-An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn. If the turn is cancelled or fails, the approval is dropped with a notice. A `session/cancel` that arrives after the turn ends but before the switch drops it too, and the prompt ends `cancelled`. To give feedback instead, choose keep planning and reply in your next message.
-
-## Questions
-
-When the host advertises `clientCapabilities.elicitation.form`, as Zed and T3 Code do, Rho can ask the user questions. The model gets the `questionnaire` tool, MCP servers may [ask through Rho](/integrations/mcp#questions-from-a-server), and each question goes to the host as a form-mode `elicitation/create` scoped to the session and to the asking tool call. Hosts that do not advertise it get no `questionnaire` tool, and Rho declares no MCP `elicitation` capability, so nothing waits on a form the host cannot draw.
-
-Each question becomes one property keyed by its id:
-
-| Question | Property |
+| Feature | In the host |
 | --- | --- |
-| Single choice | `string` with both `enum` and titled `oneOf` |
-| Multiple choice | `array` of titled choices |
-| Yes/no | `boolean` |
-| Free text | `string` |
-| Choice that also accepts free text | the choice, plus an optional `string` property `<id>.other`. A typed answer replaces a single choice and joins a multiple choice. |
+| Sessions | Saved under `~/.rho/sessions`, the same as the TUI. They show up in the host's history, in `rho sessions list`, and in `rho -R`. Loading a session replays its messages and tool cards. See [Sessions](/sessions). |
+| Permission modes | `bypass`, `auto`, `allow_edits`, `plan`, and `supervised` appear in the host's mode picker. Tools that need approval ask the host, which offers allow once, allow for the session, and reject. |
+| Plan mode | When the plan is ready, the host asks you to approve it into a mode or keep planning. Approving runs the implementation in the same prompt. |
+| Model, reasoning, fast mode | Host pickers list your Rho model catalog, favorites first, plus the current model's reasoning levels and fast mode when it has one. |
+| Questions | On hosts that support forms, such as Zed and T3 Code, questions from the model or an MCP server appear as a form. |
+| Checklist | The model's `todo` list appears as the host's plan. |
+| File changes | Edits and writes show up as diffs. |
+| Context and cost | The host gets the context fill and the session's cumulative cost, read from the same usage ledger as `/spend`. |
+| Workspace roots | Extra roots of a multi-root workspace join the session like `--add-dir`. |
+| MCP servers | Servers from your Rho config and servers the host sends both connect. A host server replaces a config server with the same name. |
+| Commands and skills | The host's command menu lists the commands below and your skills. |
 
-A short question header becomes the property `title` and the full question its `description`. Pre-selected defaults are sent as `default`. Properties go out in id order, which hosts such as Zed follow, not in the order the questions were asked.
+Changes you make in host pickers apply to that session only. They never rewrite `config.toml`. A change made while a prompt is running takes effect from the next prompt.
 
-T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts free text on every question, and requires an answer to each one. Rho sends it one `string` property per choice question, with the choice labels as `enum` and no `<id>.other` companion. Answers may name a choice by label or value; an exact label wins. A multiple choice is typed as a list separated by commas, or, when a choice label contains commas, by another character that no label contains (semicolons first); the form's description names the separator. If the labels leave no such character, the question takes one typed choice. Free text for a question that accepts only its listed choices counts as `decline`.
+Reloading a session restores its conversation, but the mode, model, reasoning, and fast mode go back to the defaults from config and flags. Sessions started with `/agent:` reload as that agent, with its prompt, tools, and model, and those started with a [per-call model](/integrations/acp/reference#per-call-model) keep their saved model.
 
-The host's answer maps to the asking tool:
-
-| Host response | Result |
-| --- | --- |
-| `accept` | The answers. Content that does not answer the questions, such as a missing required answer or an unknown choice, counts as `decline`. |
-| `decline` | The tool call fails with "the user declined to answer"; the model continues. |
-| `cancel` | The tool call fails with "the user dismissed the question without answering"; the model continues. |
-
-`session/cancel` withdraws an open form with `$/cancel_request` and ends the prompt `cancelled`.
-
-## Model
-
-`session/new` and `session/load` advertise a `configOptions` select with id `model` and category `model`. Options are the same catalog list the TUI picker uses: favorites first, value ids `provider/model`. Labels stay short so host pickers do not truncate them: the catalog name when one is known (`GPT-6 Sol`), else the bare model id. When two rows would share a label, each gets its provider appended (`Grok 4.7 (xai)`). When one provider gives several models the same name, those rows show their model ids instead (`gpt-5.6-sol`, `gpt-5.6-sol-pro`). The full `provider/model` id is the option description.
-
-Hosts switch with `session/set_config_option`. The value id is `provider/model`. A switch sent during a prompt waits for it to end. Re-selecting the current value, including an off-catalog current model, is a no-op success. The swap uses the same conversation-switch path as the TUI: it renegotiates reasoning, rebuilds compaction, updates later delegated agents, and appends the model-switch context line when history is not empty. The new model applies to later prompts in that ACP session. It does not rewrite `config.toml`. For child sessions launched with a [per-call model selection](#commands), `session/load` restores the saved provider, model, and auth profile, including any later model switch. Other sessions resume on the process default from config and flags, not on a model chosen earlier in that session. History restored on load may still mention a prior switch.
-
-## Reasoning
-
-When the current model exposes configurable reasoning, new and loaded sessions also advertise a `thought_level` select. Hosts that support `session/set_config_option` can change it. Value ids are Rho reasoning ids: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, filtered to what the current model advertises. Labels are capitalized for display (`xhigh` shows as `Extra high`). Models that do not expose configurable reasoning omit the option so hosts show no control.
-
-The change applies to later turns in that ACP session. It does not rewrite `config.toml`. Launch still honors `--reasoning` and config as the starting value. A change sent during a prompt waits for it to end. After a model switch, the advertised `thought_level` list follows the new model.
-
-## Fast mode
-
-When the current model supports fast mode, new and loaded sessions also advertise a `fast_mode` select with category `model_config`. It is the ACP counterpart of the TUI's `/fast`: value `on` (named Fast) sends later turns on the priority service tier, and `off` (named Normal) uses the standard tier. Fast mode is a select rather than a boolean option because ACP only allows boolean options for clients that advertise them.
-
-Hosts change it with `session/set_config_option`; a change sent during a prompt waits for it to end. Selecting `on` for a model without fast mode is rejected. The change applies to later turns in that ACP session and does not rewrite `config.toml`. Typed `/fast` is not an ACP command.
-
-A model switch keeps the setting, as in the TUI. Switching to a model without fast mode drops `fast_mode` from the advertised list and the tier has no effect there. Switching back advertises it again with the same value. Like `model`, `session/load` starts from the process default (`fast_mode` in `config.toml`), not a value chosen earlier in that session.
+The host owns approvals. `rho acp` can ask you to approve a tool. Headless `rho run` cannot.
 
 ## Commands
 
-Right after each `session/new` and `session/load` response, Rho sends an `available_commands_update`. Hosts show it as their command menu and send a picked command back as `/name args` prompt text:
+The host's command menu lists these. Pick one, or type it at the start of a message:
 
 | Command | Effect |
 | --- | --- |
-| `/compact [instructions]` | Compacts older context between turns, optionally saying what to keep, and replies with the before and after counts: as a compaction card on hosts that advertise compaction, else as an agent message. Cancel stops it before it commits. If the compacted session cannot be saved, later prompts fail until the host loads the session again. |
-| `/init` | Surveys the repository and writes `AGENTS.md` through the `rho-init` skill, as in the TUI. Refused in `plan` mode or without the skill, write, and file-edit tools. |
-| `/prompt:<name> [args]` | Expands a [prompt template](/configuration#prompt-templates) and runs it as the turn. |
-| `/mcp:<server>:<prompt> [args]` | Fetches an MCP server prompt and runs it as the turn. Arguments follow the TUI rules. |
-| `/agent:<name> <task>` | Turns a new session into the [agent](/subagents) `<name>` and runs `<task>` as its first prompt. The session takes that agent's prompt, tools, and model, and keeps them when loaded again. Only a session with no conversation yet accepts it; a later one fails with an invalid-params error. Hosts that run subagents themselves, such as [T3 Code](#t3-code), start children this way. |
-| `/workflow:<name> [inputs JSON]` | Starts a workspace [workflow](/workflows#start-a-workflow-by-name) in the background and ends the prompt without a model turn. The run id is added to context, so the model can check on it later. Listed only when the active agent has the `workflow` tool; refused in plan mode. Inputs are one JSON object, such as `/workflow:review {"target": "src"}`; omitted inputs use their defaults. ACP has no way for the agent to start a turn, so the result reaches the model at the next prompt. That prompt does not wait for a run that is still going. Under `--t3code`, the finished run [wakes the thread](#wake-on-background-results) instead. |
+| `/compact [instructions]` | Compacts older context between turns, optionally saying what to keep, and reports the token counts before and after. Cancel stops it before it commits. If the compacted session cannot be saved, later prompts fail until the host loads the session again. |
+| `/init` | Surveys the repository and writes `AGENTS.md` through the `rho-init` skill, as in the TUI. Refused in `plan` mode, or when the active agent is missing any of the skill, write, or file-edit tools. |
+| `/prompt:<name> [args]` | Runs a [prompt template](/configuration#prompt-templates). |
+| `/mcp:<server>:<prompt> [args]` | Runs an MCP server prompt. Arguments follow the TUI rules. |
+| `/agent:<name> <task>` | Turns a new, empty session into the [agent](/subagents) `<name>` and runs `<task>`. The session keeps that agent's prompt, tools, and model, including when loaded again. Add `--model <reference> --` before the task to pick the model for this one session. |
+| `/workflow:<name> [inputs JSON]` | Starts a workspace [workflow](/workflows#start-a-workflow-by-name) in the background, such as `/workflow:review {"target": "src"}`. Listed only when the active agent has the `workflow` tool; refused in plan mode. |
 
-The session saves the command as typed, not its expansion. Other TUI commands, such as `/model`, fail with an invalid-params error that names the command. Text that names no command, such as `/usr/bin` or an unknown template, reaches the model unchanged.
-
-For a one-call Rho model selection, a fresh session also accepts
-`/agent:<name> --model <reference> -- <task>`. The delimiter is required; the task
-may span paragraphs and retain attached images. This uses the same catalog/alias,
-auth, and permission rules as [`agent.model`](/subagents#per-call-model-selection).
-The child identity and effective selection are saved together before the first
-model-selection update reaches the host, even before the first provider request.
-The effective provider, model, and auth profile survive session reload without
-changing the agent definition or its identity. Adding optional credentials later
-does not replace a saved keyless profile. `/agent:<name> -- <task>` keeps
-option-like task text literal. A later user-driven model switch supersedes the
-saved override immediately, including a reload before the next prompt. A switch
-that violates the child's definition constraints, such as required fast-mode
-support, is rejected before changing the session.
+Other TUI commands, such as `/model`, are rejected with an error that names the command; for `/model`, use the host's model picker. Text that is not a known command, such as `/usr/bin`, goes to the model unchanged. The session saves what you typed, not its expansion. Edge cases are in the [host reference](/integrations/acp/reference#commands).
 
 ### Skills
 
-When the active agent has the `skill` tool, the update also lists one `$<name>` command per discovered [skill](/skills), using the skill's description. Hosts such as T3 Code list these in their `$` menu. Rho leaves out names a host would read as amounts, such as `$20k`.
+When the active agent has the `skill` tool, the menu also lists one `$<name>` entry per [skill](/skills). Mentioning `$<name>` anywhere in a message loads that skill before the model starts, following the TUI's [mention rule](/skills#load-a-skill-yourself).
 
-A model turn that mentions known skills as whitespace-delimited `$<name>` tokens loads each of them before the first model request, following the same [mention rule](/skills#load-a-skill-yourself) as the TUI. A prompt that starts with `/$<name>`, as a client that prefixes every picked command with `/` sends it, loads that skill first. Any currency symbol works as the sigil. Every mentioned skill loads once, in mention order, as one batch of `skill` tool calls, and the host sees one `tool_call` update per skill.
+## Background work
 
-## T3 Code
+Background processes, workflows, and subagents report back as they do in the TUI, and each result shows up in the host as a finished tool card.
 
-Launch Rho in T3 Code with `--t3code`:
+ACP gives Rho no way to start a turn on its own, so Rho keeps the current prompt open while work it is waiting on is still running, and the model continues once it finishes:
 
-```bash
-rho acp --t3code
-```
+- Subagents hold the prompt open until they finish, whichever prompt started them.
+- Workflows and background processes started during the prompt hold it open too. Older processes, such as a dev server, do not; their results arrive with your next message.
+- A workflow started with `/workflow:` ends the prompt right away. Its result reaches the model with your next message, and that prompt does not wait for the run to finish.
+- Cancelling stops the wait, not the work. Subagents and processes keep running. The next prompt waits for those subagents and delivers their results; processes report in it without holding it open. Stop subagents with the `agents` tool, or by closing or reloading the session.
 
-Subagents then run as T3 threads, so they appear in T3's subagent panel and keep running after the parent's prompt ends. The `agent` tool starts each child through the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as its first prompt. `agents` maps `status` and `stop` to T3's `task_status` and `task_cancel`. It has no `message` action. T3 delivers a finished child's result to the parent as a new turn, so a waiting child does not hold the parent's prompt open.
+Under `--t3code`, nothing holds the prompt open: subagents run as T3 threads and background results [wake the thread](/integrations/acp/t3-code#wake-on-background-results).
 
-T3 derives each child's display title from its task. Rho sends the full task without copying it into T3's separately bounded title field; the local `agents list` label remains the task's first nonempty line.
+## Not covered by ACP
 
-When `agent.model` is supplied, Rho includes it in that initial `/agent:` command
-and resolves it in the child. It does not send T3's `target.model`, whose model
-picker is a different selection surface. A resolution or auth failure is a failed
-child task, never a successful review on an inherited fallback model.
-
-Only agents with Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected: T3 runs those providers itself, so the model can start one with T3's `delegate_task` tool directly. Workflows still run inside Rho.
-
-If any of the three T3 tools is missing, the session still starts, so T3's provider status check passes, but `agent` and the `agents` `status` and `stop` actions fail with an error naming the missing tool. `agents` `list` still returns the session's local run list. Rho never falls back to in-process subagents under `--t3code`. Without `--t3code`, Rho never uses T3's task tools for delegation, even when T3's MCP server is attached.
-
-### Wake on background results
-
-Under `--t3code`, a prompt that ends while background processes or workflows are still running does not stay open. The thread goes idle, so you can keep talking to it, and the first result to finish wakes it with a new turn that delivers the result.
-
-ACP gives an agent no way to start a turn, and T3 refuses a thread's own requests once its turn ends. T3 does wake a parent when a delegated task finishes, so Rho delegates one watcher task, titled `waiting: <command>`, that makes no model call. It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result; the results follow it as usual. A watcher also ends if the session that started it closes or its Rho process exits, reporting that the work did not finish.
-
-Work that finishes during a prompt is delivered in that prompt, so most short commands never start a watcher. One watcher covers everything still running. When its work is delivered during a later prompt, Rho cancels it. If T3 refuses the watcher, Rho says so in the transcript and the results arrive with your next message. Watchers run `/rho-wake <token>`, which Rho never advertises as a command.
-
-## MCP
-
-Rho starts MCP servers from its own config, plus the `mcpServers` the host sends with `session/new` or `session/load`. Host servers belong to that session only. A host server replaces a config server with the same name.
-
-- stdio servers start with the host's command, arguments, and environment.
-- HTTP servers connect over Streamable HTTP with the host's headers. The URL must be HTTPS or a loopback address.
-- SSE servers are skipped with a warning. `initialize` advertises `mcpCapabilities.http` and not `sse`.
-- Host servers cannot request sampling.
-- Servers may ask the user questions only when the host advertises form elicitation; see [Questions](#questions).
-- An entry with an invalid name, empty command, repeated environment variable or header, or unsafe URL is reported as an invalid server instead of connected. An invalid host entry still claims its name: a config server with that name stays disconnected for the session rather than connecting with the config's endpoint and credentials.
-
-`rho acp` is not itself an MCP server. See [Model Context Protocol](/integrations/mcp).
-
-## Automation
-
-`rho acp` does not change `rho run --output jsonl`. Use [Automation and CLI](/automation-cli) for one-shot scripts.
+- `rho acp` is not an MCP server. See [Model Context Protocol](/integrations/mcp) for using MCP servers in Rho.
+- For scripts and CI, use [`rho run`](/automation-cli). `rho acp` does not change `rho run --output jsonl`.

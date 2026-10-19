@@ -1,6 +1,6 @@
 # OpenCode Go
 
-Rho supports [OpenCode Go](https://opencode.ai/docs/go/) as a first-party provider. Go is a Zen subscription that serves curated open coding models from `https://opencode.ai/zen/go/v1`.
+Rho supports [OpenCode Go](https://opencode.ai/docs/go/) as a first-party provider. Go is a Zen subscription that serves curated open coding models from `https://opencode.ai/inference/go/v1`.
 
 ## Provider details
 
@@ -9,19 +9,21 @@ Rho supports [OpenCode Go](https://opencode.ai/docs/go/) as a first-party provid
 | Provider | `opencode-go` |
 | Auth | `opencode-go-api-key` |
 | Environment override | `OPENCODE_API_KEY` |
-| API base | `https://opencode.ai/zen/go/v1` |
+| API base | `https://opencode.ai/inference/go/v1` |
 | Model source | OpenCode Go `/models` |
 | Metadata | [models.dev `opencode-go`](https://models.dev/providers/opencode-go) |
 
-Subscribe in the [OpenCode Zen console](https://opencode.ai/auth), copy the API key, and store it with Rho. Rho sends the key as a Bearer token for Chat Completions and Responses, and as `x-api-key` for Anthropic Messages. Do not put the key in `config.toml`.
+Subscribe in the [OpenCode Zen console](https://opencode.ai/auth), copy the API key, and store it with Rho. Rho sends the key as a Bearer token for Chat Completions and Responses, as `x-api-key` for Anthropic Messages, and as `x-goog-api-key` for Gemini. Do not put the key in `config.toml`.
 
 ## Interactive login
 
-In the TUI, run:
+In the TUI, run `/login` and choose **OpenCode**, then **Go subscription**, or skip the picker:
 
 ```text
 /login opencode-go
 ```
+
+If you already logged in to [OpenCode Zen](/providers/opencode-zen), leave the field blank and press Enter to reuse that key.
 
 Rho stores the key and refreshes the models available on the Go gateway. Select one with `/model`, for example:
 
@@ -51,11 +53,15 @@ rho --provider opencode-go \
 
 Use `/config` and choose **Refresh model lists** to fetch the current Go catalog. Rho does not ship a baked default model; the first cached `/models` id is used until you pick one.
 
-Cost, context, and reasoning controls come from models.dev under `opencode-go`. The same catalog names the AI SDK package for each model. Rho uses that package to choose Chat Completions, OpenAI Responses, or Anthropic Messages. New Go models work after a models.dev refresh without a Rho update, as long as they use one of those packages.
+Cost, context, and reasoning controls come from models.dev under `opencode-go`. The same catalog names the AI SDK package for each model. Rho uses that package to choose Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini `generateContent`. New Go models work after a models.dev refresh without a Rho update, as long as they use one of those packages.
 
-For Chat Completions models that advertise only a reasoning toggle (such as `qwen3.6-plus` and `qwen3.7-max`), `off` sends `reasoning_effort: "none"`; `max` enables reasoning using the backend default without sending an unadvertised effort value. Models with explicit effort values, or a `supported_reasoning_levels` override in `models.toml`, still send the selected effort. Anthropic Messages thinking budgets are unchanged.
+For Chat Completions models that advertise only a reasoning toggle (such as `qwen3.6-plus` and `qwen3.7-max`), `off` sends `reasoning_effort: "none"`; `max` enables reasoning using the backend default without sending an unadvertised effort value. Models with explicit effort values, or a `supported_reasoning_levels` override in `models.toml`, still send the selected effort. Anthropic Messages thinking budgets are unchanged. Gemini models send the advertised level as `thinkingLevel`.
 
-All three adapters send Rho's user agent and the required `x-opencode-session` routing header. Rho uses the conversation's prompt cache key to keep routing stable across turns and resumed sessions. SDK callers without a prompt cache key get a stable ID per provider instance; supply a distinct `prompt_cache_key` for each conversation when sharing a provider.
+::: warning Data use
+OpenCode lists some Go models, such as Gemini 4 Argon Contributor and the Muse Spark Contributor models, as not zero-data-retention: your prompts and completions may be used to train the provider's future models. Check the [privacy table](https://opencode.ai/v2/docs/console/go/#privacy) before sending private code or secrets to a model.
+:::
+
+All four adapters send Rho's user agent and the required `x-opencode-session` routing header. Rho uses the conversation's prompt cache key to keep routing stable across turns and resumed sessions. SDK callers without a prompt cache key get a stable ID per provider instance; supply a distinct `prompt_cache_key` for each conversation when sharing a provider.
 
 Use [`/limits`](/interactive-tui#commands) to inspect the rolling 5-hour, weekly, and monthly usage windows when you are logged in.
 

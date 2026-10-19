@@ -19,11 +19,12 @@ use crate::{
     reasoning::ReasoningLevel,
 };
 
-// Covers: Go routing must retain conversation identity across turns on every
-// adapter, including callers without cache keys. Other providers must not get it.
+// Covers: OpenCode Go and Zen routing must retain conversation identity across
+// turns on every adapter, including callers without cache keys. Other
+// providers must not get it.
 // Owner: provider builder through the SDK streaming API and HTTP wire.
 #[tokio::test]
-async fn opencode_go_session_headers_reach_every_adapter() {
+async fn opencode_session_headers_reach_every_adapter() {
     for (provider_name, npm, path) in [
         (
             "opencode-go",
@@ -32,6 +33,12 @@ async fn opencode_go_session_headers_reach_every_adapter() {
         ),
         ("opencode-go", "@ai-sdk/openai", "/responses"),
         ("opencode-go", "@ai-sdk/anthropic", "/messages"),
+        (
+            "opencode-go",
+            "@ai-sdk/google",
+            "/models/routing-test:streamGenerateContent?alt=sse",
+        ),
+        ("opencode", "@ai-sdk/anthropic", "/messages"),
         (
             "openrouter",
             "@ai-sdk/openai-compatible",
@@ -103,7 +110,7 @@ async fn opencode_go_session_headers_reach_every_adapter() {
                 })
                 .collect();
             let session = headers.get("x-opencode-session").cloned();
-            if provider_name == "opencode-go" {
+            if provider_name.starts_with("opencode") {
                 assert_eq!(headers.get("user-agent"), Some(&crate::rho_user_agent()));
                 if let Some(key) = cache_key {
                     assert_eq!(session.as_deref(), Some(key));

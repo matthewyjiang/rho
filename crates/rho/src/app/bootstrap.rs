@@ -458,10 +458,10 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
 
 /// Model discovery and agent binding are deferred until the host needs a session,
 /// so an unauthenticated provider cannot block initialize's login advertisement.
-/// `host_updates` are the optional session updates the host advertised.
+/// `host_features` are the optional features the host advertised.
 pub(super) async fn prepare_acp(
     cli: Cli,
-    host_updates: acp::HostUpdates,
+    host_features: acp::HostFeatures,
 ) -> anyhow::Result<acp::AcpStartup> {
     let Some(Command::Acp(args)) = &cli.command else {
         anyhow::bail!("ACP startup requires the acp command");
@@ -485,7 +485,7 @@ pub(super) async fn prepare_acp(
         diagnostics,
         herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
         added_dirs: startup.added_dirs,
-        host_updates,
+        host_features,
     })
 }
 

@@ -39,6 +39,6 @@ Google may add, rename, or retire models, so refresh the list when a model is mi
 
 ## Reasoning and tools
 
-Rho maps its reasoning levels to Gemini 3 thinking levels and Gemini 2.5 thinking budgets. It rejects levels a model cannot honor rather than silently selecting a higher level. Thought summaries stay separate from raw reasoning, and Gemini thought signatures remain opaque. Rho replays those signatures only to the exact same provider, API, and model.
+Rho maps its reasoning levels to Gemini 3 and later thinking levels and Gemini 2.5 thinking budgets. Requests accept the same thinking levels `/model` offers for the model. Rho rejects levels a model cannot honor rather than silently selecting a higher level. Thought summaries stay separate from raw reasoning, and Gemini thought signatures remain opaque. Rho replays those signatures only to the exact same provider, API, and model.
 
 Tool declarations use Gemini function declarations. Tool calls and function responses retain their call IDs when Google supplies them. Rho creates a unique local ID when a response omits one, while leaving the ID absent on later Google requests.

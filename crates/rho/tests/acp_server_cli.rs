@@ -28,6 +28,9 @@ mod auth_required;
 #[path = "support/acp_compaction_cards_tests.rs"]
 mod compaction_cards;
 
+#[path = "support/acp_fast_mode_tests.rs"]
+mod fast_mode;
+
 #[path = "support/acp_file_diffs_tests.rs"]
 mod file_diffs;
 

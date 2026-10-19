@@ -17,7 +17,7 @@ use crate::{
         acp::{
             elicitation,
             events::{EventMapper, RunEnding},
-            host_updates::{FormDialect, Forms, HostUpdates},
+            host_features::{FormDialect, Forms, HostFeatures},
             permission,
             signals::SessionSignals,
             AcpClientPort,
@@ -109,8 +109,9 @@ pub(super) struct PumpSources<'a> {
     /// Plan approvals from `exit_plan_mode`; `None` when the session has no
     /// plan handoff.
     pub(super) plan_approvals: Option<&'a mut PlanPermissionReceiver>,
-    /// Whether questions reach the user as form elicitation.
-    pub(super) host_updates: HostUpdates,
+    /// Host features; the pump reads whether questions reach the user as
+    /// form elicitation.
+    pub(super) host_features: HostFeatures,
     /// Background results offered to the run; tests of the event and
     /// approval plumbing pass `None`.
     pub(super) displays: Option<AppliedDisplays<'a>>,
@@ -156,7 +157,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
         approvals,
         mut approvals_open,
         mut plan_approvals,
-        host_updates,
+        host_features,
         mut displays,
     } = sources;
     let mut run_cancelled = cancel.is_cancelled();
@@ -207,7 +208,7 @@ pub(super) async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()>
                     _ => None,
                 };
                 if let Some((request, call_id)) = asked {
-                    match host_updates.forms {
+                    match host_features.forms {
                         Forms::Available(dialect) => questions.push(Box::pin(ask_user(
                             session_id.clone(),
                             request,

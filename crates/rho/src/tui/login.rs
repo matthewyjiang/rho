@@ -11,22 +11,9 @@ use {
     rho_providers::provider,
 };
 
-pub(super) use super::login_secret_input::{secret_input_frame, SecretInput};
-
-/// What Enter in the API-key overlay resolved to.
-///
-/// Blank on an optional field means "do not write a new key": keep a
-/// reachable key (store or env), otherwise run keyless. `/logout` is the
-/// wipe path.
-#[derive(Clone, Debug)]
-pub(super) enum ApiKeySubmission {
-    /// Store this key for the target's auth mode.
-    Save { target: LoginTarget, key: String },
-    /// No new key. Keep a reachable key, or run keyless when none exists.
-    LeaveUnset { target: LoginTarget },
-    /// Blank, but this target requires a key.
-    Rejected,
-}
+pub(super) use super::login_secret_input::{
+    secret_input_frame, ApiKeySubmission, BlankKey, SecretInput,
+};
 
 /// Blank optional key: keep a reachable key, otherwise run keyless. Never deletes.
 fn resolve_blank_optional_key(mut target: LoginTarget, has_reachable_key: bool) -> LoginTarget {
@@ -406,21 +393,21 @@ impl App {
                 self.report_login_not_required(&target.provider);
                 Ok(())
             }
-            AuthenticationMethod::ApiKey { entry_label } => {
-                // A host that also runs keyless accepts a blank key as "do not write a new key".
-                let optional = provider::provider_descriptor(&target.provider)
+            AuthenticationMethod::ApiKey { .. } => {
+                let keyless_host = provider::provider_descriptor(&target.provider)
                     .is_some_and(|descriptor| descriptor.has_none_auth());
-                let (secret, status) = if optional {
-                    (
-                        SecretInput::optional(target),
-                        "enter API key or leave blank".to_string(),
-                    )
-                } else {
-                    (SecretInput::new(target), format!("enter {entry_label}"))
-                };
+                let store = self.credential_store.as_ref();
+                // Reuse is a shortcut: if the store cannot be read, ask for the key.
+                let blank =
+                    match ProviderAuthentication::reusable_api_key_source(store, &target.auth) {
+                        _ if keyless_host => BlankKey::LeaveUnset,
+                        Ok(Some(source)) => BlankKey::Reuse(source),
+                        Ok(None) | Err(_) => BlankKey::Reject,
+                    };
+                let secret = SecretInput::with_blank(target, blank);
+                self.set_status(secret.prompt());
                 self.input_ui
                     .set_composer(ComposerMode::SecretInput(secret));
-                self.set_status(status);
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
@@ -481,6 +468,24 @@ impl App {
                 }
                 self.persist_api_key_and_finish(target, key, terminal, agent)
                     .await
+            }
+            // A reusable key means a store was already chosen, so no store choice.
+            ApiKeySubmission::Reuse { target, source } => {
+                let store = self.credential_store.as_ref();
+                let detail =
+                    match ProviderAuthentication::shared_api_key(store, source, &target.auth) {
+                        Ok(Some(key)) => {
+                            return self
+                                .persist_api_key_and_finish(target, key, terminal, agent)
+                                .await;
+                        }
+                        Ok(None) => "it is no longer stored".to_string(),
+                        Err(err) => err.to_string(),
+                    };
+                let label = source.login_label;
+                self.insert_entry(&Entry::Error(format!("could not reuse {label}: {detail}")));
+                self.set_status("login failed");
+                Ok(())
             }
         }
     }

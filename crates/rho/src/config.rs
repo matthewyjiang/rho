@@ -59,6 +59,10 @@ pub(crate) enum ConfigWarning {
         from: String,
         to: String,
     },
+    /// A `[providers.custom.<name>]` table for the same host as a built-in
+    /// provider that later took its name. The built-in serves it now, so the
+    /// table is skipped.
+    ShadowedCustomProvider { name: String },
 }
 
 impl ConfigWarning {
@@ -73,6 +77,9 @@ impl ConfigWarning {
             Self::Migrated { key, from, to } => {
                 format!("config `{key}` {from} now maps to {to}")
             }
+            Self::ShadowedCustomProvider { name } => format!(
+                "config `providers.custom.{name}` is ignored: {name} is now a built-in provider; remove the table"
+            ),
         }
     }
 }

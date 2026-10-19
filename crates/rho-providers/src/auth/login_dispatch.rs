@@ -10,7 +10,7 @@ use crate::{
         MetaTokens, XaiTokens,
     },
     provider::{
-        self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind,
+        self, AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind,
         ResolvedProviderProfile,
     },
 };
@@ -394,6 +394,48 @@ impl ProviderAuthentication {
             credentials::auth_has_env_override(provider_or_auth)
         } else {
             credentials::provider_has_env_override(provider_or_auth)
+        }
+    }
+
+    /// First auth profile sharing keys with `auth` that has a stored API key,
+    /// so login can offer it instead of asking for the same key again.
+    ///
+    /// Nothing is offered when `auth` already has its own stored key, so a
+    /// blank Enter cannot replace it with a different workspace's key.
+    /// Environment overrides are not offered: reusing one would persist a
+    /// secret the user only exported.
+    pub fn reusable_api_key_source(
+        store: &dyn CredentialStore,
+        auth: &str,
+    ) -> CredentialResult<Option<AuthMode>> {
+        if credentials::auth_has_stored_credentials(store, auth)? {
+            return Ok(None);
+        }
+        for sibling in provider::shared_api_key_auths(auth) {
+            if credentials::auth_has_stored_credentials(store, sibling)? {
+                return Ok(provider::resolve_auth_mode(sibling).map(|(_, mode)| mode));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The stored API key of `source` when it also works for `auth`.
+    ///
+    /// `None` when the profiles do not share keys or `source` has no stored key.
+    pub fn shared_api_key(
+        store: &dyn CredentialStore,
+        source: AuthMode,
+        auth: &str,
+    ) -> CredentialResult<Option<String>> {
+        match source.auth_kind {
+            ProviderAuthKind::ApiKey { account, .. }
+                if provider::shared_api_key_auths(auth).any(|sibling| sibling == source.id) =>
+            {
+                Ok(store
+                    .get_secret(account)?
+                    .filter(|key| !key.trim().is_empty()))
+            }
+            _ => Ok(None),
         }
     }
 }

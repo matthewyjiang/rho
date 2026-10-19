@@ -66,6 +66,7 @@ const providerItems: DefaultTheme.SidebarItem[] = [
   { text: 'MiniMax', link: '/providers/minimax' },
   { text: 'TypeSafe', link: '/providers/typesafe' },
   { text: 'OpenCode Go', link: '/providers/opencode-go' },
+  { text: 'OpenCode Zen', link: '/providers/opencode-zen' },
   { text: 'SpaceXAI', link: '/providers/xai' },
 ]
 
@@ -124,7 +125,15 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'RTK', link: '/integrations/rtk' },
           { text: 'Model Context Protocol', link: '/integrations/mcp' },
           { text: 'Computer use', link: '/integrations/computer-use' },
-          { text: 'Agent Client Protocol', link: '/integrations/acp' },
+          {
+            text: 'Agent Client Protocol',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/integrations/acp' },
+              { text: 'T3 Code', link: '/integrations/acp/t3-code' },
+              { text: 'Host reference', link: '/integrations/acp/reference' },
+            ],
+          },
           { text: 'Agent Plugins', link: '/integrations/plugins' },
           { text: 'Community', link: '/integrations/community' },
         ],

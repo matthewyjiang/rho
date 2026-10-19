@@ -21,7 +21,7 @@ impl SessionHost {
         instructions: Option<String>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let card = self.host_updates.compaction.then(CompactionCard::new);
+        let card = self.host_features.compaction.then(CompactionCard::new);
         if let Some(card) = &card {
             self.send_update(client, card.in_progress()).await?;
         }
