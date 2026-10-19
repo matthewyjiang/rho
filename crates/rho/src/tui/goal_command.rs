@@ -278,7 +278,7 @@ impl App {
                 continue;
             }
             self.set_status("evaluating goal");
-            self.begin_cancellable_wait_ui();
+            self.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal);
             self.turn.start_loading();
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -458,7 +458,7 @@ impl App {
         }
 
         self.set_status("waiting for delegated agents");
-        self.begin_cancellable_wait_ui();
+        self.begin_cancellable_wait_ui(ActivityPhase::WaitingForAgents);
         self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
@@ -550,7 +550,7 @@ impl App {
             return Ok(false);
         }
 
-        self.begin_cancellable_wait_ui();
+        self.begin_cancellable_wait_ui(ActivityPhase::WaitingToRetry);
         self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);

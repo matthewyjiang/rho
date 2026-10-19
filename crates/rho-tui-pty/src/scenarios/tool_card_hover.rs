@@ -30,7 +30,7 @@ fn wait_for_row_look(
 ) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         let look = row_look(harness, row);
         if !look.is_empty() && look.iter().all(want) {
             return Ok(());
@@ -49,7 +49,7 @@ fn wait_for_row_look(
 fn row_containing(harness: &mut PtyHarness, needle: &str) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         if let Some(row) = harness
             .screen()
             .rows_text()

@@ -27,6 +27,7 @@ use super::{
     session_assembly::{
         assemble_session, ApprovalInputs, SessionApproval, SessionAssembly, SessionAssemblyOptions,
     },
+    shutdown_signal::{ShutdownSignal, ShutdownSignals},
 };
 
 mod terminal;
@@ -91,33 +92,6 @@ impl fmt::Display for AutomationInterrupted {
 }
 
 impl std::error::Error for AutomationInterrupted {}
-
-#[derive(Clone, Copy, Debug)]
-enum ShutdownSignal {
-    Interrupt,
-    #[cfg(unix)]
-    Terminate,
-}
-
-impl ShutdownSignal {
-    fn exit_code(self) -> u8 {
-        match self {
-            Self::Interrupt => 130,
-            #[cfg(unix)]
-            Self::Terminate => 143,
-        }
-    }
-}
-
-impl fmt::Display for ShutdownSignal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interrupt => formatter.write_str("SIGINT"),
-            #[cfg(unix)]
-            Self::Terminate => formatter.write_str("SIGTERM"),
-        }
-    }
-}
 
 #[derive(Debug)]
 struct SubagentCancelled;
@@ -221,6 +195,9 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     let deadline = startup
         .timeout
         .map(|timeout| tokio::time::Instant::now() + timeout);
+    // Before any run state is published, so a signal during startup is held
+    // for the run to handle instead of killing the process mid-setup.
+    let mut shutdown = ShutdownSignals::install()?;
     // The reporter exists before anything that can fail, so a parent process
     // watching the output file always sees a terminal state, including startup failures.
     let reporter_result = startup
@@ -252,6 +229,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         let future = run_session_with_output(
             prompt_text,
             &startup,
+            &mut shutdown,
             reporter.as_mut(),
             Some(cancellation.clone()),
             jsonl.as_mut(),
@@ -269,6 +247,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
             run_session_with_output(
                 prompt_text,
                 &startup,
+                &mut shutdown,
                 reporter.as_mut(),
                 None,
                 jsonl.as_mut(),
@@ -440,12 +419,22 @@ pub(crate) async fn run_session(
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     ensure_headless_auto_classifier_model(startup.config)?;
-    run_session_with_output(prompt_text, startup, reporter, cancellation, None).await
+    let mut shutdown = ShutdownSignals::install()?;
+    run_session_with_output(
+        prompt_text,
+        startup,
+        &mut shutdown,
+        reporter,
+        cancellation,
+        None,
+    )
+    .await
 }
 
 async fn run_session_with_output(
     prompt_text: String,
     startup: &Startup<'_>,
+    shutdown: &mut ShutdownSignals,
     reporter: Option<&mut RunReporter>,
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
     mut jsonl: Option<&mut JsonlAdapter>,
@@ -545,6 +534,7 @@ async fn run_session_with_output(
         complete_run(
             session,
             entry,
+            shutdown,
             HeadlessRunDeps {
                 reporter,
                 external_cancellation: cancellation,
@@ -645,6 +635,7 @@ fn headless_auto_classifier(
 async fn complete_run(
     session: &rho_sdk::Session,
     entry: RunEntry,
+    shutdown: &mut ShutdownSignals,
     dependencies: HeadlessRunDeps<'_>,
     steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
@@ -665,7 +656,7 @@ async fn complete_run(
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
         outcome = headless_run::drive(&mut run, reporter, jsonl, host_input) => outcome,
-        signal = shutdown_signal() => {
+        signal = shutdown.recv() => {
             let signal = signal?;
             cancellation.cancel();
             let _ = run.outcome().await;
@@ -862,24 +853,6 @@ impl RunReporter {
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
     }
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() -> io::Result<ShutdownSignal> {
-    use tokio::signal::unix::{signal, SignalKind};
-
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        _ = interrupt.recv() => Ok(ShutdownSignal::Interrupt),
-        _ = terminate.recv() => Ok(ShutdownSignal::Terminate),
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<ShutdownSignal> {
-    tokio::signal::ctrl_c().await?;
-    Ok(ShutdownSignal::Interrupt)
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {

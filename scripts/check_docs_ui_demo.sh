@@ -35,8 +35,8 @@ Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH|--reuse-build
             default rebuild.
   --reuse-build
             Use debug/rho in Cargo's target directory without rebuilding.
-            Pass it right after `cargo test --workspace`, which re-copies that
-            binary from the fresh test build.
+            Pass it right after the workspace tests (`cargo nextest run
+            --workspace`), which re-copy that binary from the fresh test build.
   --jobs    Cargo job cap (default: CARGO_BUILD_JOBS or 12).
 EOF
 }

@@ -82,7 +82,7 @@ const DIFF_VIEWER_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Phase("filter_to_untracked_file"),
-    Step::TypeText("notes"),
+    Step::TypeIntoField("notes"),
     Step::WaitText {
         text: "untracked-body",
         timeout: SETTLE,

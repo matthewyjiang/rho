@@ -91,8 +91,17 @@ Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:
 1. Add steps in `crates/rho-tui-pty/src/scenarios.rs`.
 2. Assert user-visible text from the reconstructed screen, not internal status strings.
 3. Use bounded waits (`wait_for_text`, `wait_for_quiet`, `wait_for_exit`), never fixed-only sleeps as the sole sync.
-4. Type through harness helpers so paste-burst detection does not swallow Enter.
+   Prefer `wait_for_screen` for custom conditions; a hand-written loop drains with `pump` (returns on
+   the next output). The screen model holds the last whole frame while a synchronized update is open,
+   so no reader sees a half-written frame.
+   To prove something did *not* happen, wait for a later in-order effect of the same input (the hover
+   hint returning, a scroll landing), then assert; avoid fixed "must not appear within N ms" windows.
+4. Type through harness helpers so paste-burst detection does not swallow Enter. `type_text` paces
+   keys for the main/side composer and questionnaire entries; `type_into_field` sends one burst to
+   pickers, search prompts, and unmasked text inputs, then waits for the echo left of the cursor.
 5. Keep scenarios independent of the developer HOME, credentials, and host terminal markers.
+   Matrix launches are offline: every proxy points at a refusing loopback port and only loopback
+   bypasses it, so mock servers must listen on `127.0.0.1`/`localhost`.
 6. Mark stable CI cases with `smoke: true`.
 7. Keep scenario sync deterministic under load. Wait only on conditions that stay true until the scenario advances. Intermediate or timer-driven states race on slow CI - wait on the durable outcome instead, and unit-test short-lived rendering next to the pure function. Fix the wait target before you raise the timeout.
 

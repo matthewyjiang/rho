@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::{
     artifacts::ArtifactWriter,
@@ -11,6 +11,7 @@ use crate::{
     keys::{Key, MouseButton},
     pty::PtySize,
     scenario::{ScenarioOutcome, ScenarioRunner},
+    screen::ScreenModel,
 };
 
 use super::{config, STARTUP, STREAM};
@@ -24,6 +25,7 @@ const SIZE: PtySize = PtySize {
 const SEED_PROMPT: &str = "fixture bulk one";
 const EARLY_LINE: &str = "fixture bulk one line 001";
 const LATE_LINE: &str = "fixture bulk one line 180";
+const WHEEL_TICKS: usize = 4;
 // Brand/version row is unique to the session header. Tip copy is not locked.
 const SESSION_HEADER_MARK: &str = "rho  v";
 // Pinned so a search query can stop short of the full header row, which the
@@ -134,10 +136,22 @@ fn run_wheel_phases(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("resumed_tail");
     harness.wait_for_text(LATE_LINE, STARTUP)?;
     harness.set_phase("wheel_mid_transcript");
-    for _ in 0..4 {
+    let (anchor, anchor_row) =
+        top_fixture_row(harness.screen()).context("resumed tail shows no fixture rows")?;
+    for _ in 0..WHEEL_TICKS {
         harness.mouse(MouseButton::WheelUp, 40, 10, true)?;
     }
-    harness.poll(Duration::from_millis(50));
+    // Every tick scrolls `HISTORY_MOUSE_SCROLL_LINES` (3) rows. Waiting for the anchor line to
+    // move exactly that far proves all ticks landed before checking the view.
+    let scrolled_row = anchor_row + WHEEL_TICKS * 3;
+    harness.wait_for_screen(
+        "wheel ticks applied",
+        WaitTimeout::secs(5, "resume wheel scroll"),
+        |screen| {
+            fixture_line_row(screen, &anchor) == Some(scrolled_row)
+                || screen.contains_text(SESSION_HEADER_MARK)
+        },
+    )?;
     if harness.screen().contains_text(SESSION_HEADER_MARK) {
         anyhow::bail!("session header must stay off the measured resume tail");
     }
@@ -163,7 +177,7 @@ fn run_search_phases(harness: &mut PtyHarness) -> Result<()> {
     let before = history_rows(harness);
     harness.set_phase("search_unmeasured_header");
     harness.inject_key(&Key::Ctrl('f'))?;
-    harness.type_text(HEADER_QUERY)?;
+    harness.type_into_field(HEADER_QUERY)?;
     harness.wait_for_text(HEADER_ROW, STREAM)?;
     harness.set_phase("esc_restores_shifted_view");
     harness.inject_key(&Key::Esc)?;
@@ -181,6 +195,28 @@ fn run_search_phases(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+/// Topmost fixture line on screen, as its `fixture bulk one line NNN:` label
+/// and screen row.
+fn top_fixture_row(screen: &ScreenModel) -> Option<(String, usize)> {
+    screen
+        .rows_text()
+        .iter()
+        .enumerate()
+        .find_map(|(row, text)| {
+            let start = text.find("fixture bulk one line ")?;
+            let label = text[start..].split_once(':')?.0;
+            Some((format!("{label}:"), row))
+        })
+}
+
+/// Screen row showing the fixture line labeled `label`.
+fn fixture_line_row(screen: &ScreenModel, label: &str) -> Option<usize> {
+    screen
+        .rows_text()
+        .iter()
+        .position(|text| text.contains(label))
+}
+
 /// Screen rows showing fixture lines, which only the transcript paints.
 fn history_rows(harness: &PtyHarness) -> Vec<String> {
     harness
@@ -194,7 +230,7 @@ fn history_rows(harness: &PtyHarness) -> Vec<String> {
 fn wheel_up_until_text(harness: &mut PtyHarness, needle: &str, timeout: WaitTimeout) -> Result<()> {
     let deadline = Instant::now() + timeout.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         if harness.screen().contains_text(needle) {
             return Ok(());
         }

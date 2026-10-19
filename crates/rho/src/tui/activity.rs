@@ -200,6 +200,11 @@ pub(super) enum ActivityPhase {
     Compacting,
     WaitingForApproval,
     WaitingForInput,
+    /// A goal loop is holding its next turn until delegated agents finish.
+    WaitingForAgents,
+    EvaluatingGoal,
+    /// A goal loop is pausing before it retries a failed turn.
+    WaitingToRetry,
 }
 
 impl ActivityPhase {
@@ -216,6 +221,9 @@ impl ActivityPhase {
             Self::Compacting => "compacting context",
             Self::WaitingForApproval => "waiting for approval",
             Self::WaitingForInput => "waiting for input",
+            Self::WaitingForAgents => "waiting for delegated agents",
+            Self::EvaluatingGoal => "evaluating goal",
+            Self::WaitingToRetry => "waiting to retry",
         }
     }
 }

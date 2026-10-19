@@ -4,7 +4,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use super::{DEFAULT_SIZE, STARTUP, STREAM};
+use super::{
+    assert_helpers::{assert_cancelled_rail_click, mouse_row_text},
+    DEFAULT_SIZE, STARTUP, STREAM,
+};
 use crate::{
     harness::WaitTimeout,
     keys::MouseButton,
@@ -15,7 +18,7 @@ use crate::{
 fn active_subagent_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         if let Some(row) = harness.screen().rows_text().iter().position(|line| {
             line.contains("└ ◉ worker")
                 || line.contains("├ ◉ worker")
@@ -40,40 +43,24 @@ fn assert_subagent_rail_mouse_flow(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse_move(column, row)?;
     harness.wait_for_text("attach", WaitTimeout::secs(2, "subagent hover action hint"))?;
 
-    let refresh_deadline = Instant::now() + Duration::from_millis(1_200);
-    while Instant::now() < refresh_deadline {
-        harness.poll(Duration::from_millis(20));
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let hovered_row = harness
-        .screen()
-        .rows_text()
-        .get(row.saturating_sub(1) as usize)
-        .cloned()
-        .unwrap_or_default();
-    if !hovered_row.contains("attach") {
-        anyhow::bail!("hover disappeared after snapshot refresh:\n{hovered_row}");
+    // A hovered row ends in `⏎ attach · <elapsed>`, and only a snapshot
+    // refresh advances the elapsed seconds; the hover hint must survive it.
+    let elapsed = |line: &str| line.rsplit("· ").next().unwrap_or_default().to_owned();
+    let hovered = elapsed(&mouse_row_text(harness.screen(), row));
+    harness.wait_for_screen(
+        "subagent rail snapshot refresh",
+        WaitTimeout::secs(3, "subagent elapsed tick"),
+        |screen| elapsed(&mouse_row_text(screen, row)) != hovered,
+    )?;
+    let refreshed = mouse_row_text(harness.screen(), row);
+    if !refreshed.contains("attach") {
+        anyhow::bail!("hover disappeared after snapshot refresh:\n{refreshed}");
     }
 
-    harness.mouse(MouseButton::Left, column, row, true)?;
-    harness.poll(Duration::from_millis(150));
-    if harness.screen().contains_text("q back") {
-        anyhow::bail!("subagent action ran on mouse down");
-    }
-    harness.mouse_drag(column, 1)?;
-    harness.mouse(MouseButton::Left, column, 1, false)?;
-    harness.poll(Duration::from_millis(150));
-    if harness.screen().contains_text("q back") {
-        anyhow::bail!("drag-away activated the subagent row");
-    }
+    assert_cancelled_rail_click(harness, column, row, "attach")?;
 
     let row = active_subagent_row(harness)?;
-    harness.mouse_move(column, row)?;
     harness.mouse(MouseButton::Left, column, row, true)?;
-    harness.poll(Duration::from_millis(100));
-    if harness.screen().contains_text("q back") {
-        anyhow::bail!("subagent action ran before mouse release");
-    }
     harness.mouse(MouseButton::Left, column, row, false)?;
     harness.wait_for_text(
         "q back",

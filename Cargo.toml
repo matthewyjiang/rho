@@ -41,5 +41,33 @@ strip = "symbols"
 [profile.dev]
 debug = 1
 
+# Startup syntax warmup loads the bundled syntect dump and compiles grammar
+# regexes on every launch. Unoptimized, that roughly doubled the CPU of a debug
+# `rho` start (0.71 s -> 0.34 s user measured), which made the PTY suite
+# CPU-bound. Optimizing only these leaf crates keeps our own code debuggable.
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+[profile.dev.package.fancy-regex]
+opt-level = 3
+
+[profile.dev.package.syntect]
+opt-level = 3
+
+[profile.dev.package.bincode]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.zlib-rs]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
 [profile.test]
 debug = 1

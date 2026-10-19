@@ -37,7 +37,7 @@ const PERMISSIONS_COMMAND_STEPS: &[Step] = &[
         text: "select model for permission-classifier",
         timeout: SETTLE,
     },
-    Step::TypeText("gpt-5.5"),
+    Step::TypeIntoField("gpt-5.5"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Select permission screen model",
@@ -105,7 +105,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
         text: "Config · saves automatically",
         timeout: SETTLE,
     },
-    Step::TypeText("agent"),
+    Step::TypeIntoField("agent"),
     Step::WaitText {
         text: "Agent behavior",
         timeout: SETTLE,
@@ -151,7 +151,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
         text: "select model for permission-classifier",
         timeout: SETTLE,
     },
-    Step::TypeText("gpt-5.5"),
+    Step::TypeIntoField("gpt-5.5"),
     Step::WaitText {
         text: "openai/gpt-5.5",
         timeout: SETTLE,
@@ -162,7 +162,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
         text: "Select permission screen model",
         timeout: SETTLE,
     },
-    Step::TypeText("grok-4.6"),
+    Step::TypeIntoField("grok-4.6"),
     Step::WaitText {
         text: "xai/grok-4.6",
         timeout: SETTLE,
@@ -176,7 +176,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     Step::AssertText("Auto"),
     // The row's badge is the durable proof the pick was saved; the status
     // toast expires.
-    Step::TypeText("screen"),
+    Step::TypeIntoField("screen"),
     Step::WaitText {
         text: "Permission screen model",
         timeout: SETTLE,
@@ -647,7 +647,7 @@ const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
         text: "str_replace",
         timeout: SETTLE,
     },
-    Step::TypeText("apply_patch"),
+    Step::TypeIntoField("apply_patch"),
     Step::WaitTextGone {
         text: "str_replace",
         timeout: SETTLE,
@@ -716,7 +716,7 @@ const SCREEN_ALLOW_THRESHOLD_STEPS: &[Step] = &[
         text: "Config · saves automatically",
         timeout: SETTLE,
     },
-    Step::TypeText("agent"),
+    Step::TypeIntoField("agent"),
     Step::WaitText {
         text: "Agent behavior",
         timeout: SETTLE,
@@ -727,7 +727,7 @@ const SCREEN_ALLOW_THRESHOLD_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     // One word: Space confirms in the config picker.
-    Step::TypeText("threshold"),
+    Step::TypeIntoField("threshold"),
     // Only the selected row shows its detail, so this proves Enter edits
     // the threshold row and not another match.
     Step::WaitText {
@@ -743,7 +743,7 @@ const SCREEN_ALLOW_THRESHOLD_STEPS: &[Step] = &[
     },
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
-    Step::TypeText("90"),
+    Step::TypeIntoField("90"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "90%",

@@ -29,7 +29,11 @@ pub enum Step {
         quiet_for: Duration,
         timeout: WaitTimeout,
     },
+    /// Paced plain keys, for the composer. See [`PtyHarness::type_text`].
     TypeText(&'static str),
+    /// One burst of plain keys, for fields without paste-burst detection.
+    /// See [`PtyHarness::type_into_field`].
+    TypeIntoField(&'static str),
     SubmitText(&'static str),
     Key(Key),
     Paste(&'static str),
@@ -209,6 +213,7 @@ fn apply_step(harness: &mut PtyHarness, step: &Step) -> Result<()> {
         Step::WaitTextGone { text, timeout } => harness.wait_for_text_gone(text, *timeout),
         Step::WaitQuiet { quiet_for, timeout } => harness.wait_for_quiet(*quiet_for, *timeout),
         Step::TypeText(text) => harness.type_text(text),
+        Step::TypeIntoField(text) => harness.type_into_field(text),
         Step::SubmitText(text) => harness.submit_text(text),
         Step::Key(key) => harness.inject_key(key),
         Step::Paste(text) => harness.paste(text),

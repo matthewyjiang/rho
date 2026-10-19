@@ -54,8 +54,8 @@ fn wait_for_span_bold(
 ) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        // Polling drains PTY output for up to the budget, so it paces the loop.
-        harness.poll(Duration::from_millis(20));
+        // Pumping waits for output up to the budget, so it paces the loop.
+        harness.pump(Duration::from_millis(20));
         let look = span_bold(harness, cell, len);
         if !look.is_empty() && look.iter().all(|cell_bold| *cell_bold == bold) {
             return Ok(());

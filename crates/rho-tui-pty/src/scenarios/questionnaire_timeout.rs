@@ -31,13 +31,13 @@ pub(super) const TIMEOUT: Scenario = Scenario::new(
             text: "Config · saves automatically",
             timeout: STARTUP,
         },
-        Step::TypeText("agent"),
+        Step::TypeIntoField("agent"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Config / Agent behavior",
             timeout: STREAM,
         },
-        Step::TypeText("questionnaire"),
+        Step::TypeIntoField("questionnaire"),
         Step::WaitText {
             text: "Disabled",
             timeout: STREAM,
@@ -47,14 +47,14 @@ pub(super) const TIMEOUT: Scenario = Scenario::new(
             text: "edit questionnaire timeout seconds",
             timeout: STREAM,
         },
-        Step::TypeText("0"),
+        Step::TypeIntoField("0"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "questionnaire timeout must be positive whole seconds",
             timeout: STREAM,
         },
         Step::Key(Key::Backspace),
-        Step::TypeText("1"),
+        Step::TypeIntoField("1"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Config / Agent behavior",

@@ -137,6 +137,8 @@ Pull requests that add tests should fill the test-gate section in the pull reque
 
 ## Test prerequisites
 
+CI and `python3 scripts/validate.py full` run the workspace tests with [cargo-nextest](https://nexte.st/) (`cargo install cargo-nextest --locked`). Nextest runs each test in its own process and schedules across test binaries, so a test that races another binary's tests fails there even when `cargo test` passes. Doctests stay on `cargo test --doc`.
+
 Some integration tests spawn local fixtures and need host tools on `PATH`:
 
 - `stdio_lifecycle_and_failure_isolation` in `crates/rho/src/tools/mcp_tests.rs` is Unix-gated and requires `python3` to run its stdio MCP server fixture.

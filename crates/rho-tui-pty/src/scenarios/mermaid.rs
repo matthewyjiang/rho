@@ -58,7 +58,7 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
 fn wait_until_live_streamed_diagram(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + STREAM.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         let screen = harness.screen().contents();
         if screen.contains("diagram delivered") {
             anyhow::bail!(
@@ -81,7 +81,7 @@ fn wait_until_live_streamed_diagram(harness: &mut PtyHarness) -> Result<()> {
 fn wait_until_diagram_art(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         if diagram_art_visible(harness) {
             return Ok(());
         }

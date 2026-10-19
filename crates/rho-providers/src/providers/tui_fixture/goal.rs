@@ -9,7 +9,7 @@ use rho_sdk::{
     ProviderError, ProviderErrorKind, Retryability,
 };
 
-use super::{completed, completed_tool_call, last_user_text, tool_result};
+use super::{completed, completed_tool_call, last_user_text, release, tool_result};
 
 static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 static GOAL_BLOCKED_EVALUATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -20,6 +20,10 @@ const GOAL_BLOCKED_CONDITION: &str = "fixture goal blocked";
 const GOAL_DELEGATION_CONDITION: &str = "fixture goal delegation";
 const GOAL_QUESTIONNAIRE_CONDITION: &str = "fixture goal background questionnaire";
 const GOAL_DELEGATION_RETRY_CONDITION: &str = "fixture goal delegation retry";
+/// The delegated child holds its run until the scenario releases it, so the
+/// goal retry provably waited on a live child rather than a fixed sleep.
+const GOAL_RETRY_CHILD_PROMPT: &str = "fixture goal retry child";
+const GOAL_RETRY_CHILD_RELEASE: &str = ".rho-fixture-release-goal-retry-child";
 const DELEGATION_REVIEW_RESPONSE: &str =
     "background agent completion received with delegated result (delivery 1)";
 
@@ -28,6 +32,16 @@ pub(super) async fn intercept(
     request: &ModelRequest<'_>,
     _events: &ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if prompt == GOAL_RETRY_CHILD_PROMPT {
+        if let Err(error) =
+            release::wait_for_release_or_cancel(GOAL_RETRY_CHILD_RELEASE, &request.cancellation)
+                .await
+        {
+            return Some(Err(error));
+        }
+        // The delegated-result payload the agent-notification validator expects.
+        return Some(completed("assistant stream part one part two"));
+    }
     if is_goal_retry_prompt(prompt) {
         if GOAL_RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
             return Some(Err(ProviderError::new(
@@ -53,7 +67,7 @@ pub(super) async fn intercept(
                     "agent",
                     serde_json::json!({
                         "agent_id": "worker",
-                        "prompt": "fixture slow stream",
+                        "prompt": GOAL_RETRY_CHILD_PROMPT,
                     }),
                 ));
             }
@@ -65,8 +79,8 @@ pub(super) async fn intercept(
             ProviderErrorKind::Unavailable,
             "deterministic goal delegation retry failure",
             // Permanent skips SDK provider backoff; the goal-level retry under
-            // test still fires. The 4s child must outlive the 3s goal retry
-            // delay so a retry that ignores the child is caught.
+            // test still fires. The child runs until the scenario releases
+            // it, so a retry that ignores the child is caught.
             Retryability::Permanent,
         )));
     }

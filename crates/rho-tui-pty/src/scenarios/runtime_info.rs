@@ -126,7 +126,7 @@ fn wait_for_row_highlight(
 ) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         let inverse = harness.screen().inverse_columns(row);
         let highlighted = inverse
             .iter()
@@ -164,7 +164,7 @@ fn assert_info_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
 fn wait_until_runtime_info_stacked(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         if runtime_info_stacked(harness) {
             return Ok(());
         }

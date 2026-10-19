@@ -40,7 +40,7 @@ pub(super) const PROMPT_HISTORY_SEARCH_SCENARIO: Scenario = Scenario::new(
             text: "Prompt history",
             timeout: SETTLE,
         },
-        Step::TypeText("alpha"),
+        Step::TypeIntoField("alpha"),
         Step::Key(Key::Enter),
         Step::WaitTextGone {
             text: "Prompt history",
@@ -61,7 +61,7 @@ pub(super) const PROMPT_HISTORY_SEARCH_SCENARIO: Scenario = Scenario::new(
             text: "Prompt history",
             timeout: SETTLE,
         },
-        Step::TypeText("alpha"),
+        Step::TypeIntoField("alpha"),
         Step::Key(Key::Enter),
         Step::Custom(composer_shows_alpha),
         Step::Key(Key::Alt('n')),

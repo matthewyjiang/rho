@@ -117,7 +117,8 @@ def full_plan() -> tuple[Step, ...]:
         ),
         Step(
             "Run workspace tests",
-            ("cargo", "test", "--workspace", "--locked"),
+            # Matches CI. Nextest skips doctests; the documentation step runs them.
+            ("cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast"),
         ),
         # Must directly follow the workspace tests: they refresh debug/rho,
         # and the script's own build would recompile rho-coding-agent (see

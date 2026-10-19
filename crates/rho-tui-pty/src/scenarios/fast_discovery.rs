@@ -155,7 +155,7 @@ fn wait_for_draft(harness: &mut PtyHarness, draft: &str) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;
     harness.set_phase(format!("wait_for_fast_draft:{draft:?}"));
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         let (row, col) = harness.screen().cursor();
         if usize::from(col) == rendered.len()
             && harness

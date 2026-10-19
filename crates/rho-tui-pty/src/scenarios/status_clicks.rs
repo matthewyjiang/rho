@@ -51,7 +51,7 @@ fn wait_for_underline(
     let width = UnicodeWidthStr::width(MODEL) as u16;
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         if span_underlined(harness, cell, width) == want {
             return Ok(());
         }

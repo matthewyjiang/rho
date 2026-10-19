@@ -116,7 +116,7 @@ fn assert_context_overlay(harness: &mut PtyHarness) -> Result<()> {
 fn wait_until_numbers_stack(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         let rows: Vec<String> = harness
             .screen()
             .rows_text()

@@ -306,7 +306,11 @@ impl AttachmentApp {
         loop {
             let redraw = tokio::select! {
                 event = terminal_events.next() => {
-                    match self.handle_event(event?) {
+                    let event = event?;
+                    if matches!(event, Event::Resize(_, _)) {
+                        crate::tui::repaint_after_resize(terminal)?;
+                    }
+                    match self.handle_event(event) {
                         AttachInput::Leave | AttachInput::Quit => break,
                         outcome => outcome.redraws(),
                     }

@@ -171,7 +171,7 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
         text: "● editable",
         timeout: SETTLE,
     },
-    Step::TypeText("editable-fixture"),
+    Step::TypeIntoField("editable-fixture"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit agent editable-fixture",
@@ -184,13 +184,13 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
         text: "fixture agent",
         timeout: SETTLE,
     },
-    Step::TypeText(" updated"),
+    Step::TypeIntoField(" updated"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit agent editable-fixture",
         timeout: SETTLE,
     },
-    Step::TypeText("Save"),
+    Step::TypeIntoField("Save"),
     Step::WaitText {
         text: "Serialize, validate",
         timeout: SETTLE,
@@ -238,7 +238,7 @@ pub(super) const DELETE_USER_AGENT_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("Del delete"),
-    Step::TypeText("editable-fixture"),
+    Step::TypeIntoField("editable-fixture"),
     Step::Phase("cancel_delete"),
     Step::Key(Key::Delete),
     Step::WaitText {
@@ -286,7 +286,7 @@ pub(super) const VIEW_READ_ONLY_AGENT_PROMPT_STEPS: &[Step] = &[
         text: "BUILT IN",
         timeout: SETTLE,
     },
-    Step::TypeText("reviewer"),
+    Step::TypeIntoField("reviewer"),
     Step::WaitText {
         text: "● read-only",
         timeout: SETTLE,
@@ -328,13 +328,13 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
         text: "● editable",
         timeout: SETTLE,
     },
-    Step::TypeText("editable-fixture"),
+    Step::TypeIntoField("editable-fixture"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit agent editable-fixture",
         timeout: SETTLE,
     },
-    Step::TypeText("Tools"),
+    Step::TypeIntoField("Tools"),
     Step::WaitText {
         text: "Rho tool capabilities",
         timeout: SETTLE,
@@ -345,7 +345,7 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     // Regex filter: `^shell` skips powershell.
-    Step::TypeText("^shell"),
+    Step::TypeIntoField("^shell"),
     Step::WaitText {
         text: "Run shell commands.",
         timeout: SETTLE,
@@ -359,7 +359,7 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
-    Step::TypeText("^all"),
+    Step::TypeIntoField("^all"),
     Step::WaitText {
         text: "Every host tool",
         timeout: SETTLE,
@@ -387,7 +387,7 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
-    Step::TypeText("Save"),
+    Step::TypeIntoField("Save"),
     Step::WaitText {
         text: "Serialize, validate",
         timeout: SETTLE,
@@ -403,7 +403,7 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
         text: "edit agent editable-fixture",
         timeout: SETTLE,
     },
-    Step::TypeText("Tools"),
+    Step::TypeIntoField("Tools"),
     Step::WaitText {
         text: "Rho tool capabilities",
         timeout: SETTLE,
@@ -556,7 +556,7 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "INTERNAL",
         timeout: SETTLE,
     },
-    Step::TypeText("goal-judge"),
+    Step::TypeIntoField("goal-judge"),
     Step::WaitText {
         text: "Internal agent that evaluates goal completion",
         timeout: SETTLE,
@@ -642,7 +642,7 @@ const PLUGIN_AGENT_MODEL_STEPS: &[Step] = &[
         text: "PLUGIN",
         timeout: SETTLE,
     },
-    Step::TypeText("plugin-fixture"),
+    Step::TypeIntoField("plugin-fixture"),
     Step::WaitText {
         text: "● model only",
         timeout: SETTLE,
@@ -661,7 +661,7 @@ const PLUGIN_AGENT_MODEL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("Use agent default"),
-    Step::TypeText("grok-4.6"),
+    Step::TypeIntoField("grok-4.6"),
     Step::WaitText {
         text: "xai/grok-4.6",
         timeout: SETTLE,
@@ -679,7 +679,7 @@ const PLUGIN_AGENT_MODEL_STEPS: &[Step] = &[
         text: "select model for plugin-fixture",
         timeout: SETTLE,
     },
-    Step::TypeText("agent default"),
+    Step::TypeIntoField("agent default"),
     Step::WaitText {
         text: "the model the agent's file names",
         timeout: SETTLE,

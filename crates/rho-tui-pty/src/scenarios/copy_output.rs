@@ -72,8 +72,7 @@ fn copy_outputs(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("partial assistant before cancellation", STREAM)?;
     harness.submit_text("/copy")?;
     harness.wait_for_text("Copy output", SETTLE)?;
-    harness.type_text("copy first")?;
-    harness.settle_plain_text_input();
+    harness.type_into_field("copy first")?;
     harness.inject_key(&Key::Enter)?;
     harness.wait_for_raw_sequence_occurrences(FIRST_OUTPUT, 2, SETTLE)?;
     harness.wait_for_text_gone("Copy output", SETTLE)?;

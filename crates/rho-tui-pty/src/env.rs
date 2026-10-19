@@ -12,6 +12,9 @@ use tempfile::TempDir;
 
 use crate::pty::PtySize;
 
+/// Proxy that refuses every connection (TCP discard port on loopback).
+const OFFLINE_PROXY: &str = "http://127.0.0.1:9";
+
 /// Host terminal identity markers that can leak into child behavior.
 pub const HOST_TERMINAL_MARKERS: &[&str] = &[
     "CURSOR_TRACE_ID",
@@ -144,6 +147,16 @@ impl RhoLaunchPlan {
             env.push((key.into(), path.display().to_string()));
         }
         env.push(("RHO_TUI_TEST_MODE".into(), "matrix".into()));
+        // Keep the child off the internet. Without this every launch downloads
+        // and parses the models.dev catalog in the background: CPU that
+        // dominates debug PTY runs, and a hydrate whose arrival time can
+        // rewrite the first system prompt. The discard port refuses at once;
+        // loopback stays direct for scenario mock servers. A scenario that
+        // needs a different proxy layers it with `with_env` (later pairs win).
+        for key in ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"] {
+            env.push((key.into(), OFFLINE_PROXY.into()));
+        }
+        env.push(("NO_PROXY".into(), "localhost,127.0.0.1,::1".into()));
         // Keep keyring/credential side effects out of the developer account.
         env.push(("RUST_BACKTRACE".into(), "1".into()));
         Self {

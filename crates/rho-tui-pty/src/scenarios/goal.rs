@@ -125,6 +125,12 @@ pub(super) const GOAL_QUESTIONNAIRE_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+/// The goal loop is blocked on the held child; nothing may have retried yet.
+fn release_goal_retry_child(harness: &mut crate::PtyHarness) -> Result<()> {
+    assert_goal_retry_waited_for_subagents(harness)?;
+    release_fixture(harness, ".rho-fixture-release-goal-retry-child")
+}
+
 fn assert_goal_retry_waited_for_subagents(harness: &mut crate::PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if screen.contains("goal retry started before delegated agent finished") {
@@ -141,6 +147,11 @@ pub(super) const GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS: &[Step] = &[
     },
     Step::Phase("retry_after_delegation"),
     Step::SubmitText("/goal fixture goal delegation retry"),
+    Step::WaitText {
+        text: "waiting for delegated agents",
+        timeout: STREAM,
+    },
+    Step::Custom(release_goal_retry_child),
     Step::WaitText {
         text: "goal retry resumed after delegated agent finished",
         timeout: STREAM,

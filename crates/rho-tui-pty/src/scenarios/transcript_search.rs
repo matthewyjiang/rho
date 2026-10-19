@@ -36,7 +36,7 @@ pub(super) const TRANSCRIPT_SEARCH_SCENARIO: Scenario = Scenario::new(
             text: "Esc cancel",
             timeout: SETTLE,
         },
-        Step::TypeText("LINE 007"),
+        Step::TypeIntoField("LINE 007"),
         Step::WaitText {
             text: "fixture bulk one line 007",
             timeout: SETTLE,
@@ -57,7 +57,7 @@ pub(super) const TRANSCRIPT_SEARCH_SCENARIO: Scenario = Scenario::new(
         },
         Step::Phase("step_between_matches"),
         Step::Key(Key::Ctrl('f')),
-        Step::TypeText("line 0"),
+        Step::TypeIntoField("line 0"),
         Step::WaitText {
             text: "fixture bulk one line 099",
             timeout: SETTLE,
@@ -111,7 +111,7 @@ pub(super) const TRANSCRIPT_SEARCH_HOLDS_HIT_SCENARIO: Scenario = Scenario::new(
         },
         Step::Phase("focus_bottom_hit"),
         Step::Key(Key::Ctrl('f')),
-        Step::TypeText("slow stream"),
+        Step::TypeIntoField("slow stream"),
         Step::WaitText {
             text: "1/1",
             timeout: SETTLE,

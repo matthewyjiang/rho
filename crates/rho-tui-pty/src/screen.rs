@@ -10,6 +10,10 @@ pub struct ScreenModel {
 #[derive(Default)]
 struct TerminalReplies {
     bytes: Vec<u8>,
+    /// The last presented screen while a DEC 2026 synchronized update is open.
+    /// A real terminal keeps showing it until the frame ends, so every reader
+    /// sees whole frames rather than a half-written one.
+    presented: Option<vt100::Screen>,
 }
 
 impl vt100::Callbacks for TerminalReplies {
@@ -21,6 +25,20 @@ impl vt100::Callbacks for TerminalReplies {
         params: &[&[u16]],
         command: char,
     ) {
+        if intermediate1 == Some(b'?')
+            && intermediate2.is_none()
+            && matches!(command, 'h' | 'l')
+            && params.contains(&&[2026][..])
+        {
+            // A begin inside an open update keeps the frame saved at the
+            // first begin; Rho's synced backend sends one for a queued clear
+            // and another for the draw that follows.
+            if command == 'l' {
+                self.presented = None;
+            } else if self.presented.is_none() {
+                self.presented = Some(screen.clone());
+            }
+        }
         // DSR 6 requests the current cursor in one-based terminal coordinates.
         // ConPTY's INHERIT_CURSOR startup waits for this reply before painting.
         if intermediate1.is_none()
@@ -77,25 +95,43 @@ impl ScreenModel {
         }
     }
 
+    /// Whether a synchronized update is still open, so readers see the frame
+    /// before it rather than the bytes written since.
+    pub(crate) fn frame_open(&self) -> bool {
+        self.parser.callbacks().presented.is_some()
+    }
+
+    /// What a terminal honoring synchronized output would show right now.
+    fn presented(&self) -> &vt100::Screen {
+        self.parser
+            .callbacks()
+            .presented
+            .as_ref()
+            .unwrap_or_else(|| self.parser.screen())
+    }
+
     pub(crate) fn take_terminal_replies(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.parser.callbacks_mut().bytes)
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
         self.parser.screen_mut().set_size(rows, cols);
+        if let Some(presented) = &mut self.parser.callbacks_mut().presented {
+            presented.set_size(rows, cols);
+        }
     }
 
     pub fn rows(&self) -> u16 {
-        self.parser.screen().size().0
+        self.presented().size().0
     }
 
     pub fn cols(&self) -> u16 {
-        self.parser.screen().size().1
+        self.presented().size().1
     }
 
     /// Full visible contents with trailing spaces trimmed per row.
     pub fn contents(&self) -> String {
-        self.parser.screen().contents()
+        self.presented().contents()
     }
 
     /// Visible rows as individual strings with trailing spaces trimmed.
@@ -108,17 +144,24 @@ impl ScreenModel {
     }
 
     pub fn cursor(&self) -> (u16, u16) {
-        self.parser.screen().cursor_position()
+        self.presented().cursor_position()
+    }
+
+    /// Text on the cursor row left of the cursor, where an input field shows
+    /// what was just typed.
+    pub(crate) fn text_before_cursor(&self) -> String {
+        let (row, col) = self.cursor();
+        self.presented().contents_between(row, 0, row, col)
     }
 
     /// Whether the reconstructed terminal has hidden the caret (`DECTCEM` off).
     pub fn hide_cursor(&self) -> bool {
-        self.parser.screen().hide_cursor()
+        self.presented().hide_cursor()
     }
 
     /// Cell at `(row, col)`, if the coordinates fall inside the screen.
     pub(crate) fn cell(&self, row: u16, col: u16) -> Option<ScreenCell> {
-        let cell = self.parser.screen().cell(row, col)?;
+        let cell = self.presented().cell(row, col)?;
         Some(ScreenCell {
             contents: cell.contents().to_string(),
             wide: cell.is_wide(),
@@ -190,5 +233,25 @@ mod tests {
         screen.process(b"ab");
         screen.process(b"c");
         assert!(screen.contains_text("abc"));
+    }
+
+    // Covers: readers see the last whole frame while a synchronized update is
+    // still being written, as a terminal honoring DEC 2026 would.
+    #[test]
+    fn holds_presented_frame_during_synchronized_update() {
+        let mut screen = ScreenModel::new(3, 10);
+        let mut shown = Vec::new();
+        // A clear and the draw after it each begin the update.
+        for chunk in [
+            &b"old"[..],
+            b"\x1b[?20",
+            b"26h\x1b[2J",
+            b"\x1b[?2026h\x1b[Hnew",
+            b"\x1b[?2026l",
+        ] {
+            screen.process(chunk);
+            shown.push(screen.contents());
+        }
+        assert_eq!(shown, ["old", "old", "old", "old", "new"]);
     }
 }

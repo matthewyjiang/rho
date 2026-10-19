@@ -1,6 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 
+use crate::tui::ActivityPhase;
+
 use super::*;
 use crate::tui::{
     goal::GoalState,
@@ -91,14 +93,14 @@ async fn running_escape_action_picks_one_owner() {
             name: "goal evaluation wait aborts",
             setup: |app| {
                 app.goal = Some(GoalState::new("tests pass".into()));
-                app.begin_cancellable_wait_ui();
+                app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal);
             },
             expected: Some(RunningEscapeAction::AbortTurn),
         },
         Case {
             name: "limits overlay intercepts during a wait",
             setup: |app| {
-                app.begin_cancellable_wait_ui();
+                app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal);
                 app.start_limits_command();
             },
             expected: Some(RunningEscapeAction::FocusedComposer),
@@ -274,7 +276,7 @@ async fn empty_composer_abort_hint_follows_esc_policy() {
         },
         Case {
             name: "cancellable wait",
-            setup: |app| app.begin_cancellable_wait_ui(),
+            setup: |app| app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal),
             expected: true,
         },
         Case {
