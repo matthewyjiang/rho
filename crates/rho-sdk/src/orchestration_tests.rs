@@ -983,7 +983,7 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     let (_commands, command_receiver) = mpsc::channel(1);
     let worker = tokio::spawn(execute_run(
         Arc::clone(&core),
-        runtime,
+        core.runtime(),
         RunId::new(),
         RunStart::User(UserInput::text("start")),
         cancellation,

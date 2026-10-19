@@ -79,7 +79,7 @@ use tool_turn::{
 /// what "notify me when a run finishes" means inside a long interactive session.
 pub(crate) async fn execute_run(
     core: Arc<SessionCore>,
-    runtime: Rho,
+    runtime: Arc<Rho>,
     run_id: RunId,
     start: RunStart,
     cancellation: CancellationToken,
@@ -109,7 +109,7 @@ pub(crate) async fn execute_run(
 #[allow(clippy::too_many_arguments)]
 async fn execute_turn_loop(
     core: Arc<SessionCore>,
-    runtime: Rho,
+    runtime: Arc<Rho>,
     run_id: RunId,
     start: RunStart,
     cancellation: CancellationToken,

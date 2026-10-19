@@ -202,7 +202,8 @@ impl HistoryMetrics {
 pub(crate) struct SessionCore {
     id: SessionId,
     data: Mutex<SessionData>,
-    runtime: RwLock<Rho>,
+    // Readers share snapshots; idle setters copy only while a snapshot is held.
+    runtime: RwLock<Arc<Rho>>,
     approvals: Arc<crate::workspace::SessionApprovals>,
     // Run ownership remains active until its guard finalizes, independently of presentation state.
     active_run: Mutex<Option<RunId>>,
@@ -242,7 +243,7 @@ impl SessionCore {
                 working_context: None,
                 last_compaction_decision: None,
             }),
-            runtime: RwLock::new(runtime),
+            runtime: RwLock::new(Arc::new(runtime)),
             approvals,
             active_run: Mutex::new(None),
             in_flight: RwLock::new(None),
@@ -254,11 +255,12 @@ impl SessionCore {
         &self.id
     }
 
-    pub(crate) fn runtime(&self) -> Rho {
-        self.runtime
+    pub(crate) fn runtime(&self) -> Arc<Rho> {
+        let runtime = self
+            .runtime
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(&runtime)
     }
 
     pub(crate) fn approvals(&self) -> Arc<crate::workspace::SessionApprovals> {
@@ -544,11 +546,12 @@ impl Session {
 
     pub fn set_reasoning_level(&self, reasoning_level: crate::ReasoningLevel) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
-        self.core
+        let mut runtime = self
+            .core
             .runtime
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .reasoning_level = reasoning_level;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::make_mut(&mut runtime).reasoning_level = reasoning_level;
         Ok(())
     }
 
@@ -562,11 +565,12 @@ impl Session {
         service_tier: Option<crate::model::ServiceTier>,
     ) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
-        self.core
+        let mut runtime = self
+            .core
             .runtime
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .service_tier = service_tier;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::make_mut(&mut runtime).service_tier = service_tier;
         Ok(())
     }
 
@@ -587,6 +591,7 @@ impl Session {
             .runtime
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let runtime = Arc::make_mut(&mut runtime);
         runtime.compactor = compactor;
         runtime.compaction_policy = policy;
         Ok(())
@@ -634,11 +639,12 @@ impl Session {
         store: Option<Arc<dyn crate::SessionStore>>,
     ) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
-        self.core
+        let mut runtime = self
+            .core
             .runtime
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .checkpoint_store = store;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::make_mut(&mut runtime).checkpoint_store = store;
         Ok(())
     }
 
@@ -650,11 +656,12 @@ impl Session {
         source: Option<crate::BoundaryInputSource>,
     ) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
-        self.core
+        let mut runtime = self
+            .core
             .runtime
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .boundary_inputs = source;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::make_mut(&mut runtime).boundary_inputs = source;
         Ok(())
     }
 
@@ -867,11 +874,14 @@ impl Session {
         let _inactive = self.core.lock_inactive()?;
         let report =
             crate::model::handoff::report_message_omissions(&self.history(), &provider.identity());
-        self.core
-            .runtime
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .provider = provider;
+        {
+            let mut runtime = self
+                .core
+                .runtime
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            Arc::make_mut(&mut runtime).provider = provider;
+        }
         self.core.invalidate_context();
         Ok(report)
     }
