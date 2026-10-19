@@ -341,10 +341,6 @@ impl App {
         self.turn.set_activity_phase(ActivityPhase::Starting);
         self.report_working().await;
         self.turn.start_loading();
-        if let Err(error) = self.clamp_history_scroll_for_terminal(terminal) {
-            self.abandon_provider_turn_start(agent, &mut pending_boundary);
-            return Err(error.into());
-        }
         if let Err(error) = terminal.draw(|frame| self.draw(frame)) {
             self.abandon_provider_turn_start(agent, &mut pending_boundary);
             return Err(error.into());
@@ -617,7 +613,6 @@ impl App {
                 self.pending_input_changed();
             }
             if self.finish_completed_inline_shells().await? {
-                self.clamp_history_scroll_for_terminal(terminal)?;
                 terminal.draw(|frame| self.draw(frame))?;
             }
         }
@@ -773,7 +768,6 @@ impl App {
         terminal: &mut DefaultTerminal,
         frame_scheduler: &mut FrameScheduler,
     ) -> anyhow::Result<()> {
-        self.clamp_history_scroll_for_terminal(terminal)?;
         terminal.draw(|frame| self.draw(frame))?;
         frame_scheduler.rendered(Instant::now());
         Ok(())

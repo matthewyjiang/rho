@@ -124,8 +124,16 @@ impl App {
     }
 
     fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
+        let mut ctx = self.search_frame_context(area);
+        let was_bottom = self.history.scroll() == super::HistoryScroll::Bottom;
+        self.history
+            .scroll_chrome_mut()
+            .clamp(ctx.history_len, ctx.layout.history_content.height as usize);
+        // The jump chip and bottom activity inset depend on scroll mode, not position.
+        if was_bottom != (self.history.scroll() == super::HistoryScroll::Bottom) {
+            ctx = self.frame_context(area);
+        }
         self.settle_turn_finished_attention();
-        let ctx = self.search_frame_context(area);
         let (history_start, history_count) = self
             .visible_history_window(ctx.history_len, ctx.layout.history_content.height as usize);
         let surface = DrawSurface {
