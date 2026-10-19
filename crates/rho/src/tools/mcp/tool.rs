@@ -103,10 +103,6 @@ impl McpToolSlot {
         }
     }
 
-    pub(super) fn definition(&self) -> McpToolDefinition {
-        self.read().clone()
-    }
-
     /// Returns `true` when the incoming definition differs from the live one.
     pub(super) fn refresh(&self, definition: McpToolDefinition) -> bool {
         self.available.store(true, Ordering::Relaxed);
@@ -157,11 +153,11 @@ pub(crate) struct McpTool {
 
 impl Tool for McpTool {
     fn spec(&self) -> ToolSpec {
-        self.slot.definition().spec
+        self.slot.read().spec.clone()
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
-        self.slot.definition().expectation.output_schema
+        self.slot.read().expectation.output_schema.clone()
     }
 
     fn security(&self) -> ToolSecurity {
@@ -232,8 +228,13 @@ impl McpTool {
                     "MCP tool arguments must be a JSON object",
                 ));
             };
-            let definition = self.slot.definition();
-            let metadata = definition.presentation.metadata(&self.transport);
+            let (metadata, expectation) = {
+                let definition = self.slot.read();
+                (
+                    definition.presentation.metadata(&self.transport),
+                    definition.expectation.clone(),
+                )
+            };
             Ok(PreparedToolInvocation::resource_aware(
                 [],
                 [],
@@ -256,7 +257,7 @@ impl McpTool {
                                 budget: &budget,
                                 remote_name: self.remote_name.clone(),
                                 arguments,
-                                expectation: definition.expectation,
+                                expectation,
                                 image_delivery: self.image_delivery,
                             },
                             context.cancellation(),
