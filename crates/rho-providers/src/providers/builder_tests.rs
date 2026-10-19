@@ -129,6 +129,11 @@ fn opencode_go_catalog_npm_selects_adapter_identity() {
             Some("@ai-sdk/anthropic"),
             "anthropic-messages",
         ),
+        (
+            "gemini-4-argon-contributor",
+            Some("@ai-sdk/google"),
+            "gemini-generate-content",
+        ),
         ("unknown-go-model", None, "openai-chat-completions"),
     ];
 

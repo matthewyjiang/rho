@@ -39,8 +39,10 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 /// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
-/// OpenCode Go bootstrap base (Chat Completions, Responses, Messages, `/models`).
-pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/zen/go/v1";
+/// OpenCode Go base (Chat Completions, Responses, Messages, Gemini
+/// `generateContent`, `/models`). The older `/zen/go/v1` base serves the first
+/// three but returns 404 for Gemini.
+pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/inference/go/v1";
 /// MiniMax Anthropic-compatible base (`/messages` and `/models`).
 pub const MINIMAX_API_BASE: &str = "https://api.minimax.io/anthropic/v1";
 /// TypeSafe System One base (`/systemone`), which serves the Jev decision models.

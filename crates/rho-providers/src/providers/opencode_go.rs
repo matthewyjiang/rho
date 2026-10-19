@@ -1,4 +1,4 @@
-//! OpenCode Go routing headers, shared by its three wire adapters.
+//! OpenCode Go routing headers, shared by its four wire adapters.
 
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use sha2::{Digest, Sha256};
