@@ -9,6 +9,9 @@ mod model_prompt;
 #[path = "interactive_runtime_codemode_tests.rs"]
 mod codemode;
 
+#[path = "interactive_runtime_startup_tests.rs"]
+pub(crate) mod startup;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse},

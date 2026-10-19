@@ -42,6 +42,8 @@ mod context;
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]
 mod mcp;
+#[cfg(test)]
+pub(crate) use mcp::StartupHydrateChanges;
 #[path = "interactive_runtime_permission.rs"]
 mod permission;
 #[path = "interactive_runtime_provider.rs"]
@@ -179,7 +181,7 @@ enum SessionWriteRetention {
 
 impl InteractiveRuntime {
     pub(crate) async fn new(options: InteractiveRuntimeOptions<'_>) -> anyhow::Result<Self> {
-        startup::initialize(options).await
+        startup::initialize(options, rho_providers::model::ensure_model_catalog_names()).await
     }
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
@@ -849,6 +851,8 @@ mod tests;
 #[path = "interactive_runtime_todo_tests.rs"]
 mod todo_tests;
 
+#[cfg(test)]
+pub(crate) use tests::startup::test_startup_runtime;
 #[cfg(test)]
 pub(crate) use tests::test_runtime;
 

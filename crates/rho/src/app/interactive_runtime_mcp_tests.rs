@@ -32,14 +32,23 @@ async fn frozen_prompt_receives_connected_context_as_a_notice() {
         let expected = prompt::mcp_context(&report);
         let system_before = runtime.sessions.prompt.system.clone();
         let before = runtime.history().len();
-        runtime
-            .apply_mcp_connect(McpConnectOutcome {
+        let (finished, completion) = tokio::sync::oneshot::channel();
+        runtime.pending_mcp = Some(tokio::spawn(async move {
+            finished.send(()).unwrap();
+            McpConnectOutcome {
                 report,
                 bundle: None,
                 catalog: Default::default(),
-            })
-            .await
-            .unwrap();
+            }
+        }));
+        completion.await.unwrap();
+        assert_eq!(
+            runtime.poll_startup_hydrates().await.unwrap(),
+            StartupHydrateChanges {
+                mcp_inventory_changed: true,
+                ..Default::default()
+            }
+        );
         assert_eq!(runtime.sessions.prompt.system, system_before);
         assert_eq!(
             &runtime.history()[before..],

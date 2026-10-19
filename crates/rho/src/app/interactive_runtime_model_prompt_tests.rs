@@ -189,7 +189,13 @@ async fn new_session_keeps_startup_prompt_hydration() {
         tokio::task::yield_now().await;
     }
     runtime.pending_catalog_names = Some(handle);
-    assert!(runtime.poll_startup_hydrates().await.unwrap());
+    assert_eq!(
+        runtime.poll_startup_hydrates().await.unwrap(),
+        super::super::StartupHydrateChanges {
+            catalog_completed: true,
+            ..Default::default()
+        }
+    );
     let running = PromptModel::from_sdk_identity(&runtime.provider.provider().identity());
     let expected = runtime
         .prompt_template
@@ -205,25 +211,6 @@ async fn new_session_keeps_startup_prompt_hydration() {
         SystemPrompt::Custom(expected.text)
     );
     assert!(runtime.may_rewrite_startup_prompt);
-}
-
-// Covers: catalog completion must notify chrome even without a prompt rewrite.
-// Owner: interactive runtime hydration signal (no network or rendering needed).
-#[tokio::test]
-async fn catalog_completion_notifies_when_prompt_is_unchanged_or_frozen() {
-    let (mut runtime, _home, _path, _stored) = configured_runtime().await;
-    for may_rewrite in [true, false] {
-        runtime.may_rewrite_startup_prompt = may_rewrite;
-        let history = runtime.history().to_vec();
-        let handle = tokio::spawn(async { 0usize });
-        while !handle.is_finished() {
-            tokio::task::yield_now().await;
-        }
-        runtime.pending_catalog_names = Some(handle);
-        assert!(runtime.poll_startup_hydrates().await.unwrap());
-        assert!(!runtime.poll_startup_hydrates().await.unwrap());
-        assert_eq!(runtime.history(), history);
-    }
 }
 
 // Covers: a model-switch notice save can fail after prompt replacement. Its

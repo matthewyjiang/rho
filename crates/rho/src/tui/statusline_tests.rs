@@ -79,6 +79,102 @@ fn reasoning_capabilities_refresh_on_catalog_and_metadata_changes() {
     });
 }
 
+// Covers: a resumed startup catalog completion refreshes capabilities without
+// rebuilding an unrelated MCP picker and losing its selected server/filter.
+// Owner: TUI startup-result dispatch. PTY cannot gate catalog completion while
+// retaining a complete selected metadata row without a production test hook.
+#[tokio::test(flavor = "current_thread")]
+async fn startup_catalog_completion_preserves_mcp_picker() {
+    use crate::{
+        app::interactive_runtime::test_startup_runtime,
+        tools::mcp::{
+            report::{ConnectedServerReport, McpLiveServerState},
+            McpServerReport, McpSessionReport, McpTransportSummary,
+        },
+        tui::ComposerMode,
+    };
+    use rho_providers::model::models_dev::{
+        age_catalog_snapshot_for_tests, write_cached_model_metadata_for_tests,
+        ModelsDevCacheDirGuard,
+    };
+
+    let home = tempfile::tempdir().unwrap();
+    let _cache_dir = ModelsDevCacheDirGuard::new(home.path().to_path_buf());
+    let mut app = crate::tui::tests::test_app();
+    let mut metadata = ModelMetadata {
+        reasoning_capabilities_known: true,
+        reasoning_metadata_complete: true,
+        ..ModelMetadata::default()
+    };
+    write_cached_model_metadata_for_tests(
+        &app.info.runtime.provider,
+        &app.info.runtime.model,
+        &metadata,
+    );
+    age_catalog_snapshot_for_tests();
+    app.statusline = StatusLine::new(&app.info.runtime);
+    assert!(!app.statusline.state.reasoning_configurable);
+    app.mcp_report = McpSessionReport {
+        servers: ["docs", "search"]
+            .map(|identity| {
+                McpServerReport::connected(ConnectedServerReport {
+                    identity: identity.into(),
+                    transport: McpTransportSummary::Stdio {
+                        command: "fixture".into(),
+                        args: Vec::new(),
+                    },
+                    tools: Vec::new(),
+                    instructions: None,
+                    live: McpLiveServerState::default(),
+                    filtered_out_count: 0,
+                    collision_skipped_count: 0,
+                })
+            })
+            .to_vec(),
+        ..Default::default()
+    };
+    app.execute_mcp_command().unwrap();
+    let ComposerMode::Picker(picker) = app.input_ui.composer_mut() else {
+        panic!("expected MCP picker");
+    };
+    picker.filter = "search".into();
+    picker.selected = 2;
+    let cursor = (picker.filter.clone(), picker.selected);
+
+    let stored = crate::session::Session::create_in_root(home.path(), home.path()).unwrap();
+    let (release, catalog) = tokio::sync::oneshot::channel();
+    let (finished, completion) = tokio::sync::oneshot::channel();
+    let mut agent = test_startup_runtime(home.path(), Some(stored), async move {
+        catalog.await.unwrap();
+        finished.send(()).unwrap();
+        0
+    })
+    .await;
+    app.start_model_metadata_fetch(&mut agent);
+    assert!(!app
+        .tasks
+        .contains(|id| { *id == crate::tui::background_tasks::TaskId::ModelMetadata }));
+    assert!(!app.poll_startup_hydrates(&mut agent).await.unwrap());
+
+    metadata.supported_reasoning_levels = Some(vec![ReasoningLevel::High]);
+    write_cached_model_metadata_for_tests(
+        &app.info.runtime.provider,
+        &app.info.runtime.model,
+        &metadata,
+    );
+    release.send(()).unwrap();
+    completion.await.unwrap();
+    assert!(app.poll_startup_hydrates(&mut agent).await.unwrap());
+    assert!(app.statusline.state.reasoning_configurable);
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
+        panic!("expected MCP picker");
+    };
+    assert!(picker.is_mcp_inventory());
+    assert_eq!((picker.filter.clone(), picker.selected), cursor);
+    assert!(!app.poll_startup_hydrates(&mut agent).await.unwrap());
+    agent.shutdown().await;
+}
+
 fn fully_populated_statusline() -> StatusLine {
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
     // Pin hierarchy inputs so pack tests do not depend on models.dev metadata.

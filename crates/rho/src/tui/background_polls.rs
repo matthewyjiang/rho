@@ -29,25 +29,24 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let pending = agent.mcp_connect_pending();
-        let changed = agent.poll_startup_hydrates().await?;
-        if !changed {
+        let changes = agent.poll_startup_hydrates().await?;
+        if !changes.any() {
             return Ok(false);
         }
         self.refresh_catalog_chrome();
-        self.mcp_report = agent.mcp_report().clone();
-        self.mcp_catalog = agent.mcp_catalog().clone();
-        if pending && !agent.mcp_connect_pending() {
+        if changes.mcp_inventory_changed {
+            self.mcp_report = agent.mcp_report().clone();
+            self.mcp_catalog = agent.mcp_catalog().clone();
             if self.status_source == StatusSource::McpConnecting {
                 self.set_status_quiet("");
             }
             self.clear_mcp_connecting_activity();
-        }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.is_mcp_inventory()
-        ) {
-            let _ = self.execute_mcp_command();
+            if matches!(
+                self.input_ui.composer(),
+                ComposerMode::Picker(picker) if picker.is_mcp_inventory()
+            ) {
+                let _ = self.execute_mcp_command();
+            }
         }
         Ok(true)
     }
