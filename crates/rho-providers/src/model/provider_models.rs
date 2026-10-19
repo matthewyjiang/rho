@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    fs,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -9,6 +8,9 @@ use reqwest::{StatusCode, Url};
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::Value;
+
+#[cfg(test)]
+use std::fs;
 
 use crate::{
     auth::github_copilot_token::{
@@ -105,35 +107,39 @@ pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderMode
 }
 
 fn cached_provider_model_exact(provider: &str, model: &str) -> Option<ProviderModel> {
-    let connection = open_provider_models_cache().ok()?;
-    let mut statement = connection
-        .prepare(
-            "select model, display_name, context_window, max_output_tokens, reasoning_capabilities_json from provider_models where provider = ?1 and model = ?2",
-        )
-        .ok()?;
-    statement
-        .query_row(params![provider, model], |row| {
-            let model: String = row.get(0)?;
-            let display_name: String = row.get(1)?;
-            let context_window: Option<u64> = row.get(2)?;
-            let max_output_tokens: Option<u64> = row.get(3)?;
-            let reasoning_capabilities = row
-                .get::<_, Option<String>>(4)?
-                .and_then(|value| serde_json::from_str(&value).ok())
-                .unwrap_or_default();
-            let model = provider::provider_descriptor(provider)
-                .map(|descriptor| descriptor.canonicalize_model_id(&model))
-                .unwrap_or(model);
-            Ok(ProviderModel {
-                provider: provider.to_string(),
-                model,
-                display_name,
-                context_window,
-                max_output_tokens,
-                reasoning_capabilities,
+    with_provider_models_cache(|connection| {
+        let mut statement = connection
+            .prepare_cached(
+                "select model, display_name, context_window, max_output_tokens, reasoning_capabilities_json
+                 from provider_models where provider = ?1 and model = ?2",
+            )
+            .ok()?;
+        statement
+            .query_row(params![provider, model], |row| {
+                let model: String = row.get(0)?;
+                let display_name: String = row.get(1)?;
+                let context_window: Option<u64> = row.get(2)?;
+                let max_output_tokens: Option<u64> = row.get(3)?;
+                let reasoning_capabilities = row
+                    .get::<_, Option<String>>(4)?
+                    .and_then(|value| serde_json::from_str(&value).ok())
+                    .unwrap_or_default();
+                let model = provider::provider_descriptor(provider)
+                    .map(|descriptor| descriptor.canonicalize_model_id(&model))
+                    .unwrap_or(model);
+                Ok(ProviderModel {
+                    provider: provider.to_string(),
+                    model,
+                    display_name,
+                    context_window,
+                    max_output_tokens,
+                    reasoning_capabilities,
+                })
             })
-        })
-        .ok()
+            .ok()
+    })
+    .ok()
+    .flatten()
 }
 
 fn canonicalize_cached_model_id(provider: &str, model: &str) -> String {
@@ -146,15 +152,18 @@ fn canonicalize_cached_model_id(provider: &str, model: &str) -> String {
 /// [`anthropic::cached_thinking_mode`] / [`cached_provider_model`].
 pub(crate) fn cached_provider_model_raw_json(provider: &str, model: &str) -> Option<Value> {
     let model = canonicalize_cached_model_id(provider, model);
-    let connection = open_provider_models_cache().ok()?;
-    let raw: Option<String> = connection
-        .query_row(
-            "select raw_json from provider_models where provider = ?1 and model = ?2",
-            params![provider, model],
-            |row| row.get(0),
-        )
-        .ok()?;
-    raw.and_then(|value| serde_json::from_str(&value).ok())
+    with_provider_models_cache(|connection| {
+        let raw: Option<String> = connection
+            .query_row(
+                "select raw_json from provider_models where provider = ?1 and model = ?2",
+                params![provider, model],
+                |row| row.get(0),
+            )
+            .ok()?;
+        raw.and_then(|value| serde_json::from_str(&value).ok())
+    })
+    .ok()
+    .flatten()
 }
 
 /// Replaces the provider's cached rows with one model carrying `raw_json`,
@@ -188,38 +197,39 @@ pub(crate) fn write_cached_provider_model_raw_json_for_tests(
 }
 
 pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
-    let Ok(connection) = open_provider_models_cache() else {
-        return Vec::new();
-    };
-    let Ok(mut statement) = connection.prepare(
-        "select model, display_name, context_window, max_output_tokens, reasoning_capabilities_json from provider_models where provider = ?1 order by model",
-    ) else {
-        return Vec::new();
-    };
-    let Ok(rows) = statement.query_map(params![provider], |row| {
-        let model: String = row.get(0)?;
-        let display_name: String = row.get(1)?;
-        let context_window: Option<u64> = row.get(2)?;
-        let max_output_tokens: Option<u64> = row.get(3)?;
-        let reasoning_capabilities = row
-            .get::<_, Option<String>>(4)?
-            .and_then(|value| serde_json::from_str(&value).ok())
-            .unwrap_or_default();
-        let model = provider::provider_descriptor(provider)
-            .map(|descriptor| descriptor.canonicalize_model_id(&model))
-            .unwrap_or(model);
-        Ok(ProviderModel {
-            provider: provider.to_string(),
-            model,
-            display_name,
-            context_window,
-            max_output_tokens,
-            reasoning_capabilities,
-        })
-    }) else {
-        return Vec::new();
-    };
-    rows.filter_map(Result::ok).collect()
+    with_provider_models_cache(|connection| {
+        let Ok(mut statement) = connection.prepare_cached(
+            "select model, display_name, context_window, max_output_tokens, reasoning_capabilities_json
+             from provider_models where provider = ?1 order by model",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(params![provider], |row| {
+            let model: String = row.get(0)?;
+            let display_name: String = row.get(1)?;
+            let context_window: Option<u64> = row.get(2)?;
+            let max_output_tokens: Option<u64> = row.get(3)?;
+            let reasoning_capabilities = row
+                .get::<_, Option<String>>(4)?
+                .and_then(|value| serde_json::from_str(&value).ok())
+                .unwrap_or_default();
+            let model = provider::provider_descriptor(provider)
+                .map(|descriptor| descriptor.canonicalize_model_id(&model))
+                .unwrap_or(model);
+            Ok(ProviderModel {
+                provider: provider.to_string(),
+                model,
+                display_name,
+                context_window,
+                max_output_tokens,
+                reasoning_capabilities,
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.filter_map(Result::ok).collect()
+    })
+    .unwrap_or_default()
 }
 
 const PROVIDER_MODEL_CACHE_VERSION: i64 = 3;
@@ -266,7 +276,7 @@ struct CachedCapabilityRow {
 }
 
 fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapabilityRow> {
-    let connection = open_provider_models_cache().ok()?;
+    with_provider_models_cache(|connection| {
     connection
         .query_row(
             "select models.cache_version, models.reasoning_capabilities_json, models.raw_json, refresh.updated_at
@@ -284,6 +294,9 @@ fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapability
             },
         )
         .ok()
+    })
+    .ok()
+    .flatten()
 }
 
 // Native tags may omit `capabilities`, and the OpenAI-compatible fallback
@@ -412,47 +425,52 @@ fn replace_cached_provider_model_records_with_context(
     records: &[ProviderModelRecord],
     context_json: Option<&str>,
 ) -> Result<(), ModelError> {
-    let mut connection = open_provider_models_cache().map_err(model_cache_error)?;
-    let tx = connection.transaction().map_err(model_cache_error)?;
-    tx.execute(
-        "delete from provider_models where provider = ?1",
-        params![provider],
-    )
-    .map_err(model_cache_error)?;
-    for record in records {
-        let reasoning_capabilities = serde_json::to_string(&record.model.reasoning_capabilities)
-            .map_err(|error| {
-                ModelError::InvalidResponse(format!(
-                    "failed to serialize provider reasoning capabilities: {error}"
-                ))
-            })?;
+    with_provider_models_cache(|connection| -> Result<(), ModelError> {
+        let tx = connection.transaction().map_err(model_cache_error)?;
         tx.execute(
-            "insert into provider_models (provider, model, display_name, context_window, max_output_tokens, reasoning_capabilities_json, cache_version, raw_json, updated_at)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, strftime('%s', 'now'))",
-            params![
-                provider,
-                record.model.model,
-                record.model.display_name,
-                record.model.context_window,
-                record.model.max_output_tokens,
-                reasoning_capabilities,
-                PROVIDER_MODEL_CACHE_VERSION,
-                record.raw_json.to_string()
-            ],
+            "delete from provider_models where provider = ?1",
+            params![provider],
         )
         .map_err(model_cache_error)?;
-    }
-    tx.execute(
-        "insert into provider_model_refresh (provider, updated_at, error, context_json)
-         values (?1, strftime('%s', 'now'), null, ?2)
-         on conflict(provider) do update set
-            updated_at = excluded.updated_at,
-            error = null,
-            context_json = excluded.context_json",
-        params![provider, context_json],
-    )
-    .map_err(model_cache_error)?;
-    tx.commit().map_err(model_cache_error)?;
+        for record in records {
+            let reasoning_capabilities =
+                serde_json::to_string(&record.model.reasoning_capabilities).map_err(|error| {
+                    ModelError::InvalidResponse(format!(
+                        "failed to serialize provider reasoning capabilities: {error}"
+                    ))
+                })?;
+            tx.execute(
+                "insert into provider_models (
+                    provider, model, display_name, context_window, max_output_tokens,
+                    reasoning_capabilities_json, cache_version, raw_json, updated_at
+                 ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, strftime('%s', 'now'))",
+                params![
+                    provider,
+                    record.model.model,
+                    record.model.display_name,
+                    record.model.context_window,
+                    record.model.max_output_tokens,
+                    reasoning_capabilities,
+                    PROVIDER_MODEL_CACHE_VERSION,
+                    record.raw_json.to_string()
+                ],
+            )
+            .map_err(model_cache_error)?;
+        }
+        tx.execute(
+            "insert into provider_model_refresh (provider, updated_at, error, context_json)
+             values (?1, strftime('%s', 'now'), null, ?2)
+             on conflict(provider) do update set
+                updated_at = excluded.updated_at,
+                error = null,
+                context_json = excluded.context_json",
+            params![provider, context_json],
+        )
+        .map_err(model_cache_error)?;
+        tx.commit().map_err(model_cache_error)?;
+        Ok(())
+    })
+    .map_err(model_cache_error)??;
     super::display_name::forget_provider_display_names(provider);
     Ok(())
 }
@@ -640,49 +658,14 @@ struct OpenAiModel {
     kimi_reasoning: kimi_capabilities::KimiReasoningMetadata,
 }
 
-pub(super) fn open_provider_models_cache() -> rusqlite::Result<Connection> {
-    let path = provider_models_sqlite_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let connection = Connection::open(path)?;
-    connection.execute_batch(
-        "create table if not exists provider_models (
-            provider text not null,
-            model text not null,
-            display_name text not null,
-            context_window integer,
-            max_output_tokens integer,
-            reasoning_capabilities_json text,
-            cache_version integer not null default 1,
-            raw_json text,
-            updated_at integer not null,
-            primary key(provider, model)
-        );
-        create table if not exists provider_model_refresh (
-            provider text primary key,
-            updated_at integer not null,
-            error text
-        );",
-    )?;
-    let _ = connection.execute(
-        "alter table provider_models add column context_window integer",
-        [],
-    );
-    let _ = connection.execute(
-        "alter table provider_models add column max_output_tokens integer",
-        [],
-    );
-    let _ = connection.execute(
-        "alter table provider_models add column reasoning_capabilities_json text",
-        [],
-    );
-    let _ = connection.execute(
-        "alter table provider_models add column cache_version integer not null default 1",
-        [],
-    );
-    cli::ensure_refresh_context_column(&connection);
-    Ok(connection)
+pub(super) fn with_provider_models_cache<T>(
+    operation: impl FnOnce(&mut Connection) -> T,
+) -> rusqlite::Result<T> {
+    super::catalog_cache::with_connection(
+        provider_models_sqlite_path(),
+        super::catalog_cache::Schema::ProviderModels,
+        |connection, _state| operation(connection),
+    )
 }
 
 fn model_cache_error(error: rusqlite::Error) -> ModelError {
@@ -741,6 +724,7 @@ fn default_test_cache_dir() -> PathBuf {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     extern "C" fn remove_dir() {
         if let Some(dir) = DIR.get() {
+            super::catalog_cache::forget_connection(&dir.join("provider-models.sqlite3"));
             let _ = fs::remove_dir_all(dir);
         }
     }
@@ -757,16 +741,23 @@ fn default_test_cache_dir() -> PathBuf {
 
 #[doc(hidden)]
 pub fn with_provider_models_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
-    TEST_CACHE_DIR.with(|cache_dir| {
-        let previous = cache_dir.replace(Some(path));
-        let result = f();
-        cache_dir.replace(previous);
-        result
-    })
+    struct RestoreCacheDir(Option<PathBuf>);
+    impl Drop for RestoreCacheDir {
+        fn drop(&mut self) {
+            super::catalog_cache::forget_connection(&provider_models_sqlite_path());
+            TEST_CACHE_DIR.with(|cache_dir| cache_dir.replace(self.0.take()));
+        }
+    }
+    let previous = TEST_CACHE_DIR.with(|cache_dir| cache_dir.replace(Some(path)));
+    let _restore = RestoreCacheDir(previous);
+    f()
 }
 
 #[doc(hidden)]
 pub fn set_provider_models_cache_dir_for_tests(path: Option<PathBuf>) {
+    if test_cache_dir().is_some() {
+        super::catalog_cache::forget_connection(&provider_models_sqlite_path());
+    }
     TEST_CACHE_DIR.with(|cache_dir| {
         cache_dir.replace(path);
     });

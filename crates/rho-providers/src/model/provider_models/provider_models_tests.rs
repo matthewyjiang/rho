@@ -863,13 +863,14 @@ fn cli_provider_models_round_trip_without_canonicalizing_ids() {
         assert_eq!(cli_rows.len(), 2);
         assert_eq!(cli_rows[0].raw_json["default"], true);
 
-        let connection = open_provider_models_cache().unwrap();
-        connection
-            .execute(
+        with_provider_models_cache(|connection| {
+            connection.execute(
                 "update provider_model_refresh set updated_at = 0 where provider = 'cursor'",
                 [],
             )
-            .unwrap();
+        })
+        .unwrap()
+        .unwrap();
         assert!(!provider_models_are_fresh("cursor"));
     });
     let _ = fs::remove_dir_all(cache);

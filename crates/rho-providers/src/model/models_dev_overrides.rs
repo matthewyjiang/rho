@@ -2,7 +2,12 @@
 //!
 //! Handles built-in `model_overrides.toml` and user-configured local `models.toml`.
 
-use std::{fs, path::PathBuf, sync::OnceLock};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::SystemTime,
+};
 
 use crate::reasoning::ReasoningLevel;
 
@@ -87,8 +92,86 @@ pub(super) fn local_override_table(
     model: &str,
 ) -> Option<toml::map::Map<String, toml::Value>> {
     let path = local_overrides_path()?;
+    local_override_table_at(&path, provider, model)
+}
+
+struct LocalOverrides {
+    path: PathBuf,
+    stamp: FileStamp,
+    document: Option<toml::Table>,
+}
+
+#[derive(PartialEq, Eq)]
+struct FileStamp {
+    modified: SystemTime,
+    created: Option<SystemTime>,
+    len: u64,
+    #[cfg(unix)]
+    identity: (u64, u64),
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+impl FileStamp {
+    fn from_metadata(metadata: &fs::Metadata) -> Option<Self> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            modified: metadata.modified().ok()?,
+            created: metadata.created().ok(),
+            len: metadata.len(),
+            #[cfg(unix)]
+            identity: (metadata.dev(), metadata.ino()),
+            #[cfg(unix)]
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+
+    fn read(path: &Path) -> Option<Self> {
+        Self::from_metadata(&fs::metadata(path).ok()?)
+    }
+}
+
+fn local_override_table_at(path: &Path, provider: &str, model: &str) -> Option<toml::Table> {
+    // Only the active file is retained. Re-check metadata for every lookup so
+    // editing, deleting, or atomically replacing models.toml takes effect without
+    // restarting. Invalid documents are cached too, until their metadata changes.
+    static CACHE: OnceLock<Mutex<Option<LocalOverrides>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Ok(metadata) = fs::metadata(path) else {
+        *cache = None;
+        return None;
+    };
+    let Some(stamp) = FileStamp::from_metadata(&metadata) else {
+        *cache = None;
+        return fs::read_to_string(path)
+            .ok()
+            .and_then(|contents| model_override_from_document(&contents, provider, model));
+    };
+    if let Some(cached) = cache
+        .as_ref()
+        .filter(|cached| cached.path == path && cached.stamp == stamp)
+    {
+        return override_from_table(cached.document.as_ref()?, provider, model);
+    }
+    *cache = None;
     let contents = fs::read_to_string(path).ok()?;
-    model_override_from_document(&contents, provider, model)
+    let document = contents.parse::<toml::Table>().ok();
+    let table = document
+        .as_ref()
+        .and_then(|document| override_from_table(document, provider, model));
+    // Do not associate a concurrent edit's metadata with the document just read.
+    if FileStamp::read(path).as_ref() == Some(&stamp) {
+        *cache = Some(LocalOverrides {
+            path: path.to_path_buf(),
+            stamp,
+            document,
+        });
+    }
+    table
 }
 
 /// Returns the `[models."provider/model"]` table from a `models.toml` document.
@@ -101,6 +184,10 @@ pub(super) fn model_override_from_document(
 ) -> Option<toml::Table> {
     // Parse as a document (`Table`): in toml 1.x, `Value::from_str` parses a single value.
     let document = contents.parse::<toml::Table>().ok()?;
+    override_from_table(&document, provider, model)
+}
+
+fn override_from_table(document: &toml::Table, provider: &str, model: &str) -> Option<toml::Table> {
     let key = format!("{provider}/{model}");
     document
         .get("models")
@@ -200,3 +287,7 @@ fn toml_cost_value(table: &toml::map::Map<String, toml::Value>, key: &str) -> Op
         .is_finite()
         .then(|| (dollars.max(0.0) * 1_000_000.0).round() as u64)
 }
+
+#[cfg(test)]
+#[path = "models_dev_overrides_tests.rs"]
+mod tests;

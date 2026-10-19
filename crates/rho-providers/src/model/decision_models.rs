@@ -8,7 +8,7 @@
 //! OpenAI's `/models` marks no model as a decision model, so its list is fixed.
 
 use reqwest::Url;
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use serde::Deserialize;
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::provider_models::{
-    authorized_models_get, ollama::native_root, open_provider_models_cache, provider_models_client,
+    authorized_models_get, ollama::native_root, provider_models_client, with_provider_models_cache,
 };
 
 /// Decision models last discovered on `provider`, sorted and deduplicated,
@@ -30,19 +30,19 @@ pub fn cached_decision_models(provider: &str) -> Vec<String> {
     {
         return models.iter().map(|&model| model.to_owned()).collect();
     }
-    let Ok(connection) = open_cache() else {
-        return Vec::new();
-    };
-    let Ok(mut statement) =
-        connection.prepare("select model from decision_models where provider = ?1 order by model")
-    else {
-        return Vec::new();
-    };
-    let Ok(rows) = statement.query_map(params![provider], |row| row.get::<_, String>(0)) else {
-        return Vec::new();
-    };
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap_or_default()
+    with_provider_models_cache(|connection| {
+        let Ok(mut statement) = connection
+            .prepare("select model from decision_models where provider = ?1 order by model")
+        else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(params![provider], |row| row.get::<_, String>(0)) else {
+            return Vec::new();
+        };
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
 }
 
 /// Lists `provider`'s decision models from its server and replaces the cache.
@@ -227,34 +227,22 @@ fn normalized_models(models: Vec<String>) -> Vec<String> {
     models
 }
 
-fn open_cache() -> rusqlite::Result<Connection> {
-    let connection = open_provider_models_cache()?;
-    connection.execute_batch(
-        "create table if not exists decision_models (
-            provider text not null,
-            model text not null,
-            updated_at integer not null,
-            primary key(provider, model)
-        );",
-    )?;
-    Ok(connection)
-}
-
 fn replace_cache(provider: &str, models: &[String]) -> rusqlite::Result<()> {
-    let mut connection = open_cache()?;
-    let tx = connection.transaction()?;
-    tx.execute(
-        "delete from decision_models where provider = ?1",
-        params![provider],
-    )?;
-    for model in models {
+    with_provider_models_cache(|connection| {
+        let tx = connection.transaction()?;
         tx.execute(
-            "insert into decision_models (provider, model, updated_at)
-             values (?1, ?2, strftime('%s', 'now'))",
-            params![provider, model],
+            "delete from decision_models where provider = ?1",
+            params![provider],
         )?;
-    }
-    tx.commit()
+        for model in models {
+            tx.execute(
+                "insert into decision_models (provider, model, updated_at)
+             values (?1, ?2, strftime('%s', 'now'))",
+                params![provider, model],
+            )?;
+        }
+        tx.commit()
+    })?
 }
 
 fn cache_error(error: rusqlite::Error) -> ModelError {

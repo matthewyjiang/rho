@@ -13,14 +13,15 @@ fn pre_toggle_cache_rows_rehydrate_with_control_provenance() {
             "reasoning": true, "reasoning_options": [{"type": "toggle"}]
         }}}});
         super::super::cache_catalog_for_tests(&api);
-        let connection = super::super::open_models_dev_cache().unwrap();
-        connection
-            .execute(
+        super::super::with_models_dev_cache(|connection| {
+            connection.execute(
                 "update model_metadata set cache_version = 12,
              metadata_json = json_remove(metadata_json, '$.reasoning_control')",
                 [],
             )
-            .unwrap();
+        })
+        .unwrap()
+        .unwrap();
         assert!(super::super::model_metadata_needs_refresh(
             "opencode-go",
             "qwen3.7-max"

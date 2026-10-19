@@ -18,8 +18,8 @@ use crate::provider::{CatalogConstruction, CatalogLookupMode, ProviderDescriptor
 
 use super::{
     document::{self, ModelsDevCatalog},
-    fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
-    upstream_row_from_api, write_cached_upstream_model_metadata_batch, CachedRow,
+    fetch_models_dev_api, model_metadata_needs_refresh, upstream_row_from_api,
+    with_models_dev_cache, write_cached_upstream_model_metadata_batch, CachedRow,
     MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
 };
 
@@ -268,18 +268,18 @@ fn decode_extra_catalog_docs(raw: &str) -> ExtraCatalogDocs {
 }
 
 fn stored_extra_catalog_docs() -> ExtraCatalogDocs {
-    let Ok(connection) = open_models_dev_cache() else {
-        return ExtraCatalogDocs::default();
-    };
-    connection
-        .query_row(
-            "select borrowed_slugs from catalog_snapshot where id = 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .map(|raw| decode_extra_catalog_docs(&raw))
-        .unwrap_or_default()
+    with_models_dev_cache(|connection| {
+        connection
+            .query_row(
+                "select borrowed_slugs from catalog_snapshot where id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .map(|raw| decode_extra_catalog_docs(&raw))
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
 }
 
 fn extra_catalog_docs_are_hydrated() -> bool {
@@ -334,17 +334,17 @@ pub(super) fn catalog_snapshot_is_ready() -> bool {
 }
 
 fn is_catalog_snapshot_current() -> bool {
-    let Ok(connection) = open_models_dev_cache() else {
-        return false;
-    };
-    let Ok((version, updated_at)) = connection.query_row(
-        "select cache_version, updated_at from catalog_snapshot where id = 1",
-        [],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    ) else {
-        return false;
-    };
-    version == MODEL_METADATA_CACHE_VERSION && catalog_snapshot_timestamp_is_fresh(updated_at)
+    with_models_dev_cache(|connection| {
+        let Ok((version, updated_at)) = connection.query_row(
+            "select cache_version, updated_at from catalog_snapshot where id = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        ) else {
+            return false;
+        };
+        version == MODEL_METADATA_CACHE_VERSION && catalog_snapshot_timestamp_is_fresh(updated_at)
+    })
+    .unwrap_or(false)
 }
 
 fn catalog_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
@@ -362,37 +362,36 @@ fn catalog_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
 }
 
 pub(super) fn mark_catalog_snapshot_current() -> bool {
-    let Ok(connection) = open_models_dev_cache() else {
-        return false;
-    };
     let extra = encode_extra_catalog_docs(&needed_extra_catalog_docs());
-    connection
-        .execute(
-            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
+    with_models_dev_cache(|connection| {
+        connection
+            .execute(
+                "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
              values (1, ?1, strftime('%s', 'now'), ?2)
              on conflict(id) do update set
                cache_version = excluded.cache_version,
                updated_at = excluded.updated_at,
                borrowed_slugs = excluded.borrowed_slugs",
-            params![MODEL_METADATA_CACHE_VERSION, extra],
-        )
-        .is_ok()
+                params![MODEL_METADATA_CACHE_VERSION, extra],
+            )
+            .is_ok()
+    })
+    .unwrap_or(false)
 }
 
 pub(super) fn invalidate_catalog_snapshot() {
     set_catalog_ready(false);
-    let Ok(connection) = open_models_dev_cache() else {
-        return;
-    };
-    let _ = connection.execute(
-        "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
+    let _ = with_models_dev_cache(|connection| {
+        let _ = connection.execute(
+            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
          values (1, ?1, 0, '')
          on conflict(id) do update set
            cache_version = excluded.cache_version,
            updated_at = excluded.updated_at,
            borrowed_slugs = excluded.borrowed_slugs",
-        params![MODEL_METADATA_CACHE_VERSION],
-    );
+            params![MODEL_METADATA_CACHE_VERSION],
+        );
+    });
 }
 
 pub(super) fn catalog_hydrate_lock_for_parent() -> &'static Mutex<()> {

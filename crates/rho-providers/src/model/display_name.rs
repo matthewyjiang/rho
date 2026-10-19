@@ -16,9 +16,9 @@ use crate::model::{models_dev, provider_models};
 
 /// Names resolved this process, including the models that have none.
 ///
-/// Every lookup otherwise opens a fresh sqlite connection and runs its schema
-/// statements, and these lookups sit on hot paths: every delegated run listing
-/// formats one.
+/// These lookups sit on hot paths: every delegated run listing formats one.
+/// Memoizing names avoids querying and decoding catalog rows for each listing,
+/// even though the underlying SQLite connections are also reused.
 ///
 /// A cached answer is dropped when a catalog write lands for that provider, so
 /// a name that arrives during a session reaches the next text that names the
