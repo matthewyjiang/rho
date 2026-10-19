@@ -38,7 +38,8 @@ impl Default for EngineLimits {
 }
 
 /// Structured result of one script. The model receives only the text from
-/// [`format_engine_output`]; `calls` feeds the interactive card's header.
+/// [`format_engine_output`]; `calls` feeds the interactive card's header. The
+/// structured value is omitted when its serialized bytes exceed the output budget.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(super) struct EngineOutput {
     pub return_value: JsonValue,
@@ -300,7 +301,7 @@ fn starlark_to_json(value: Value<'_>) -> starlark::Result<JsonValue> {
     value.to_json_value().map_err(starlark::Error::new_value)
 }
 
-pub(super) fn format_engine_output(output: &EngineOutput) -> String {
+pub(super) fn format_engine_output(output: &EngineOutput, limit: usize) -> String {
     let mut parts = Vec::new();
     if !output.prints.is_empty() {
         parts.push(output.prints.join("\n"));
@@ -316,7 +317,6 @@ pub(super) fn format_engine_output(output: &EngineOutput) -> String {
     } else {
         parts.join("\n\n")
     };
-    let limit = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
     if text.len() <= limit {
         return text;
     }
@@ -331,7 +331,7 @@ pub(super) fn format_engine_output(output: &EngineOutput) -> String {
         let failure_budget = limit - notice.len() - 2;
         if failure.len() > failure_budget {
             // Even the diagnostic alone cannot fit alongside the notice. Keep
-            // its head here; the structured `error` still has the full detail.
+            // its head here; oversized structured output may also be omitted.
             return rho_tools::tool::truncate(
                 format!("{notice}\n\n{failure}"),
                 limit - rho_tools::tool::TRUNCATION_MARKER.len(),
