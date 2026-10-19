@@ -230,7 +230,7 @@ fn process_data_budget_matches_serialized_page_sizes() {
                 }
             }
         }
-        let actual = limit_process_data(original.clone(), max_output_bytes).unwrap();
+        let actual = limit_process_data(render_snapshot(input.clone()), max_output_bytes).unwrap();
         assert_eq!(
             serde_json::to_value(actual.data().unwrap()).unwrap(),
             serde_json::to_value(expected).unwrap(),
