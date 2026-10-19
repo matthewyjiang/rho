@@ -30,7 +30,14 @@ impl vt100::Callbacks for TerminalReplies {
             && matches!(command, 'h' | 'l')
             && params.contains(&&[2026][..])
         {
-            self.presented = (command == 'h').then(|| screen.clone());
+            // A begin inside an open update keeps the frame saved at the
+            // first begin; Rho's synced backend sends one for a queued clear
+            // and another for the draw that follows.
+            if command == 'l' {
+                self.presented = None;
+            } else if self.presented.is_none() {
+                self.presented = Some(screen.clone());
+            }
         }
         // DSR 6 requests the current cursor in one-based terminal coordinates.
         // ConPTY's INHERIT_CURSOR startup waits for this reply before painting.
@@ -234,10 +241,17 @@ mod tests {
     fn holds_presented_frame_during_synchronized_update() {
         let mut screen = ScreenModel::new(3, 10);
         let mut shown = Vec::new();
-        for chunk in [&b"old"[..], b"\x1b[?20", b"26h\x1b[Hnew", b"\x1b[?2026l"] {
+        // A clear and the draw after it each begin the update.
+        for chunk in [
+            &b"old"[..],
+            b"\x1b[?20",
+            b"26h\x1b[2J",
+            b"\x1b[?2026h\x1b[Hnew",
+            b"\x1b[?2026l",
+        ] {
             screen.process(chunk);
             shown.push(screen.contents());
         }
-        assert_eq!(shown, ["old", "old", "old", "new"]);
+        assert_eq!(shown, ["old", "old", "old", "old", "new"]);
     }
 }
