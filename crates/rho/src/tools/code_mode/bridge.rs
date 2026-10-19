@@ -3,7 +3,7 @@
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::Instant,
 };
@@ -15,7 +15,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::call_log::{NestedCallRecord, NestedCallStatus};
-use super::exposure::{search_entries, CodeModeSurface, ToolCatalogEntry};
+use super::exposure::{search_entries, CodeModeSurface, ScriptTool, ToolCatalogEntry};
 
 pub(crate) const CODEMODE_TOOL_NAME: &str = "codemode";
 /// Existing runaway-loop tripwire; failures name the limit and requested count.
@@ -37,7 +37,10 @@ pub(super) enum BridgeError {
 pub(super) struct ToolHostBridge {
     host: ToolHost,
     parent: ToolContext,
-    catalog: Vec<ToolCatalogEntry>,
+    /// Handles freeze with the child host, while contracts remain live until
+    /// the first list/search/describe operation in this script.
+    tools: Vec<ScriptTool>,
+    catalog: OnceLock<Vec<ToolCatalogEntry>>,
     calls: AtomicUsize,
     /// Held while a rendered snapshot is sent, so concurrent calls cannot
     /// deliver an older snapshot after a newer one.
@@ -49,22 +52,35 @@ impl ToolHostBridge {
         surface: Arc<CodeModeSurface>,
         parent: ToolContext,
     ) -> Result<Self, rho_sdk::tool::ToolError> {
-        let (host, catalog) = surface.snapshot(&parent)?;
+        let (host, tools) = surface.snapshot(&parent)?;
         Ok(Self {
             host,
             parent,
-            catalog,
+            tools,
+            catalog: OnceLock::new(),
             calls: AtomicUsize::new(0),
             log: tokio::sync::Mutex::default(),
         })
     }
 
     pub(super) fn search(&self, query: &str, limit: usize) -> Vec<&ToolCatalogEntry> {
-        search_entries(self.catalog.iter(), query, limit)
+        search_entries(self.catalog().iter(), query, limit)
     }
 
     pub(super) fn describe(&self, name: &str) -> Option<&ToolCatalogEntry> {
-        self.catalog.iter().find(|entry| entry.name == name)
+        let catalog = self.catalog();
+        catalog
+            .binary_search_by(|entry| entry.name.as_str().cmp(name))
+            .ok()
+            .map(|index| &catalog[index])
+    }
+
+    fn catalog(&self) -> &[ToolCatalogEntry] {
+        self.catalog.get_or_init(|| {
+            let mut entries: Vec<_> = self.tools.iter().map(ScriptTool::catalog_entry).collect();
+            entries.sort_by(|a, b| a.name.cmp(&b.name));
+            entries
+        })
     }
 
     /// The evaluator and native tool waits share the parent cancellation token.

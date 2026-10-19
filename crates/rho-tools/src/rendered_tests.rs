@@ -20,6 +20,36 @@ fn json_measurement_matches_wire_encoding() {
     assert!(json_len(&invalid).is_err());
 }
 
+// Covers: concurrent discovery must generate a type's output schema only once.
+// Owner: shared output schema cache.
+#[test]
+fn concurrent_schema_requests_share_generation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static GENERATED: AtomicUsize = AtomicUsize::new(0);
+    struct Counted;
+    impl JsonSchema for Counted {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            "rendered_tests::Counted".into()
+        }
+
+        fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+            GENERATED.fetch_add(1, Ordering::SeqCst);
+            String::json_schema(generator)
+        }
+    }
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                pretty_assertions::assert_eq!(
+                    output_schema::<Counted>(),
+                    serde_json::json!({"type": "string"})
+                );
+            });
+        }
+    });
+    pretty_assertions::assert_eq!(GENERATED.load(Ordering::SeqCst), 1);
+}
+
 // Covers: omitting oversized script data must not silently cut model-facing text.
 // Owner: generic rendered output budgets.
 #[test]

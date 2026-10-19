@@ -10,6 +10,11 @@ use rho_sdk::{
 };
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::Serialize;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, LazyLock, OnceLock, RwLock},
+};
 
 /// Measure serialized JSON bytes without allocating an encoded copy.
 pub fn json_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, serde_json::Error> {
@@ -153,13 +158,35 @@ impl<T: Serialize> Rendered<T> {
 /// Schema for emitted values, including required nullable fields. Inline
 /// subschemas keep script-facing returns free of definition indirection.
 pub fn output_schema<T: JsonSchema>() -> serde_json::Value {
-    let mut settings = SchemaSettings::draft2020_12().for_serialize();
-    settings.inline_subschemas = true;
-    let mut schema: serde_json::Value =
-        settings.into_generator().into_root_schema_for::<T>().into();
-    if let Some(object) = schema.as_object_mut() {
-        object.remove("$schema");
-        object.remove("title");
-    }
-    schema
+    // JsonSchema's identity contract distinguishes schemas, including generic
+    // parameters, without imposing a new 'static bound on callers.
+    type SchemaCell = Arc<OnceLock<serde_json::Value>>;
+    static SCHEMAS: LazyLock<RwLock<HashMap<Cow<'static, str>, SchemaCell>>> =
+        LazyLock::new(RwLock::default);
+    let id = T::schema_id();
+    let cached = SCHEMAS
+        .read()
+        .expect("output schema cache")
+        .get(&id)
+        .cloned();
+    let cell = cached.unwrap_or_else(|| {
+        SCHEMAS
+            .write()
+            .expect("output schema cache")
+            .entry(id)
+            .or_default()
+            .clone()
+    });
+    cell.get_or_init(|| {
+        let mut settings = SchemaSettings::draft2020_12().for_serialize();
+        settings.inline_subschemas = true;
+        let mut schema: serde_json::Value =
+            settings.into_generator().into_root_schema_for::<T>().into();
+        if let Some(object) = schema.as_object_mut() {
+            object.remove("$schema");
+            object.remove("title");
+        }
+        schema
+    })
+    .clone()
 }

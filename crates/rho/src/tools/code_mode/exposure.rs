@@ -37,16 +37,17 @@ pub(crate) struct ToolCatalogEntry {
     pub returns: Option<serde_json::Value>,
 }
 
-struct ScriptTool {
+#[derive(Clone)]
+pub(super) struct ScriptTool {
     tool: Arc<dyn Tool>,
     name: String,
     mcp: bool,
 }
 
 impl ScriptTool {
-    // Definitions can refresh independently of the app inventory. Only a
-    // script's bridge snapshot freezes descriptions and schemas.
-    fn catalog_entry(&self) -> ToolCatalogEntry {
+    // Definitions can refresh independently of the app inventory. A bridge
+    // freezes descriptions and schemas only on its first discovery request.
+    pub(super) fn catalog_entry(&self) -> ToolCatalogEntry {
         let spec = self.tool.spec();
         ToolCatalogEntry {
             name: spec.name,
@@ -64,8 +65,8 @@ struct SurfaceState {
     mode: CodemodeMode,
 }
 
-/// Owns the script-callable siblings. Each script snapshots execution and
-/// discovery together; orchestration tools never enter that snapshot.
+/// Owns the script-callable siblings. Each script snapshots callable handles;
+/// discovery freezes their contracts on first use. Orchestration stays outside.
 #[derive(Default)]
 pub(crate) struct CodeModeSurface {
     state: RwLock<SurfaceState>,
@@ -99,10 +100,10 @@ impl CodeModeSurface {
         self.state.write().expect("codemode surface").tools = siblings;
     }
 
-    pub(crate) fn snapshot(
+    pub(super) fn snapshot(
         &self,
         context: &ToolContext,
-    ) -> Result<(ToolHost, Vec<ToolCatalogEntry>), ToolError> {
+    ) -> Result<(ToolHost, Vec<ScriptTool>), ToolError> {
         let state = self.state.read().expect("codemode surface");
         let host = state
             .tools
@@ -113,17 +114,28 @@ impl CodeModeSurface {
             .max_parallel_tools(crate::app::sdk_config::parallel_tool_limit())
             .build()
             .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-        Ok((
-            host,
-            state.tools.iter().map(ScriptTool::catalog_entry).collect(),
-        ))
+        Ok((host, state.tools.clone()))
     }
 
     /// Top-level search loads only returned hits for subsequent model requests,
     /// including in `only` mode. Script discovery stays read-only in its bridge.
     pub(crate) fn search_and_load(&self, query: &str, limit: usize) -> Vec<ToolSearchHit> {
         let mut state = self.state.write().expect("codemode surface");
-        let entries: Vec<_> = state.tools.iter().map(ScriptTool::catalog_entry).collect();
+        // Search needs argument summaries, not return contracts. In particular,
+        // do not generate every sibling's output schema just to load a hit.
+        let entries: Vec<_> = state
+            .tools
+            .iter()
+            .map(|sibling| {
+                let spec = sibling.tool.spec();
+                ToolCatalogEntry {
+                    name: spec.name,
+                    description: spec.description,
+                    parameters: spec.input_schema,
+                    returns: None,
+                }
+            })
+            .collect();
         let hits = search_entries(entries.iter(), query, limit);
         state
             .loaded
