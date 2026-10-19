@@ -57,8 +57,12 @@ impl InteractiveSessionController {
         controller
     }
 
-    pub(crate) fn with_todo_state(mut self, todo: crate::tools::todo::TodoState) -> Self {
-        todo.restore(&self.session.snapshot());
+    pub(crate) fn with_todo_state(
+        mut self,
+        todo: crate::tools::todo::TodoState,
+        snapshot: &rho_sdk::SessionSnapshot,
+    ) -> Self {
+        todo.restore(snapshot);
         self.todo = todo;
         self
     }
@@ -71,8 +75,9 @@ impl InteractiveSessionController {
     pub(crate) fn with_code_mode(
         mut self,
         surface: std::sync::Arc<crate::tools::code_mode::CodeModeSurface>,
+        snapshot: &rho_sdk::SessionSnapshot,
     ) -> Self {
-        surface.restore(&self.session.snapshot());
+        surface.restore(snapshot);
         self.code_mode = Some(surface);
         self
     }
@@ -136,9 +141,10 @@ impl InteractiveSessionController {
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
-        self.todo.restore(&session.snapshot());
+        let snapshot = session.snapshot();
+        self.todo.restore(&snapshot);
         if let Some(surface) = &self.code_mode {
-            surface.restore(&session.snapshot());
+            surface.restore(&snapshot);
         }
         self.session = session;
         self.pending_session_id = None;

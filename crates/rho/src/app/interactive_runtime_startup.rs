@@ -226,6 +226,7 @@ pub(super) async fn initialize(
     } else {
         super::computer::ComputerPreferenceSource::NewSession
     };
+    let snapshot = session.snapshot();
     let mut runtime = InteractiveRuntime {
         runtime,
         hooks,
@@ -237,8 +238,8 @@ pub(super) async fn initialize(
             tools.recall_store(),
             tools.advisor().cloned(),
         )
-        .with_todo_state(tools.todo_state())
-        .with_code_mode(tools.code_mode().clone())
+        .with_todo_state(tools.todo_state(), &snapshot)
+        .with_code_mode(tools.code_mode().clone(), &snapshot)
         .with_added_dirs(added_dirs),
         provider: ProviderController::new(
             provider,
@@ -285,7 +286,7 @@ pub(super) async fn initialize(
     runtime.queue_missing_added_dirs_notice(&restored.missing);
     if runtime.prompt_template.is_some() {
         if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
-            &runtime.sessions.session().snapshot(),
+            &snapshot,
             runtime.sessions.prompt.loaded.as_ref(),
         ) {
             runtime.sessions.queue_notice(notice);
