@@ -41,8 +41,8 @@ use super::super::{
 #[cfg(test)]
 use super::chrome::format_run_cost;
 use super::chrome::{
-    activity_metrics_line, footer_line, header_title_line, herdr_status, identity_line,
-    AttachChrome,
+    activity_metrics_line, attach_reasoning, footer_line, header_title_line, herdr_status,
+    identity_line, AttachChrome,
 };
 use super::tool_toggle::{
     latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, PaintedHistory,
@@ -223,6 +223,7 @@ pub(crate) struct AttachmentApp {
     model_performance: ModelPerformanceAggregate,
     provider_attempt: ProviderAttempt,
     status: Option<RunStatus>,
+    reasoning: Option<crate::agent::ReasoningLevel>,
     /// Last whole-second live elapsed painted into the header (running runs only).
     last_drawn_elapsed_secs: Option<u64>,
     scroll: HistoryScrollChrome,
@@ -260,6 +261,7 @@ impl AttachmentApp {
             model_performance: ModelPerformanceAggregate::default(),
             provider_attempt: ProviderAttempt::default(),
             status: None,
+            reasoning: None,
             last_drawn_elapsed_secs: None,
             scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
@@ -360,11 +362,17 @@ impl AttachmentApp {
             if status_changed {
                 // Status feeds the fallback history items.
                 self.invalidate_painted();
+                self.reasoning = attach_reasoning(&status);
             }
             changed |= status_changed;
             self.status = Some(status);
         }
         Ok(changed)
+    }
+
+    /// Refresh on catalog completion, never from the rendering path.
+    pub(crate) fn refresh_reasoning_capabilities(&mut self) {
+        self.reasoning = self.status.as_ref().and_then(attach_reasoning);
     }
 
     /// Whole-second live elapsed for non-terminal runs with `started_at`.
@@ -751,7 +759,12 @@ impl AttachmentApp {
         let activity = status
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
-        let identity = identity_line(status, self.run_usage.current(), subagent::unix_now_secs());
+        let identity = identity_line(
+            status,
+            self.reasoning,
+            self.run_usage.current(),
+            subagent::unix_now_secs(),
+        );
         let rate = self.model_performance.summary().rounded_generation_rate();
         let activity_metrics = activity_metrics_line(
             activity,

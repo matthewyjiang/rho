@@ -212,13 +212,7 @@ impl App {
         )
         .await
         {
-            Ok(refresh) => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "refreshed {} model list: {} models",
-                    refresh.provider,
-                    refresh.models.len()
-                )));
-            }
+            Ok(refresh) => self.apply_model_list_refresh(refresh),
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
                     "stored credentials for {}, but failed to refresh its model list: {err}",

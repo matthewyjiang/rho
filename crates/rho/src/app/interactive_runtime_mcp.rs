@@ -49,7 +49,7 @@ impl InteractiveRuntime {
     }
 
     /// Apply finished MCP connect and catalog-name hydrates. Returns whether
-    /// `/mcp` inventory or the startup prompt changed.
+    /// `/mcp` inventory changed or catalog hydration completed.
     pub(crate) async fn poll_startup_hydrates(&mut self) -> anyhow::Result<bool> {
         let mut changed = false;
         if let Some(handle) = self.pending_mcp.as_mut() {
@@ -76,6 +76,8 @@ impl InteractiveRuntime {
             if handle.is_finished() {
                 if let Some(handle) = self.pending_catalog_names.take() {
                     let _ = handle.now_or_never();
+                    // Capabilities may change even if the prompt is unchanged or frozen.
+                    changed = true;
                     if self.pending_mcp.is_none() {
                         match self.refresh_startup_system_prompt() {
                             StartupPromptRefresh::Rewritten => {

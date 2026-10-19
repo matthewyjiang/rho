@@ -17,6 +17,14 @@ use super::{
 mod tests;
 
 impl App {
+    pub(super) fn refresh_catalog_chrome(&mut self) {
+        self.statusline.update_model(&self.info.runtime);
+        self.statusline.refresh_reasoning_capabilities();
+        if let Some(view) = self.exclusive.attach_view_mut() {
+            view.refresh_reasoning_capabilities();
+        }
+    }
+
     pub(super) async fn poll_startup_hydrates(
         &mut self,
         agent: &mut InteractiveRuntime,
@@ -26,6 +34,7 @@ impl App {
         if !changed {
             return Ok(false);
         }
+        self.refresh_catalog_chrome();
         self.mcp_report = agent.mcp_report().clone();
         self.mcp_catalog = agent.mcp_catalog().clone();
         if pending && !agent.mcp_connect_pending() {
@@ -108,6 +117,9 @@ impl App {
         reasoning_at_start: (ReasoningLevel, ReasoningRequestSource),
         metadata: Result<Option<ModelMetadata>, JoinError>,
     ) {
+        // A successful hydrate may update catalog capabilities even when it
+        // returns no display metadata or the context-window apply is rejected.
+        self.refresh_catalog_chrome();
         let Ok(Some(metadata)) = metadata else {
             self.warn_custom_model_id_catalog_miss();
             return;

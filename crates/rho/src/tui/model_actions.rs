@@ -179,13 +179,7 @@ impl App {
             )
             .await
             {
-                Ok(refresh) => {
-                    self.insert_entry(&Entry::Notice(format!(
-                        "refreshed {} model list: {} models",
-                        refresh.provider,
-                        refresh.models.len()
-                    )));
-                }
+                Ok(refresh) => self.apply_model_list_refresh(refresh),
                 Err(err) => {
                     self.insert_entry(&Entry::Error(format!(
                         "could not refresh {provider} model list: {err}"
@@ -195,6 +189,19 @@ impl App {
         }
         self.set_status("model list refresh complete");
         Ok(())
+    }
+
+    /// Provider discovery can change capabilities without changing model identity.
+    pub(super) fn apply_model_list_refresh(
+        &mut self,
+        refresh: rho_providers::model::provider_models::ProviderModelRefresh,
+    ) {
+        self.refresh_catalog_chrome();
+        self.insert_entry(&Entry::Notice(format!(
+            "refreshed {} model list: {} models",
+            refresh.provider,
+            refresh.models.len()
+        )));
     }
 
     pub(super) async fn execute_model_command(

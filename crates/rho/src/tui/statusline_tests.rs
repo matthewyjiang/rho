@@ -20,6 +20,65 @@ fn test_info(cwd: PathBuf) -> RuntimeModelView {
     info
 }
 
+// Covers: unchanged frames retain capability state; refresh completion/metadata events update it.
+// Owner: statusline state invalidation. PTY fixtures cannot replace catalog rows.
+#[test]
+fn reasoning_capabilities_refresh_on_catalog_and_metadata_changes() {
+    use rho_providers::model::models_dev::{
+        with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(dir.path().to_path_buf(), || {
+        let mut info = test_info(dir.path().to_path_buf());
+        info.provider = "openai".into();
+        info.model = "gpt-4o".into();
+        write_cached_model_metadata_for_tests(
+            &info.provider,
+            &info.model,
+            &ModelMetadata {
+                reasoning_capabilities_known: true,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+        let mut app = crate::tui::tests::test_app();
+        app.info.runtime = info;
+        app.statusline = StatusLine::new(&app.info.runtime);
+        for levels in [Some(vec![ReasoningLevel::High]), None] {
+            let metadata = ModelMetadata {
+                supported_reasoning_levels: levels.clone(),
+                reasoning_capabilities_known: true,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            };
+            let before = app.statusline.state.reasoning_configurable;
+            write_cached_model_metadata_for_tests(
+                &app.info.runtime.provider,
+                &app.info.runtime.model,
+                &metadata,
+            );
+            app.statusline.update_model(&app.info.runtime);
+            app.statusline
+                .update_model_metadata(app.statusline.state.model_metadata.clone().as_ref());
+            assert_eq!(app.statusline.state.reasoning_configurable, before);
+            if levels.is_some() {
+                app.apply_model_list_refresh(
+                    rho_providers::model::provider_models::ProviderModelRefresh {
+                        provider: app.info.runtime.provider.clone(),
+                        models: vec![],
+                    },
+                );
+            } else {
+                app.statusline.update_model_metadata(Some(&metadata));
+            }
+            assert_eq!(
+                app.statusline.state.reasoning_configurable,
+                levels.is_some()
+            );
+        }
+    });
+}
+
 fn fully_populated_statusline() -> StatusLine {
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
     // Pin hierarchy inputs so pack tests do not depend on models.dev metadata.
