@@ -1,0 +1,252 @@
+# Each path exercises one way a real spec goes wrong. The version and status
+# codes are unquoted on purpose: YAML reads them as numbers.
+openapi: 3.0
+info: {title: Sloppy, version: "1"}
+# Past 64 bits; must not fail the spec.
+x-build: 123456789012345678901234567890
+servers:
+  - url: /v{version}
+    variables:
+      version: {default: "2"}
+paths:
+  /pets:
+    get:
+      operationId: pets/list
+      summary: List pets
+      tags: [pets]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+      responses:
+        200:
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Pet'}
+            # An unused alternative with an external ref does not skip.
+            application/xml:
+              schema: {$ref: 'pets.xml#/Pet'}
+    post:
+      # Same id as `pets/list` once sanitized.
+      operationId: pets-list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Pet'}
+      responses:
+        201: {description: created}
+  /pets/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    # No operationId.
+    get:
+      responses:
+        200: {$ref: '#/components/responses/Pet'}
+    delete:
+      operationId: pets/delete
+      parameters:
+        - {name: session, in: cookie, schema: {type: string}}
+      responses:
+        204: {description: deleted}
+    put:
+      operationId: pets/replace
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NewPet'}
+      responses:
+        204: {description: replaced}
+  /pets/{id}/events:
+    get:
+      operationId: pets/events
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        200:
+          description: stream
+          content:
+            text/event-stream: {schema: {type: string}}
+  /pets/{id}/live:
+    get:
+      operationId: pets/live
+      x-websocket: true
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        101: {description: upgrade}
+  /broken:
+    get:
+      operationId: broken
+      responses:
+        200:
+          description: ok
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Missing'}
+  /external:
+    get:
+      operationId: external
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/page'
+      responses:
+        200: {description: ok}
+  /cycle:
+    get:
+      operationId: cycle
+      parameters:
+        - $ref: '#/components/parameters/loopA'
+      responses:
+        200: {description: ok}
+  /tree:
+    get:
+      operationId: tree/get
+      servers:
+        - url: https://trees.example.com
+      responses:
+        200:
+          description: a recursive schema is legal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Node'}
+  /upload:
+    put:
+      operationId: upload
+      requestBody:
+        content:
+          application/octet-stream: {schema: {type: string, format: binary}}
+      responses:
+        204: {description: stored}
+  /form:
+    post:
+      operationId: form
+      requestBody:
+        content:
+          application/x-www-form-urlencoded: {schema: {type: object}}
+      responses:
+        204: {description: posted}
+  /matrix/{id}:
+    get:
+      operationId: matrix
+      parameters:
+        - {name: id, in: path, required: true, style: matrix, schema: {type: string}}
+      responses:
+        200: {description: ok}
+  /undeclared/{id}:
+    get:
+      operationId: undeclared
+      responses:
+        200: {description: ok}
+  /report:
+    get:
+      operationId: report
+      responses:
+        200:
+          description: only bytes
+          content:
+            application/pdf: {schema: {type: string}}
+  /export:
+    get:
+      operationId: export
+      responses:
+        200:
+          description: text media type, binary schema behind a ref
+          content:
+            text/csv: {schema: {$ref: '#/components/schemas/File'}}
+  /legacy:
+    get:
+      operationId: legacy
+      responses:
+        200:
+          description: springdoc's default media type
+          content:
+            '*/*': {schema: {$ref: '#/components/schemas/Pet'}}
+  /deep:
+    get:
+      operationId: deep
+      parameters:
+        - $ref: '#/components/parameters/hop1'
+      responses:
+        200: {description: ok}
+  /listless:
+    get:
+      operationId: listless
+      parameters: {limit: {name: limit, in: query, schema: {type: integer}}}
+      responses:
+        200: {description: ok}
+  /aliased: {$ref: '#/x-shared/aliased'}
+  /bogus: not-an-object
+  x-internal: {note: an extension, not a path}
+  /long:
+    get:
+      operationId: aVeryLongOperationIdentifierThatKeepsGoingWellPastTheProviderLimit
+      responses:
+        200: {description: ok}
+components:
+  parameters:
+    limit: {name: limit, in: query, schema: {type: integer}}
+    loopA: {$ref: '#/components/parameters/loopB'}
+    loopB: {$ref: '#/components/parameters/loopA'}
+    # With the use site, this chain is 17 refs: one more than MAX_REF_HOPS.
+    hop1: {$ref: '#/components/parameters/hop2'}
+    hop2: {$ref: '#/components/parameters/hop3'}
+    hop3: {$ref: '#/components/parameters/hop4'}
+    hop4: {$ref: '#/components/parameters/hop5'}
+    hop5: {$ref: '#/components/parameters/hop6'}
+    hop6: {$ref: '#/components/parameters/hop7'}
+    hop7: {$ref: '#/components/parameters/hop8'}
+    hop8: {$ref: '#/components/parameters/hop9'}
+    hop9: {$ref: '#/components/parameters/hop10'}
+    hop10: {$ref: '#/components/parameters/hop11'}
+    hop11: {$ref: '#/components/parameters/hop12'}
+    hop12: {$ref: '#/components/parameters/hop13'}
+    hop13: {$ref: '#/components/parameters/hop14'}
+    hop14: {$ref: '#/components/parameters/hop15'}
+    hop15: {$ref: '#/components/parameters/hop16'}
+    hop16: {$ref: '#/components/parameters/limit'}
+  responses:
+    Pet:
+      description: ok
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Pet'}
+  schemas:
+    Pet:
+      type: object
+      required: [id, name, secret]
+      properties:
+        id: {type: integer, readOnly: true}
+        name: {type: string}
+        tag: {type: string, nullable: true}
+        secret: {type: string, writeOnly: true}
+        weight: {type: number, minimum: 0, exclusiveMinimum: true}
+    # Hides `id` through `allOf`.
+    NewPet:
+      allOf:
+        - $ref: '#/components/schemas/Pet'
+      required: [id, name, owner]
+      properties:
+        # Hidden through an `allOf` wrapper, a common generator pattern.
+        owner:
+          allOf: [{$ref: '#/components/schemas/Owner'}]
+      # Under `not`, Pet keeps its readOnly `id`: removing it would change
+      # what the negation rejects.
+      not: {$ref: '#/components/schemas/Pet'}
+    Owner: {type: object, readOnly: true}
+    File: {type: string, format: binary}
+    Node:
+      type: object
+      properties:
+        children:
+          type: array
+          items: {$ref: '#/components/schemas/Node'}
+x-shared:
+  aliased:
+    get:
+      operationId: aliased
+      responses:
+        200:
+          description: text only
+          content:
+            text/plain: {schema: {type: string}}

@@ -1,0 +1,1274 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "GitHub v3 REST API",
+    "version": "1.1.4"
+  },
+  "servers": [
+    {
+      "url": "https://api.github.com"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "GitHub API Root",
+        "tags": [
+          "meta"
+        ],
+        "operationId": "meta/root",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/root"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/markdown/raw": {
+      "post": {
+        "summary": "Render a Markdown document in raw mode",
+        "operationId": "markdown/render-raw",
+        "tags": [
+          "markdown"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "text/x-markdown": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "headers": {
+              "X-CommonMarker-Version": {
+                "$ref": "#/components/headers/x-common-marker-version"
+              }
+            },
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "$ref": "#/components/responses/not_modified"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{repo}/issues/{issue_number}/comments": {
+      "post": {
+        "summary": "Create an issue comment",
+        "tags": [
+          "issues"
+        ],
+        "operationId": "issues/create-comment",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/repo"
+          },
+          {
+            "$ref": "#/components/parameters/issue-number"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "body"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/issue-comment"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "410": {
+            "$ref": "#/components/responses/gone"
+          },
+          "422": {
+            "$ref": "#/components/responses/validation_failed"
+          },
+          "404": {
+            "$ref": "#/components/responses/not_found"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{repo}/releases/{release_id}/assets": {
+      "post": {
+        "summary": "Upload a release asset",
+        "tags": [
+          "repos"
+        ],
+        "operationId": "repos/upload-release-asset",
+        "servers": [
+          {
+            "url": "https://uploads.github.com"
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/repo"
+          },
+          {
+            "$ref": "#/components/parameters/release-id"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "label",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/release-asset"
+                }
+              }
+            }
+          },
+          "422": {}
+        }
+      }
+    },
+    "/repos/{owner}/{repo}/tags": {
+      "get": {
+        "summary": "List repository tags",
+        "tags": [
+          "repos"
+        ],
+        "operationId": "repos/list-tags",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/owner"
+          },
+          {
+            "$ref": "#/components/parameters/repo"
+          },
+          {
+            "$ref": "#/components/parameters/per-page"
+          },
+          {
+            "$ref": "#/components/parameters/page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/tag"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Link": {
+                "$ref": "#/components/headers/link"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "headers": {
+      "link": {
+        "schema": {
+          "type": "string"
+        }
+      },
+      "x-common-marker-version": {
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "parameters": {
+      "issue-number": {
+        "name": "issue_number",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "owner": {
+        "name": "owner",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "page": {
+        "name": "page",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "per-page": {
+        "name": "per_page",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "default": 30
+        }
+      },
+      "release-id": {
+        "name": "release_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "repo": {
+        "name": "repo",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/basic-error"
+            }
+          }
+        }
+      },
+      "gone": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/basic-error"
+            }
+          }
+        }
+      },
+      "not_found": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/basic-error"
+            }
+          }
+        }
+      },
+      "not_modified": {},
+      "validation_failed": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/validation-error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "author-association": {
+        "title": "author_association",
+        "type": "string",
+        "enum": [
+          "COLLABORATOR",
+          "CONTRIBUTOR",
+          "FIRST_TIMER",
+          "FIRST_TIME_CONTRIBUTOR",
+          "MANNEQUIN",
+          "MEMBER",
+          "NONE",
+          "OWNER"
+        ]
+      },
+      "basic-error": {
+        "title": "Basic Error",
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "documentation_url": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "enterprise": {
+        "title": "Enterprise",
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "html_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "website_url": {
+            "type": "string",
+            "nullable": true,
+            "format": "uri"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "avatar_url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "name",
+          "slug",
+          "html_url",
+          "created_at",
+          "updated_at",
+          "avatar_url"
+        ]
+      },
+      "issue-comment": {
+        "title": "Issue Comment",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_text": {
+            "type": "string"
+          },
+          "body_html": {
+            "type": "string"
+          },
+          "html_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "user": {
+            "$ref": "#/components/schemas/nullable-simple-user"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "issue_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "author_association": {
+            "$ref": "#/components/schemas/author-association"
+          },
+          "performed_via_github_app": {
+            "$ref": "#/components/schemas/nullable-integration"
+          },
+          "reactions": {
+            "$ref": "#/components/schemas/reaction-rollup"
+          },
+          "pin": {
+            "$ref": "#/components/schemas/nullable-pinned-issue-comment"
+          },
+          "minimized": {
+            "$ref": "#/components/schemas/nullable-issue-comment-minimized"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "html_url",
+          "issue_url",
+          "user",
+          "url",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "nullable-integration": {
+        "title": "GitHub app",
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "owner": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/simple-user"
+              },
+              {
+                "$ref": "#/components/schemas/enterprise"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "external_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "html_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "permissions": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "type": "string"
+              },
+              "checks": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "string"
+              },
+              "contents": {
+                "type": "string"
+              },
+              "deployments": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "installations_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "owner",
+          "name",
+          "description",
+          "external_url",
+          "html_url",
+          "created_at",
+          "updated_at",
+          "permissions",
+          "events"
+        ]
+      },
+      "nullable-issue-comment-minimized": {
+        "title": "Minimized Issue Comment",
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "nullable": true
+      },
+      "nullable-pinned-issue-comment": {
+        "title": "Pinned Issue Comment",
+        "type": "object",
+        "properties": {
+          "pinned_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "pinned_by": {
+            "$ref": "#/components/schemas/nullable-simple-user"
+          }
+        },
+        "required": [
+          "pinned_at",
+          "pinned_by"
+        ],
+        "nullable": true
+      },
+      "nullable-simple-user": {
+        "title": "Simple User",
+        "type": "object",
+        "properties": {
+          "name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "email": {
+            "nullable": true,
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "avatar_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "gravatar_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "html_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "followers_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "following_url": {
+            "type": "string"
+          },
+          "gists_url": {
+            "type": "string"
+          },
+          "starred_url": {
+            "type": "string"
+          },
+          "subscriptions_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "organizations_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "repos_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "events_url": {
+            "type": "string"
+          },
+          "received_events_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "type": {
+            "type": "string"
+          },
+          "site_admin": {
+            "type": "boolean"
+          },
+          "starred_at": {
+            "type": "string"
+          },
+          "user_view_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "avatar_url",
+          "events_url",
+          "followers_url",
+          "following_url",
+          "gists_url",
+          "gravatar_id",
+          "html_url",
+          "id",
+          "node_id",
+          "login",
+          "organizations_url",
+          "received_events_url",
+          "repos_url",
+          "site_admin",
+          "starred_url",
+          "subscriptions_url",
+          "type",
+          "url"
+        ],
+        "nullable": true
+      },
+      "reaction-rollup": {
+        "title": "Reaction Rollup",
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "total_count": {
+            "type": "integer"
+          },
+          "+1": {
+            "type": "integer"
+          },
+          "-1": {
+            "type": "integer"
+          },
+          "laugh": {
+            "type": "integer"
+          },
+          "confused": {
+            "type": "integer"
+          },
+          "heart": {
+            "type": "integer"
+          },
+          "hooray": {
+            "type": "integer"
+          },
+          "eyes": {
+            "type": "integer"
+          },
+          "rocket": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url",
+          "total_count",
+          "+1",
+          "-1",
+          "laugh",
+          "confused",
+          "heart",
+          "hooray",
+          "eyes",
+          "rocket"
+        ]
+      },
+      "release-asset": {
+        "title": "Release Asset",
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "browser_download_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "uploaded",
+              "open"
+            ]
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "digest": {
+            "type": "string",
+            "nullable": true
+          },
+          "download_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uploader": {
+            "$ref": "#/components/schemas/nullable-simple-user"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "content_type",
+          "size",
+          "digest",
+          "state",
+          "url",
+          "node_id",
+          "download_count",
+          "label",
+          "uploader",
+          "browser_download_url",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "root": {
+        "type": "object",
+        "properties": {
+          "current_user_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "current_user_authorizations_html_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "authorizations_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "code_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "commit_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "emails_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "emojis_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "events_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "feeds_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "followers_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "following_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "gists_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "hub_url": {
+            "type": "string",
+            "format": "uri-template",
+            "deprecated": true
+          },
+          "issue_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "issues_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "keys_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "label_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "notifications_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "organization_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "organization_repositories_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "organization_teams_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "public_gists_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "rate_limit_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "repository_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "repository_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "current_user_repositories_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "starred_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "starred_gists_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "topic_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "user_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "user_organizations_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "user_repositories_url": {
+            "type": "string",
+            "format": "uri-template"
+          },
+          "user_search_url": {
+            "type": "string",
+            "format": "uri-template"
+          }
+        },
+        "required": [
+          "current_user_url",
+          "current_user_authorizations_html_url",
+          "authorizations_url",
+          "code_search_url",
+          "commit_search_url",
+          "emails_url",
+          "emojis_url",
+          "events_url",
+          "feeds_url",
+          "followers_url",
+          "following_url",
+          "gists_url",
+          "issue_search_url",
+          "issues_url",
+          "keys_url",
+          "label_search_url",
+          "notifications_url",
+          "organization_url",
+          "organization_repositories_url",
+          "organization_teams_url",
+          "public_gists_url",
+          "rate_limit_url",
+          "repository_url",
+          "repository_search_url",
+          "current_user_repositories_url",
+          "starred_url",
+          "starred_gists_url",
+          "user_url",
+          "user_organizations_url",
+          "user_repositories_url",
+          "user_search_url"
+        ],
+        "x-github-breaking-changes": [
+          {
+            "changeset": "remove_authorizations_url_from_api_root",
+            "patch": [
+              {
+                "op": "remove",
+                "path": "/properties/authorizations_url"
+              },
+              {
+                "op": "remove",
+                "path": "/required/2"
+              }
+            ],
+            "version": "2026-03-10"
+          },
+          {
+            "changeset": "remove_hub_url_from_api_root",
+            "patch": {
+              "properties": {
+                "hub_url": null
+              }
+            },
+            "version": "2026-03-10"
+          }
+        ]
+      },
+      "simple-user": {
+        "title": "Simple User",
+        "type": "object",
+        "properties": {
+          "name": {
+            "nullable": true,
+            "type": "string"
+          },
+          "email": {
+            "nullable": true,
+            "type": "string"
+          },
+          "login": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "avatar_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "gravatar_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "html_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "followers_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "following_url": {
+            "type": "string"
+          },
+          "gists_url": {
+            "type": "string"
+          },
+          "starred_url": {
+            "type": "string"
+          },
+          "subscriptions_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "organizations_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "repos_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "events_url": {
+            "type": "string"
+          },
+          "received_events_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "type": {
+            "type": "string"
+          },
+          "site_admin": {
+            "type": "boolean"
+          },
+          "starred_at": {
+            "type": "string"
+          },
+          "user_view_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "avatar_url",
+          "events_url",
+          "followers_url",
+          "following_url",
+          "gists_url",
+          "gravatar_id",
+          "html_url",
+          "id",
+          "node_id",
+          "login",
+          "organizations_url",
+          "received_events_url",
+          "repos_url",
+          "site_admin",
+          "starred_url",
+          "subscriptions_url",
+          "type",
+          "url"
+        ]
+      },
+      "tag": {
+        "title": "Tag",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "object",
+            "properties": {
+              "sha": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "sha",
+              "url"
+            ]
+          },
+          "zipball_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "tarball_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "node_id",
+          "commit",
+          "zipball_url",
+          "tarball_url"
+        ]
+      },
+      "validation-error": {
+        "title": "Validation Error",
+        "type": "object",
+        "required": [
+          "message",
+          "documentation_url"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "documentation_url": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "code"
+              ],
+              "properties": {
+                "resource": {
+                  "type": "string"
+                },
+                "field": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
