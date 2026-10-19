@@ -17,6 +17,7 @@ use crate::{
         google::{GoogleProvider, API_BASE as GOOGLE_API_BASE},
         openai::{auth::Auth, OpenAiProvider},
         openai_compatible::{CompatibleAuth, OpenAiCompatibleProvider},
+        request_body::{EndpointCompression, RequestCompression},
         xai::XaiProvider,
     },
     reasoning::ReasoningLevel,
@@ -39,6 +40,7 @@ pub struct ProviderBuildOptions {
     model: String,
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
+    request_compression: EndpointCompression,
     /// Prefer provider-hosted web search when the transport supports it.
     hosted_web_search: bool,
     /// Function tool names advertised as async on Responses when the model allows it.
@@ -74,6 +76,7 @@ impl ProviderBuildOptions {
             model,
             endpoint: None,
             request_timeout: None,
+            request_compression: EndpointCompression::Verified,
             hosted_web_search: true,
             async_tools: BTreeSet::new(),
             hosted_image_generation: true,
@@ -107,6 +110,25 @@ impl ProviderBuildOptions {
             ));
         }
         self.request_timeout = Some(timeout);
+        Ok(self)
+    }
+
+    /// Compresses large JSON request bodies to a custom OpenAI-compatible host
+    /// with `compression`, which the host must decode.
+    ///
+    /// Built-in providers keep their verified endpoint allowlist, so this
+    /// fails for them rather than being silently ignored.
+    pub fn request_compression(
+        mut self,
+        compression: RequestCompression,
+    ) -> Result<Self, ModelError> {
+        if !self.profile.provider.is_custom_openai_compatible() {
+            return Err(ModelError::InvalidResponse(format!(
+                "request compression is configurable only for custom providers, not '{}'",
+                self.profile.provider_name()
+            )));
+        }
+        self.request_compression = EndpointCompression::Configured(compression);
         Ok(self)
     }
 
@@ -292,6 +314,7 @@ impl ProviderBuilder {
                         client,
                         hosted_web_search: self.options.hosted_web_search,
                         async_tools: self.options.async_tools,
+                        compression: self.options.request_compression,
                     },
                 )
             }
@@ -361,6 +384,9 @@ struct OpenAiCompatibleBuild {
     client: reqwest::Client,
     hosted_web_search: bool,
     async_tools: BTreeSet<String>,
+    /// Configured only for custom hosts, which construct the Responses, Chat
+    /// Completions, or (SDK-declared) Anthropic Messages adapters below.
+    compression: EndpointCompression,
 }
 
 fn build_openai_compatible_provider(
@@ -393,8 +419,8 @@ fn build_openai_compatible_provider(
         build.hosted_web_search
     };
     match (adapter, build.auth) {
-        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
-            Ok(Arc::new(OpenAiProvider::new_with_identity(
+        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => Ok(Arc::new(
+            OpenAiProvider::new_with_identity(
                 model,
                 Some(Auth::ApiKey(key)),
                 build.client,
@@ -402,10 +428,11 @@ fn build_openai_compatible_provider(
                 hosted_web_search,
                 build.async_tools.clone(),
                 provider_name,
-            )))
-        }
-        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::None) => {
-            Ok(Arc::new(OpenAiProvider::new_with_identity(
+            )
+            .with_request_compression(build.compression),
+        )),
+        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::None) => Ok(Arc::new(
+            OpenAiProvider::new_with_identity(
                 model,
                 None,
                 build.client,
@@ -413,17 +440,19 @@ fn build_openai_compatible_provider(
                 hosted_web_search,
                 build.async_tools,
                 provider_name,
-            )))
-        }
-        (CatalogSdkAdapter::AnthropicMessages, CompatibleAuth::ApiKey(key)) => {
-            Ok(Arc::new(AnthropicProvider::new_with_identity(
+            )
+            .with_request_compression(build.compression),
+        )),
+        (CatalogSdkAdapter::AnthropicMessages, CompatibleAuth::ApiKey(key)) => Ok(Arc::new(
+            AnthropicProvider::new_with_identity(
                 model,
                 key,
                 build.client,
                 build.api_base,
                 provider_name,
-            )))
-        }
+            )
+            .with_request_compression(build.compression),
+        )),
         (CatalogSdkAdapter::AnthropicMessages, _) => Err(ModelError::InvalidResponse(format!(
             "provider '{provider_name}' Anthropic Messages requires an API key"
         ))),
@@ -444,14 +473,17 @@ fn build_openai_compatible_provider(
         // first hydrate) or names an unrecognized package. OpenAiResponses
         // plus Kimi/Ollama device auth also falls through; custom Responses
         // hosts only construct on ApiKey or None.
-        (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
-            build.client,
-            provider_name,
-            model,
-            build.dialect,
-            auth,
-            build.api_base,
-        ))),
+        (_, auth) => Ok(Arc::new(
+            OpenAiCompatibleProvider::new(
+                build.client,
+                provider_name,
+                model,
+                build.dialect,
+                auth,
+                build.api_base,
+            )
+            .with_request_compression(build.compression),
+        )),
     }
 }
 
@@ -462,3 +494,7 @@ mod tests;
 #[cfg(test)]
 #[path = "builder_session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "builder_compression_tests.rs"]
+mod compression_tests;

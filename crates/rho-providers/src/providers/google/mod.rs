@@ -95,6 +95,7 @@ impl GoogleProvider {
                 .headers(headers)
                 .header("x-goog-api-key", &self.api_key)
                 .json(&body),
+            super::request_body::EndpointCompression::Verified,
         )
         .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
@@ -129,6 +130,7 @@ impl GoogleProvider {
                 .header("x-goog-api-key", &self.api_key)
                 .header(reqwest::header::ACCEPT, "text/event-stream")
                 .json(&body),
+            super::request_body::EndpointCompression::Verified,
         )
         .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;

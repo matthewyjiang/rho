@@ -127,6 +127,7 @@ impl GitHubCopilotProvider {
         super::request_body::send(
             self.apply_headers(self.client.post(endpoint), auth)
                 .json(body),
+            super::request_body::EndpointCompression::Verified,
         )
         .await
     }

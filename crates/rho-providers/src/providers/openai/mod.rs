@@ -83,6 +83,7 @@ pub struct OpenAiProvider {
     hosted_web_search: bool,
     async_tools: BTreeSet<String>,
     session_headers: super::opencode::SessionHeaders,
+    compression: super::request_body::EndpointCompression,
 }
 
 impl OpenAiProvider {
@@ -165,11 +166,23 @@ impl OpenAiProvider {
             session_headers,
             hosted_web_search,
             async_tools,
+            compression: super::request_body::EndpointCompression::Verified,
         }
+    }
+
+    /// Replaces the built-in endpoint allowlist for HTTP Responses bodies.
+    /// Codex WebSocket frames are not HTTP bodies and stay unchanged.
+    pub(crate) fn with_request_compression(
+        mut self,
+        compression: super::request_body::EndpointCompression,
+    ) -> Self {
+        self.compression = compression;
+        self
     }
 
     fn http(&self) -> ResponsesHttpTransport<'_> {
         ResponsesHttpTransport::new(&self.client, &self.api_base)
+            .with_request_compression(self.compression)
     }
 
     async fn post_responses(

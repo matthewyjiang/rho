@@ -6,7 +6,8 @@ use reqwest::header::{HeaderValue, ACCEPT, CONTENT_ENCODING, CONTENT_LENGTH, CON
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::encoding::{encode_request, supports_gzip, MIN_GZIP_BYTES};
+use super::encoding::{encode_request, supports_gzip, MIN_COMPRESSED_BYTES};
+use super::{EndpointCompression, RequestCompression};
 
 // Covers: a shared JSON dialect must not enable gzip on an incompatible endpoint.
 // Owner: provider HTTP request encoding; existing provider fixtures use local overrides.
@@ -50,8 +51,9 @@ fn compression_support_is_scoped_to_verified_endpoints() {
     }
 }
 
-// Covers: gzip must round-trip the full serialized conversation and retain SSE/auth
-// headers, while small or incompressible requests must not grow on the wire.
+// Covers: each encoding must round-trip the full serialized conversation and
+// retain SSE/auth headers, a configured encoding must apply to the user's own
+// host, and small or incompressible requests must not grow on the wire.
 // Owner: provider HTTP request encoding; no existing test exercises binary bodies.
 #[test]
 fn encoded_body_round_trips_and_preserves_request_semantics() {
@@ -62,43 +64,74 @@ fn encoded_body_round_trips_and_preserves_request_semantics() {
     }))
     .unwrap();
     let mut incompressible = Vec::new();
-    for index in 0..(MIN_GZIP_BYTES / 32 + 1) {
+    for index in 0..(MIN_COMPRESSED_BYTES / 32 + 1) {
         incompressible.extend_from_slice(&Sha256::digest(index.to_le_bytes()));
     }
-    for (bytes, compressed) in [
-        (vec![b'a'; MIN_GZIP_BYTES - 1], false),
-        (vec![b'a'; MIN_GZIP_BYTES], true),
-        (conversation, true),
-        (incompressible, false),
-    ] {
-        let mut request = crate::reqwest_client()
-            .post("https://api.anthropic.com/v1/messages")
-            .header(CONTENT_TYPE, "application/json")
-            .header(CONTENT_LENGTH, bytes.len())
-            .header(ACCEPT, "text/event-stream")
-            .header("x-api-key", "test-secret")
-            .body(bytes.clone())
-            .build()
-            .unwrap();
-        let original_headers = request.headers().clone();
-        encode_request(&mut request).unwrap();
-        let wire_body = request.body().unwrap().as_bytes().unwrap();
-        let mut expected_headers = original_headers;
-        if compressed {
-            let mut decoded = Vec::new();
-            GzDecoder::new(wire_body).read_to_end(&mut decoded).unwrap();
-            assert_eq!(decoded, bytes);
-            assert!(wire_body.len() < bytes.len());
-            expected_headers.remove(CONTENT_LENGTH);
-            expected_headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
-        } else {
-            assert_eq!(wire_body, bytes);
+    let endpoints = [
+        (
+            "https://api.anthropic.com/v1/messages",
+            EndpointCompression::Verified,
+            RequestCompression::Gzip,
+        ),
+        (
+            "http://node0:8317/v1/responses",
+            EndpointCompression::Configured(RequestCompression::Zstd),
+            RequestCompression::Zstd,
+        ),
+        (
+            "https://proxy.example/v1/chat/completions",
+            EndpointCompression::Configured(RequestCompression::Gzip),
+            RequestCompression::Gzip,
+        ),
+    ];
+    for (url, policy, encoding) in endpoints {
+        for (bytes, compressed) in [
+            (vec![b'a'; MIN_COMPRESSED_BYTES - 1], false),
+            (vec![b'a'; MIN_COMPRESSED_BYTES], true),
+            (conversation.clone(), true),
+            (incompressible.clone(), false),
+        ] {
+            let mut request = crate::reqwest_client()
+                .post(url)
+                .header(CONTENT_TYPE, "application/json")
+                .header(CONTENT_LENGTH, bytes.len())
+                .header(ACCEPT, "text/event-stream")
+                .header("x-api-key", "test-secret")
+                .body(bytes.clone())
+                .build()
+                .unwrap();
+            let original_headers = request.headers().clone();
+            encode_request(&mut request, policy).unwrap();
+            let wire_body = request.body().unwrap().as_bytes().unwrap();
+            let mut expected_headers = original_headers;
+            if compressed {
+                assert_eq!(decode(encoding, wire_body), bytes, "{url}");
+                assert!(wire_body.len() < bytes.len());
+                expected_headers.remove(CONTENT_LENGTH);
+                expected_headers.insert(
+                    CONTENT_ENCODING,
+                    HeaderValue::from_static(encoding.as_str()),
+                );
+            } else {
+                assert_eq!(wire_body, bytes, "{url}");
+            }
+            assert_eq!(request.headers(), &expected_headers, "{url}");
+            // A rebuilt/retried encoded request must not be compressed twice.
+            let once = wire_body.to_vec();
+            encode_request(&mut request, policy).unwrap();
+            assert_eq!(request.body().unwrap().as_bytes().unwrap(), once);
         }
-        assert_eq!(request.headers(), &expected_headers);
-        // A rebuilt/retried encoded request must not be compressed twice.
-        let once = wire_body.to_vec();
-        encode_request(&mut request).unwrap();
-        assert_eq!(request.body().unwrap().as_bytes().unwrap(), once);
+    }
+}
+
+fn decode(encoding: RequestCompression, body: &[u8]) -> Vec<u8> {
+    match encoding {
+        RequestCompression::Gzip => {
+            let mut decoded = Vec::new();
+            GzDecoder::new(body).read_to_end(&mut decoded).unwrap();
+            decoded
+        }
+        RequestCompression::Zstd => zstd::decode_all(body).unwrap(),
     }
 }
 
@@ -108,11 +141,11 @@ fn encoded_body_round_trips_and_preserves_request_semantics() {
 #[test]
 fn ineligible_requests_are_unchanged() {
     let client = crate::reqwest_client();
-    let body = vec![b'a'; MIN_GZIP_BYTES * 2];
+    let body = vec![b'a'; MIN_COMPRESSED_BYTES * 2];
     for builder in [
         client
             .post("https://proxy.example/v1/messages")
-            .json(&json!({"text": "a".repeat(MIN_GZIP_BYTES)})),
+            .json(&json!({"text": "a".repeat(MIN_COMPRESSED_BYTES)})),
         client
             .post("https://api.anthropic.com/v1/messages")
             .header(CONTENT_ENCODING, "br")
@@ -126,7 +159,7 @@ fn ineligible_requests_are_unchanged() {
             .post("https://api.anthropic.com/v1/messages")
             .header(CONTENT_TYPE, "application/json")
             .body(reqwest::Body::wrap_stream(futures_util::stream::once(
-                async { Ok::<_, std::io::Error>(vec![b'a'; MIN_GZIP_BYTES]) },
+                async { Ok::<_, std::io::Error>(vec![b'a'; MIN_COMPRESSED_BYTES]) },
             ))),
     ] {
         let mut request = builder.build().unwrap();
@@ -135,7 +168,7 @@ fn ineligible_requests_are_unchanged() {
             .body()
             .and_then(reqwest::Body::as_bytes)
             .map(<[u8]>::to_vec);
-        encode_request(&mut request).unwrap();
+        encode_request(&mut request, EndpointCompression::Verified).unwrap();
         assert_eq!(request.headers(), &headers);
         assert_eq!(
             request

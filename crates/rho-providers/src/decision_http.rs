@@ -34,8 +34,11 @@ pub(crate) async fn post_json(
             post = post.bearer_auth(api_key.expose_secret());
         }
         let mut request = post.build().map_err(transport_error)?;
-        crate::providers::request_body::encode_request(&mut request)
-            .map_err(|error| DecisionError::Model(Box::new(error)))?;
+        crate::providers::request_body::encode_request(
+            &mut request,
+            crate::providers::request_body::EndpointCompression::Verified,
+        )
+        .map_err(|error| DecisionError::Model(Box::new(error)))?;
         let response = client.execute(request).await.map_err(transport_error)?;
         let status = response.status();
         let text = response.text().await.map_err(transport_error)?;

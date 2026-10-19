@@ -29,6 +29,9 @@ pub(crate) struct ProviderEndpointConfig {
     /// default. Usage on Responses-shaped hosts does not report the TTL, so
     /// it cannot be learned from responses.
     pub(crate) prompt_cache_ttl: Option<std::time::Duration>,
+    /// Encoding the user asserts this host decodes on large request bodies.
+    /// `None` sends plain JSON; Rho cannot probe this without a billed turn.
+    pub(crate) request_compression: Option<rho_providers::providers::RequestCompression>,
 }
 
 impl ProviderEndpointConfig {
@@ -73,6 +76,16 @@ impl ProviderEndpointConfig {
             .map(|ttl| parse_prompt_cache_ttl(&ttl_field, &ttl))
             .transpose()?;
 
+        let compression_field = format!("providers.custom.{provider}.request_compression");
+        let request_compression = endpoint
+            .request_compression
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|error| anyhow::anyhow!("{compression_field} {error}"))
+            })
+            .transpose()?;
+
         Ok(Self {
             base_url,
             catalog,
@@ -80,6 +93,7 @@ impl ProviderEndpointConfig {
             api,
             edit_tool: endpoint.edit_tool,
             prompt_cache_ttl,
+            request_compression,
         })
     }
 }
@@ -124,6 +138,7 @@ impl ProviderConfigs {
                 api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
                 edit_tool: None,
                 prompt_cache_ttl: None,
+                request_compression: None,
             });
             return Ok(());
         }
@@ -160,6 +175,7 @@ impl ProviderConfigs {
                     api,
                     edit_tool: None,
                     prompt_cache_ttl: None,
+                    request_compression: None,
                 });
             }
         };
@@ -186,6 +202,9 @@ impl ProviderConfigs {
             }
             if endpoint.prompt_cache_ttl.is_some() {
                 anyhow::bail!("providers.ollama does not accept prompt_cache_ttl");
+            }
+            if endpoint.request_compression.is_some() {
+                anyhow::bail!("providers.ollama does not accept request_compression");
             }
             if let Some(base_url) = endpoint.base_url {
                 self.set_endpoint("ollama", &base_url)?;
@@ -238,6 +257,16 @@ impl ProviderConfigs {
         self.custom
             .get(provider)
             .and_then(|endpoint| endpoint.edit_tool)
+    }
+
+    /// Request encoding a custom host was configured to decode, if any.
+    pub(crate) fn request_compression(
+        &self,
+        provider: &str,
+    ) -> Option<rho_providers::providers::RequestCompression> {
+        self.custom
+            .get(provider)
+            .and_then(|endpoint| endpoint.request_compression)
     }
 
     /// Configured prompt cache TTL for a custom host, if any.
@@ -511,6 +540,8 @@ struct PersistedEndpointConfig<'a> {
     edit_tool: Option<rho_tools::EditFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     prompt_cache_ttl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_compression: Option<&'static str>,
 }
 
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
@@ -526,6 +557,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                     api: None,
                     edit_tool: None,
                     prompt_cache_ttl: None,
+                    request_compression: None,
                 }),
             custom: config
                 .custom
@@ -542,6 +574,9 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                             prompt_cache_ttl: endpoint
                                 .prompt_cache_ttl
                                 .map(|ttl| humantime::format_duration(ttl).to_string()),
+                            request_compression: endpoint
+                                .request_compression
+                                .map(rho_providers::providers::RequestCompression::as_str),
                         },
                     )
                 })
@@ -575,6 +610,7 @@ pub(super) struct PartialEndpointConfig {
     pub(super) api: Option<String>,
     pub(super) edit_tool: Option<rho_tools::EditFormat>,
     pub(super) prompt_cache_ttl: Option<String>,
+    pub(super) request_compression: Option<String>,
 }
 
 #[cfg(test)]

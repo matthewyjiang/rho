@@ -54,6 +54,7 @@ pub struct AnthropicProvider {
     /// key, so a mid-session change does not rewrite top-level effort.
     per_message_effort: Mutex<per_message_effort::PerMessageEffortState>,
     session_headers: super::opencode::SessionHeaders,
+    compression: super::request_body::EndpointCompression,
 }
 
 impl AnthropicProvider {
@@ -73,6 +74,7 @@ impl AnthropicProvider {
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
             session_headers: super::opencode::SessionHeaders::new("anthropic"),
+            compression: super::request_body::EndpointCompression::Verified,
             thinking_budget_ceiling: OnceLock::new(),
             per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
@@ -124,6 +126,15 @@ impl AnthropicProvider {
         )
     }
 
+    /// Replaces the built-in endpoint allowlist for Messages request bodies.
+    pub(crate) fn with_request_compression(
+        mut self,
+        compression: super::request_body::EndpointCompression,
+    ) -> Self {
+        self.compression = compression;
+        self
+    }
+
     fn with_cold_max_tokens(
         model: String,
         api_key: String,
@@ -142,6 +153,7 @@ impl AnthropicProvider {
             max_tokens_override: None,
             thinking_override: None,
             session_headers: super::opencode::SessionHeaders::new(identity_provider),
+            compression: super::request_body::EndpointCompression::Verified,
             thinking_budget_ceiling: OnceLock::new(),
             per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
@@ -262,9 +274,11 @@ impl AnthropicProvider {
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request, false)?;
-        let response =
-            super::request_body::send(self.messages_request(&body).headers(headers).json(&body))
-                .await?;
+        let response = super::request_body::send(
+            self.messages_request(&body).headers(headers).json(&body),
+            self.compression,
+        )
+        .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
@@ -277,9 +291,11 @@ impl AnthropicProvider {
     ) -> Result<ModelResponse, ModelError> {
         let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request, true)?;
-        let response =
-            super::request_body::send(self.messages_request(&body).headers(headers).json(&body))
-                .await?;
+        let response = super::request_body::send(
+            self.messages_request(&body).headers(headers).json(&body),
+            self.compression,
+        )
+        .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
     }

@@ -35,3 +35,4 @@ pub use factory::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,
     UnavailableProvider,
 };
+pub use request_body::{RequestCompression, RequestCompressionParseError};

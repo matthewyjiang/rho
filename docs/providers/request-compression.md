@@ -1,6 +1,6 @@
 # Request compression
 
-Long conversations resend system instructions, tool schemas, source files, and tool results on each turn. Rho gzip-compresses large JSON inference requests where the **receiving endpoint** is known to accept `Content-Encoding: gzip`.
+Long conversations resend system instructions, tool schemas, source files, and tool results on each turn. Rho gzip-compresses large JSON inference requests where the **receiving endpoint** is known to accept `Content-Encoding: gzip`. Custom hosts can opt in to `zstd` or `gzip` with [`request_compression`](#custom-hosts).
 
 This is request-body compression, not `Accept-Encoding` response negotiation. Streaming responses remain SSE. Codex WebSocket messages are not HTTP request bodies and are unchanged.
 
@@ -10,8 +10,16 @@ This is request-body compression, not `Accept-Encoding` response negotiation. St
 - Requests smaller than **16 KiB (16,384 serialized bytes)** stay JSON. Compression uses the fast gzip level, and the compressed body is sent only if it is smaller.
 - `Content-Type: application/json`, credentials, provider headers, and SSE negotiation are preserved. The HTTP client computes the compressed `Content-Length` rather than retaining the original length.
 - Existing content encodings and streaming request bodies are not recompressed.
-- Support is checked against the actual HTTPS host, port, and inference path. A custom endpoint does **not** inherit support from its provider name, models.dev catalog, or OpenAI-compatible dialect.
-- Unsupported and unverified endpoints keep ordinary JSON. Rho does not replay a generation after a speculative compressed request: an ambiguous failure could otherwise duplicate a billed turn.
+- For built-in providers, support is checked against the actual HTTPS host, port, and inference path. A custom endpoint does **not** inherit support from its provider name, models.dev catalog, or OpenAI-compatible dialect.
+- Unsupported and unverified endpoints keep ordinary JSON unless a custom host sets `request_compression`. Rho does not replay a generation after a speculative compressed request: an ambiguous failure could otherwise duplicate a billed turn.
+
+## Custom hosts
+
+A custom OpenAI-compatible host can opt in with `request_compression = "zstd"` or `"gzip"` in its `[providers.custom.<name>]` table. This tells Rho that the deployment decodes that encoding. It replaces the allowlist for that host on Chat Completions and Responses (and Messages for SDK-declared hosts), over `http` or `https` and on any port. The same 16 KiB threshold and the "send only if smaller" rule apply. zstd uses level 3: on a 1 MB Rho session body it produced 153,718 bytes in 1.9 ms, where gzip's fast level produced 211,484 bytes.
+
+Compression pays off only when upload bandwidth is the bottleneck, as on a WAN or VPN link to a remote proxy. On loopback, compressing a 1.4 MB body to CLIProxyAPI took longer (about 11–13 ms) than sending it plain (about 7–10 ms).
+
+Built-in providers cannot opt in, so the allowlist still governs them. `ProviderBuildOptions::request_compression` returns an error for a built-in provider rather than ignoring the setting.
 
 The threshold rationale and performance measurements are recorded in [PR #1524](https://github.com/matthewyjiang/rho/pull/1524).
 
@@ -41,8 +49,8 @@ Gzip support must be established for **requests**. A server emitting gzipped res
 | Meta `api.meta.ai/v1/chat/completions` | **Unverified**: all controls return `401 invalid_api_key`. [API docs](https://dev.meta.ai/docs/quickstart). | Ordinary JSON for both API-key and Muse authentication. |
 | OpenCode Go `opencode.ai/inference/go/v1/{chat/completions,responses,messages}`; Zen `opencode.ai/zen/v1/{chat/completions,responses,messages}` | **Likely rejects (moderate confidence)**: [public proxy](https://github.com/anomalyco/opencode/blob/65932e870ca50d21886f9d0ee89c6603bac34a65/packages/console/app/src/lib/inference-proxy.ts#L17-L60) preserves compressed bytes and encoding, with no decompressor. Probes produce different 400/500 errors, but the downstream inference implementation is unavailable. | Ordinary JSON on every adapter; no inherited Anthropic/Responses capability. |
 | MiniMax `api.minimax.io/anthropic/v1/messages` | **Unverified**: controls stop at authentication; the [Messages specification](https://platform.minimax.io/docs/api-reference/text-chat-anthropic) does not promise gzip. | Ordinary JSON. |
-| Stock CLIProxyAPI, custom `/responses`, `/chat/completions`, `/messages` | **No gzip decoding in inspected source**: [Chat/Responses decoder](https://github.com/router-for-me/CLIProxyAPI/blob/911f49cbd49f4fe2516979754a7488a3fd14fe64/sdk/api/handlers/request_body.go#L35-L70) supports zstd, not gzip; [Messages reads raw bytes](https://github.com/router-for-me/CLIProxyAPI/blob/911f49cbd49f4fe2516979754a7488a3fd14fe64/sdk/api/handlers/claude/code_handlers.go#L72-L84). | Ordinary JSON. Deployment-specific decompression middleware could change support, but the provider name alone proves nothing. |
-| Other custom OpenAI-compatible endpoints | **Deployment-specific**: a shared JSON schema is not a transport contract. | Ordinary JSON unless the actual endpoint matches the verified allowlist above. |
+| Stock CLIProxyAPI, custom `/responses`, `/chat/completions`, `/messages` | **zstd on Responses/Chat, no gzip**: the [Chat/Responses decoder](https://github.com/router-for-me/CLIProxyAPI/blob/2422c6b0f5fe16495320fa29456493874c1977a0/sdk/api/handlers/request_body.go#L54-L73) handles only zstd and rejects gzip with `unsupported request content encoding`; [Messages reads raw bytes](https://github.com/router-for-me/CLIProxyAPI/blob/2422c6b0f5fe16495320fa29456493874c1977a0/sdk/api/handlers/claude/code_handlers.go#L72-L84). A live deployment (2026-10-18) decoded zstd that contained a bogus model name and reported that name, while gzip and corrupt zstd failed at the decoder. A real Rho Responses turn with `request_compression = "zstd"` succeeded, shrinking the request from 50,994 to 16,725 bytes. | Ordinary JSON by default. Set `request_compression = "zstd"` on the custom host to opt in. |
+| Other custom OpenAI-compatible endpoints | **Deployment-specific**: a shared JSON schema is not a transport contract. | Ordinary JSON by default; opt in with `request_compression` when the deployment decodes it. |
 
 Audit snapshot: **2026-10-17 UTC**, covering all 17 built-in providers plus CLIProxyAPI, OpenCode Zen, and arbitrary custom hosts. No credentials were read and no authenticated generation was requested for the audit. Positive Google/xAI controls establish body decoding, not a completed authenticated generation or SSE stream. The body decoder acts before authentication/schema handling; streaming flags do not change the compressed JSON representation. Unknown results are deliberately described as **unverified**, not unsupported. Vertex AI and differently hosted proxies are not covered by the Gemini finding.
 

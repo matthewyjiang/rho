@@ -43,6 +43,13 @@ fn options_reject_invalid_states_and_accept_typed_overrides() {
             .request_timeout(Duration::ZERO)
             .is_err()
     );
+    // Built-in hosts keep the verified allowlist; an override must fail loud.
+    assert!(
+        ProviderBuildOptions::new("openrouter", "model", ReasoningLevel::Off)
+            .unwrap()
+            .request_compression(super::RequestCompression::Zstd)
+            .is_err()
+    );
 }
 
 #[test]

@@ -44,6 +44,19 @@ api = "responses"
 
 Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider.
 
+### Request compression
+
+Long conversations resend the whole transcript every turn. If the host decodes compressed request bodies, set `request_compression` so JSON requests of 16 KiB or more go out as `"zstd"` or `"gzip"` (sent only when that makes them smaller):
+
+```toml
+[providers.custom.cliproxyapi]
+base_url = "http://node0:8317/v1"
+api = "responses"
+request_compression = "zstd"
+```
+
+This is your claim about the host, and Rho does not check it: a host that cannot decode the body rejects every large turn. Rho also does not retry a rejected turn as plain JSON. Stock CLIProxyAPI decodes `zstd` (not `gzip`) on `/responses` and `/chat/completions`. Leave the setting unset for hosts on the same machine or LAN, where compressing costs more time than it saves. See [request compression](/providers/request-compression).
+
 ## Authentication
 
 Custom hosts default to `auth = "none"` and send no `Authorization` header. If the host requires a key, store one with `/login <name>` or during onboarding. That selects `{name}-api-key` and sends `Authorization: Bearer <key>`. Restart keeps a keyed profile. Startup only promotes leftover `none` when a key is stored; it does not write `none` over a keyed profile. Secrets stay in the credential store, not in config.
