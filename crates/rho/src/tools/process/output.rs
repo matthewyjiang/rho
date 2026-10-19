@@ -103,16 +103,6 @@ pub(super) fn limit_process_data(
     let Some(mut data) = rendered.data().cloned() else {
         return Ok(rendered);
     };
-    let serialized_bytes = |data: &ProcessOutput| {
-        serde_json::to_vec(data)
-            .map(|bytes| bytes.len())
-            .map_err(|error| {
-                rho_sdk::tool::ToolError::new(
-                    rho_sdk::tool::ToolErrorKind::Execution,
-                    error.to_string(),
-                )
-            })
-    };
     let received_bytes = serialized_bytes(&data)?;
     if received_bytes <= max_output_bytes {
         return Ok(rendered);
@@ -128,7 +118,8 @@ pub(super) fn limit_process_data(
         }
         ProcessOutput::StopRequested { .. } => return Ok(rendered),
     }
-    while serialized_bytes(&data)? > max_output_bytes {
+    let mut bytes = serialized_bytes(&data)?;
+    while bytes > max_output_bytes {
         match &mut data {
             ProcessOutput::Snapshot {
                 snapshot,
@@ -140,6 +131,18 @@ pub(super) fn limit_process_data(
                     break;
                 };
                 let budget = output_budget.as_mut().expect("snapshot budget initialized");
+                // Each removed chunk is serialized only once. A nonempty array
+                // also loses the comma before its former final element.
+                bytes -= serialized_bytes(&chunk)? + usize::from(!snapshot.chunks.is_empty());
+                let mutable_bytes = |snapshot: &Snapshot, budget: &OutputBudget| {
+                    serialized_bytes(&(
+                        snapshot.next_cursor,
+                        snapshot.output_pending,
+                        budget.deferred_chunks,
+                        budget.omitted_chunks,
+                    ))
+                };
+                let previous = mutable_bytes(snapshot, budget)?;
                 if snapshot.chunks.is_empty() {
                     // Match poll_bounded: consume an indivisible oversized chunk
                     // rather than leave every subsequent poll stuck on it.
@@ -151,11 +154,25 @@ pub(super) fn limit_process_data(
                     snapshot.output_pending = true;
                     budget.deferred_chunks += 1;
                 }
+                // Account for decimal-width and true/false changes without
+                // serializing the unchanged command, detail, or retained chunks.
+                bytes = bytes - previous + mutable_bytes(snapshot, budget)?;
             }
             ProcessOutput::StopRequested { .. } => unreachable!("snapshot budget initialized"),
         }
     }
     Ok(rho_tools::Rendered::new(rendered.text().to_owned(), data).failed_if(rendered.is_failure()))
+}
+
+fn serialized_bytes(value: &impl serde::Serialize) -> Result<usize, rho_sdk::tool::ToolError> {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .map_err(|error| {
+            rho_sdk::tool::ToolError::new(
+                rho_sdk::tool::ToolErrorKind::Execution,
+                error.to_string(),
+            )
+        })
 }
 
 pub(super) fn format_stop(process_id: &str) -> String {

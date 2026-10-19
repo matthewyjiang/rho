@@ -171,6 +171,74 @@ fn process_data_budget_preserves_control_fields_and_pages_chunks() {
     }
 }
 
+// Covers: JSON page boundaries include escaping, commas, boolean lengths and
+// decimal-width transitions in cursors and deferred counts.
+// Owner: process script-output budgeting; the two-chunk test misses width changes.
+#[test]
+fn process_data_budget_matches_serialized_page_sizes() {
+    let mut input = snapshot();
+    input.chunks = (98..110)
+        .map(|cursor| Chunk {
+            cursor,
+            stream: Stream::Stdout,
+            text: "\"\\\n\u{0001}🦀".repeat(4),
+        })
+        .collect();
+    input.next_cursor = 110;
+    input.available_cursor = 110;
+    let original = render_snapshot(input.clone());
+    let received_bytes = serialized_bytes(original.data().unwrap()).unwrap();
+    for max_output_bytes in 0..=received_bytes {
+        let mut expected = original.data().unwrap().clone();
+        if received_bytes > max_output_bytes {
+            let ProcessOutput::Snapshot {
+                snapshot,
+                output_budget,
+            } = &mut expected
+            else {
+                unreachable!()
+            };
+            *output_budget = Some(OutputBudget {
+                max_output_bytes,
+                received_bytes,
+                deferred_chunks: 0,
+                omitted_chunks: 0,
+            });
+            // Independent oracle: serialize each complete candidate page.
+            loop {
+                if serialized_bytes(&ProcessOutput::Snapshot {
+                    snapshot: snapshot.clone(),
+                    output_budget: output_budget.clone(),
+                })
+                .unwrap()
+                    <= max_output_bytes
+                {
+                    break;
+                }
+                let Some(chunk) = snapshot.chunks.pop() else {
+                    break;
+                };
+                let budget = output_budget.as_mut().unwrap();
+                if snapshot.chunks.is_empty() {
+                    snapshot.next_cursor = chunk.cursor + 1;
+                    snapshot.output_pending = snapshot.next_cursor < snapshot.available_cursor;
+                    budget.omitted_chunks += 1;
+                } else {
+                    snapshot.next_cursor = chunk.cursor;
+                    snapshot.output_pending = true;
+                    budget.deferred_chunks += 1;
+                }
+            }
+        }
+        let actual = limit_process_data(original.clone(), max_output_bytes).unwrap();
+        assert_eq!(
+            serde_json::to_value(actual.data().unwrap()).unwrap(),
+            serde_json::to_value(expected).unwrap(),
+            "budget={max_output_bytes}"
+        );
+    }
+}
+
 // Covers: stop is a two-line receipt, not JSON
 // Owner: process output
 #[test]

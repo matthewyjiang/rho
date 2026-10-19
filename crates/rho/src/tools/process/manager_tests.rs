@@ -1,6 +1,64 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+// Covers: exact page boundaries across empty/mixed streams and cursor digit widths.
+// Owner: process snapshot paging; OS tests do not exercise exact byte boundaries.
+#[test]
+fn bounded_snapshot_matches_formatted_prefix_budgets() {
+    let (_manager, record) = manager_with_record(State::Exited);
+    {
+        let mut r = record.lock().unwrap();
+        r.command = "echo \\\nUnicode: 🦀".into();
+        r.exit_code = Some(7);
+        r.detail = Some("terminal detail".into());
+        for (index, text) in ["", "out\n", "", "err🦀", "more", "tail"]
+            .into_iter()
+            .enumerate()
+        {
+            r.chunks.push_back(RetainedChunk {
+                chunk: Chunk {
+                    cursor: 8 + index as u64,
+                    stream: if index % 2 == 0 {
+                        super::super::Stream::Stderr
+                    } else {
+                        super::super::Stream::Stdout
+                    },
+                    text: text.into(),
+                },
+                byte_cost: text.len(),
+            });
+        }
+        r.next = 14;
+    }
+    let full = snapshot(&record, 0);
+    for budget in 0..=super::super::output::format_snapshot(&full).len() + 16 {
+        let mut expected = full.clone();
+        expected.chunks.clear();
+        expected.next_cursor = full.first_cursor;
+        for chunk in &full.chunks {
+            let mut candidate = expected.clone();
+            candidate.chunks.push(chunk.clone());
+            candidate.next_cursor = chunk.cursor + 1;
+            candidate.output_pending = true;
+            if super::super::output::format_snapshot(&candidate).len() > budget {
+                if expected.chunks.is_empty() {
+                    expected.next_cursor = chunk.cursor + 1;
+                }
+                break;
+            }
+            expected = candidate;
+        }
+        expected.output_pending = expected.next_cursor < expected.available_cursor;
+        let actual = snapshot_bounded(&record, 0, budget);
+        assert_eq!(actual.chunks, expected.chunks, "budget={budget}");
+        assert_eq!(
+            super::super::output::format_snapshot(&actual),
+            super::super::output::format_snapshot(&expected),
+            "budget={budget}"
+        );
+    }
+}
+
 // Covers: a terminal snapshot returned at poll timeout acknowledges the exit,
 // including when restoring an earlier automatic-delivery reservation afterward.
 // Owner: process manager. A manual clock forces the otherwise narrow timeout race.
