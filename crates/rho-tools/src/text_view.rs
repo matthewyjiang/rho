@@ -5,6 +5,8 @@
 //! selection, and chain snapshots live here so hashline is not the generic
 //! renderer.
 
+use std::fmt::Write;
+
 mod line_split;
 mod window;
 
@@ -28,11 +30,6 @@ pub(crate) const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
 
 /// Tail lines kept after the head so EOF anchors stay chainable on large files.
 pub(crate) const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
-
-/// Format one numbered content line as `N:text` (no trailing newline).
-pub(crate) fn format_numbered_line(line_number: usize, line: &str) -> String {
-    format!("{line_number}{LINE_BODY_SEP}{line}")
-}
 
 /// Render a numbered view of `text`.
 ///
@@ -128,8 +125,12 @@ pub(crate) fn emit_numbered_body(
         if previous != 0 && line_number > previous + 1 {
             out.push_str("…\n");
         }
-        out.push_str(&format_numbered_line(line_number, lines[line_number - 1]));
-        out.push('\n');
+        writeln!(
+            out,
+            "{line_number}{LINE_BODY_SEP}{}",
+            lines[line_number - 1]
+        )
+        .expect("writing to a String cannot fail");
         previous = line_number;
     }
     out.pop();

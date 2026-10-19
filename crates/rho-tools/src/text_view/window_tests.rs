@@ -33,6 +33,32 @@ fn hashline_header<'a>(path: &'a str) -> impl FnOnce(Option<&str>) -> String + '
     }
 }
 
+// Covers: both numbered renderers preserve content bytes and output newline boundaries
+// Owner: text view
+#[test]
+fn numbered_renderers_preserve_line_boundaries() {
+    let cases = [
+        ("", "file.txt"),
+        ("\n", "file.txt\n1:"),
+        ("one", "file.txt\n1:one"),
+        ("one\n", "file.txt\n1:one"),
+        ("one\n\n", "file.txt\n1:one\n2:"),
+        ("α\r\n🦀\r\n", "file.txt\n1:α\n2:🦀"),
+        ("α\r\n🦀", "file.txt\n1:α\n2:🦀"),
+    ];
+    for (text, expected) in cases {
+        let split = format_numbered_view("file.txt", text, None, None).unwrap();
+        // A fingerprint forces the scan path even for these small inputs.
+        let scanned =
+            format_window_bytes(text.as_bytes(), None, None, Some(FileHash::new()), |_| {
+                "file.txt".to_string()
+            })
+            .unwrap();
+        assert_eq!(split, expected, "split input={text:?}");
+        assert_eq!(scanned, expected, "scanned input={text:?}");
+    }
+}
+
 // Covers: request-local scan must match the split view, including a line that
 // starts before a 256 KiB chunk boundary
 // Owner: text view window

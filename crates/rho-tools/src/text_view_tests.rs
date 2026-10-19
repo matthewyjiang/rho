@@ -53,15 +53,20 @@ fn chain_snapshot_uses_head_tail_window_without_focus() {
     }
     let text = format!("{}\n", lines.join("\n"));
     let snapshot = format_chain_snapshot("big.txt", &text, &[]);
-    assert!(snapshot.starts_with("big.txt\n"), "{snapshot}");
-    assert!(snapshot.contains("1:line-1"), "{snapshot}");
-    assert!(snapshot.contains("80:line-80"), "{snapshot}");
-    assert!(snapshot.contains("…\n"), "{snapshot}");
-    assert!(
-        snapshot.contains(&chain_truncation_footer(36, 80)),
-        "{snapshot}"
+    let head = (1..=28)
+        .map(|i| format!("{i}:line-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail = (73..=80)
+        .map(|i| format!("{i}:line-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        snapshot,
+        format!(
+            "big.txt\n{head}\n…\n{tail}\n\n[showing 36 of 80 lines; re-read with offset/limit for other lines]"
+        )
     );
-    assert!(!snapshot.contains("40:line-40"), "{snapshot}");
 }
 
 // Covers: failure focus keeps anchors without dumping the whole file

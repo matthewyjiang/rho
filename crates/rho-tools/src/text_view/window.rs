@@ -5,14 +5,14 @@
 //! [`LineFingerprint`]; untagged reads still finish the file so the footer can
 //! report `of {total}`.
 
+use std::fmt::Write;
 use std::path::Path;
 
 use tokio::io::AsyncReadExt;
 
 use super::{
-    format_numbered_line,
     line_split::{decode_content_line, LineFingerprint, LineSplit},
-    offset_past_end, window_footer,
+    offset_past_end, window_footer, LINE_BODY_SEP,
 };
 
 #[cfg(test)]
@@ -131,8 +131,8 @@ fn emit_window(header: &str, start: usize, lines: &[String], footer: Option<&str
     let mut out = header.to_string();
     out.push('\n');
     for (index, line) in lines.iter().enumerate() {
-        out.push_str(&format_numbered_line(start + index, line));
-        out.push('\n');
+        writeln!(out, "{}{LINE_BODY_SEP}{line}", start + index)
+            .expect("writing to a String cannot fail");
     }
     out.pop();
     if let Some(footer) = footer {
