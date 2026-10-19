@@ -39,8 +39,8 @@ pub(crate) struct OpenAiCompatibleProvider {
 }
 
 /// The request and its accounting policy share one resolved reasoning decision.
-struct PreparedChatRequest {
-    body: ChatRequest,
+struct PreparedChatRequest<'a> {
+    body: ChatRequest<'a>,
     hidden_reasoning_risk: HiddenReasoningRisk,
 }
 
@@ -118,17 +118,16 @@ impl OpenAiCompatibleProvider {
         chat_stream.finish(on_event)
     }
 
-    fn request_body(
+    fn request_body<'a>(
         &self,
-        request: ModelRequest<'_>,
+        request: ModelRequest<'a>,
         stream: bool,
-    ) -> Result<PreparedChatRequest, ModelError> {
+    ) -> Result<PreparedChatRequest<'a>, ModelError> {
         let target = self.model_identity();
         let messages = to_openai_messages_for_target(request.messages, Some(&target))?;
         let tools = request
             .tools
             .iter()
-            .cloned()
             .map(to_openai_tool)
             .map(|tool| self.dialect.normalize_tool(tool))
             .collect::<Vec<_>>();
@@ -161,7 +160,7 @@ impl OpenAiCompatibleProvider {
 
     async fn send(
         &self,
-        body: &ChatRequest,
+        body: &ChatRequest<'_>,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                       + Send),
@@ -193,7 +192,7 @@ impl OpenAiCompatibleProvider {
 
     async fn send_refreshing<F, Fut>(
         &self,
-        body: &ChatRequest,
+        body: &ChatRequest<'_>,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                       + Send),
@@ -232,7 +231,7 @@ impl OpenAiCompatibleProvider {
 
     async fn send_request(
         &self,
-        body: &ChatRequest,
+        body: &ChatRequest<'_>,
         auth: RequestAuth<'_>,
     ) -> Result<reqwest::Response, ModelError> {
         let endpoint = format!("{}/chat/completions", self.api_base.trim_end_matches('/'));

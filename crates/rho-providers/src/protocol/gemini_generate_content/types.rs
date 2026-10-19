@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GenerateContentRequest {
+pub struct GenerateContentRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<Content>,
     pub contents: Vec<Content>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
+    pub tools: Option<Vec<Tool<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,
 }
@@ -85,18 +85,18 @@ pub struct FunctionResponse {
     pub response: Value,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Tool {
-    pub function_declarations: Vec<FunctionDeclaration>,
+pub struct Tool<'a> {
+    pub function_declarations: Vec<FunctionDeclaration<'a>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FunctionDeclaration {
-    pub name: String,
-    pub description: String,
-    pub parameters_json_schema: Value,
+pub struct FunctionDeclaration<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub parameters_json_schema: &'a Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

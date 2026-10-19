@@ -68,7 +68,7 @@ impl ResponsesWireContract {
 
     fn serialize_tool(
         self,
-        tool: ToolSpec,
+        tool: &ToolSpec,
         hosted_web_search: bool,
         async_mode: ToolAsync,
     ) -> Value {
@@ -237,7 +237,6 @@ pub(super) fn build_responses_create_body(
     let tools = request
         .tools
         .iter()
-        .cloned()
         .map(|tool| {
             let async_mode = if super::supports_async_tools(profile.provider(), profile.model())
                 && async_tools.contains(&tool.name)

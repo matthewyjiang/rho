@@ -22,12 +22,12 @@ struct CallInfo {
     has_provider_id: bool,
 }
 
-pub fn build_request(
+pub fn build_request<'a>(
     messages: &[Message],
-    tools: &[ToolSpec],
+    tools: &'a [ToolSpec],
     target: &ModelIdentity,
     reasoning: Option<ThinkingConfig>,
-) -> Result<GenerateContentRequest, ModelError> {
+) -> Result<GenerateContentRequest<'a>, ModelError> {
     let messages = crate::protocol::late_tool_results::normalize_late_tool_results(messages);
     let system_text = messages
         .iter()
@@ -126,9 +126,9 @@ pub fn build_request(
             function_declarations: tools
                 .iter()
                 .map(|tool| FunctionDeclaration {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
-                    parameters_json_schema: tool.input_schema.clone(),
+                    name: &tool.name,
+                    description: &tool.description,
+                    parameters_json_schema: &tool.input_schema,
                 })
                 .collect(),
         }]

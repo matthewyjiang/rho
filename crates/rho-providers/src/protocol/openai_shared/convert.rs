@@ -176,13 +176,13 @@ pub(crate) fn codex_reasoning_param(
     Some(serde_json::Value::Object(reasoning))
 }
 
-pub(crate) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
+pub(crate) fn to_openai_tool(tool: &ToolSpec) -> OpenAiTool<'_> {
     OpenAiTool {
         kind: "function",
         function: OpenAiToolFunction {
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.input_schema,
+            name: &tool.name,
+            description: &tool.description,
+            parameters: Cow::Borrowed(&tool.input_schema),
             strict: false,
         },
     }
@@ -219,7 +219,7 @@ pub(crate) enum ToolAsync {
 
 /// Serializes a tool for a Responses endpoint that offers hosted tools.
 pub(crate) fn to_responses_tool(
-    tool: ToolSpec,
+    tool: &ToolSpec,
     strictness: ToolStrictness,
     hosted_web_search: bool,
     async_mode: ToolAsync,
@@ -240,14 +240,17 @@ pub(crate) fn to_responses_tool(
 
 /// Serializes a tool for a Responses endpoint with no hosted tool types.
 pub(crate) fn to_responses_lite_tool(
-    tool: ToolSpec,
+    tool: &ToolSpec,
     strictness: ToolStrictness,
 ) -> serde_json::Value {
     Value::Object(Map::from_iter([
         ("type".into(), "function".into()),
-        ("name".into(), Value::String(tool.name)),
-        ("description".into(), Value::String(tool.description)),
-        ("parameters".into(), tool.input_schema),
+        ("name".into(), Value::String(tool.name.clone())),
+        (
+            "description".into(),
+            Value::String(tool.description.clone()),
+        ),
+        ("parameters".into(), tool.input_schema.clone()),
         ("strict".into(), strictness.to_json()),
     ]))
 }

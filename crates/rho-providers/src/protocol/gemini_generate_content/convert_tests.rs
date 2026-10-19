@@ -67,13 +67,14 @@ fn request_maps_system_tools_results_and_thought_signatures() {
             content: "/tmp".into(),
         }),
     ];
+    let tools = [ToolSpec {
+        name: "bash".into(),
+        description: "run a command".into(),
+        input_schema: json!({"type":"object"}),
+    }];
     let body = build_request(
         &messages,
-        &[ToolSpec {
-            name: "bash".into(),
-            description: "run a command".into(),
-            input_schema: json!({"type":"object"}),
-        }],
+        &tools,
         &identity,
         Some(ThinkingConfig {
             thinking_budget: Some(16_384),

@@ -55,7 +55,7 @@ fn lower_xai_create_request(
 
 /// Serializes one xAI Responses tool, optionally rewriting web_search to the hosted type.
 fn to_xai_responses_tool(
-    tool: ToolSpec,
+    tool: &ToolSpec,
     strictness: ToolStrictness,
     hosted: XaiHostedTools,
 ) -> Value {
@@ -82,7 +82,6 @@ fn xai_responses_tools(tools: &[ToolSpec], hosted: XaiHostedTools) -> Vec<Value>
         .filter(|tool| {
             tool.name != "x_search" && !(hosted.image_generation && tool.name == "image_generation")
         })
-        .cloned()
         .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted))
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));

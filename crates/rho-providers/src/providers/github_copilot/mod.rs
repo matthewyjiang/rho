@@ -66,19 +66,14 @@ impl GitHubCopilotProvider {
         }
     }
 
-    fn chat_request(
+    fn chat_request<'a>(
         &self,
-        request: ModelRequest<'_>,
+        request: ModelRequest<'a>,
         stream: bool,
-    ) -> Result<ChatRequest, ModelError> {
+    ) -> Result<ChatRequest<'a>, ModelError> {
         let target = self.model_identity();
         let messages = to_openai_messages_for_target(request.messages, Some(&target))?;
-        let tools = request
-            .tools
-            .iter()
-            .cloned()
-            .map(to_openai_tool)
-            .collect::<Vec<_>>();
+        let tools = request.tools.iter().map(to_openai_tool).collect::<Vec<_>>();
         let has_tools = !tools.is_empty();
         Ok(ChatRequest {
             model: self.model.clone(),
@@ -114,7 +109,7 @@ impl GitHubCopilotProvider {
 
     async fn send_chat_once(
         &self,
-        body: &ChatRequest,
+        body: &ChatRequest<'_>,
         auth: &GitHubCopilotAuthMaterial,
     ) -> Result<reqwest::Response, ModelError> {
         let endpoint = self.chat_endpoint.as_deref().unwrap_or_else(|| {
@@ -133,7 +128,7 @@ impl GitHubCopilotProvider {
 
     async fn send_chat_with_retry(
         &self,
-        body: ChatRequest,
+        body: ChatRequest<'_>,
         auth: GitHubCopilotAuthMaterial,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>

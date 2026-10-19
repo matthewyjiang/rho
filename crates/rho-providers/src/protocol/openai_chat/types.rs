@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
-pub(crate) struct ChatRequest {
+pub(crate) struct ChatRequest<'a> {
     pub(crate) model: String,
     pub(crate) messages: Vec<OpenAiMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) tools: Option<Vec<OpenAiTool>>,
+    pub(crate) tools: Option<Vec<OpenAiTool<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -87,17 +87,17 @@ pub(crate) struct OpenAiFunctionCall {
 }
 
 #[derive(Serialize)]
-pub(crate) struct OpenAiTool {
+pub(crate) struct OpenAiTool<'a> {
     #[serde(rename = "type")]
     pub(crate) kind: &'static str,
-    pub(crate) function: OpenAiToolFunction,
+    pub(crate) function: OpenAiToolFunction<'a>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct OpenAiToolFunction {
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) parameters: serde_json::Value,
+pub(crate) struct OpenAiToolFunction<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) description: &'a str,
+    pub(crate) parameters: std::borrow::Cow<'a, serde_json::Value>,
     pub(crate) strict: bool,
 }
 
