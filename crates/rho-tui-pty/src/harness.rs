@@ -190,6 +190,23 @@ impl PtyHarness {
         Ok(())
     }
 
+    /// Types `text` as one write of plain keys into a focused field that has
+    /// no paste-burst detection, such as a picker filter or a text input, and
+    /// waits until the field echoes it left of the cursor. That echo proves
+    /// Rho consumed every key, so later waits cannot match the pre-typing
+    /// screen. The composers would buffer the burst as a paste and masked
+    /// fields never echo; use the paced `type_text` for both.
+    pub fn type_into_field(&mut self, text: &str) -> Result<()> {
+        self.log(format!("type into field {text:?}"));
+        self.inject_bytes(text.as_bytes())?;
+        self.wait_for_screen(
+            &format!("field echo {text:?}"),
+            // Same budget as the scenario `SETTLE` waits that followed typing.
+            WaitTimeout::secs(10, "typed field echo"),
+            |screen| screen.text_before_cursor().ends_with(text),
+        )
+    }
+
     pub fn submit_text(&mut self, text: &str) -> Result<()> {
         // Use an explicit paste event so runner load cannot collapse delayed
         // plain-key input into a paste burst and absorb Enter as a newline.
@@ -252,18 +269,110 @@ impl PtyHarness {
     }
 
     /// Pull available output into the screen model.
+    ///
+    /// Observes for the whole `budget`, so negative checks ("X must not appear
+    /// within N ms") can rely on it. Condition waits use [`Self::pump`].
     pub fn poll(&mut self, budget: Duration) {
         let bytes = self.pty.drain(budget);
-        if !bytes.is_empty() {
-            self.raw_output.extend_from_slice(&bytes);
-            self.screen.process(&bytes);
-            let replies = self.screen.take_terminal_replies();
-            if !replies.is_empty() {
-                if let Err(error) = self.pty.inject_bytes(&replies) {
-                    // poll is best-effort; keep the cause in failure artifacts
-                    // if a live child subsequently times out waiting for a reply.
-                    self.log(format!("could not answer terminal query: {error}"));
+        self.ingest(&bytes);
+    }
+
+    /// Pull output into the screen model, returning as soon as any arrives or
+    /// after `max_wait` without output. Use it in loops that recheck a
+    /// condition each turn; it wakes on the frame that satisfies the condition
+    /// instead of sleeping out a fixed poll budget.
+    pub fn pump(&mut self, max_wait: Duration) {
+        let started = Instant::now();
+        let Some(mut bytes) = self.pty.recv_chunk(max_wait) else {
+            // After reader EOF `recv_chunk` returns at once; keep callers paced.
+            std::thread::sleep(max_wait.saturating_sub(started.elapsed()));
+            return;
+        };
+        while let Some(chunk) = self.pty.recv_chunk(Duration::ZERO) {
+            bytes.extend(chunk);
+        }
+        self.ingest(&bytes);
+    }
+
+    fn ingest(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.raw_output.extend_from_slice(bytes);
+        self.screen.process(bytes);
+        let replies = self.screen.take_terminal_replies();
+        if !replies.is_empty() {
+            if let Err(error) = self.pty.inject_bytes(&replies) {
+                // Ingest is best-effort; keep the cause in failure artifacts
+                // if a live child subsequently times out waiting for a reply.
+                self.log(format!("could not answer terminal query: {error}"));
+            }
+        }
+    }
+
+    /// Pump output until `met` holds, the child exits, or `timeout` passes.
+    /// Checks before each pump, so a condition that already holds costs no
+    /// PTY wait. Callers wait on transitions whose pre-state fails `met`.
+    fn wait_until(&mut self, timeout: Duration, met: impl Fn(&Self) -> bool) -> WaitEnd {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.pump(Duration::ZERO);
+            if met(self) {
+                return WaitEnd::Met;
+            }
+            if !self.pty.is_running() {
+                // The satisfying output can race the exit; drain once more.
+                self.poll(Duration::from_millis(50));
+                return if met(self) {
+                    WaitEnd::Met
+                } else {
+                    WaitEnd::ChildExited
+                };
+            }
+            if Instant::now() >= deadline {
+                return WaitEnd::TimedOut;
+            }
+            self.pump(Duration::from_millis(25));
+        }
+    }
+
+    /// Runs [`Self::wait_until`] as a named wait: `what` labels the phase, the
+    /// log line, and failures; `detail` adds context to a timeout failure.
+    fn wait_named(
+        &mut self,
+        what: &str,
+        timeout: WaitTimeout,
+        met: impl Fn(&Self) -> bool,
+        detail: impl Fn(&Self) -> String,
+    ) -> Result<()> {
+        self.set_phase(format!("wait_for:{what}"));
+        let started = Instant::now();
+        match self.wait_until(timeout.duration, met) {
+            WaitEnd::Met => {
+                if self.record_timing {
+                    self.timing
+                        .push(TimingSample::new(what.to_owned(), started.elapsed()));
                 }
+                self.log(format!("observed {what}"));
+                Ok(())
+            }
+            WaitEnd::ChildExited => self.fail_unit(format!(
+                "child exited before {what} during {}",
+                timeout.label
+            )),
+            WaitEnd::TimedOut => {
+                // A frame Rho never finished leaves the screen on the last
+                // whole frame; name that instead of a bare timeout.
+                let open_frame = if self.screen.frame_open() {
+                    "; a synchronized update is still open"
+                } else {
+                    ""
+                };
+                self.fail_unit(format!(
+                    "timeout waiting for {what} ({}){}{open_frame}",
+                    timeout.label,
+                    detail(self)
+                ))
             }
         }
     }
@@ -284,120 +393,58 @@ impl PtyHarness {
         expected: usize,
         timeout: WaitTimeout,
     ) -> Result<()> {
-        self.set_phase(format!("wait_for_raw_sequence:{expected}"));
-        let deadline = Instant::now() + timeout.duration;
-        loop {
-            self.poll(Duration::from_millis(25));
-            if self.raw_sequence_occurrences(sequence) >= expected {
-                self.log(format!("observed raw sequence {expected} times"));
-                return Ok(());
-            }
-            if !self.pty.is_running() {
-                self.poll(Duration::from_millis(50));
-                if self.raw_sequence_occurrences(sequence) >= expected {
-                    self.log(format!("observed raw sequence {expected} times"));
-                    return Ok(());
-                }
-                return self.fail_unit(format!(
-                    "child exited before raw sequence appeared {expected} times during {}",
-                    timeout.label
-                ));
-            }
-            if Instant::now() >= deadline {
-                return self.fail_unit(format!(
-                    "timeout waiting for raw sequence to appear {expected} times ({})",
-                    timeout.label
-                ));
-            }
-        }
+        self.wait_named(
+            &format!("raw sequence {expected} times"),
+            timeout,
+            |harness| harness.raw_sequence_occurrences(sequence) >= expected,
+            |_| String::new(),
+        )
     }
 
     pub fn wait_for_text(&mut self, needle: &str, timeout: WaitTimeout) -> Result<()> {
-        self.set_phase(format!("wait_for_text:{needle}"));
-        let started = Instant::now();
-        let deadline = started + timeout.duration;
-        loop {
-            self.poll(Duration::from_millis(25));
-            if self.screen.contains_text(needle) {
-                if self.record_timing {
-                    self.timing.push(TimingSample::new(
-                        format!("wait_for_text:{needle}"),
-                        started.elapsed(),
-                    ));
-                }
-                self.log(format!("observed text {needle:?}"));
-                return Ok(());
-            }
-            if !self.pty.is_running() {
-                self.poll(Duration::from_millis(50));
-                if self.screen.contains_text(needle) {
-                    return Ok(());
-                }
-                return self.fail_unit(format!(
-                    "child exited before text {:?} appeared during {}",
-                    needle, timeout.label
-                ));
-            }
-            if Instant::now() >= deadline {
-                return self.fail_unit(format!(
-                    "timeout waiting for text {:?} ({})",
-                    needle, timeout.label
-                ));
-            }
-        }
+        self.wait_named(
+            &format!("text {needle:?}"),
+            timeout,
+            |harness| harness.screen.contains_text(needle),
+            |_| String::new(),
+        )
+    }
+
+    /// Wait until `met` holds for the reconstructed screen. For conditions the
+    /// named waits cannot express, such as one row's text or a pair of rows.
+    pub(crate) fn wait_for_screen(
+        &mut self,
+        what: &str,
+        timeout: WaitTimeout,
+        met: impl Fn(&ScreenModel) -> bool,
+    ) -> Result<()> {
+        self.wait_named(
+            what,
+            timeout,
+            |harness| met(&harness.screen),
+            |_| String::new(),
+        )
     }
 
     /// Wait until DECTCEM is off. Ratatui flushes hide-cursor after the cell
     /// buffer, so overlay title text can appear a frame before the caret hides.
     pub fn wait_for_hidden_cursor(&mut self, timeout: WaitTimeout) -> Result<()> {
-        self.set_phase("wait_for_hidden_cursor");
-        let deadline = Instant::now() + timeout.duration;
-        loop {
-            self.poll(Duration::from_millis(25));
-            if self.screen.hide_cursor() {
-                self.log("observed hidden cursor");
-                return Ok(());
-            }
-            if !self.pty.is_running() {
-                return self.fail_unit(format!(
-                    "child exited before the caret hid during {}",
-                    timeout.label
-                ));
-            }
-            if Instant::now() >= deadline {
-                return self.fail_unit(format!(
-                    "timeout waiting for hidden caret ({}); cursor at {:?}",
-                    timeout.label,
-                    self.screen.cursor()
-                ));
-            }
-        }
+        self.wait_named(
+            "hidden caret",
+            timeout,
+            |harness| harness.screen.hide_cursor(),
+            Self::cursor_detail,
+        )
     }
 
     /// Wait until DECTCEM is on after a modal surface returns to the composer.
     pub fn wait_for_visible_cursor(&mut self, timeout: WaitTimeout) -> Result<()> {
-        self.set_phase("wait_for_visible_cursor");
-        let deadline = Instant::now() + timeout.duration;
-        loop {
-            self.poll(Duration::from_millis(25));
-            if !self.screen.hide_cursor() {
-                self.log("observed visible cursor");
-                return Ok(());
-            }
-            if !self.pty.is_running() {
-                return self.fail_unit(format!(
-                    "child exited before the caret appeared during {}",
-                    timeout.label
-                ));
-            }
-            if Instant::now() >= deadline {
-                return self.fail_unit(format!(
-                    "timeout waiting for visible caret ({}); cursor at {:?}",
-                    timeout.label,
-                    self.screen.cursor()
-                ));
-            }
-        }
+        self.wait_named(
+            "visible caret",
+            timeout,
+            |harness| !harness.screen.hide_cursor(),
+            Self::cursor_detail,
+        )
     }
 
     /// Wait for a visible caret at `(row, column)`, including the cursor flush
@@ -407,55 +454,28 @@ impl PtyHarness {
         position: (u16, u16),
         timeout: WaitTimeout,
     ) -> Result<()> {
-        self.set_phase(format!("wait_for_cursor:{position:?}"));
-        let deadline = Instant::now() + timeout.duration;
-        loop {
-            self.poll(Duration::from_millis(25));
-            if !self.screen.hide_cursor() && self.screen.cursor() == position {
-                self.log(format!("observed cursor at {position:?}"));
-                return Ok(());
-            }
-            if !self.pty.is_running() {
-                return self.fail_unit(format!(
-                    "child exited before the caret reached {position:?} during {}",
-                    timeout.label
-                ));
-            }
-            if Instant::now() >= deadline {
-                return self.fail_unit(format!(
-                    "timeout waiting for caret at {position:?} ({}); cursor at {:?}",
-                    timeout.label,
-                    self.screen.cursor()
-                ));
-            }
-        }
+        self.wait_named(
+            &format!("caret at {position:?}"),
+            timeout,
+            |harness| !harness.screen.hide_cursor() && harness.screen.cursor() == position,
+            Self::cursor_detail,
+        )
+    }
+
+    fn cursor_detail(&self) -> String {
+        format!("; cursor at {:?}", self.screen.cursor())
     }
 
     /// Wait until `needle` is off the screen. The counterpart to
     /// [`Self::wait_for_text`], for steps that must know something is gone
     /// before acting, such as a composer clearing on submit.
     pub fn wait_for_text_gone(&mut self, needle: &str, timeout: WaitTimeout) -> Result<()> {
-        self.set_phase(format!("wait_for_text_gone:{needle}"));
-        let deadline = Instant::now() + timeout.duration;
-        loop {
-            self.poll(Duration::from_millis(25));
-            if !self.screen.contains_text(needle) {
-                self.log(format!("text {needle:?} left the screen"));
-                return Ok(());
-            }
-            if !self.pty.is_running() {
-                return self.fail_unit(format!(
-                    "child exited while text {:?} was still on screen during {}",
-                    needle, timeout.label
-                ));
-            }
-            if Instant::now() >= deadline {
-                return self.fail_unit(format!(
-                    "timeout waiting for text {:?} to leave the screen ({})",
-                    needle, timeout.label
-                ));
-            }
-        }
+        self.wait_named(
+            &format!("text {needle:?} to leave the screen"),
+            timeout,
+            |harness| !harness.screen.contains_text(needle),
+            |_| String::new(),
+        )
     }
 
     pub fn wait_for_quiet(&mut self, quiet_for: Duration, timeout: WaitTimeout) -> Result<()> {
@@ -508,13 +528,14 @@ impl PtyHarness {
         let mut saw_clean_exit_marker = false;
         let mut marker_at = None;
         loop {
-            self.poll(Duration::from_millis(20));
+            self.pump(Duration::from_millis(20));
             if !saw_clean_exit_marker && self.observed_clean_exit_marker() {
                 saw_clean_exit_marker = true;
                 marker_at = Some(Instant::now());
                 self.log("observed clean TUI exit marker");
             }
-            if let Some(code) = self.pty.wait_exit(Duration::from_millis(20))? {
+            // `pump` paces the loop; reap without a second sleep.
+            if let Some(code) = self.pty.wait_exit(Duration::ZERO)? {
                 if self.record_timing {
                     self.timing
                         .push(TimingSample::new("wait_for_exit", started.elapsed()));
@@ -586,29 +607,17 @@ impl PtyHarness {
 
     pub fn quit_with_exit_command(&mut self) -> Result<u32> {
         self.set_phase("quit_with_/exit");
-        // Dismiss overlays, then type /exit. Bracketed paste starts with ESC
-        // (`\x1b[200~`); a short PTY read of that introducer lands as literal
-        // `[200~/exit` and the child never quits.
+        // Dismiss overlays, then paste /exit like every other submitted
+        // command. Esc is CSI-u, so it cannot merge with the paste introducer;
+        // pasting also skips the 120 ms Enter suppression that typed input can
+        // trip when runner load collapses keys into a paste burst.
         self.inject_key(&Key::Esc)?;
         self.settle_for(Duration::from_millis(50));
-        self.type_text("/exit")?;
+        self.paste("/exit")?;
         self.wait_for_text("/exit", WaitTimeout::secs(10, "/exit in composer"))?;
-        // Under runner load the five typed chars can be drained in one
-        // event-loop turn and look like a paste burst. Rho then suppresses
-        // Enter for 120ms (turning it into a newline). Wait well past that
-        // window, and if the first Enter was still swallowed as a newline,
-        // send a second after another suppress window.
-        self.settle_for(Duration::from_millis(250));
+        self.settle_input();
         self.inject_key(&Key::Enter)?;
-        // Quiet probe: a timeout here must not write a failure artifact,
-        // because a second Enter may still succeed.
-        if let Some(code) = self.poll_for_exit(WaitTimeout::secs(5, "exit after /exit"))? {
-            return Ok(code);
-        }
-        self.log("first Enter after /exit did not quit; retrying Enter once");
-        self.settle_for(Duration::from_millis(250));
-        self.inject_key(&Key::Enter)?;
-        match self.wait_for_exit(WaitTimeout::secs(10, "exit after /exit retry")) {
+        match self.wait_for_exit(WaitTimeout::secs(10, "exit after /exit")) {
             Ok(code) => Ok(code),
             Err(err) => {
                 // Tear the child down so a stuck session does not poison the
@@ -716,6 +725,13 @@ impl PtyHarness {
             timing: self.timing,
         }
     }
+}
+
+/// How [`PtyHarness::wait_until`] stopped.
+enum WaitEnd {
+    Met,
+    ChildExited,
+    TimedOut,
 }
 
 #[derive(Clone, Debug)]

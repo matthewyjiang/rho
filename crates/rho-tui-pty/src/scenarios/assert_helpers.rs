@@ -3,7 +3,50 @@ use std::time::{Duration, Instant};
 use anyhow::{ensure, Context, Result};
 
 use super::STREAM;
-use crate::harness::{PtyHarness, WaitTimeout};
+use crate::{
+    harness::{PtyHarness, WaitTimeout},
+    keys::MouseButton,
+    screen::ScreenModel,
+};
+
+/// Text of one-based (mouse-coordinate) `row`, or empty when off screen.
+pub(super) fn mouse_row_text(screen: &ScreenModel, row: u16) -> String {
+    screen
+        .rows_text()
+        .get(usize::from(row.saturating_sub(1)))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Presses a hovered rail `row`, drags off it, and releases on row 1. Neither
+/// the press nor the cancelled release may open the row's exclusive view
+/// (`q back`). Input is handled in order, so the hover `hint` returning after
+/// the pointer moves back proves Rho processed the press and release; no
+/// fixed observation window is needed.
+pub(super) fn assert_cancelled_rail_click(
+    harness: &mut PtyHarness,
+    column: u16,
+    row: u16,
+    hint: &str,
+) -> Result<()> {
+    const POINTER: WaitTimeout = WaitTimeout::secs(2, "rail pointer");
+    harness.mouse(MouseButton::Left, column, row, true)?;
+    harness.mouse_drag(column, 1)?;
+    harness.mouse(MouseButton::Left, column, 1, false)?;
+    harness.wait_for_screen("rail hover hint cleared", POINTER, |screen| {
+        !mouse_row_text(screen, row).contains(hint)
+    })?;
+    harness.mouse_move(column, row)?;
+    harness.wait_for_screen("rail hover hint or opened view", POINTER, |screen| {
+        mouse_row_text(screen, row).contains(hint) || screen.contains_text("q back")
+    })?;
+    ensure!(
+        !harness.screen().contains_text("q back"),
+        "press or drag-away activated the rail row:\n{}",
+        harness.screen().debug_dump()
+    );
+    Ok(())
+}
 
 /// Waits until the cursor's row, the composer line, shows `text`. The
 /// transcript repeats submitted prompts, so screen-wide text is ambiguous.
@@ -11,7 +54,7 @@ pub(super) fn wait_for_composer(harness: &mut PtyHarness, text: &str) -> Result<
     const COMPOSER: WaitTimeout = WaitTimeout::secs(5, "composer text");
     let deadline = Instant::now() + COMPOSER.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         let screen = harness.screen();
         let (row, _) = screen.cursor();
         let line = screen.rows_text().get(usize::from(row)).cloned();
@@ -109,7 +152,7 @@ pub(super) fn saved_session_with_text(harness: &PtyHarness, marker: &str) -> Res
 pub(super) fn wait_for_turn_completion_after(harness: &mut PtyHarness, marker: &str) -> Result<()> {
     let deadline = Instant::now() + STREAM.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         let screen = harness.screen().contents();
         if screen
             .rfind(marker)

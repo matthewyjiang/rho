@@ -70,8 +70,8 @@ fn assert_appended_instructions(harness: &mut PtyHarness) -> Result<()> {
         .join("AGENTS.md");
     let deadline = Instant::now() + SETTLE.duration;
     loop {
-        // Use the harness's established poll cadence while draining PTY output.
-        harness.poll(Duration::from_millis(25));
+        // Pump PTY output while waiting for the file write.
+        harness.pump(Duration::from_millis(25));
         let contents = std::fs::read_to_string(&path)?;
         if contents == "- use max jobs 8\n- keep changes focused\n" {
             return Ok(());

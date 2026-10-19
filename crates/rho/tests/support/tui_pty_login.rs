@@ -356,9 +356,7 @@ fn ollama_device_login_needs_enter_and_logout_signs_out() {
         },
     )
     // Headless on every platform, so no real browser opens.
-    .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2")
-    // The post-login model refresh must fail fast, not reach ollama.com.
-    .with_env("HTTPS_PROXY", "http://127.0.0.1:9");
+    .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_login").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))

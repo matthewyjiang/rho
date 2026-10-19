@@ -73,7 +73,7 @@ fn wait_signal(
                 received.insert(std::str::from_utf8(&packet[..length])?.to_owned());
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                harness.poll(Duration::from_millis(20));
+                harness.pump(Duration::from_millis(20));
             }
             Err(error) => return Err(error.into()),
         }

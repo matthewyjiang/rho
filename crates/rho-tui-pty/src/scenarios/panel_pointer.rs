@@ -182,7 +182,7 @@ fn wait_until(
 ) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         if done(harness) {
             return Ok(());
         }

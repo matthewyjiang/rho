@@ -40,7 +40,7 @@ fn wait_for_row_highlight(
 ) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         let inverse = harness.screen().inverse_columns(row);
         let highlighted = inverse
             .iter()

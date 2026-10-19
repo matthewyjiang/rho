@@ -172,14 +172,14 @@ fn wait_for_idle_reply(harness: &mut PtyHarness, reply: &str) -> Result<()> {
             Instant::now() < deadline,
             "timeout waiting for idle reply {reply:?}:\n{screen}"
         );
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
     }
 }
 
 fn open_compaction_config(harness: &mut PtyHarness) -> Result<()> {
     harness.submit_text("/config")?;
     harness.wait_for_text("Config · saves automatically", SETTLE)?;
-    harness.type_text("context")?;
+    harness.type_into_field("context")?;
     harness.inject_key(&crate::keys::Key::Enter)?;
     harness.wait_for_text("Config / Context & limits", SETTLE)
 }
@@ -194,14 +194,14 @@ fn close_compaction_config(harness: &mut PtyHarness) -> Result<()> {
 fn set_compaction_number(harness: &mut PtyHarness, filter: &str, value: &str) -> Result<()> {
     use crate::keys::Key;
     open_compaction_config(harness)?;
-    harness.type_text(filter)?;
+    harness.type_into_field(filter)?;
     harness.inject_key(&Key::Enter)?;
     harness.wait_for_text("Enter save", SETTLE)?;
     harness.inject_key(&Key::End)?;
     // The initial threshold and target are both two-digit percentages.
     harness.inject_key(&Key::Backspace)?;
     harness.inject_key(&Key::Backspace)?;
-    harness.type_text(value)?;
+    harness.type_into_field(value)?;
     harness.inject_key(&Key::Enter)?;
     harness.wait_for_text("Config / Context & limits", SETTLE)?;
     close_compaction_config(harness)

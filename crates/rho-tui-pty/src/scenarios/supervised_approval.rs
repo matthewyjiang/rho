@@ -26,7 +26,7 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         text: "Config · saves automatically",
         timeout: SETTLE,
     },
-    Step::TypeText("agent"),
+    Step::TypeIntoField("agent"),
     Step::WaitText {
         text: "Agent behavior",
         timeout: SETTLE,

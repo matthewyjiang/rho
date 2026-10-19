@@ -121,7 +121,7 @@ fn wait_for_advisor_divider(
 ) -> Result<()> {
     let deadline = Instant::now() + timeout.duration;
     loop {
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
         let last = top_composer_divider(harness).unwrap_or_default();
         if check(&last) {
             return Ok(());
@@ -231,7 +231,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "select model for advisor",
         timeout: SETTLE,
     },
-    Step::TypeText("grok-4.5"),
+    Step::TypeIntoField("grok-4.5"),
     Step::WaitText {
         text: ADVISOR_MODEL,
         timeout: SETTLE,
@@ -261,7 +261,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
     },
     Step::AssertText("Advisor mode"),
     Step::AssertText("on · xai/grok-4.5"),
-    Step::TypeText("advisor_mode"),
+    Step::TypeIntoField("advisor_mode"),
     Step::WaitTextGone {
         text: "Permission mode",
         timeout: SETTLE,
@@ -349,7 +349,7 @@ pub(super) const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
         text: "select model for advisor",
         timeout: SETTLE,
     },
-    Step::TypeText("laguna"),
+    Step::TypeIntoField("laguna"),
     Step::WaitText {
         text: "poolside/laguna-m.1",
         timeout: SETTLE,
@@ -360,7 +360,7 @@ pub(super) const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_reasoning_picker_offers_only_off_and_max),
-    Step::TypeText("off"),
+    Step::TypeIntoField("off"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "advisor reasoning: off",
@@ -376,7 +376,7 @@ pub(super) const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
         text: "select model for advisor",
         timeout: SETTLE,
     },
-    Step::TypeText("laguna"),
+    Step::TypeIntoField("laguna"),
     Step::WaitText {
         text: "poolside/laguna-m.1",
         timeout: SETTLE,
@@ -438,7 +438,7 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("on · no model"),
-    Step::TypeText("advisor_mode"),
+    Step::TypeIntoField("advisor_mode"),
     Step::WaitTextGone {
         text: "Permission mode",
         timeout: SETTLE,

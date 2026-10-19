@@ -66,7 +66,7 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     Step::AssertText("Anthropic"),
     Step::AssertText("GitHub Copilot"),
     Step::Phase("sign_in"),
-    Step::TypeText("openai"),
+    Step::TypeIntoField("openai"),
     Step::WaitText {
         text: "OpenAI",
         timeout: SETTLE,
@@ -76,7 +76,7 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
         text: "Select OpenAI login method",
         timeout: SETTLE,
     },
-    Step::TypeText("OAuth"),
+    Step::TypeIntoField("OAuth"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Local file",
@@ -155,7 +155,7 @@ pub(super) const FIRST_RUN_DECISION_HOST_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("sign_in_to_decision_host"),
-    Step::TypeText("typesafe"),
+    Step::TypeIntoField("typesafe"),
     Step::WaitText {
         text: "TypeSafe",
         timeout: SETTLE,
@@ -180,7 +180,7 @@ pub(super) const FIRST_RUN_DECISION_HOST_STEPS: &[Step] = &[
     Step::AssertText("Sign in to a provider"),
     Step::Custom(assert_session_chrome_hidden),
     Step::Phase("sign_in_to_chat_provider"),
-    Step::TypeText("openai"),
+    Step::TypeIntoField("openai"),
     Step::WaitText {
         text: "OpenAI",
         timeout: SETTLE,

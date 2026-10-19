@@ -403,7 +403,7 @@ fn release_gate(harness: &mut PtyHarness) -> Result<()> {
             harness.screen().debug_dump()
         );
         // Poll PTY output while waiting on the explicit reader-ready condition.
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
     }
 }
 

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use super::{DEFAULT_SIZE, STARTUP, STREAM};
+use super::{assert_helpers::assert_cancelled_rail_click, DEFAULT_SIZE, STARTUP, STREAM};
 use crate::{
     harness::WaitTimeout,
     keys::{Key, MouseButton},
@@ -35,7 +35,7 @@ pub(super) const PROCESS_RAIL_STEPS: &[Step] = &[
 fn active_process_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         // Prefer the rail glyph. The finished process card also shows
         // `└ sleep 60`, and hovering that row is not the peek target.
         if let Some(row) = harness
@@ -62,25 +62,10 @@ fn assert_process_rail_peek_flow(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse_move(column, row)?;
     harness.wait_for_text("peek", WaitTimeout::secs(2, "process hover action hint"))?;
 
-    harness.mouse(MouseButton::Left, column, row, true)?;
-    harness.poll(Duration::from_millis(150));
-    if harness.screen().contains_text("q back") {
-        anyhow::bail!("process peek ran on mouse down");
-    }
-    harness.mouse_drag(column, 1)?;
-    harness.mouse(MouseButton::Left, column, 1, false)?;
-    harness.poll(Duration::from_millis(150));
-    if harness.screen().contains_text("q back") {
-        anyhow::bail!("drag-away activated the process row");
-    }
+    assert_cancelled_rail_click(harness, column, row, "peek")?;
 
     let row = active_process_row(harness)?;
-    harness.mouse_move(column, row)?;
     harness.mouse(MouseButton::Left, column, row, true)?;
-    harness.poll(Duration::from_millis(100));
-    if harness.screen().contains_text("q back") {
-        anyhow::bail!("process peek ran before mouse release");
-    }
     harness.mouse(MouseButton::Left, column, row, false)?;
     harness.wait_for_text("q back", WaitTimeout::secs(2, "process click release peek"))?;
     if !harness.screen().contains_text("sleep 60") {
@@ -127,7 +112,7 @@ pub(super) const PROCESS_RAIL_PEEK_STEPS: &[Step] = &[
 fn assert_pending_input_below_process_row(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        harness.poll(Duration::from_millis(20));
+        harness.pump(Duration::from_millis(20));
         let rows = harness.screen().rows_text();
         let process_row = rows.iter().position(|line| line.contains("⚙ sleep 60"));
         // The queued follow-up renders as a NEXT row in the pending-input panel.

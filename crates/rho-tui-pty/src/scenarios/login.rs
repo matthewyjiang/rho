@@ -14,7 +14,7 @@ use super::{SETTLE, STARTUP};
 fn assert_claude_code_absent_from_login_groups(harness: &mut PtyHarness) -> Result<()> {
     // Type a claude filter so only matching groups remain; Claude Code must not
     // surface as its own top-level group.
-    harness.type_text("claude")?;
+    harness.type_into_field("claude")?;
     let screen = harness.screen().contents();
     let lower = screen.to_ascii_lowercase();
     if lower.contains("claude code")
@@ -51,7 +51,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::Custom(assert_claude_code_absent_from_login_groups),
     // Cursor is a delegated runtime nested under SpaceXAI, not a top-level row;
     // searching for it still lands on the owning group.
-    Step::TypeText("cursor"),
+    Step::TypeIntoField("cursor"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Select SpaceXAI login method",
@@ -74,7 +74,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
         text: "Select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("OpenAI"),
+    Step::TypeIntoField("OpenAI"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Select OpenAI login method",
@@ -101,7 +101,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
         text: "Select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("Anthropic"),
+    Step::TypeIntoField("Anthropic"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Select Anthropic login method",
@@ -118,7 +118,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::AssertText("Uses the claude CLI"),
     Step::AssertText("Claude Code manages credentials"),
     // Choose API Key deliberately after browsing methods, not by default selection.
-    Step::TypeText("API Key"),
+    Step::TypeIntoField("API Key"),
     Step::WaitText {
         text: "API Key",
         timeout: SETTLE,
@@ -143,7 +143,7 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
         text: "Select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("Chat Completions"),
+    Step::TypeIntoField("Chat Completions"),
     Step::WaitText {
         text: "Custom · Chat Completions",
         timeout: SETTLE,
@@ -154,7 +154,7 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     // A rejected name must keep what was typed instead of clearing the field.
-    Step::TypeText("openai"),
+    Step::TypeIntoField("openai"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "conflicts with a built-in provider",
@@ -167,7 +167,7 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
     Step::Key(Key::Backspace),
-    Step::TypeText("vllm"),
+    Step::TypeIntoField("vllm"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit base URL",
@@ -202,7 +202,7 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
     Step::AssertText("Browser"),
     Step::AssertText("Device code"),
     Step::Phase("filter_login_flow"),
-    Step::TypeText("dev"),
+    Step::TypeIntoField("dev"),
     Step::Key(Key::Tab),
     Step::WaitText {
         text: "> device",
@@ -219,13 +219,13 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         text: "Select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("OpenAI"),
+    Step::TypeIntoField("OpenAI"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Select OpenAI login method",
         timeout: SETTLE,
     },
-    Step::TypeText("OAuth"),
+    Step::TypeIntoField("OAuth"),
     Step::WaitText {
         text: "OAuth",
         timeout: SETTLE,

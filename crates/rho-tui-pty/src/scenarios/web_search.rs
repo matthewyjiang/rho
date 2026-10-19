@@ -20,13 +20,13 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "Appearance",
             timeout: SETTLE,
         },
-        Step::TypeText("Tools"),
+        Step::TypeIntoField("Tools"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Inline shell",
             timeout: SETTLE,
         },
-        Step::TypeText("web_search"),
+        Step::TypeIntoField("web_search"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Next turn route",
@@ -39,7 +39,7 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "Web search mode",
             timeout: SETTLE,
         },
-        Step::TypeText("web_search_mode:backend"),
+        Step::TypeIntoField("web_search_mode:backend"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Next turn route",
@@ -51,14 +51,14 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "Web search backend",
             timeout: SETTLE,
         },
-        Step::TypeText("web_search_backend:firecrawl"),
+        Step::TypeIntoField("web_search_backend:firecrawl"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Firecrawl API",
             timeout: SETTLE,
         },
         Step::Phase("edit_endpoint"),
-        Step::TypeText("web_search_firecrawl"),
+        Step::TypeIntoField("web_search_firecrawl"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Firecrawl API base URL",
@@ -100,7 +100,7 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
         },
         Step::Key(Key::Esc),
         Step::Custom(clear_filter),
-        Step::TypeText("web_search_test"),
+        Step::TypeIntoField("web_search_test"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Send test query",
@@ -318,7 +318,7 @@ fn test_connection_lifecycle(harness: &mut crate::harness::PtyHarness) -> Result
             .context("test did not reach local endpoint")?;
         // Filtering remains responsive while the server holds the response.
         clear_filter(harness)?;
-        harness.type_text("web_search_firecrawl")?;
+        harness.type_into_field("web_search_firecrawl")?;
         harness.inject_key(&Key::Enter)?;
         harness.wait_for_text("Firecrawl API base URL", SETTLE)?;
         if index == 2 {
@@ -346,8 +346,7 @@ fn test_connection_lifecycle(harness: &mut crate::harness::PtyHarness) -> Result
 
 fn select(harness: &mut crate::harness::PtyHarness, label: &str) -> Result<()> {
     clear_filter(harness)?;
-    harness.type_text(label)?;
-    harness.settle_plain_text_input();
+    harness.type_into_field(label)?;
     harness.inject_key(&Key::Enter)
 }
 

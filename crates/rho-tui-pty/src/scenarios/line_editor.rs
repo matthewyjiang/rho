@@ -24,13 +24,13 @@ const STEPS: &[Step] = &[
         text: "Select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("Chat Completions"),
+    Step::TypeIntoField("Chat Completions"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit provider name",
         timeout: SETTLE,
     },
-    Step::TypeText("viewport-test"),
+    Step::TypeIntoField("viewport-test"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit base URL",
@@ -64,7 +64,7 @@ const STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(|harness| check_navigation_window(harness, "TAI")),
-    Step::TypeText("X"),
+    Step::TypeIntoField("X"),
     Step::WaitText {
         text: "TAXI",
         timeout: SETTLE,
@@ -113,7 +113,7 @@ pub(super) fn wait_for_tail_caret(harness: &mut PtyHarness, tail: &str) -> Resul
             harness.wait_for_cursor(position, WaitTimeout::millis(0, "settled tail caret"))?;
             return Ok(position);
         }
-        harness.poll(Duration::from_millis(25));
+        harness.pump(Duration::from_millis(25));
     }
 }
 
@@ -243,7 +243,7 @@ pub(super) const SETUP_LINE_EDITOR_SCENARIO: Scenario = Scenario::new(
             text: "Select provider to login",
             timeout: STARTUP,
         },
-        Step::TypeText("Chat Completions"),
+        Step::TypeIntoField("Chat Completions"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "edit provider name",
