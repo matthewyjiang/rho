@@ -59,13 +59,15 @@ fn search_matches_any_term_and_ranks_name_hits_first() {
         ("github", vec![]),
     ];
     for (query, expected) in cases {
-        let names: Vec<String> = search_entries(catalog.iter(), query, usize::MAX)
-            .into_iter()
-            .map(|hit| hit.name)
-            .collect();
-        assert_eq!(
-            (query, names),
-            (query, expected.into_iter().map(String::from).collect())
-        );
+        for limit in [0, 1, catalog.len(), usize::MAX] {
+            let names: Vec<&str> = search_entries(catalog.iter(), query, limit)
+                .into_iter()
+                .map(|hit| hit.name.as_str())
+                .collect();
+            assert_eq!(
+                (query, limit, names.as_slice()),
+                (query, limit, &expected[..expected.len().min(limit)])
+            );
+        }
     }
 }

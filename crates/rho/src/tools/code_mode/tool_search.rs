@@ -28,19 +28,19 @@ fn default_limit() -> usize {
 
 /// One `tool_search` hit, as both model text and structured data.
 #[derive(Debug, Serialize, JsonSchema)]
-struct ToolSearchHit {
+pub(crate) struct ToolSearchHit {
     name: String,
     description: String,
     /// Top-level argument names; optional ones end in `?`.
     parameters: Vec<String>,
 }
 
-impl From<ToolCatalogEntry> for ToolSearchHit {
-    fn from(entry: ToolCatalogEntry) -> Self {
+impl From<&ToolCatalogEntry> for ToolSearchHit {
+    fn from(entry: &ToolCatalogEntry) -> Self {
         Self {
             parameters: parameter_names(&entry.parameters),
-            name: entry.name,
-            description: entry.description,
+            name: entry.name.clone(),
+            description: entry.description.clone(),
         }
     }
 }
@@ -99,12 +99,7 @@ impl Tool for ToolSearchTool {
                 serde_json::from_value(invocation.arguments().clone()).map_err(|error| {
                     ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
                 })?;
-            let hits: Vec<ToolSearchHit> = self
-                .surface
-                .search_and_load(&args.query, args.limit)
-                .into_iter()
-                .map(ToolSearchHit::from)
-                .collect();
+            let hits = self.surface.search_and_load(&args.query, args.limit);
             // A bare `[]` reads as "this server is not connected", so a miss
             // says how to browse the catalog instead. `data` stays `[]`.
             let text = if hits.is_empty() {

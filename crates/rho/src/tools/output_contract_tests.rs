@@ -116,22 +116,18 @@ async fn built_in_script_results_match_advertised_schemas() {
         #[cfg(windows)]
         ("powershell", json!({"command": "Write-Output needle"})),
     ] {
-        let entry = surface
-            .search_and_load(name, usize::MAX)
-            .into_iter()
-            .find(|entry| entry.name == name)
-            .unwrap();
         let output = host
             .invoke(ToolHostCall::new(
                 CODEMODE_TOOL_NAME,
-                json!({"script": format!("result = call_tool({name:?}, {args})")}),
+                json!({"script": format!("result = {{\"output\": call_tool({name:?}, {args}), \"schema\": describe_tool({name:?})[\"returns\"]}}")}),
             ))
             .await
             .unwrap();
-        let result = &output.structured_content().unwrap()["return_value"];
+        let returned = &output.structured_content().unwrap()["return_value"];
+        let result = &returned["output"];
         assert_eq!(result["is_error"], false, "{name}: {result}");
         assert!(!result["data"].is_null(), "{name}: {result}");
-        jsonschema::validator_for(&entry.returns.unwrap())
+        jsonschema::validator_for(&returned["schema"])
             .unwrap()
             .validate(&result["data"])
             .unwrap();
