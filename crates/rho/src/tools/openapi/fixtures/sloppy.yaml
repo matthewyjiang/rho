@@ -141,6 +141,14 @@ paths:
           description: only bytes
           content:
             application/pdf: {schema: {type: string}}
+  /export:
+    get:
+      operationId: export
+      responses:
+        200:
+          description: text media type, binary schema behind a ref
+          content:
+            text/csv: {schema: {$ref: '#/components/schemas/File'}}
   /deep:
     get:
       operationId: deep
@@ -198,10 +206,16 @@ components:
     NewPet:
       allOf:
         - $ref: '#/components/schemas/Pet'
-      required: [id, name]
+      required: [id, name, owner]
+      properties:
+        # Hidden through an `allOf` wrapper, a common generator pattern.
+        owner:
+          allOf: [{$ref: '#/components/schemas/Owner'}]
       not:
         properties:
           legacy: {type: string, readOnly: true}
+    Owner: {type: object, readOnly: true}
+    File: {type: string, format: binary}
     Node:
       type: object
       properties:

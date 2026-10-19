@@ -171,6 +171,13 @@ fn sloppy_spec_skips_only_unusable_operations() {
             ),
             (
                 Some(Get),
+                "/export",
+                SkipReason::BinaryResponse {
+                    media_type: name("text/csv")
+                }
+            ),
+            (
+                Some(Get),
                 "/deep",
                 RefError::TooDeep {
                     reference: name("#/components/parameters/limit"),
@@ -345,15 +352,16 @@ fn rendered_schemas_hide_properties_by_direction() {
         schema_of("openapi__sloppy__tree_get", SchemaDirection::Response),
         json!({"$ref": "#/$defs/Node", "$defs": {"Node": node}})
     );
-    // `id` is hidden through `allOf`, so it leaves the outer `required`; the
-    // `not` branch keeps its readOnly property, since removing it would change
-    // what the negation rejects.
+    // `id` is hidden through `allOf` and `owner` through an `allOf` wrapper, so
+    // both leave `required`; the `not` branch keeps its readOnly property,
+    // since removing it would change what the negation rejects.
     let new_pet = schema_of("openapi__sloppy__pets_replace", SchemaDirection::Request);
     assert_eq!(
         new_pet["$defs"]["NewPet"],
         json!({
             "allOf": [{"$ref": "#/$defs/Pet"}],
             "required": ["name"],
+            "properties": {},
             "not": {"properties": {"legacy": {"type": "string", "readOnly": true}}},
         })
     );
@@ -404,12 +412,31 @@ fn render_normalizes_3_0_schemas_to_2020_12() {
             json!({"$ref": "#/components/schemas/t", "description": "kept in 3.1"}),
             json!({"$ref": "#/$defs/t", "description": "kept in 3.1", "$defs": target_defs}),
         ),
+        // A 3.0 chain collapses to its end; in 3.1 each link keeps its own
+        // constraints.
+        (
+            "3.0.3",
+            json!({"$ref": "#/components/schemas/c"}),
+            json!({"$ref": "#/$defs/t", "$defs": target_defs}),
+        ),
+        (
+            "3.1.0",
+            json!({"$ref": "#/components/schemas/c"}),
+            json!({"$ref": "#/$defs/c", "$defs": {
+                "c": {"$ref": "#/$defs/t", "maxLength": 3},
+                "t": {"type": "string"},
+            }}),
+        ),
     ];
     for (version, schema, expected) in cases {
         let spec = json!({
             "openapi": version,
             "paths": {},
-            "components": {"schemas": {"s": schema, "t": {"type": "string"}}},
+            "components": {"schemas": {
+                "s": schema,
+                "t": {"type": "string"},
+                "c": {"$ref": "#/components/schemas/t", "maxLength": 3},
+            }},
         });
         let document = Document::parse(spec.to_string().as_bytes()).expect("parses");
         let rendered = document
@@ -417,6 +444,37 @@ fn render_normalizes_3_0_schemas_to_2020_12() {
             .expect("renders");
         assert_eq!((version, &schema, rendered), (version, &schema, expected));
     }
+}
+
+// Covers: in 3.1, refs beside a `$ref` are checked too, so a broken one skips
+// the operation instead of failing later at render time.
+// Owner: OpenAPI operation index.
+#[test]
+fn openapi_3_1_checks_refs_beside_a_ref() {
+    let spec = json!({
+        "openapi": "3.1.0",
+        "paths": {"/thing": {"get": {
+            "operationId": "thing",
+            "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {
+                "$ref": "#/components/schemas/base",
+                "properties": {"x": {"$ref": "#/components/schemas/missing"}},
+            }}}}},
+        }}},
+        "components": {"schemas": {"base": {"type": "object"}}},
+    });
+    let spec = load("api", spec.to_string().as_bytes());
+    let skipped: Vec<_> = spec
+        .skipped
+        .iter()
+        .map(|skipped| skipped.reason.clone())
+        .collect();
+    assert_eq!(
+        (spec.operations.len(), skipped),
+        (
+            0,
+            vec![RefError::Broken("#/components/schemas/missing".to_owned()).into()]
+        )
+    );
 }
 
 // Covers: only an oversized, unparsable, alias-bombed, or non-3.x document

@@ -3,7 +3,7 @@
 use std::{borrow::Cow, collections::HashSet, fmt};
 
 use percent_encoding::percent_decode_str;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::LoadError;
 
@@ -112,6 +112,31 @@ impl Document {
             at = Some(target);
         }
         Ok(at.map(|at| (at, value)))
+    }
+
+    /// Where the `$ref` of a schema points, after checking that its whole
+    /// chain resolves. OpenAPI 3.0 ignores `$ref` siblings, so a chain
+    /// collapses to its end; in 3.1 every link may add constraints, so only
+    /// the first hop is taken. Returns `None` when `schema` has no `$ref`.
+    pub(super) fn schema_ref_target(
+        &self,
+        schema: &Map<String, Value>,
+    ) -> Result<Option<JsonPointer>, RefError> {
+        let Some(reference) = schema.get("$ref").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let first = JsonPointer::from_ref(reference)?;
+        let value = self
+            .get(&first)
+            .ok_or_else(|| RefError::Broken(reference.to_owned()))?;
+        let last = self
+            .resolve(value)?
+            .map_or_else(|| first.clone(), |(at, _)| at);
+        Ok(Some(if self.version.ignores_ref_siblings() {
+            last
+        } else {
+            first
+        }))
     }
 
     /// The value at `at` with any `$ref` chain followed, and where it lives.

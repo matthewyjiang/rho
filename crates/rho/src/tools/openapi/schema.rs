@@ -122,7 +122,9 @@ pub(super) fn check_refs(
         if verified.contains(&at) || !visited.insert(at.clone()) {
             continue;
         }
-        let (_, schema) = document.resolve_at(at)?;
+        let schema = document
+            .get(&at)
+            .ok_or_else(|| RefError::Broken(at.to_string()))?;
         collect_refs(document, schema, &mut pending)?;
     }
     verified.extend(visited);
@@ -138,7 +140,7 @@ fn collect_refs(
     let Value::Object(map) = schema else {
         return Ok(());
     };
-    if let Some((target, _)) = document.resolve(schema)? {
+    if let Some(target) = document.schema_ref_target(map)? {
         pending.push(target);
         if document.version().ignores_ref_siblings() {
             return Ok(());
@@ -201,28 +203,16 @@ struct Renderer<'a> {
 
 impl Renderer<'_> {
     fn transform(&mut self, schema: &mut Value, hiding: Hiding<'_>) -> Result<(), RefError> {
-        let def_key = self
-            .document
-            .resolve(schema)?
-            .map(|(target, _)| self.def_key(target));
         let Value::Object(map) = schema else {
             return Ok(());
         };
-        let ignores_ref_siblings = self.document.version().ignores_ref_siblings();
-        if let Some(key) = def_key {
-            if ignores_ref_siblings {
-                map.clear();
-            }
-            // Keys never contain `~` or `/`, so they need no pointer escaping.
-            map.insert("$ref".to_owned(), Value::String(format!("#/$defs/{key}")));
-            if ignores_ref_siblings {
-                return Ok(());
-            }
+        let target = self.document.schema_ref_target(map)?;
+        if let (Some(target), true) = (&target, self.document.version().ignores_ref_siblings()) {
+            let reference = self.def_ref(target.clone());
+            *map = Map::from_iter([("$ref".to_owned(), reference)]);
+            return Ok(());
         }
-        match self.document.version() {
-            SpecVersion::V3_0 => normalize_3_0(map),
-            SpecVersion::V3_1 => {}
-        }
+        // Computed before the `$ref` is rewritten, since it follows the ref.
         let hidden = match hiding {
             Hiding::Off => None,
             Hiding::On(inherited) => {
@@ -231,6 +221,14 @@ impl Renderer<'_> {
                 Some(hidden)
             }
         };
+        if let Some(target) = target {
+            let reference = self.def_ref(target);
+            map.insert("$ref".to_owned(), reference);
+        }
+        match self.document.version() {
+            SpecVersion::V3_0 => normalize_3_0(map),
+            SpecVersion::V3_1 => {}
+        }
         if let Some(hidden) = hidden.as_ref().filter(|hidden| !hidden.is_empty()) {
             if let Some(Value::Object(properties)) = map.get_mut("properties") {
                 properties.retain(|name, _| !hidden.contains(name));
@@ -253,14 +251,25 @@ impl Renderer<'_> {
         })
     }
 
-    /// Names of properties `schema` hides in this direction, including those
-    /// declared by its `allOf` branches, which describe the same instance.
+    /// Names of properties `schema` hides in this direction. Its `$ref` and
+    /// `allOf` branches describe the same instance, so their hidden names
+    /// count too.
     fn hidden_names(
         &self,
         schema: &Map<String, Value>,
         visited: &mut HashSet<JsonPointer>,
     ) -> Result<BTreeSet<String>, RefError> {
         let mut hidden = BTreeSet::new();
+        if let Some(target) = self.document.schema_ref_target(schema)? {
+            if let (true, Some(Value::Object(target))) =
+                (visited.insert(target.clone()), self.document.get(&target))
+            {
+                hidden.extend(self.hidden_names(target, visited)?);
+            }
+            if self.document.version().ignores_ref_siblings() {
+                return Ok(hidden);
+            }
+        }
         if let Some(Value::Object(properties)) = schema.get("properties") {
             for (name, property) in properties {
                 if self.marks_hidden(property, &mut HashSet::new())? {
@@ -268,12 +277,7 @@ impl Renderer<'_> {
                 }
             }
         }
-        for branch in all_of(schema) {
-            let branch = match self.document.resolve(branch)? {
-                Some((at, _)) if !visited.insert(at.clone()) => continue,
-                Some((_, target)) => target,
-                None => branch,
-            };
+        for branch in branches(schema, "allOf") {
             if let Value::Object(branch) = branch {
                 hidden.extend(self.hidden_names(branch, visited)?);
             }
@@ -281,34 +285,46 @@ impl Renderer<'_> {
         Ok(hidden)
     }
 
-    /// Whether `schema` carries this direction's hidden keyword, directly,
-    /// through its `$ref`, or through an `allOf` branch.
+    /// Whether `schema` carries this direction's hidden keyword, directly or
+    /// through its `$ref` or an `allOf` branch, as opencode does. A flag on
+    /// one `anyOf` or `oneOf` branch says nothing about the others. The
+    /// schema's own flag counts even beside a 3.0 `$ref`, where generators
+    /// put it.
     fn marks_hidden(
         &self,
         schema: &Value,
         visited: &mut HashSet<JsonPointer>,
     ) -> Result<bool, RefError> {
-        let keyword = self.direction.hidden_keyword();
-        if schema.get(keyword) == Some(&Value::Bool(true)) {
-            return Ok(true);
-        }
-        let schema = match self.document.resolve(schema)? {
-            Some((at, _)) if !visited.insert(at.clone()) => return Ok(false),
-            Some((_, target)) => target,
-            None => schema,
-        };
-        if schema.get(keyword) == Some(&Value::Bool(true)) {
-            return Ok(true);
-        }
         let Value::Object(map) = schema else {
             return Ok(false);
         };
-        for branch in all_of(map) {
+        if map.get(self.direction.hidden_keyword()) == Some(&Value::Bool(true)) {
+            return Ok(true);
+        }
+        if let Some(target) = self.document.schema_ref_target(map)? {
+            if let (true, Some(value)) =
+                (visited.insert(target.clone()), self.document.get(&target))
+            {
+                if self.marks_hidden(value, visited)? {
+                    return Ok(true);
+                }
+            }
+            if self.document.version().ignores_ref_siblings() {
+                return Ok(false);
+            }
+        }
+        for branch in branches(map, "allOf") {
             if self.marks_hidden(branch, visited)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// The `$ref` value pointing at `target`'s entry in `$defs`.
+    fn def_ref(&mut self, target: JsonPointer) -> Value {
+        // Keys never contain `~` or `/`, so they need no pointer escaping.
+        Value::String(format!("#/$defs/{}", self.def_key(target)))
     }
 
     /// A stable, readable `$defs` key for `target`, queued on first sight.
@@ -349,9 +365,10 @@ enum Hiding<'a> {
     On(&'a BTreeSet<String>),
 }
 
-fn all_of(schema: &Map<String, Value>) -> impl Iterator<Item = &Value> {
+/// The subschemas of a composition keyword such as `allOf`.
+fn branches<'a>(schema: &'a Map<String, Value>, keyword: &str) -> impl Iterator<Item = &'a Value> {
     schema
-        .get("allOf")
+        .get(keyword)
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
