@@ -460,6 +460,32 @@ fn render_normalizes_3_0_schemas_to_2020_12() {
     }
 }
 
+// Covers: alias-free YAML at the decoding worst cases loads instead of
+// tripping the alias-expansion budget.
+// Owner: OpenAPI spec loader.
+#[test]
+fn alias_free_yaml_fits_the_expansion_budget() {
+    let header = "openapi: 3.1.0\npaths: {}\n";
+    let cases = [
+        // `\L` decodes two bytes into a three-byte line separator.
+        format!(
+            "{header}info: {{title: \"{}\", version: v}}\n",
+            "\\L".repeat(500)
+        ),
+        // Each one-byte key also gets an implied null value.
+        format!("{header}x-flags: {{{}}}\n", vec!["a"; 500].join(",")),
+    ];
+    for source in cases {
+        let loaded = OpenApiSpec::load(SpecInput {
+            name: "api",
+            url: &url("https://example.com/api.yaml"),
+            bytes: source.as_bytes(),
+            max_spec_bytes: source.len(),
+        });
+        assert_eq!(loaded.err().map(|error| error.to_string()), None);
+    }
+}
+
 // Covers: in 3.1, keywords beside a `$ref` count: a broken ref there skips
 // the operation instead of failing later at render time, and `format: binary`
 // on a middle link makes a text response unsupported.
@@ -580,13 +606,13 @@ fn load_fails_whole_source_only_for_document_problems() {
         (
             ALIAS_BOMB,
             1024,
-            |error| matches!(error, LoadError::YamlAliasExpansion { limit } if *limit == ALIAS_BOMB.len()),
+            |error| matches!(error, LoadError::YamlAliasExpansion { limit } if *limit == 2 * ALIAS_BOMB.len()),
         ),
         // Few nodes, but each alias replays a 40-byte string.
         (
             STRING_ALIAS_BOMB,
             1024,
-            |error| matches!(error, LoadError::YamlAliasExpansion { limit } if *limit == STRING_ALIAS_BOMB.len()),
+            |error| matches!(error, LoadError::YamlAliasExpansion { limit } if *limit == 2 * STRING_ALIAS_BOMB.len()),
         ),
     ];
     for (bytes, max_spec_bytes, expected) in cases {

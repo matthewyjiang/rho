@@ -2,10 +2,8 @@
 //!
 //! YAML aliases replay whole subtrees and scalars, so a few kilobytes can
 //! expand into gigabytes before serde_yaml_ng's own repetition check trips.
-//! Each node costs one unit and each string or key also costs its length, and
-//! the budget is one unit per input byte. Real specs need far less: GitHub's
-//! 10.3 MB YAML spec needs 0.61 units per byte and Stripe's 6.6 MB spec 0.54,
-//! so the budget only trips when aliases replay content.
+//! Each node costs one unit and each string or key also costs its decoded
+//! length, against a budget of `UNITS_PER_BYTE` units per input byte.
 
 use std::{cell::Cell, fmt};
 
@@ -14,10 +12,18 @@ use serde_json::{Map, Value};
 
 use super::LoadError;
 
-/// Parse YAML into JSON, failing once it expands past one unit per byte.
+/// Without aliases, a document needs at most 1.5 units per byte: a two-byte
+/// `\L` escape decodes to three bytes, and a one-byte flow key such as the
+/// `a` in `{a, b}` adds an implied null. Real specs need far less: GitHub's
+/// 10.3 MB YAML spec needs 0.61 units per byte and Stripe's 6.6 MB spec 0.54.
+/// So only aliases replaying content can pass two.
+const UNITS_PER_BYTE: usize = 2;
+
+/// Parse YAML into JSON, failing once it expands past `UNITS_PER_BYTE`.
 pub(super) fn parse(bytes: &[u8]) -> Result<Value, LoadError> {
+    let limit = bytes.len().saturating_mul(UNITS_PER_BYTE);
     let budget = Budget {
-        remaining: Cell::new(bytes.len()),
+        remaining: Cell::new(limit),
         exceeded: Cell::new(false),
     };
     let deserializer = serde_yaml_ng::Deserializer::from_slice(bytes);
@@ -25,7 +31,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Value, LoadError> {
         .deserialize(deserializer)
         .map_err(|error| {
             if budget.exceeded.get() {
-                LoadError::YamlAliasExpansion { limit: bytes.len() }
+                LoadError::YamlAliasExpansion { limit }
             } else {
                 LoadError::Yaml(error)
             }
