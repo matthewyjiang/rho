@@ -11,6 +11,24 @@ use rho_sdk::{
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::Serialize;
 
+/// Measure serialized JSON bytes without allocating an encoded copy.
+pub fn json_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, serde_json::Error> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value)?;
+    Ok(counter.0)
+}
+
 /// A completed result. Missing data means the tool has no script-facing value.
 /// Structured data is bounded by its serialized JSON bytes via [`Self::limit_data`];
 /// oversized data is omitted with an explicit truncation notice. Images and
@@ -93,20 +111,26 @@ impl<T> Rendered<T> {
 
 impl<T: Serialize> Rendered<T> {
     /// Omit oversized structured data instead of exposing an unbounded script view.
-    pub fn limit_data(mut self, max_output_bytes: usize) -> Result<Self, ToolError> {
+    pub fn limit_data(self, max_output_bytes: usize) -> Result<Self, ToolError> {
         if let Some(data) = &self.data {
-            let asked = serde_json::to_vec(data)
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?
-                .len();
-            if asked > max_output_bytes {
-                self.data = None;
-                self.text = crate::tool::truncate(
+            let asked = json_len(data)
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            return Ok(self.limit_data_with_size(max_output_bytes, asked));
+        }
+        Ok(self)
+    }
+
+    /// Apply the data budget using a previously measured serialized JSON size.
+    /// `asked` must describe the current data, measured with [`json_len`].
+    pub fn limit_data_with_size(mut self, max_output_bytes: usize, asked: usize) -> Self {
+        if self.data.is_some() && asked > max_output_bytes {
+            self.data = None;
+            self.text = crate::tool::truncate(
                     format!("[structured data truncated: max_output_bytes {max_output_bytes}, received {asked} bytes]\n{}", self.text),
                     max_output_bytes.saturating_sub(crate::tool::TRUNCATION_MARKER.len()),
                 );
-            }
         }
-        Ok(self)
+        self
     }
 
     pub fn into_tool_output(self, mut metadata: ToolMetadata) -> Result<ToolOutput, ToolError> {

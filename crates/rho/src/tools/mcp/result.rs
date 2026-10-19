@@ -199,13 +199,13 @@ fn ensure_json_budget(
     max_bytes: usize,
     label: &str,
 ) -> Result<(), ToolError> {
-    let encoded = serde_json::to_vec(value).map_err(|error| {
+    let encoded_len = rho_tools::json_len(value).map_err(|error| {
         ToolError::new(
             ToolErrorKind::Execution,
             format!("MCP server returned {label} that could not be measured: {error}"),
         )
     })?;
-    if encoded.len() > max_bytes {
+    if encoded_len > max_bytes {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             format!(
