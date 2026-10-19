@@ -19,13 +19,13 @@ use crate::{
 
 use super::{
     tool::CodeModeTool,
-    tool_search::{ToolSearchTool, TOOL_SEARCH_NAME},
+    tool_search::{ToolSearchHit, ToolSearchTool, TOOL_SEARCH_NAME},
     CODEMODE_TOOL_NAME,
 };
 
 /// The full contract script `describe_tool` returns. `tool_search` and script
 /// discovery send only compact summaries of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ToolCatalogEntry {
     pub name: String,
     pub description: String,
@@ -121,14 +121,15 @@ impl CodeModeSurface {
 
     /// Top-level search loads only returned hits for subsequent model requests,
     /// including in `only` mode. Script discovery stays read-only in its bridge.
-    pub(crate) fn search_and_load(&self, query: &str, limit: usize) -> Vec<ToolCatalogEntry> {
+    pub(crate) fn search_and_load(&self, query: &str, limit: usize) -> Vec<ToolSearchHit> {
         let mut state = self.state.write().expect("codemode surface");
         let entries: Vec<_> = state.tools.iter().map(ScriptTool::catalog_entry).collect();
         let hits = search_entries(entries.iter(), query, limit);
         state
             .loaded
             .extend(hits.iter().map(|entry| entry.name.clone()));
-        hits
+        // Keep only compact results once this fresh catalog goes out of scope.
+        hits.into_iter().map(ToolSearchHit::from).collect()
     }
 
     pub(crate) fn mode(&self) -> CodemodeMode {
@@ -187,7 +188,7 @@ pub(super) fn search_entries<'a>(
     entries: impl Iterator<Item = &'a ToolCatalogEntry>,
     query: &str,
     limit: usize,
-) -> Vec<ToolCatalogEntry> {
+) -> Vec<&'a ToolCatalogEntry> {
     let terms = search_terms(query);
     let mut hits: Vec<_> = entries
         .filter_map(|entry| {
@@ -207,7 +208,7 @@ pub(super) fn search_entries<'a>(
     hits.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     hits.into_iter()
         .take(limit)
-        .map(|(_, entry)| entry.clone())
+        .map(|(_, entry)| entry)
         .collect()
 }
 

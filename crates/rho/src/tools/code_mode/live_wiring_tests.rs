@@ -380,7 +380,7 @@ fn discovery_refreshes_live_definitions_without_resync() {
         progress,
     );
     let frozen = ToolHostBridge::new(surface.clone(), context.clone()).unwrap();
-    let original = frozen.describe("mcp__github__create_issue").unwrap();
+    let original = json!(frozen.describe("mcp__github__create_issue").unwrap());
     let revised = DiscoveryDefinition {
         spec: ToolSpec {
             name: "mcp__github__create_issue".into(),
@@ -401,12 +401,16 @@ fn discovery_refreshes_live_definitions_without_resync() {
         returns: revised.output_schema,
     };
     assert_eq!(
-        surface.search_and_load(&expected.description, 1),
-        vec![expected.clone()]
+        json!(surface.search_and_load(&expected.description, 1)),
+        json!([{
+            "name": expected.name,
+            "description": expected.description,
+            "parameters": ["priority"],
+        }])
     );
     let fresh = ToolHostBridge::new(surface, context).unwrap();
-    assert_eq!(fresh.describe(&expected.name), Some(expected));
-    assert_eq!(frozen.describe(&original.name), Some(original));
+    assert_eq!(fresh.describe(&expected.name), Some(&expected));
+    assert_eq!(json!(frozen.describe(&expected.name)), original);
 }
 
 // Covers: publishing siblings mid-script cannot advertise names its child host rejects.

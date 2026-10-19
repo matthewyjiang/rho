@@ -59,15 +59,12 @@ impl ToolHostBridge {
         })
     }
 
-    pub(super) fn search(&self, query: &str, limit: usize) -> Vec<ToolCatalogEntry> {
+    pub(super) fn search(&self, query: &str, limit: usize) -> Vec<&ToolCatalogEntry> {
         search_entries(self.catalog.iter(), query, limit)
     }
 
-    pub(super) fn describe(&self, name: &str) -> Option<ToolCatalogEntry> {
-        self.catalog
-            .iter()
-            .find(|entry| entry.name == name)
-            .cloned()
+    pub(super) fn describe(&self, name: &str) -> Option<&ToolCatalogEntry> {
+        self.catalog.iter().find(|entry| entry.name == name)
     }
 
     /// The evaluator and native tool waits share the parent cancellation token.
