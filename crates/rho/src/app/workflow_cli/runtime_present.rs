@@ -1,6 +1,6 @@
 //! Text and JSONL presentation for non-TUI workflow runs.
 
-use std::{io, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     app::workflow_runtime::{RecoveryDecision, RuntimeEvent, WorkflowRunner},
@@ -28,6 +28,8 @@ pub(super) async fn drive_with_stream(
         presentation,
         run.manifest.run_id,
     ));
+    // Before driving, so no workflow output precedes the handlers.
+    let mut shutdown = crate::app::shutdown_signal::ShutdownSignals::install()?;
     let interrupted = {
         let drive = runner.drive(run.manifest.run_id, recovery, Some(event_tx));
         tokio::pin!(drive);
@@ -36,7 +38,7 @@ pub(super) async fn drive_with_stream(
                 result?;
                 false
             }
-            result = workflow_shutdown_signal() => {
+            result = shutdown.recv() => {
                 result?;
                 cancellation.request()?;
                 drive.as_mut().await?;
@@ -82,23 +84,6 @@ pub(super) fn runtime_event_json(
     object.insert("sequence".into(), sequence.into());
     object.insert("run_id".into(), run_id.to_string().into());
     value
-}
-
-#[cfg(unix)]
-async fn workflow_shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
-
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        _ = interrupt.recv() => Ok(()),
-        _ = terminate.recv() => Ok(()),
-    }
-}
-
-#[cfg(not(unix))]
-async fn workflow_shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
 }
 
 #[cfg(test)]

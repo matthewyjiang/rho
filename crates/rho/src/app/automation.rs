@@ -27,6 +27,7 @@ use super::{
     session_assembly::{
         assemble_session, ApprovalInputs, SessionApproval, SessionAssembly, SessionAssemblyOptions,
     },
+    shutdown_signal::{ShutdownSignal, ShutdownSignals},
 };
 
 mod terminal;
@@ -91,33 +92,6 @@ impl fmt::Display for AutomationInterrupted {
 }
 
 impl std::error::Error for AutomationInterrupted {}
-
-#[derive(Clone, Copy, Debug)]
-enum ShutdownSignal {
-    Interrupt,
-    #[cfg(unix)]
-    Terminate,
-}
-
-impl ShutdownSignal {
-    fn exit_code(self) -> u8 {
-        match self {
-            Self::Interrupt => 130,
-            #[cfg(unix)]
-            Self::Terminate => 143,
-        }
-    }
-}
-
-impl fmt::Display for ShutdownSignal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interrupt => formatter.write_str("SIGINT"),
-            #[cfg(unix)]
-            Self::Terminate => formatter.write_str("SIGTERM"),
-        }
-    }
-}
 
 #[derive(Debug)]
 struct SubagentCancelled;
@@ -654,6 +628,8 @@ async fn complete_run(
         jsonl,
         host_input,
     } = dependencies;
+    // Before the run starts, so no observable output precedes the handlers.
+    let mut shutdown = ShutdownSignals::install()?;
     let mut run = match entry {
         RunEntry::Prompt(text) => session.start(UserInput::text(text)).await?,
         RunEntry::Resume => session.continue_history().await?,
@@ -665,7 +641,7 @@ async fn complete_run(
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
         outcome = headless_run::drive(&mut run, reporter, jsonl, host_input) => outcome,
-        signal = shutdown_signal() => {
+        signal = shutdown.recv() => {
             let signal = signal?;
             cancellation.cancel();
             let _ = run.outcome().await;
@@ -862,24 +838,6 @@ impl RunReporter {
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
     }
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() -> io::Result<ShutdownSignal> {
-    use tokio::signal::unix::{signal, SignalKind};
-
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        _ = interrupt.recv() => Ok(ShutdownSignal::Interrupt),
-        _ = terminate.recv() => Ok(ShutdownSignal::Terminate),
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<ShutdownSignal> {
-    tokio::signal::ctrl_c().await?;
-    Ok(ShutdownSignal::Interrupt)
 }
 
 fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
