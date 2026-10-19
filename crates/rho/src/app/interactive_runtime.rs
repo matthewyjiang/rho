@@ -420,10 +420,14 @@ impl InteractiveRuntime {
         model_message: Message,
         display_message: Message,
     ) {
+        // Keep history and revision atomic while the run continues, without
+        // decorating persistence metadata for this display-only checkpoint.
+        let snapshot = self.sessions.session().snapshot();
         self.runs.record_boundary_display(
             model_message,
             display_message,
-            &self.sessions.snapshot(),
+            snapshot.history(),
+            snapshot.revision(),
         );
     }
 

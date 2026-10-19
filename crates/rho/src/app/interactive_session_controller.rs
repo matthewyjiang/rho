@@ -234,9 +234,10 @@ impl InteractiveSessionController {
         let Some(storage) = &self.storage else {
             return Ok(());
         };
-        let history = self.session.history();
-        let display =
-            pending_turn.map_or_else(Vec::new, |turn| turn.display_tail(&history, outcome));
+        let snapshot = self.snapshot();
+        let display = pending_turn.map_or_else(Vec::new, |turn| {
+            turn.display_tail(snapshot.history(), outcome)
+        });
         let display_tail = display.get(persisted..).ok_or_else(|| {
             anyhow::anyhow!(
                 "turn display checkpoint exceeds accumulated history: persisted {}, accumulated {}",
@@ -244,7 +245,7 @@ impl InteractiveSessionController {
                 display.len()
             )
         })?;
-        storage.save_snapshot(&self.snapshot(), display_tail)?;
+        storage.save_snapshot(&snapshot, display_tail)?;
         Ok(())
     }
 
