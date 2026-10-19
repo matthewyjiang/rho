@@ -48,7 +48,7 @@ class FullPlanTests(unittest.TestCase):
         self.assertIn("--all-features", commands["Run Clippy"])
         self.assertEqual(
             commands["Run workspace tests"],
-            ("cargo", "test", "--workspace", "--locked"),
+            ("cargo", "nextest", "run", "--workspace", "--locked", "--no-fail-fast"),
         )
         self.assertEqual(
             commands["Run documentation tests"],
