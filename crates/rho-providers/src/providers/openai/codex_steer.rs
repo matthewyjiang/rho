@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Map, Value};
 
 use crate::model::{ContentBlock, Message, ModelError};
 use crate::protocol::openai_responses::lower_codex_history_message;
@@ -73,11 +73,11 @@ pub(super) fn steer_frame(
     content: &[ContentBlock],
 ) -> Result<Value, ModelError> {
     let items = steer_items(content)?;
-    Ok(json!({
-        "type": "response.steer",
-        "previous_response_id": response_id,
-        "input": items,
-    }))
+    Ok(Value::Object(Map::from_iter([
+        ("type".into(), "response.steer".into()),
+        ("previous_response_id".into(), response_id.into()),
+        ("input".into(), Value::Array(items)),
+    ])))
 }
 
 pub(super) fn steer_event_type(value: &Value) -> Option<&str> {
