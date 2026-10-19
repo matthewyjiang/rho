@@ -587,55 +587,67 @@ fn snapshot_bounded(rec: &SharedRecord, cursor: u64, max_output_bytes: usize) ->
     let r = rec.lock().unwrap();
     let first = r.chunks.front().map_or(r.next, |chunk| chunk.chunk.cursor);
     let requested = cursor.max(first);
-    let mut next_cursor = requested;
-    let mut chunks = Vec::new();
-    for retained in r
-        .chunks
-        .iter()
-        .filter(|item| item.chunk.cursor >= requested)
-    {
-        chunks.push(retained.chunk.clone());
-        let candidate = Snapshot {
-            process_id: r.id.clone(),
-            command: r.command.clone(),
-            state: r.state,
-            runtime_seconds: r.started.elapsed().as_secs_f64(),
-            first_cursor: first,
-            next_cursor: retained.chunk.cursor + 1,
-            available_cursor: r.next,
-            truncated: cursor < first,
-            // Size as if more output remains so adding a later chunk cannot get
-            // cheaper by dropping the pending line.
-            output_pending: true,
-            chunks: chunks.clone(),
-            exit_code: r.exit_code,
-            terminal_detail: r.detail.clone(),
-        };
-        if super::output::format_snapshot(&candidate).len() > max_output_bytes {
-            chunks.pop();
-            if chunks.is_empty() {
-                // A chunk that cannot fit by itself must still be consumed, or
-                // every poll will remain stuck on it.
-                next_cursor = retained.chunk.cursor + 1;
-            }
-            break;
-        }
-        next_cursor = retained.chunk.cursor + 1;
-    }
-    Snapshot {
+    let mut snapshot = Snapshot {
         process_id: r.id.clone(),
         command: r.command.clone(),
         state: r.state,
         runtime_seconds: r.started.elapsed().as_secs_f64(),
         first_cursor: first,
-        next_cursor,
+        next_cursor: 0,
         available_cursor: r.next,
         truncated: cursor < first,
-        output_pending: next_cursor < r.next,
-        chunks,
+        // Always budget the pending line, even on the final chunk.
+        output_pending: true,
+        chunks: Vec::new(),
         exit_code: r.exit_code,
         terminal_detail: r.detail.clone(),
+    };
+    let bounded = max_output_bytes != usize::MAX;
+    // The header's next=0 contributes one digit; add any extra digits below.
+    let mut bytes = if bounded {
+        super::output::format_snapshot(&snapshot).len()
+    } else {
+        0
+    };
+    snapshot.next_cursor = requested;
+    let (mut stdout, mut stderr) = (false, false);
+    for retained in r
+        .chunks
+        .iter()
+        .filter(|item| item.chunk.cursor >= requested)
+    {
+        let chunk = &retained.chunk;
+        let next = chunk.cursor + 1;
+        if bounded {
+            if !chunk.text.is_empty() {
+                // format_snapshot joins each stream's chunks without separators.
+                // First output adds a blank line; each new stream adds \n<label>:\n.
+                if !stdout && !stderr {
+                    bytes += 1;
+                }
+                let seen = match chunk.stream {
+                    super::Stream::Stdout => &mut stdout,
+                    super::Stream::Stderr => &mut stderr,
+                };
+                if !*seen {
+                    bytes += "\nstdout:\n".len(); // stderr has the same label length.
+                    *seen = true;
+                }
+                bytes += chunk.text.len();
+            }
+            if bytes + next.ilog10() as usize > max_output_bytes {
+                if snapshot.chunks.is_empty() {
+                    // Consume an indivisible chunk so subsequent polls progress.
+                    snapshot.next_cursor = next;
+                }
+                break;
+            }
+        }
+        snapshot.chunks.push(chunk.clone());
+        snapshot.next_cursor = next;
     }
+    snapshot.output_pending = snapshot.next_cursor < snapshot.available_cursor;
+    snapshot
 }
 impl Drop for Inner {
     fn drop(&mut self) {
