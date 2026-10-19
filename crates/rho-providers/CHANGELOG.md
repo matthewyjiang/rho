@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.21.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.20.0...rho-providers-v2.21.0) (2026-10-19)
+
+
+### Features
+
+* **providers:** add OpenCode Zen with a shared key across Zen and Go logins ([#1555](https://github.com/matthewyjiang/rho/issues/1555)) ([26f310c](https://github.com/matthewyjiang/rho/commit/26f310cc93a8a6dac69a9cb9f8ab2146fd33e82e))
+* **providers:** compress long conversation uploads to custom hosts ([#1559](https://github.com/matthewyjiang/rho/issues/1559)) ([e6275fc](https://github.com/matthewyjiang/rho/commit/e6275fc9c41982e2b4f1ef96bd18eb9cb9d41f42))
+* **providers:** run opencode go's gemini models through google's own api ([#1554](https://github.com/matthewyjiang/rho/issues/1554)) ([9dd4f11](https://github.com/matthewyjiang/rho/commit/9dd4f11f7b44ad0f891e903050a304c0a3dd59ef))
+
+
+### Bug Fixes
+
+* **auth:** require /login for ollama cloud device keys and make /logout sign out ([#1549](https://github.com/matthewyjiang/rho/issues/1549)) ([4ce06ec](https://github.com/matthewyjiang/rho/commit/4ce06ec6bad14436d99c7bc2a0a09580d738a1af))
+
+
+### Performance Improvements
+
+* **providers:** avoid deep copies on request and stream paths ([#1561](https://github.com/matthewyjiang/rho/issues/1561)) ([319e5a0](https://github.com/matthewyjiang/rho/commit/319e5a09a9da968374f07459a353fe5073b85716))
+* **providers:** open model catalog cache once per path ([#1562](https://github.com/matthewyjiang/rho/issues/1562)) ([c296cd2](https://github.com/matthewyjiang/rho/commit/c296cd226679cbedcf230048e4b7a56080e13273))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.12.0 to 5.12.1
+
 ## [2.20.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.19.0...rho-providers-v2.20.0) (2026-10-18)
 
 
