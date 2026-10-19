@@ -426,22 +426,38 @@ impl Indexer<'_> {
         if !json && essence != "*/*" && !essence.starts_with("text/") {
             return MediaKind::Other;
         }
-        // An unusable ref here is not this check's concern: `check_refs`
-        // rejects it if the schema is ever used, and text never is.
         let schema = media.get("schema");
-        let resolved = schema.and_then(|schema| match self.document.resolve(schema) {
-            Ok(Some((_, target))) => Some(target),
-            Ok(None) => Some(schema),
-            Err(_) => None,
-        });
-        let binary = resolved
-            .and_then(|schema| schema.get("format"))
-            .and_then(Value::as_str)
-            == Some("binary");
+        let binary = schema.is_some_and(|schema| self.is_binary(schema));
         match (binary, json || (essence == "*/*" && schema.is_some())) {
             (true, _) => MediaKind::Other,
             (false, true) => MediaKind::Json,
             (false, false) => MediaKind::Text,
+        }
+    }
+
+    /// Whether `schema` says `format: binary`, on itself or along its `$ref`
+    /// chain. 3.1 keeps siblings on every link, so each one counts; 3.0
+    /// ignores them, so only the chain's end does. An unusable ref is not
+    /// this check's concern: `check_refs` rejects it if the schema is ever
+    /// used, and text never is.
+    fn is_binary(&self, schema: &Value) -> bool {
+        let mut current = schema;
+        loop {
+            let Value::Object(map) = current else {
+                return false;
+            };
+            let Ok(target) = self.document.schema_ref_target(map) else {
+                return false;
+            };
+            let counts = target.is_none() || !self.document.version().ignores_ref_siblings();
+            if counts && map.get("format").and_then(Value::as_str) == Some("binary") {
+                return true;
+            }
+            // `schema_ref_target` rejects cycles and long chains, so this ends.
+            match target.and_then(|target| self.document.get(&target)) {
+                Some(next) => current = next,
+                None => return false,
+            }
         }
     }
 

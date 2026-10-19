@@ -460,21 +460,39 @@ fn render_normalizes_3_0_schemas_to_2020_12() {
     }
 }
 
-// Covers: in 3.1, refs beside a `$ref` are checked too, so a broken one skips
-// the operation instead of failing later at render time.
+// Covers: in 3.1, keywords beside a `$ref` count: a broken ref there skips
+// the operation instead of failing later at render time, and `format: binary`
+// on a middle link makes a text response unsupported.
 // Owner: OpenAPI operation index.
 #[test]
-fn openapi_3_1_checks_refs_beside_a_ref() {
+fn openapi_3_1_reads_keywords_beside_a_ref() {
+    let response = |schema: Value| {
+        json!({"responses": {"200": {"description": "ok", "content": {
+            "text/plain": {"schema": schema},
+            "application/json": {"schema": schema},
+        }}}})
+    };
+    let mut thing = response(json!({
+        "$ref": "#/components/schemas/base",
+        "properties": {"x": {"$ref": "#/components/schemas/missing"}},
+    }));
+    thing["responses"]["200"]["content"]
+        .as_object_mut()
+        .expect("content")
+        .remove("text/plain");
+    let mut file = response(json!({"$ref": "#/components/schemas/download"}));
+    file["responses"]["200"]["content"]
+        .as_object_mut()
+        .expect("content")
+        .remove("application/json");
     let spec = json!({
         "openapi": "3.1.0",
-        "paths": {"/thing": {"get": {
-            "operationId": "thing",
-            "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {
-                "$ref": "#/components/schemas/base",
-                "properties": {"x": {"$ref": "#/components/schemas/missing"}},
-            }}}}},
-        }}},
-        "components": {"schemas": {"base": {"type": "object"}}},
+        "paths": {"/thing": {"get": thing}, "/file": {"get": file}},
+        "components": {"schemas": {
+            "base": {"type": "object"},
+            "download": {"$ref": "#/components/schemas/blob", "format": "binary"},
+            "blob": {"type": "string"},
+        }},
     });
     let spec = load("api", spec.to_string().as_bytes());
     let skipped: Vec<_> = spec
@@ -486,7 +504,46 @@ fn openapi_3_1_checks_refs_beside_a_ref() {
         (spec.operations.len(), skipped),
         (
             0,
-            vec![RefError::Broken("#/components/schemas/missing".to_owned()).into()]
+            vec![
+                RefError::Broken("#/components/schemas/missing".to_owned()).into(),
+                SkipReason::UnsupportedResponse {
+                    media_type: "text/plain".to_owned()
+                },
+            ]
+        )
+    );
+}
+
+// Covers: hidden-property lookups stop at a named limit on a long allOf
+// chain instead of taking quadratic time.
+// Owner: OpenAPI schema renderer.
+#[test]
+fn render_fails_past_the_allof_chain_limit() {
+    let chain = |links: usize| {
+        let mut schemas: serde_json::Map<String, Value> = (0..links)
+            .map(|i| {
+                let next = format!("#/components/schemas/s{}", i + 1);
+                (format!("s{i}"), json!({"allOf": [{"$ref": next}]}))
+            })
+            .collect();
+        schemas.insert(format!("s{links}"), json!({"type": "object"}));
+        let spec = json!({"openapi": "3.1.0", "components": {"schemas": schemas}});
+        Document::parse(spec.to_string().as_bytes())
+            .expect("parses")
+            .render_schema(
+                &pointer("#/components/schemas/s0"),
+                SchemaDirection::Request,
+            )
+            .map(|_| ())
+    };
+    assert_eq!(
+        (chain(64), chain(65)),
+        (
+            Ok(()),
+            Err(RefError::TooManyAllOf {
+                reference: "#/components/schemas/s65".to_owned(),
+                limit: 64,
+            })
         )
     );
 }

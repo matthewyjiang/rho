@@ -54,6 +54,8 @@ pub(crate) enum RefError {
     Cycle(String),
     #[error("$ref '{reference}' chains more than {limit} references")]
     TooDeep { reference: String, limit: usize },
+    #[error("$ref '{reference}' is one of more than {limit} schemas joined through allOf")]
+    TooManyAllOf { reference: String, limit: usize },
 }
 
 impl Document {

@@ -11,6 +11,12 @@ use serde_json::{Map, Value};
 use super::document::{Document, JsonPointer, RefError, SpecVersion};
 use crate::tools::tool_name::sanitize_segment;
 
+/// Hidden-property lookups follow `$ref` and `allOf` across the document, and
+/// each definition repeats its own walk, so a long chain costs its length
+/// squared: 12,000 links took 376 s to render. GitHub's deepest walk reaches
+/// 3 schemas, so a walk past this many fails the render instead.
+const MAX_ALLOF_REFS: usize = 64;
+
 /// Which side of a call a schema describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SchemaDirection {
@@ -269,10 +275,10 @@ impl Renderer<'_> {
         let mut pending = vec![schema];
         while let Some(schema) = pending.pop() {
             if let Some(target) = self.document.schema_ref_target(schema)? {
-                if let (true, Some(Value::Object(target))) =
-                    (visited.insert(target.clone()), self.document.get(&target))
-                {
-                    pending.push(target);
+                if visit(&mut visited, &target)? {
+                    if let Some(Value::Object(target)) = self.document.get(&target) {
+                        pending.push(target);
+                    }
                 }
                 if self.document.version().ignores_ref_siblings() {
                     continue;
@@ -307,10 +313,10 @@ impl Renderer<'_> {
                 return Ok(true);
             }
             if let Some(target) = self.document.schema_ref_target(map)? {
-                if let (true, Some(target)) =
-                    (visited.insert(target.clone()), self.document.get(&target))
-                {
-                    pending.push(target);
+                if visit(&mut visited, &target)? {
+                    if let Some(target) = self.document.get(&target) {
+                        pending.push(target);
+                    }
                 }
                 if self.document.version().ignores_ref_siblings() {
                     continue;
@@ -374,6 +380,21 @@ enum DefMode {
     Hiding,
     /// Unchanged, for use under `not`, `if`, or `contains`.
     Verbatim,
+}
+
+/// Record `target` as walked, returning whether it is new. Fails once a walk
+/// passes `MAX_ALLOF_REFS` schemas.
+fn visit(visited: &mut HashSet<JsonPointer>, target: &JsonPointer) -> Result<bool, RefError> {
+    if visited.contains(target) {
+        return Ok(false);
+    }
+    if visited.len() == MAX_ALLOF_REFS {
+        return Err(RefError::TooManyAllOf {
+            reference: target.to_string(),
+            limit: MAX_ALLOF_REFS,
+        });
+    }
+    Ok(visited.insert(target.clone()))
 }
 
 /// The subschemas of a composition keyword such as `allOf`.
