@@ -34,6 +34,7 @@ use super::{
     RunArtifactIdentity, RunEntry, RunReporter, RunTerminal, TerminalMessages, MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
+use crate::app::shutdown_signal::ShutdownSignals;
 use crate::permission_classifier_handler::{
     ClassifierApprovalHandler, CONSECUTIVE_DENY_ESCALATION,
 };
@@ -468,6 +469,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     let outcome = complete_run(
         &session,
         RunEntry::Prompt("continue".into()),
+        &mut ShutdownSignals::install().unwrap(),
         HeadlessRunDeps {
             reporter: None,
             external_cancellation: None,
@@ -667,6 +669,7 @@ async fn headless_run_fails_closed_without_host_input_responder() {
         complete_run(
             &session,
             RunEntry::Prompt("ask".into()),
+            &mut ShutdownSignals::install().unwrap(),
             HeadlessRunDeps {
                 reporter: None,
                 external_cancellation: None,
@@ -716,6 +719,7 @@ async fn headless_run_answers_host_input_through_generic_responder() {
         complete_run(
             &session,
             RunEntry::Prompt("ask".into()),
+            &mut ShutdownSignals::install().unwrap(),
             HeadlessRunDeps {
                 reporter: None,
                 external_cancellation: None,
@@ -776,6 +780,7 @@ async fn headless_run_drains_events_while_waiting_for_parent_host_input() {
             complete_run(
                 &session,
                 RunEntry::Prompt("ask".into()),
+                &mut ShutdownSignals::install().unwrap(),
                 HeadlessRunDeps {
                     reporter: None,
                     external_cancellation: None,
@@ -876,6 +881,7 @@ async fn headless_run_drains_events_while_waiting_for_respond_ack() {
         complete_run(
             &session,
             RunEntry::Prompt("ask".into()),
+            &mut ShutdownSignals::install().unwrap(),
             HeadlessRunDeps {
                 reporter: None,
                 external_cancellation: None,
