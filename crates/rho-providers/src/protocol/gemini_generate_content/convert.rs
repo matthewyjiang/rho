@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::model::{
@@ -205,12 +206,11 @@ fn replay_provider_context(
                 }
             }
             THOUGHT_PART_CONTEXT => {
-                let part =
-                    serde_json::from_value::<Part>(context.data.clone()).map_err(|error| {
-                        ModelError::InvalidResponse(format!(
-                            "invalid Gemini thought-part context: {error}"
-                        ))
-                    })?;
+                let part = Part::deserialize(&context.data).map_err(|error| {
+                    ModelError::InvalidResponse(format!(
+                        "invalid Gemini thought-part context: {error}"
+                    ))
+                })?;
                 thought_parts.push((position, sequence, part));
             }
             _ => {}

@@ -5,6 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::Deserialize;
+
 use crate::{
     model::{
         ContentBlock, ImageContent, ModelError, ModelEvent, ModelResponse,
@@ -900,9 +902,7 @@ pub(crate) fn handle_codex_sse_value(
         // unset on empty content so empty assemblies can emit a stream-summary
         // diagnostic instead of the bare "missing response text" error.
         if state.text.is_empty() {
-            if let Ok(response) =
-                serde_json::from_value::<ResponsesResponse>(value["response"].clone())
-            {
+            if let Ok(response) = ResponsesResponse::deserialize(&value["response"]) {
                 if let Ok(text) = extract_response_text(response) {
                     state.completed_text = Some(text);
                 }
