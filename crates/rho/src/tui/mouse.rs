@@ -2,21 +2,21 @@ use std::time::Instant;
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
-    Terminal,
     backend::Backend,
     layout::{Position, Rect},
+    Terminal,
 };
 
 use super::{
-    App, ComposerMode,
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
     frame_context::FrameContext,
     picker::PickerMouseEvent,
     render::TRANSCRIPT_LEADING_GUTTER,
-    text_selection::{CopyNotice, TextSelection, screen_lines},
+    text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
     view::LiveHistory,
+    App, ComposerMode,
 };
 
 impl App {
@@ -708,8 +708,8 @@ impl App {
         let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         let header_len = self.visible_session_header_len(width);
         if let Some(transcript_line) = line.checked_sub(header_len) {
-            let cwd = self.info.runtime.cwd.clone();
             self.sync_open_stream_tail();
+            let cwd = &self.info.runtime.cwd;
             let hit = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
                     let index = history_lines.entry_index_at_line(
@@ -717,7 +717,7 @@ impl App {
                         settings,
                         transcript_line,
                         &|entry_index, sources| {
-                            markdown_images.ready_images(entry_index, sources, &cwd)
+                            markdown_images.ready_images(entry_index, sources, cwd)
                         },
                     )?;
                     entries

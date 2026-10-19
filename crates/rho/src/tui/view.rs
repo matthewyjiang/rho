@@ -623,13 +623,13 @@ impl App {
     }
 
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
-        let update_notice = self.info.services.update_notice.clone();
+        let update_notice = self.info.services.update_notice.as_deref();
         let setup = self.setup_state();
         let header_hints = HeaderHints::from_enabled(self.info.runtime.show_header_hints);
         let theme_generation = Theme::generation();
         let stale = self.history.session_header_cache().is_none_or(|cache| {
             cache.width != width
-                || cache.update_notice != update_notice
+                || cache.update_notice.as_deref() != update_notice
                 || cache.setup != setup
                 || cache.header_hints != header_hints
                 || cache.theme_generation != theme_generation
@@ -638,7 +638,7 @@ impl App {
             self.history
                 .set_session_header_cache(Some(SessionHeaderCache {
                     width,
-                    update_notice,
+                    update_notice: self.info.services.update_notice.clone(),
                     setup,
                     header_hints,
                     theme_generation,
@@ -689,8 +689,8 @@ impl App {
         if lines.len() < count {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
-            let cwd = self.info.runtime.cwd.clone();
             self.sync_open_stream_tail();
+            let cwd = &self.info.runtime.cwd;
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                     history_lines.extend_visible_lines(
@@ -702,7 +702,7 @@ impl App {
                         },
                         &mut lines,
                         &|entry_index, sources| {
-                            markdown_images.ready_images(entry_index, sources, &cwd)
+                            markdown_images.ready_images(entry_index, sources, cwd)
                         },
                     );
                 });
@@ -732,11 +732,11 @@ impl App {
         settings: HistoryRenderSettings,
     ) -> usize {
         self.sync_open_stream_tail();
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 history_lines.line_count(entries, settings, &|entry_index, sources| {
-                    markdown_images.ready_images(entry_index, sources, &cwd)
+                    markdown_images.ready_images(entry_index, sources, cwd)
                 })
             })
     }
@@ -754,16 +754,14 @@ impl App {
         self.sync_open_stream_tail();
         let header_len = self.visible_session_header_len(width);
         let transcript_line = line.checked_sub(header_len)?;
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 let block = history_lines.code_block_at_line(
                     entries,
                     settings,
                     transcript_line,
-                    &|entry_index, sources| {
-                        markdown_images.ready_images(entry_index, sources, &cwd)
-                    },
+                    &|entry_index, sources| markdown_images.ready_images(entry_index, sources, cwd),
                 )?;
                 Some(CodeBlockCopyTarget {
                     line,

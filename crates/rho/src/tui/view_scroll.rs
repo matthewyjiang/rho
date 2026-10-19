@@ -4,19 +4,19 @@ use std::time::Instant;
 
 use crossterm::event::KeyEvent;
 use ratatui::{
-    Terminal,
     backend::Backend,
     text::{Line, Span},
+    Terminal,
 };
 
 use crate::keybindings::ReservedComposerKey;
 
 use super::{
-    App, ComposerMode, HISTORY_SCROLLBAR_REVEAL_DURATION, HistoryScroll, HistoryScrollbar, Theme,
     activity,
     history_cache::HistoryRenderSettings,
     screen_layout::ScreenLayout,
     scrollbar::{unmeasured_prefix_scroll_need, unmeasured_prefix_scrollbar_top_need},
+    App, ComposerMode, HistoryScroll, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 impl App {
@@ -27,11 +27,11 @@ impl App {
     ) {
         // One extra pane so wheel/page-up does not wrap on the first notch.
         let min_lines = viewport.saturating_add(viewport.max(1));
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         self.history
             .with_lines_and_images_mut(|cache, entries, images| {
                 cache.ensure_suffix(entries, settings, min_lines, &|index, sources| {
-                    images.ready_images(index, sources, &cwd)
+                    images.ready_images(index, sources, cwd)
                 });
             });
     }
@@ -41,11 +41,11 @@ impl App {
         settings: HistoryRenderSettings,
         extra_lines: usize,
     ) -> usize {
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         self.history
             .with_lines_and_images_mut(|cache, entries, images| {
                 cache.grow_prefix(entries, settings, extra_lines, &|index, sources| {
-                    images.ready_images(index, sources, &cwd)
+                    images.ready_images(index, sources, cwd)
                 })
             })
     }
