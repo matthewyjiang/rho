@@ -54,8 +54,6 @@ pub(crate) use validate::{
     validate_literal_headers, validate_oauth_client, validate_stdio_environment, McpHttpSecurity,
 };
 
-use definition::McpToolDefinition;
-use exported_name::namespaced_tool_name;
 use session::{ConnectResult, ConnectedServer, McpSession, SessionMaintenance};
 use tool::{McpTool, McpToolSlot};
 
@@ -344,25 +342,16 @@ impl McpBundleBuilder {
         } = connected;
         let mut exported = Vec::new();
         let mut slots = BTreeMap::new();
-        let mut filtered_out_count = 0usize;
+        let filtered_out_count = discovered.filtered_out_count;
         let mut collision_skipped_count = 0usize;
-        for remote in discovered {
-            let remote_name = remote.name.to_string();
-            if !server.tools.includes(&remote_name) {
-                filtered_out_count += 1;
-                continue;
-            }
-            let name = namespaced_tool_name(&identity, &remote_name);
+        for (remote_name, definition) in discovered.definitions {
+            let name = definition.spec.name.clone();
             if !self.registered_names.insert(name.clone()) {
                 tracing::warn!(server = %identity, tool = %remote_name, exported = %name, "MCP tool name collision; ignoring tool");
                 collision_skipped_count += 1;
                 continue;
             }
-            let slot = Arc::new(McpToolSlot::new(McpToolDefinition::from_remote(
-                &identity,
-                &remote_name,
-                &remote,
-            )));
+            let slot = Arc::new(McpToolSlot::new(definition));
             slots.insert(remote_name.clone(), Arc::clone(&slot));
             self.tools.push(Arc::new(McpTool {
                 slot,

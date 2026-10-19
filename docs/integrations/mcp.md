@@ -167,6 +167,8 @@ Rho reads more than the name, description, and input schema:
 - **Annotations** (`readOnlyHint`, `destructiveHint`, `openWorldHint`) appear as `Server hint:` lines in the description and as notices on the tool card. They are hints from a server Rho does not control, so they never relax a permission or skip an approval. A read-only hint changes the card's icon and nothing else.
 - **`outputSchema`** sets a contract. A server that declares one must return `structuredContent` that validates against that schema; a missing or invalid result fails the call rather than passing a half-answer to the model.
 
+Rho validates and compiles output schemas during tool discovery, after applying the configured tool allow/deny filters. An invalid or over-budget schema on a selected tool fails initial discovery with the server and tool named in the error. If a later refresh contains such a schema, Rho logs the rejection and keeps the previous tool definitions unchanged. Excluded tools do not block discovery or refresh.
+
 ### Results
 
 Each content block is rendered for what it is, rather than serialized as a JSON envelope:

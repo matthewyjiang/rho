@@ -10,6 +10,29 @@ use rho_sdk::{
 };
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::Serialize;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, LazyLock, OnceLock, RwLock},
+};
+
+/// Measure serialized JSON bytes without allocating an encoded copy.
+pub fn json_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, serde_json::Error> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value)?;
+    Ok(counter.0)
+}
 
 /// A completed result. Missing data means the tool has no script-facing value.
 /// Structured data is bounded by its serialized JSON bytes via [`Self::limit_data`];
@@ -93,23 +116,49 @@ impl<T> Rendered<T> {
 
 impl<T: Serialize> Rendered<T> {
     /// Omit oversized structured data instead of exposing an unbounded script view.
-    pub fn limit_data(mut self, max_output_bytes: usize) -> Result<Self, ToolError> {
+    pub fn limit_data(self, max_output_bytes: usize) -> Result<Self, ToolError> {
         if let Some(data) = &self.data {
-            let asked = serde_json::to_vec(data)
-                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?
-                .len();
-            if asked > max_output_bytes {
-                self.data = None;
-                self.text = crate::tool::truncate(
-                    format!("[structured data truncated: max_output_bytes {max_output_bytes}, received {asked} bytes]\n{}", self.text),
-                    max_output_bytes.saturating_sub(crate::tool::TRUNCATION_MARKER.len()),
-                );
-            }
+            let asked = json_len(data)
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            return Ok(self.limit_data_with_size(max_output_bytes, asked));
         }
         Ok(self)
     }
 
-    pub fn into_tool_output(self, mut metadata: ToolMetadata) -> Result<ToolOutput, ToolError> {
+    /// Apply the data budget using a previously measured serialized JSON size.
+    /// `asked` must describe the current data, measured with [`json_len`].
+    pub fn limit_data_with_size(mut self, max_output_bytes: usize, asked: usize) -> Self {
+        if self.data.is_some() && asked > max_output_bytes {
+            self.data = None;
+            self.text = crate::tool::truncate(
+                    format!("[structured data truncated: max_output_bytes {max_output_bytes}, received {asked} bytes]\n{}", self.text),
+                    max_output_bytes.saturating_sub(crate::tool::TRUNCATION_MARKER.len()),
+                );
+        }
+        self
+    }
+
+    pub fn into_tool_output(self, metadata: ToolMetadata) -> Result<ToolOutput, ToolError> {
+        let data = self
+            .data
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+        Ok(Rendered {
+            text: self.text,
+            data,
+            failed: self.failed,
+            assets: self.assets,
+            images: self.images,
+        }
+        .into_json_output(metadata))
+    }
+}
+
+impl Rendered<serde_json::Value> {
+    /// Move already-encoded structured data into the SDK output without
+    /// serializing it through another JSON value.
+    pub fn into_json_output(self, mut metadata: ToolMetadata) -> ToolOutput {
         for asset in self.assets {
             metadata = metadata.asset(asset);
         }
@@ -117,25 +166,48 @@ impl<T: Serialize> Rendered<T> {
             .metadata(metadata)
             .with_images(self.images);
         if let Some(data) = self.data {
-            output = output
-                .with_structured_content(serde_json::to_value(data).map_err(|error| {
-                    ToolError::new(ToolErrorKind::Execution, error.to_string())
-                })?);
+            output = output.with_structured_content(data);
         }
-        Ok(if self.failed { output.failed() } else { output })
+        if self.failed {
+            output.failed()
+        } else {
+            output
+        }
     }
 }
 
 /// Schema for emitted values, including required nullable fields. Inline
 /// subschemas keep script-facing returns free of definition indirection.
 pub fn output_schema<T: JsonSchema>() -> serde_json::Value {
-    let mut settings = SchemaSettings::draft2020_12().for_serialize();
-    settings.inline_subschemas = true;
-    let mut schema: serde_json::Value =
-        settings.into_generator().into_root_schema_for::<T>().into();
-    if let Some(object) = schema.as_object_mut() {
-        object.remove("$schema");
-        object.remove("title");
-    }
-    schema
+    // JsonSchema's identity contract distinguishes schemas, including generic
+    // parameters, without imposing a new 'static bound on callers.
+    type SchemaCell = Arc<OnceLock<serde_json::Value>>;
+    static SCHEMAS: LazyLock<RwLock<HashMap<Cow<'static, str>, SchemaCell>>> =
+        LazyLock::new(RwLock::default);
+    let id = T::schema_id();
+    let cached = SCHEMAS
+        .read()
+        .expect("output schema cache")
+        .get(&id)
+        .cloned();
+    let cell = cached.unwrap_or_else(|| {
+        SCHEMAS
+            .write()
+            .expect("output schema cache")
+            .entry(id)
+            .or_default()
+            .clone()
+    });
+    cell.get_or_init(|| {
+        let mut settings = SchemaSettings::draft2020_12().for_serialize();
+        settings.inline_subschemas = true;
+        let mut schema: serde_json::Value =
+            settings.into_generator().into_root_schema_for::<T>().into();
+        if let Some(object) = schema.as_object_mut() {
+            object.remove("$schema");
+            object.remove("title");
+        }
+        schema
+    })
+    .clone()
 }

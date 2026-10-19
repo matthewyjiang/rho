@@ -103,9 +103,27 @@ impl Tool for CodeModeTool {
                 error,
             };
             let failed = output.error.is_some();
-            rho_tools::Rendered::new(format_engine_output(&output), output)
+            let limit = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
+            let asked = rho_tools::json_len(&output)
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            let rendered = if asked > limit {
+                let notice = format!(
+                    "[structured data truncated: max_output_bytes {limit}, received {asked} bytes]"
+                );
+                // Reserve the omission notice before formatting, so trimming
+                // prints never cuts the failure diagnostic off the end.
+                let text = format_engine_output(&output, limit - notice.len() - 1);
+                rho_tools::Rendered::text_only(format!("{notice}\n{text}"))
+            } else {
+                rho_tools::Rendered::new(format_engine_output(&output, limit), output)
+            };
+            rendered
                 .failed_if(failed)
                 .into_tool_output(Default::default())
         })
     }
 }
+
+#[cfg(test)]
+#[path = "tool_tests.rs"]
+mod tests;

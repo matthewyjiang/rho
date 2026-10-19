@@ -1,6 +1,9 @@
 //! Contract coverage through real ToolHosts, not a test-only bridge.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -216,6 +219,7 @@ struct DiscoveryDefinition {
 /// Models an MCP handle whose definition changes without an inventory update.
 struct DiscoveryTool {
     definition: Mutex<DiscoveryDefinition>,
+    output_schema_reads: AtomicUsize,
 }
 
 impl Tool for DiscoveryTool {
@@ -224,6 +228,7 @@ impl Tool for DiscoveryTool {
     }
 
     fn output_schema(&self) -> Option<Value> {
+        self.output_schema_reads.fetch_add(1, Ordering::Relaxed);
         self.definition.lock().unwrap().output_schema.clone()
     }
 
@@ -266,6 +271,7 @@ async fn discovery_matches_callable_siblings() {
             },
             output_schema: None,
         }),
+        output_schema_reads: AtomicUsize::new(0),
     })];
     tools.extend(orchestration.clone());
     surface.sync(&tools);
@@ -355,11 +361,11 @@ async fn discovery_matches_callable_siblings() {
     ));
 }
 
-// Covers: new searches and bridges refresh live contracts without sync,
-// while an existing bridge retains its original catalog.
+// Covers: direct-call scripts and top-level searches never build return
+// contracts; first discovery freezes live definitions for that script only.
 // Owner: codemode live discovery and bridge snapshots (runtime contract).
-#[test]
-fn discovery_refreshes_live_definitions_without_resync() {
+#[tokio::test]
+async fn discovery_refreshes_live_definitions_without_resync() {
     use super::{bridge::ToolHostBridge, exposure::ToolCatalogEntry};
 
     let tool = Arc::new(DiscoveryTool {
@@ -371,16 +377,33 @@ fn discovery_refreshes_live_definitions_without_resync() {
             },
             output_schema: Some(json!({"type": "string"})),
         }),
+        output_schema_reads: AtomicUsize::new(0),
     });
     let surface = surface(vec![tool.clone()]);
-    let (progress, _receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    let (progress, receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    drop(receiver);
     let context = ToolContext::new(
         /*workspace*/ None,
         rho_sdk::CancellationToken::new(),
         progress,
     );
-    let frozen = ToolHostBridge::new(surface.clone(), context.clone()).unwrap();
+    let frozen = Arc::new(ToolHostBridge::new(surface.clone(), context.clone()).unwrap());
+    let fresh = ToolHostBridge::new(surface.clone(), context.clone()).unwrap();
+    assert_eq!(tool.output_schema_reads.load(Ordering::Relaxed), 0);
+    let evaluator_bridge = frozen.clone();
+    let evaluated = tokio::task::spawn_blocking(move || {
+        super::engine::evaluate_code_mode(
+            "result = call_tool(\"mcp__github__create_issue\", {\"title\": \"direct\"})[\"content\"]",
+            evaluator_bridge,
+            super::engine::EngineLimits::default(),
+        )
+    })
+    .await
+    .unwrap();
+    assert_eq!(evaluated.result.unwrap(), json!("direct"));
+    assert_eq!(tool.output_schema_reads.load(Ordering::Relaxed), 0);
     let original = json!(frozen.describe("mcp__github__create_issue").unwrap());
+    assert_eq!(tool.output_schema_reads.load(Ordering::Relaxed), 1);
     let revised = DiscoveryDefinition {
         spec: ToolSpec {
             name: "mcp__github__create_issue".into(),
@@ -408,9 +431,14 @@ fn discovery_refreshes_live_definitions_without_resync() {
             "parameters": ["priority"],
         }])
     );
-    let fresh = ToolHostBridge::new(surface, context).unwrap();
+    assert_eq!(tool.output_schema_reads.load(Ordering::Relaxed), 1);
+    assert_eq!(fresh.search("github", 1), vec![&expected]);
     assert_eq!(fresh.describe(&expected.name), Some(&expected));
     assert_eq!(json!(frozen.describe(&expected.name)), original);
+    assert_eq!(tool.output_schema_reads.load(Ordering::Relaxed), 2);
+    let next = ToolHostBridge::new(surface, context).unwrap();
+    assert_eq!(next.describe(&expected.name), Some(&expected));
+    assert_eq!(tool.output_schema_reads.load(Ordering::Relaxed), 3);
 }
 
 // Covers: publishing siblings mid-script cannot advertise names its child host rejects.

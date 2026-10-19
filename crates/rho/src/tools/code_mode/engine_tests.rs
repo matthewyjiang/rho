@@ -69,7 +69,7 @@ async fn engine_output_has_one_total_byte_budget() {
             error: Some(format!("diagnostic head\n{}", "é".repeat(limit))),
         },
     ] {
-        let rendered = format_engine_output(&output);
+        let rendered = format_engine_output(&output, limit);
         assert!(rendered.len() <= limit, "{} > {limit}", rendered.len());
         if let Some(error) = &output.error {
             assert!(error.lines().count() > 1, "missing Starlark diagnostic");

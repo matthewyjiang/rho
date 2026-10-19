@@ -471,19 +471,23 @@ impl AppToolSet {
 
     /// Returns registry names without applying any additional capability filter.
     pub fn unfiltered_names(&self) -> impl Iterator<Item = String> + '_ {
-        self.tools().iter().map(|tool| tool.spec().name)
+        self.inventory
+            .named_tools()
+            .map(|(name, _)| name.to_owned())
     }
 
     pub fn contains(&self, name: &str) -> bool {
-        self.unfiltered_names().any(|registered| registered == name)
+        self.inventory
+            .named_tools()
+            .any(|(registered, _)| registered == name)
     }
 
     /// Gets an executable handle without applying model advertisement filters.
     pub(crate) fn tool_named(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        self.tools()
-            .iter()
-            .find(|tool| tool.spec().name == name)
-            .cloned()
+        self.inventory
+            .named_tools()
+            .find(|(registered, _)| *registered == name)
+            .map(|(_, tool)| tool.clone())
     }
 
     /// Replaces delegation only when launch was enabled for this session.

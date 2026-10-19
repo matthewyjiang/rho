@@ -11,6 +11,9 @@ use super::super::code_mode::CodeModeSurface;
 #[derive(Default)]
 pub(super) struct ToolInventory {
     tools: Vec<Arc<dyn Tool>>,
+    /// Names and handles share registration order and are refreshed only at
+    /// the mutation boundary, never during read-only inventory lookups.
+    names: Vec<String>,
     surface: Arc<CodeModeSurface>,
 }
 
@@ -23,9 +26,17 @@ impl ToolInventory {
         &self.surface
     }
 
+    pub(super) fn named_tools(&self) -> impl Iterator<Item = (&str, &Arc<dyn Tool>)> {
+        self.names.iter().map(String::as_str).zip(&self.tools)
+    }
+
     pub(super) fn mutate<T>(&mut self, mutation: impl FnOnce(&mut Vec<Arc<dyn Tool>>) -> T) -> T {
         let result = mutation(&mut self.tools);
-        self.surface.sync(&self.tools);
+        self.names = self.tools.iter().map(|tool| tool.spec().name).collect();
+        self.surface.sync_named(
+            self.named_tools()
+                .map(|(name, tool)| (name.to_owned(), tool.clone())),
+        );
         result
     }
 }
