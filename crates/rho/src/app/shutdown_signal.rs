@@ -62,17 +62,21 @@ impl ShutdownSignals {
     }
 }
 
-#[cfg(not(unix))]
-pub(super) struct ShutdownSignals;
+#[cfg(windows)]
+pub(super) struct ShutdownSignals {
+    ctrl_c: tokio::signal::windows::CtrlC,
+}
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 impl ShutdownSignals {
     pub(super) fn install() -> io::Result<Self> {
-        Ok(Self)
+        Ok(Self {
+            ctrl_c: tokio::signal::windows::ctrl_c()?,
+        })
     }
 
     pub(super) async fn recv(&mut self) -> io::Result<ShutdownSignal> {
-        tokio::signal::ctrl_c().await?;
+        self.ctrl_c.recv().await;
         Ok(ShutdownSignal::Interrupt)
     }
 }
