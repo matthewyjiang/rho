@@ -356,6 +356,7 @@ fn endpoint_updates_preserve_unrelated_custom_options() {
         api: rho_providers::provider::OpenAiCompatibleApi::Responses,
         edit_tool: Some(rho_tools::EditFormat::ApplyPatch),
         prompt_cache_ttl: Some(std::time::Duration::from_secs(3600)),
+        request_compression: Some(rho_providers::providers::RequestCompression::Zstd),
     };
     providers
         .custom
@@ -648,5 +649,54 @@ fn custom_prompt_cache_ttl_loads_persists_and_rejects_zero() {
         format!("{error:#}").contains("providers.custom.cliproxy.prompt_cache_ttl"),
         "{error:#}"
     );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: request_compression loads, round-trips through settings writes, and
+// rejects unknown encodings and Ollama tables with the offending field
+// Owner: provider config
+#[test]
+fn custom_request_compression_loads_persists_and_rejects_invalid_values() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nrequest_compression = \"zstd\"\n",
+    )
+    .unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    let zstd = Some(rho_providers::providers::RequestCompression::Zstd);
+    assert_eq!(
+        config.providers.custom["cliproxy"].request_compression,
+        zstd
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(
+        reloaded.providers.custom["cliproxy"].request_compression,
+        zstd
+    );
+
+    for (name, table, field) in [
+        (
+            "unknown.toml",
+            "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nrequest_compression = \"br\"\n",
+            "providers.custom.cliproxy.request_compression",
+        ),
+        (
+            "ollama.toml",
+            "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\nrequest_compression = \"zstd\"\n",
+            "providers.ollama does not accept request_compression",
+        ),
+    ] {
+        let invalid = dir.path().join(name);
+        std::fs::write(&invalid, table).unwrap();
+        let error = Config::load_with_store(invalid, &store).unwrap_err();
+        assert!(format!("{error:#}").contains(field), "{error:#}");
+    }
     rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }

@@ -94,6 +94,7 @@ base_url = "http://127.0.0.1:8787/v1"
 # catalog = "llmgateway" # optional models.dev slug for context, price, and reasoning
 # catalog_mode = "model-id" # look up unsplit slug/model ids in models.dev
 # edit_tool = "apply_patch" # auto preference: hashline, apply_patch, or str_replace
+# request_compression = "zstd" # or "gzip"; only if the host decodes that request encoding
 
 [codemode]
 mode = "on" # "on": natives and codemode declared; "only": tools hidden unless tool_search loads them

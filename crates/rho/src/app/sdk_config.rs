@@ -115,6 +115,9 @@ fn provider_options_with_transport(
     if let Some(endpoint) = endpoint {
         provider = provider.endpoint(endpoint)?;
     }
+    if let Some(compression) = config.providers.request_compression(&config.provider) {
+        provider = provider.request_compression(compression)?;
+    }
     if let Some(request_timeout) = request_timeout {
         provider = provider.request_timeout(request_timeout)?;
     }

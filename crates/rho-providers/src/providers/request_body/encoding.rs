@@ -3,17 +3,30 @@
 use std::io::Write;
 
 use flate2::{write::GzEncoder, Compression};
-use reqwest::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
+use reqwest::header::{HeaderValue, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE};
+
+use super::{EndpointCompression, RequestCompression};
 
 // A conservative large-payload cutoff, not a request-size limit. The benchmark
 // sweeps 1 KiB–1 MiB and records CPU and paced-upload costs; see the docs report.
-pub(super) const MIN_GZIP_BYTES: usize = 16 * 1024;
+pub(super) const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
 
-/// Compresses a buffered JSON body only at an endpoint known to decode gzip.
+// zstd's own default level. On a 1 MB Rho session body, level 3 produced
+// 153,718 bytes in 1.9 ms versus 169,343 bytes in 1.5 ms at level 1; the extra
+// 0.4 ms of CPU is repaid by 15 KB less upload at any WAN bandwidth below
+// ~300 Mbit/s.
+const ZSTD_LEVEL: i32 = 3;
+
+/// Compresses a buffered JSON body when `policy` names an encoding for its URL.
 /// Existing content encodings and streaming bodies are left to their owner.
-pub(crate) fn encode_request(request: &mut reqwest::Request) -> std::io::Result<()> {
-    if !supports_gzip(request.url())
-        || request.headers().contains_key(CONTENT_ENCODING)
+pub(crate) fn encode_request(
+    request: &mut reqwest::Request,
+    policy: EndpointCompression,
+) -> std::io::Result<()> {
+    let Some(encoding) = policy.encoding_for(request.url()) else {
+        return Ok(());
+    };
+    if request.headers().contains_key(CONTENT_ENCODING)
         || request
             .headers()
             .get(CONTENT_TYPE)
@@ -25,12 +38,17 @@ pub(crate) fn encode_request(request: &mut reqwest::Request) -> std::io::Result<
     let Some(bytes) = request.body().and_then(reqwest::Body::as_bytes) else {
         return Ok(());
     };
-    if bytes.len() < MIN_GZIP_BYTES {
+    if bytes.len() < MIN_COMPRESSED_BYTES {
         return Ok(());
     }
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(bytes)?;
-    let compressed = encoder.finish()?;
+    let compressed = match encoding {
+        RequestCompression::Gzip => {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+            encoder.write_all(bytes)?;
+            encoder.finish()?
+        }
+        RequestCompression::Zstd => zstd::bulk::compress(bytes, ZSTD_LEVEL)?,
+    };
     if compressed.len() >= bytes.len() {
         return Ok(());
     }
@@ -38,11 +56,12 @@ pub(crate) fn encode_request(request: &mut reqwest::Request) -> std::io::Result<
     request.headers_mut().remove(CONTENT_LENGTH);
     request.headers_mut().insert(
         CONTENT_ENCODING,
-        reqwest::header::HeaderValue::from_static("gzip"),
+        HeaderValue::from_static(encoding.as_str()),
     );
     Ok(())
 }
 
+/// Built-in endpoints verified to decode gzip request bodies.
 pub(super) fn supports_gzip(url: &url::Url) -> bool {
     if url.scheme() != "https" || url.port_or_known_default() != Some(443) {
         return false;

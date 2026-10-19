@@ -36,6 +36,7 @@ pub(crate) struct OpenAiCompatibleProvider {
     api_base: String,
     reasoning: reasoning::DialectReasoning,
     session_headers: super::opencode::SessionHeaders,
+    compression: super::request_body::EndpointCompression,
 }
 
 /// The request and its accounting policy share one resolved reasoning decision.
@@ -63,7 +64,17 @@ impl OpenAiCompatibleProvider {
             api_base,
             reasoning,
             session_headers: super::opencode::SessionHeaders::new(provider),
+            compression: super::request_body::EndpointCompression::Verified,
         }
+    }
+
+    /// Replaces the built-in endpoint allowlist for chat request bodies.
+    pub(crate) fn with_request_compression(
+        mut self,
+        compression: super::request_body::EndpointCompression,
+    ) -> Self {
+        self.compression = compression;
+        self
     }
 
     pub(crate) fn model_identity(&self) -> ModelIdentity {
@@ -264,7 +275,7 @@ impl OpenAiCompatibleProvider {
                 );
             }
         }
-        super::request_body::send(request).await
+        super::request_body::send(request, self.compression).await
     }
 }
 

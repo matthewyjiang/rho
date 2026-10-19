@@ -192,6 +192,7 @@ pub(crate) struct ResponsesHttpTransport<'a> {
     client: &'a reqwest::Client,
     api_base: &'a str,
     headers: reqwest::header::HeaderMap,
+    compression: super::request_body::EndpointCompression,
 }
 
 impl<'a> ResponsesHttpTransport<'a> {
@@ -200,7 +201,16 @@ impl<'a> ResponsesHttpTransport<'a> {
             client,
             api_base,
             headers: reqwest::header::HeaderMap::new(),
+            compression: super::request_body::EndpointCompression::Verified,
         }
+    }
+
+    pub(crate) fn with_request_compression(
+        mut self,
+        compression: super::request_body::EndpointCompression,
+    ) -> Self {
+        self.compression = compression;
+        self
     }
 
     pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
@@ -291,7 +301,11 @@ impl<'a> ResponsesHttpTransport<'a> {
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> Result<reqwest::Response, ModelError> {
         let request = self.build_request(endpoint, body, auth);
-        cancel_aware(cancellation, super::request_body::send(request)).await
+        cancel_aware(
+            cancellation,
+            super::request_body::send(request, self.compression),
+        )
+        .await
     }
 }
 
