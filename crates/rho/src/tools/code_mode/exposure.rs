@@ -12,10 +12,7 @@ use rho_sdk::{
 };
 use serde::Serialize;
 
-use crate::{
-    config::CodemodeMode,
-    tools::mcp::exported_name::{parse_exported_name, ExportedNameDialect},
-};
+use crate::config::CodemodeMode;
 
 use super::{
     tool::CodeModeTool,
@@ -37,14 +34,35 @@ pub(crate) struct ToolCatalogEntry {
     pub returns: Option<serde_json::Value>,
 }
 
+/// Whether a tool is declared to the model directly. Owners choose this per
+/// bundle; codemode never infers it from the tool name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ContextExposure {
+    /// Declared directly while `[codemode] mode` is `on`.
+    Advertised,
+    /// Kept out of model context in every mode until top-level `tool_search`
+    /// loads it. Scripts can still discover and call it. Large generated
+    /// catalogs, such as MCP tools, use this so they cost no context up front.
+    Hidden,
+}
+
+/// One script-callable inventory entry as the owning registry publishes it.
 #[derive(Clone)]
-pub(super) struct ScriptTool {
+pub(crate) struct ScriptTool {
     tool: Arc<dyn Tool>,
     name: String,
-    mcp: bool,
+    exposure: ContextExposure,
 }
 
 impl ScriptTool {
+    pub(crate) fn new(name: String, tool: Arc<dyn Tool>, exposure: ContextExposure) -> Self {
+        Self {
+            tool,
+            name,
+            exposure,
+        }
+    }
+
     // Definitions can refresh independently of the app inventory. A bridge
     // freezes descriptions and schemas only on its first discovery request.
     pub(super) fn catalog_entry(&self) -> ToolCatalogEntry {
@@ -80,21 +98,18 @@ impl CodeModeSurface {
         ]
     }
 
+    /// Publishes advertised siblings; tests use it in place of a registry.
     #[cfg(test)]
     pub(crate) fn sync(&self, tools: &[Arc<dyn Tool>]) {
-        self.sync_named(tools.iter().map(|tool| (tool.spec().name, tool.clone())));
+        self.sync_entries(tools.iter().map(|tool| {
+            ScriptTool::new(tool.spec().name, tool.clone(), ContextExposure::Advertised)
+        }));
     }
 
-    pub(crate) fn sync_named(&self, tools: impl IntoIterator<Item = (String, Arc<dyn Tool>)>) {
+    pub(crate) fn sync_entries(&self, tools: impl IntoIterator<Item = ScriptTool>) {
         let mut siblings: Vec<_> = tools
             .into_iter()
-            .filter_map(|(name, tool)| {
-                if is_orchestration_tool(&name) {
-                    return None;
-                }
-                let mcp = parse_exported_name(&name, ExportedNameDialect::Rho).is_some();
-                Some(ScriptTool { tool, name, mcp })
-            })
+            .filter(|sibling| !is_orchestration_tool(&sibling.name))
             .collect();
         siblings.sort_by(|a, b| a.name.cmp(&b.name));
         self.state.write().expect("codemode surface").tools = siblings;
@@ -259,7 +274,12 @@ impl ToolVisibility for CodeModeSurface {
             .binary_search_by(|sibling| sibling.name.as_str().cmp(name))
             .is_ok_and(|index| {
                 state.loaded.contains(name)
-                    || (state.mode == CodemodeMode::On && !state.tools[index].mcp)
+                    || match (state.mode, state.tools[index].exposure) {
+                        (CodemodeMode::On, ContextExposure::Advertised) => true,
+                        (CodemodeMode::On, ContextExposure::Hidden) | (CodemodeMode::Only, _) => {
+                            false
+                        }
+                    }
             })
     }
 

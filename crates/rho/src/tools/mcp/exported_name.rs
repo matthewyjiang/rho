@@ -4,6 +4,8 @@
 //! producers may use the same `mcp__server__tool` shape without that codec, so
 //! callers must state which wire dialect they are parsing.
 
+use crate::tools::tool_name::cap_tool_name;
+
 /// The producer of an exported MCP tool name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExportedNameDialect {
@@ -20,13 +22,16 @@ pub(crate) struct McpToolIdentity {
     pub(crate) tool: String,
 }
 
-/// Build Rho's unambiguous exported name for one MCP server tool.
+/// Build Rho's exported name for one MCP server tool. Names within the
+/// provider limit round-trip through [`parse_exported_name`]. Longer names are
+/// capped with a hash suffix, which providers accept but which no longer
+/// decodes to the original tool; registration rejects any resulting collision.
 pub(crate) fn namespaced_tool_name(server: &str, tool: &str) -> String {
-    format!(
+    cap_tool_name(format!(
         "mcp__{}__{}",
         encode_component(server),
         encode_component(tool)
-    )
+    ))
 }
 
 fn encode_component(value: &str) -> String {
@@ -116,6 +121,17 @@ mod tests {
                 })
             );
         }
+    }
+
+    // Covers: a server tool whose encoded name exceeds the provider limit
+    // still exports a loadable name under its server namespace.
+    #[test]
+    fn rho_codec_caps_over_long_names() {
+        let name = namespaced_tool_name("github", &"get-content".repeat(8));
+        assert_eq!(
+            (name.len(), name.starts_with("mcp__github___rho_")),
+            (64, true)
+        );
     }
 
     #[test]

@@ -434,13 +434,22 @@ async fn streamable_http_discovery() {
         invalid_servers: Vec::new(),
     };
     let outcome = McpBundle::connect(&config, test_options()).await;
-    let bundle = outcome.bundle.unwrap();
-    assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
     assert_eq!(
         outcome.report.servers[0].status(),
         McpServerStatus::Connected
     );
-    bundle.shutdown().await;
+    // Discovered tools are callable but stay out of codemode `on` context.
+    let tools = crate::tools::sdk_registry::AppToolSet::disabled().with_mcp(outcome);
+    let exported = "mcp__remote__remote_echo";
+    assert_eq!(
+        (
+            tools.code_mode().mode(),
+            tools.contains(exported),
+            tools.specs().iter().any(|spec| spec.name == exported),
+        ),
+        (crate::config::CodemodeMode::On, true, false)
+    );
+    tools.shutdown().await;
     server.await.unwrap();
 }
 
@@ -546,7 +555,8 @@ open(sys.argv[1], "w").close()
             .map(|tool| tool.spec().name)
             .collect::<Vec<_>>(),
         vec![
-            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho_6563686f2f76616c7565",
+            // Escaping makes this name exceed the provider limit, so it is capped.
+            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho_65_33f40cc0",
             "mcp__devtools_validator___rho_6563686f2f76616c7565",
         ]
     );
