@@ -15,13 +15,7 @@ use rho_sdk::{
 };
 use rmcp::model::{Tool as RemoteTool, ToolAnnotations};
 
-use super::{
-    config::McpTransport,
-    exported_name::{
-        namespaced_tool_name, parse_exported_name, ExportedNameDialect, McpToolIdentity,
-    },
-    result::ResultExpectation,
-};
+use super::{config::McpTransport, exported_name::namespaced_tool_name, result::ResultExpectation};
 
 /// Everything one exported MCP tool derives from its current declaration.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,29 +54,16 @@ impl McpToolDefinition {
         let title = annotations
             .and_then(|annotations| annotations.title.as_deref())
             .or(remote.title.as_deref());
-        let name = namespaced_tool_name(identity, remote_name);
-        // A capped name lost part of the remote name; restate it so the model
-        // and name-ranked search still see which tool this is.
-        let complete = parse_exported_name(&name, ExportedNameDialect::Rho)
-            == Some(McpToolIdentity {
-                server: identity.to_owned(),
-                tool: remote_name.to_owned(),
-            });
-        let server = if complete {
-            format!("MCP server `{identity}`")
-        } else {
-            format!("MCP server `{identity}` tool `{remote_name}`")
-        };
         let mut description = match title {
-            Some(title) => format!("{server}, {title}: {description}"),
-            None => format!("{server}: {description}"),
+            Some(title) => format!("MCP server `{identity}`, {title}: {description}"),
+            None => format!("MCP server `{identity}`: {description}"),
         };
         for hint in behavior_hints(annotations) {
             description.push_str(&format!("\nServer hint: {hint}."));
         }
         Ok(Self {
             spec: ToolSpec {
-                name,
+                name: namespaced_tool_name(identity, remote_name),
                 description,
                 input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
             },

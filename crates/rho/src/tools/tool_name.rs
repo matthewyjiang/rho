@@ -4,8 +4,10 @@
 //! `[a-zA-Z0-9_-]` and at most [`MAX_TOOL_NAME_LEN`] characters, so producers
 //! build segments without `-` and cap the joined name with [`cap_tool_name`].
 //! The cap's `-` suffix therefore marks a capped name unambiguously. Both steps
-//! are lossy; the registering owner must reject duplicate results, as MCP
-//! registration does.
+//! are lossy; the registering owner must reject duplicate results.
+//!
+//! MCP keeps its existing `_rho_` hex codec and does not cap yet: its tool
+//! cards decode identity from the name, which a cap would truncate.
 
 use sha2::{Digest as _, Sha256};
 
@@ -51,7 +53,11 @@ pub(crate) fn sanitize_segment(raw: &str) -> String {
 /// Cap a name at [`MAX_TOOL_NAME_LEN`]. Names within the limit are unchanged.
 /// Longer names keep a readable prefix and end in `-` plus a hash of the whole
 /// name, so long names that share a prefix stay distinct. Segments never
-/// contain `-`, so readers can tell a capped name by [`capped_body`].
+/// contain `-`, so a `-` marks a name as capped.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "OpenAPI tool names adopt the sanitizer next")
+)]
 pub(crate) fn cap_tool_name(name: String) -> String {
     if name.len() <= MAX_TOOL_NAME_LEN {
         return name;
@@ -63,12 +69,6 @@ pub(crate) fn cap_tool_name(name: String) -> String {
     // A dangling separator would leave an empty trailing segment.
     let prefix = name[..end].trim_end_matches('_');
     format!("{prefix}-{}", short_hash(&name))
-}
-
-/// The truncated readable prefix of a name [`cap_tool_name`] shortened, or
-/// `None` for a name that is complete.
-pub(crate) fn capped_body(name: &str) -> Option<&str> {
-    name.rsplit_once('-').map(|(body, _)| body)
 }
 
 fn short_hash(value: &str) -> String {

@@ -558,8 +558,7 @@ open(sys.argv[1], "w").close()
             .map(|tool| tool.spec().name)
             .collect::<Vec<_>>(),
         vec![
-            // Escaping makes this name exceed the provider limit, so it is capped.
-            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho_65-33f40cc0",
+            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho_6563686f2f76616c7565",
             "mcp__devtools_validator___rho_6563686f2f76616c7565",
         ]
     );

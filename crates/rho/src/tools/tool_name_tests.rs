@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::{cap_tool_name, capped_body, sanitize_segment, HASH_SUFFIX_LEN, MAX_TOOL_NAME_LEN};
+use super::{cap_tool_name, sanitize_segment, HASH_SUFFIX_LEN, MAX_TOOL_NAME_LEN};
 
 /// Returns the readable prefix of a capped name after checking its suffix.
 fn capped_prefix(name: &str) -> String {
@@ -65,15 +65,9 @@ fn cap_tool_name_fits_the_provider_limit() {
     ]
     .map(|name| (name.clone(), cap_tool_name(name)));
     for (original, capped) in [&over_by_one, &long_a, &long_b] {
-        let prefix = capped_prefix(capped);
         assert_eq!(
-            (
-                capped.len(),
-                original.starts_with(&prefix),
-                capped_body(capped),
-                capped_body(original),
-            ),
-            (MAX_TOOL_NAME_LEN, true, Some(prefix.as_str()), None),
+            (capped.len(), original.starts_with(&capped_prefix(capped))),
+            (MAX_TOOL_NAME_LEN, true),
             "{original} -> {capped}"
         );
     }
