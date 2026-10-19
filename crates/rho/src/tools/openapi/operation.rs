@@ -93,7 +93,8 @@ pub(crate) struct RequestBody {
     pub(crate) content: JsonContent,
 }
 
-/// A JSON media type entry: `application/json` or a `+json` type.
+/// A JSON media type entry: `application/json`, a `+json` type, or `*/*`
+/// with a schema, which generators such as springdoc emit for JSON.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct JsonContent {
     pub(crate) media_type: String,
@@ -142,8 +143,8 @@ pub(crate) enum SkipReason {
     Sse,
     #[error("request body has no JSON content (declared: {})", declared_list(.declared))]
     NonJsonRequestBody { declared: Vec<String> },
-    #[error("binary response '{media_type}' is not supported")]
-    BinaryResponse { media_type: String },
+    #[error("response type '{media_type}' is neither JSON nor text")]
+    UnsupportedResponse { media_type: String },
     #[error("cookie parameter '{name}' is not supported")]
     CookieParam { name: String },
     #[error("parameter '{name}' uses unsupported location '{location}'")]
@@ -330,7 +331,7 @@ impl Indexer<'_> {
             return Ok(None);
         }
         let (at, body) = self.document.resolve_at(body_at)?;
-        let content = self.content(&at.child("content"), body)?;
+        let content = self.content(&at.child("content"), body);
         match content.json {
             Some(content) => Ok(Some(RequestBody {
                 required: body.get("required") == Some(&Value::Bool(true)),
@@ -354,15 +355,19 @@ impl Indexer<'_> {
         let mut success = Vec::new();
         for status in responses.keys().filter(|status| is_success_status(status)) {
             let (at, response) = self.document.resolve_at(responses_at.child(status))?;
-            let content = self.content(&at.child("content"), response)?;
+            let content = self.content(&at.child("content"), response);
             if content.event_stream {
                 return Err(SkipReason::Sse);
             }
-            let body = match (content.json, content.text, content.binary) {
+            // JSON wins over text, and either over other types, since the
+            // request can ask for it. opencode instead skips any response that
+            // offers a binary type at all, which would drop GitHub's commit
+            // and compare operations for their diff alternatives.
+            let body = match (content.json, content.text, content.other) {
                 (Some(json), _, _) => ResponseBody::Json(json),
                 (None, Some(media_type), _) => ResponseBody::Text { media_type },
                 (None, None, Some(media_type)) => {
-                    return Err(SkipReason::BinaryResponse { media_type });
+                    return Err(SkipReason::UnsupportedResponse { media_type });
                 }
                 (None, None, None) => ResponseBody::Empty,
             };
@@ -376,14 +381,14 @@ impl Indexer<'_> {
 
     /// Classify the `content` map of a request body or response, keeping the
     /// first media type of each kind.
-    fn content(&self, content_at: &JsonPointer, owner: &Value) -> Result<Content, RefError> {
+    fn content(&self, content_at: &JsonPointer, owner: &Value) -> Content {
         let mut content = Content::default();
         let Some(Value::Object(entries)) = owner.get("content") else {
-            return Ok(content);
+            return content;
         };
         for (media_type, media) in entries {
             content.declared.push(media_type.clone());
-            match self.media_kind(media_type, media)? {
+            match self.media_kind(media_type, media) {
                 MediaKind::Json => {
                     content.json.get_or_insert_with(|| JsonContent {
                         media_type: media_type.clone(),
@@ -396,45 +401,47 @@ impl Indexer<'_> {
                 MediaKind::Text => {
                     content.text.get_or_insert_with(|| media_type.clone());
                 }
-                MediaKind::Binary => {
-                    content.binary.get_or_insert_with(|| media_type.clone());
+                MediaKind::Other => {
+                    content.other.get_or_insert_with(|| media_type.clone());
                 }
             }
         }
-        Ok(content)
+        content
     }
 
-    /// JSON and `text/*` types carry text; every other type, and any schema
-    /// with `format: binary`, carries bytes.
-    fn media_kind(&self, media_type: &str, media: &Value) -> Result<MediaKind, RefError> {
+    /// JSON and `text/*` types carry text, and so does `*/*`, which
+    /// generators such as springdoc put on JSON responses. Everything else,
+    /// and any schema with `format: binary`, is neither.
+    fn media_kind(&self, media_type: &str, media: &Value) -> MediaKind {
         let essence = media_type
             .split(';')
             .next()
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
-        if essence == "application/json" || essence.ends_with("+json") {
-            return Ok(MediaKind::Json);
-        }
         if essence == "text/event-stream" {
-            return Ok(MediaKind::EventStream);
+            return MediaKind::EventStream;
         }
-        let schema = match media.get("schema") {
-            Some(schema) => Some(
-                self.document
-                    .resolve(schema)?
-                    .map_or(schema, |(_, target)| target),
-            ),
-            None => None,
-        };
-        let binary_format = schema
+        let json = essence == "application/json" || essence.ends_with("+json");
+        if !json && essence != "*/*" && !essence.starts_with("text/") {
+            return MediaKind::Other;
+        }
+        // An unusable ref here is not this check's concern: `check_refs`
+        // rejects it if the schema is ever used, and text never is.
+        let schema = media.get("schema");
+        let resolved = schema.and_then(|schema| match self.document.resolve(schema) {
+            Ok(Some((_, target))) => Some(target),
+            Ok(None) => Some(schema),
+            Err(_) => None,
+        });
+        let binary = resolved
             .and_then(|schema| schema.get("format"))
             .and_then(Value::as_str)
             == Some("binary");
-        if essence.starts_with("text/") && !binary_format {
-            Ok(MediaKind::Text)
-        } else {
-            Ok(MediaKind::Binary)
+        match (binary, json || (essence == "*/*" && schema.is_some())) {
+            (true, _) => MediaKind::Other,
+            (false, true) => MediaKind::Json,
+            (false, false) => MediaKind::Text,
         }
     }
 
@@ -459,7 +466,8 @@ enum MediaKind {
     Json,
     EventStream,
     Text,
-    Binary,
+    /// Binary, XML, and anything else tools cannot hand back as JSON or text.
+    Other,
 }
 
 /// A classified `content` map.
@@ -468,7 +476,7 @@ struct Content {
     json: Option<JsonContent>,
     event_stream: bool,
     text: Option<String>,
-    binary: Option<String>,
+    other: Option<String>,
     /// Every declared media type, in order.
     declared: Vec<String>,
 }

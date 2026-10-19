@@ -2,6 +2,8 @@
 # codes are unquoted on purpose: YAML reads them as numbers.
 openapi: 3.0
 info: {title: Sloppy, version: "1"}
+# Past 64 bits; must not fail the spec.
+x-build: 123456789012345678901234567890
 servers:
   - url: /v{version}
     variables:
@@ -22,6 +24,9 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/Pet'}
+            # An unused alternative with an external ref does not skip.
+            application/xml:
+              schema: {$ref: 'pets.xml#/Pet'}
     post:
       # Same id as `pets/list` once sanitized.
       operationId: pets-list
@@ -149,6 +154,14 @@ paths:
           description: text media type, binary schema behind a ref
           content:
             text/csv: {schema: {$ref: '#/components/schemas/File'}}
+  /legacy:
+    get:
+      operationId: legacy
+      responses:
+        200:
+          description: springdoc's default media type
+          content:
+            '*/*': {schema: {$ref: '#/components/schemas/Pet'}}
   /deep:
     get:
       operationId: deep

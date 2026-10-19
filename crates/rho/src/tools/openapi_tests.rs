@@ -72,6 +72,7 @@ fn sloppy_spec_skips_only_unusable_operations() {
             ("openapi__sloppy__pets_replace", Put, "/pets/{id}"),
             // A recursive schema is legal.
             ("openapi__sloppy__tree_get", Get, "/tree"),
+            ("openapi__sloppy__legacy", Get, "/legacy"),
             // A path item behind a `$ref`, with a text-only response.
             ("openapi__sloppy__aliased", Get, "/aliased"),
             (
@@ -90,7 +91,7 @@ fn sloppy_spec_skips_only_unusable_operations() {
         Some(vec![Ok(url("https://trees.example.com"))])
     );
     assert_eq!(
-        spec.operations[5].responses,
+        spec.operations[6].responses,
         vec![SuccessResponse {
             status: "200".to_owned(),
             body: ResponseBody::Text {
@@ -168,14 +169,14 @@ fn sloppy_spec_skips_only_unusable_operations() {
             (
                 Some(Get),
                 "/report",
-                SkipReason::BinaryResponse {
+                SkipReason::UnsupportedResponse {
                     media_type: name("application/pdf")
                 }
             ),
             (
                 Some(Get),
                 "/export",
-                SkipReason::BinaryResponse {
+                SkipReason::UnsupportedResponse {
                     media_type: name("text/csv")
                 }
             ),

@@ -98,6 +98,18 @@ impl<'de> Visitor<'de> for Node<'_> {
         Ok(Value::from(value))
     }
 
+    // serde_yaml_ng hands integers past 64 bits to these; arbitrary_precision
+    // keeps them exact, as the JSON path does.
+    fn visit_i128<E: de::Error>(self, value: i128) -> Result<Value, E> {
+        self.charge()?;
+        big_integer(value.to_string())
+    }
+
+    fn visit_u128<E: de::Error>(self, value: u128) -> Result<Value, E> {
+        self.charge()?;
+        big_integer(value.to_string())
+    }
+
     fn visit_f64<E: de::Error>(self, value: f64) -> Result<Value, E> {
         self.charge()?;
         Ok(Value::from(value))
@@ -145,4 +157,8 @@ impl<'de> Visitor<'de> for Node<'_> {
         }
         Ok(Value::Object(entries))
     }
+}
+
+fn big_integer<E: de::Error>(digits: String) -> Result<Value, E> {
+    serde_json::from_str(&digits).map_err(E::custom)
 }
