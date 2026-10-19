@@ -2,7 +2,7 @@
 
 use ratatui::{backend::Backend, Terminal};
 
-use super::{tool_card_render::card_is_toggleable, App, Entry};
+use super::{render::padded_content_width, tool_card_render::card_is_toggleable, App, Entry};
 
 /// Default history width used when a toggle check has no live terminal size yet.
 const TOGGLE_WIDTH_FALLBACK: usize = 80;
@@ -25,10 +25,13 @@ pub(super) fn tool_output_toggleable(
     width: usize,
 ) -> bool {
     let width = width.max(1);
+    if let Some(toggleable) = tool.cached_output_toggleable(width, max_tool_output_lines) {
+        return toggleable;
+    }
     match &tool.presentation {
         crate::presentation::Presentation::Notification(_) => true,
         crate::presentation::Presentation::Card(card) => {
-            card_is_toggleable(card, width, max_tool_output_lines, tool.expanded)
+            card_is_toggleable(card, padded_content_width(width), max_tool_output_lines)
         }
         crate::presentation::Presentation::SummaryCard(card) => !card.body.is_empty(),
     }

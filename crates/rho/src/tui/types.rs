@@ -443,6 +443,7 @@ pub(in crate::tui) struct LiveCardRenderCache {
     pub(in crate::tui) theme_generation: u64,
     pub(in crate::tui) syntax_ready: bool,
     pub(in crate::tui) expanded: bool,
+    pub(in crate::tui) toggleable: bool,
     pub(in crate::tui) elapsed_label: Option<String>,
     pub(in crate::tui) last_fact_is_end: bool,
     pub(in crate::tui) prefix_len: usize,
@@ -461,6 +462,7 @@ impl std::fmt::Debug for LiveCardRenderCache {
             .field("max_image_height", &self.max_image_height)
             .field("theme_generation", &self.theme_generation)
             .field("expanded", &self.expanded)
+            .field("toggleable", &self.toggleable)
             .field("elapsed_label", &self.elapsed_label)
             .field("body_lines", &self.body.len())
             .finish_non_exhaustive()

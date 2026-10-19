@@ -142,16 +142,17 @@ pub(super) fn paint_entry_sections(
     tool: &ToolEntry,
     width: usize,
     max_tool_output_lines: usize,
-) -> CardSections {
+) -> CardRender {
     match &tool.presentation {
-        crate::presentation::Presentation::Notification(message) => {
-            super::notification_card_render::notification_card_sections(
+        crate::presentation::Presentation::Notification(message) => CardRender {
+            sections: super::notification_card_render::notification_card_sections(
                 message,
                 width,
                 max_tool_output_lines,
                 tool.expanded,
-            )
-        }
+            ),
+            toggleable: true,
+        },
         crate::presentation::Presentation::Card(card) => paint_card_sections(
             card,
             width,
@@ -159,13 +160,17 @@ pub(super) fn paint_entry_sections(
             tool.expanded,
             live_shell_elapsed(tool),
         ),
-        crate::presentation::Presentation::SummaryCard(card) => paint_card_sections(
-            card,
-            width,
-            summary_card_budget(card, width),
-            tool.expanded,
-            None,
-        ),
+        crate::presentation::Presentation::SummaryCard(card) => {
+            let mut rendered = paint_card_sections(
+                card,
+                width,
+                summary_card_budget(card, width),
+                tool.expanded,
+                None,
+            );
+            rendered.toggleable = !card.body.is_empty();
+            rendered
+        }
     }
 }
 
@@ -175,7 +180,7 @@ pub(super) fn push_tool_entry(
     width: usize,
     max_tool_output_lines: usize,
 ) {
-    let sections = paint_entry_sections(tool, width, max_tool_output_lines);
+    let sections = paint_entry_sections(tool, width, max_tool_output_lines).sections;
     lines.extend(sections.header);
     lines.extend(sections.facts);
     lines.extend(sections.body);
@@ -196,7 +201,8 @@ pub(super) fn push_tool_card(
         max_tool_output_lines.max(1),
         expanded,
         live_elapsed,
-    );
+    )
+    .sections;
     lines.extend(sections.header);
     lines.extend(sections.facts);
     lines.extend(sections.body);
@@ -213,20 +219,26 @@ pub(super) struct CardSections {
     pub(super) last_fact_is_end: bool,
 }
 
+/// Toggle metadata comes from the same row count used to clip the painted card.
+pub(super) struct CardRender {
+    pub(super) sections: CardSections,
+    pub(super) toggleable: bool,
+}
+
 pub(super) fn paint_card_sections(
     card: &PresentedToolCard,
     width: usize,
     collapsed_rows: usize,
     expanded: bool,
     live_elapsed: Option<Duration>,
-) -> CardSections {
+) -> CardRender {
     let mut header = Vec::new();
     push_header_line(&mut header, card, card.status, width);
     let mut facts = Vec::new();
 
     let budget = collapsed_rows;
     // Collapsed: paint only the visible budget (syntax is the costly part).
-    // Expanded: paint the full body. Toggle checks never full-paint.
+    // Expanded: paint the full body. Retain the row count for toggle checks.
     let paint_budget = if expanded { None } else { Some(budget) };
     let rendered = render_child_groups(card, width, paint_budget, live_elapsed);
     let total_rows = rendered.total_terminal_rows;
@@ -330,11 +342,14 @@ pub(super) fn paint_card_sections(
             body.append(&mut notice);
         }
     }
-    CardSections {
-        header,
-        facts,
-        body,
-        last_fact_is_end,
+    CardRender {
+        sections: CardSections {
+            header,
+            facts,
+            body,
+            last_fact_is_end,
+        },
+        toggleable: total_rows > budget,
     }
 }
 
@@ -370,7 +385,6 @@ pub(super) fn card_is_toggleable(
     card: &PresentedToolCard,
     width: usize,
     max_tool_output_lines: usize,
-    _expanded: bool,
 ) -> bool {
     let budget = max_tool_output_lines.max(1);
     // Wrap math only, no syntect. Highlight does not change display width.
@@ -568,7 +582,7 @@ pub(super) fn estimate_plain_body_rows(line: &str, width: usize) -> usize {
     wrap_line_at_whitespace(line, content_width).len().max(1)
 }
 
-fn estimate_lines_rows(lines: &[String], width: usize, search_mode: bool) -> usize {
+fn estimate_lines_rows(lines: &[&str], width: usize, search_mode: bool) -> usize {
     if search_mode {
         lines
             .iter()

@@ -547,12 +547,12 @@ impl App {
         let header = self.session_header_lines(ctx.width)[..header_len].to_vec();
         let mut line = collect_matches(&mut matches, &mut buffers, &header, 0, needle);
         self.sync_open_stream_tail();
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         line = self
             .history
             .with_lines_and_images_mut(|cache, entries, images| {
                 let rows = cache.measured_lines(entries, ctx.settings, &|index, sources| {
-                    images.ready_images(index, sources, &cwd)
+                    images.ready_images(index, sources, cwd)
                 });
                 let rows = rows.take(limit.saturating_sub(line));
                 collect_matches(&mut matches, &mut buffers, rows, line, needle)

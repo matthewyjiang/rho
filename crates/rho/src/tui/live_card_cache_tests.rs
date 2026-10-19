@@ -8,6 +8,7 @@ use rho_tools::tool_card::{
 use crate::tui::{
     syntax::{reset_highlight_line_calls, take_highlight_line_calls, warm_syntax_set},
     theme::Theme,
+    tool_output_ui::tool_output_toggleable,
     ToolEntry,
 };
 
@@ -77,6 +78,58 @@ fn live_card_cache_hits_skip_syntax_highlight() {
     assert_eq!(take_highlight_line_calls(), 0);
     assert_eq!(entry.render_cache_paints(), 1);
     assert_eq!(first, second);
+}
+
+// Covers: toggle metadata follows wrapped child height, not visible/clipped rows,
+// and cannot be reused for another terminal width or output budget.
+// Owner: pure unit (live card layout cache); no interactive behavior is asserted.
+#[test]
+fn cached_toggleability_tracks_layout_and_survives_expansion() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    for (body, width, budget, expected) in [
+        (vec![], 14, 1, false),
+        (vec![""], 14, 1, false),
+        (vec!["abcdefgh"], 14, 1, false),
+        (vec!["abcdefghi"], 14, 1, true),
+        (vec!["a\nb", ""], 14, 2, true),
+        (vec!["a\nb", ""], 14, 3, false),
+    ] {
+        let mut entry = ToolEntry::new(
+            ToolCard::new(
+                ToolStatus::Ok,
+                ToolFamily::FileCommand,
+                ToolHeader::call("read", None),
+            )
+            .with_body(ToolBody::Lines(
+                body.into_iter().map(str::to_string).collect(),
+            )),
+            /*expanded*/ false,
+            None,
+            None,
+        );
+        assert_eq!(entry.cached_output_toggleable(width, budget), None);
+        assert_eq!(tool_output_toggleable(&entry, budget, width), expected);
+        entry.rendered_lines(width, budget, 4);
+        assert_eq!(
+            entry.cached_output_toggleable(width, budget),
+            Some(expected)
+        );
+        assert_eq!(tool_output_toggleable(&entry, budget, width), expected);
+
+        entry.expanded = true;
+        assert_eq!(
+            entry.cached_output_toggleable(width, budget),
+            Some(expected)
+        );
+        entry.rendered_lines(width, budget, 4);
+        assert_eq!(
+            entry.cached_output_toggleable(width, budget),
+            Some(expected)
+        );
+        assert_eq!(entry.cached_output_toggleable(width + 1, budget), None);
+        assert_eq!(entry.cached_output_toggleable(width, budget + 1), None);
+        assert_eq!(entry.clone().cached_output_toggleable(width, budget), None);
+    }
 }
 
 // Covers: themed live-card cache must miss after Theme::generation() bumps.

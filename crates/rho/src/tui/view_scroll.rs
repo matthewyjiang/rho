@@ -27,11 +27,11 @@ impl App {
     ) {
         // One extra pane so wheel/page-up does not wrap on the first notch.
         let min_lines = viewport.saturating_add(viewport.max(1));
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         self.history
             .with_lines_and_images_mut(|cache, entries, images| {
                 cache.ensure_suffix(entries, settings, min_lines, &|index, sources| {
-                    images.ready_images(index, sources, &cwd)
+                    images.ready_images(index, sources, cwd)
                 });
             });
     }
@@ -41,11 +41,11 @@ impl App {
         settings: HistoryRenderSettings,
         extra_lines: usize,
     ) -> usize {
-        let cwd = self.info.runtime.cwd.clone();
+        let cwd = &self.info.runtime.cwd;
         self.history
             .with_lines_and_images_mut(|cache, entries, images| {
                 cache.grow_prefix(entries, settings, extra_lines, &|index, sources| {
-                    images.ready_images(index, sources, &cwd)
+                    images.ready_images(index, sources, cwd)
                 })
             })
     }
@@ -257,25 +257,23 @@ impl App {
         if self.input_ui.composer().is_centered_overlay() {
             return Ok(false);
         }
-        let size = terminal.size()?;
-        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-        let now = Instant::now();
-        let ctx = self.frame_context(area);
         match ReservedComposerKey::from_key(key) {
-            Some(ReservedComposerKey::HistoryPageUp) => {
-                self.reveal_history_scrollbar(now);
+            Some(
+                direction @ (ReservedComposerKey::HistoryPageUp
+                | ReservedComposerKey::HistoryPageDown),
+            ) => {
+                let size = terminal.size()?;
+                let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+                let ctx = self.frame_context(area);
+                self.reveal_history_scrollbar(Instant::now());
                 self.history.set_scrollbar_drag(None);
-                let page = (ctx.layout.history_content.height as usize).max(1);
-                self.scroll_history_lines(&ctx.layout, ctx.settings, -(page as isize));
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            Some(ReservedComposerKey::HistoryPageDown) => {
-                self.reveal_history_scrollbar(now);
-                self.history.set_scrollbar_drag(None);
-                let page = (ctx.layout.history_content.height as usize).max(1);
-                self.scroll_history_lines(&ctx.layout, ctx.settings, page as isize);
+                let page = (ctx.layout.history_content.height as usize).max(1) as isize;
+                let delta = if direction == ReservedComposerKey::HistoryPageUp {
+                    -page
+                } else {
+                    page
+                };
+                self.scroll_history_lines(&ctx.layout, ctx.settings, delta);
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)

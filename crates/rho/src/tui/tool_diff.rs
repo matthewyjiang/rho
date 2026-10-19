@@ -113,17 +113,10 @@ pub(super) fn gutter_width(rows: &[DiffRow]) -> usize {
         .map_or(0, |line| line.to_string().len())
 }
 
-pub(super) fn logical_lines(display_lines: &[String]) -> Vec<String> {
+pub(super) fn logical_lines(display_lines: &[String]) -> Vec<&str> {
     display_lines
         .iter()
-        .flat_map(|line| {
-            let lines = line.lines().map(str::to_string).collect::<Vec<_>>();
-            if lines.is_empty() {
-                vec![String::new()]
-            } else {
-                lines
-            }
-        })
+        .flat_map(|line| line.lines().chain(line.is_empty().then_some("")))
         .collect()
 }
 
