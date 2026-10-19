@@ -157,7 +157,12 @@ impl Tool for McpTool {
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
-        self.slot.read().expectation.output_schema.clone()
+        self.slot
+            .read()
+            .expectation
+            .output_schema
+            .as_deref()
+            .cloned()
     }
 
     fn security(&self) -> ToolSecurity {
@@ -275,7 +280,7 @@ impl McpTool {
                             result = &mut call => result?,
                             never = &mut service => match never {},
                         };
-                        rendered.into_tool_output(metadata)
+                        Ok(rendered.into_json_output(metadata))
                     })
                 },
             ))
@@ -416,7 +421,7 @@ pub(super) async fn call_remote_tool(
                 *completion.lock().unwrap_or_else(|error| error.into_inner()) =
                     McpCallCompletion::Answered;
             }
-            result::render(&result, &expectation, max_output_bytes, image_delivery)
+            result::render(result, &expectation, max_output_bytes, image_delivery)
         }
         Ok(Ok(_)) => Err(ToolError::new(
             ToolErrorKind::Execution,

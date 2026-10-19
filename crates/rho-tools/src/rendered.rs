@@ -138,7 +138,27 @@ impl<T: Serialize> Rendered<T> {
         self
     }
 
-    pub fn into_tool_output(self, mut metadata: ToolMetadata) -> Result<ToolOutput, ToolError> {
+    pub fn into_tool_output(self, metadata: ToolMetadata) -> Result<ToolOutput, ToolError> {
+        let data = self
+            .data
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+        Ok(Rendered {
+            text: self.text,
+            data,
+            failed: self.failed,
+            assets: self.assets,
+            images: self.images,
+        }
+        .into_json_output(metadata))
+    }
+}
+
+impl Rendered<serde_json::Value> {
+    /// Move already-encoded structured data into the SDK output without
+    /// serializing it through another JSON value.
+    pub fn into_json_output(self, mut metadata: ToolMetadata) -> ToolOutput {
         for asset in self.assets {
             metadata = metadata.asset(asset);
         }
@@ -146,12 +166,13 @@ impl<T: Serialize> Rendered<T> {
             .metadata(metadata)
             .with_images(self.images);
         if let Some(data) = self.data {
-            output = output
-                .with_structured_content(serde_json::to_value(data).map_err(|error| {
-                    ToolError::new(ToolErrorKind::Execution, error.to_string())
-                })?);
+            output = output.with_structured_content(data);
         }
-        Ok(if self.failed { output.failed() } else { output })
+        if self.failed {
+            output.failed()
+        } else {
+            output
+        }
     }
 }
 

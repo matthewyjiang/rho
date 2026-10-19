@@ -8,13 +8,14 @@
 //! binary becomes a card asset with a short descriptor, and structured content
 //! is presented once rather than twice.
 
+use std::sync::Arc;
+
+use base64::Engine;
 use rho_sdk::{
     model::ImageContent,
     tool::{ToolAsset, ToolError, ToolErrorKind},
 };
 use rmcp::model::{CallToolResult, ContentBlock, ResourceContents};
-
-use base64::Engine;
 
 /// Encoded image bytes one MCP result may retain for card display.
 ///
@@ -57,11 +58,35 @@ const MAX_OUTPUT_SCHEMA_NODES: usize = 2_048;
 use rho_tools::Rendered;
 
 /// What the tool's own declaration says its result must contain.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct ResultExpectation {
     /// Declared `outputSchema`, when present. A successful result must include
     /// `structuredContent` that validates against it.
-    pub(super) output_schema: Option<serde_json::Value>,
+    pub(super) output_schema: Option<Arc<serde_json::Value>>,
+    validator: Option<Arc<jsonschema::Validator>>,
+}
+
+impl PartialEq for ResultExpectation {
+    fn eq(&self, other: &Self) -> bool {
+        // Compiled validators are derived state, not declaration changes.
+        self.output_schema == other.output_schema
+    }
+}
+
+impl ResultExpectation {
+    /// Compile the untrusted declaration once, before exporting or refreshing
+    /// a tool. Clones share both the schema and its compiled validator.
+    pub(super) fn from_schema(output_schema: Option<serde_json::Value>) -> Result<Self, ToolError> {
+        let validator = output_schema
+            .as_ref()
+            .map(compile_output_schema)
+            .transpose()?
+            .map(Arc::new);
+        Ok(Self {
+            output_schema: output_schema.map(Arc::new),
+            validator,
+        })
+    }
 }
 
 /// Tracks which image bytes this result still keeps for the card.
@@ -77,7 +102,7 @@ struct AssetBudget {
 /// server's result available to scripts while the model receives an error
 /// result with readable text rather than a JSON envelope.
 pub(super) fn render(
-    result: &CallToolResult,
+    result: CallToolResult,
     expectation: &ResultExpectation,
     max_output_bytes: usize,
     image_delivery: McpImageDelivery,
@@ -91,11 +116,16 @@ pub(super) fn render(
         }
     }
 
-    if let Some(structured) = &result.structured_content {
+    let structured_bytes = if let Some(structured) = &result.structured_content {
         // The declaration constrains the server result even if the script copy
-        // is omitted. Validation has its own bounded-work budget.
-        if let (false, Some(schema)) = (failed, &expectation.output_schema) {
-            validate_structured_content(schema, structured)?;
+        // is omitted. Check depth before the recursive size measurement.
+        if !failed && expectation.validator.is_some() {
+            ensure_depth_budget(structured, "structured content")?;
+        }
+        let asked = measure_json(structured, "structured content")?;
+        if let (false, Some(validator)) = (failed, &expectation.validator) {
+            ensure_json_budget(asked, MAX_STRUCTURED_CONTENT_BYTES, "structured content")?;
+            validate_structured_content(validator, structured)?;
         }
         // Preserve the model view regardless of script retention: remove the
         // server's JSON mirror only when replacing it with the same JSON.
@@ -103,26 +133,29 @@ pub(super) fn render(
         sections.push(
             serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string()),
         );
+        asked
     } else if expectation.output_schema.is_some() && !failed {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             "MCP server declared an output schema but returned no structured content",
         ));
-    }
+    } else {
+        0
+    };
 
     if sections.is_empty() {
         sections.push("The MCP server returned no content.".into());
     }
     let text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
-    let rendered = match &result.structured_content {
-        Some(data) => Rendered::new(text, data.clone()),
+    let rendered = match result.structured_content {
+        Some(data) => Rendered::new(text, data),
         None => Rendered::text_only(text),
     };
-    rendered
+    Ok(rendered
         .failed_if(failed)
         .with_assets(budget.assets)
         .with_images(budget.images)
-        .limit_data(max_output_bytes)
+        .limit_data_with_size(max_output_bytes, structured_bytes))
 }
 
 /// Render the messages one `prompts/get` returned into composer text.
@@ -155,28 +188,20 @@ pub(super) fn render_prompt_messages(
     rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes)
 }
 
-/// Fail when structured content does not match the tool's declared schema.
-fn validate_structured_content(
-    schema: &serde_json::Value,
-    structured: &serde_json::Value,
-) -> Result<(), ToolError> {
-    // Bound work before compiling or walking anything server-controlled. The
-    // schema and instance both come from an untrusted MCP server. Depth goes
-    // first: measuring bytes serializes recursively.
+/// Bound compile work before handing a server's declaration to jsonschema.
+fn compile_output_schema(schema: &serde_json::Value) -> Result<jsonschema::Validator, ToolError> {
     ensure_depth_budget(schema, "output schema")?;
-    ensure_depth_budget(structured, "structured content")?;
-    ensure_json_budget(schema, MAX_OUTPUT_SCHEMA_BYTES, "output schema")?;
     ensure_json_budget(
-        structured,
-        MAX_STRUCTURED_CONTENT_BYTES,
-        "structured content",
+        measure_json(schema, "output schema")?,
+        MAX_OUTPUT_SCHEMA_BYTES,
+        "output schema",
     )?;
     ensure_node_budget(schema, MAX_OUTPUT_SCHEMA_NODES, "output schema")?;
 
     // No remote or file $ref resolution: default-features disable the retrieve
     // backends. Prefer the linear `regex` pattern engine so a hostile pattern
     // cannot spend exponential backtracking time on every tools/call.
-    let validator = jsonschema::options()
+    jsonschema::options()
         .with_pattern_options(jsonschema::PatternOptions::regex())
         .build(schema)
         .map_err(|error| {
@@ -184,7 +209,14 @@ fn validate_structured_content(
                 ToolErrorKind::Execution,
                 format!("MCP server declared an invalid output schema: {error}"),
             )
-        })?;
+        })
+}
+
+/// Fail when structured content does not match the tool's compiled contract.
+fn validate_structured_content(
+    validator: &jsonschema::Validator,
+    structured: &serde_json::Value,
+) -> Result<(), ToolError> {
     if let Err(error) = validator.validate(structured) {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
@@ -194,22 +226,21 @@ fn validate_structured_content(
     Ok(())
 }
 
-fn ensure_json_budget(
-    value: &serde_json::Value,
-    max_bytes: usize,
-    label: &str,
-) -> Result<(), ToolError> {
-    let encoded_len = rho_tools::json_len(value).map_err(|error| {
+fn measure_json(value: &serde_json::Value, label: &str) -> Result<usize, ToolError> {
+    rho_tools::json_len(value).map_err(|error| {
         ToolError::new(
             ToolErrorKind::Execution,
             format!("MCP server returned {label} that could not be measured: {error}"),
         )
-    })?;
-    if encoded_len > max_bytes {
+    })
+}
+
+fn ensure_json_budget(asked: usize, max_bytes: usize, label: &str) -> Result<(), ToolError> {
+    if asked > max_bytes {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             format!(
-                "MCP server {label} exceeds the {} validation budget",
+                "MCP server {label} exceeds the {} validation budget (asked {asked} bytes)",
                 byte_size(max_bytes)
             ),
         ));
@@ -225,7 +256,7 @@ fn ensure_depth_budget(value: &serde_json::Value, label: &str) -> Result<(), Too
             return Err(ToolError::new(
                 ToolErrorKind::Execution,
                 format!(
-                    "MCP server {label} exceeds the {MAX_VALIDATION_DEPTH}-level validation nesting budget"
+                    "MCP server {label} exceeds the {MAX_VALIDATION_DEPTH}-level validation nesting budget (asked {depth} levels)"
                 ),
             ));
         }
@@ -254,7 +285,7 @@ fn ensure_node_budget(
         if count > max_nodes {
             return Err(ToolError::new(
                 ToolErrorKind::Execution,
-                format!("MCP server {label} exceeds the {max_nodes}-node validation budget"),
+                format!("MCP server {label} exceeds the {max_nodes}-node validation budget (asked {count} nodes)"),
             ));
         }
         match next {

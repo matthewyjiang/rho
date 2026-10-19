@@ -15,7 +15,7 @@ use anyhow::{bail, Context};
 use http::{HeaderName, HeaderValue};
 use rho_sdk::Workspace;
 use rmcp::{
-    model::{SetLevelRequestParams, Tool as RemoteTool},
+    model::SetLevelRequestParams,
     service::{PeerRequestOptions, RunningService},
     transport::{
         streamable_http_client::StreamableHttpClientTransportConfig, which_command,
@@ -27,7 +27,7 @@ use rmcp::{
 use super::{
     catalog::{self, McpCatalogHandle},
     client::{McpClientHandler, McpClientServices, McpEventReceiver, McpServerEvent},
-    config::{McpServerConfig, McpTransport},
+    config::{McpServerConfig, McpToolFilter, McpTransport},
     definition::McpToolDefinition,
     elicitation::{McpElicitationService, McpElicitationSupport},
     http_client::McpTransportClient,
@@ -68,7 +68,7 @@ pub(super) enum ConnectResult {
 /// A server that finished its handshake and first discovery.
 pub(super) struct ConnectedServer {
     pub(super) session: McpSession,
-    pub(super) discovered: Vec<RemoteTool>,
+    pub(super) discovered: McpToolDiscovery,
     /// `initialize` guidance, passed to the model as server-authored context.
     pub(super) instructions: Option<String>,
     pub(super) progress: McpProgressRouter,
@@ -77,6 +77,21 @@ pub(super) struct ConnectedServer {
     pub(super) calls: McpInFlightCalls,
     pub(super) events: McpEventReceiver,
     pub(super) offers: McpServerOffers,
+}
+
+/// Selected, validated definitions and the tools excluded by configuration.
+#[derive(Debug, Default)]
+pub(super) struct McpToolDiscovery {
+    pub(super) definitions: Vec<(String, McpToolDefinition)>,
+    pub(super) filtered_out_count: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ToolDiscoveryError {
+    #[error("MCP tool discovery exceeded its deadline")]
+    TimedOut,
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
 }
 
 /// What the host is able to serve a server beyond `roots/list`.
@@ -168,8 +183,8 @@ pub(super) async fn connect_server_bounded(
     apply_log_level(identity, server, &session, deadline).await;
 
     let offers = McpServerOffers::from_session(&session);
-    match tokio::time::timeout_at(deadline, session.list_all_tools()).await {
-        Ok(Ok(discovered)) => ConnectResult::Ready(Box::new(ConnectedServer {
+    match list_tool_definitions(identity, session.peer(), &server.tools, deadline).await {
+        Ok(discovered) => ConnectResult::Ready(Box::new(ConnectedServer {
             session,
             discovered,
             instructions,
@@ -178,18 +193,65 @@ pub(super) async fn connect_server_bounded(
             events,
             offers,
         })),
-        Ok(Err(error)) => {
+        Err(ToolDiscoveryError::Failed(error)) => {
             close_session(session).await;
             ConnectResult::Failed {
-                error: anyhow::anyhow!(error)
-                    .context(format!("MCP server `{identity}` failed tools/list")),
+                // Reports display this error without anyhow's chain formatter.
+                error: anyhow::anyhow!("MCP server `{identity}` failed tools/list: {error:#}"),
             }
         }
-        Err(_) => {
+        Err(ToolDiscoveryError::TimedOut) => {
             close_session(session).await;
             ConnectResult::TimedOut
         }
     }
+}
+
+/// Filter before compiling output contracts, then validate the whole selected set
+/// before publishing any definitions. A bad selected declaration fails discovery
+/// without partially changing live slots; excluded declarations cannot block it.
+async fn list_tool_definitions(
+    identity: &str,
+    peer: &Peer<RoleClient>,
+    filter: &McpToolFilter,
+    deadline: tokio::time::Instant,
+) -> Result<McpToolDiscovery, ToolDiscoveryError> {
+    let tools = tokio::time::timeout_at(deadline, peer.list_all_tools())
+        .await
+        .map_err(|_| ToolDiscoveryError::TimedOut)?
+        .map_err(anyhow::Error::from)?;
+    compile_tool_definitions(identity, tools, filter, deadline).await
+}
+
+async fn compile_tool_definitions(
+    identity: &str,
+    tools: Vec<rmcp::model::Tool>,
+    filter: &McpToolFilter,
+    deadline: tokio::time::Instant,
+) -> Result<McpToolDiscovery, ToolDiscoveryError> {
+    let mut discovered = McpToolDiscovery::default();
+    for remote in tools {
+        // Bound one poll to one schema, including when other servers share
+        // this task. Check the absolute budget after every cancellation point.
+        tokio::task::yield_now().await;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ToolDiscoveryError::TimedOut);
+        }
+        let name = remote.name.to_string();
+        if !filter.includes(&name) {
+            discovered.filtered_out_count += 1;
+            continue;
+        }
+        let definition = McpToolDefinition::from_remote(identity, &name, &remote)
+            .with_context(|| format!("MCP tool `{name}` has an unusable output schema"))?;
+        discovered.definitions.push((name, definition));
+    }
+    // The last synchronous compilation can itself cross the deadline. Never
+    // publish that batch, even though there is no subsequent yield to time out.
+    if tokio::time::Instant::now() >= deadline {
+        return Err(ToolDiscoveryError::TimedOut);
+    }
+    Ok(discovered)
 }
 
 /// Resolve what this session declares and answers for one server.
@@ -538,22 +600,25 @@ async fn ping(peer: &Peer<RoleClient>) -> Result<(), rmcp::service::ServiceError
 /// under one budget instead of rmcp's per-request one. That bounds a server that
 /// answers pages slowly as well as one that never answers at all.
 async fn refresh_tools(maintenance: &SessionMaintenance) {
-    let discovered = match tokio::time::timeout(
-        MCP_MAINTENANCE_REQUEST_BUDGET,
-        maintenance.peer.list_all_tools(),
+    let deadline = tokio::time::Instant::now() + MCP_MAINTENANCE_REQUEST_BUDGET;
+    let discovered = match list_tool_definitions(
+        &maintenance.identity,
+        &maintenance.peer,
+        &maintenance.server.tools,
+        deadline,
     )
     .await
     {
-        Ok(Ok(discovered)) => discovered,
-        Ok(Err(error)) => {
+        Ok(discovered) => discovered,
+        Err(ToolDiscoveryError::Failed(error)) => {
             tracing::warn!(
                 server = %maintenance.identity,
-                error = %error,
+                error = %format!("{error:#}"),
                 "MCP tools/list refresh failed"
             );
             return;
         }
-        Err(_) => {
+        Err(ToolDiscoveryError::TimedOut) => {
             tracing::warn!(
                 server = %maintenance.identity,
                 limit_seconds = MCP_MAINTENANCE_REQUEST_BUDGET.as_secs(),
@@ -565,19 +630,11 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
 
     let mut present = std::collections::HashSet::new();
     let mut added = Vec::new();
-    for remote in discovered {
-        let remote_name = remote.name.to_string();
-        if !maintenance.server.tools.includes(&remote_name) {
-            continue;
-        }
+    for (remote_name, definition) in discovered.definitions {
         match maintenance.slots.get(&remote_name) {
             Some(slot) => {
                 present.insert(remote_name.clone());
-                if slot.refresh(McpToolDefinition::from_remote(
-                    &maintenance.identity,
-                    &remote_name,
-                    &remote,
-                )) {
+                if slot.refresh(definition) {
                     tracing::info!(
                         server = %maintenance.identity,
                         tool = %remote_name,
@@ -687,3 +744,7 @@ pub(super) fn prepare_server_filesystem(server: &McpServerConfig) -> anyhow::Res
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;

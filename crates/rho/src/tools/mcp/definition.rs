@@ -11,7 +11,7 @@
 
 use rho_sdk::{
     model::ToolSpec,
-    tool::{OperationKind, ToolMetadata},
+    tool::{OperationKind, ToolError, ToolMetadata},
 };
 use rmcp::model::{Tool as RemoteTool, ToolAnnotations};
 
@@ -35,7 +35,17 @@ pub(super) struct McpToolPresentation {
 }
 
 impl McpToolDefinition {
-    pub(super) fn from_remote(identity: &str, remote_name: &str, remote: &RemoteTool) -> Self {
+    pub(super) fn from_remote(
+        identity: &str,
+        remote_name: &str,
+        remote: &RemoteTool,
+    ) -> Result<Self, ToolError> {
+        let expectation = ResultExpectation::from_schema(
+            remote
+                .output_schema
+                .as_ref()
+                .map(|schema| serde_json::Value::Object((**schema).clone())),
+        )?;
         let annotations = remote.annotations.as_ref();
         let description = remote
             .description
@@ -51,20 +61,13 @@ impl McpToolDefinition {
         for hint in behavior_hints(annotations) {
             description.push_str(&format!("\nServer hint: {hint}."));
         }
-        Self {
+        Ok(Self {
             spec: ToolSpec {
                 name: namespaced_tool_name(identity, remote_name),
                 description,
                 input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
             },
-            expectation: ResultExpectation {
-                // Keep the schema itself so successful structured content can
-                // be validated, not only checked for presence.
-                output_schema: remote
-                    .output_schema
-                    .as_ref()
-                    .map(|schema| serde_json::Value::Object((**schema).clone())),
-            },
+            expectation,
             presentation: McpToolPresentation {
                 read_only: annotations
                     .is_some_and(|annotations| annotations.read_only_hint.unwrap_or(false)),
@@ -73,7 +76,7 @@ impl McpToolDefinition {
                     .map(|hint| format!("Server hint: {hint}"))
                     .collect(),
             },
-        }
+        })
     }
 }
 

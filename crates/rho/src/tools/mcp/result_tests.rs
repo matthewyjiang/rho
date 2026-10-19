@@ -5,7 +5,7 @@ use rmcp::model::{CallToolResult, ContentBlock, Resource, ResourceContents};
 
 use super::{
     render, McpImageDelivery, Rendered, ResultExpectation, MAX_RETAINED_IMAGE_BYTES,
-    MAX_VALIDATION_DEPTH,
+    MAX_STRUCTURED_CONTENT_BYTES, MAX_VALIDATION_DEPTH,
 };
 
 const LIMIT: usize = 12_000;
@@ -19,9 +19,7 @@ fn result(content: Vec<ContentBlock>) -> CallToolResult {
 }
 
 fn expect_schema(schema: serde_json::Value) -> ResultExpectation {
-    ResultExpectation {
-        output_schema: Some(schema),
-    }
+    ResultExpectation::from_schema(Some(schema)).unwrap()
 }
 
 // Covers: each content kind must reach the model as something it can act on.
@@ -32,7 +30,7 @@ fn expect_schema(schema: serde_json::Value) -> ResultExpectation {
 fn content_blocks_render_by_kind() {
     let png = [0x89, b'P', b'N', b'G', 0, 1, 2, 3];
     let rendered = render(
-        &result(vec![
+        result(vec![
             ContentBlock::text("first line"),
             ContentBlock::image(encode(&png), "image/png"),
             ContentBlock::audio(encode(&[0u8; 2048]), "audio/wav"),
@@ -83,7 +81,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
 
     assert_eq!(
         render(
-            &mirrored,
+            mirrored,
             &ResultExpectation::default(),
             LIMIT,
             McpImageDelivery::PresentationOnly
@@ -96,7 +94,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
     with_prose.structured_content = Some(structured.clone());
     assert_eq!(
         render(
-            &with_prose,
+            with_prose,
             &ResultExpectation::default(),
             LIMIT,
             McpImageDelivery::PresentationOnly
@@ -107,7 +105,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
     );
 
     let missing = render(
-        &result(vec![ContentBlock::text("Found 2 matches.")]),
+        result(vec![ContentBlock::text("Found 2 matches.")]),
         &expect_schema(serde_json::json!({
             "type": "object",
             "required": ["count"],
@@ -124,7 +122,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
     valid.structured_content = Some(structured);
     assert_eq!(
         render(
-            &valid,
+            valid,
             &expect_schema(serde_json::json!({
                 "type": "object",
                 "required": ["count"],
@@ -148,7 +146,7 @@ fn structured_content_must_match_declared_output_schema() {
     invalid.structured_content = Some(serde_json::json!({"count": "two"}));
     for limit in [LIMIT, 1] {
         let error = render(
-            &invalid,
+            invalid.clone(),
             &expect_schema(serde_json::json!({
                 "type": "object",
                 "required": ["count"],
@@ -170,7 +168,7 @@ fn error_results_and_empty_results_stay_readable() {
     let mut failed = result(vec![ContentBlock::text("disk is full")]);
     failed.is_error = Some(true);
     let error = render(
-        &failed,
+        failed.clone(),
         &ResultExpectation::default(),
         LIMIT,
         McpImageDelivery::PresentationOnly,
@@ -186,7 +184,7 @@ fn error_results_and_empty_results_stay_readable() {
     let payload = serde_json::json!({"free_bytes": 0});
     failed.structured_content = Some(payload.clone());
     let error = render(
-        &failed,
+        failed,
         &ResultExpectation::default(),
         LIMIT,
         McpImageDelivery::PresentationOnly,
@@ -196,7 +194,7 @@ fn error_results_and_empty_results_stay_readable() {
 
     assert_eq!(
         render(
-            &result(Vec::new()),
+            result(Vec::new()),
             &ResultExpectation::default(),
             LIMIT,
             McpImageDelivery::PresentationOnly
@@ -216,7 +214,7 @@ fn image_assets_keep_only_the_first_that_fits_the_budget() {
     let oversized = vec![0u8; MAX_RETAINED_IMAGE_BYTES + 1];
 
     let multi = render(
-        &result(vec![
+        result(vec![
             ContentBlock::image(encode(&small), "image/png"),
             ContentBlock::image(encode(&small), "image/png"),
         ]),
@@ -231,7 +229,7 @@ fn image_assets_keep_only_the_first_that_fits_the_budget() {
         .contains("[not shown: card keeps only the first image]"));
 
     let too_large = render(
-        &result(vec![ContentBlock::image(encode(&oversized), "image/png")]),
+        result(vec![ContentBlock::image(encode(&oversized), "image/png")]),
         &ResultExpectation::default(),
         LIMIT,
         McpImageDelivery::PresentationOnly,
@@ -280,7 +278,13 @@ fn model_images_are_independent_of_presentation_retention() {
         (McpImageDelivery::PresentationOnly, Vec::new()),
         (McpImageDelivery::ModelAndPresentation, expected),
     ] {
-        let rendered = render(&content, &ResultExpectation::default(), LIMIT, delivery).unwrap();
+        let rendered = render(
+            content.clone(),
+            &ResultExpectation::default(),
+            LIMIT,
+            delivery,
+        )
+        .unwrap();
         assert_eq!(rendered.images(), images);
         assert_eq!(rendered.assets().len(), 1);
     }
@@ -302,11 +306,9 @@ fn structured_content_obeys_output_budget() {
             let mut call = result(vec![ContentBlock::text(payload.to_string())]);
             call.structured_content = Some(payload.clone());
             call.is_error = Some(failed);
-            let expectation = ResultExpectation {
-                output_schema: schema.clone(),
-            };
+            let expectation = ResultExpectation::from_schema(schema.clone()).unwrap();
             let rendered = render(
-                &call,
+                call,
                 &expectation,
                 LIMIT,
                 McpImageDelivery::PresentationOnly,
@@ -324,54 +326,34 @@ fn structured_content_obeys_output_budget() {
     }
 }
 
-// Covers: untrusted output schemas and structured payloads must be rejected
-// before compile/validate work can monopolize CPU or memory.
-// Owner: MCP structured-result contract.
-#[test]
-fn structured_validation_rejects_oversize_schemas() {
-    // A schema with far more nodes than the budget, built without a huge
-    // serialized form by nesting many tiny properties.
-    let mut properties = serde_json::Map::new();
-    for index in 0..3_000 {
-        properties.insert(format!("f{index}"), serde_json::json!({"type": "string"}));
-    }
-    let schema = serde_json::json!({
-        "type": "object",
-        "properties": properties,
-    });
-    let mut call = result(Vec::new());
-    call.structured_content = Some(serde_json::json!({}));
-    let error = render(
-        &call,
-        &expect_schema(schema),
-        LIMIT,
-        McpImageDelivery::PresentationOnly,
-    )
-    .unwrap_err();
-    assert_eq!(error.kind(), ToolErrorKind::Execution);
-}
-
-// Covers: large-but-bounded structured results validate. T3 Code's
+// Covers: large-but-bounded structured results validate, but content beyond the
+// validation byte budget fails even when the output retention cap allows it. T3 Code's
 // `orchestrator_capabilities` returns ~13k nodes in ~190 KB and was rejected by
 // a node cap far below what the byte budget already bounds.
 // Owner: MCP structured-result contract.
 #[test]
-fn structured_validation_accepts_many_nodes_within_byte_budget() {
-    let payload = serde_json::json!({ "items": vec![0; 20_000] });
-    let mut call = result(Vec::new());
-    call.structured_content = Some(payload.clone());
-    let schema = serde_json::json!({
+fn structured_validation_bounds_bytes_not_node_count() {
+    let expectation = expect_schema(serde_json::json!({
         "type": "object",
         "properties": { "items": { "type": "array", "items": { "type": "integer" } } },
-    });
-    let rendered = render(
-        &call,
-        &expect_schema(schema),
-        /*max_output_bytes*/ 128 * 1024,
-        McpImageDelivery::PresentationOnly,
-    )
-    .unwrap();
-    assert_eq!(rendered.data(), Some(&payload));
+    }));
+    for (nodes, accepted) in [(20_000, true), (MAX_STRUCTURED_CONTENT_BYTES / 2, false)] {
+        // Each zero costs two bytes with its separator, plus the object wrapper.
+        let payload = serde_json::json!({ "items": vec![0; nodes] });
+        let mut call = result(Vec::new());
+        call.structured_content = Some(payload.clone());
+        let rendered = render(
+            call,
+            &expectation,
+            /*max_output_bytes*/ MAX_STRUCTURED_CONTENT_BYTES * 2,
+            McpImageDelivery::PresentationOnly,
+        );
+        if accepted {
+            assert_eq!(rendered.unwrap().data(), Some(&payload));
+        } else {
+            assert_eq!(rendered.unwrap_err().kind(), ToolErrorKind::Execution);
+        }
+    }
 }
 
 // Covers: width is bounded by bytes, depth separately. Nested content past the
@@ -399,7 +381,7 @@ fn structured_validation_bounds_nesting_depth() {
         let mut call = result(Vec::new());
         call.structured_content = Some(payload);
         let rendered = render(
-            &call,
+            call,
             &expect_schema(schema.clone()),
             /*max_output_bytes*/ 128 * 1024,
             McpImageDelivery::PresentationOnly,

@@ -44,7 +44,7 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
     // One description line, plus one line per server behavior hint.
     let hint_lines = |description: &str| description.lines().count() - 1;
 
-    let plain = McpToolDefinition::from_remote("docs", "search", &remote(None, false));
+    let plain = McpToolDefinition::from_remote("docs", "search", &remote(None, false)).unwrap();
     assert!(plain.spec.description.contains("`docs`"));
     assert!(plain.spec.description.contains("find things"));
     assert_eq!(hint_lines(&plain.spec.description), 0);
@@ -54,20 +54,22 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
         "docs",
         "search",
         &remote(Some(annotations(true, false, true)), true),
-    );
+    )
+    .unwrap();
     assert!(annotated.spec.description.contains("Search"));
     assert!(annotated.spec.description.contains("find things"));
     assert_eq!(hint_lines(&annotated.spec.description), 2);
     assert_eq!(
-        annotated.expectation.output_schema,
-        Some(serde_json::json!({"type": "object"}))
+        annotated.expectation.output_schema.as_deref(),
+        Some(&serde_json::json!({"type": "object"}))
     );
 
     let destructive = McpToolDefinition::from_remote(
         "docs",
         "search",
         &remote(Some(annotations(false, true, false)), false),
-    );
+    )
+    .unwrap();
     assert_eq!(hint_lines(&destructive.spec.description), 1);
 }
 
@@ -81,8 +83,9 @@ fn read_only_hint_changes_presentation_only() {
         "docs",
         "search",
         &remote(Some(annotations(true, false, false)), false),
-    );
-    let writing = McpToolDefinition::from_remote("docs", "search", &remote(None, false));
+    )
+    .unwrap();
+    let writing = McpToolDefinition::from_remote("docs", "search", &remote(None, false)).unwrap();
 
     assert_eq!(
         (
