@@ -79,20 +79,20 @@ impl CodeModeSurface {
         ]
     }
 
+    #[cfg(test)]
     pub(crate) fn sync(&self, tools: &[Arc<dyn Tool>]) {
+        self.sync_named(tools.iter().map(|tool| (tool.spec().name, tool.clone())));
+    }
+
+    pub(crate) fn sync_named(&self, tools: impl IntoIterator<Item = (String, Arc<dyn Tool>)>) {
         let mut siblings: Vec<_> = tools
-            .iter()
-            .filter_map(|tool| {
-                let spec = tool.spec();
-                if is_orchestration_tool(&spec.name) {
+            .into_iter()
+            .filter_map(|(name, tool)| {
+                if is_orchestration_tool(&name) {
                     return None;
                 }
-                let mcp = parse_exported_name(&spec.name, ExportedNameDialect::Rho).is_some();
-                Some(ScriptTool {
-                    tool: tool.clone(),
-                    name: spec.name,
-                    mcp,
-                })
+                let mcp = parse_exported_name(&name, ExportedNameDialect::Rho).is_some();
+                Some(ScriptTool { tool, name, mcp })
             })
             .collect();
         siblings.sort_by(|a, b| a.name.cmp(&b.name));
@@ -242,10 +242,13 @@ impl ToolVisibility for CodeModeSurface {
             return true;
         }
         let state = self.state.read().expect("codemode surface");
-        state.tools.iter().any(|sibling| {
-            sibling.name == name
-                && (state.loaded.contains(name) || (state.mode == CodemodeMode::On && !sibling.mcp))
-        })
+        state
+            .tools
+            .binary_search_by(|sibling| sibling.name.as_str().cmp(name))
+            .is_ok_and(|index| {
+                state.loaded.contains(name)
+                    || (state.mode == CodemodeMode::On && !state.tools[index].mcp)
+            })
     }
 
     fn describe(&self, spec: &ToolSpec) -> Option<String> {
@@ -255,8 +258,8 @@ impl ToolVisibility for CodeModeSurface {
         }
         state
             .tools
-            .iter()
-            .find(|sibling| sibling.name == spec.name)?;
+            .binary_search_by(|sibling| sibling.name.cmp(&spec.name))
+            .ok()?;
         Some(format!(
             "{}\n\nCodemode: `call_tool(\"{}\", args)` returns `{{ is_error, content, data }}`; batch independent calls with `call_tools`.",
             spec.description.trim_end(), spec.name,
