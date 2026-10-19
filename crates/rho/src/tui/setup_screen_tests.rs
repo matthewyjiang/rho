@@ -6,7 +6,7 @@ use rho_providers::{auth::login_prompt::LoginPrompt, model::catalog::LoginTarget
 use super::*;
 use crate::tui::{
     custom_provider_login::CustomHostStep, login::SecretInput, tests::test_app,
-    text_input::TextInput, ComposerMode, PendingLoginComposer,
+    text_input::TextInput, ComposerMode, PendingLoginComposer, PendingLoginFinish,
 };
 
 /// The content column stays centred and never runs past the terminal, so a
@@ -54,6 +54,7 @@ fn setup_body_shows_pending_login_url_and_code() {
                 None,
                 "Visit this URL and enter the code.",
             ),
+            finish: PendingLoginFinish::ProviderCallback,
         }));
     let lines: Vec<String> = app
         .setup_body_frame(80, 12)
@@ -91,6 +92,7 @@ fn pending_login() -> PendingLoginComposer {
             Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
             "Visit this URL and enter the code.",
         ),
+        finish: PendingLoginFinish::ProviderCallback,
     }
 }
 

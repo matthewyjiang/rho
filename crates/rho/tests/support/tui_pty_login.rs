@@ -339,3 +339,65 @@ credential_store = "file"
     );
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
+
+// Covers: an Ollama device login counts only after Enter, logout signs Rho
+// out, and Esc on the prompt records nothing.
+// Owner: interactive login lifecycle.
+#[test]
+fn ollama_device_login_needs_enter_and_logout_signs_out() {
+    let home = IsolatedHome::new().unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 140,
+        },
+    )
+    // Headless on every platform, so no real browser opens.
+    .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2")
+    // The post-login model refresh must fail fast, not reach ollama.com.
+    .with_env("HTTPS_PROXY", "http://127.0.0.1:9");
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_login").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/login ollama-cloud-device").unwrap();
+    harness
+        .wait_for_text("Enter done", WaitTimeout::secs(10, "device prompt"))
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "stored credentials for ollama-cloud",
+            WaitTimeout::secs(10, "device login finished"),
+        )
+        .unwrap();
+
+    harness.submit_text("/logout ollama-cloud-device").unwrap();
+    harness
+        .wait_for_text(
+            "deleted stored credentials for ollama-cloud",
+            WaitTimeout::secs(10, "device logout"),
+        )
+        .unwrap();
+
+    harness.submit_text("/login ollama-cloud-device").unwrap();
+    harness
+        .wait_for_text("Enter done", WaitTimeout::secs(10, "second device prompt"))
+        .unwrap();
+    harness.inject_key(&Key::Esc).unwrap();
+    harness
+        .wait_for_text_gone("Enter done", WaitTimeout::secs(5, "prompt closed"))
+        .unwrap();
+    harness.submit_text("/logout ollama-cloud-device").unwrap();
+    harness
+        .wait_for_text(
+            "no stored credentials for ollama-cloud were present",
+            WaitTimeout::secs(10, "cancelled login recorded nothing"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}

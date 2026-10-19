@@ -140,7 +140,10 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                         }
                     }
                     ProviderAuthKind::OllamaDeviceKey { missing_message } => {
-                        CompatibleAuth::OllamaDevice(load_ollama_device_key(missing_message)?)
+                        CompatibleAuth::OllamaDevice(load_ollama_device_key(
+                            self.store.as_ref(),
+                            missing_message,
+                        )?)
                     }
                     ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
@@ -342,9 +345,14 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         .ok_or_else(|| missing_credential_error(missing_message))
 }
 
+/// Loads the `~/.ollama` device key once the user signed in to it through Rho.
 pub(crate) fn load_ollama_device_key(
+    store: &dyn CredentialStore,
     missing_message: &'static str,
 ) -> Result<OllamaDeviceKey, ModelError> {
+    if !crate::credentials::ollama_device_login_recorded(store)? {
+        return Err(missing_credential_error(missing_message));
+    }
     load_ollama_device_key_from(OllamaDeviceKey::load_default, missing_message)
 }
 

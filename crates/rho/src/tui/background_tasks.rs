@@ -88,7 +88,7 @@ pub(super) enum SessionOutput {
     CustomModels,
     CursorModels(Result<crate::cursor_runtime::models::RefreshResult, JoinError>),
     SyntaxWarmup,
-    InteractiveLogin(super::login::FinishedInteractiveLogin),
+    InteractiveLogin(super::login_pending::FinishedInteractiveLogin),
 }
 
 impl From<UiOutput> for TaskOutput {

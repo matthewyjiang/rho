@@ -38,6 +38,16 @@ use rho_providers::{
 pub(super) struct PendingLoginComposer {
     pub target: LoginTarget,
     pub prompt: LoginPrompt,
+    pub finish: PendingLoginFinish,
+}
+
+/// How a pending interactive login reaches success.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PendingLoginFinish {
+    /// A background task waits for the provider's callback.
+    ProviderCallback,
+    /// The provider sends no callback, so Enter means the user approved.
+    UserConfirms,
 }
 
 #[cfg(test)]

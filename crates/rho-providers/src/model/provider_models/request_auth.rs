@@ -94,7 +94,7 @@ pub(super) async fn load(
         }
         ProviderAuthKind::OllamaDeviceKey { missing_message } => {
             Ok(ModelRequestAuth::OllamaDevice(
-                crate::auth::provider_credentials::load_ollama_device_key(missing_message)?,
+                crate::auth::provider_credentials::load_ollama_device_key(store, missing_message)?,
             ))
         }
         ProviderAuthKind::CodexOAuth { .. }

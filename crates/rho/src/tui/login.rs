@@ -1,16 +1,11 @@
 use super::{
-    background_tasks::{SessionOutput, TaskId},
     provider_actions::{ProviderActivation, ProviderActivationOutcome},
     setup_screen::SetupStep,
     InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
 };
 use {
-    rho_providers::auth::{
-        browser::BrowserAvailability,
-        login_dispatch::{
-            AuthenticationMethod, CompletedAuthentication, InteractiveLoginCompletion,
-            InteractiveLoginMode, ProviderAuthentication,
-        },
+    rho_providers::auth::login_dispatch::{
+        AuthenticationMethod, InteractiveLoginMode, ProviderAuthentication,
     },
     rho_providers::model::registry,
     rho_providers::provider,
@@ -19,12 +14,6 @@ use {
 pub(super) use super::login_secret_input::{
     secret_input_frame, ApiKeySubmission, BlankKey, SecretInput,
 };
-
-/// A finished interactive login task and the target it signed in to.
-pub(super) struct FinishedInteractiveLogin {
-    target: LoginTarget,
-    result: Result<Result<CompletedAuthentication, String>, tokio::task::JoinError>,
-}
 
 /// Blank optional key: keep a reachable key, otherwise run keyless. Never deletes.
 fn resolve_blank_optional_key(mut target: LoginTarget, has_reachable_key: bool) -> LoginTarget {
@@ -525,137 +514,7 @@ impl App {
         }
     }
 
-    pub(super) async fn start_interactive_login_flow(
-        &mut self,
-        target: LoginTarget,
-        provider_label: &'static str,
-        mode: InteractiveLoginMode,
-        terminal: &mut DefaultTerminal,
-        _agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.interactive_login_pending() {
-            self.insert_entry(&Entry::Notice(
-                "Interactive login is already in progress. Press esc to cancel.".into(),
-            ));
-            return Ok(());
-        }
-
-        let availability = BrowserAvailability::from_process();
-        self.set_status(match mode {
-            InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
-            InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
-        });
-        terminal.draw(|frame| self.draw(frame))?;
-        let login = match ProviderAuthentication::start_interactive_login_with_availability(
-            &target.auth,
-            mode,
-            availability,
-        )
-        .await
-        {
-            Ok(login) => login,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("login failed");
-                return Ok(());
-            }
-        };
-
-        let provider_label = login.provider_label;
-        let device_flow = login.prompt.user_code.is_some();
-        for line in super::login_presentation::notice_lines(provider_label, &login.prompt) {
-            self.insert_entry(&Entry::Notice(line));
-        }
-        let pending = PendingLoginComposer {
-            target: target.clone(),
-            prompt: login.prompt.clone(),
-        };
-        let completion = match login.completion {
-            InteractiveLoginCompletion::Confirm(completion) => completion,
-            InteractiveLoginCompletion::Unconfirmed { instruction } => {
-                self.insert_entry(&Entry::Notice(instruction.into()));
-                self.input_ui
-                    .set_composer(ComposerMode::InteractivePending(pending));
-                self.refresh_available_auths();
-                self.report_resting_herdr_state().await;
-                return Ok(());
-            }
-        };
-        let flow = if device_flow { " device" } else { "" };
-        self.set_status(format!(
-            "waiting for {provider_label}{flow} login · {}",
-            super::login_presentation::LOGIN_KEY_HINT
-        ));
-        self.input_ui
-            .set_composer(ComposerMode::InteractivePending(pending));
-        self.tasks.spawn(
-            TaskId::InteractiveLogin,
-            async move { completion.await.map_err(|err| err.to_string()) },
-            move |result| {
-                SessionOutput::InteractiveLogin(FinishedInteractiveLogin { target, result }).into()
-            },
-        );
-        Ok(())
-    }
-
-    pub(super) fn interactive_login_pending(&self) -> bool {
-        self.tasks.contains(|id| *id == TaskId::InteractiveLogin)
-    }
-
-    /// Esc on the pending-login composer. Drops the task so its result never
-    /// applies.
-    pub(super) fn abort_interactive_login(&mut self) {
-        self.tasks.abort(|id| *id == TaskId::InteractiveLogin);
-    }
-
-    pub(super) async fn apply_interactive_login(
-        &mut self,
-        finished: FinishedInteractiveLogin,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let FinishedInteractiveLogin { target, result } = finished;
-        match result {
-            Ok(Ok(result)) => {
-                self.cancel_limits_command().await;
-                self.cancel_doctor_command().await;
-                let saved = result.save(self.credential_store.as_ref());
-                match saved {
-                    Ok(()) => {
-                        self.input_ui.set_composer(ComposerMode::Input);
-                        self.finish_login(target, terminal, agent).await
-                    }
-                    Err(err) => {
-                        self.input_ui.set_composer(ComposerMode::Input);
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.set_status("login failed");
-                        Ok(())
-                    }
-                }
-            }
-            Ok(Err(err)) => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Error(err));
-                self.set_status("login failed");
-                Ok(())
-            }
-            Err(err) if err.is_cancelled() => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.set_status("login cancelled");
-                Ok(())
-            }
-            Err(_) => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Error(
-                    "background task failed: interactive login".into(),
-                ));
-                self.set_status("login failed");
-                Ok(())
-            }
-        }
-    }
-
-    async fn finish_login(
+    pub(super) async fn finish_login(
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,

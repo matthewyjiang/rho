@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use super::{AuthenticationError, ProviderAuthentication};
 use crate::{
     auth::{
         browser::{BrowserAvailability, BrowserOpen},
         login_prompt::LoginPrompt,
+        ollama_device::{with_ollama_device_key_dir_for_tests, OllamaDeviceKey},
+        provider_credentials::{ApplicationCredentialSource, ProviderCredentialSource},
     },
-    credentials::MemoryCredentialStore,
+    credentials::{available_auth_modes, MemoryCredentialStore},
 };
 
 // Covers: public device-login capability matches the providers with a device grant
@@ -111,6 +115,44 @@ fn owns_api_key_storage_and_deletion() {
     assert!(ProviderAuthentication::has_stored_credentials(&store, "openai").unwrap());
     assert!(ProviderAuthentication::delete_credentials(&store, "openai").unwrap());
     assert!(!ProviderAuthentication::has_credentials(&store, "openai").unwrap());
+}
+
+// Covers: a device key on disk stays unused until a Rho device login, and logout undoes it
+// Owner: login dispatch
+#[test]
+fn ollama_device_key_needs_rho_login_and_logout_undoes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    OllamaDeviceKey::load_or_create(dir.path()).unwrap();
+    with_ollama_device_key_dir_for_tests(dir.path().into(), || {
+        let store = Arc::new(MemoryCredentialStore::default());
+        let source = ApplicationCredentialSource::new(store.clone());
+        let device = "ollama-cloud-device";
+        let signed_in = || ProviderAuthentication::has_credentials(store.as_ref(), device).unwrap();
+        let listed = || available_auth_modes(store.as_ref()).contains(&device.to_string());
+        assert!(!signed_in());
+        assert!(!listed());
+        assert!(source.acquire("ollama-cloud", device).is_err());
+
+        ProviderAuthentication::accept_unconfirmed_login(store.as_ref(), device).unwrap();
+        assert!(signed_in());
+        assert!(listed());
+        assert!(source.acquire("ollama-cloud", device).is_ok());
+
+        assert!(ProviderAuthentication::delete_credentials(store.as_ref(), device).unwrap());
+        assert!(!signed_in());
+        assert!(!listed());
+        assert!(source.acquire("ollama-cloud", device).is_err());
+        assert!(!ProviderAuthentication::delete_credentials(store.as_ref(), device).unwrap());
+        // The key belongs to the Ollama CLI too; logout must leave it on disk.
+        assert!(OllamaDeviceKey::load_from_dir(dir.path()).is_ok());
+
+        // Provider-level logout covers every mode, including the device key.
+        ProviderAuthentication::accept_unconfirmed_login(store.as_ref(), device).unwrap();
+        assert!(
+            ProviderAuthentication::delete_credentials(store.as_ref(), "ollama-cloud").unwrap()
+        );
+        assert!(!signed_in());
+    });
 }
 
 #[test]

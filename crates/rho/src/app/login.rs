@@ -97,6 +97,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<Log
             Ok(LoginCompletion::Saved)
         }
         InteractiveLoginCompletion::Unconfirmed { instruction } => {
+            ProviderAuthentication::accept_unconfirmed_login(&AppCredentialStore, &target.auth)?;
             eprintln!("{instruction}");
             Ok(LoginCompletion::Unconfirmed)
         }

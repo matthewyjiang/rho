@@ -54,6 +54,10 @@ const WEB_SEARCH_OPENAI_API_KEY_ACCOUNT: &str = "web-search:openai:api-key";
 const WEB_SEARCH_EXA_API_KEY_ACCOUNT: &str = "web-search:exa:api-key";
 const WEB_SEARCH_BRAVE_API_KEY_ACCOUNT: &str = "web-search:brave:api-key";
 const WEB_SEARCH_FIRECRAWL_API_KEY_ACCOUNT: &str = "web-search:firecrawl:api-key";
+/// Ollama device keys live in `~/.ollama`, which the Ollama CLI shares, so a
+/// key on disk does not mean the user signed in to Rho. Device login sets this
+/// flag and logout deletes it; the key itself is never removed.
+const OLLAMA_DEVICE_SIGNED_IN_ACCOUNT: &str = "provider:ollama-cloud:device-signed-in";
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CodexTokens {
@@ -303,14 +307,28 @@ fn delete_auth_kind_credentials(
     store: &dyn CredentialStore,
     auth_kind: ProviderAuthKind,
 ) -> CredentialResult<bool> {
-    // External device keys live outside the Rho credential store; logout is a no-op.
     if matches!(auth_kind, ProviderAuthKind::OllamaDeviceKey { .. }) {
-        return Ok(false);
+        return store.delete_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT);
     }
     let Some(account) = auth_kind.account() else {
         return Ok(false);
     };
     store.delete_secret(account)
+}
+
+/// True when the user completed a Rho device login and has not logged out.
+pub(crate) fn ollama_device_login_recorded(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    Ok(store.get_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT)?.is_some())
+}
+
+/// True when Rho is signed in and a usable `~/.ollama` device key exists.
+fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool> {
+    Ok(ollama_device_login_recorded(store)?
+        && crate::auth::ollama_device::ollama_device_credentials_available())
+}
+
+pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialResult<()> {
+    store.set_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT, "1")
 }
 
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
@@ -458,9 +476,7 @@ fn auth_mode_has_stored_credentials(
 ) -> CredentialResult<bool> {
     match auth_kind {
         ProviderAuthKind::None => Ok(true),
-        ProviderAuthKind::OllamaDeviceKey { .. } => {
-            Ok(crate::auth::ollama_device::ollama_device_credentials_available())
-        }
+        ProviderAuthKind::OllamaDeviceKey { .. } => ollama_device_signed_in(store),
         auth_kind => {
             let Some(account) = auth_kind.account() else {
                 return Ok(false);
@@ -553,9 +569,7 @@ fn auth_mode_has_credentials(
             credential_value_is_usable(&tokens.api_key)
                 || credential_value_is_usable(&tokens.identity_token)
         })),
-        ProviderAuthKind::OllamaDeviceKey { .. } => {
-            Ok(crate::auth::ollama_device::ollama_device_credentials_available())
-        }
+        ProviderAuthKind::OllamaDeviceKey { .. } => ollama_device_signed_in(store),
     }
 }
 

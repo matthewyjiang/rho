@@ -7,7 +7,7 @@ use rho_providers::{
 use crate::tui::{
     custom_provider_login::CustomHostStep, exclusive_screen::ExclusiveOccupant, login::SecretInput,
     setup_screen::SetupStep, tests::test_app, text_input::TextInput, ComposerMode,
-    PendingLoginComposer,
+    PendingLoginComposer, PendingLoginFinish,
 };
 
 fn pending() -> PendingLoginComposer {
@@ -23,6 +23,7 @@ fn pending() -> PendingLoginComposer {
             None,
             "Visit this URL and enter the code.",
         ),
+        finish: PendingLoginFinish::ProviderCallback,
     }
 }
 
