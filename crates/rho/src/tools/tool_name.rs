@@ -28,10 +28,6 @@ const HASH_SUFFIX_LEN: usize = 8;
 /// `/`, `-`, `.`, or `_`, becomes one `_`, and edge `_` are trimmed.
 /// The result never contains the `__` separator, so a joined name keeps its
 /// segment boundaries. Text with no usable characters becomes a hash of itself.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "OpenAPI tool names adopt the sanitizer next")
-)]
 pub(crate) fn sanitize_segment(raw: &str) -> String {
     let mut segment = String::with_capacity(raw.len());
     for character in raw.chars() {
@@ -54,10 +50,6 @@ pub(crate) fn sanitize_segment(raw: &str) -> String {
 /// Longer names keep a readable prefix and end in `-` plus a hash of the whole
 /// name, so long names that share a prefix stay distinct. Segments never
 /// contain `-`, so a `-` marks a name as capped.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "OpenAPI tool names adopt the sanitizer next")
-)]
 pub(crate) fn cap_tool_name(name: String) -> String {
     if name.len() <= MAX_TOOL_NAME_LEN {
         return name;

@@ -1,0 +1,159 @@
+# Each path exercises one way a real spec goes wrong. Status codes are
+# unquoted on purpose: YAML reads them as integers.
+openapi: 3.0.3
+info: {title: Sloppy, version: "1"}
+servers:
+  - url: /v{version}
+    variables:
+      version: {default: "2"}
+paths:
+  /pets:
+    get:
+      operationId: pets/list
+      summary: List pets
+      tags: [pets]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+      responses:
+        200:
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Pet'}
+    post:
+      # Same id as `pets/list` once sanitized.
+      operationId: pets-list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Pet'}
+      responses:
+        201: {description: created}
+  /pets/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    # No operationId.
+    get:
+      responses:
+        200: {$ref: '#/components/responses/Pet'}
+    delete:
+      operationId: pets/delete
+      parameters:
+        - {name: session, in: cookie, schema: {type: string}}
+      responses:
+        204: {description: deleted}
+  /pets/{id}/events:
+    get:
+      operationId: pets/events
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        200:
+          description: stream
+          content:
+            text/event-stream: {schema: {type: string}}
+  /pets/{id}/live:
+    get:
+      operationId: pets/live
+      x-websocket: true
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        101: {description: upgrade}
+  /broken:
+    get:
+      operationId: broken
+      responses:
+        200:
+          description: ok
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Missing'}
+  /external:
+    get:
+      operationId: external
+      parameters:
+        - $ref: 'common.yaml#/components/parameters/page'
+      responses:
+        200: {description: ok}
+  /cycle:
+    get:
+      operationId: cycle
+      parameters:
+        - $ref: '#/components/parameters/loopA'
+      responses:
+        200: {description: ok}
+  /tree:
+    get:
+      operationId: tree/get
+      servers:
+        - url: https://trees.example.com
+      responses:
+        200:
+          description: a recursive schema is legal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Node'}
+  /upload:
+    put:
+      operationId: upload
+      requestBody:
+        content:
+          application/octet-stream: {schema: {type: string, format: binary}}
+      responses:
+        204: {description: stored}
+  /form:
+    post:
+      operationId: form
+      requestBody:
+        content:
+          application/x-www-form-urlencoded: {schema: {type: object}}
+      responses:
+        204: {description: posted}
+  /matrix/{id}:
+    get:
+      operationId: matrix
+      parameters:
+        - {name: id, in: path, required: true, style: matrix, schema: {type: string}}
+      responses:
+        200: {description: ok}
+  /undeclared/{id}:
+    get:
+      operationId: undeclared
+      responses:
+        200: {description: ok}
+  /long:
+    get:
+      operationId: aVeryLongOperationIdentifierThatKeepsGoingWellPastTheProviderLimit
+      responses:
+        200: {description: ok}
+components:
+  parameters:
+    limit: {name: limit, in: query, schema: {type: integer}}
+    loopA: {$ref: '#/components/parameters/loopB'}
+    loopB: {$ref: '#/components/parameters/loopA'}
+  responses:
+    Pet:
+      description: ok
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Pet'}
+  schemas:
+    Pet:
+      type: object
+      required: [id, name, secret]
+      properties:
+        id: {type: integer, readOnly: true}
+        name: {type: string}
+        tag: {type: string, nullable: true}
+        secret: {type: string, writeOnly: true}
+        weight: {type: number, minimum: 0, exclusiveMinimum: true}
+    Node:
+      type: object
+      properties:
+        children:
+          type: array
+          items: {$ref: '#/components/schemas/Node'}

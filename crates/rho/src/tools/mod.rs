@@ -9,6 +9,11 @@ mod notification_format;
 #[cfg(test)]
 #[path = "notification_format_tests.rs"]
 mod notification_format_tests;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "OpenApiBundle wires the spec loader in next")
+)]
+pub(crate) mod openapi;
 #[cfg(test)]
 #[path = "output_contract_tests.rs"]
 mod output_contract_tests;
