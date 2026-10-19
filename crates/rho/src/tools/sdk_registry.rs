@@ -30,7 +30,7 @@ pub(crate) trait ToolBundle: Send + Sync {
     /// How every tool in this bundle reaches model context. Owners of large
     /// generated catalogs return [`ContextExposure::Hidden`].
     fn context_exposure(&self) -> ContextExposure {
-        ContextExposure::Advertised
+        ContextExposure::Direct
     }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -41,34 +41,17 @@ pub(crate) trait ToolBundle: Send + Sync {
 /// A bundle for features which need no shutdown work.
 pub(crate) struct StaticToolBundle {
     tools: Vec<Arc<dyn Tool>>,
-    exposure: ContextExposure,
 }
 
 impl StaticToolBundle {
     pub(crate) fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
-        Self {
-            tools,
-            exposure: ContextExposure::Advertised,
-        }
-    }
-
-    /// Tools that stay out of model context until `tool_search` loads them.
-    #[cfg(test)]
-    pub(crate) fn hidden(tools: Vec<Arc<dyn Tool>>) -> Self {
-        Self {
-            tools,
-            exposure: ContextExposure::Hidden,
-        }
+        Self { tools }
     }
 }
 
 impl ToolBundle for StaticToolBundle {
     fn tools(&self) -> &[Arc<dyn Tool>] {
         &self.tools
-    }
-
-    fn context_exposure(&self) -> ContextExposure {
-        self.exposure
     }
 }
 
@@ -383,7 +366,7 @@ impl AppToolSet {
         let orchestration = tool_set.code_mode().orchestration_tools();
         tool_set
             .inventory
-            .mutate(|tools| tools.extend(orchestration));
+            .extend(&orchestration, ContextExposure::Direct);
 
         tool_set
     }

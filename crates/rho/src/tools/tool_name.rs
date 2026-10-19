@@ -2,9 +2,10 @@
 //!
 //! Generated names are `<prefix>__<segment>__<segment>`. Providers accept only
 //! `[a-zA-Z0-9_-]` and at most [`MAX_TOOL_NAME_LEN`] characters, so producers
-//! build segments from these rules and cap the joined name with
-//! [`cap_tool_name`]. Both steps are lossy; the registering owner must reject
-//! duplicate results, as MCP registration does.
+//! build segments without `-` and cap the joined name with [`cap_tool_name`].
+//! The cap's `-` suffix therefore marks a capped name unambiguously. Both steps
+//! are lossy; the registering owner must reject duplicate results, as MCP
+//! registration does.
 
 use sha2::{Digest as _, Sha256};
 
@@ -13,9 +14,10 @@ use sha2::{Digest as _, Sha256};
 /// `^[a-zA-Z0-9_-]{1,64}$`.
 const MAX_TOOL_NAME_LEN: usize = 64;
 
-/// Hex digits of SHA-256 kept as the suffix of a capped name. With 32 bits, a
-/// suffix collision among GitHub's 196 over-long operations is below 1 in
-/// 200,000 (196^2 / 2^33), before also requiring a shared 55-character prefix.
+/// Hex digits of SHA-256 kept as the suffix of a capped name. Only capped names
+/// sharing a 55-character prefix can collide; for `n` of them the chance is
+/// about `n^2 / 2^33`, under 1 in 200,000 even for `n = 196`. Registration
+/// still rejects a collision rather than trusting the odds.
 const HASH_SUFFIX_LEN: usize = 8;
 
 /// Map arbitrary text to a readable name segment.
@@ -47,8 +49,9 @@ pub(crate) fn sanitize_segment(raw: &str) -> String {
 }
 
 /// Cap a name at [`MAX_TOOL_NAME_LEN`]. Names within the limit are unchanged.
-/// Longer names keep a readable prefix and end in `_` plus a hash of the whole
-/// name, so long names that share a prefix stay distinct.
+/// Longer names keep a readable prefix and end in `-` plus a hash of the whole
+/// name, so long names that share a prefix stay distinct. Segments never
+/// contain `-`, so readers can tell a capped name by [`capped_body`].
 pub(crate) fn cap_tool_name(name: String) -> String {
     if name.len() <= MAX_TOOL_NAME_LEN {
         return name;
@@ -57,18 +60,19 @@ pub(crate) fn cap_tool_name(name: String) -> String {
     while !name.is_char_boundary(end) {
         end -= 1;
     }
-    // A trailing `_` would join the suffix into a `__` segment separator.
+    // A dangling separator would leave an empty trailing segment.
     let prefix = name[..end].trim_end_matches('_');
-    format!("{prefix}_{}", short_hash(&name))
+    format!("{prefix}-{}", short_hash(&name))
+}
+
+/// The truncated readable prefix of a name [`cap_tool_name`] shortened, or
+/// `None` for a name that is complete.
+pub(crate) fn capped_body(name: &str) -> Option<&str> {
+    name.rsplit_once('-').map(|(body, _)| body)
 }
 
 fn short_hash(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    let mut hex = String::with_capacity(HASH_SUFFIX_LEN);
-    for byte in &digest[..HASH_SUFFIX_LEN / 2] {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
+    hex::encode(&Sha256::digest(value.as_bytes())[..HASH_SUFFIX_LEN / 2])
 }
 
 #[cfg(test)]

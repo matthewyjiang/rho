@@ -6,8 +6,10 @@ use rho_sdk::tool::Tool;
 
 use super::super::code_mode::{CodeModeSurface, ContextExposure, ScriptTool};
 
-/// The parent registry can read tools, but only `mutate` can write them. Every
-/// change publishes execution and discovery together in one surface snapshot.
+/// The parent registry can read tools, but only `extend` and `mutate` can
+/// write them. Every change publishes execution and discovery together in one
+/// surface snapshot. Handles added through `mutate` are
+/// [`ContextExposure::Direct`]; `extend` records the owner's exposure.
 #[derive(Default)]
 pub(super) struct ToolInventory {
     tools: Vec<Arc<dyn Tool>>,
@@ -15,7 +17,9 @@ pub(super) struct ToolInventory {
     /// the mutation boundary, never during read-only inventory lookups.
     names: Vec<String>,
     /// Handles their owners registered as [`ContextExposure::Hidden`]. Matched
-    /// by identity, so a same-named replacement never inherits the exposure.
+    /// by identity, so a same-named replacement never inherits the exposure,
+    /// while a removed handle that is restored keeps it. Bundles outlive the
+    /// inventory entries, so keeping removed handles here retains nothing new.
     hidden: Vec<Arc<dyn Tool>>,
     surface: Arc<CodeModeSurface>,
 }
@@ -36,7 +40,7 @@ impl ToolInventory {
     /// Appends one owner's tools with the exposure that owner chose.
     pub(super) fn extend(&mut self, tools: &[Arc<dyn Tool>], exposure: ContextExposure) {
         match exposure {
-            ContextExposure::Advertised => {}
+            ContextExposure::Direct => {}
             ContextExposure::Hidden => self.hidden.extend(tools.iter().cloned()),
         }
         self.mutate(|all| all.extend(tools.iter().cloned()));
@@ -45,17 +49,13 @@ impl ToolInventory {
     pub(super) fn mutate<T>(&mut self, mutation: impl FnOnce(&mut Vec<Arc<dyn Tool>>) -> T) -> T {
         let result = mutation(&mut self.tools);
         self.names = self.tools.iter().map(|tool| tool.spec().name).collect();
-        // Release handles the mutation removed.
-        let tools = &self.tools;
-        self.hidden
-            .retain(|hidden| tools.iter().any(|tool| Arc::ptr_eq(tool, hidden)));
         let hidden = &self.hidden;
         self.surface
             .sync_entries(self.named_tools().map(|(name, tool)| {
                 let exposure = if hidden.iter().any(|entry| Arc::ptr_eq(entry, tool)) {
                     ContextExposure::Hidden
                 } else {
-                    ContextExposure::Advertised
+                    ContextExposure::Direct
                 };
                 ScriptTool::new(name.to_owned(), tool.clone(), exposure)
             }));

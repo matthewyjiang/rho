@@ -1,10 +1,10 @@
 use pretty_assertions::assert_eq;
 
-use super::{cap_tool_name, sanitize_segment, HASH_SUFFIX_LEN, MAX_TOOL_NAME_LEN};
+use super::{cap_tool_name, capped_body, sanitize_segment, HASH_SUFFIX_LEN, MAX_TOOL_NAME_LEN};
 
 /// Returns the readable prefix of a capped name after checking its suffix.
 fn capped_prefix(name: &str) -> String {
-    let (prefix, hash) = name.rsplit_once('_').expect("capped name has a suffix");
+    let (prefix, hash) = name.rsplit_once('-').expect("capped name has a suffix");
     assert_eq!(
         (
             hash.len(),
@@ -65,16 +65,22 @@ fn cap_tool_name_fits_the_provider_limit() {
     ]
     .map(|name| (name.clone(), cap_tool_name(name)));
     for (original, capped) in [&over_by_one, &long_a, &long_b] {
+        let prefix = capped_prefix(capped);
         assert_eq!(
-            (capped.len(), original.starts_with(&capped_prefix(capped))),
-            (MAX_TOOL_NAME_LEN, true),
+            (
+                capped.len(),
+                original.starts_with(&prefix),
+                capped_body(capped),
+                capped_body(original),
+            ),
+            (MAX_TOOL_NAME_LEN, true, Some(prefix.as_str()), None),
             "{original} -> {capped}"
         );
     }
     assert_ne!(long_a.1, long_b.1);
     assert_eq!(cap_tool_name(long_a.0.clone()), long_a.1);
 
-    // A cut landing on `_` must not fuse with the suffix into a separator.
+    // A cut landing on `_` must not leave an empty trailing segment.
     let cut = MAX_TOOL_NAME_LEN - HASH_SUFFIX_LEN - 1;
     let at_separator = format!("{}__{}", "c".repeat(cut - 1), "d".repeat(20));
     assert_eq!(

@@ -34,16 +34,26 @@ pub(crate) struct ToolCatalogEntry {
     pub returns: Option<serde_json::Value>,
 }
 
-/// Whether a tool is declared to the model directly. Owners choose this per
-/// bundle; codemode never infers it from the tool name.
+/// Whether a tool is declared to the model before `tool_search` loads it.
+/// Owners choose this per bundle; codemode never infers it from the tool name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ContextExposure {
     /// Declared directly while `[codemode] mode` is `on`.
-    Advertised,
+    Direct,
     /// Kept out of model context in every mode until top-level `tool_search`
     /// loads it. Scripts can still discover and call it. Large generated
     /// catalogs, such as MCP tools, use this so they cost no context up front.
     Hidden,
+}
+
+impl ContextExposure {
+    /// Whether an unloaded tool with this exposure is declared in `mode`.
+    fn declared_in(self, mode: CodemodeMode) -> bool {
+        match self {
+            Self::Direct => mode == CodemodeMode::On,
+            Self::Hidden => false,
+        }
+    }
 }
 
 /// One script-callable inventory entry as the owning registry publishes it.
@@ -98,12 +108,14 @@ impl CodeModeSurface {
         ]
     }
 
-    /// Publishes advertised siblings; tests use it in place of a registry.
+    /// Publishes direct siblings; tests use it in place of a registry.
     #[cfg(test)]
     pub(crate) fn sync(&self, tools: &[Arc<dyn Tool>]) {
-        self.sync_entries(tools.iter().map(|tool| {
-            ScriptTool::new(tool.spec().name, tool.clone(), ContextExposure::Advertised)
-        }));
+        self.sync_entries(
+            tools.iter().map(|tool| {
+                ScriptTool::new(tool.spec().name, tool.clone(), ContextExposure::Direct)
+            }),
+        );
     }
 
     pub(crate) fn sync_entries(&self, tools: impl IntoIterator<Item = ScriptTool>) {
@@ -273,13 +285,7 @@ impl ToolVisibility for CodeModeSurface {
             .tools
             .binary_search_by(|sibling| sibling.name.as_str().cmp(name))
             .is_ok_and(|index| {
-                state.loaded.contains(name)
-                    || match (state.mode, state.tools[index].exposure) {
-                        (CodemodeMode::On, ContextExposure::Advertised) => true,
-                        (CodemodeMode::On, ContextExposure::Hidden) | (CodemodeMode::Only, _) => {
-                            false
-                        }
-                    }
+                state.loaded.contains(name) || state.tools[index].exposure.declared_in(state.mode)
             })
     }
 

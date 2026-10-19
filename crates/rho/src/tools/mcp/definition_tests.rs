@@ -73,6 +73,33 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
     assert_eq!(hint_lines(&destructive.spec.description), 1);
 }
 
+// Covers: a capped exported name drops part of the remote tool name, so the
+// description must restate it for the model and name-ranked tool search.
+// Owner: MCP tool declaration mapping.
+#[test]
+fn capped_names_restate_the_remote_tool() {
+    let identity = "sequential-thinking";
+    let [short, capped] = ["search", "sequentialthinking"]
+        .map(|tool| McpToolDefinition::from_remote(identity, tool, &remote(None, false)).unwrap());
+    assert_eq!(
+        [short, capped].map(|definition| (
+            definition.spec.name.len() <= 64,
+            definition.spec.description
+        )),
+        [
+            (
+                true,
+                "MCP server `sequential-thinking`: find things".to_string()
+            ),
+            (
+                true,
+                "MCP server `sequential-thinking` tool `sequentialthinking`: find things"
+                    .to_string()
+            ),
+        ]
+    );
+}
+
 // Covers: a read-only hint must change only how a call is presented. It must
 // never change what the call is permitted to do, because the hint comes from a
 // server Rho does not control.

@@ -19,10 +19,23 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     permission::PermissionMode,
     tools::{
-        code_mode::{CODEMODE_TOOL_NAME, TOOL_SEARCH_NAME},
-        sdk_registry::{AppToolSet, StaticToolBundle, ToolSetOptions},
+        code_mode::{ContextExposure, CODEMODE_TOOL_NAME, TOOL_SEARCH_NAME},
+        sdk_registry::{AppToolSet, ToolBundle, ToolSetOptions},
     },
 };
+
+/// Tools their owner keeps out of model context, whatever their names.
+struct HiddenBundle(Vec<Arc<dyn rho_sdk::tool::Tool>>);
+
+impl ToolBundle for HiddenBundle {
+    fn tools(&self) -> &[Arc<dyn rho_sdk::tool::Tool>] {
+        &self.0
+    }
+
+    fn context_exposure(&self) -> ContextExposure {
+        ContextExposure::Hidden
+    }
+}
 
 fn runtime_for(
     config: &Config,
@@ -81,7 +94,7 @@ async fn codemode_mode_selects_each_live_provider_request() {
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::default(),
     );
-    tools.add_bundle(StaticToolBundle::hidden(vec![Arc::new(ScriptedTool::new(
+    tools.add_bundle(HiddenBundle(vec![Arc::new(ScriptedTool::new(
         ToolSpec {
             name: "openapi__docs__lookup".into(),
             description: "documentation".into(),
@@ -223,7 +236,7 @@ async fn tool_search_loads_mcp_hits_for_direct_calls() {
             "required": ["threadId"],
             "additionalProperties": false,
         });
-        tools.add_bundle(StaticToolBundle::hidden(
+        tools.add_bundle(HiddenBundle(
             [&found, &deferred]
                 .into_iter()
                 .map(|name| {
