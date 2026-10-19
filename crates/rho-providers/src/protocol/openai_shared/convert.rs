@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::BTreeSet};
 
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 use crate::model::{
     handoff::{prepare_assistant, PreparedAssistant},
@@ -176,13 +176,13 @@ pub(crate) fn codex_reasoning_param(
     Some(serde_json::Value::Object(reasoning))
 }
 
-pub(crate) fn to_openai_tool(tool: ToolSpec) -> OpenAiTool {
+pub(crate) fn to_openai_tool(tool: &ToolSpec) -> OpenAiTool<'_> {
     OpenAiTool {
         kind: "function",
         function: OpenAiToolFunction {
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.input_schema,
+            name: &tool.name,
+            description: &tool.description,
+            parameters: Cow::Borrowed(&tool.input_schema),
             strict: false,
         },
     }
@@ -219,7 +219,7 @@ pub(crate) enum ToolAsync {
 
 /// Serializes a tool for a Responses endpoint that offers hosted tools.
 pub(crate) fn to_responses_tool(
-    tool: ToolSpec,
+    tool: &ToolSpec,
     strictness: ToolStrictness,
     hosted_web_search: bool,
     async_mode: ToolAsync,
@@ -240,16 +240,19 @@ pub(crate) fn to_responses_tool(
 
 /// Serializes a tool for a Responses endpoint with no hosted tool types.
 pub(crate) fn to_responses_lite_tool(
-    tool: ToolSpec,
+    tool: &ToolSpec,
     strictness: ToolStrictness,
 ) -> serde_json::Value {
-    json!({
-        "type": "function",
-        "name": tool.name,
-        "description": tool.description,
-        "parameters": tool.input_schema,
-        "strict": strictness.to_json(),
-    })
+    Value::Object(Map::from_iter([
+        ("type".into(), "function".into()),
+        ("name".into(), Value::String(tool.name.clone())),
+        (
+            "description".into(),
+            Value::String(tool.description.clone()),
+        ),
+        ("parameters".into(), tool.input_schema.clone()),
+        ("strict".into(), strictness.to_json()),
+    ]))
 }
 
 pub(crate) fn codex_input_items(
@@ -293,10 +296,10 @@ fn append_codex_history_message(
 ) -> Result<(), ModelError> {
     match message {
         Message::System(content) => instructions.push(content.clone()),
-        Message::User(blocks) => input.push(json!({
-            "role": "user",
-            "content": codex_content_blocks(blocks),
-        })),
+        Message::User(blocks) => input.push(Value::Object(Map::from_iter([
+            ("role".into(), "user".into()),
+            ("content".into(), codex_content_blocks(blocks)),
+        ]))),
         Message::Assistant(blocks) => {
             append_codex_assistant(input, blocks)?;
         }
@@ -453,16 +456,22 @@ fn append_codex_assistant(
 ) -> Result<(), ModelError> {
     let text = assistant_text(blocks);
     if !text.is_empty() {
-        input.push(json!({ "role": "assistant", "content": text }));
+        input.push(Value::Object(Map::from_iter([
+            ("role".into(), "assistant".into()),
+            ("content".into(), Value::String(text)),
+        ])));
     }
     for block in blocks {
         if let ContentBlock::ToolCall(call) = block {
-            input.push(json!({
-                "type": "function_call",
-                "call_id": &call.id,
-                "name": &call.name,
-                "arguments": serde_json::to_string(&call.arguments).map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?,
-            }));
+            let arguments = serde_json::to_string(&call.arguments).map_err(|e| {
+                ModelError::InvalidResponse(format!("invalid tool call arguments: {e}"))
+            })?;
+            input.push(Value::Object(Map::from_iter([
+                ("type".into(), "function_call".into()),
+                ("call_id".into(), Value::String(call.id.clone())),
+                ("name".into(), Value::String(call.name.clone())),
+                ("arguments".into(), Value::String(arguments)),
+            ])));
         }
     }
     Ok(())
@@ -513,7 +522,7 @@ fn openai_prepared_assistant(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(OpenAiMessage {
         role: "assistant".into(),
-        content: (!content.is_empty()).then(|| json!(content)),
+        content: (!content.is_empty()).then(|| Value::String(content)),
         reasoning_content: replay
             .reasoning_content
             .or_else(|| (synthesize_tool_reasoning && !tool_calls.is_empty()).then(String::new)),
@@ -584,7 +593,7 @@ pub(crate) fn to_openai_message_for_target(
 fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
     OpenAiMessage {
         role: role.into(),
-        content: Some(json!(content)),
+        content: Some(Value::String(content)),
         reasoning_content: None,
         tool_calls: None,
         tool_call_id: None,
@@ -609,16 +618,23 @@ fn chat_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
         .iter()
         .map(|block| match block {
             ContentBlock::Text(text) => json!({ "type": "text", "text": text }),
-            ContentBlock::Image(image) => json!({
-                "type": "image_url",
-                "image_url": { "url": format!("data:{};base64,{}", image.mime_type, image.data) },
-            }),
-            ContentBlock::ToolCall(call) => {
-                json!({ "type": "text", "text": render_tool_call(call) })
-            }
+            ContentBlock::Image(image) => Value::Object(Map::from_iter([
+                ("type".into(), "image_url".into()),
+                (
+                    "image_url".into(),
+                    Value::Object(Map::from_iter([(
+                        "url".into(),
+                        Value::String(format!("data:{};base64,{}", image.mime_type, image.data)),
+                    )])),
+                ),
+            ])),
+            ContentBlock::ToolCall(call) => Value::Object(Map::from_iter([
+                ("type".into(), "text".into()),
+                ("text".into(), Value::String(render_tool_call(call))),
+            ])),
         })
         .collect::<Vec<_>>();
-    json!(content)
+    Value::Array(content)
 }
 
 fn codex_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
@@ -626,16 +642,20 @@ fn codex_content_blocks(blocks: &[ContentBlock]) -> serde_json::Value {
         .iter()
         .map(|block| match block {
             ContentBlock::Text(text) => json!({ "type": "input_text", "text": text }),
-            ContentBlock::Image(image) => json!({
-                "type": "input_image",
-                "image_url": format!("data:{};base64,{}", image.mime_type, image.data),
-            }),
-            ContentBlock::ToolCall(call) => {
-                json!({ "type": "input_text", "text": render_tool_call(call) })
-            }
+            ContentBlock::Image(image) => Value::Object(Map::from_iter([
+                ("type".into(), "input_image".into()),
+                (
+                    "image_url".into(),
+                    Value::String(format!("data:{};base64,{}", image.mime_type, image.data)),
+                ),
+            ])),
+            ContentBlock::ToolCall(call) => Value::Object(Map::from_iter([
+                ("type".into(), "input_text".into()),
+                ("text".into(), Value::String(render_tool_call(call))),
+            ])),
         })
         .collect::<Vec<_>>();
-    json!(content)
+    Value::Array(content)
 }
 
 /// Placeholder for an assistant image neither OpenAI protocol can encode.

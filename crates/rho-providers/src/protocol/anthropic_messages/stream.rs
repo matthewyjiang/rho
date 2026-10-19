@@ -46,12 +46,6 @@ impl AnthropicSseState {
                     cache_control: None,
                 });
             }
-            if !block.thinking.is_empty() || !block.signature.is_empty() {
-                blocks.push(AnthropicContentBlock::Thinking {
-                    thinking: block.thinking,
-                    signature: block.signature,
-                });
-            }
             if let Some(data) = block.redacted_thinking {
                 blocks.push(AnthropicContentBlock::RedactedThinking { data });
             }
@@ -274,8 +268,8 @@ pub(crate) fn handle_anthropic_stream_line(
             let block = state.ensure_block(index);
             let provider_block = if !block.thinking.is_empty() || !block.signature.is_empty() {
                 Some(AnthropicContentBlock::Thinking {
-                    thinking: block.thinking.clone(),
-                    signature: block.signature.clone(),
+                    thinking: std::mem::take(&mut block.thinking),
+                    signature: std::mem::take(&mut block.signature),
                 })
             } else {
                 block

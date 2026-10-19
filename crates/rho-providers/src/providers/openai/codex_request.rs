@@ -68,7 +68,7 @@ impl ResponsesWireContract {
 
     fn serialize_tool(
         self,
-        tool: ToolSpec,
+        tool: &ToolSpec,
         hosted_web_search: bool,
         async_mode: ToolAsync,
     ) -> Value {
@@ -217,7 +217,7 @@ fn attach_prompt_cache_and_reasoning(
     reasoning: Option<Value>,
 ) {
     if let Some(prompt_cache_key) = prompt_cache_key {
-        body["prompt_cache_key"] = json!(prompt_cache_key);
+        body["prompt_cache_key"] = Value::String(prompt_cache_key);
     }
     if let Some(reasoning) = reasoning {
         body["reasoning"] = reasoning;
@@ -237,7 +237,6 @@ pub(super) fn build_responses_create_body(
     let tools = request
         .tools
         .iter()
-        .cloned()
         .map(|tool| {
             let async_mode = if super::supports_async_tools(profile.provider(), profile.model())
                 && async_tools.contains(&tool.name)
@@ -275,10 +274,10 @@ pub(super) fn build_responses_create_body(
     {
         body["max_output_tokens"] = json!(tokens.get());
     }
-    body["instructions"] = json!(instructions);
-    body["input"] = json!(input);
+    body["instructions"] = Value::String(instructions);
+    body["input"] = Value::Array(input);
     if !tools.is_empty() {
-        body["tools"] = json!(tools);
+        body["tools"] = Value::Array(tools);
         body["tool_choice"] = json!("auto");
     }
     if let Some(parallel_tool_calls) = contract.parallel_tool_calls() {
@@ -324,8 +323,8 @@ pub(super) fn build_responses_compact_body(
         ReasoningUpdatePolicy::CurrentLevel,
     )?;
     let mut body = base_responses_body(profile);
-    body["instructions"] = json!(instructions);
-    body["input"] = json!(input);
+    body["instructions"] = Value::String(instructions);
+    body["input"] = Value::Array(input);
     attach_prompt_cache_and_reasoning(&mut body, prompt_cache_key, reasoning);
     Ok(body)
 }

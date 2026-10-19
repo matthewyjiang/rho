@@ -32,7 +32,7 @@ impl OpenAiCompatibleDialect {
         }
     }
 
-    pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
+    pub(crate) fn normalize_tool(self, mut tool: OpenAiTool<'_>) -> OpenAiTool<'_> {
         match self {
             Self::Standard
             | Self::Custom
@@ -40,7 +40,7 @@ impl OpenAiCompatibleDialect {
             | Self::Poolside
             | Self::OpenRouter => tool,
             Self::Moonshot | Self::KimiCode => {
-                normalize_moonshot_parameters(&mut tool.function.parameters);
+                normalize_moonshot_parameters(tool.function.parameters.to_mut());
                 tool
             }
         }

@@ -45,7 +45,7 @@ pub(crate) fn split_system_and_messages(
     let messages = crate::protocol::late_tool_results::normalize_late_tool_results(messages);
     let mut system = Vec::new();
     let mut converted = Vec::new();
-    for message in messages.as_ref() {
+    for message in messages.iter().map(std::borrow::Cow::as_ref) {
         match message {
             Message::System(content) => system.push(content.as_str()),
             Message::User(blocks) => push_message(

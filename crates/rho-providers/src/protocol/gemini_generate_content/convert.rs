@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::model::{
@@ -21,16 +22,16 @@ struct CallInfo {
     has_provider_id: bool,
 }
 
-pub fn build_request(
+pub fn build_request<'a>(
     messages: &[Message],
-    tools: &[ToolSpec],
+    tools: &'a [ToolSpec],
     target: &ModelIdentity,
     reasoning: Option<ThinkingConfig>,
-) -> Result<GenerateContentRequest, ModelError> {
+) -> Result<GenerateContentRequest<'a>, ModelError> {
     let messages = crate::protocol::late_tool_results::normalize_late_tool_results(messages);
     let system_text = messages
         .iter()
-        .filter_map(|message| match message {
+        .filter_map(|message| match message.as_ref() {
             Message::System(text) => Some(text.as_str()),
             _ => None,
         })
@@ -38,7 +39,7 @@ pub fn build_request(
         .join("\n\n");
     let mut call_names = HashMap::new();
     let mut contents = Vec::new();
-    for message in messages.as_ref() {
+    for message in messages.iter().map(std::borrow::Cow::as_ref) {
         let content = match message {
             Message::System(_) => continue,
             Message::User(blocks) => Content {
@@ -125,9 +126,9 @@ pub fn build_request(
             function_declarations: tools
                 .iter()
                 .map(|tool| FunctionDeclaration {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
-                    parameters_json_schema: tool.input_schema.clone(),
+                    name: &tool.name,
+                    description: &tool.description,
+                    parameters_json_schema: &tool.input_schema,
                 })
                 .collect(),
         }]
@@ -205,12 +206,11 @@ fn replay_provider_context(
                 }
             }
             THOUGHT_PART_CONTEXT => {
-                let part =
-                    serde_json::from_value::<Part>(context.data.clone()).map_err(|error| {
-                        ModelError::InvalidResponse(format!(
-                            "invalid Gemini thought-part context: {error}"
-                        ))
-                    })?;
+                let part = Part::deserialize(&context.data).map_err(|error| {
+                    ModelError::InvalidResponse(format!(
+                        "invalid Gemini thought-part context: {error}"
+                    ))
+                })?;
                 thought_parts.push((position, sequence, part));
             }
             _ => {}

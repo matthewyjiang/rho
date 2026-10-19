@@ -57,10 +57,11 @@ impl GoogleProvider {
         }
     }
 
-    fn request_body(
+    fn request_body<'a>(
         &self,
-        request: ModelRequest<'_>,
-    ) -> Result<crate::protocol::gemini_generate_content::GenerateContentRequest, ModelError> {
+        request: ModelRequest<'a>,
+    ) -> Result<crate::protocol::gemini_generate_content::GenerateContentRequest<'a>, ModelError>
+    {
         build_request(
             request.messages,
             request.tools,

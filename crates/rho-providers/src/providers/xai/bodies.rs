@@ -5,7 +5,7 @@
 //! and a full `input` window (system messages included).
 
 use rho_sdk::model::ToolSpec;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::protocol::openai_responses::{
     codex_input_items_for_target, to_responses_lite_tool, ToolStrictness,
@@ -55,7 +55,7 @@ fn lower_xai_create_request(
 
 /// Serializes one xAI Responses tool, optionally rewriting web_search to the hosted type.
 fn to_xai_responses_tool(
-    tool: ToolSpec,
+    tool: &ToolSpec,
     strictness: ToolStrictness,
     hosted: XaiHostedTools,
 ) -> Value {
@@ -82,7 +82,6 @@ fn xai_responses_tools(tools: &[ToolSpec], hosted: XaiHostedTools) -> Vec<Value>
         .filter(|tool| {
             tool.name != "x_search" && !(hosted.image_generation && tool.name == "image_generation")
         })
-        .cloned()
         .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted))
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));
@@ -110,21 +109,21 @@ pub(super) fn build_xai_responses_body(
         prompt_cache_key,
         reasoning_effort,
     } = lower_xai_create_request(provider, model, reasoning, request)?;
-    let mut body = json!({
-        "model": model,
-        "input": input,
-        "store": false,
-        "stream": true,
-        "include": ["reasoning.encrypted_content"],
-    });
+    let mut body = Value::Object(Map::from_iter([
+        ("model".into(), model.into()),
+        ("input".into(), Value::Array(input)),
+        ("store".into(), Value::Bool(false)),
+        ("stream".into(), Value::Bool(true)),
+        ("include".into(), json!(["reasoning.encrypted_content"])),
+    ]));
     // Hosted x_search is always present. Image generation is host-gated.
-    body["tools"] = json!(tools);
+    body["tools"] = Value::Array(tools);
     body["tool_choice"] = json!("auto");
     if !instructions.is_empty() {
-        body["instructions"] = json!(instructions);
+        body["instructions"] = Value::String(instructions);
     }
     if let Some(prompt_cache_key) = prompt_cache_key {
-        body["prompt_cache_key"] = json!(prompt_cache_key);
+        body["prompt_cache_key"] = Value::String(prompt_cache_key);
     }
     if let Some(effort) = reasoning_effort {
         body["reasoning"] = json!({ "effort": effort });
@@ -144,10 +143,10 @@ pub(super) fn build_xai_compact_body(
 ) -> Result<Value, ModelError> {
     let target = ModelIdentity::new(provider, "openai-responses", model);
     let input = xai_compact_input_items(request.messages, &target)?;
-    Ok(json!({
-        "model": model,
-        "input": input,
-    }))
+    Ok(Value::Object(Map::from_iter([
+        ("model".into(), model.into()),
+        ("input".into(), Value::Array(input)),
+    ])))
 }
 
 /// Converts history for compact: system messages stay in `input` in order.

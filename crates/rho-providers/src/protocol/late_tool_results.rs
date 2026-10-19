@@ -16,25 +16,25 @@ const LATE_PLACEHOLDER: &str = "result delivered later in this conversation";
 
 /// Returns history where every completed assistant tool call is followed by an
 /// adjacent `ToolResult`, rewriting delayed results into user text.
-pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Cow<'_, [Message]> {
-    if !needs_normalize(messages) {
-        return Cow::Borrowed(messages);
-    }
-
+pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Vec<Cow<'_, Message>> {
     let mut out = Vec::with_capacity(messages.len());
     let mut late_names = BTreeMap::<String, String>::new();
     let mut index = 0;
     while index < messages.len() {
         if let Message::ToolResult(result) = &messages[index] {
             if let Some(name) = late_names.remove(&result.id) {
-                out.push(late_result_user_message(&result.id, &name, &result.content));
+                out.push(Cow::Owned(late_result_user_message(
+                    &result.id,
+                    &name,
+                    &result.content,
+                )));
                 index += 1;
                 continue;
             }
         }
 
         let calls = assistant_tool_calls(&messages[index]);
-        out.push(messages[index].clone());
+        out.push(Cow::Borrowed(&messages[index]));
         index += 1;
         if calls.is_empty() {
             continue;
@@ -49,7 +49,7 @@ pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Cow<'_, [Mess
                 break;
             }
             adjacent_ids.insert(result.id.as_str());
-            out.push(messages[index].clone());
+            out.push(Cow::Borrowed(&messages[index]));
             index += 1;
         }
 
@@ -57,39 +57,16 @@ pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Cow<'_, [Mess
             if adjacent_ids.contains(id) {
                 continue;
             }
-            out.push(Message::ToolResult(ToolResult {
+            out.push(Cow::Owned(Message::ToolResult(ToolResult {
                 id: id.to_owned(),
                 ok: true,
                 content: LATE_PLACEHOLDER.into(),
-            }));
+            })));
             late_names.insert(id.to_owned(), name.to_owned());
         }
     }
 
-    Cow::Owned(out)
-}
-
-fn needs_normalize(messages: &[Message]) -> bool {
-    let mut index = 0;
-    while index < messages.len() {
-        let calls = assistant_tool_calls(&messages[index]);
-        index += 1;
-        if calls.is_empty() {
-            continue;
-        }
-        let mut adjacent_ids = BTreeSet::new();
-        while index < messages.len() {
-            let Message::ToolResult(result) = &messages[index] else {
-                break;
-            };
-            adjacent_ids.insert(result.id.as_str());
-            index += 1;
-        }
-        if calls.iter().any(|(id, _)| !adjacent_ids.contains(id)) {
-            return true;
-        }
-    }
-    false
+    out
 }
 
 fn assistant_tool_calls(message: &Message) -> Vec<(&str, &str)> {
