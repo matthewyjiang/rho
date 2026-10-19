@@ -1,6 +1,6 @@
 //! `servers` lists, resolved to absolute HTTP(S) URLs.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use url::Url;
 
 /// Why one `servers` entry has no usable URL.
@@ -16,6 +16,8 @@ pub(crate) enum ServerUrlError {
     Invalid { url: String, reason: String },
     #[error("server URL '{url}' does not resolve to an HTTP(S) URL")]
     NotHttp { url: String },
+    #[error("server URL '{url}' has a query or fragment")]
+    QueryOrFragment { url: String },
 }
 
 /// Resolved `servers` entries, in spec order.
@@ -23,13 +25,15 @@ pub(crate) type Servers = Vec<Result<Url, ServerUrlError>>;
 
 /// The spec's top-level servers. A spec without servers means `/`, per OpenAPI.
 pub(super) fn resolve_spec(root: &Value, spec_url: &Url) -> Servers {
-    resolve_declared(root, spec_url).unwrap_or_else(|| vec![resolve_url("/", spec_url)])
+    root.as_object()
+        .and_then(|root| resolve_declared(root, spec_url))
+        .unwrap_or_else(|| vec![resolve_url("/", spec_url)])
 }
 
 /// Resolve the `servers` declared on `owner` (the spec root, a path item, or an
 /// operation) against `spec_url`, filling variables with their defaults.
 /// Returns `None` when `owner` declares none.
-pub(super) fn resolve_declared(owner: &Value, spec_url: &Url) -> Option<Servers> {
+pub(super) fn resolve_declared(owner: &Map<String, Value>, spec_url: &Url) -> Option<Servers> {
     let servers = owner.get("servers")?.as_array()?;
     if servers.is_empty() {
         return None;
@@ -58,16 +62,22 @@ fn resolve_one(server: &Value, spec_url: &Url) -> Result<Url, ServerUrlError> {
                 url: template.to_owned(),
             })?;
         let name = &after[..close];
-        let default = server
+        // OpenAPI requires a string, but YAML reads an unquoted `8443` as a number.
+        let default = match server
             .get("variables")
             .and_then(|variables| variables.get(name))
             .and_then(|variable| variable.get("default"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| ServerUrlError::MissingVariable {
-                url: template.to_owned(),
-                name: name.to_owned(),
-            })?;
-        url.push_str(default);
+        {
+            Some(Value::String(default)) => default.clone(),
+            Some(Value::Number(default)) => default.to_string(),
+            _ => {
+                return Err(ServerUrlError::MissingVariable {
+                    url: template.to_owned(),
+                    name: name.to_owned(),
+                })
+            }
+        };
+        url.push_str(&default);
         rest = &after[close + 1..];
     }
     url.push_str(rest);
@@ -81,10 +91,16 @@ fn resolve_url(url: &str, spec_url: &Url) -> Result<Url, ServerUrlError> {
             url: url.to_owned(),
             reason: error.to_string(),
         })?;
-    match resolved.scheme() {
-        "http" | "https" => Ok(resolved),
-        _ => Err(ServerUrlError::NotHttp {
+    if !matches!(resolved.scheme(), "http" | "https") {
+        return Err(ServerUrlError::NotHttp {
             url: resolved.to_string(),
-        }),
+        });
     }
+    // Tools append operation paths and their own query strings.
+    if resolved.query().is_some() || resolved.fragment().is_some() {
+        return Err(ServerUrlError::QueryOrFragment {
+            url: resolved.to_string(),
+        });
+    }
+    Ok(resolved)
 }

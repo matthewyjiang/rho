@@ -22,6 +22,16 @@ pub(crate) enum SpecVersion {
     V3_1,
 }
 
+impl SpecVersion {
+    /// OpenAPI 3.0 ignores every sibling of `$ref`; 3.1 applies them.
+    pub(super) fn ignores_ref_siblings(self) -> bool {
+        match self {
+            Self::V3_0 => true,
+            Self::V3_1 => false,
+        }
+    }
+}
+
 /// A parsed spec. Read-only after load and shared behind an `Arc`.
 #[derive(Debug)]
 pub(crate) struct Document {
@@ -57,13 +67,13 @@ impl Document {
         let root: Value = if looks_like_json {
             serde_json::from_slice(bytes).map_err(LoadError::Json)?
         } else {
-            serde_yaml_ng::from_slice(bytes).map_err(LoadError::Yaml)?
+            super::yaml::parse(bytes)?
         };
         let version = detect_version(&root)?;
         Ok(Self { version, root })
     }
 
-    pub(crate) fn version(&self) -> SpecVersion {
+    pub(super) fn version(&self) -> SpecVersion {
         self.version
     }
 
@@ -114,7 +124,7 @@ impl Document {
 }
 
 /// The `$ref` string of a reference object.
-pub(super) fn ref_of(value: &Value) -> Option<&str> {
+fn ref_of(value: &Value) -> Option<&str> {
     value.get("$ref")?.as_str()
 }
 

@@ -5,13 +5,14 @@
 //! never cloned schemas. Every `$ref` an entry can reach is checked here, so a
 //! broken or external ref skips only the operations that use it.
 
-use std::{collections::HashSet, fmt};
+use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 use url::Url;
 
 use super::{
     document::{Document, JsonPointer, RefError},
+    params::{self, Params},
     schema::check_refs,
     servers::{self, Servers},
 };
@@ -19,9 +20,6 @@ use crate::tools::tool_name::{cap_tool_name, sanitize_segment};
 
 /// First segment of every generated tool name.
 const TOOL_NAME_PREFIX: &str = "openapi";
-
-/// OpenAPI ignores header parameters with these names; transport sets them.
-const IGNORED_HEADER_PARAMS: &[&str] = &["accept", "content-type", "authorization"];
 
 /// An HTTP method that can carry an OpenAPI operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,17 +65,13 @@ impl HttpMethod {
     }
 }
 
-impl fmt::Display for HttpMethod {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.as_str().to_ascii_uppercase())
-    }
-}
-
 /// One callable operation.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Operation {
     /// Provider-safe and unique within the spec: `openapi__<source>__<id>`.
     pub(crate) tool_name: String,
+    /// Where the operation object lives, for reading fields the index skips.
+    pub(crate) at: JsonPointer,
     pub(crate) operation_id: Option<String>,
     pub(crate) method: HttpMethod,
     /// The path template, such as `/repos/{owner}/{repo}`.
@@ -91,35 +85,6 @@ pub(crate) struct Operation {
     /// Servers declared on the operation or its path item, which replace the
     /// spec's servers. `None` when neither declares any.
     pub(crate) servers: Option<Servers>,
-}
-
-/// Parameters grouped by where they are sent.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Params {
-    pub(crate) path: Vec<Param>,
-    pub(crate) query: Vec<Param>,
-    pub(crate) header: Vec<Param>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Param {
-    pub(crate) name: String,
-    /// Always true for path parameters.
-    pub(crate) required: bool,
-    pub(crate) style: ParamStyle,
-    pub(crate) explode: bool,
-    pub(crate) schema: JsonPointer,
-}
-
-/// The parameter serializations tools support.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ParamStyle {
-    /// Path and header parameters.
-    Simple,
-    /// Query parameters, the default.
-    Form,
-    /// Query objects as `name[key]=value`.
-    DeepObject,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,8 +104,19 @@ pub(crate) struct JsonContent {
 pub(crate) struct SuccessResponse {
     /// A status code such as `200`, or the `2XX` range.
     pub(crate) status: String,
-    /// `None` when the response has no body or only a non-JSON text body.
-    pub(crate) content: Option<JsonContent>,
+    pub(crate) body: ResponseBody,
+}
+
+/// What a successful response carries.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ResponseBody {
+    /// No content is declared.
+    Empty,
+    /// No JSON is offered, but this `text/*` type is.
+    Text {
+        media_type: String,
+    },
+    Json(JsonContent),
 }
 
 /// An operation left out of the index.
@@ -158,15 +134,13 @@ pub(crate) struct SkippedOperation {
 pub(crate) enum SkipReason {
     #[error(transparent)]
     Ref(#[from] RefError),
-    #[error("operation is not an object")]
+    #[error("declaration is not an object")]
     NotAnObject,
     #[error("WebSocket operations are not supported")]
     WebSocket,
     #[error("SSE operations are not supported")]
     Sse,
-    #[error("binary request body '{media_type}' is not supported")]
-    BinaryRequestBody { media_type: String },
-    #[error("request body has no JSON content (declared: {})", .declared.join(", "))]
+    #[error("request body has no JSON content (declared: {})", declared_list(.declared))]
     NonJsonRequestBody { declared: Vec<String> },
     #[error("binary response '{media_type}' is not supported")]
     BinaryResponse { media_type: String },
@@ -176,10 +150,20 @@ pub(crate) enum SkipReason {
     UnsupportedParamLocation { name: String, location: String },
     #[error("parameter '{name}' uses unsupported serialization '{style}'")]
     UnsupportedParamStyle { name: String, style: String },
-    #[error("parameter is invalid: {0}")]
+    #[error("invalid parameter declaration: {0}")]
     InvalidParam(&'static str),
+    #[error("parameter '{name}' {problem}")]
+    MalformedParam { name: String, problem: &'static str },
     #[error("path parameter '{name}' is not declared")]
     UndeclaredPathParam { name: String },
+}
+
+fn declared_list(declared: &[String]) -> String {
+    if declared.is_empty() {
+        "none".to_owned()
+    } else {
+        declared.join(", ")
+    }
 }
 
 /// Index every operation in `document`, naming tools for source `source`.
@@ -199,7 +183,8 @@ pub(super) fn index(
     };
     if let Some(Value::Object(paths)) = document.root().get("paths") {
         let paths_at = JsonPointer::root().child("paths");
-        for path in paths.keys() {
+        // `x-` keys are extensions, not paths.
+        for path in paths.keys().filter(|path| !path.starts_with("x-")) {
             indexer.path_item(path, paths_at.child(path));
         }
     }
@@ -221,71 +206,75 @@ struct Indexer<'a> {
 struct OperationSite<'a> {
     method: HttpMethod,
     path: &'a str,
+    operation_id: Option<String>,
     at: JsonPointer,
-    value: &'a Value,
-    path_item: &'a Value,
     path_item_at: &'a JsonPointer,
+    path_item: &'a Map<String, Value>,
 }
 
 impl Indexer<'_> {
     fn path_item(&mut self, path: &str, at: JsonPointer) {
-        let (path_item_at, path_item) = match self.document.resolve_at(at) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                self.skipped.push(SkippedOperation {
-                    method: None,
-                    path: path.to_owned(),
-                    operation_id: None,
-                    reason: error.into(),
-                });
-                return;
-            }
+        let resolved = self.document.resolve_at(at);
+        let (path_item_at, path_item) = match resolved {
+            Ok((at, Value::Object(path_item))) => (at, path_item),
+            Ok(_) => return self.skip_path_item(path, SkipReason::NotAnObject),
+            Err(error) => return self.skip_path_item(path, error.into()),
         };
-        let Value::Object(entries) = path_item else {
-            return;
-        };
-        for (key, value) in entries {
+        for (key, value) in path_item {
             let Some(method) = HttpMethod::from_key(key) else {
                 continue;
             };
             let site = OperationSite {
                 method,
                 path,
+                operation_id: value
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .filter(|operation_id| !operation_id.is_empty())
+                    .map(str::to_owned),
                 at: path_item_at.child(key),
-                value,
-                path_item,
                 path_item_at: &path_item_at,
+                path_item,
             };
-            let operation_id = value
-                .get("operationId")
-                .and_then(Value::as_str)
-                .filter(|operation_id| !operation_id.is_empty())
-                .map(str::to_owned);
-            match self.operation(&site, operation_id.clone()) {
+            let result = match value {
+                Value::Object(operation) => self.operation(&site, operation),
+                _ => Err(SkipReason::NotAnObject),
+            };
+            match result {
                 Ok(operation) => self.operations.push(operation),
                 Err(reason) => self.skipped.push(SkippedOperation {
                     method: Some(method),
                     path: path.to_owned(),
-                    operation_id,
+                    operation_id: site.operation_id,
                     reason,
                 }),
             }
         }
     }
 
+    fn skip_path_item(&mut self, path: &str, reason: SkipReason) {
+        self.skipped.push(SkippedOperation {
+            method: None,
+            path: path.to_owned(),
+            operation_id: None,
+            reason,
+        });
+    }
+
     fn operation(
         &mut self,
         site: &OperationSite<'_>,
-        operation_id: Option<String>,
+        operation: &Map<String, Value>,
     ) -> Result<Operation, SkipReason> {
-        let Value::Object(operation) = site.value else {
-            return Err(SkipReason::NotAnObject);
-        };
         if operation.get("x-websocket") == Some(&Value::Bool(true)) {
             return Err(SkipReason::WebSocket);
         }
-        let params = self.params(site)?;
-        let request_body = self.request_body(site, operation)?;
+        let params = params::parse(
+            self.document,
+            [(site.path_item_at, site.path_item), (&site.at, operation)],
+            site.path,
+        )?;
+        let request_body = self.request_body(site)?;
         let responses = self.responses(site, operation)?;
 
         let schemas = [&params.path, &params.query, &params.header]
@@ -300,16 +289,20 @@ impl Indexer<'_> {
             .chain(
                 responses
                     .iter()
-                    .filter_map(|response| response.content.as_ref()?.schema.clone()),
+                    .filter_map(|response| match &response.body {
+                        ResponseBody::Json(content) => content.schema.clone(),
+                        ResponseBody::Empty | ResponseBody::Text { .. } => None,
+                    }),
             )
             .collect();
         check_refs(self.document, schemas, &mut self.verified_schemas)?;
 
-        let servers = servers::resolve_declared(site.value, self.spec_url)
+        let servers = servers::resolve_declared(operation, self.spec_url)
             .or_else(|| servers::resolve_declared(site.path_item, self.spec_url));
         Ok(Operation {
-            tool_name: self.tool_name(operation_id.as_deref(), site),
-            operation_id,
+            tool_name: self.tool_name(site),
+            at: site.at.clone(),
+            operation_id: site.operation_id.clone(),
             method: site.method,
             path: site.path.to_owned(),
             summary: operation
@@ -331,135 +324,22 @@ impl Indexer<'_> {
         })
     }
 
-    /// Path item parameters, overridden by operation parameters with the same
-    /// name and location, grouped by location in declaration order.
-    fn params(&self, site: &OperationSite<'_>) -> Result<Params, SkipReason> {
-        let mut declared: Vec<(String, String, JsonPointer, &Map<String, Value>)> = Vec::new();
-        for (owner_at, owner) in [(site.path_item_at, site.path_item), (&site.at, site.value)] {
-            let Some(Value::Array(list)) = owner.get("parameters") else {
-                continue;
-            };
-            let list_at = owner_at.child("parameters");
-            for index in 0..list.len() {
-                let (at, param) = self.document.resolve_at(list_at.index(index))?;
-                let Value::Object(param) = param else {
-                    return Err(SkipReason::InvalidParam("parameter is not an object"));
-                };
-                let (Some(name), Some(location)) = (
-                    param.get("name").and_then(Value::as_str),
-                    param.get("in").and_then(Value::as_str),
-                ) else {
-                    return Err(SkipReason::InvalidParam(
-                        "parameter has no name or location",
-                    ));
-                };
-                let entry = (name.to_owned(), location.to_owned(), at, param);
-                match declared.iter_mut().find(|(seen_name, seen_location, ..)| {
-                    seen_name == name && seen_location == location
-                }) {
-                    Some(seen) => *seen = entry,
-                    None => declared.push(entry),
-                }
-            }
-        }
-
-        let mut params = Params::default();
-        for (name, location, at, param) in declared {
-            let (group, default_style) = match location.as_str() {
-                "path" => (&mut params.path, ParamStyle::Simple),
-                "query" => (&mut params.query, ParamStyle::Form),
-                "header" if IGNORED_HEADER_PARAMS.contains(&name.to_ascii_lowercase().as_str()) => {
-                    continue;
-                }
-                "header" => (&mut params.header, ParamStyle::Simple),
-                "cookie" => return Err(SkipReason::CookieParam { name }),
-                _ => return Err(SkipReason::UnsupportedParamLocation { name, location }),
-            };
-            let unsupported = |style: &str| SkipReason::UnsupportedParamStyle {
-                name: name.clone(),
-                style: style.to_owned(),
-            };
-            if param.contains_key("content") {
-                return Err(unsupported("content"));
-            }
-            if !param.contains_key("schema") {
-                return Err(SkipReason::InvalidParam(
-                    "parameter has neither schema nor content",
-                ));
-            }
-            if param.get("allowReserved") == Some(&Value::Bool(true)) {
-                return Err(unsupported("allowReserved"));
-            }
-            let style = match param.get("style") {
-                None => default_style,
-                Some(Value::String(style)) => match (default_style, style.as_str()) {
-                    (ParamStyle::Simple, "simple") => ParamStyle::Simple,
-                    (ParamStyle::Form, "form") => ParamStyle::Form,
-                    (ParamStyle::Form, "deepObject") => ParamStyle::DeepObject,
-                    _ => return Err(unsupported(style)),
-                },
-                Some(_) => return Err(SkipReason::InvalidParam("parameter style is not a string")),
-            };
-            let explode = match param.get("explode") {
-                None => style == ParamStyle::Form,
-                Some(Value::Bool(explode)) => *explode,
-                Some(_) => {
-                    return Err(SkipReason::InvalidParam(
-                        "parameter explode is not a boolean",
-                    ))
-                }
-            };
-            if style == ParamStyle::DeepObject && !explode {
-                return Err(unsupported("deepObject without explode"));
-            }
-            group.push(Param {
-                required: location == "path" || param.get("required") == Some(&Value::Bool(true)),
-                style,
-                explode,
-                schema: at.child("schema"),
-                name,
-            });
-        }
-
-        for name in path_template_params(site.path) {
-            if !params.path.iter().any(|param| param.name == name) {
-                return Err(SkipReason::UndeclaredPathParam {
-                    name: name.to_owned(),
-                });
-            }
-        }
-        Ok(params)
-    }
-
-    fn request_body(
-        &self,
-        site: &OperationSite<'_>,
-        operation: &Map<String, Value>,
-    ) -> Result<Option<RequestBody>, SkipReason> {
-        if !operation.contains_key("requestBody") {
+    fn request_body(&self, site: &OperationSite<'_>) -> Result<Option<RequestBody>, SkipReason> {
+        let body_at = site.at.child("requestBody");
+        if self.document.get(&body_at).is_none() {
             return Ok(None);
         }
-        let (at, body) = self.document.resolve_at(site.at.child("requestBody"))?;
-        let content_at = at.child("content");
-        let content = body.get("content").and_then(Value::as_object);
-        let entries = content.into_iter().flatten();
-        if let Some(content) = json_content(&content_at, entries.clone()) {
-            return Ok(Some(RequestBody {
+        let (at, body) = self.document.resolve_at(body_at)?;
+        let content = self.content(&at.child("content"), body)?;
+        match content.json {
+            Some(content) => Ok(Some(RequestBody {
                 required: body.get("required") == Some(&Value::Bool(true)),
                 content,
-            }));
+            })),
+            None => Err(SkipReason::NonJsonRequestBody {
+                declared: content.declared,
+            }),
         }
-        if let Some((media_type, _)) = entries
-            .clone()
-            .find(|(media_type, media)| is_binary(media_type, media))
-        {
-            return Err(SkipReason::BinaryRequestBody {
-                media_type: media_type.clone(),
-            });
-        }
-        Err(SkipReason::NonJsonRequestBody {
-            declared: entries.map(|(media_type, _)| media_type.clone()).collect(),
-        })
     }
 
     fn responses(
@@ -474,39 +354,94 @@ impl Indexer<'_> {
         let mut success = Vec::new();
         for status in responses.keys().filter(|status| is_success_status(status)) {
             let (at, response) = self.document.resolve_at(responses_at.child(status))?;
-            let content_at = at.child("content");
-            let entries = response
-                .get("content")
-                .and_then(Value::as_object)
-                .into_iter()
-                .flatten();
-            if entries
-                .clone()
-                .any(|(media_type, _)| essence(media_type) == "text/event-stream")
-            {
+            let content = self.content(&at.child("content"), response)?;
+            if content.event_stream {
                 return Err(SkipReason::Sse);
             }
-            let content = json_content(&content_at, entries.clone());
-            let binary = entries
-                .clone()
-                .find(|(media_type, media)| is_binary(media_type, media));
-            if let (None, Some((media_type, _))) = (&content, binary) {
-                return Err(SkipReason::BinaryResponse {
-                    media_type: media_type.clone(),
-                });
-            }
+            let body = match (content.json, content.text, content.binary) {
+                (Some(json), _, _) => ResponseBody::Json(json),
+                (None, Some(media_type), _) => ResponseBody::Text { media_type },
+                (None, None, Some(media_type)) => {
+                    return Err(SkipReason::BinaryResponse { media_type });
+                }
+                (None, None, None) => ResponseBody::Empty,
+            };
             success.push(SuccessResponse {
                 status: status.clone(),
-                content,
+                body,
             });
         }
         Ok(success)
     }
 
+    /// Classify the `content` map of a request body or response, keeping the
+    /// first media type of each kind.
+    fn content(&self, content_at: &JsonPointer, owner: &Value) -> Result<Content, RefError> {
+        let mut content = Content::default();
+        let Some(Value::Object(entries)) = owner.get("content") else {
+            return Ok(content);
+        };
+        for (media_type, media) in entries {
+            content.declared.push(media_type.clone());
+            match self.media_kind(media_type, media)? {
+                MediaKind::Json => {
+                    content.json.get_or_insert_with(|| JsonContent {
+                        media_type: media_type.clone(),
+                        schema: media
+                            .get("schema")
+                            .map(|_| content_at.child(media_type).child("schema")),
+                    });
+                }
+                MediaKind::EventStream => content.event_stream = true,
+                MediaKind::Text => {
+                    content.text.get_or_insert_with(|| media_type.clone());
+                }
+                MediaKind::Binary => {
+                    content.binary.get_or_insert_with(|| media_type.clone());
+                }
+            }
+        }
+        Ok(content)
+    }
+
+    /// JSON and `text/*` types carry text; every other type, and any schema
+    /// with `format: binary`, carries bytes.
+    fn media_kind(&self, media_type: &str, media: &Value) -> Result<MediaKind, RefError> {
+        let essence = media_type
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if essence == "application/json" || essence.ends_with("+json") {
+            return Ok(MediaKind::Json);
+        }
+        if essence == "text/event-stream" {
+            return Ok(MediaKind::EventStream);
+        }
+        let schema = match media.get("schema") {
+            Some(schema) => Some(
+                self.document
+                    .resolve(schema)?
+                    .map_or(schema, |(_, target)| target),
+            ),
+            None => None,
+        };
+        let binary_format = schema
+            .and_then(|schema| schema.get("format"))
+            .and_then(Value::as_str)
+            == Some("binary");
+        if essence.starts_with("text/") && !binary_format {
+            Ok(MediaKind::Text)
+        } else {
+            Ok(MediaKind::Binary)
+        }
+    }
+
     /// A unique tool name from the operation id, or `<method>_<path>` without
     /// one. Collisions after sanitizing or capping get `_2`, `_3`, and so on.
-    fn tool_name(&mut self, operation_id: Option<&str>, site: &OperationSite<'_>) -> String {
-        let segment = match operation_id {
+    fn tool_name(&mut self, site: &OperationSite<'_>) -> String {
+        let segment = match &site.operation_id {
             Some(operation_id) => sanitize_segment(operation_id),
             None => sanitize_segment(&format!("{}_{}", site.method.as_str(), site.path)),
         };
@@ -520,41 +455,22 @@ impl Indexer<'_> {
     }
 }
 
-/// The first JSON entry in a `content` map, with a pointer to its schema.
-fn json_content<'a>(
-    content_at: &JsonPointer,
-    mut entries: impl Iterator<Item = (&'a String, &'a Value)>,
-) -> Option<JsonContent> {
-    let (media_type, media) = entries.find(|(media_type, _)| {
-        let essence = essence(media_type);
-        essence == "application/json" || essence.ends_with("+json")
-    })?;
-    Some(JsonContent {
-        media_type: media_type.clone(),
-        schema: media
-            .get("schema")
-            .map(|_| content_at.child(media_type).child("schema")),
-    })
+enum MediaKind {
+    Json,
+    EventStream,
+    Text,
+    Binary,
 }
 
-/// Media types that carry bytes rather than text.
-fn is_binary(media_type: &str, media: &Value) -> bool {
-    let essence = essence(media_type);
-    let binary_type = essence == "application/octet-stream"
-        || ["image/", "audio/", "video/", "font/"]
-            .iter()
-            .any(|prefix| essence.starts_with(prefix));
-    binary_type || media.pointer("/schema/format").and_then(Value::as_str) == Some("binary")
-}
-
-/// A media type without parameters, lowercased: `application/json`.
-fn essence(media_type: &str) -> String {
-    media_type
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
+/// A classified `content` map.
+#[derive(Default)]
+struct Content {
+    json: Option<JsonContent>,
+    event_stream: bool,
+    text: Option<String>,
+    binary: Option<String>,
+    /// Every declared media type, in order.
+    declared: Vec<String>,
 }
 
 fn is_success_status(status: &str) -> bool {
@@ -562,11 +478,4 @@ fn is_success_status(status: &str) -> bool {
     bytes.len() == 3
         && bytes[0] == b'2'
         && (bytes[1..].iter().all(u8::is_ascii_digit) || bytes[1..].eq_ignore_ascii_case(b"XX"))
-}
-
-/// Names of `{param}` segments in a path template.
-fn path_template_params(path: &str) -> impl Iterator<Item = &str> {
-    path.split('{')
-        .skip(1)
-        .filter_map(|rest| rest.split_once('}').map(|(name, _)| name))
 }

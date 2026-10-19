@@ -5,14 +5,19 @@ use super::{
     document::{JsonPointer, RefError},
     operation::{
         HttpMethod::{Delete, Get, Post, Put},
-        JsonContent, Param, ParamStyle, Params, RequestBody, SkipReason, SuccessResponse,
+        JsonContent, RequestBody, ResponseBody, SkipReason, SuccessResponse,
     },
+    params::{Param, ParamStyle, Params},
     schema::SchemaDirection,
     servers::{resolve_spec, ServerUrlError},
     *,
 };
 
 const SLOPPY: &[u8] = include_bytes!("openapi/fixtures/sloppy.yaml");
+const ALIAS_BOMB: &[u8] = b"a: &a [1,1,1,1,1,1,1,1,1,1]
+b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]
+c: [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]
+";
 /// Five operations of GitHub's REST spec with their components, minus
 /// descriptions and examples.
 const GITHUB_SUBSET: &[u8] = include_bytes!("openapi/fixtures/github_subset.json");
@@ -61,8 +66,11 @@ fn sloppy_spec_skips_only_unusable_operations() {
             ("openapi__sloppy__pets_list_2", Post, "/pets"),
             // No operationId: named from the method and path.
             ("openapi__sloppy__get_pets_id", Get, "/pets/{id}"),
+            ("openapi__sloppy__pets_replace", Put, "/pets/{id}"),
             // A recursive schema is legal.
             ("openapi__sloppy__tree_get", Get, "/tree"),
+            // A path item behind a `$ref`, with a text-only response.
+            ("openapi__sloppy__aliased", Get, "/aliased"),
             (
                 "openapi__sloppy__aVeryLongOperationIdentifierThatKeepsG-dcffd71c",
                 Get,
@@ -75,8 +83,17 @@ fn sloppy_spec_skips_only_unusable_operations() {
     // an operation's own servers replace it.
     assert_eq!(spec.servers, vec![Ok(url("https://example.com/v2"))]);
     assert_eq!(
-        spec.operations[3].servers,
+        spec.operations[4].servers,
         Some(vec![Ok(url("https://trees.example.com"))])
+    );
+    assert_eq!(
+        spec.operations[5].responses,
+        vec![SuccessResponse {
+            status: "200".to_owned(),
+            body: ResponseBody::Text {
+                media_type: "text/plain".to_owned()
+            },
+        }]
     );
 
     let skipped: Vec<_> = spec
@@ -121,8 +138,8 @@ fn sloppy_spec_skips_only_unusable_operations() {
             (
                 Some(Put),
                 "/upload",
-                SkipReason::BinaryRequestBody {
-                    media_type: name("application/octet-stream")
+                SkipReason::NonJsonRequestBody {
+                    declared: vec![name("application/octet-stream")]
                 }
             ),
             (
@@ -145,6 +162,24 @@ fn sloppy_spec_skips_only_unusable_operations() {
                 "/undeclared/{id}",
                 SkipReason::UndeclaredPathParam { name: name("id") }
             ),
+            (
+                Some(Get),
+                "/report",
+                SkipReason::BinaryResponse {
+                    media_type: name("application/pdf")
+                }
+            ),
+            (
+                Some(Get),
+                "/deep",
+                RefError::TooDeep {
+                    reference: name("#/components/parameters/limit"),
+                    limit: 16
+                }
+                .into()
+            ),
+            // `x-internal` under `paths` is an extension and is not reported.
+            (None, "/bogus", SkipReason::NotAnObject),
         ]
     );
 }
@@ -185,8 +220,8 @@ fn github_subset_indexes_params_bodies_and_responses() {
             ),
             (
                 Some("repos/upload-release-asset"),
-                SkipReason::BinaryRequestBody {
-                    media_type: "application/octet-stream".to_owned()
+                SkipReason::NonJsonRequestBody {
+                    declared: vec!["application/octet-stream".to_owned()]
                 }
             ),
         ]
@@ -204,6 +239,7 @@ fn github_subset_indexes_params_bodies_and_responses() {
         spec.operations[1],
         Operation {
             tool_name: "openapi__github__issues_create_comment".to_owned(),
+            at: pointer(&format!("#{comments}")),
             operation_id: Some("issues/create-comment".to_owned()),
             method: Post,
             path: "/repos/{owner}/{repo}/issues/{issue_number}/comments".to_owned(),
@@ -229,7 +265,7 @@ fn github_subset_indexes_params_bodies_and_responses() {
             }),
             responses: vec![SuccessResponse {
                 status: "201".to_owned(),
-                content: Some(JsonContent {
+                body: ResponseBody::Json(JsonContent {
                     media_type: "application/json".to_owned(),
                     schema: Some(pointer(&format!(
                         "#{comments}/responses/201/content/application~1json/schema"
@@ -255,7 +291,10 @@ fn rendered_schemas_hide_properties_by_direction() {
             .expect("indexed operation");
         let content = match direction {
             SchemaDirection::Request => operation.request_body.as_ref().map(|body| &body.content),
-            SchemaDirection::Response => operation.responses[0].content.as_ref(),
+            SchemaDirection::Response => match &operation.responses[0].body {
+                ResponseBody::Json(content) => Some(content),
+                ResponseBody::Empty | ResponseBody::Text { .. } => None,
+            },
         };
         let at = content.and_then(|content| content.schema.as_ref());
         spec.document
@@ -305,6 +344,18 @@ fn rendered_schemas_hide_properties_by_direction() {
     assert_eq!(
         schema_of("openapi__sloppy__tree_get", SchemaDirection::Response),
         json!({"$ref": "#/$defs/Node", "$defs": {"Node": node}})
+    );
+    // `id` is hidden through `allOf`, so it leaves the outer `required`; the
+    // `not` branch keeps its readOnly property, since removing it would change
+    // what the negation rejects.
+    let new_pet = schema_of("openapi__sloppy__pets_replace", SchemaDirection::Request);
+    assert_eq!(
+        new_pet["$defs"]["NewPet"],
+        json!({
+            "allOf": [{"$ref": "#/$defs/Pet"}],
+            "required": ["name"],
+            "not": {"properties": {"legacy": {"type": "string", "readOnly": true}}},
+        })
     );
 }
 
@@ -368,13 +419,13 @@ fn render_normalizes_3_0_schemas_to_2020_12() {
     }
 }
 
-// Covers: only an oversized, unparsable, or non-3.x document fails the whole
-// source, and the size error names the limit and the actual size.
+// Covers: only an oversized, unparsable, alias-bombed, or non-3.x document
+// fails the whole source, and size errors name their limit.
 // Owner: OpenAPI spec loader.
 #[test]
 fn load_fails_whole_source_only_for_document_problems() {
     type IsExpected = fn(&LoadError) -> bool;
-    let cases: [(&[u8], usize, IsExpected); 6] = [
+    let cases: [(&[u8], usize, IsExpected); 7] = [
         (b"{\"openapi\": \"3.1.0\"}", 8, |error| {
             matches!(error, LoadError::TooLarge { size: 20, limit: 8 })
         }),
@@ -395,6 +446,13 @@ fn load_fails_whole_source_only_for_document_problems() {
         (b"info: {}\n", 64, |error| {
             matches!(error, LoadError::MissingVersion)
         }),
+        // Each alias replays the list above it, so about 100 bytes expand to
+        // over 1,200 nodes.
+        (
+            ALIAS_BOMB,
+            1024,
+            |error| matches!(error, LoadError::YamlTooManyNodes { limit } if *limit == ALIAS_BOMB.len()),
+        ),
     ];
     for (bytes, max_spec_bytes, expected) in cases {
         let error = OpenApiSpec::load(SpecInput {
@@ -436,6 +494,18 @@ fn servers_resolve_against_the_spec_url() {
             Err(ServerUrlError::MissingVariable {
                 url: "https://{region}.example.com/{base}".to_owned(),
                 name: "base".to_owned(),
+            }),
+        ),
+        (
+            &https_spec,
+            json!({"servers": [{"url": "https://example.com:{port}", "variables": {"port": {"default": 8443}}}]}),
+            Ok("https://example.com:8443/"),
+        ),
+        (
+            &https_spec,
+            json!({"servers": [{"url": "https://example.com/api?version=2"}]}),
+            Err(ServerUrlError::QueryOrFragment {
+                url: "https://example.com/api?version=2".to_owned(),
             }),
         ),
         (

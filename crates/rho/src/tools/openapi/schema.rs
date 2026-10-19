@@ -4,7 +4,7 @@
 //! copied once into a root `$defs` and rewritten to point there, so recursive
 //! schemas stay finite and shared components are not inlined repeatedly.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde_json::{Map, Value};
 
@@ -30,6 +30,8 @@ impl SchemaDirection {
 }
 
 /// Keywords holding one subschema, or a list of them (`items` in 2019 form).
+/// Both walkers below visit exactly these and [`SUBSCHEMA_MAP_KEYWORDS`], so
+/// an operation whose refs pass [`check_refs`] always renders.
 const SUBSCHEMA_KEYWORDS: &[&str] = &[
     "items",
     "additionalItems",
@@ -62,36 +64,42 @@ fn for_each_subschema<E>(
     schema: &Map<String, Value>,
     mut visit: impl FnMut(&Value) -> Result<(), E>,
 ) -> Result<(), E> {
-    for keyword in SUBSCHEMA_KEYWORDS {
-        match schema.get(*keyword) {
-            Some(Value::Array(items)) => items.iter().try_for_each(&mut visit)?,
-            Some(subschema) => visit(subschema)?,
-            None => {}
-        }
-    }
-    for keyword in SUBSCHEMA_MAP_KEYWORDS {
-        if let Some(Value::Object(entries)) = schema.get(*keyword) {
-            entries.values().try_for_each(&mut visit)?;
+    for (keyword, value) in schema {
+        let keyword = keyword.as_str();
+        match value {
+            Value::Array(items) if SUBSCHEMA_KEYWORDS.contains(&keyword) => {
+                items.iter().try_for_each(&mut visit)?;
+            }
+            Value::Object(entries) if SUBSCHEMA_MAP_KEYWORDS.contains(&keyword) => {
+                entries.values().try_for_each(&mut visit)?;
+            }
+            subschema if SUBSCHEMA_KEYWORDS.contains(&keyword) => visit(subschema)?,
+            _ => {}
         }
     }
     Ok(())
 }
 
-/// The mutable twin of [`for_each_subschema`].
+/// The mutable twin of [`for_each_subschema`], which also passes the keyword
+/// each subschema sits under.
 fn for_each_subschema_mut<E>(
     schema: &mut Map<String, Value>,
-    mut visit: impl FnMut(&mut Value) -> Result<(), E>,
+    mut visit: impl FnMut(&str, &mut Value) -> Result<(), E>,
 ) -> Result<(), E> {
     for (keyword, value) in schema.iter_mut() {
         let keyword = keyword.as_str();
         match value {
             Value::Array(items) if SUBSCHEMA_KEYWORDS.contains(&keyword) => {
-                items.iter_mut().try_for_each(&mut visit)?;
+                for item in items {
+                    visit(keyword, item)?;
+                }
             }
             Value::Object(entries) if SUBSCHEMA_MAP_KEYWORDS.contains(&keyword) => {
-                entries.values_mut().try_for_each(&mut visit)?;
+                for entry in entries.values_mut() {
+                    visit(keyword, entry)?;
+                }
             }
-            subschema if SUBSCHEMA_KEYWORDS.contains(&keyword) => visit(subschema)?,
+            subschema if SUBSCHEMA_KEYWORDS.contains(&keyword) => visit(keyword, subschema)?,
             _ => {}
         }
     }
@@ -132,7 +140,7 @@ fn collect_refs(
     };
     if let Some((target, _)) = document.resolve(schema)? {
         pending.push(target);
-        if document.version() == SpecVersion::V3_0 {
+        if document.version().ignores_ref_siblings() {
             return Ok(());
         }
     }
@@ -158,14 +166,16 @@ impl Document {
             pending: Vec::new(),
         };
         let mut rendered = root.clone();
-        renderer.transform(&mut rendered)?;
+        renderer.transform(&mut rendered, Hiding::On(&BTreeSet::new()))?;
         let mut defs = Map::new();
         while let Some((target, key)) = renderer.pending.pop() {
             let mut def = self
                 .get(&target)
                 .cloned()
                 .ok_or_else(|| RefError::Broken(target.to_string()))?;
-            renderer.transform(&mut def)?;
+            // A definition is shared by every use site, so it hides only
+            // what it declares itself.
+            renderer.transform(&mut def, Hiding::On(&BTreeSet::new()))?;
             defs.insert(key, def);
         }
         if !defs.is_empty() {
@@ -190,7 +200,7 @@ struct Renderer<'a> {
 }
 
 impl Renderer<'_> {
-    fn transform(&mut self, schema: &mut Value) -> Result<(), RefError> {
+    fn transform(&mut self, schema: &mut Value, hiding: Hiding<'_>) -> Result<(), RefError> {
         let def_key = self
             .document
             .resolve(schema)?
@@ -198,48 +208,107 @@ impl Renderer<'_> {
         let Value::Object(map) = schema else {
             return Ok(());
         };
-        let is_3_0 = self.document.version() == SpecVersion::V3_0;
+        let ignores_ref_siblings = self.document.version().ignores_ref_siblings();
         if let Some(key) = def_key {
-            if is_3_0 {
-                // OpenAPI 3.0 ignores every sibling of `$ref`.
+            if ignores_ref_siblings {
                 map.clear();
             }
             // Keys never contain `~` or `/`, so they need no pointer escaping.
             map.insert("$ref".to_owned(), Value::String(format!("#/$defs/{key}")));
-            if is_3_0 {
+            if ignores_ref_siblings {
                 return Ok(());
             }
         }
-        if is_3_0 {
-            normalize_3_0(map);
+        match self.document.version() {
+            SpecVersion::V3_0 => normalize_3_0(map),
+            SpecVersion::V3_1 => {}
         }
-        self.drop_hidden_properties(map)?;
-        for_each_subschema_mut(map, |subschema| self.transform(subschema))
-    }
-
-    /// Remove properties marked hidden for this direction, directly or on the
-    /// schema they reference, and drop them from `required`.
-    fn drop_hidden_properties(&self, schema: &mut Map<String, Value>) -> Result<(), RefError> {
-        let Some(Value::Object(properties)) = schema.get_mut("properties") else {
-            return Ok(());
+        let hidden = match hiding {
+            Hiding::Off => None,
+            Hiding::On(inherited) => {
+                let mut hidden = self.hidden_names(map, &mut HashSet::new())?;
+                hidden.extend(inherited.iter().cloned());
+                Some(hidden)
+            }
         };
-        let keyword = self.direction.hidden_keyword();
-        let mut hidden = Vec::new();
-        let is_hidden = |value: &Value| value.get(keyword) == Some(&Value::Bool(true));
-        for (name, property) in properties.iter() {
-            let target = self.document.resolve(property)?.map(|(_, target)| target);
-            if is_hidden(property) || target.is_some_and(is_hidden) {
-                hidden.push(name.clone());
+        if let Some(hidden) = hidden.as_ref().filter(|hidden| !hidden.is_empty()) {
+            if let Some(Value::Object(properties)) = map.get_mut("properties") {
+                properties.retain(|name, _| !hidden.contains(name));
+            }
+            if let Some(Value::Array(required)) = map.get_mut("required") {
+                required.retain(|name| !name.as_str().is_some_and(|name| hidden.contains(name)));
             }
         }
-        if hidden.is_empty() {
-            return Ok(());
+        let empty = BTreeSet::new();
+        for_each_subschema_mut(map, |keyword, subschema| {
+            let child = match (hidden.as_ref(), keyword) {
+                // Removing constraints under these would invert or shift what
+                // they mean, so they pass through unhidden.
+                (None, _) | (_, "not" | "if" | "contains") => Hiding::Off,
+                // `allOf` branches describe the same instance as their parent.
+                (Some(hidden), "allOf") => Hiding::On(hidden),
+                (Some(_), _) => Hiding::On(&empty),
+            };
+            self.transform(subschema, child)
+        })
+    }
+
+    /// Names of properties `schema` hides in this direction, including those
+    /// declared by its `allOf` branches, which describe the same instance.
+    fn hidden_names(
+        &self,
+        schema: &Map<String, Value>,
+        visited: &mut HashSet<JsonPointer>,
+    ) -> Result<BTreeSet<String>, RefError> {
+        let mut hidden = BTreeSet::new();
+        if let Some(Value::Object(properties)) = schema.get("properties") {
+            for (name, property) in properties {
+                if self.marks_hidden(property, &mut HashSet::new())? {
+                    hidden.insert(name.clone());
+                }
+            }
         }
-        properties.retain(|name, _| !hidden.contains(name));
-        if let Some(Value::Array(required)) = schema.get_mut("required") {
-            required.retain(|name| !hidden.iter().any(|hidden| name == hidden));
+        for branch in all_of(schema) {
+            let branch = match self.document.resolve(branch)? {
+                Some((at, _)) if !visited.insert(at.clone()) => continue,
+                Some((_, target)) => target,
+                None => branch,
+            };
+            if let Value::Object(branch) = branch {
+                hidden.extend(self.hidden_names(branch, visited)?);
+            }
         }
-        Ok(())
+        Ok(hidden)
+    }
+
+    /// Whether `schema` carries this direction's hidden keyword, directly,
+    /// through its `$ref`, or through an `allOf` branch.
+    fn marks_hidden(
+        &self,
+        schema: &Value,
+        visited: &mut HashSet<JsonPointer>,
+    ) -> Result<bool, RefError> {
+        let keyword = self.direction.hidden_keyword();
+        if schema.get(keyword) == Some(&Value::Bool(true)) {
+            return Ok(true);
+        }
+        let schema = match self.document.resolve(schema)? {
+            Some((at, _)) if !visited.insert(at.clone()) => return Ok(false),
+            Some((_, target)) => target,
+            None => schema,
+        };
+        if schema.get(keyword) == Some(&Value::Bool(true)) {
+            return Ok(true);
+        }
+        let Value::Object(map) = schema else {
+            return Ok(false);
+        };
+        for branch in all_of(map) {
+            if self.marks_hidden(branch, visited)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// A stable, readable `$defs` key for `target`, queued on first sight.
@@ -267,6 +336,25 @@ impl Renderer<'_> {
         self.pending.push((target, key.clone()));
         key
     }
+}
+
+/// Whether a schema hides properties for this direction.
+#[derive(Clone, Copy)]
+enum Hiding<'a> {
+    /// Under `not`, `if`, or `contains`, where removing a property would
+    /// change what the schema means.
+    Off,
+    /// Hide this schema's own hidden properties plus `inherited`, the names an
+    /// enclosing `allOf` hides.
+    On(&'a BTreeSet<String>),
+}
+
+fn all_of(schema: &Map<String, Value>) -> impl Iterator<Item = &Value> {
+    schema
+        .get("allOf")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
 }
 
 /// Rewrite OpenAPI 3.0 keywords into their JSON Schema 2020-12 form.
