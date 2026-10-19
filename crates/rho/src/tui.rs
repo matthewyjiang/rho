@@ -10,7 +10,7 @@ use std::{
 };
 
 use questionnaire::QuestionnaireCancelReason;
-use synced_backend::DefaultTerminal;
+use synced_backend::{repaint_after_resize, DefaultTerminal};
 use tokio::sync::oneshot;
 mod activity;
 mod add_dir_command;

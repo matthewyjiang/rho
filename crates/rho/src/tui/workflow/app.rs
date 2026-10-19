@@ -108,6 +108,7 @@ async fn run_loop(
                         }
                     }
                     Event::Resize(_, _) => {
+                        crate::tui::repaint_after_resize(terminal)?;
                         terminal.draw(|frame| view::draw(frame, app))?;
                     }
                     Event::FocusGained => {

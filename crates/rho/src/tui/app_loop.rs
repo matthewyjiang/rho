@@ -632,6 +632,7 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> std::io::Result<()> {
+        crate::tui::repaint_after_resize(terminal)?;
         self.flush_pending_paste_burst();
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_panel_overlay_scroll(terminal);

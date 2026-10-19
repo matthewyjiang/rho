@@ -12,13 +12,13 @@ use std::io::{self, Stdout};
 use crossterm::{
     execute, queue,
     terminal::{
-        enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen,
+        self, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen,
     },
 };
 use ratatui::{
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
     buffer::Cell,
-    layout::{Position, Size},
+    layout::{Position, Rect, Size},
     Terminal,
 };
 
@@ -46,10 +46,23 @@ pub(crate) fn init() -> DefaultTerminal {
     try_init().expect("failed to initialize terminal")
 }
 
+/// Forces the next draw to repaint every cell after a terminal resize event.
+///
+/// Ratatui only clears when the size differs from its last frame. A shrink
+/// then restore can coalesce into events that all report the old size, yet
+/// the terminal truncated cells on the shrink; a diff-only redraw then leaves
+/// them blank. Call this from each surface's `Event::Resize` handler.
+pub(crate) fn repaint_after_resize(terminal: &mut DefaultTerminal) -> io::Result<()> {
+    let size = terminal.size()?;
+    terminal.resize(Rect::new(0, 0, size.width, size.height))
+}
+
 /// Ratatui's crossterm backend with each frame sent as one synchronized
 /// update. `Terminal::draw` calls `draw` once, positions the cursor, then calls
 /// `flush`, so begin-in-`draw` and end-in-`flush` cover cells and caret
-/// together. Both markers are idempotent, so no open-update state is tracked.
+/// together. A clear also begins the update and stays queued, so every clear
+/// must be followed by a draw; ratatui's resize and autoresize always are.
+/// Both markers are idempotent, so no open-update state is tracked.
 pub(crate) struct SyncedBackend(CrosstermBackend<Stdout>);
 
 impl Backend for SyncedBackend {
@@ -89,11 +102,21 @@ impl Backend for SyncedBackend {
     }
 
     fn clear(&mut self) -> io::Result<()> {
-        self.0.clear()
+        self.clear_region(ClearType::All)
     }
 
+    /// Queues the clear inside the next frame's synchronized update instead of
+    /// flushing it. Ratatui clears before redrawing a resized frame, and a
+    /// flushed clear shows a blank screen until that frame arrives.
     fn clear_region(&mut self, clear_type: ClearType) -> io::Result<()> {
-        self.0.clear_region(clear_type)
+        let clear_type = match clear_type {
+            ClearType::All => terminal::ClearType::All,
+            ClearType::AfterCursor => terminal::ClearType::FromCursorDown,
+            ClearType::BeforeCursor => terminal::ClearType::FromCursorUp,
+            ClearType::CurrentLine => terminal::ClearType::CurrentLine,
+            ClearType::UntilNewLine => terminal::ClearType::UntilNewLine,
+        };
+        queue!(self.0, BeginSynchronizedUpdate, terminal::Clear(clear_type))
     }
 
     fn size(&self) -> io::Result<Size> {
