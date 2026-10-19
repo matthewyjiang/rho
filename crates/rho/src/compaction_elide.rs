@@ -56,10 +56,9 @@ pub(crate) fn elide_tool_results(
     let Range { start, end } = partition.compacted_range();
     let owners = Owners::new(&messages[start..end], start);
 
-    let mut output = messages.to_vec();
+    let mut stubs = BTreeMap::new();
     let mut dropped = vec![false; messages.len()];
     let mut tokens = estimate_context_tokens(messages, tools);
-    let mut originals = Vec::new();
     for index in start..end {
         if tokens <= target_tokens {
             break;
@@ -88,15 +87,31 @@ pub(crate) fn elide_tool_results(
             tokens = tokens.saturating_sub(estimate_message_tokens(&messages[image_index]));
             dropped[image_index] = true;
         }
-        output[index] = stub;
-        originals.push(result.clone());
+        stubs.insert(index, stub);
     }
-    (!originals.is_empty()).then(|| Elision {
-        messages: output
-            .into_iter()
-            .zip(dropped)
-            .filter_map(|(message, dropped)| (!dropped).then_some(message))
-            .collect(),
+    if stubs.is_empty() {
+        return None;
+    }
+    let mut originals = Vec::with_capacity(stubs.len());
+    let messages = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| {
+            if dropped[index] {
+                return None;
+            }
+            if let Some(stub) = stubs.remove(&index) {
+                if let Message::ToolResult(result) = message {
+                    originals.push(result.clone());
+                }
+                Some(stub)
+            } else {
+                Some(message.clone())
+            }
+        })
+        .collect();
+    Some(Elision {
+        messages,
         originals,
     })
 }

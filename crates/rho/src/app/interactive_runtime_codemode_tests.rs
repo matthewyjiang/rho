@@ -60,6 +60,7 @@ async fn search_runtime(storage: StoredSession) -> (InteractiveRuntime, Scripted
         .session(SessionOptions::new().id(SessionId::from_string(storage.id()).unwrap()))
         .await
         .unwrap();
+    let snapshot = session.snapshot();
     interactive.sessions = InteractiveSessionController::new(
         session,
         Some(storage),
@@ -67,7 +68,7 @@ async fn search_runtime(storage: StoredSession) -> (InteractiveRuntime, Scripted
         /*recall*/ None,
         /*advisor*/ None,
     )
-    .with_code_mode(interactive.tools.code_mode().clone());
+    .with_code_mode(interactive.tools.code_mode().clone(), &snapshot);
     interactive.rebind_current_session().await.unwrap();
     interactive.sessions.save_snapshot(&[]).unwrap();
     (interactive, provider)

@@ -74,8 +74,9 @@ impl InteractiveRuntime {
             .set_boundary_inputs(boundary_inputs)?;
         let model_user = Message::User(input.blocks().to_vec());
         let mut request_history = self.sessions.history();
-        let pending_turn = PendingTurn::new(model_user, display_user, request_history.len());
-        request_history.push(Message::User(input.blocks().to_vec()));
+        let pending_turn =
+            PendingTurn::new(model_user.clone(), display_user, request_history.len());
+        request_history.push(model_user);
         let estimate = self.sessions.session().estimate_context(&request_history);
         let context_usage = self.context_usage(estimate);
         self.record_context_estimate(estimate);

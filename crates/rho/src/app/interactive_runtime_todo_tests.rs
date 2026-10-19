@@ -68,7 +68,7 @@ async fn todo_runtime(
         /*recall*/ None,
         /*advisor*/ None,
     )
-    .with_todo_state(interactive.tools.todo_state());
+    .with_todo_state(interactive.tools.todo_state(), &snapshot);
     interactive
         .rebuild_session(
             snapshot,

@@ -224,10 +224,11 @@ impl InteractiveRunController {
         &mut self,
         model: Message,
         display: Message,
-        snapshot: &rho_sdk::SessionSnapshot,
+        history: &[Message],
+        revision: rho_sdk::Revision,
     ) {
         if let Some(turn) = &mut self.pending_turn {
-            turn.record_boundary_display(model, display, snapshot.history(), snapshot.revision());
+            turn.record_boundary_display(model, display, history, revision);
         }
     }
 

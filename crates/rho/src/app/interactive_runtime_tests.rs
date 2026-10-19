@@ -280,6 +280,7 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let snapshot = session.snapshot();
     let cached_tool_specs = tools.specs();
     InteractiveRuntime {
         runtime,
@@ -292,8 +293,8 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
             tools.recall_store(),
             tools.advisor().cloned(),
         )
-        .with_code_mode(tools.code_mode().clone())
-        .with_todo_state(tools.todo_state()),
+        .with_code_mode(tools.code_mode().clone(), &snapshot)
+        .with_todo_state(tools.todo_state(), &snapshot),
         mcp_sampling: crate::tools::mcp::McpSamplingBridge::new(),
         provider: ProviderController::new(
             shared_provider,
