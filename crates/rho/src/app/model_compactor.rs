@@ -284,13 +284,13 @@ impl ModelCompactor {
             None => (None, 0),
         };
         trace.elided_tool_results = elided_tool_results;
-        if let Some(elided) = &elided {
-            let tokens = estimate_context_tokens(elided, tools);
-            if tokens <= target_tokens {
+        let elided = match elided {
+            Some(elided) if estimate_context_tokens(&elided, tools) <= target_tokens => {
                 trace.tier = Some(CompactionTier::Elision);
-                return CompactionOutput::new(elided.clone());
+                return CompactionOutput::new(elided);
             }
-        }
+            elided => elided,
+        };
         let messages = elided.as_deref().unwrap_or(request.messages());
         let mut rejected_native_usage = ModelUsage::default();
 
