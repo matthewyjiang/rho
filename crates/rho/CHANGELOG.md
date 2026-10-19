@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.27.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.26.0...rho-coding-agent-v2.27.0) (2026-10-19)
+
+
+### Features
+
+* **acp:** show fast mode as an on/off switch in editors that support it ([#1552](https://github.com/matthewyjiang/rho/issues/1552)) ([0c27b9c](https://github.com/matthewyjiang/rho/commit/0c27b9ce0ee08e697a91fcbaf2a5bfa4cb0f0583))
+* **providers:** add OpenCode Zen with a shared key across Zen and Go logins ([#1555](https://github.com/matthewyjiang/rho/issues/1555)) ([26f310c](https://github.com/matthewyjiang/rho/commit/26f310cc93a8a6dac69a9cb9f8ab2146fd33e82e))
+* **providers:** compress long conversation uploads to custom hosts ([#1559](https://github.com/matthewyjiang/rho/issues/1559)) ([e6275fc](https://github.com/matthewyjiang/rho/commit/e6275fc9c41982e2b4f1ef96bd18eb9cb9d41f42))
+
+
+### Bug Fixes
+
+* **auth:** require /login for ollama cloud device keys and make /logout sign out ([#1549](https://github.com/matthewyjiang/rho/issues/1549)) ([4ce06ec](https://github.com/matthewyjiang/rho/commit/4ce06ec6bad14436d99c7bc2a0a09580d738a1af))
+
+
+### Performance Improvements
+
+* **app:** take one session snapshot per save and startup ([#1563](https://github.com/matthewyjiang/rho/issues/1563)) ([38ccf00](https://github.com/matthewyjiang/rho/commit/38ccf002a37c138ee7394c1946d33fd536cafb36))
+* **codemode:** avoid redundant discovery schema clones ([80322d8](https://github.com/matthewyjiang/rho/commit/80322d83d8aa221f9f076c383e87482d09717200))
+* **codemode:** defer tool catalogs and reuse MCP validators ([#1566](https://github.com/matthewyjiang/rho/issues/1566)) ([b981f31](https://github.com/matthewyjiang/rho/commit/b981f3168907b74627bbe99bcc3b0048c8b3e48a))
+* **process:** measure bounded snapshots incrementally ([#1564](https://github.com/matthewyjiang/rho/issues/1564)) ([2bb781a](https://github.com/matthewyjiang/rho/commit/2bb781a3534b7b0a420fd5ff95ca171252179910))
+* **providers:** open model catalog cache once per path ([#1562](https://github.com/matthewyjiang/rho/issues/1562)) ([c296cd2](https://github.com/matthewyjiang/rho/commit/c296cd226679cbedcf230048e4b7a56080e13273))
+* **sdk:** hash history incrementally and share runtime snapshots ([#1560](https://github.com/matthewyjiang/rho/issues/1560)) ([de40554](https://github.com/matthewyjiang/rho/commit/de40554a8b6db3545103d3a64e1782f3277f0eac))
+* **tui:** remove redundant layouts and cache live-card toggleability ([#1565](https://github.com/matthewyjiang/rho/issues/1565)) ([78d3d1e](https://github.com/matthewyjiang/rho/commit/78d3d1efcf185949ee220418244ac2d6b4eea54b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.12.0 to 5.12.1
+
 ## [2.26.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.25.0...rho-coding-agent-v2.26.0) (2026-10-18)
 
 

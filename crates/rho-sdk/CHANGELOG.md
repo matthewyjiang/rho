@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.12.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.12.0...rho-sdk-v5.12.1) (2026-10-19)
+
+
+### Performance Improvements
+
+* **sdk:** hash history incrementally and share runtime snapshots ([#1560](https://github.com/matthewyjiang/rho/issues/1560)) ([de40554](https://github.com/matthewyjiang/rho/commit/de40554a8b6db3545103d3a64e1782f3277f0eac))
+
 ## [5.12.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.11.1...rho-sdk-v5.12.0) (2026-10-18)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.12.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.12.0...rho-agent-tools-v1.12.1) (2026-10-19)
+
+
+### Performance Improvements
+
+* **codemode:** defer tool catalogs and reuse MCP validators ([#1566](https://github.com/matthewyjiang/rho/issues/1566)) ([b981f31](https://github.com/matthewyjiang/rho/commit/b981f3168907b74627bbe99bcc3b0048c8b3e48a))
+* **tools:** avoid per-line allocations in numbered file views ([#1558](https://github.com/matthewyjiang/rho/issues/1558)) ([c18e2e9](https://github.com/matthewyjiang/rho/commit/c18e2e966cd0d4a7a0a9bbfba2e391e8aa3685af))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.12.0 to 5.12.1
+
 ## [1.12.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.11.1...rho-agent-tools-v1.12.0) (2026-10-18)
 
 
