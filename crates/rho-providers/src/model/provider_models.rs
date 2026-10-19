@@ -351,6 +351,12 @@ pub async fn refresh_provider_models_with_store(
                 openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
             )
         }
+        Some(ProviderModelRefreshKind::OpenAiCompatiblePaid) => {
+            let api_base = discovery_api_base(descriptor, endpoint)?;
+            records_from_models(
+                openai_compatible::fetch_paid(descriptor, auth_mode, api_base, store).await?,
+            )
+        }
         Some(ProviderModelRefreshKind::AnthropicCompatible) => {
             let api_base = discovery_api_base(descriptor, endpoint)?;
             anthropic::fetch_compatible(provider, api_base, store).await?

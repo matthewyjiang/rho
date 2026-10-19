@@ -585,7 +585,11 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 ///
 /// v13: retain toggle-only reasoning provenance so Chat Completions does not
 /// serialize the binary UI's Max level as an unadvertised effort value.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 13;
+///
+/// v14: the new `opencode` (Zen) provider reads `sdk_package` and prices from
+/// its rows to pick adapters and hide free models. A current older snapshot
+/// has no `opencode` rows, so it must refetch.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 14;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheFreshness {

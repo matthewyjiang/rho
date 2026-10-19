@@ -82,7 +82,7 @@ pub struct OpenAiProvider {
     codex_ws: CodexWsTransport,
     hosted_web_search: bool,
     async_tools: BTreeSet<String>,
-    session_headers: super::opencode_go::SessionHeaders,
+    session_headers: super::opencode::SessionHeaders,
 }
 
 impl OpenAiProvider {
@@ -154,7 +154,7 @@ impl OpenAiProvider {
             crate::model::models_dev::current_model_metadata(profile.provider(), profile.model()),
         );
         let codex_ws = CodexWsTransport::new(&api_base);
-        let session_headers = super::opencode_go::SessionHeaders::new(profile.provider());
+        let session_headers = super::opencode::SessionHeaders::new(profile.provider());
         Self {
             client,
             auth,

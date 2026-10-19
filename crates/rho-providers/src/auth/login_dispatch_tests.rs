@@ -173,3 +173,28 @@ fn login_prompt_maps_to_interactive_user_action() {
         );
     }
 }
+
+// Covers: one OpenCode console key logs in to Zen and Go, so login offers a
+// sibling's stored key; unrelated or unstored profiles offer nothing, and a
+// profile with its own key is not offered a replacement
+// Owner: login dispatch
+#[test]
+fn opencode_logins_reuse_a_sibling_stored_key() {
+    let store = MemoryCredentialStore::default();
+    let reuse_source =
+        |auth| ProviderAuthentication::reusable_api_key_source(&store, auth).unwrap();
+    assert_eq!(reuse_source("opencode-api-key"), None);
+
+    ProviderAuthentication::save_api_key(&store, "opencode-go-api-key", "console-key").unwrap();
+
+    let go = reuse_source("opencode-api-key").expect("the stored Go key is offered to Zen");
+    assert_eq!(go.id, "opencode-go-api-key");
+    assert_eq!(reuse_source("opencode-go-api-key"), None);
+    assert_eq!(reuse_source("api-key"), None);
+    let shared = |auth| ProviderAuthentication::shared_api_key(&store, go, auth).unwrap();
+    assert_eq!(shared("opencode-api-key").as_deref(), Some("console-key"));
+    assert_eq!(shared("anthropic-api-key"), None);
+
+    ProviderAuthentication::save_api_key(&store, "opencode-api-key", "zen-key").unwrap();
+    assert_eq!(reuse_source("opencode-api-key"), None);
+}

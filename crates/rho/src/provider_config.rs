@@ -166,7 +166,11 @@ impl ProviderConfigs {
         Ok(())
     }
 
-    pub(super) fn apply(&mut self, partial: PartialProviderConfigs) -> anyhow::Result<()> {
+    pub(super) fn apply(
+        &mut self,
+        partial: PartialProviderConfigs,
+        warnings: &mut Vec<crate::config::ConfigWarning>,
+    ) -> anyhow::Result<()> {
         if let Some(endpoint) = partial.ollama {
             if endpoint.catalog.is_some() {
                 anyhow::bail!("providers.ollama does not accept catalog");
@@ -188,13 +192,16 @@ impl ProviderConfigs {
             }
         }
         if let Some(custom) = partial.custom {
-            self.custom = custom
-                .into_iter()
-                .map(|(name, endpoint)| {
-                    let endpoint = ProviderEndpointConfig::from_custom_partial(&name, endpoint)?;
-                    Ok((name, endpoint))
-                })
-                .collect::<anyhow::Result<_>>()?;
+            let mut hosts = BTreeMap::new();
+            for (name, endpoint) in custom {
+                if custom_table_shadowed_by_builtin(&name, &endpoint)? {
+                    warnings.push(crate::config::ConfigWarning::ShadowedCustomProvider { name });
+                    continue;
+                }
+                let endpoint = ProviderEndpointConfig::from_custom_partial(&name, endpoint)?;
+                hosts.insert(name, endpoint);
+            }
+            self.custom = hosts;
         }
         Ok(())
     }
@@ -296,6 +303,38 @@ fn parse_provider_api(
 ) -> anyhow::Result<rho_providers::provider::OpenAiCompatibleApi> {
     api.parse()
         .map_err(|error| anyhow::anyhow!("{field} {error}"))
+}
+
+/// Whether a `[providers.custom.<name>]` table names a provider Rho later
+/// shipped as a built-in (OpenCode Zen as `opencode`). Such a table already
+/// shares the built-in's credential account, so it is skipped only when it
+/// points at the built-in's own API base. A table for any other base fails to
+/// load instead: a private gateway's key must not reach the built-in's host,
+/// and another route on the same host (OpenCode Go) must not switch billing.
+fn custom_table_shadowed_by_builtin(
+    name: &str,
+    endpoint: &PartialEndpointConfig,
+) -> anyhow::Result<bool> {
+    let Some(builtin) = rho_providers::provider::builtin_providers()
+        .iter()
+        .find(|descriptor| descriptor.name == name)
+    else {
+        return Ok(false);
+    };
+    let builtin_base = match builtin.runtime {
+        rho_providers::provider::ProviderRuntime::OpenAiCompatible {
+            default_api_base, ..
+        } => Some(default_api_base),
+        _ => None,
+    };
+    if let (Some(builtin_base), Some(table_base)) = (builtin_base, endpoint.base_url.as_deref()) {
+        if builtin_base.trim_end_matches('/') == table_base.trim_end_matches('/') {
+            return Ok(true);
+        }
+    }
+    anyhow::bail!(
+        "providers.custom.{name} conflicts with the built-in {name} provider; rename the table and log in to it again"
+    )
 }
 
 fn parse_provider_base_url(field: &str, base_url: &str) -> anyhow::Result<Url> {

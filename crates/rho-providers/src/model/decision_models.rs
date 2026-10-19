@@ -160,6 +160,7 @@ fn fixed_decision_models(id: ProviderId) -> Option<&'static [&'static str]> {
         | ProviderId::QwenTokenPlan
         | ProviderId::Meta
         | ProviderId::OpenCodeGo
+        | ProviderId::OpenCode
         | ProviderId::MiniMax
         | ProviderId::OpenAiCompatible => None,
     }
@@ -198,6 +199,7 @@ fn discovery_host(id: ProviderId) -> Option<DiscoveryHost> {
         | ProviderId::QwenTokenPlan
         | ProviderId::Meta
         | ProviderId::OpenCodeGo
+        | ProviderId::OpenCode
         | ProviderId::MiniMax
         | ProviderId::OpenAiCompatible => None,
     }

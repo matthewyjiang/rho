@@ -20,7 +20,7 @@ pub struct GoogleProvider {
     identity_provider: &'static str,
     model: String,
     thinking: GeminiThinking,
-    session_headers: super::opencode_go::SessionHeaders,
+    session_headers: super::opencode::SessionHeaders,
 }
 
 impl GoogleProvider {
@@ -53,7 +53,7 @@ impl GoogleProvider {
                 known_reasoning_capabilities(identity_provider, &model),
             ),
             model,
-            session_headers: super::opencode_go::SessionHeaders::new(identity_provider),
+            session_headers: super::opencode::SessionHeaders::new(identity_provider),
         }
     }
 

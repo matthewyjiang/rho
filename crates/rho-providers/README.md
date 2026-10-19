@@ -40,6 +40,7 @@ The runtime registry includes:
 - `meta`
 - `minimax`
 - `opencode-go`
+- `opencode`
 - `typesafe`, a decision-model host: it serves the System One API through
   `system_one::SystemOneModel`, not chat
 

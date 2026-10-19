@@ -35,7 +35,7 @@ pub(crate) struct OpenAiCompatibleProvider {
     auth: CompatibleAuth,
     api_base: String,
     reasoning: reasoning::DialectReasoning,
-    session_headers: super::opencode_go::SessionHeaders,
+    session_headers: super::opencode::SessionHeaders,
 }
 
 /// The request and its accounting policy share one resolved reasoning decision.
@@ -62,7 +62,7 @@ impl OpenAiCompatibleProvider {
             auth,
             api_base,
             reasoning,
-            session_headers: super::opencode_go::SessionHeaders::new(provider),
+            session_headers: super::opencode::SessionHeaders::new(provider),
         }
     }
 

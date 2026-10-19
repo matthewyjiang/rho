@@ -17,11 +17,13 @@ Subscribe in the [OpenCode Zen console](https://opencode.ai/auth), copy the API 
 
 ## Interactive login
 
-In the TUI, run:
+In the TUI, run `/login` and choose **OpenCode**, then **Go subscription**, or skip the picker:
 
 ```text
 /login opencode-go
 ```
+
+If you already logged in to [OpenCode Zen](/providers/opencode-zen), leave the field blank and press Enter to reuse that key.
 
 Rho stores the key and refreshes the models available on the Go gateway. Select one with `/model`, for example:
 
