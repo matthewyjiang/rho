@@ -76,6 +76,7 @@ pub(super) fn footer_line(chrome: AttachChrome, width: usize) -> Line<'static> {
 /// Middle header row: model, reasoning, runtime, turn, elapsed, optional Claude session, cost.
 pub(super) fn identity_line(
     status: Option<&RunStatus>,
+    reasoning: Option<crate::agent::ReasoningLevel>,
     run_usage: Option<&ModelUsage>,
     now_unix_secs: u64,
 ) -> String {
@@ -88,7 +89,7 @@ pub(super) fn identity_line(
     {
         parts.push(model);
     }
-    if let Some(reasoning) = attach_reasoning(status) {
+    if let Some(reasoning) = reasoning {
         parts.push(reasoning.to_string());
     }
     if let Some(runtime) = status.runtime {
@@ -166,7 +167,7 @@ fn join_fields(parts: Vec<String>) -> String {
     parts.join(FIELD_SEP)
 }
 
-fn attach_reasoning(status: &RunStatus) -> Option<crate::agent::ReasoningLevel> {
+pub(super) fn attach_reasoning(status: &RunStatus) -> Option<crate::agent::ReasoningLevel> {
     let reasoning = status.reasoning?;
     let provider = status.provider.as_deref()?;
     reasoning_is_configurable(provider, status.model.as_deref().unwrap_or("")).then_some(reasoning)

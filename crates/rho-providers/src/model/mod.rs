@@ -1,4 +1,5 @@
 pub mod catalog;
+mod catalog_cache;
 pub mod context;
 mod contract;
 pub mod decision_models;

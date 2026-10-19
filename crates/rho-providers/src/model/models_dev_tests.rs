@@ -404,14 +404,15 @@ fn poolside_version_five_metadata_is_stale_after_reasoning_policy_change() {
             ..ModelMetadata::default()
         };
         write_cached_upstream_model_metadata("poolside", "laguna-s-2.1", &old_metadata);
-        open_models_dev_cache()
-            .unwrap()
-            .execute(
+        with_models_dev_cache(|connection| {
+            connection.execute(
                 "update model_metadata set cache_version = 5
                  where provider = 'poolside' and model = 'laguna-s-2.1'",
                 [],
             )
-            .unwrap();
+        })
+        .unwrap()
+        .unwrap();
 
         assert_eq!(
             current_cached_upstream_model_metadata("poolside", "laguna-s-2.1"),
@@ -437,14 +438,15 @@ fn qwen_token_plan_unknown_complete_rows_are_stale_after_policy_change() {
             ..ModelMetadata::default()
         };
         write_cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max", &old_metadata);
-        open_models_dev_cache()
-            .unwrap()
-            .execute(
+        with_models_dev_cache(|connection| {
+            connection.execute(
                 "update model_metadata set cache_version = 6
                  where provider = 'qwen-token-plan' and model = 'qwen3.8-max'",
                 [],
             )
-            .unwrap();
+        })
+        .unwrap()
+        .unwrap();
 
         assert_eq!(
             current_cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max"),
@@ -1391,8 +1393,7 @@ fn batch_metadata_writes_inserts_all_records() {
 fn batch_metadata_writes_returns_zero_on_commit_failure() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        {
-            let conn = open_models_dev_cache().unwrap();
+        with_models_dev_cache(|conn| {
             conn.execute_batch(
                 "PRAGMA foreign_keys = ON;
                  CREATE TABLE parent_fk (id INTEGER PRIMARY KEY);
@@ -1408,7 +1409,8 @@ fn batch_metadata_writes_returns_zero_on_commit_failure() {
                  );",
             )
             .unwrap();
-        }
+        })
+        .unwrap();
 
         let meta = ModelMetadata {
             display_name: Some("Model A".into()),
@@ -1435,8 +1437,7 @@ fn batch_metadata_writes_returns_zero_on_commit_failure() {
 fn failed_hydrate_does_not_advance_readiness() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        {
-            let conn = open_models_dev_cache().unwrap();
+        with_models_dev_cache(|conn| {
             conn.execute_batch(
                 "PRAGMA foreign_keys = ON;
                  CREATE TABLE parent_fk (id INTEGER PRIMARY KEY);
@@ -1452,7 +1453,8 @@ fn failed_hydrate_does_not_advance_readiness() {
                  );",
             )
             .unwrap();
-        }
+        })
+        .unwrap();
 
         let api = serde_json::json!({
             "openai": {

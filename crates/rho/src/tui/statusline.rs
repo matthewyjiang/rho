@@ -220,14 +220,12 @@ impl StatusLine {
     }
 
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
-        let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         let fast_mode_active = info.fast_mode_active();
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.fast_mode_active != fast_mode_active
             || self.state.zen_mode != info.zen_mode
             || self.state.reasoning != info.reasoning
-            || self.state.reasoning_configurable != reasoning_configurable
             || self.state.permission_mode != info.permission_mode
         {
             self.state.provider.clone_from(&info.provider);
@@ -235,7 +233,8 @@ impl StatusLine {
             self.state.fast_mode_active = fast_mode_active;
             self.state.zen_mode = info.zen_mode;
             self.state.reasoning = info.reasoning;
-            self.state.reasoning_configurable = reasoning_configurable;
+            self.state.reasoning_configurable =
+                reasoning_is_configurable(&info.provider, &info.model);
             self.state.permission_mode = info.permission_mode;
             self.invalidate();
         }
@@ -273,13 +272,18 @@ impl StatusLine {
     }
 
     pub(super) fn update_model_metadata(&mut self, model_metadata: Option<&ModelMetadata>) {
-        let reasoning_configurable =
-            reasoning_is_configurable(&self.state.provider, &self.state.model);
-        if self.state.model_metadata.as_ref() != model_metadata
-            || self.state.reasoning_configurable != reasoning_configurable
-        {
+        if self.state.model_metadata.as_ref() != model_metadata {
             self.state.model_metadata = model_metadata.cloned();
-            self.state.reasoning_configurable = reasoning_configurable;
+            self.refresh_reasoning_capabilities();
+            self.invalidate();
+        }
+    }
+
+    /// Catalog completion can change capabilities without changing model identity.
+    pub(super) fn refresh_reasoning_capabilities(&mut self) {
+        let configurable = reasoning_is_configurable(&self.state.provider, &self.state.model);
+        if self.state.reasoning_configurable != configurable {
+            self.state.reasoning_configurable = configurable;
             self.invalidate();
         }
     }

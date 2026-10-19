@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet, fs, path::PathBuf, time::Duration};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf, time::Duration};
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -604,15 +604,16 @@ fn cached_upstream_row(
 ) -> Option<CachedRow> {
     let cache_provider = provider;
     let cache_model = model;
-    let connection = open_models_dev_cache().ok()?;
-    let (contents, cache_version): (String, i64) = connection
-        .query_row(
+    let (contents, cache_version): (String, i64) = with_models_dev_cache(|connection| {
+        connection.query_row(
             "select metadata_json, cache_version from model_metadata
              where provider = ?1 and model = ?2",
             params![cache_provider, cache_model],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .ok()?;
+    })
+    .ok()?
+    .ok()?;
     let cached: CachedRow = serde_json::from_str(&contents).ok()?;
     if !should_rehydrate_cached_metadata(cache_version, &cached.metadata) {
         return Some(cached);
@@ -632,81 +633,62 @@ fn write_cached_upstream_model_metadata_batch<'a, I>(entries: I) -> usize
 where
     I: IntoIterator<Item = (&'a str, &'a str, &'a CachedRow)>,
 {
-    let Ok(mut connection) = open_models_dev_cache() else {
-        return 0;
-    };
-    let Ok(tx) = connection.transaction() else {
-        return 0;
-    };
-    let mut written = 0;
-    {
-        let Ok(mut stmt) = tx.prepare_cached(
-            "insert into model_metadata (provider, model, metadata_json, updated_at, cache_version)
-             values (?1, ?2, ?3, strftime('%s', 'now'), ?4)
-             on conflict(provider, model) do update set
-               metadata_json = excluded.metadata_json,
-               updated_at = excluded.updated_at,
-               cache_version = excluded.cache_version",
-        ) else {
+    with_models_dev_cache(|connection| {
+        let Ok(tx) = connection.transaction() else {
             return 0;
         };
-        for (provider, model, row) in entries {
-            let Ok(contents) = serde_json::to_string(row) else {
-                continue;
+        let mut written = 0;
+        {
+            let Ok(mut stmt) = tx.prepare_cached(
+                "insert into model_metadata (provider, model, metadata_json, updated_at, cache_version)
+                 values (?1, ?2, ?3, strftime('%s', 'now'), ?4)
+                 on conflict(provider, model) do update set
+                   metadata_json = excluded.metadata_json,
+                   updated_at = excluded.updated_at,
+                   cache_version = excluded.cache_version",
+            ) else {
+                return 0;
             };
-            if stmt
-                .execute(params![
-                    provider,
-                    model,
-                    contents,
-                    MODEL_METADATA_CACHE_VERSION
-                ])
-                .is_ok()
-            {
-                written += 1;
+            for (provider, model, row) in entries {
+                let Ok(contents) = serde_json::to_string(row) else {
+                    continue;
+                };
+                if stmt
+                    .execute(params![
+                        provider,
+                        model,
+                        contents,
+                        MODEL_METADATA_CACHE_VERSION
+                    ])
+                    .is_ok()
+                {
+                    written += 1;
+                }
             }
         }
-    }
-    if tx.commit().is_err() {
-        return 0;
-    }
-    written
+        if tx.commit().is_err() {
+            return 0;
+        }
+        written
+    })
+    .unwrap_or_default()
 }
 
-pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
-    let path = models_dev_sqlite_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let connection = Connection::open(path)?;
-    connection.execute_batch(
-        "create table if not exists model_metadata (
-            provider text not null,
-            model text not null,
-            metadata_json text not null,
-            updated_at integer not null,
-            cache_version integer not null default 1,
-            primary key (provider, model)
-        );
-        create table if not exists catalog_snapshot (
-            id integer primary key check (id = 1),
-            cache_version integer not null,
-            updated_at integer not null,
-            -- Extra models.dev rows this snapshot contains: a comma-separated
-            -- borrowed slug list, plus '*' when the shared ExactAdvertised
-            -- slug/model tree was written for model-id hosts.
-            borrowed_slugs text not null default ''
-        );",
-    )?;
-    let _ = connection.execute(
-        "alter table model_metadata add column cache_version integer not null default 1",
-        [],
-    );
-    let _ = connection.execute(
-        "alter table catalog_snapshot add column borrowed_slugs text not null default ''",
-        [],
-    );
-    Ok(connection)
+pub(super) fn with_models_dev_cache<T>(
+    operation: impl FnOnce(&mut Connection) -> T,
+) -> rusqlite::Result<T> {
+    super::catalog_cache::with_connection(
+        models_dev_sqlite_path(),
+        super::catalog_cache::Schema::ModelsDev,
+        |connection, state| {
+            if matches!(state, super::catalog_cache::ConnectionState::Opened) {
+                // An externally removed/replaced catalog must not inherit the
+                // previous file's process-local hydrate readiness.
+                hydrate::set_catalog_ready(false);
+            }
+            operation(connection)
+        },
+    )
 }
 
 fn models_dev_sqlite_path() -> PathBuf {
@@ -752,15 +734,8 @@ pub(super) fn test_cache_dir() -> Option<PathBuf> {
 
 #[doc(hidden)]
 pub fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
-    // Process-level ready must not leak across tests that swap the sqlite path.
-    reset_catalog_hydrate_state_for_tests();
-    TEST_CACHE_DIR.with(|cache_dir| {
-        let previous = cache_dir.replace(Some(path));
-        let result = f();
-        cache_dir.replace(previous);
-        reset_catalog_hydrate_state_for_tests();
-        result
-    })
+    let _guard = ModelsDevCacheDirGuard::new(path);
+    f()
 }
 
 /// Holds the models.dev cache dir for the current thread across awaits.
@@ -783,6 +758,7 @@ impl ModelsDevCacheDirGuard {
 
 impl Drop for ModelsDevCacheDirGuard {
     fn drop(&mut self) {
+        super::catalog_cache::forget_connection(&models_dev_sqlite_path());
         let previous = self.previous.take();
         TEST_CACHE_DIR.with(|cache_dir| {
             cache_dir.replace(previous);

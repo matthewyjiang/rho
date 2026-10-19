@@ -58,13 +58,14 @@ fn provider_snapshot_expiration_applies_to_every_model_in_the_snapshot() {
             reasoning_capabilities: capabilities.clone(),
         });
         replace_cached_provider_models("kimi-code", &models).unwrap();
-        let connection = open_provider_models_cache().unwrap();
-        connection
-            .execute(
+        with_provider_models_cache(|connection| {
+            connection.execute(
                 "update provider_model_refresh set updated_at = 0 where provider = 'kimi-code'",
                 [],
             )
-            .unwrap();
+        })
+        .unwrap()
+        .unwrap();
 
         assert!(provider_model_capabilities_need_refresh("kimi-code", "k3"));
         assert!(provider_model_capabilities_need_refresh(
@@ -223,18 +224,18 @@ fn ollama_unknown_reasoning_rows_settle_after_a_fresh_refresh() {
             "a missing Ollama row must still refresh"
         );
 
-        let connection = open_provider_models_cache().unwrap();
-        connection
-            .execute(
+        with_provider_models_cache(|connection| {
+            connection.execute(
                 "update provider_model_refresh set updated_at = 0 where provider = 'ollama'",
                 [],
             )
-            .unwrap();
+        })
+        .unwrap()
+        .unwrap();
         assert!(
             provider_model_capabilities_need_refresh("ollama", "gemma4:31b"),
             "an expired Ollama snapshot must refresh"
         );
-        drop(connection);
 
         replace_cached_provider_models(
             "ollama",

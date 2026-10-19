@@ -21,6 +21,7 @@ impl App {
             ));
             self.set_status("models.dev catalog refresh failed");
         } else {
+            self.refresh_catalog_chrome();
             self.insert_entry(&Entry::Notice(format!(
                 "refreshed models.dev catalog: {written} models"
             )));

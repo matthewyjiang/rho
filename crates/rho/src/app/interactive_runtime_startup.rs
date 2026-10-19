@@ -32,6 +32,7 @@ use rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvid
 
 pub(super) async fn initialize(
     options: InteractiveRuntimeOptions<'_>,
+    catalog_names: impl std::future::Future<Output = usize> + Send + 'static,
 ) -> anyhow::Result<InteractiveRuntime> {
     let InteractiveRuntimeOptions {
         config,
@@ -218,8 +219,9 @@ pub(super) async fn initialize(
     bind_mcp_sampling(&mcp_sampling, &provider, session.id(), &cwd);
     let may_rewrite_startup_prompt =
         storage.is_none() && !matches!(prompt.system, rho_sdk::SystemPrompt::None);
-    let pending_catalog_names = may_rewrite_startup_prompt
-        .then(|| tokio::spawn(async { rho_providers::model::ensure_model_catalog_names().await }));
+    // Catalog capabilities can change even when resumed history or launch policy
+    // freezes the prompt. Always observe completion so the TUI refreshes them.
+    let pending_catalog_names = Some(tokio::spawn(catalog_names));
     let cached_tool_specs = tools.specs();
     let computer_preference_source = if storage.is_some() {
         super::computer::ComputerPreferenceSource::SavedSession

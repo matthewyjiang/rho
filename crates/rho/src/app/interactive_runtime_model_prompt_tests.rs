@@ -189,7 +189,13 @@ async fn new_session_keeps_startup_prompt_hydration() {
         tokio::task::yield_now().await;
     }
     runtime.pending_catalog_names = Some(handle);
-    assert!(runtime.poll_startup_hydrates().await.unwrap());
+    assert_eq!(
+        runtime.poll_startup_hydrates().await.unwrap(),
+        super::super::StartupHydrateChanges {
+            catalog_completed: true,
+            ..Default::default()
+        }
+    );
     let running = PromptModel::from_sdk_identity(&runtime.provider.provider().identity());
     let expected = runtime
         .prompt_template

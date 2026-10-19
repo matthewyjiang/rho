@@ -17,28 +17,36 @@ use super::{
 mod tests;
 
 impl App {
+    pub(super) fn refresh_catalog_chrome(&mut self) {
+        self.statusline.update_model(&self.info.runtime);
+        self.statusline.refresh_reasoning_capabilities();
+        if let Some(view) = self.exclusive.attach_view_mut() {
+            view.refresh_reasoning_capabilities();
+        }
+    }
+
     pub(super) async fn poll_startup_hydrates(
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let pending = agent.mcp_connect_pending();
-        let changed = agent.poll_startup_hydrates().await?;
-        if !changed {
+        let changes = agent.poll_startup_hydrates().await?;
+        if !changes.any() {
             return Ok(false);
         }
-        self.mcp_report = agent.mcp_report().clone();
-        self.mcp_catalog = agent.mcp_catalog().clone();
-        if pending && !agent.mcp_connect_pending() {
+        self.refresh_catalog_chrome();
+        if changes.mcp_inventory_changed {
+            self.mcp_report = agent.mcp_report().clone();
+            self.mcp_catalog = agent.mcp_catalog().clone();
             if self.status_source == StatusSource::McpConnecting {
                 self.set_status_quiet("");
             }
             self.clear_mcp_connecting_activity();
-        }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.is_mcp_inventory()
-        ) {
-            let _ = self.execute_mcp_command();
+            if matches!(
+                self.input_ui.composer(),
+                ComposerMode::Picker(picker) if picker.is_mcp_inventory()
+            ) {
+                let _ = self.execute_mcp_command();
+            }
         }
         Ok(true)
     }
@@ -108,6 +116,9 @@ impl App {
         reasoning_at_start: (ReasoningLevel, ReasoningRequestSource),
         metadata: Result<Option<ModelMetadata>, JoinError>,
     ) {
+        // A successful hydrate may update catalog capabilities even when it
+        // returns no display metadata or the context-window apply is rejected.
+        self.refresh_catalog_chrome();
         let Ok(Some(metadata)) = metadata else {
             self.warn_custom_model_id_catalog_miss();
             return;

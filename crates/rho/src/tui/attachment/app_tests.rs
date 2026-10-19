@@ -8,6 +8,14 @@ use tempfile::TempDir;
 use super::{super::chrome::AttachChrome, *};
 use rho_sdk::model::ModelUsage;
 
+fn resolved_identity_line(
+    status: Option<&RunStatus>,
+    usage: Option<&ModelUsage>,
+    now: u64,
+) -> String {
+    identity_line(status, status.and_then(attach_reasoning), usage, now)
+}
+
 fn test_app() -> (TempDir, AttachmentApp) {
     let directory = TempDir::new().unwrap();
     let app = AttachmentApp::new(
@@ -461,7 +469,7 @@ fn identity_line_includes_provider_model_reasoning_runtime_elapsed_and_cost() {
                 ..ModelMetadata::default()
             },
         );
-        let line = identity_line(
+        let line = resolved_identity_line(
             Some(&RunStatus {
                 agent_id: Some("explorer".into()),
                 provider: Some("openai".into()),
@@ -489,7 +497,7 @@ fn identity_line_includes_provider_model_reasoning_runtime_elapsed_and_cost() {
 fn identity_line_handles_partial_model_fields() {
     // A Rho status needs both provider and model before it can name one.
     assert_eq!(
-        identity_line(
+        resolved_identity_line(
             Some(&RunStatus {
                 model: Some("gpt-5.5".into()),
                 turns: 1,
@@ -502,7 +510,7 @@ fn identity_line_handles_partial_model_fields() {
     );
     // An unpinned Claude run still names the runtime honestly.
     assert_eq!(
-        identity_line(
+        resolved_identity_line(
             Some(&RunStatus {
                 provider: Some("claude-code".into()),
                 runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
@@ -514,7 +522,7 @@ fn identity_line_handles_partial_model_fields() {
         ),
         "claude-code (no model pinned; Claude Code chooses) · claude-cli · turn 2"
     );
-    assert_eq!(identity_line(None, None, 0), "");
+    assert_eq!(resolved_identity_line(None, None, 0), "");
 }
 
 // Covers: attach must not advertise a level the bound model ignores; Claude
@@ -530,7 +538,7 @@ fn identity_line_omits_reasoning_when_the_model_cannot_use_it() {
     with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
         let _names = ModelDisplayNameCacheGuard::new();
         assert_eq!(
-            identity_line(
+            resolved_identity_line(
                 Some(&RunStatus {
                     provider: Some("github-copilot".into()),
                     model: Some("gpt-4o".into()),
@@ -545,7 +553,7 @@ fn identity_line_omits_reasoning_when_the_model_cannot_use_it() {
             "github-copilot/gpt-4o · rho · turn 1"
         );
         assert_eq!(
-            identity_line(
+            resolved_identity_line(
                 Some(&RunStatus {
                     provider: Some("claude-code".into()),
                     runtime: Some(crate::agent::AgentRuntime::ClaudeCli),

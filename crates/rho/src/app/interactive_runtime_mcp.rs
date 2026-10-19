@@ -16,6 +16,20 @@ enum StartupPromptRefresh {
     Frozen,
 }
 
+/// Independent startup changes consumed by the TUI. Catalog completion must not
+/// reset an open MCP inventory picker.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct StartupHydrateChanges {
+    pub(crate) mcp_inventory_changed: bool,
+    pub(crate) catalog_completed: bool,
+}
+
+impl StartupHydrateChanges {
+    pub(crate) fn any(&self) -> bool {
+        self.mcp_inventory_changed || self.catalog_completed
+    }
+}
+
 impl InteractiveRuntime {
     pub(crate) fn mcp_connect_pending(&self) -> bool {
         self.pending_mcp.is_some()
@@ -48,24 +62,24 @@ impl InteractiveRuntime {
         }
     }
 
-    /// Apply finished MCP connect and catalog-name hydrates. Returns whether
-    /// `/mcp` inventory or the startup prompt changed.
-    pub(crate) async fn poll_startup_hydrates(&mut self) -> anyhow::Result<bool> {
-        let mut changed = false;
+    /// Apply finished MCP connect and catalog-name hydrates, retaining which
+    /// inventory changed so consumers only refresh the affected UI.
+    pub(crate) async fn poll_startup_hydrates(&mut self) -> anyhow::Result<StartupHydrateChanges> {
+        let mut changes = StartupHydrateChanges::default();
         if let Some(handle) = self.pending_mcp.as_mut() {
             if handle.is_finished() {
                 if let Some(handle) = self.pending_mcp.take() {
                     match handle.now_or_never() {
                         Some(Ok(outcome)) => {
                             self.apply_mcp_connect(outcome).await?;
-                            changed = true;
+                            changes.mcp_inventory_changed = true;
                         }
                         // The connect task died without reporting. Say so, or
                         // `/mcp` sits on `connecting` until the session ends.
                         Some(Err(error)) => {
                             self.mcp_report
                                 .fail_connecting(&format!("MCP connect did not finish: {error}"));
-                            changed = true;
+                            changes.mcp_inventory_changed = true;
                         }
                         None => {}
                     }
@@ -76,11 +90,12 @@ impl InteractiveRuntime {
             if handle.is_finished() {
                 if let Some(handle) = self.pending_catalog_names.take() {
                     let _ = handle.now_or_never();
+                    // Capabilities may change even if the prompt is unchanged or frozen.
+                    changes.catalog_completed = true;
                     if self.pending_mcp.is_none() {
                         match self.refresh_startup_system_prompt() {
                             StartupPromptRefresh::Rewritten => {
                                 self.replace_history_system_prompt()?;
-                                changed = true;
                             }
                             StartupPromptRefresh::Unchanged | StartupPromptRefresh::Frozen => {}
                         }
@@ -88,7 +103,7 @@ impl InteractiveRuntime {
                 }
             }
         }
-        Ok(changed)
+        Ok(changes)
     }
 
     async fn apply_mcp_connect(&mut self, outcome: McpConnectOutcome) -> anyhow::Result<()> {
