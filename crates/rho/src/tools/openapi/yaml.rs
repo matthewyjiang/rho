@@ -1,11 +1,11 @@
-//! YAML parsing with a node budget.
+//! YAML parsing with an expansion budget.
 //!
-//! YAML aliases replay whole subtrees, so a few kilobytes can expand into
-//! billions of nodes before serde_yaml_ng's own repetition check trips. The
-//! budget allows one node per input byte: an alias-free document needs at
-//! least two bytes per node (`0,`), and GitHub's spec averages 28. Aliases can
-//! therefore at most double the node count a spec of the same size could
-//! reach without them.
+//! YAML aliases replay whole subtrees and scalars, so a few kilobytes can
+//! expand into gigabytes before serde_yaml_ng's own repetition check trips.
+//! Each node costs one unit and each string or key also costs its length, and
+//! the budget is one unit per input byte. Real specs need far less: GitHub's
+//! 10.3 MB YAML spec needs 0.61 units per byte and Stripe's 6.6 MB spec 0.54,
+//! so the budget only trips when aliases replay content.
 
 use std::{cell::Cell, fmt};
 
@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 
 use super::LoadError;
 
-/// Parse YAML into JSON, failing once it expands past one node per byte.
+/// Parse YAML into JSON, failing once it expands past one unit per byte.
 pub(super) fn parse(bytes: &[u8]) -> Result<Value, LoadError> {
     let budget = Budget {
         remaining: Cell::new(bytes.len()),
@@ -25,7 +25,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Value, LoadError> {
         .deserialize(deserializer)
         .map_err(|error| {
             if budget.exceeded.get() {
-                LoadError::YamlTooManyNodes { limit: bytes.len() }
+                LoadError::YamlAliasExpansion { limit: bytes.len() }
             } else {
                 LoadError::Yaml(error)
             }
@@ -45,14 +45,24 @@ struct Node<'a> {
 
 impl Node<'_> {
     fn charge<E: de::Error>(self) -> Result<(), E> {
-        match self.budget.remaining.get().checked_sub(1) {
+        self.charge_units(1)
+    }
+
+    /// A string costs its node plus its length: an alias replays the whole
+    /// scalar.
+    fn charge_string<E: de::Error>(self, value: &str) -> Result<(), E> {
+        self.charge_units(1 + value.len())
+    }
+
+    fn charge_units<E: de::Error>(self, units: usize) -> Result<(), E> {
+        match self.budget.remaining.get().checked_sub(units) {
             Some(remaining) => {
                 self.budget.remaining.set(remaining);
                 Ok(())
             }
             None => {
                 self.budget.exceeded.set(true);
-                Err(E::custom("YAML node budget exceeded"))
+                Err(E::custom("YAML expansion budget exceeded"))
             }
         }
     }
@@ -94,12 +104,12 @@ impl<'de> Visitor<'de> for Node<'_> {
     }
 
     fn visit_str<E: de::Error>(self, value: &str) -> Result<Value, E> {
-        self.charge()?;
+        self.charge_string(value)?;
         Ok(Value::String(value.to_owned()))
     }
 
     fn visit_string<E: de::Error>(self, value: String) -> Result<Value, E> {
-        self.charge()?;
+        self.charge_string(&value)?;
         Ok(Value::String(value))
     }
 
@@ -130,7 +140,7 @@ impl<'de> Visitor<'de> for Node<'_> {
         let mut entries = Map::new();
         // YAML keys such as `200` arrive as strings, as with serde_json::Value.
         while let Some(key) = map.next_key::<String>()? {
-            self.charge()?;
+            self.charge_string(&key)?;
             entries.insert(key, map.next_value_seed(self)?);
         }
         Ok(Value::Object(entries))

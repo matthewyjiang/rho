@@ -65,8 +65,10 @@ pub(super) fn parse(
 ) -> Result<Params, SkipReason> {
     let mut declared: Vec<Declared<'_>> = Vec::new();
     for (owner_at, owner) in owners {
-        let Some(Value::Array(list)) = owner.get("parameters") else {
-            continue;
+        let list = match owner.get("parameters") {
+            None => continue,
+            Some(Value::Array(list)) => list,
+            Some(_) => return Err(SkipReason::InvalidParam("parameters is not a list")),
         };
         let list_at = owner_at.child("parameters");
         for index in 0..list.len() {

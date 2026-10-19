@@ -62,8 +62,11 @@ pub(crate) enum LoadError {
     Json(serde_json::Error),
     #[error("could not parse OpenAPI spec as YAML: {0}")]
     Yaml(serde_yaml_ng::Error),
-    #[error("YAML spec expands past {limit} nodes (one per byte of the spec); its aliases repeat too much")]
-    YamlTooManyNodes { limit: usize },
+    #[error(
+        "YAML aliases expand the spec past {limit} bytes of content, its own size; \
+         its aliases repeat too much"
+    )]
+    YamlAliasExpansion { limit: usize },
     #[error("Swagger 2.0 specs are not supported; convert the spec to OpenAPI 3")]
     Swagger2,
     #[error("OpenAPI version {0} is not supported; expected 3.0 or 3.1")]

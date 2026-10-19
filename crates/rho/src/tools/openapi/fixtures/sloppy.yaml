@@ -156,6 +156,12 @@ paths:
         - $ref: '#/components/parameters/hop1'
       responses:
         200: {description: ok}
+  /listless:
+    get:
+      operationId: listless
+      parameters: {limit: {name: limit, in: query, schema: {type: integer}}}
+      responses:
+        200: {description: ok}
   /aliased: {$ref: '#/x-shared/aliased'}
   /bogus: not-an-object
   x-internal: {note: an extension, not a path}
@@ -202,7 +208,7 @@ components:
         tag: {type: string, nullable: true}
         secret: {type: string, writeOnly: true}
         weight: {type: number, minimum: 0, exclusiveMinimum: true}
-    # Hides `id` through `allOf`; the `not` branch keeps its readOnly property.
+    # Hides `id` through `allOf`.
     NewPet:
       allOf:
         - $ref: '#/components/schemas/Pet'
@@ -211,9 +217,9 @@ components:
         # Hidden through an `allOf` wrapper, a common generator pattern.
         owner:
           allOf: [{$ref: '#/components/schemas/Owner'}]
-      not:
-        properties:
-          legacy: {type: string, readOnly: true}
+      # Under `not`, Pet keeps its readOnly `id`: removing it would change
+      # what the negation rejects.
+      not: {$ref: '#/components/schemas/Pet'}
     Owner: {type: object, readOnly: true}
     File: {type: string, format: binary}
     Node:

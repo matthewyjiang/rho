@@ -170,14 +170,18 @@ impl Document {
         let mut rendered = root.clone();
         renderer.transform(&mut rendered, Hiding::On(&BTreeSet::new()))?;
         let mut defs = Map::new();
-        while let Some((target, key)) = renderer.pending.pop() {
+        while let Some((target, mode, key)) = renderer.pending.pop() {
             let mut def = self
                 .get(&target)
                 .cloned()
                 .ok_or_else(|| RefError::Broken(target.to_string()))?;
             // A definition is shared by every use site, so it hides only
             // what it declares itself.
-            renderer.transform(&mut def, Hiding::On(&BTreeSet::new()))?;
+            let hiding = match mode {
+                DefMode::Hiding => Hiding::On(&BTreeSet::new()),
+                DefMode::Verbatim => Hiding::Off,
+            };
+            renderer.transform(&mut def, hiding)?;
             defs.insert(key, def);
         }
         if !defs.is_empty() {
@@ -194,11 +198,11 @@ impl Document {
 struct Renderer<'a> {
     document: &'a Document,
     direction: SchemaDirection,
-    /// `$defs` key for each ref target already seen.
-    def_keys: HashMap<JsonPointer, String>,
+    /// `$defs` key for each ref target already seen, in each mode.
+    def_keys: HashMap<(JsonPointer, DefMode), String>,
     used_keys: HashSet<String>,
     /// Targets whose definitions still need rendering.
-    pending: Vec<(JsonPointer, String)>,
+    pending: Vec<(JsonPointer, DefMode, String)>,
 }
 
 impl Renderer<'_> {
@@ -207,8 +211,12 @@ impl Renderer<'_> {
             return Ok(());
         };
         let target = self.document.schema_ref_target(map)?;
+        let mode = match hiding {
+            Hiding::On(_) => DefMode::Hiding,
+            Hiding::Off => DefMode::Verbatim,
+        };
         if let (Some(target), true) = (&target, self.document.version().ignores_ref_siblings()) {
-            let reference = self.def_ref(target.clone());
+            let reference = self.def_ref(target.clone(), mode);
             *map = Map::from_iter([("$ref".to_owned(), reference)]);
             return Ok(());
         }
@@ -216,13 +224,13 @@ impl Renderer<'_> {
         let hidden = match hiding {
             Hiding::Off => None,
             Hiding::On(inherited) => {
-                let mut hidden = self.hidden_names(map, &mut HashSet::new())?;
+                let mut hidden = self.hidden_names(map)?;
                 hidden.extend(inherited.iter().cloned());
                 Some(hidden)
             }
         };
         if let Some(target) = target {
-            let reference = self.def_ref(target);
+            let reference = self.def_ref(target, mode);
             map.insert("$ref".to_owned(), reference);
         }
         match self.document.version() {
@@ -253,34 +261,31 @@ impl Renderer<'_> {
 
     /// Names of properties `schema` hides in this direction. Its `$ref` and
     /// `allOf` branches describe the same instance, so their hidden names
-    /// count too.
-    fn hidden_names(
-        &self,
-        schema: &Map<String, Value>,
-        visited: &mut HashSet<JsonPointer>,
-    ) -> Result<BTreeSet<String>, RefError> {
+    /// count too. Walks a worklist, so a long ref chain cannot overflow the
+    /// stack.
+    fn hidden_names(&self, schema: &Map<String, Value>) -> Result<BTreeSet<String>, RefError> {
         let mut hidden = BTreeSet::new();
-        if let Some(target) = self.document.schema_ref_target(schema)? {
-            if let (true, Some(Value::Object(target))) =
-                (visited.insert(target.clone()), self.document.get(&target))
-            {
-                hidden.extend(self.hidden_names(target, visited)?);
-            }
-            if self.document.version().ignores_ref_siblings() {
-                return Ok(hidden);
-            }
-        }
-        if let Some(Value::Object(properties)) = schema.get("properties") {
-            for (name, property) in properties {
-                if self.marks_hidden(property, &mut HashSet::new())? {
-                    hidden.insert(name.clone());
+        let mut visited = HashSet::new();
+        let mut pending = vec![schema];
+        while let Some(schema) = pending.pop() {
+            if let Some(target) = self.document.schema_ref_target(schema)? {
+                if let (true, Some(Value::Object(target))) =
+                    (visited.insert(target.clone()), self.document.get(&target))
+                {
+                    pending.push(target);
+                }
+                if self.document.version().ignores_ref_siblings() {
+                    continue;
                 }
             }
-        }
-        for branch in branches(schema, "allOf") {
-            if let Value::Object(branch) = branch {
-                hidden.extend(self.hidden_names(branch, visited)?);
+            if let Some(Value::Object(properties)) = schema.get("properties") {
+                for (name, property) in properties {
+                    if self.marks_hidden(property)? {
+                        hidden.insert(name.clone());
+                    }
+                }
             }
+            pending.extend(branches(schema, "allOf").filter_map(Value::as_object));
         }
         Ok(hidden)
     }
@@ -290,46 +295,42 @@ impl Renderer<'_> {
     /// one `anyOf` or `oneOf` branch says nothing about the others. The
     /// schema's own flag counts even beside a 3.0 `$ref`, where generators
     /// put it.
-    fn marks_hidden(
-        &self,
-        schema: &Value,
-        visited: &mut HashSet<JsonPointer>,
-    ) -> Result<bool, RefError> {
-        let Value::Object(map) = schema else {
-            return Ok(false);
-        };
-        if map.get(self.direction.hidden_keyword()) == Some(&Value::Bool(true)) {
-            return Ok(true);
-        }
-        if let Some(target) = self.document.schema_ref_target(map)? {
-            if let (true, Some(value)) =
-                (visited.insert(target.clone()), self.document.get(&target))
-            {
-                if self.marks_hidden(value, visited)? {
-                    return Ok(true);
-                }
-            }
-            if self.document.version().ignores_ref_siblings() {
-                return Ok(false);
-            }
-        }
-        for branch in branches(map, "allOf") {
-            if self.marks_hidden(branch, visited)? {
+    fn marks_hidden(&self, schema: &Value) -> Result<bool, RefError> {
+        let keyword = self.direction.hidden_keyword();
+        let mut visited = HashSet::new();
+        let mut pending = vec![schema];
+        while let Some(schema) = pending.pop() {
+            let Value::Object(map) = schema else {
+                continue;
+            };
+            if map.get(keyword) == Some(&Value::Bool(true)) {
                 return Ok(true);
             }
+            if let Some(target) = self.document.schema_ref_target(map)? {
+                if let (true, Some(target)) =
+                    (visited.insert(target.clone()), self.document.get(&target))
+                {
+                    pending.push(target);
+                }
+                if self.document.version().ignores_ref_siblings() {
+                    continue;
+                }
+            }
+            pending.extend(branches(map, "allOf"));
         }
         Ok(false)
     }
 
     /// The `$ref` value pointing at `target`'s entry in `$defs`.
-    fn def_ref(&mut self, target: JsonPointer) -> Value {
+    fn def_ref(&mut self, target: JsonPointer, mode: DefMode) -> Value {
         // Keys never contain `~` or `/`, so they need no pointer escaping.
-        Value::String(format!("#/$defs/{}", self.def_key(target)))
+        Value::String(format!("#/$defs/{}", self.def_key(target, mode)))
     }
 
-    /// A stable, readable `$defs` key for `target`, queued on first sight.
-    fn def_key(&mut self, target: JsonPointer) -> String {
-        if let Some(key) = self.def_keys.get(&target) {
+    /// A stable, readable `$defs` key for `target` in `mode`, queued on first
+    /// sight.
+    fn def_key(&mut self, target: JsonPointer, mode: DefMode) -> String {
+        if let Some(key) = self.def_keys.get(&(target.clone(), mode)) {
             return key.clone();
         }
         let last = target.segments().last().unwrap_or_default();
@@ -348,8 +349,8 @@ impl Renderer<'_> {
             key = format!("{base}_{suffix}");
             suffix += 1;
         }
-        self.def_keys.insert(target.clone(), key.clone());
-        self.pending.push((target, key.clone()));
+        self.def_keys.insert((target.clone(), mode), key.clone());
+        self.pending.push((target, mode, key.clone()));
         key
     }
 }
@@ -363,6 +364,16 @@ enum Hiding<'a> {
     /// Hide this schema's own hidden properties plus `inherited`, the names an
     /// enclosing `allOf` hides.
     On(&'a BTreeSet<String>),
+}
+
+/// How a `$defs` entry is rendered. A target referenced both under `not` and
+/// elsewhere gets one entry per mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DefMode {
+    /// Hidden properties removed, for ordinary use sites.
+    Hiding,
+    /// Unchanged, for use under `not`, `if`, or `contains`.
+    Verbatim,
 }
 
 /// The subschemas of a composition keyword such as `allOf`.

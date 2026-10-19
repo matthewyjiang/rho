@@ -18,6 +18,9 @@ const ALIAS_BOMB: &[u8] = b"a: &a [1,1,1,1,1,1,1,1,1,1]
 b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]
 c: [*b,*b,*b,*b,*b,*b,*b,*b,*b,*b]
 ";
+const STRING_ALIAS_BOMB: &[u8] = b"a: &a xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+b: [*a,*a,*a,*a,*a,*a,*a,*a,*a,*a]
+";
 /// Five operations of GitHub's REST spec with their components, minus
 /// descriptions and examples.
 const GITHUB_SUBSET: &[u8] = include_bytes!("openapi/fixtures/github_subset.json");
@@ -184,6 +187,11 @@ fn sloppy_spec_skips_only_unusable_operations() {
                     limit: 16
                 }
                 .into()
+            ),
+            (
+                Some(Get),
+                "/listless",
+                SkipReason::InvalidParam("parameters is not a list")
             ),
             // `x-internal` under `paths` is an extension and is not reported.
             (None, "/bogus", SkipReason::NotAnObject),
@@ -353,8 +361,8 @@ fn rendered_schemas_hide_properties_by_direction() {
         json!({"$ref": "#/$defs/Node", "$defs": {"Node": node}})
     );
     // `id` is hidden through `allOf` and `owner` through an `allOf` wrapper, so
-    // both leave `required`; the `not` branch keeps its readOnly property,
-    // since removing it would change what the negation rejects.
+    // both leave `required`. Under `not`, Pet renders unchanged as its own
+    // definition, since removing `id` there would change what it rejects.
     let new_pet = schema_of("openapi__sloppy__pets_replace", SchemaDirection::Request);
     assert_eq!(
         new_pet["$defs"]["NewPet"],
@@ -362,8 +370,13 @@ fn rendered_schemas_hide_properties_by_direction() {
             "allOf": [{"$ref": "#/$defs/Pet"}],
             "required": ["name"],
             "properties": {},
-            "not": {"properties": {"legacy": {"type": "string", "readOnly": true}}},
+            "not": {"$ref": "#/$defs/Pet_2"},
         })
+    );
+    let required = |def: &str| new_pet["$defs"][def]["required"].clone();
+    assert_eq!(
+        (required("Pet"), required("Pet_2")),
+        (json!(["name", "secret"]), json!(["id", "name", "secret"]))
     );
 }
 
@@ -483,7 +496,7 @@ fn openapi_3_1_checks_refs_beside_a_ref() {
 #[test]
 fn load_fails_whole_source_only_for_document_problems() {
     type IsExpected = fn(&LoadError) -> bool;
-    let cases: [(&[u8], usize, IsExpected); 7] = [
+    let cases: [(&[u8], usize, IsExpected); 8] = [
         (b"{\"openapi\": \"3.1.0\"}", 8, |error| {
             matches!(error, LoadError::TooLarge { size: 20, limit: 8 })
         }),
@@ -509,7 +522,13 @@ fn load_fails_whole_source_only_for_document_problems() {
         (
             ALIAS_BOMB,
             1024,
-            |error| matches!(error, LoadError::YamlTooManyNodes { limit } if *limit == ALIAS_BOMB.len()),
+            |error| matches!(error, LoadError::YamlAliasExpansion { limit } if *limit == ALIAS_BOMB.len()),
+        ),
+        // Few nodes, but each alias replays a 40-byte string.
+        (
+            STRING_ALIAS_BOMB,
+            1024,
+            |error| matches!(error, LoadError::YamlAliasExpansion { limit } if *limit == STRING_ALIAS_BOMB.len()),
         ),
     ];
     for (bytes, max_spec_bytes, expected) in cases {
