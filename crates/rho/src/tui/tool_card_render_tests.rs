@@ -512,7 +512,6 @@ fn toggle_check_does_not_highlight() {
         &card.clone().into(),
         /*width*/ 100,
         /*max_tool_output_lines*/ 10,
-        /*expanded*/ false,
     ));
     assert_eq!(
         take_highlight_line_calls(),

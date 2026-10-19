@@ -3,6 +3,22 @@ use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
 use super::*;
 use crate::tui::theme::{SyntaxRole, Theme};
 
+// Covers: borrowed logical lines preserve intentional blank rows and hard breaks.
+// Owner: pure unit (tool body line splitting).
+#[test]
+fn logical_lines_preserve_blank_rows_and_hard_breaks() {
+    for (input, expected) in [
+        (vec![], vec![]),
+        (vec!["", ""], vec!["", ""]),
+        (vec!["a\nb", "c"], vec!["a", "b", "c"]),
+        (vec!["a\n\n", "\n"], vec!["a", "", ""]),
+        (vec!["a\r\nb\r\n"], vec!["a", "b"]),
+    ] {
+        let input: Vec<_> = input.into_iter().map(str::to_string).collect();
+        pretty_assertions::assert_eq!(logical_lines(&input), expected);
+    }
+}
+
 #[test]
 fn sizes_gutter_to_the_widest_line_number() {
     for (case, rows, expected) in [

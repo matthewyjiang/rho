@@ -15,9 +15,24 @@ use super::super::{
     theme::Theme,
     LiveCardRenderCache, ToolEntry,
 };
-use super::{live_elapsed_label, live_shell_elapsed, paint_entry_sections, paint_live_prefix};
+use super::{
+    live_elapsed_label, live_shell_elapsed, paint_entry_sections, paint_live_prefix, CardRender,
+};
 
 impl ToolEntry {
+    /// Toggleability from the last paint at this terminal width and row budget.
+    /// Expansion does not affect whether the collapsed card has hidden rows.
+    pub(in crate::tui) fn cached_output_toggleable(
+        &self,
+        width: usize,
+        max_tool_output_lines: usize,
+    ) -> Option<bool> {
+        self.render_cache.as_ref().and_then(|cache| {
+            (cache.width == width && cache.max_tool_output_lines == max_tool_output_lines)
+                .then_some(cache.toggleable)
+        })
+    }
+
     /// Cached live-card paint. Rebuilds when layout, theme, or expand state
     /// change; refreshes only the elapsed prefix otherwise.
     pub(in crate::tui) fn rendered_lines(
@@ -59,7 +74,10 @@ impl ToolEntry {
         }
 
         let inner_width = padded_content_width(width);
-        let sections = paint_entry_sections(self, inner_width, max_tool_output_lines);
+        let CardRender {
+            sections,
+            toggleable,
+        } = paint_entry_sections(self, inner_width, max_tool_output_lines);
         let last_fact_is_end = sections.last_fact_is_end;
         let header = sections.header;
         let mut prefix = header.clone();
@@ -81,6 +99,7 @@ impl ToolEntry {
             theme_generation,
             syntax_ready,
             expanded: self.expanded,
+            toggleable,
             elapsed_label,
             last_fact_is_end,
             prefix_len,
