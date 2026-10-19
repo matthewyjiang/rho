@@ -330,13 +330,15 @@ impl InteractiveRuntime {
         if let Some(RunEvent::ToolProposed { call }) = &event {
             self.diagnostics.observe_tool_call(call);
         }
+        // Stream usage precedes SDK calibration. ToolProposed first observes the
+        // accepted response (even while approval waits); completion of a tool is
+        // accounted at the next history boundary.
         if matches!(
             event,
             Some(
                 RunEvent::StepStarted { .. }
-                    | RunEvent::UsageUpdated { .. }
+                    | RunEvent::ToolProposed { .. }
                     | RunEvent::ToolStarted { .. }
-                    | RunEvent::ToolFinished { .. }
                     | RunEvent::BoundaryInputApplied { .. }
                     | RunEvent::CompactionCompleted { .. }
                     | RunEvent::Completed { .. }

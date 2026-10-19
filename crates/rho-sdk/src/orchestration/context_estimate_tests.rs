@@ -72,7 +72,7 @@ async fn step_context_estimate_tracks_compaction_and_staged_steering() {
         let (events, mut event_receiver) = mpsc::channel(1);
         let worker = execute_run(
             Arc::clone(&core),
-            runtime,
+            core.runtime(),
             RunId::new(),
             RunStart::User(UserInput::text("current")),
             CancellationToken::new(),

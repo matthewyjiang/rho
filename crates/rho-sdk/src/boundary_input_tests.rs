@@ -216,7 +216,7 @@ async fn accepted_input_survives_event_consumer_loss() {
     let (_commands, command_receiver) = tokio::sync::mpsc::channel(1);
     let worker = tokio::spawn(crate::orchestration::execute_run(
         Arc::clone(&core),
-        runtime,
+        core.runtime(),
         RunId::new(),
         RunStart::User(UserInput::text("work")),
         CancellationToken::new(),

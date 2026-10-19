@@ -503,6 +503,73 @@ fn context_anchor_validates_tools_identity_and_prefix() {
     }
 }
 
+// Covers: append, replacement, or invalidation leaves a stale running prefix,
+// so the next accepted request cannot calibrate an unchanged proposed history.
+// Owner: context accounting; existing session tests cover lifecycle integration.
+#[test]
+fn context_anchor_tracks_history_transitions() {
+    #[derive(Debug)]
+    enum Transition {
+        Append,
+        Replace,
+        Invalidate,
+    }
+    for transition in [
+        Transition::Append,
+        Transition::Replace,
+        Transition::Invalidate,
+    ] {
+        let mut history = vec![Message::user_text("original")];
+        let mut accounting = super::ContextAccounting::new(&history, &[]);
+        match transition {
+            Transition::Append => {
+                history.push(Message::user_text("appended"));
+            }
+            Transition::Replace => {
+                history[0] = Message::user_text("rewritten");
+                accounting.replace(&history, &[], &[], &identity());
+            }
+            Transition::Invalidate => {
+                accounting.invalidate();
+                history[0] = Message::user_text("rewritten");
+            }
+        }
+        let estimate = accounting.advance(&history, &[], &[], &identity());
+        accounting.record(
+            &history,
+            &[],
+            &[],
+            identity(),
+            &ModelUsage {
+                input_tokens: Some(1_000),
+                ..ModelUsage::default()
+            },
+            estimate,
+        );
+        let appended = Message::user_text("after report");
+        accounting.append(&appended);
+        history.push(appended);
+        assert_eq!(
+            accounting.estimate(&history, &[], &[], &identity()),
+            accounting.current(&[], &identity()),
+            "{transition:?}"
+        );
+        assert_eq!(
+            accounting
+                .current(&[], &identity())
+                .provider_reported_tokens(),
+            Some(1_000)
+        );
+        history[0] = Message::user_text("different");
+        assert_eq!(
+            accounting
+                .estimate(&history, &[], &[], &identity())
+                .provider_reported_tokens(),
+            None
+        );
+    }
+}
+
 struct CancelledUsageProvider;
 
 impl crate::provider::ModelProvider for CancelledUsageProvider {

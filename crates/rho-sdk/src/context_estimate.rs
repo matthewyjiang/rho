@@ -105,6 +105,7 @@ pub(crate) struct ContextAccounting {
     source: Vec<Message>,
     current: ContextEstimate,
     current_messages: Option<usize>,
+    history_fingerprint: HistoryFingerprint,
     tools_fingerprint: u64,
     request_overhead_tokens: u64,
 }
@@ -118,6 +119,7 @@ impl ContextAccounting {
                 history, tools,
             )),
             current_messages: Some(history.len()),
+            history_fingerprint: HistoryFingerprint::new(history),
             tools_fingerprint: fingerprint(&[], tools),
             request_overhead_tokens: estimate_context_tokens(&[], tools),
         }
@@ -181,6 +183,7 @@ impl ContextAccounting {
             None => {
                 self.publish(self.estimate(history, source, tools, identity));
                 self.current_messages = Some(history.len());
+                self.history_fingerprint = HistoryFingerprint::new(history);
             }
         }
         self.current
@@ -199,6 +202,7 @@ impl ContextAccounting {
             self.source = source.to_vec();
         }
         self.current_messages = Some(history.len());
+        self.history_fingerprint = HistoryFingerprint::new(history);
         self.tools_fingerprint = fingerprint(&[], tools);
         self.request_overhead_tokens = estimate_context_tokens(&[], tools);
     }
@@ -249,6 +253,7 @@ impl ContextAccounting {
         let Some(reported) = usage.inclusive_prompt_tokens() else {
             return;
         };
+        debug_assert_eq!(self.current_messages, Some(history.len()));
         let estimate = ContextEstimate {
             estimated_tokens: request_estimate.estimated_tokens(),
             provider_reported_tokens: Some(reported),
@@ -258,7 +263,8 @@ impl ContextAccounting {
         self.baseline = Some(Baseline {
             identity,
             message_count: history.len(),
-            fingerprint: fingerprint(history, tools),
+            // advance/replace accounted for this immutable request before it ran.
+            fingerprint: self.history_fingerprint.with_tools(tools),
             estimate,
         });
         if source != self.source {
@@ -277,6 +283,7 @@ impl ContextAccounting {
     }
 
     pub(crate) fn append(&mut self, message: &Message) {
+        self.history_fingerprint.append(message);
         self.current_messages = self.current_messages.map(|count| count + 1);
         self.current.estimated_tokens = self
             .current
@@ -286,20 +293,45 @@ impl ContextAccounting {
 }
 
 fn fingerprint(history: &[Message], tools: &[ToolSpec]) -> u64 {
-    struct Sink(DefaultHasher);
-    impl Write for Sink {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.write(bytes);
-            Ok(bytes.len())
+    HistoryFingerprint::new(history).with_tools(tools)
+}
+
+/// Append-only JSON message stream. Newlines frame messages without a closing
+/// array delimiter that would have to be removed before the next append.
+#[derive(Clone, Debug)]
+struct HistoryFingerprint(DefaultHasher);
+
+impl HistoryFingerprint {
+    fn new(history: &[Message]) -> Self {
+        let mut fingerprint = Self(DefaultHasher::new());
+        for message in history {
+            fingerprint.append(message);
         }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
+        fingerprint
     }
-    let mut sink = Sink(DefaultHasher::new());
-    serde_json::to_writer(&mut sink, &(history, tools))
-        .expect("provider messages and tool specifications are serializable");
-    sink.0.finish()
+
+    fn append(&mut self, message: &Message) {
+        serde_json::to_writer(&mut *self, message).expect("provider messages are serializable");
+        self.0.write(b"\n");
+    }
+
+    fn with_tools(&self, tools: &[ToolSpec]) -> u64 {
+        let mut fingerprint = self.clone();
+        serde_json::to_writer(&mut fingerprint, tools)
+            .expect("tool specifications are serializable");
+        fingerprint.0.finish()
+    }
+}
+
+impl Write for HistoryFingerprint {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.write(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

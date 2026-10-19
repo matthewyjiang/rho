@@ -34,10 +34,6 @@ pub(super) async fn prepare_batch<'a>(
     cancellation: &CancellationToken,
     limit: NonZeroUsize,
 ) -> (Vec<BatchCall<'a>>, bool) {
-    let interrupted = calls
-        .iter()
-        .map(|entry| (entry.call.clone(), entry.id.clone()))
-        .collect::<Vec<_>>();
     let scope = PreparationScope {
         runtime,
         // One shared bundle per batch: policy, approvals, hooks, and the
@@ -103,9 +99,9 @@ pub(super) async fn prepare_batch<'a>(
 
     if cancelled {
         return (
-            interrupted
-                .into_iter()
-                .map(|(call, id)| interrupted_entry(call, id))
+            calls
+                .iter()
+                .map(|entry| interrupted_entry(entry.call.clone(), entry.id.clone()))
                 .collect(),
             true,
         );
