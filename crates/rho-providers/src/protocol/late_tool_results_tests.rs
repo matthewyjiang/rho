@@ -115,19 +115,33 @@ fn normalize_late_tool_results_pairs_or_borrows() {
         match case.expected {
             None => {
                 assert!(
-                    matches!(normalized, Cow::Borrowed(_)),
+                    normalized
+                        .iter()
+                        .all(|message| matches!(message, Cow::Borrowed(_))),
                     "{} should borrow",
                     case.name
                 );
-                assert_eq!(normalized.as_ref(), case.input.as_slice(), "{}", case.name);
+                assert_eq!(
+                    normalized.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+                    case.input.iter().collect::<Vec<_>>(),
+                    "{}",
+                    case.name
+                );
             }
             Some(expected) => {
                 assert!(
-                    matches!(normalized, Cow::Owned(_)),
+                    normalized
+                        .iter()
+                        .any(|message| matches!(message, Cow::Owned(_))),
                     "{} should own a rewrite",
                     case.name
                 );
-                assert_eq!(normalized.as_ref(), expected.as_slice(), "{}", case.name);
+                assert_eq!(
+                    normalized.iter().map(Cow::as_ref).collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{}",
+                    case.name
+                );
             }
         }
     }
@@ -188,7 +202,13 @@ fn image_supplements_allow_late_results_in_every_provider_protocol() {
             paired.push(late_user("b", "background", "finished"));
             paired.push(late_supplement.clone());
         }
-        assert_eq!(normalize_late_tool_results(&history).as_ref(), paired);
+        assert_eq!(
+            normalize_late_tool_results(&history)
+                .iter()
+                .map(Cow::as_ref)
+                .collect::<Vec<_>>(),
+            paired.iter().collect::<Vec<_>>()
+        );
 
         let target = ModelIdentity::new("test", "test", "test");
         let (_, anthropic) = anthropic_messages::split_system_and_messages(

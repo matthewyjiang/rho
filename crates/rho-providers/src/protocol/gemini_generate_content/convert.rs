@@ -31,7 +31,7 @@ pub fn build_request(
     let messages = crate::protocol::late_tool_results::normalize_late_tool_results(messages);
     let system_text = messages
         .iter()
-        .filter_map(|message| match message {
+        .filter_map(|message| match message.as_ref() {
             Message::System(text) => Some(text.as_str()),
             _ => None,
         })
@@ -39,7 +39,7 @@ pub fn build_request(
         .join("\n\n");
     let mut call_names = HashMap::new();
     let mut contents = Vec::new();
-    for message in messages.as_ref() {
+    for message in messages.iter().map(std::borrow::Cow::as_ref) {
         let content = match message {
             Message::System(_) => continue,
             Message::User(blocks) => Content {
