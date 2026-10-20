@@ -145,24 +145,25 @@ fn proposed_started_finished_map_kind_and_status() {
 }
 
 // Covers: Zed renders an execute call's title verbatim as the command, so a
-// shell card must title with the command alone, not the tool name
+// shell card must title with its command line alone, while execute tools
+// whose summary is display copy keep their tool name
 // Owner: acp event mapper
 #[test]
-fn started_title_names_the_command_for_execute_calls() {
+fn started_title_names_the_command_line_only_when_one_is_set() {
     for (name, metadata, title) in [
         (
             "bash",
             ToolMetadata::new()
                 .operation(OperationKind::Execute)
-                .command_summary("cargo test"),
+                .command_line("cargo test"),
             "cargo test",
         ),
         (
-            "write",
+            "computer",
             ToolMetadata::new()
-                .operation(OperationKind::Write)
-                .command_summary("patch a.rs"),
-            "write: patch a.rs",
+                .operation(OperationKind::Execute)
+                .command_summary("click · x 4"),
+            "computer: click · x 4",
         ),
         (
             "bash",

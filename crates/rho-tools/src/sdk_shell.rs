@@ -235,11 +235,11 @@ impl Tool for SdkShellTool {
         Some(crate::output_schema::<crate::shell_process::ShellOutcome>())
     }
 
-    /// Carries the command as the summary, so hosts can show what runs.
+    /// Carries the command line, so hosts can show what runs.
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         let metadata = ToolMetadata::new().operation(OperationKind::Execute);
         match arguments.get("command").and_then(Value::as_str) {
-            Some(command) => metadata.command_summary(command),
+            Some(command) => metadata.command_line(command),
             None => metadata,
         }
     }

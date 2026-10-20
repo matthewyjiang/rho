@@ -329,14 +329,15 @@ fn started_tool_call(
     tool
 }
 
-/// Hosts such as Zed show an execute call's title as the command itself, so
-/// it is the bare summary there; other kinds lead with the tool name.
+/// Hosts such as Zed show an execute call's title verbatim as its command,
+/// so a call with a command line is titled with it alone; others lead with
+/// the tool name.
 fn tool_title(name: &str, metadata: &ToolMetadata) -> String {
+    if let Some(command) = metadata.command_line_text().filter(|c| !c.is_empty()) {
+        return command.to_owned();
+    }
     match metadata.command_summary_text() {
-        Some(summary) if !summary.is_empty() => match metadata.operation_kind() {
-            Some(OperationKind::Execute) => summary.to_owned(),
-            _ => format!("{name}: {summary}"),
-        },
+        Some(summary) if !summary.is_empty() => format!("{name}: {summary}"),
         _ => name.to_owned(),
     }
 }
