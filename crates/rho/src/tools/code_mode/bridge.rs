@@ -16,6 +16,7 @@ use thiserror::Error;
 
 use super::call_log::{NestedCallRecord, NestedCallStatus};
 use super::exposure::{search_entries, CodeModeSurface, ScriptTool, ToolCatalogEntry};
+use crate::tools::mcp::exported_name::resolve_foreign_spelling;
 
 pub(crate) const CODEMODE_TOOL_NAME: &str = "codemode";
 /// Existing runaway-loop tripwire; failures name the limit and requested count.
@@ -68,11 +69,27 @@ impl ToolHostBridge {
     }
 
     pub(super) fn describe(&self, name: &str) -> Option<&ToolCatalogEntry> {
+        let name = self.resolve(name);
         let catalog = self.catalog();
         catalog
             .binary_search_by(|entry| entry.name.as_str().cmp(name))
             .ok()
             .map(|index| &catalog[index])
+    }
+
+    /// The registered name a script means. Exact names win; otherwise another
+    /// harness's MCP spelling, such as T3 Code's `mcp__t3_code__<tool>`,
+    /// resolves when it names exactly one tool. Nested hosts, hooks, and
+    /// approvals only ever see the registered name.
+    fn resolve<'a>(&'a self, name: &'a str) -> &'a str {
+        if self
+            .tools
+            .binary_search_by(|tool| tool.name().cmp(name))
+            .is_ok()
+        {
+            return name;
+        }
+        resolve_foreign_spelling(name, self.tools.iter().map(ScriptTool::name)).unwrap_or(name)
     }
 
     fn catalog(&self) -> &[ToolCatalogEntry] {
@@ -149,6 +166,7 @@ impl ToolHostBridge {
         if self.parent.cancellation().is_cancelled() {
             return Err(BridgeError::Cancelled);
         }
+        let name = self.resolve(&name).to_owned();
         let started = Instant::now();
         let record = NestedCallRecord::running(&name, &arguments);
         let index = {

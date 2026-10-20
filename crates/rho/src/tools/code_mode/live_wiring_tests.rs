@@ -242,6 +242,25 @@ impl Tool for DiscoveryTool {
     }
 }
 
+// Covers: a script using another harness's MCP spelling, such as T3 Code's
+// `mcp__t3_code__<tool>`, reaches and describes the registered tool.
+// Owner: codemode ToolHost bridge.
+#[tokio::test]
+async fn foreign_mcp_spellings_reach_the_registered_tool() {
+    let host = host(StubTool {
+        name: "mcp__t3-code__task_status",
+        ..StubTool::output(ToolOutput::text("completed"))
+    });
+    assert_eq!(
+        script(
+            &host,
+            "name = \"mcp__t3_code__task_status\"\nresult = [call_tool(name, {})[\"content\"], describe_tool(name)[\"name\"]]",
+        )
+        .await,
+        Ok(json!(["completed", "mcp__t3-code__task_status"]))
+    );
+}
+
 // Covers: tool_search hits summarize arguments (required first, optional
 // marked `?`), describe_tool keeps the complete
 // contract, and execution shares the inventory; orchestration is not a

@@ -76,6 +76,44 @@ pub(crate) fn parse_exported_name(
     })
 }
 
+/// Find the registered MCP tool that another dialect's spelling names.
+///
+/// Hosts and servers spell MCP tool names their own way: T3 Code writes
+/// `mcp__t3_code__task_status` for Rho's `mcp__t3-code__task_status`, and
+/// sessions saved before hyphens stayed verbatim hold hex such as
+/// `mcp___rho_74332d636f6465__task_status`. Both sides decode Rho escapes and
+/// fold every character outside `[A-Za-z0-9]` to `_`. Only a unique match
+/// resolves, so a spelling two tools share stays unresolved. Callers check
+/// exact names first.
+pub(crate) fn resolve_foreign_spelling<'a>(
+    requested: &str,
+    registered: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let key = spelling_key(requested)?;
+    let mut matches = registered
+        .into_iter()
+        .filter(|name| spelling_key(name).as_ref() == Some(&key));
+    let found = matches.next()?;
+    matches.next().is_none().then_some(found)
+}
+
+fn spelling_key(name: &str) -> Option<(String, String)> {
+    let identity = parse_exported_name(name, ExportedNameDialect::Rho)?;
+    let fold = |value: &str| -> String {
+        value
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    };
+    Some((fold(&identity.server), fold(&identity.tool)))
+}
+
 /// Reverse Rho's `_rho_` + hex component escape. Invalid payloads remain
 /// verbatim so malformed names can still be presented without guessed text.
 fn decode_rho_component(component: &str) -> String {
@@ -135,6 +173,41 @@ mod tests {
                 server: "_rho_6162".into(),
                 tool: "_rho_746f6f6c".into(),
             })
+        );
+    }
+
+    // Covers: other harnesses' spellings and legacy hex names find the one
+    // registered tool they mean; shared or non-MCP spellings resolve to nothing.
+    #[test]
+    fn foreign_spellings_resolve_only_to_a_unique_tool() {
+        let registered = [
+            namespaced_tool_name("t3-code", "task_status"),
+            namespaced_tool_name("acme/docs", "search"),
+            namespaced_tool_name("srv", "get-issue"),
+            namespaced_tool_name("srv", "get.issue"),
+            "read_file".to_string(),
+        ];
+        let resolve = |requested: &str| {
+            resolve_foreign_spelling(requested, registered.iter().map(String::as_str))
+        };
+        assert_eq!(
+            [
+                "mcp__t3_code__task_status",
+                "mcp___rho_74332d636f6465__task_status",
+                "mcp__acme_docs__search",
+                "mcp__srv__get_issue",
+                "mcp__t3_code__missing",
+                "read_file",
+            ]
+            .map(resolve),
+            [
+                Some("mcp__t3-code__task_status"),
+                Some("mcp__t3-code__task_status"),
+                Some(registered[1].as_str()),
+                None,
+                None,
+                None,
+            ]
         );
     }
 }
