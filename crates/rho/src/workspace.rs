@@ -6,10 +6,12 @@ pub const TRUST_PROJECT_HOOKS_ENV: &str = "RHO_TRUST_PROJECT_HOOKS";
 pub const TRUST_PROJECT_AGENTS_ENV: &str = "RHO_TRUST_PROJECT_AGENTS";
 /// Environment variable that grants a workspace's project Agent Plugins.
 pub const TRUST_PROJECT_PLUGINS_ENV: &str = "RHO_TRUST_PROJECT_PLUGINS";
+/// Environment variable that grants a workspace's project OpenAPI sources.
+pub const TRUST_PROJECT_OPENAPI_ENV: &str = "RHO_TRUST_PROJECT_OPENAPI";
 
 /// Whether a workspace's project-supplied files may activate.
 ///
-/// Shared by project hooks, project agents, and project Agent Plugins.
+/// Shared by project hooks, agents, Agent Plugins, and OpenAPI sources.
 /// Each feature has its own env var; only the exact value `1` grants trust.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectTrust {
@@ -40,6 +42,10 @@ impl ProjectTrust {
 
     pub fn from_plugins_env() -> Self {
         Self::from_env_var(TRUST_PROJECT_PLUGINS_ENV)
+    }
+
+    pub fn from_openapi_env() -> Self {
+        Self::from_env_var(TRUST_PROJECT_OPENAPI_ENV)
     }
 
     pub const fn is_trusted(self) -> bool {

@@ -40,6 +40,13 @@ pub(crate) struct CallResult {
     pub(crate) headers: BTreeMap<String, String>,
 }
 
+impl CallResult {
+    /// Whether the status is 2xx; anything else is a failed call.
+    pub(crate) fn succeeded(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
 /// Why a response body could not be read.
 #[derive(Debug)]
 pub(crate) enum BodyError {
@@ -174,7 +181,7 @@ pub(crate) fn model_text(route: &str, result: &CallResult, max_bytes: usize) -> 
         Value::String(text) => text.clone(),
         body => body.to_string(),
     };
-    let text = if (200..300).contains(&result.status) {
+    let text = if result.succeeded() {
         let mut text = format!("HTTP {}", status.trim_end());
         if !body.is_empty() {
             text.push('\n');

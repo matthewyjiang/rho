@@ -137,6 +137,10 @@ pub(crate) enum SkipReason {
     Ref(#[from] RefError),
     #[error("declaration is not an object")]
     NotAnObject,
+    /// A path must begin with `/`; anything else, such as `@host/x`, would
+    /// move the request off the server once appended to it.
+    #[error("path does not begin with '/'")]
+    RelativePath,
     #[error("WebSocket operations are not supported")]
     WebSocket,
     #[error("SSE operations are not supported")]
@@ -215,6 +219,9 @@ struct OperationSite<'a> {
 
 impl Indexer<'_> {
     fn path_item(&mut self, path: &str, at: JsonPointer) {
+        if !path.starts_with('/') {
+            return self.skip_path_item(path, SkipReason::RelativePath);
+        }
         let resolved = self.document.resolve_at(at);
         let (path_item_at, path_item) = match resolved {
             Ok((at, Value::Object(path_item))) => (at, path_item),

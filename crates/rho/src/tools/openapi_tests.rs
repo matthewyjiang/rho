@@ -196,6 +196,7 @@ fn sloppy_spec_skips_only_unusable_operations() {
             ),
             // `x-internal` under `paths` is an extension and is not reported.
             (None, "/bogus", SkipReason::NotAnObject),
+            (None, "@evil.example/x", SkipReason::RelativePath),
         ]
     );
 }

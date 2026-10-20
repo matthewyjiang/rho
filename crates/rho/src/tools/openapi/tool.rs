@@ -135,7 +135,7 @@ impl OpenApiTool {
             }
         };
         let text = response::model_text(&self.route, &result, self.source.max_output_bytes);
-        let failed = !(200..300).contains(&result.status);
+        let failed = !result.succeeded();
         rho_tools::Rendered::new(text, result)
             .failed_if(failed)
             .into_tool_output(ToolMetadata::new().operation(OperationKind::Network))
@@ -213,8 +213,15 @@ impl OpenApiTool {
                     BodyError::Transport(error) => self.failure(error.without_url().to_string()),
                 })?
         };
+        let credential = self.source.headers.query.as_ref().map(|(name, _)| name);
         let next = response::next_link(&headers, url).and_then(|next| {
-            let pairs: Vec<(String, String)> = next.query_pairs().into_owned().collect();
+            // A server may echo the query key into its links; it must not
+            // come back to the model as an argument.
+            let pairs: Vec<(String, String)> = next
+                .query_pairs()
+                .into_owned()
+                .filter(|(name, _)| Some(name) != credential)
+                .collect();
             self.shape.next_arguments(arguments, &pairs)
         });
         Ok(CallResult {

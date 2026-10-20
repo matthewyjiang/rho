@@ -173,14 +173,9 @@ pub(crate) struct RenderedSchemas {
 
 impl Document {
     /// Render the schema at `at` as self-contained JSON Schema 2020-12, with
-    /// properties hidden in `direction` removed.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the signature renderer will render one schema at a time"
-        )
-    )]
+    /// properties hidden in `direction` removed. Tests use it to check one
+    /// schema at a time; tools render through [`Self::render_schemas`].
+    #[cfg(test)]
     pub(crate) fn render_schema(
         &self,
         at: &JsonPointer,

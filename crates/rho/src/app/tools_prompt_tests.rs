@@ -299,6 +299,66 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
     handle.abort();
 }
 
+// Covers: an interactive session whose only external tool source is an
+// invalid OpenAPI source still defers, so the error reaches the transcript.
+// Owner: root tool/prompt assembly
+#[tokio::test]
+async fn invalid_openapi_source_alone_still_reports_through_the_deferred_load() {
+    use std::collections::BTreeMap;
+
+    use crate::tools::openapi::config::{OpenApiConfig, OpenApiSourceConfig};
+
+    let cwd = tempfile::tempdir().unwrap();
+    let source: OpenApiSourceConfig = toml::from_str(
+        r#"spec = "https://example.com/api.json"
+auth = { type = "bearer", token_env = "TOKEN" }"#,
+    )
+    .unwrap();
+    let config = Config {
+        openapi: OpenApiConfig {
+            sources: BTreeMap::from([("api".to_owned(), source)]),
+        },
+        ..Config::default()
+    };
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    let agent = bound_agent(&config);
+    let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
+        catalog: None,
+        config: &config,
+        config_path: cwd.path().join("config.toml"),
+        cwd: cwd.path(),
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: true,
+        questionnaire_enabled: false,
+        mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
+        mcp_sampling: super::McpSamplingSupport::Unavailable,
+        tool_source_attach: super::ToolSourceAttach::Connect,
+        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
+        await_catalog_names: false,
+        defer_tool_sources: true,
+        diagnostics: &diagnostics,
+        agent: &agent,
+        added_dirs: &Default::default(),
+        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
+    })
+    .await
+    .unwrap();
+    let loaded = assembled
+        .pending_tool_sources
+        .expect("a failed source should still defer")
+        .await
+        .unwrap();
+    assert_eq!(
+        loaded.openapi.report.errors,
+        vec![
+            "could not load OpenAPI source `api`: source `api` sends credentials or headers, \
+             so it needs a `base_url`: they go only to that origin"
+                .to_owned()
+        ]
+    );
+}
+
 // Covers: transient MCP status never enters a cached prompt, and hydration
 // refreshed twice equals one assembled from the final report alone.
 // Owner: app MCP prompt assembly seam.
@@ -324,7 +384,7 @@ fn deferred_mcp_catalog_replaces_startup_status() {
         ..Default::default()
     };
     let before = deferred.render(&running, None);
-    deferred.replace_mcp(&report);
+    deferred.replace_tool_sources(&report, &Default::default());
     let connecting = deferred.render(&running, None);
     assert_eq!(
         (connecting.text, connecting.sources),
@@ -345,10 +405,10 @@ fn deferred_mcp_catalog_replaces_startup_status() {
         })],
         ..Default::default()
     };
-    deferred.replace_mcp(&report);
-    deferred.replace_mcp(&report);
+    deferred.replace_tool_sources(&report, &Default::default());
+    deferred.replace_tool_sources(&report, &Default::default());
     let mut immediate = make_template();
-    immediate.replace_mcp(&report);
+    immediate.replace_tool_sources(&report, &Default::default());
     let deferred = deferred.render(&running, None);
     let immediate = immediate.render(&running, None);
     assert_eq!(

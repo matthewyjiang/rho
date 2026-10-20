@@ -11,7 +11,7 @@ use rho_sdk::SystemPrompt;
 use super::InteractiveRuntime;
 use crate::{
     app::tools_prompt::ToolSourcesOutcome, model_identity::PromptModel, prompt,
-    tools::openapi::bundle::OpenApiReport,
+    tools::openapi::report::OpenApiReport,
 };
 
 enum StartupPromptRefresh {
@@ -124,8 +124,7 @@ impl InteractiveRuntime {
         self.tools.attach_openapi(outcome.openapi);
         self.mcp_report = self.tools.mcp_report().clone();
         if let Some(template) = self.prompt_template.as_mut() {
-            template.replace_mcp(&self.mcp_report);
-            template.replace_openapi(self.tools.openapi_report());
+            template.replace_tool_sources(&self.mcp_report, self.tools.openapi_report());
         }
         let refresh = self.refresh_startup_system_prompt();
         self.rebind_current_session().await?;
@@ -134,8 +133,8 @@ impl InteractiveRuntime {
             StartupPromptRefresh::Rewritten => self.replace_history_system_prompt()?,
             StartupPromptRefresh::Unchanged => {}
             StartupPromptRefresh::Frozen => {
-                let notice = prompt::mcp_context(&self.mcp_report)
-                    + &self.tools.openapi_report().prompt_context();
+                let notice =
+                    prompt::tool_sources_context(&self.mcp_report, self.tools.openapi_report());
                 if !notice.is_empty() {
                     self.append_user_context_with_display(notice.clone(), notice)?;
                 }

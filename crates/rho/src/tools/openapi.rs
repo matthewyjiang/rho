@@ -4,7 +4,8 @@
 //! indexes its operations without rendering any schema. Operations the tools
 //! cannot call correctly are skipped with a [`operation::SkipReason`]. Only a
 //! parse error, an unsupported version, or an oversized spec fails the whole
-//! source. Schemas render on demand through [`Document::render_schema`].
+//! source. Schemas render on demand through
+//! [`Document::render_schemas`].
 
 use std::sync::Arc;
 
@@ -17,6 +18,7 @@ mod fetch;
 mod filter;
 pub(crate) mod operation;
 pub(crate) mod params;
+pub(crate) mod report;
 mod request;
 mod response;
 pub(crate) mod schema;

@@ -215,7 +215,7 @@ pub struct AppToolSet {
     web_search_capable: bool,
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
-    openapi_report: super::openapi::bundle::OpenApiReport,
+    openapi_report: super::openapi::report::OpenApiReport,
     file_view: rho_tools::FileViewPolicy,
     session_search: super::sessions::SessionBinding,
     /// Present only when the `sessions` tool is installed, since recall is
@@ -243,7 +243,7 @@ impl AppToolSet {
             web_search_capable: false,
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
-            openapi_report: super::openapi::bundle::OpenApiReport::default(),
+            openapi_report: super::openapi::report::OpenApiReport::default(),
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
@@ -463,7 +463,7 @@ impl AppToolSet {
         &self.mcp_report
     }
 
-    pub(crate) fn openapi_report(&self) -> &super::openapi::bundle::OpenApiReport {
+    pub(crate) fn openapi_report(&self) -> &super::openapi::report::OpenApiReport {
         &self.openapi_report
     }
 

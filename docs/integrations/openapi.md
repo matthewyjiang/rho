@@ -24,7 +24,7 @@ deny = ["GET /orgs/*/audit-log"]
 | Key | Meaning |
 | --- | --- |
 | `spec` | HTTP(S) URL or file path of a JSON or YAML spec. A relative path resolves against the config file's directory. |
-| `base_url` | Replaces every server the spec declares. Without it, calls use the operation's or the spec's first usable server. Required when the source sends credentials. |
+| `base_url` | Replaces every server the spec declares. Without it, calls use the operation's or the spec's first usable server. Required when the source sends credentials or headers. |
 | `headers` | Literal headers sent on every call to the source's origin. |
 | `headers_from_env` | Header names mapped to environment variable names, for secrets. |
 | `auth` | One credential, read from the environment. See [Authentication](#authentication). |
@@ -47,7 +47,7 @@ auth = { type = "api_key", in = "header", name = "X-Api-Key", value_env = "API_K
 auth = { type = "api_key", in = "query", name = "api_key", value_env = "API_KEY" }
 ```
 
-Credentials and headers, literal ones included, go only to the source's origin: `base_url`, or the spec's first server when `base_url` is unset. A source that sends credentials must set `base_url`, and it must use HTTPS unless its host is loopback. When a call is redirected to another origin, Rho follows the redirect without any of them. A missing environment variable fails that source at session start.
+Credentials and headers, literal ones included, go only to the source's origin: `base_url`, or the spec's first server when `base_url` is unset. A source that sends credentials or headers must set `base_url`, and it must use HTTPS unless its host is loopback. When a call is redirected to another origin, Rho follows the redirect without any of them. A missing environment variable fails that source at session start.
 
 ### Project sources
 
@@ -61,7 +61,13 @@ base_url = "http://localhost:8080"
 
 A project file cannot attach credentials. A project source that sets `auth` or `headers_from_env` fails with an error, and a user source with the same name replaces the project source entirely. A repository therefore can never send your tokens to a server it chose. Relative `spec` paths resolve against the project root.
 
-Project sources load without a trust prompt. Declaring a source lets Rho download its spec and call its read operations against the declared server.
+Project sources load only in trusted workspaces. A project source makes Rho download its spec and lets the model call read operations against the declared server without approval, which may be a local or internal address. Until you opt in, Rho ignores the file and shows a warning:
+
+```bash
+RHO_TRUST_PROJECT_OPENAPI=1 rho
+```
+
+This is the same family as `RHO_TRUST_PROJECT_HOOKS`, `RHO_TRUST_PROJECT_AGENTS`, and `RHO_TRUST_PROJECT_PLUGINS`.
 
 ## Loading
 
@@ -91,7 +97,7 @@ A call returns this to scripts:
 ```
 
 - `body` is parsed JSON, the text of a non-JSON body, or `null`.
-- `next` is the argument object for the next page, read from a `Link: <…>; rel="next"` header. It is `null` on the last page.
+- `next` is the argument object for the next page, read from a `Link: <…>; rel="next"` header. It is `null` on the last page, and also when the link pages with a query parameter the operation does not declare.
 - `headers` keeps rate-limit headers, `retry-after`, and total-count headers.
 
 A non-2xx status fails the call for the model with a one-line summary and the first 1 KiB of the body, and `data` is still returned. Transport errors and timeouts fail the call. Rho never retries.

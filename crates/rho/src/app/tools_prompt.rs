@@ -163,14 +163,19 @@ pub(crate) async fn assemble_tools_and_prompt(
         report: plugins_report,
     } = plugin_discovery;
     let mcp_config = mcp_config_for_attach(options.config, plugin_mcp, options.tool_source_attach);
-    let mcp_plan = if !native_runtime {
+    // One decision for every external tool source, so MCP and OpenAPI attach
+    // together or not at all.
+    let attach_tool_sources = native_runtime
+        && !options.no_tools
+        && options.tool_source_attach == ToolSourceAttach::Connect;
+    let mcp_plan = if attach_tool_sources {
+        crate::tools::mcp::McpSessionPlan::Connect
+    } else if !native_runtime {
         crate::tools::mcp::McpSessionPlan::Inventory(
             crate::tools::mcp::McpLoadMode::UnsupportedAgent,
         )
-    } else if options.no_tools || options.tool_source_attach == ToolSourceAttach::None {
-        crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
     } else {
-        crate::tools::mcp::McpSessionPlan::Connect
+        crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
     };
     let mcp_sampling_bridge = crate::tools::mcp::McpSamplingBridge::new();
     let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
@@ -185,24 +190,24 @@ pub(crate) async fn assemble_tools_and_prompt(
         }
         McpSamplingSupport::Unavailable => {}
     }
-    let openapi_plans = match mcp_plan {
-        crate::tools::mcp::McpSessionPlan::Connect => {
-            crate::tools::openapi::config::OpenApiSources::discover(
-                &options.config.openapi,
-                &options.config_path,
-                options.cwd,
-            )
-            .plan(&|name| std::env::var(name).ok())
-        }
-        crate::tools::mcp::McpSessionPlan::Inventory(_) => {
-            crate::tools::openapi::config::SourcePlans::default()
-        }
+    let openapi_plans = if attach_tool_sources {
+        crate::tools::openapi::config::OpenApiSources::discover(
+            &options.config.openapi,
+            &options.config_path,
+            options.cwd,
+            crate::workspace::ProjectTrust::from_openapi_env(),
+        )
+        .plan(&|name| std::env::var(name).ok())
+    } else {
+        crate::tools::openapi::config::SourcePlans::default()
     };
     let openapi_options =
         crate::tools::openapi::bundle::LoadOptions::new(options.config.max_output_bytes);
+    // A source that failed planning still defers, so its error reaches the
+    // transcript through the same path as a failed download.
     let defer = options.defer_tool_sources
-        && matches!(mcp_plan, crate::tools::mcp::McpSessionPlan::Connect)
-        && (mcp_config.has_enabled_servers() || !openapi_plans.sources.is_empty());
+        && attach_tool_sources
+        && (mcp_config.has_enabled_servers() || !openapi_plans.is_empty());
     let (sources, pending_tool_sources) = if defer {
         let pending_report =
             crate::tools::mcp::McpSessionReport::from_config_connecting(&mcp_config);
@@ -239,8 +244,8 @@ pub(crate) async fn assemble_tools_and_prompt(
             openapi_options,
         )
         .await;
-        // Nobody watches a transcript here; the interactive host shows these
-        // when the deferred load lands.
+        // Hosts that load inline have no transcript yet, so problems go to
+        // the log, as MCP connect failures do. Deferred loads show them.
         for problem in loaded
             .openapi
             .report
@@ -320,8 +325,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                     advisor.as_ref(),
                     plugin_skills,
                 );
-                template.replace_mcp(&mcp_report);
-                template.replace_openapi(&openapi_report);
+                template.replace_tool_sources(&mcp_report, &openapi_report);
                 template.set_added_dirs(options.added_dirs);
                 let mut retained = String::new();
                 if !launch_delegation_enabled {

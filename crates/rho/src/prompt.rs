@@ -272,9 +272,18 @@ pub fn append_subagents_disabled_instruction(text: &mut String) {
     text.push_str("\n\nAgent delegation is disabled. Do not attempt to delegate work.\n");
 }
 
-/// Stable MCP prompt context, shared by startup assembly and deferred notices.
+/// Stable external tool context, shared by startup assembly and deferred
+/// notices: MCP servers, then OpenAPI sources.
+pub(crate) fn tool_sources_context(
+    mcp: &crate::tools::mcp::McpSessionReport,
+    openapi: &crate::tools::openapi::report::OpenApiReport,
+) -> String {
+    mcp_context(mcp) + &openapi.prompt_context()
+}
+
+/// Stable MCP prompt context.
 /// Transient connect/failure statuses belong to `/mcp`, never the cached prompt.
-pub(crate) fn mcp_context(report: &crate::tools::mcp::McpSessionReport) -> String {
+fn mcp_context(report: &crate::tools::mcp::McpSessionReport) -> String {
     use crate::tools::mcp::McpServerStatus;
     let mut servers: Vec<_> = report
         .servers

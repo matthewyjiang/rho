@@ -76,21 +76,24 @@ fn retained_suffix_and_mcp_rerender_match_the_built_prompt() {
     use crate::tools::mcp::report::{
         ConnectedServerReport, McpServerReport, McpSessionReport, McpTransportSummary,
     };
-    template.replace_mcp(&McpSessionReport {
-        servers: vec![McpServerReport::connected(ConnectedServerReport {
-            identity: "docs".into(),
-            transport: McpTransportSummary::Stdio {
-                command: "fixture".into(),
-                args: Vec::new(),
-            },
-            tools: Vec::new(),
-            instructions: Some("mcp context".into()),
-            live: Default::default(),
-            filtered_out_count: 0,
-            collision_skipped_count: 0,
-        })],
-        ..Default::default()
-    });
+    template.replace_tool_sources(
+        &McpSessionReport {
+            servers: vec![McpServerReport::connected(ConnectedServerReport {
+                identity: "docs".into(),
+                transport: McpTransportSummary::Stdio {
+                    command: "fixture".into(),
+                    args: Vec::new(),
+                },
+                tools: Vec::new(),
+                instructions: Some("mcp context".into()),
+                live: Default::default(),
+                filtered_out_count: 0,
+                collision_skipped_count: 0,
+            })],
+            ..Default::default()
+        },
+        &Default::default(),
+    );
     let mut built = template.build(&running).unwrap();
     let suffix = "\n\n# Agent instructions\n\nsession suffix";
     built.text.push_str(suffix);

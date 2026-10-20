@@ -4,7 +4,7 @@ use crate::tools::{
         report::{ConnectedServerReport, McpLiveServerState},
         McpConnectOutcome, McpServerReport, McpSessionReport, McpTransportSummary,
     },
-    openapi::bundle::{LoadedSource, OpenApiLoadOutcome},
+    openapi::{bundle::OpenApiLoadOutcome, report::LoadedSource},
 };
 use pretty_assertions::assert_eq;
 
@@ -41,7 +41,7 @@ async fn frozen_prompt_receives_connected_context_as_a_notice() {
             }],
             ..Default::default()
         };
-        let expected = prompt::mcp_context(&report) + &openapi.prompt_context();
+        let expected = prompt::tool_sources_context(&report, &openapi);
         let loaded = openapi.clone();
         let system_before = runtime.sessions.prompt.system.clone();
         let before = runtime.history().len();

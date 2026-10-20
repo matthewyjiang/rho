@@ -9,6 +9,7 @@ fn sources(user: &str, project: Option<&str>) -> OpenApiSources {
         user: toml::from_str(user).unwrap(),
         user_dir: PathBuf::from("/home/me/.rho"),
         project: project.map(|text| ProjectSources {
+            trust: ProjectTrust::Trusted,
             path: PathBuf::from("/repo/.rho/openapi.toml"),
             root: PathBuf::from("/repo"),
             config: parse_project_file(text),
@@ -92,6 +93,37 @@ headers_from_env = { x-key = "TOKEN" }
     );
 }
 
+// Covers: an untrusted workspace's project file is skipped with a warning that
+// names the opt-in, while user sources still load.
+// Owner: OpenAPI config trust boundary
+#[test]
+fn untrusted_projects_load_no_sources() {
+    let user = r#"
+[github]
+spec = "https://example.com/github.json"
+"#;
+    let project = r#"
+[openapi.petstore]
+spec = "specs/petstore.yaml"
+"#;
+    let mut untrusted = sources(user, Some(project));
+    if let Some(project) = untrusted.project.as_mut() {
+        project.trust = ProjectTrust::Untrusted;
+    }
+    assert_eq!(
+        outcome(&untrusted.plan(&env)),
+        (
+            vec!["github"],
+            Vec::new(),
+            vec![
+                "ignoring /repo/.rho/openapi.toml because this workspace is not trusted; \
+                 set RHO_TRUST_PROJECT_OPENAPI=1 to load it"
+                    .to_owned()
+            ],
+        )
+    );
+}
+
 // Covers: one bad source fails alone, with a reason that names the fix.
 // Owner: OpenAPI config validation
 #[test]
@@ -99,7 +131,11 @@ fn invalid_sources_fail_alone() {
     let cases = [
         (
             r#"auth = { type = "bearer", token_env = "TOKEN" }"#,
-            "source `api` sends credentials, so it needs a `base_url`: credentials go only to that origin",
+            "source `api` sends credentials or headers, so it needs a `base_url`: they go only to that origin",
+        ),
+        (
+            r#"headers = { authorization = "Bearer inline" }"#,
+            "source `api` sends credentials or headers, so it needs a `base_url`: they go only to that origin",
         ),
         (
             r#"base_url = "http://api.example.com"

@@ -33,6 +33,8 @@ fn spec() -> Value {
                 "parameters": [
                     {"name": "page", "in": "query", "schema": {"type": "integer"}},
                     {"name": "per_page", "in": "query", "schema": {"type": "integer"}},
+                    // Specs often declare the source's own query key.
+                    {"name": "api_key", "in": "query", "schema": {"type": "string"}},
                 ],
                 "responses": ok,
             }},
@@ -248,6 +250,34 @@ async fn results_carry_status_body_next_and_kept_headers() {
             (failed, Some(&data))
         );
     }
+}
+
+// Covers: a query key the server echoes into its next link stays out of the
+// `next` arguments handed back to the model.
+// Owner: OpenAPI tool transport (credential placement)
+#[tokio::test]
+async fn next_never_carries_the_query_key() {
+    let server = TestServer::start(|_| {
+        Reply::json(200, &json!([])).header("link", "</items?page=2&api_key=k>; rel=\"next\"")
+    })
+    .await;
+    let config = format!(
+        r#"base_url = "{}"
+auth = {{ type = "api_key", in = "query", name = "api_key", value_env = "KEY" }}"#,
+        server.url("")
+    );
+    let list_items = tool(&config, &[("KEY", "k")], MAX_RESPONSE_BYTES, "listItems").await;
+
+    let completion = call(list_items, json!({"page": 1}), RecordingPolicy::default()).await;
+    let ToolCompletion::Success(output) = completion else {
+        panic!("expected success, got {completion:?}");
+    };
+    assert_eq!(
+        output
+            .structured_content()
+            .and_then(|data| data.get("next")),
+        Some(&json!({"page": 2}))
+    );
 }
 
 // Covers: a body over max_response_bytes fails the call naming the limit and

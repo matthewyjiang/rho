@@ -18,6 +18,7 @@ use super::{
     config::{SourceFailure, SourcePlan, SourcePlans},
     fetch::{SpecCache, SpecFetch},
     operation::{HttpMethod, Operation, ResponseBody},
+    report::{LoadedSource, OpenApiReport},
     request::RequestShape,
     response::MAX_RESPONSE_BYTES,
     tool::{OpenApiTool, SourceClient},
@@ -47,89 +48,6 @@ impl ToolBundle for OpenApiBundle {
 pub(crate) struct OpenApiLoadOutcome {
     pub(crate) bundle: Option<OpenApiBundle>,
     pub(crate) report: OpenApiReport,
-}
-
-/// Loaded sources for the prompt, and problems for the user.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct OpenApiReport {
-    pub(crate) sources: Vec<LoadedSource>,
-    /// Sources that did not load, one line each.
-    pub(crate) errors: Vec<String>,
-    /// Sources that loaded from a stale cache or were ignored.
-    pub(crate) warnings: Vec<String>,
-}
-
-/// Tags listed per source in the prompt line; the rest are counted.
-const PROMPT_TAGS: usize = 6;
-
-/// Spec text is untrusted, so a tag shown in the prompt is one short line.
-const PROMPT_TAG_CHARS: usize = 40;
-
-impl OpenApiReport {
-    /// One prompt line per loaded source, beside the MCP server list. The
-    /// operations stay out of context until `tool_search` loads them.
-    pub(crate) fn prompt_context(&self) -> String {
-        let sources: Vec<&LoadedSource> = self
-            .sources
-            .iter()
-            .filter(|source| source.read_operations > 0)
-            .collect();
-        if sources.is_empty() {
-            return String::new();
-        }
-        let mut text = String::from(
-            "\n\n# OpenAPI sources\n\nRead-only REST operations, found and called like MCP tools through `tool_search` or `codemode`:\n",
-        );
-        for source in sources {
-            text.push_str(&format!(
-                "- {}: {} read operations",
-                source.name, source.read_operations
-            ));
-            if !source.tags.is_empty() {
-                let shown: Vec<String> = source
-                    .tags
-                    .iter()
-                    .take(PROMPT_TAGS)
-                    .map(|tag| prompt_tag(tag))
-                    .collect();
-                let more = if source.tags.len() > PROMPT_TAGS {
-                    ", …"
-                } else {
-                    ""
-                };
-                text.push_str(&format!(
-                    ", {} tags ({}{more})",
-                    source.tags.len(),
-                    shown.join(", ")
-                ));
-            }
-            text.push('\n');
-        }
-        text
-    }
-}
-
-fn prompt_tag(tag: &str) -> String {
-    let tag: String = tag
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .filter(|character| !character.is_control())
-        .collect();
-    match tag.char_indices().nth(PROMPT_TAG_CHARS) {
-        Some((cut, _)) => format!("{}…", &tag[..cut]),
-        None => tag,
-    }
-}
-
-/// One source whose tools are registered.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LoadedSource {
-    pub(crate) name: String,
-    pub(crate) read_operations: usize,
-    /// Tags of the registered operations, most used first.
-    pub(crate) tags: Vec<String>,
 }
 
 /// Session inputs every source shares.
@@ -195,8 +113,13 @@ pub(crate) async fn load(plans: SourcePlans, options: LoadOptions) -> OpenApiLoa
             Ok(loaded) => {
                 report.warnings.extend(loaded.warning);
                 for tool in loaded.tools {
-                    if names.insert(tool.spec().name) {
+                    let tool_name = tool.spec().name;
+                    if names.insert(tool_name.clone()) {
                         tools.push(tool);
+                    } else {
+                        report.warnings.push(format!(
+                            "OpenAPI tool `{tool_name}` is declared twice; keeping the first"
+                        ));
                     }
                 }
                 report.sources.push(loaded.source);
@@ -291,13 +214,13 @@ fn build_tools(
     settings: SourceSettings,
 ) -> (Vec<Arc<dyn Tool>>, LoadedSource) {
     let default_server = spec.servers.iter().find_map(|server| server.as_ref().ok());
-    // Without a `base_url` the source sends no credentials, so its literal
-    // headers follow the spec's own default server.
+    // Without a `base_url` the source sends no credentials or headers, so
+    // this origin only decides where nothing is attached.
     let origin = plan
         .base_url
         .as_ref()
         .or(default_server)
-        .map_or_else(opaque_origin, Url::origin);
+        .map_or_else(url::Origin::new_opaque, Url::origin);
     let source = Arc::new(SourceClient {
         name: plan.name.clone(),
         client: settings.calls,
@@ -370,11 +293,6 @@ fn build_tools(
         tags: tags.into_iter().map(|(tag, _)| tag.to_owned()).collect(),
     };
     (tools, loaded)
-}
-
-/// An origin no URL has, so nothing is ever trusted with source headers.
-fn opaque_origin() -> url::Origin {
-    url::Origin::new_opaque()
 }
 
 /// What search matches on: the summary, route, source, and tags. Spec text is

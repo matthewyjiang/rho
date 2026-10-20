@@ -34,8 +34,8 @@ pub(crate) struct ModelPromptTemplate {
     home: Option<PathBuf>,
     before_model: String,
     parts: Vec<PromptPart>,
-    mcp: String,
-    openapi: String,
+    /// MCP servers, then OpenAPI sources; see [`super::tool_sources_context`].
+    tool_sources: String,
 }
 
 #[cfg(test)]
@@ -56,8 +56,7 @@ impl ModelPromptTemplate {
                 text: retained,
                 sources,
             }],
-            mcp: String::new(),
-            openapi: String::new(),
+            tool_sources: String::new(),
         }
     }
 
@@ -106,17 +105,14 @@ impl ModelPromptTemplate {
         );
     }
 
-    /// Replace startup MCP context rather than retaining stale connect status.
-    pub(crate) fn replace_mcp(&mut self, report: &crate::tools::mcp::McpSessionReport) {
-        self.mcp = super::mcp_context(report);
-    }
-
-    /// Replace the loaded OpenAPI source lines.
-    pub(crate) fn replace_openapi(
+    /// Replace startup external tool context rather than retaining stale
+    /// connect status.
+    pub(crate) fn replace_tool_sources(
         &mut self,
-        report: &crate::tools::openapi::bundle::OpenApiReport,
+        mcp: &crate::tools::mcp::McpSessionReport,
+        openapi: &crate::tools::openapi::report::OpenApiReport,
     ) {
-        self.openapi = report.prompt_context();
+        self.tool_sources = super::tool_sources_context(mcp, openapi);
     }
 
     /// A model switch preserves instruction files cached for the current session.
@@ -187,8 +183,7 @@ impl ModelPromptTemplate {
             "You are running on {}. Rho can switch this mid-session and tells you when it does.\n",
             running.describe(),
         ));
-        text.push_str(&self.mcp);
-        text.push_str(&self.openapi);
+        text.push_str(&self.tool_sources);
         sources[0].bytes += text.len() - start;
         for part in &self.parts {
             match part {

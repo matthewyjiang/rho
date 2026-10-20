@@ -22,7 +22,10 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::filter::OperationFilter;
-use crate::tools::tool_name::sanitize_segment;
+use crate::{
+    tools::tool_name::sanitize_segment,
+    workspace::{ProjectTrust, TRUST_PROJECT_OPENAPI_ENV},
+};
 
 /// Default `timeout_secs`, the same budget an MCP tool call gets.
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -71,6 +74,14 @@ pub(crate) struct OpenApiSourceConfig {
     pub(crate) timeout_secs: Option<u64>,
 }
 
+impl OpenApiSourceConfig {
+    /// Whether requests carry anything that may be secret. Literal headers
+    /// count: `Authorization = "Bearer ..."` is a secret written inline.
+    fn has_credentials(&self) -> bool {
+        self.auth.is_some() || !self.headers_from_env.is_empty() || !self.headers.is_empty()
+    }
+}
+
 /// Where a credential comes from. Values are always read from the
 /// environment, never written in config.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -100,11 +111,10 @@ pub(crate) enum ApiKeyLocation {
 }
 
 /// Which file declared a source.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConfigOrigin {
     User,
-    /// The project file, at this path.
-    Project(PathBuf),
+    Project,
 }
 
 /// Sources a session should load, read from both config files.
@@ -119,6 +129,9 @@ pub(crate) struct OpenApiSources {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProjectSources {
+    /// An untrusted workspace's file is reported and skipped: its server
+    /// gets approval-free GETs, which may reach internal addresses.
+    pub(crate) trust: ProjectTrust,
     pub(crate) path: PathBuf,
     /// The project root, which relative `spec` paths resolve against.
     pub(crate) root: PathBuf,
@@ -128,17 +141,24 @@ pub(crate) struct ProjectSources {
 
 impl OpenApiSources {
     /// User sources from `config`, plus the project file for `cwd` if any.
-    pub(crate) fn discover(user: &OpenApiConfig, config_path: &Path, cwd: &Path) -> Self {
+    pub(crate) fn discover(
+        user: &OpenApiConfig,
+        config_path: &Path,
+        cwd: &Path,
+        trust: ProjectTrust,
+    ) -> Self {
         let root = crate::plugins::state::project_root(cwd);
         let path = root.join(PROJECT_FILE);
         let project = match std::fs::read_to_string(&path) {
             Ok(text) => Some(ProjectSources {
+                trust,
                 config: parse_project_file(&text),
                 path,
                 root,
             }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => Some(ProjectSources {
+                trust,
                 config: Err(format!("could not read: {error}")),
                 path,
                 root,
@@ -160,12 +180,22 @@ impl OpenApiSources {
         for (name, source) in &self.user.sources {
             plans.push(
                 name,
-                plan_source(name, source, &self.user_dir, &ConfigOrigin::User, env),
+                plan_source(name, source, &self.user_dir, ConfigOrigin::User, env),
             );
         }
         let Some(project) = &self.project else {
             return plans;
         };
+        match project.trust {
+            ProjectTrust::Trusted => {}
+            ProjectTrust::Untrusted => {
+                plans.warnings.push(format!(
+                    "ignoring {} because this workspace is not trusted; set {TRUST_PROJECT_OPENAPI_ENV}=1 to load it",
+                    crate::paths::display(&project.path)
+                ));
+                return plans;
+            }
+        }
         let config = match &project.config {
             Ok(config) => config,
             Err(error) => {
@@ -176,7 +206,7 @@ impl OpenApiSources {
                 return plans;
             }
         };
-        let origin = ConfigOrigin::Project(project.path.clone());
+        let origin = ConfigOrigin::Project;
         for (name, source) in &config.sources {
             if self.user.sources.contains_key(name) {
                 plans.warnings.push(format!(
@@ -187,7 +217,7 @@ impl OpenApiSources {
             }
             plans.push(
                 name,
-                plan_source(name, source, &project.root, &origin, env)
+                plan_source(name, source, &project.root, origin, env)
                     .map_err(|error| format!("{}: {error}", project.path.display())),
             );
         }
@@ -216,6 +246,11 @@ pub(crate) struct SourcePlans {
 }
 
 impl SourcePlans {
+    /// Whether there is nothing to load or report.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sources.is_empty() && self.failures.is_empty() && self.warnings.is_empty()
+    }
+
     fn push(&mut self, name: &str, plan: Result<SourcePlan, String>) {
         match plan {
             Ok(plan) => self.sources.push(plan),
@@ -262,18 +297,11 @@ pub(crate) struct SourceHeaders {
     pub(crate) query: Option<(String, String)>,
 }
 
-impl SourceHeaders {
-    /// Whether anything here came from the environment.
-    fn has_credentials(source: &OpenApiSourceConfig) -> bool {
-        source.auth.is_some() || !source.headers_from_env.is_empty()
-    }
-}
-
 fn plan_source(
     name: &str,
     source: &OpenApiSourceConfig,
     base_dir: &Path,
-    origin: &ConfigOrigin,
+    origin: ConfigOrigin,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<SourcePlan, String> {
     if name.is_empty() || sanitize_segment(name) != name {
@@ -281,20 +309,23 @@ fn plan_source(
             "source name `{name}` must be ASCII letters and digits, optionally joined by single underscores"
         ));
     }
-    if let ConfigOrigin::Project(_) = origin {
-        let mut rejected = Vec::new();
-        if source.auth.is_some() {
-            rejected.push("`auth`");
-        }
-        if !source.headers_from_env.is_empty() {
-            rejected.push("`headers_from_env`");
-        }
-        if !rejected.is_empty() {
-            return Err(format!(
+    match origin {
+        ConfigOrigin::User => {}
+        ConfigOrigin::Project => {
+            let mut rejected = Vec::new();
+            if source.auth.is_some() {
+                rejected.push("`auth`");
+            }
+            if !source.headers_from_env.is_empty() {
+                rejected.push("`headers_from_env`");
+            }
+            if !rejected.is_empty() {
+                return Err(format!(
                 "source `{name}` sets {} in project config; credentials come only from user config, \
                  so declare `[openapi.{name}]` in ~/.rho/config.toml instead",
                 rejected.join(" and ")
             ));
+            }
         }
     }
     let base_url = source
@@ -302,10 +333,10 @@ fn plan_source(
         .as_deref()
         .map(|base_url| parse_base_url(name, base_url))
         .transpose()?;
-    if SourceHeaders::has_credentials(source) {
+    if source.has_credentials() {
         let Some(base_url) = &base_url else {
             return Err(format!(
-                "source `{name}` sends credentials, so it needs a `base_url`: credentials go only to that origin"
+                "source `{name}` sends credentials or headers, so it needs a `base_url`: they go only to that origin"
             ));
         };
         crate::tools::mcp::validate::parse_secure_url(
