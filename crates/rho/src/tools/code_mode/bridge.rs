@@ -77,18 +77,13 @@ impl ToolHostBridge {
             .map(|index| &catalog[index])
     }
 
-    /// The registered name a script means. Exact names win; otherwise another
-    /// harness's MCP spelling, such as T3 Code's `mcp__t3_code__<tool>`,
-    /// resolves when it names exactly one tool. Nested hosts, hooks, and
-    /// approvals only ever see the registered name.
+    /// The registered name a script means. Another harness's MCP spelling, such
+    /// as T3 Code's `mcp__t3_code__<tool>`, resolves when it names exactly one
+    /// tool; anything else, including an exact name, passes through unchanged.
+    /// Nested hosts, hooks, and approvals only ever see the registered name.
+    /// This is the only name-shaped policy codemode applies, and the MCP
+    /// module owns it.
     fn resolve<'a>(&'a self, name: &'a str) -> &'a str {
-        if self
-            .tools
-            .binary_search_by(|tool| tool.name().cmp(name))
-            .is_ok()
-        {
-            return name;
-        }
         resolve_foreign_spelling(name, self.tools.iter().map(ScriptTool::name)).unwrap_or(name)
     }
 

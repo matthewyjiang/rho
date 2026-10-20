@@ -83,8 +83,9 @@ pub(crate) fn parse_exported_name(
 /// sessions saved before hyphens stayed verbatim hold hex such as
 /// `mcp___rho_74332d636f6465__task_status`. Both sides decode Rho escapes and
 /// fold every character outside `[A-Za-z0-9]` to `_`. Only a unique match
-/// resolves, so a spelling two tools share stays unresolved. Callers check
-/// exact names first.
+/// resolves, so a spelling two tools share stays unresolved. A registered name
+/// always matches itself, so it resolves to itself unless a sibling folds to
+/// the same key; callers then keep the exact name.
 pub(crate) fn resolve_foreign_spelling<'a>(
     requested: &str,
     registered: impl IntoIterator<Item = &'a str>,
@@ -99,18 +100,8 @@ pub(crate) fn resolve_foreign_spelling<'a>(
 
 fn spelling_key(name: &str) -> Option<(String, String)> {
     let identity = parse_exported_name(name, ExportedNameDialect::Rho)?;
-    let fold = |value: &str| -> String {
-        value
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect()
-    };
+    let fold =
+        |value: &str| value.replace(|character: char| !character.is_ascii_alphanumeric(), "_");
     Some((fold(&identity.server), fold(&identity.tool)))
 }
 
@@ -197,6 +188,7 @@ mod tests {
                 "mcp__acme_docs__search",
                 "mcp__srv__get_issue",
                 "mcp__t3_code__missing",
+                "mcp__srv__get-issue",
                 "read_file",
             ]
             .map(resolve),
@@ -204,6 +196,7 @@ mod tests {
                 Some("mcp__t3-code__task_status"),
                 Some("mcp__t3-code__task_status"),
                 Some(registered[1].as_str()),
+                None,
                 None,
                 None,
                 None,
