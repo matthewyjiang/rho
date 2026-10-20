@@ -235,8 +235,13 @@ impl Tool for SdkShellTool {
         Some(crate::output_schema::<crate::shell_process::ShellOutcome>())
     }
 
-    fn start_metadata(&self, _arguments: &Value) -> ToolMetadata {
-        ToolMetadata::new().operation(OperationKind::Execute)
+    /// Carries the command line, so hosts can show what runs.
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        let metadata = ToolMetadata::new().operation(OperationKind::Execute);
+        match arguments.get("command").and_then(Value::as_str) {
+            Some(command) => metadata.command_line(command),
+            None => metadata,
+        }
     }
 
     /// Declares the process facts up front, so the runtime authorizes them
@@ -252,6 +257,7 @@ impl Tool for SdkShellTool {
             if context.cancellation().is_cancelled() {
                 return Err(ToolError::cancelled());
             }
+            let metadata = self.start_metadata(invocation.arguments());
             let plan = ShellPlan::parse(
                 self.kind,
                 invocation.into_arguments(),
@@ -261,7 +267,7 @@ impl Tool for SdkShellTool {
             )?;
             Ok(PreparedToolInvocation::exclusive_with_capabilities(
                 [plan.capability(self.kind)],
-                ToolMetadata::new().operation(OperationKind::Execute),
+                metadata,
                 move |context| {
                     Box::pin(async move {
                         if let Some(observer) = self.mutation_observer.as_ref() {

@@ -49,6 +49,7 @@ pub struct ToolMetadata {
 struct MetadataExtras {
     file_changes: Vec<ToolFileChange>,
     presentation_notices: Vec<String>,
+    command_line: Option<String>,
 }
 
 impl ToolMetadata {
@@ -72,6 +73,13 @@ impl ToolMetadata {
 
     pub fn command_summary(mut self, summary: impl Into<String>) -> Self {
         self.command_summary = Some(summary.into());
+        self
+    }
+
+    /// The exact command line the call runs, for hosts that show commands
+    /// verbatim. Unlike [`Self::command_summary`], it is never display copy.
+    pub fn command_line(mut self, command: impl Into<String>) -> Self {
+        self.extras_mut().command_line = Some(command.into());
         self
     }
 
@@ -113,6 +121,10 @@ impl ToolMetadata {
 
     pub fn command_summary_text(&self) -> Option<&str> {
         self.command_summary.as_deref()
+    }
+
+    pub fn command_line_text(&self) -> Option<&str> {
+        self.extras.as_ref()?.command_line.as_deref()
     }
 
     pub fn urls(&self) -> &[String] {
