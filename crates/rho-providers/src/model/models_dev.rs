@@ -246,11 +246,13 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     override_metadata(provider, model)
 }
 
-/// Cache provider for the shared ExactAdvertised `slug/model` tree.
+/// Cache provider for the shared `slug/model` tree.
 ///
 /// The slash keeps this out of custom host names and `catalog` slugs, so
 /// model-id lookup never aliases into built-in extract (Anthropic stores
-/// Unknown; this tree is ExactAdvertised).
+/// Unknown; `api.json` tree rows are ExactAdvertised). Canonical
+/// `models.json` rows fill ids no serving provider publishes; their reasoning
+/// stays unknown unless the row says the model does not reason.
 pub(super) const MODEL_ID_CATALOG_CACHE_PROVIDER: &str = "models.dev/tree";
 
 /// Why a custom host with `catalog_mode = "model-id"` has no models.dev row.
@@ -297,7 +299,7 @@ pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<Catal
 /// Cache provider and model id used for the sqlite catalog row.
 ///
 /// Custom hosts can borrow another slug (`catalog = "llmgateway"`) or read the
-/// shared ExactAdvertised tree with unsplit `slug/model` ids
+/// shared model-id tree with unsplit `slug/model` ids
 /// (`catalog_mode = "model-id"`). A models.toml
 /// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
 ///
@@ -522,31 +524,32 @@ pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<H
     let response = fetch_models_dev_api().await?;
     // Reuse the document for a full hydrate when this process has not already
     // marked the snapshot current, so a deprecation check also warms names.
-    if !hydrate::catalog_snapshot_is_ready() {
-        let _guard = hydrate::catalog_hydrate_lock_for_parent().lock().await;
-        if !hydrate::catalog_snapshot_is_ready() {
-            let written = hydrate::hydrate_catalog_from_api(&response);
-            if written > 0 && hydrate::mark_catalog_snapshot_current() {
-                hydrate::apply_in_memory_catalog_ready();
-            }
-        }
-    }
+    hydrate::hydrate_from_fetched_api(&response).await;
     Some(document::deprecated_provider_models(&response, provider))
 }
 
 async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
+    fetch_models_dev_document("https://models.dev/api.json").await
+}
+
+/// Canonical `lab/model` rows; see [`document::ModelsDevCanonicalCatalog`].
+async fn fetch_models_dev_canonical() -> Option<document::ModelsDevCanonicalCatalog> {
+    fetch_models_dev_document("https://models.dev/models.json").await
+}
+
+async fn fetch_models_dev_document<T: serde::de::DeserializeOwned>(url: &str) -> Option<T> {
     crate::reqwest_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
         .ok()?
-        .get("https://models.dev/api.json")
+        .get(url)
         .header("User-Agent", crate::rho_user_agent())
         .send()
         .await
         .ok()?
         .error_for_status()
         .ok()?
-        .json::<document::ModelsDevCatalog>()
+        .json::<T>()
         .await
         .ok()
 }
@@ -589,7 +592,11 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// v14: the new `opencode` (Zen) provider reads `sdk_package` and prices from
 /// its rows to pick adapters and hide free models. A current older snapshot
 /// has no `opencode` rows, so it must refetch.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 14;
+///
+/// v15: the shared model-id tree also holds canonical `models.json` rows for
+/// `lab/model` ids no serving provider publishes under that slug. Older
+/// snapshots lack them, so those hosts would keep missing for a day.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 15;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheFreshness {
@@ -836,7 +843,10 @@ fn model_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<M
 
 #[cfg(test)]
 pub(crate) fn cache_catalog_for_tests(api: &Value) {
-    hydrate::hydrate_catalog_from_api(&document::ModelsDevCatalog::from_json_value(api));
+    hydrate::hydrate_catalog_from_api(
+        &document::ModelsDevCatalog::from_json_value(api),
+        &document::ModelsDevCanonicalCatalog::default(),
+    );
 }
 
 #[cfg(test)]

@@ -41,7 +41,14 @@ fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<S
 }
 
 fn hydrate_catalog_from_api(api: &Value) -> usize {
-    hydrate::hydrate_catalog_from_api(&catalog(api))
+    hydrate_catalog_with_canonical(api, &json!({}))
+}
+
+fn hydrate_catalog_with_canonical(api: &Value, canonical: &Value) -> usize {
+    hydrate::hydrate_catalog_from_api(
+        &catalog(api),
+        &super::document::ModelsDevCanonicalCatalog::from_json_value(canonical),
+    )
 }
 
 // Covers: one junk models.dev row or field type must not fail the catalog
@@ -2148,6 +2155,212 @@ fn invalidate_catalog_snapshot_clears_stored_extra_docs() {
             )
             .unwrap();
         assert_eq!(updated_at, 0);
+        assert!(!hydrate::catalog_snapshot_is_ready());
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+/// `api.json` where `alibaba` (DashScope) does not serve the canonical
+/// `alibaba/qwen3.8-flash-next`; only a reseller does, under its own slug.
+fn api_without_lab_slug_row() -> Value {
+    json!({
+        "alibaba": {
+            "models": {
+                "qwen-shared": {
+                    "name": "Qwen Shared (DashScope)",
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "effort", "values": ["low", "high"]}
+                    ],
+                    "limit": { "context": 131072, "output": 8192 },
+                    "cost": { "input": 1, "output": 2 },
+                    "modalities": { "input": ["text"] }
+                },
+                "qwen-incomplete": {
+                    "name": "Qwen Incomplete (DashScope)",
+                    "reasoning": true,
+                    "limit": { "context": 65536 }
+                }
+            }
+        },
+        "cortecs": {
+            "models": {
+                "qwen3.8-flash-next": {
+                    "name": "Qwen3.8 Flash Next (Cortecs)",
+                    "reasoning": true,
+                    "reasoning_options": [{"type": "effort", "values": ["high"]}],
+                    "limit": { "context": 200000, "output": 32000 },
+                    "cost": { "input": 0.3, "output": 1.2 }
+                }
+            }
+        }
+    })
+}
+
+/// `models.json`: provider-agnostic facts keyed by lab id, with no prices
+/// and no `reasoning_options`.
+fn canonical_models() -> Value {
+    json!({
+        "alibaba/qwen3.8-flash-next": {
+            "id": "alibaba/qwen3.8-flash-next",
+            "name": "Qwen3.8 Flash Next",
+            "reasoning": true,
+            "tool_call": true,
+            "modalities": { "input": ["text", "image", "video"], "output": ["text"] },
+            "limit": { "context": 262144, "output": 131072 },
+            "benchmarks": [{ "name": "GPQA Diamond", "score": 91.7 }]
+        },
+        "acme/plain-instruct": {
+            "name": "Plain Instruct",
+            "reasoning": false,
+            "modalities": { "input": ["text"] },
+            "limit": { "context": 32768, "output": 4096 }
+        },
+        "alibaba/qwen-incomplete": {
+            "name": "Qwen Incomplete",
+            "reasoning": true,
+            "limit": { "context": 1000000 }
+        },
+        "alibaba/qwen-shared": {
+            "name": "Qwen Shared",
+            "reasoning": true,
+            "modalities": { "input": ["text", "image"] },
+            "limit": { "context": 1000000, "output": 65536 }
+        }
+    })
+}
+
+// Covers: a model-id host whose lab id has no api.json provider-tree row
+// reads the canonical models.json row: limits, name, and image input fill,
+// reasoning stays unknown (no effort values), and no price is invented
+// Owner: models.dev catalog hydrate
+#[test]
+fn model_id_host_falls_back_to_canonical_row() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    install_model_id_host();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(
+            hydrate_catalog_with_canonical(&api_without_lab_slug_row(), &canonical_models()) > 0
+        );
+        mark_catalog_snapshot_current_for_tests();
+
+        let model = "alibaba/qwen3.8-flash-next";
+        assert_eq!(
+            current_model_metadata("cliproxyapi", model),
+            Some(ModelMetadata {
+                display_name: Some("Qwen3.8 Flash Next".into()),
+                advertised_context_window: Some(262_144),
+                effective_context_window: Some(262_144),
+                max_output_tokens: Some(131_072),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            })
+        );
+        assert_eq!(image_input("cliproxyapi", model), ImageInput::Supported);
+        assert_eq!(
+            known_reasoning_capabilities("cliproxyapi", model),
+            ReasoningCapabilities::Unknown
+        );
+        assert_eq!(custom_model_id_catalog_miss("cliproxyapi", model), None);
+
+        // `reasoning: false` is exact even without options.
+        assert_eq!(
+            known_reasoning_capabilities("cliproxyapi", "acme/plain-instruct"),
+            ReasoningCapabilities::NotConfigurable
+        );
+        assert_eq!(
+            image_input("cliproxyapi", "acme/plain-instruct"),
+            ImageInput::Unsupported
+        );
+
+        // Absent from both documents: the miss notice still fires.
+        assert_eq!(
+            custom_model_id_catalog_miss("cliproxyapi", "alibaba/qwen-absent"),
+            Some(CatalogLookupMiss::MissingRow {
+                source_provider: "alibaba".into(),
+                source_model: "qwen-absent".into(),
+            })
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: an id api.json publishes never takes the canonical row: an exact
+// tree row keeps host prices and effort levels, an incomplete one stays absent
+// Owner: models.dev catalog hydrate
+#[test]
+fn provider_tree_row_wins_over_canonical_row() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    install_model_id_host();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(
+            hydrate_catalog_with_canonical(&api_without_lab_slug_row(), &canonical_models()) > 0
+        );
+        mark_catalog_snapshot_current_for_tests();
+
+        let model = "alibaba/qwen-shared";
+        assert_eq!(
+            current_model_metadata("cliproxyapi", model),
+            Some(ModelMetadata {
+                display_name: Some("Qwen Shared (DashScope)".into()),
+                advertised_context_window: Some(131_072),
+                effective_context_window: Some(131_072),
+                max_output_tokens: Some(8_192),
+                cost_default: Some(ModelCost {
+                    input_micros_per_m: Some(1_000_000),
+                    output_micros_per_m: Some(2_000_000),
+                    ..ModelCost::default()
+                }),
+                supported_reasoning_levels: Some(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+                reasoning_capabilities_known: true,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            })
+        );
+        assert_eq!(image_input("cliproxyapi", model), ImageInput::Unsupported);
+
+        // A published but incomplete api.json row keeps base behavior (no
+        // row) rather than taking the canonical lab limits for this host.
+        assert_eq!(
+            current_model_metadata("cliproxyapi", "alibaba/qwen-incomplete"),
+            None
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: an opportunistic API-only hydrate that waited on the lock while the
+// first model-id host was interned must not mark canonical coverage current
+// Owner: models.dev catalog hydrate
+#[test]
+fn opportunistic_hydrate_rechecks_model_id_hosts_under_lock() {
+    use futures_util::FutureExt;
+
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let api = catalog(&api_without_lab_slug_row());
+        let held = hydrate::catalog_hydrate_lock_for_parent()
+            .try_lock()
+            .unwrap();
+        let mut hydrate = Box::pin(hydrate::hydrate_from_fetched_api(&api));
+        assert!(
+            (&mut hydrate).now_or_never().is_none(),
+            "hydrate must wait on the held lock"
+        );
+
+        install_model_id_host();
+        drop(held);
+        assert!((&mut hydrate).now_or_never().is_some());
+
         assert!(!hydrate::catalog_snapshot_is_ready());
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();

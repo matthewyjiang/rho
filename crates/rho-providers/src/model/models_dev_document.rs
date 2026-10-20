@@ -3,6 +3,12 @@
 //! The live catalog is several megabytes of JSON. Deserializing that document as
 //! `serde_json::Value` builds a 20-35 MB tree because every unused field stays
 //! on the heap. This module keeps only the provider and model fields Rho reads.
+//!
+//! models.dev publishes two documents. `api.json` ([`ModelsDevCatalog`]) is
+//! keyed by serving provider, with that host's prices and reasoning controls.
+//! `models.json` ([`ModelsDevCanonicalCatalog`]) is keyed by canonical lab id
+//! (`alibaba/qwen3.8-flash-next`) and describes the model itself: limits,
+//! modalities, and whether it reasons, but no prices or effort values.
 
 #[path = "models_dev_document_de.rs"]
 mod de;
@@ -21,6 +27,24 @@ use super::{
 #[derive(Clone, Debug, Default)]
 pub(super) struct ModelsDevCatalog {
     providers: HashMap<String, ModelsDevProvider>,
+}
+
+/// models.dev `models.json` root object: canonical `lab/model` id -> model.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ModelsDevCanonicalCatalog {
+    models: HashMap<String, ModelsDevModel>,
+}
+
+impl ModelsDevCanonicalCatalog {
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&str, &ModelsDevModel)> {
+        self.models.iter().map(|(id, model)| (id.as_str(), model))
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_json_value(value: &serde_json::Value) -> Self {
+        serde_json::from_str(&value.to_string())
+            .expect("models.dev canonical test fixture must deserialize")
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -160,6 +184,38 @@ pub(super) fn cached_row_from_catalog(
     reasoning_policy: CatalogReasoningPolicy,
 ) -> Option<CachedRow> {
     let (provider_doc, model) = api.model(provider, model)?;
+    Some(cached_row_from_model(
+        model,
+        resolved_sdk_package(provider_doc, model),
+        reasoning_policy,
+    ))
+}
+
+/// Cache row for one canonical `models.json` model, parsed with `policy`.
+///
+/// Canonical rows carry no `reasoning_options`, so a reasoning model (or one
+/// with no `reasoning` field) cannot be exact under `policy`. Such a row falls
+/// back to the `Unknown` policy: complete, so it reads as current, but with
+/// unknown capabilities so the picker keeps the full level list. Rows `policy`
+/// can parse exactly (`reasoning: false`) keep it. Canonical rows publish no
+/// prices or SDK package, so both stay unknown.
+pub(super) fn cached_row_from_canonical(
+    model: &ModelsDevModel,
+    policy: CatalogReasoningPolicy,
+) -> CachedRow {
+    let policy = if reasoning_metadata_complete(model, policy) {
+        policy
+    } else {
+        CatalogReasoningPolicy::Unknown
+    };
+    cached_row_from_model(model, None, policy)
+}
+
+fn cached_row_from_model(
+    model: &ModelsDevModel,
+    sdk_package: Option<String>,
+    reasoning_policy: CatalogReasoningPolicy,
+) -> CachedRow {
     let metadata = ModelMetadata {
         display_name: model
             .name
@@ -185,9 +241,9 @@ pub(super) fn cached_row_from_catalog(
         },
         reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
-        sdk_package: resolved_sdk_package(provider_doc, model),
+        sdk_package,
     };
-    Some(CachedRow {
+    CachedRow {
         metadata,
         image_input: model.modalities.image_input(),
         reasoning_control: if model.reasoning == Some(true)
@@ -198,7 +254,7 @@ pub(super) fn cached_row_from_catalog(
         } else {
             ReasoningControl::Effort
         },
-    })
+    }
 }
 
 /// models.dev provider `npm`, overridden by per-model `provider.npm` or `npm`.

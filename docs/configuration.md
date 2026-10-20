@@ -215,6 +215,8 @@ catalog = "anthropic/claude-opus-4-6"
 
 The catalog window can sit above a model's long-context price tier. Rho does not clamp it.
 
+A custom host with `catalog_mode = "model-id"` looks up the unsplit `slug/model` id among models.dev serving providers first. When no provider publishes that id, as with `alibaba/qwen3.8-flash-next`, which only resellers serve, Rho falls back to the canonical [models.dev model page](https://models.dev/models/alibaba/qwen3.8-flash-next/) for the same id. That entry fills the context window, output limit, image input, and whether the model reasons. It has no prices or effort values, so cost stays unknown and, for reasoning models, the picker keeps every level. Set `catalog` or the fields above in `models.toml` to fill the rest.
+
 Image input comes from models.dev `modalities.input`. When the catalog lists a model as text-only, Rho replaces images from `read_file`, MCP tools, and attachments with a short text note before sending the request. Models with no catalog row still receive images. Set `image_input` to override the catalog:
 
 ```toml
