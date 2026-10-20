@@ -472,6 +472,7 @@ async fn run_session_with_output(
         // capability and rejects any request that arrives anyway.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Unavailable,
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
+        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::from_process(),
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,
         max_steps: startup.max_steps,

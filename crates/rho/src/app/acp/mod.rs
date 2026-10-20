@@ -190,7 +190,7 @@ impl AcpClientPort for ConnectionPort {
 pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
     // Probe stdin before the transport starts reading it; on Windows a later
     // probe would wait behind that read forever. See `stdin_is_terminal`.
-    crate::stdio::stdin_is_terminal();
+    let _ = crate::stdio::stdin_is_terminal();
     let agent = Arc::new(startup::LazyAgent::new(cli)?);
     Agent
         .builder()

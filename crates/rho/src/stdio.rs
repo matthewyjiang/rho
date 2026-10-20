@@ -8,8 +8,8 @@ use std::{io::IsTerminal, sync::OnceLock};
 /// probe asks a pipe for its name, and the query waits behind any pending
 /// synchronous read on the same handle. `rho acp` keeps such a read open on
 /// stdin for its whole life, so probing during a session hung `session/new`.
-/// Startup calls this before anything reads stdin, and stdin's kind never
-/// changes afterwards.
+/// `rho acp` primes the cache before its transport reads stdin, and stdin's
+/// kind never changes afterwards.
 pub(crate) fn stdin_is_terminal() -> bool {
     static STDIN_IS_TERMINAL: OnceLock<bool> = OnceLock::new();
     *STDIN_IS_TERMINAL.get_or_init(|| std::io::stdin().is_terminal())
