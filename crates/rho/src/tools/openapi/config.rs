@@ -149,7 +149,32 @@ impl OpenApiSources {
     ) -> Self {
         let root = crate::plugins::state::project_root(cwd);
         let path = root.join(PROJECT_FILE);
-        let project = match std::fs::read_to_string(&path) {
+        // An untrusted file is only noticed, never opened: it could be a
+        // symlink to `/dev/zero` or a FIFO.
+        let project = match trust {
+            ProjectTrust::Untrusted => {
+                std::fs::symlink_metadata(&path)
+                    .is_ok()
+                    .then(|| ProjectSources {
+                        trust,
+                        config: Ok(OpenApiConfig::default()),
+                        path,
+                        root,
+                    })
+            }
+            ProjectTrust::Trusted => Self::read_project(path, root, trust),
+        };
+        Self {
+            user: user.clone(),
+            user_dir: config_path
+                .parent()
+                .map_or_else(PathBuf::new, Path::to_path_buf),
+            project,
+        }
+    }
+
+    fn read_project(path: PathBuf, root: PathBuf, trust: ProjectTrust) -> Option<ProjectSources> {
+        match std::fs::read_to_string(&path) {
             Ok(text) => Some(ProjectSources {
                 trust,
                 config: parse_project_file(&text),
@@ -163,13 +188,6 @@ impl OpenApiSources {
                 path,
                 root,
             }),
-        };
-        Self {
-            user: user.clone(),
-            user_dir: config_path
-                .parent()
-                .map_or_else(PathBuf::new, Path::to_path_buf),
-            project,
         }
     }
 

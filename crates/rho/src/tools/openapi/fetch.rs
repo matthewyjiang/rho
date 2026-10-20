@@ -142,8 +142,15 @@ impl SpecFetch<'_> {
     fn read_file(&self, path: &Path) -> Result<FetchedSpec, String> {
         let read_error =
             |error: std::io::Error| format!("could not read {}: {error}", path.display());
-        // Read at most one byte past the limit: metadata alone does not
-        // bound a read, since `/dev/zero` reports a size of zero.
+        // Only regular files: a FIFO would block `open` forever, and a
+        // device such as `/dev/zero` never ends.
+        if !std::fs::metadata(path).map_err(read_error)?.is_file() {
+            return Err(format!(
+                "could not read {}: not a regular file",
+                path.display()
+            ));
+        }
+        // Read at most one byte past the limit, in case the file grows.
         let mut bytes = Vec::new();
         std::fs::File::open(path)
             .and_then(|file| {
