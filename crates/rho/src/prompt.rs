@@ -284,7 +284,7 @@ pub(crate) fn tool_sources_context(
 /// Stable MCP prompt context.
 /// Transient connect/failure statuses belong to `/mcp`, never the cached prompt.
 fn mcp_context(report: &crate::tools::mcp::McpSessionReport) -> String {
-    use crate::tools::mcp::McpServerStatus;
+    use crate::tools::mcp::{exported_name::exported_name_prefix, McpServerStatus};
     let mut servers: Vec<_> = report
         .servers
         .iter()
@@ -296,8 +296,11 @@ fn mcp_context(report: &crate::tools::mcp::McpSessionReport) -> String {
         text.push_str(
             "\n\n# MCP servers\n\nUse top-level `tool_search` to load connected tools for direct calls on the next model request, or discover and call them inside `codemode` without loading direct schemas:\n",
         );
+        // Name the exported prefix so a model holding a tool name from server
+        // or host instructions can map it without a search round trip.
         for server in &servers {
-            text.push_str(&format!("- {}\n", server.identity));
+            let prefix = exported_name_prefix(&server.identity);
+            text.push_str(&format!("- {} (`{prefix}*`)\n", server.identity));
         }
     }
     append_mcp_instructions(

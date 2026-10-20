@@ -73,6 +73,10 @@ impl ScriptTool {
         }
     }
 
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
     // Definitions can refresh independently of the app inventory. A bridge
     // freezes descriptions and schemas only on its first discovery request.
     pub(super) fn catalog_entry(&self) -> ToolCatalogEntry {

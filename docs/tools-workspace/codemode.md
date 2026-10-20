@@ -92,6 +92,10 @@ There is no `while`, `try`, `import`, or exception handling.
 
 Pass the exact tool name and an argument dictionary to `call_tool`, or batch
 independent calls with `call_tools`. There is no `tools.<name>` namespace.
+`call_tool`, `call_tools`, and `describe_tool` also accept another harness's
+spelling of an MCP tool name, such as T3 Code's `mcp__t3_code__task_status` for
+`mcp__t3-code__task_status`, when it names exactly one tool. See
+[MCP tool names](/integrations/mcp#discovery-and-tool-calls).
 
 Each result is a native Starlark dictionary with three string keys. Use bracket
 indexing, not dot access:

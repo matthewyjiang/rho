@@ -33,12 +33,14 @@ fn parse_exported_name_splits_server_and_tool() {
     }
 }
 
-// Covers: `_rho_` hex escapes from namespaced_tool_name round-trip back to the
-// original component; invalid hex is shown verbatim instead of guessed.
+// Covers: `_rho_` hex escapes round-trip back to the original component, so
+// names in sessions saved before hyphens stayed verbatim still decode; invalid
+// hex is shown verbatim instead of guessed.
 // Owner: mcp display helper
 #[test]
 fn parse_exported_name_decodes_rho_escapes() {
-    // From mcp_tests: server "git-hub", tool "issues/list".
+    // Legacy encoding of server "git-hub", tool "issues/list". Keep the hex
+    // server: current exports leave "git-hub" verbatim.
     let parsed = parse_exported_name(
         "mcp___rho_6769742d687562___rho_6973737565732f6c697374",
         ExportedNameDialect::Rho,
