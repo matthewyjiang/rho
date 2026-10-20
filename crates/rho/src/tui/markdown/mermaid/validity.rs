@@ -219,7 +219,12 @@ fn blocks_close(lines: &[&str], opener: fn(&str) -> Option<BlockClose>) -> Resul
 /// order: 1`, `merge feat tag: "v1"`) and `mainBranchName` are misread: they
 /// would paint a parentless lane or a merge without its second parent.
 fn branch_refs_resolve(source: &str, lines: &[&str], main_branch: &str) -> Result<(), Defect> {
-    if source.contains("mainBranchName") {
+    // Config only comes from `%%{init: ...}%%` directives; comments and
+    // commit messages may mention the key freely.
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with("%%{") && line.contains("mainBranchName"))
+    {
         return Err(Defect::Misread);
     }
     let mut branches = HashSet::from([main_branch]);

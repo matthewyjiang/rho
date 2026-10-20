@@ -304,6 +304,7 @@ fn validity_checks_keep_valid_lookalikes_painting() {
         "erDiagram\np[\"Person: admin\"] {\nstring name\n}",
         "flowchart TD\nA -- yes<br>no --> B",
         "gitGraph\ncommit\nbranch feat\ncheckout feat\ncommit\ncheckout main\nmerge feat",
+        "gitGraph\n%% mainBranchName stays main here\ncommit id: \"set mainBranchName\"",
     ] {
         assert!(
             matches!(
