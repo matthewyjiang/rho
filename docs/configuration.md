@@ -24,6 +24,7 @@ Unknown keys in `config.toml` are a load error, so typos fail loudly. Values tha
 | SpaceXAI image generation | [SpaceXAI](/providers/xai#notes) |
 | Edit tool | [Edit tool](#edit-tool) |
 | MCP servers | `[mcp.servers]`. Inspect with `/mcp` or `rho mcp list`. See [Model Context Protocol](/integrations/mcp) |
+| OpenAPI sources | `[openapi.<source>]`. See [OpenAPI](/integrations/openapi) |
 | Auto compaction | [Auto compaction](/configuration/compaction) |
 | Per-model context or reasoning | [Local model metadata](#local-model-metadata) |
 | Model aliases | [Model aliases](#model-aliases) |

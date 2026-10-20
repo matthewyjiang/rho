@@ -120,7 +120,7 @@ const MCP_HOLD_TAKE_BACK_STEPS: &[Step] = &[
     Step::Phase("submit_during_connect"),
     Step::SubmitText("hold-turn-xyz"),
     Step::WaitText {
-        text: "connecting MCP servers",
+        text: "loading external tools",
         timeout: SETTLE,
     },
     Step::WaitText {

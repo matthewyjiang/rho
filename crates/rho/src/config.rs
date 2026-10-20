@@ -197,6 +197,7 @@ pub struct Config {
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
     pub(crate) providers: ProviderConfigs,
     pub(crate) mcp: McpConfig,
+    pub(crate) openapi: crate::tools::openapi::config::OpenApiConfig,
 }
 
 pub(crate) fn default_inline_shell() -> String {
@@ -262,6 +263,7 @@ impl Default for Config {
             prompt_templates: Default::default(),
             providers: ProviderConfigs::default(),
             mcp: McpConfig::default(),
+            openapi: Default::default(),
         }
     }
 }

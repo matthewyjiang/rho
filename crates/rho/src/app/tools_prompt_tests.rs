@@ -78,10 +78,10 @@ async fn assemble_awaiting_catalog(
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: super::McpSamplingSupport::Unavailable,
-        mcp_attach: super::McpAttach::Connect,
+        tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         await_catalog_names,
-        defer_mcp_connect: false,
+        defer_tool_sources: false,
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &Default::default(),
@@ -151,10 +151,10 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: super::McpSamplingSupport::Unavailable,
-        mcp_attach: super::McpAttach::Connect,
+        tool_source_attach: super::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         await_catalog_names: false,
-        defer_mcp_connect: false,
+        defer_tool_sources: false,
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &Default::default(),
@@ -272,10 +272,10 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             questionnaire_enabled: false,
             mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
             mcp_sampling: super::McpSamplingSupport::Unavailable,
-            mcp_attach: super::McpAttach::Connect,
+            tool_source_attach: super::ToolSourceAttach::Connect,
             mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
             await_catalog_names: false,
-            defer_mcp_connect: true,
+            defer_tool_sources: true,
             diagnostics: &diagnostics,
             agent: &agent,
             added_dirs: &Default::default(),
@@ -294,7 +294,7 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
         Some(McpServerStatus::Connecting)
     );
     let handle = assembled
-        .pending_mcp
+        .pending_tool_sources
         .expect("deferred connect should leave a join handle");
     handle.abort();
 }
@@ -379,7 +379,7 @@ fn stdio_server(command: &str, args: Vec<String>) -> crate::tools::mcp::config::
     }
 }
 
-// Covers: McpAttach::None must drop user and plugin MCP so an aside cannot
+// Covers: ToolSourceAttach::None must drop user and plugin MCP so an aside cannot
 // inherit Agent Plugin servers through assemble_tools_and_prompt.
 // Owner: root tool/prompt assembly
 #[test]
@@ -388,7 +388,7 @@ fn mcp_attach_none_drops_user_and_plugin_servers() {
 
     use crate::tools::mcp::config::McpConfig;
 
-    use super::{mcp_config_for_attach, McpAttach};
+    use super::{mcp_config_for_attach, ToolSourceAttach};
 
     let config = Config {
         mcp: McpConfig {
@@ -402,18 +402,18 @@ fn mcp_attach_none_drops_user_and_plugin_servers() {
         invalid_servers: Vec::new(),
     };
 
-    let connected = mcp_config_for_attach(&config, plugin.clone(), McpAttach::Connect);
+    let connected = mcp_config_for_attach(&config, plugin.clone(), ToolSourceAttach::Connect);
     pretty_assertions::assert_eq!(
         connected.servers.keys().cloned().collect::<Vec<_>>(),
         vec!["plugin".to_string(), "user".to_string()]
     );
 
-    let none = mcp_config_for_attach(&config, plugin, McpAttach::None);
+    let none = mcp_config_for_attach(&config, plugin, ToolSourceAttach::None);
     pretty_assertions::assert_eq!(none.servers.is_empty(), true);
     pretty_assertions::assert_eq!(none.invalid_servers.is_empty(), true);
 }
 
-// Covers: McpAttach::None must not start transports even when config lists
+// Covers: ToolSourceAttach::None must not start transports even when config lists
 // enabled servers.
 // Owner: root tool/prompt assembly
 #[tokio::test]
@@ -422,7 +422,7 @@ async fn mcp_attach_none_does_not_connect_configured_servers() {
 
     use crate::tools::mcp::{config::McpConfig, McpLoadMode};
 
-    use super::McpAttach;
+    use super::ToolSourceAttach;
 
     let cwd = tempfile::tempdir().unwrap();
     let config = Config {
@@ -447,10 +447,10 @@ async fn mcp_attach_none_does_not_connect_configured_servers() {
             questionnaire_enabled: false,
             mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
             mcp_sampling: super::McpSamplingSupport::Unavailable,
-            mcp_attach: McpAttach::None,
+            tool_source_attach: ToolSourceAttach::None,
             mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
             await_catalog_names: false,
-            defer_mcp_connect: false,
+            defer_tool_sources: false,
             diagnostics: &diagnostics,
             agent: &agent,
             added_dirs: &Default::default(),
@@ -458,11 +458,11 @@ async fn mcp_attach_none_does_not_connect_configured_servers() {
         }),
     )
     .await
-    .expect("McpAttach::None awaited an MCP handshake")
+    .expect("ToolSourceAttach::None awaited an MCP handshake")
     .unwrap();
 
     pretty_assertions::assert_eq!(assembled.inventory.mcp.mode, McpLoadMode::ToolsDisabled);
     pretty_assertions::assert_eq!(assembled.inventory.mcp.servers.is_empty(), true);
-    pretty_assertions::assert_eq!(assembled.pending_mcp.is_none(), true);
+    pretty_assertions::assert_eq!(assembled.pending_tool_sources.is_none(), true);
     pretty_assertions::assert_eq!(assembled.inventory.mcp.find("slow").is_none(), true);
 }

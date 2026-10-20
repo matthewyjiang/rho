@@ -108,8 +108,8 @@ impl App {
         // signed-out session needs no history entry that would scroll away.
         self.start_setup_screen(terminal);
         self.reconcile_auto_classifier_gate(agent).await?;
-        if agent.mcp_connect_pending() {
-            self.set_status_quiet("connecting MCP servers");
+        if agent.tool_sources_pending() {
+            self.set_status_quiet("loading external tools");
         }
         let mut needs_redraw = true;
         let mut first_frame = true;
@@ -668,7 +668,7 @@ impl App {
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
         changed |= self.apply_finished_ui_tasks();
-        self.restore_mcp_hold_activity_if_needed(agent.mcp_connect_pending());
+        self.restore_tool_sources_hold_activity_if_needed(agent.tool_sources_pending());
         if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();
         }
@@ -698,7 +698,10 @@ impl App {
     pub(super) fn loading_active(&self) -> bool {
         self.is_ui_busy()
             || self.streams.loading_streams_active()
-            || matches!(self.turn.activity_phase(), ActivityPhase::ConnectingMcp)
+            || matches!(
+                self.turn.activity_phase(),
+                ActivityPhase::LoadingToolSources
+            )
     }
 
     pub(super) fn handle_queued_agent_event(

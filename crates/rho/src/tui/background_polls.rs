@@ -34,13 +34,21 @@ impl App {
             return Ok(false);
         }
         self.refresh_catalog_chrome();
-        if changes.mcp_inventory_changed {
+        if changes.tool_inventory_changed {
             self.mcp_report = agent.mcp_report().clone();
             self.mcp_catalog = agent.mcp_catalog().clone();
-            if self.status_source == StatusSource::McpConnecting {
+            if self.status_source == StatusSource::ToolSourcesLoading {
                 self.set_status_quiet("");
             }
-            self.clear_mcp_connecting_activity();
+            self.clear_tool_sources_loading_activity();
+            if let Some(openapi) = &changes.openapi {
+                for error in &openapi.errors {
+                    self.insert_entry(&Entry::Error(error.clone()));
+                }
+                for warning in &openapi.warnings {
+                    self.insert_entry(&Entry::Notice(warning.clone()));
+                }
+            }
             if matches!(
                 self.input_ui.composer(),
                 ComposerMode::Picker(picker) if picker.is_mcp_inventory()

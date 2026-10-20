@@ -35,6 +35,7 @@ pub(crate) struct ModelPromptTemplate {
     before_model: String,
     parts: Vec<PromptPart>,
     mcp: String,
+    openapi: String,
 }
 
 #[cfg(test)]
@@ -56,6 +57,7 @@ impl ModelPromptTemplate {
                 sources,
             }],
             mcp: String::new(),
+            openapi: String::new(),
         }
     }
 
@@ -107,6 +109,14 @@ impl ModelPromptTemplate {
     /// Replace startup MCP context rather than retaining stale connect status.
     pub(crate) fn replace_mcp(&mut self, report: &crate::tools::mcp::McpSessionReport) {
         self.mcp = super::mcp_context(report);
+    }
+
+    /// Replace the loaded OpenAPI source lines.
+    pub(crate) fn replace_openapi(
+        &mut self,
+        report: &crate::tools::openapi::bundle::OpenApiReport,
+    ) {
+        self.openapi = report.prompt_context();
     }
 
     /// A model switch preserves instruction files cached for the current session.
@@ -178,6 +188,7 @@ impl ModelPromptTemplate {
             running.describe(),
         ));
         text.push_str(&self.mcp);
+        text.push_str(&self.openapi);
         sources[0].bytes += text.len() - start;
         for part in &self.parts {
             match part {

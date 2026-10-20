@@ -39,6 +39,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
     if let Some(mcp) = file.mcp {
         cfg.mcp = mcp;
     }
+    if let Some(openapi) = file.openapi {
+        cfg.openapi = openapi;
+    }
     if let Some(v) = file.provider {
         cfg.provider = v;
     }
@@ -332,6 +335,7 @@ struct PartialConfig {
     keybindings: Option<Keybindings>,
     prompt_templates: Option<crate::prompt_templates::PromptTemplates>,
     mcp: Option<crate::tools::mcp::config::McpConfig>,
+    openapi: Option<crate::tools::openapi::config::OpenApiConfig>,
     providers: Option<PartialProviderConfigs>,
 }
 

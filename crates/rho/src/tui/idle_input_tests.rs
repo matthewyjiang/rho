@@ -144,7 +144,7 @@ fn unchanged_and_failed_compact_start_follow_ups_cancel_does_not() {
     assert!(!CompactionUiOutcome::Cancelled.starts_follow_ups());
 }
 
-// Covers: an MCP hold is idle UI with ConnectingMcp activity, not a pending-input item.
+// Covers: an MCP hold is idle UI with LoadingToolSources activity, not a pending-input item.
 // Owner: idle input hold/release
 #[test]
 fn mcp_hold_uses_connecting_activity_without_joining_pending_input() {
@@ -159,7 +159,7 @@ fn mcp_hold_uses_connecting_activity_without_joining_pending_input() {
     assert_eq!(
         app.activity_status(),
         Some(ActivityStatus::Parent {
-            phase: ActivityPhase::ConnectingMcp,
+            phase: ActivityPhase::LoadingToolSources,
             retry: None,
             background: crate::tui::activity::BackgroundCounts::default(),
         })

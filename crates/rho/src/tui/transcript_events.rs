@@ -640,9 +640,9 @@ impl App {
 
     /// Put up the MCP connect indicator and record that it is ours, so the
     /// hydrate poll can retire it later without matching on its wording.
-    pub(super) fn set_mcp_connecting_status(&mut self) {
-        self.set_status("connecting MCP servers");
-        self.status_source = super::StatusSource::McpConnecting;
+    pub(super) fn set_tool_sources_loading_status(&mut self) {
+        self.set_status("loading external tools");
+        self.status_source = super::StatusSource::ToolSourcesLoading;
     }
 
     fn write_status(&mut self, status: &str, allow_toast: bool) {
