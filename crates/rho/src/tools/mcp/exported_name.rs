@@ -33,7 +33,7 @@ pub(crate) fn exported_name_prefix(server: &str) -> String {
 
 fn encode_component(value: &str) -> String {
     const ESCAPE_PREFIX: &str = "_rho_";
-    // Every supported provider accepts `[a-zA-Z0-9_-]` in tool names, and `-`
+    // Providers accept `-` in tool names (see `tools::tool_name`), and it
     // cannot merge with the `__` separator, so a hyphenated name such as
     // `t3-code` stays readable.
     let already_safe = value

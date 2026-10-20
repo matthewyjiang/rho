@@ -7,7 +7,8 @@
 //! are lossy; the registering owner must reject duplicate results.
 //!
 //! MCP keeps its existing `_rho_` hex codec and does not cap yet: its tool
-//! cards decode identity from the name, which a cap would truncate.
+//! cards decode identity from the name, which a cap would truncate. MCP
+//! components may contain `-`, so a future MCP cap needs another marker.
 
 use sha2::{Digest as _, Sha256};
 
