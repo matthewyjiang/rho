@@ -620,22 +620,9 @@ fn first_omitted_source_identity(
     messages: &[Message],
     target: &ModelIdentity,
 ) -> Option<ModelIdentity> {
-    for message in messages {
-        let blocks = match message {
-            Message::EnrichedAssistant(message) => &message.provider_context,
-            Message::AbortedAssistant(message) => &message.provider_context,
-            Message::System(_)
-            | Message::User(_)
-            | Message::Assistant(_)
-            | Message::ToolResult(_) => continue,
-        };
-        for block in blocks {
-            if !block.is_replayable_to(target) {
-                return Some(block.identity.clone());
-            }
-        }
-    }
-    None
+    rho_sdk::model::handoff::omitted_message_context(messages, target)
+        .next()
+        .map(|block| block.identity.clone())
 }
 
 fn next_shortcut(current: char) -> char {

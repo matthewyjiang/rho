@@ -1,9 +1,14 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::model::handoff::HandoffReport;
+use rho_providers::model::Message;
+use rho_sdk::model::{
+    handoff::HandoffReport, AssistantMessage, ModelIdentity, ProviderContextBlock,
+};
+use rho_sdk::SessionId;
 
 use super::{
-    confirm_send_choice, AuthorizedSendSubmission, CancellationSource, SendSubmission, TurnOrigin,
-    ACTION_COMPACT_SEND, ACTION_DONT_SEND, ACTION_SEND,
+    confirm_send_choice, AuthorizedSendSubmission, CancellationSource, SendOmissions,
+    SendSubmission, TurnOrigin, ACTION_COMPACT_SEND, ACTION_DONT_SEND, ACTION_SEND,
+    ACTION_SEND_SESSION,
 };
 use crate::tui::{
     goal, tests::test_app, ChatMedia, ChatTextDocument, ComposerAttachment, GoalState,
@@ -22,8 +27,9 @@ fn omissions(count: usize) -> HandoffReport {
 }
 
 // Covers: the confirm-send modal always offers send/don't-send, only offers
-// compaction when the conversation can be compacted, and numbers shortcuts
-// sequentially so Don't send is 2 when compaction is omitted
+// compaction when the conversation can be compacted, and keeps the established
+// shortcuts: Don't send stays 2 without compaction, and session-wide consent
+// comes last so it never takes over a key users already press
 // Owner: send confirm gate
 #[test]
 fn confirm_send_options_depend_on_compact_availability() {
@@ -37,7 +43,8 @@ fn confirm_send_options_depend_on_compact_availability() {
         vec![
             (ACTION_SEND, '1'),
             (ACTION_COMPACT_SEND, '2'),
-            (ACTION_DONT_SEND, '3')
+            (ACTION_DONT_SEND, '3'),
+            (ACTION_SEND_SESSION, '4')
         ]
     );
 
@@ -48,8 +55,84 @@ fn confirm_send_options_depend_on_compact_availability() {
             .iter()
             .map(|option| (option.value.as_str(), option.shortcut))
             .collect::<Vec<_>>(),
-        vec![(ACTION_SEND, '1'), (ACTION_DONT_SEND, '2')]
+        vec![
+            (ACTION_SEND, '1'),
+            (ACTION_DONT_SEND, '2'),
+            (ACTION_SEND_SESSION, '3')
+        ]
     );
+}
+
+fn native_history(payloads: &[&str]) -> Vec<Message> {
+    let source = ModelIdentity::new("openai-codex", "openai-responses", "gpt-source");
+    payloads
+        .iter()
+        .map(|payload| {
+            Message::EnrichedAssistant(Box::new(AssistantMessage {
+                provider_context: vec![ProviderContextBlock {
+                    identity: source.clone(),
+                    kind: "openai_response_output_item".into(),
+                    position: None,
+                    data: serde_json::json!({"type": "message", "id": payload}),
+                }],
+                ..AssistantMessage::default()
+            }))
+        })
+        .collect()
+}
+
+// Covers: a send asks only when something is omitted, and "Send for this
+// session" consent skips it only while the session, target, and omitted blocks
+// stay within what the user was warned about; compaction dropping blocks keeps
+// it, anything new asks again.
+// Owner: send confirm gate
+#[test]
+fn session_acknowledgement_covers_only_warned_omissions() {
+    let session = SessionId::new();
+    let target = ModelIdentity::new("openai-codex", "openai-responses", "gpt-target");
+    let other_target = ModelIdentity::new("openai-codex", "openai-responses", "gpt-other");
+    let omissions = |session: &SessionId, target: &ModelIdentity, payloads: &[&str]| {
+        SendOmissions::new(session.clone(), target.clone(), &native_history(payloads))
+    };
+    let acknowledged = omissions(&session, &target, &["a", "b", "c"]);
+
+    let cases = [
+        ("nothing omitted", omissions(&session, &target, &[]), false),
+        (
+            "unchanged",
+            omissions(&session, &target, &["a", "b", "c"]),
+            false,
+        ),
+        ("compacted", omissions(&session, &target, &["c"]), false),
+        (
+            "new block",
+            omissions(&session, &target, &["a", "b", "c", "d"]),
+            true,
+        ),
+        (
+            "replaced block",
+            omissions(&session, &target, &["a", "b", "x"]),
+            true,
+        ),
+        (
+            "target changed",
+            omissions(&session, &other_target, &["a", "b", "c"]),
+            true,
+        ),
+        (
+            "session changed",
+            omissions(&SessionId::new(), &target, &["a", "b", "c"]),
+            true,
+        ),
+    ];
+    for (name, current, asks) in cases {
+        assert_eq!(
+            current.needs_confirmation(Some(&acknowledged)),
+            asks,
+            "{name}"
+        );
+    }
+    assert!(omissions(&session, &target, &["a"]).needs_confirmation(None));
 }
 
 // Covers: approval for one exact submission and model cannot become an ambient

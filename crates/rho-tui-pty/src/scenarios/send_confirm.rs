@@ -4,6 +4,7 @@ use super::*;
 // model cannot replay opens a confirm-send modal; Esc returns the prompt and
 // "Send anyway" starts the turn. With multiple follow-ups, rejection or a
 // failed confirmed turn must park the remainder rather than arm idle delivery.
+// "Send for this session" stops the modal for the unchanged omitted blocks.
 // Owner: interactive TUI
 pub(super) const SEND_CONFIRM_HANDOFF_ID: &str = "send_confirm_handoff";
 
@@ -13,6 +14,8 @@ pub(crate) fn is_send_confirm_scenario(name: &str) -> bool {
 
 const SEED_PROMPT: &str = "hello there";
 const SEND_PROMPT: &str = "confirmed prompt";
+const SESSION_PROMPT: &str = "acknowledged prompt";
+const UNGATED_PROMPT: &str = "ungated prompt";
 
 #[derive(Clone, Copy)]
 enum QueuedStop {
@@ -89,7 +92,7 @@ pub(super) fn run_send_confirm_handoff(
     };
 
     const SIZE: PtySize = PtySize {
-        rows: 16,
+        rows: 24,
         cols: 100,
     };
 
@@ -170,6 +173,21 @@ pub(super) fn run_send_confirm_handoff(
         for stop in [QueuedStop::Rejected, QueuedStop::Failed] {
             assert_queued_stop(&mut harness, stop)?;
         }
+
+        // Runs last: the acknowledgement suppresses every later modal for
+        // these unchanged blocks, which the cases above depend on.
+        harness.set_phase("send_for_session_acknowledges");
+        harness.submit_text(SESSION_PROMPT)?;
+        harness.wait_for_text("Send to openai/gpt-5.5?", SETTLE)?;
+        // Session consent is the last option and needs its text on screen.
+        harness.wait_for_text("Send for this session", SETTLE)?;
+        harness.inject_key(&Key::Char('4'))?;
+        harness.wait_for_text(&format!("fixture response: {SESSION_PROMPT}"), STREAM)?;
+
+        harness.set_phase("unchanged_omissions_skip_confirm");
+        harness.submit_text(UNGATED_PROMPT)?;
+        // The modal would block the turn, so the response is the proof.
+        harness.wait_for_text(&format!("fixture response: {UNGATED_PROMPT}"), STREAM)?;
         let code = harness.quit_with_exit_command()?;
         if code != 0 {
             anyhow::bail!("session exited with code {code}");

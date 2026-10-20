@@ -47,6 +47,7 @@ Provider events are forwarded in arrival order into the run event stream. Usage 
 - a changed provider or API always requires omission; other native formats still require the exact model
 - portable assistant content remains available
 - `Session::replace_provider` returns a `HandoffReport` so the host can surface omissions
+- `handoff::report_message_omissions` counts the blocks a target cannot replay; `handoff::omitted_message_context` yields those same blocks, for hosts that track which omissions a user already acknowledged
 
 Opaque blocks may still exist in session history and snapshots. Treat their `data` as sensitive provider content, do not render it by default, and apply retention and encryption policy. Identity checks protect compatibility, not confidentiality.
 

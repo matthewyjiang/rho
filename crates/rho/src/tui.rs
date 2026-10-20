@@ -623,6 +623,8 @@ struct App {
     /// Work made runnable by compact settlement. A confirmed send remains a
     /// distinct owned submission rather than being cloned into the edit queue.
     start_follow_ups: Option<compact_work::ReadyFollowUp>,
+    /// "Send for this session" consent; see [`send_confirm::SendOmissions::covers`].
+    acknowledged_send_omissions: Option<send_confirm::SendOmissions>,
     pending_model_selection: Option<InteractiveModelSelection>,
     pending_permission_mode: Option<crate::permission::PermissionMode>,
     /// Explicit all/pinned choice from the scope-toggle key. `None` means
