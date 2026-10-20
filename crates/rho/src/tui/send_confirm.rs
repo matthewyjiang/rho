@@ -6,7 +6,7 @@
 //! value and the model identity shown by the confirmation. The only state a
 //! later send can consume is an explicit "Send for this session"
 //! acknowledgement, which [`SendOmissions::covers`] scopes to one session,
-//! one target, and the exact native blocks the user was shown.
+//! one target model, and the exact native blocks the user was warned about.
 
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -53,8 +53,15 @@ impl SendOmissions {
         }
     }
 
+    /// Whether this send must ask: some block is omitted and no session
+    /// acknowledgement covers the omissions.
+    fn needs_confirmation(&self, acknowledged: Option<&Self>) -> bool {
+        !self.blocks.is_empty()
+            && !acknowledged.is_some_and(|acknowledged| acknowledged.covers(self))
+    }
+
     /// Whether consent to omit `self` also covers `current`: the same session
-    /// and target, and no omitted block the user has not already been shown.
+    /// and target, and no omitted block the user was not already warned about.
     /// Compaction only drops blocks, so it never invalidates consent.
     fn covers(&self, current: &Self) -> bool {
         self.session_id == current.session_id
@@ -236,7 +243,7 @@ impl std::fmt::Debug for PendingConfirmSend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PendingConfirmSend")
-            .field("confirmation_identity", &self.omissions.target)
+            .field("target", &self.omissions.target)
             .field("can_compact", &self.can_compact)
             .finish_non_exhaustive()
     }
@@ -278,13 +285,6 @@ fn confirm_send_choice(
         ),
     )];
     shortcut = next_shortcut(shortcut);
-    options.push(InlineChoiceOption::available(
-        ACTION_SEND_SESSION,
-        shortcut,
-        "Send for this session",
-        "Don't ask again in this session unless the model or omitted blocks change.",
-    ));
-    shortcut = next_shortcut(shortcut);
     if can_compact {
         options.push(InlineChoiceOption::available(
             ACTION_COMPACT_SEND,
@@ -302,6 +302,20 @@ fn confirm_send_choice(
         "Don't send",
         "Return the prompt to the composer.",
     ));
+    shortcut = next_shortcut(shortcut);
+    // Last, so the established shortcuts keep their meaning; session-wide
+    // consent is only selectable once its explanation is fully visible.
+    options.push(
+        InlineChoiceOption::available(
+            ACTION_SEND_SESSION,
+            shortcut,
+            "Send for this session",
+            format!(
+                "Don't ask again for {target_label} in this session unless new native blocks would be omitted."
+            ),
+        )
+        .require_full_visibility(),
+    );
     InlineChoice::new(
         format!("Send to {target_label}?"),
         format!(
@@ -326,22 +340,13 @@ impl App {
             return Some(AuthorizedSendSubmission(submission));
         }
         let history = agent.history();
-        let report = handoff::report_message_omissions(&history, &target_identity);
-        if !report.has_omissions() {
-            return Some(AuthorizedSendSubmission(
-                submission.approve_for(target_identity),
-            ));
-        }
         let omissions = SendOmissions::new(agent.session_id().clone(), target_identity, &history);
-        if self
-            .acknowledged_send_omissions
-            .as_ref()
-            .is_some_and(|acknowledged| acknowledged.covers(&omissions))
-        {
+        if !omissions.needs_confirmation(self.acknowledged_send_omissions.as_ref()) {
             return Some(AuthorizedSendSubmission(
                 submission.approve_for(omissions.target),
             ));
         }
+        let report = handoff::report_message_omissions(&history, &omissions.target);
 
         let target_label = rho_providers::provider::model_reference(
             &self.info.runtime.provider,

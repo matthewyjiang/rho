@@ -92,7 +92,7 @@ pub(super) fn run_send_confirm_handoff(
     };
 
     const SIZE: PtySize = PtySize {
-        rows: 20,
+        rows: 24,
         cols: 100,
     };
 
@@ -179,17 +179,15 @@ pub(super) fn run_send_confirm_handoff(
         harness.set_phase("send_for_session_acknowledges");
         harness.submit_text(SESSION_PROMPT)?;
         harness.wait_for_text("Send to openai/gpt-5.5?", SETTLE)?;
-        harness.assert_screen_contains("Send for this session")?;
-        harness.inject_key(&Key::Char('2'))?;
+        // Session consent is the last option and needs its text on screen.
+        harness.wait_for_text("Send for this session", SETTLE)?;
+        harness.inject_key(&Key::Char('4'))?;
         harness.wait_for_text(&format!("fixture response: {SESSION_PROMPT}"), STREAM)?;
 
         harness.set_phase("unchanged_omissions_skip_confirm");
         harness.submit_text(UNGATED_PROMPT)?;
+        // The modal would block the turn, so the response is the proof.
         harness.wait_for_text(&format!("fixture response: {UNGATED_PROMPT}"), STREAM)?;
-        anyhow::ensure!(
-            !harness.screen().contains_text("Send to openai/gpt-5.5?"),
-            "acknowledged send reopened the confirmation"
-        );
         let code = harness.quit_with_exit_command()?;
         if code != 0 {
             anyhow::bail!("session exited with code {code}");
