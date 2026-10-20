@@ -148,9 +148,31 @@ fn next_target(value: &str) -> Option<&str> {
         let after = &rest[open + 1..];
         let close = after.find('>')?;
         let target = &after[..close];
-        let params = &after[close + 1..];
-        let params = &params[..params.find('<').unwrap_or(params.len())];
-        let is_next = params.split([';', ',']).any(|param| {
+        // Parameters run to the next `,` outside a quoted string, so a
+        // `title="a; rel=next"` is one parameter, not a rel.
+        let mut params = Vec::new();
+        let mut start = close + 1;
+        let mut end = after.len();
+        let mut quoted = false;
+        for (index, character) in after
+            .char_indices()
+            .skip_while(|(index, _)| *index <= close)
+        {
+            match character {
+                '"' => quoted = !quoted,
+                ';' if !quoted => {
+                    params.push(&after[start..index]);
+                    start = index + 1;
+                }
+                ',' if !quoted => {
+                    end = index;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        params.push(&after[start..end]);
+        let is_next = params.iter().any(|param| {
             param.split_once('=').is_some_and(|(key, value)| {
                 key.trim().eq_ignore_ascii_case("rel")
                     && value
@@ -163,7 +185,7 @@ fn next_target(value: &str) -> Option<&str> {
         if is_next {
             return Some(target);
         }
-        rest = &after[close + 1..];
+        rest = &after[end..];
     }
     None
 }

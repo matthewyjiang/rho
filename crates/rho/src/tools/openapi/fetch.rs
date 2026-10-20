@@ -2,7 +2,9 @@
 //! `~/.rho/cache/openapi/` and revalidated with its `ETag` every session.
 //!
 //! A failed download falls back to the cached copy with a warning, so a
-//! flaky network or a moved spec does not take a working source away.
+//! flaky network or a moved spec does not take a working source away. A
+//! fresh download is cached only once it parses ([`SpecCache::remember`]),
+//! so a broken response never replaces the last working copy.
 
 use std::{
     path::{Path, PathBuf},
@@ -29,9 +31,13 @@ pub(crate) struct SpecCache {
 }
 
 /// Validators saved next to a cached spec.
-#[derive(Debug, Default, Deserialize, Serialize)]
-struct CacheMeta {
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub(crate) struct CacheMeta {
     url: String,
+    /// SHA-256 of the spec file. Sessions refresh the same entry
+    /// concurrently, so a spec read back must match its own validators.
+    #[serde(default)]
+    sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     etag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,20 +68,40 @@ impl SpecCache {
         let (spec, meta) = self.paths(url);
         let meta: CacheMeta = serde_json::from_slice(&std::fs::read(meta).ok()?).ok()?;
         (meta.url == url.as_str()).then_some(())?;
-        Some((meta, std::fs::read(spec).ok()?))
+        let bytes = std::fs::read(spec).ok()?;
+        (meta.sha256 == sha256(&bytes)).then_some((meta, bytes))
+    }
+
+    /// Cache a freshly downloaded spec once it has parsed. Failing to cache
+    /// costs only the next session's revalidation, so it is logged.
+    pub(crate) fn remember(&self, fetched: &FetchedSpec) {
+        let Some(meta) = &fetched.fresh else {
+            return;
+        };
+        if let Err(error) = self.write(meta, &fetched.bytes) {
+            tracing::warn!(url = %fetched.url, error = %error, "could not cache OpenAPI spec");
+        }
     }
 
     fn write(&self, meta: &CacheMeta, bytes: &[u8]) -> std::io::Result<()> {
         let url = Url::parse(&meta.url).map_err(std::io::Error::other)?;
         let (spec, meta_path) = self.paths(&url);
+        let meta = CacheMeta {
+            sha256: sha256(bytes),
+            ..meta.clone()
+        };
         std::fs::create_dir_all(&self.dir)?;
         write_atomically(&self.dir, &spec, bytes)?;
         write_atomically(
             &self.dir,
             &meta_path,
-            &serde_json::to_vec(meta).map_err(std::io::Error::other)?,
+            &serde_json::to_vec(&meta).map_err(std::io::Error::other)?,
         )
     }
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn write_atomically(dir: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -93,6 +119,8 @@ pub(crate) struct FetchedSpec {
     pub(crate) url: Url,
     /// Set when the download failed and the cached copy was used.
     pub(crate) warning: Option<String>,
+    /// Validators of a fresh download, for [`SpecCache::remember`].
+    pub(crate) fresh: Option<CacheMeta>,
 }
 
 /// What a spec fetch may use.
@@ -114,16 +142,27 @@ impl SpecFetch<'_> {
     fn read_file(&self, path: &Path) -> Result<FetchedSpec, String> {
         let read_error =
             |error: std::io::Error| format!("could not read {}: {error}", path.display());
-        let size = std::fs::metadata(path).map_err(read_error)?.len();
-        if size > self.max_spec_bytes as u64 {
-            return Err(too_large(size, self.max_spec_bytes));
+        // Read at most one byte past the limit: metadata alone does not
+        // bound a read, since `/dev/zero` reports a size of zero.
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .and_then(|file| {
+                use std::io::Read as _;
+                file.take(self.max_spec_bytes as u64 + 1)
+                    .read_to_end(&mut bytes)
+            })
+            .map_err(read_error)?;
+        if bytes.len() > self.max_spec_bytes {
+            let size = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
+            return Err(too_large(size.max(bytes.len() as u64), self.max_spec_bytes));
         }
         let absolute = std::path::absolute(path).map_err(read_error)?;
         Ok(FetchedSpec {
-            bytes: std::fs::read(path).map_err(read_error)?,
+            bytes,
             url: Url::from_file_path(&absolute)
                 .map_err(|()| format!("{} is not an absolute path", absolute.display()))?,
             warning: None,
+            fresh: None,
         })
     }
 
@@ -138,24 +177,18 @@ impl SpecFetch<'_> {
                 ))
             });
         match (downloaded, cached) {
-            (Ok(Download::NotModified), Some((_, bytes))) => Ok(fetched(bytes, url, None)),
+            (Ok(Download::NotModified), Some((_, bytes))) => Ok(fetched(bytes, url, None, None)),
             (Ok(Download::NotModified), None) => Err(format!(
                 "{url} answered 304 Not Modified to a request without a cached copy"
             )),
-            (Ok(Download::Fresh { meta, bytes }), _) => {
-                if let Some(cache) = self.cache {
-                    if let Err(error) = cache.write(&meta, &bytes) {
-                        tracing::warn!(url = %url, error = %error, "could not cache OpenAPI spec");
-                    }
-                }
-                Ok(fetched(bytes, url, None))
-            }
+            (Ok(Download::Fresh { meta, bytes }), _) => Ok(fetched(bytes, url, None, Some(meta))),
             (Err(error), Some((_, bytes))) => Ok(fetched(
                 bytes,
                 url,
                 Some(format!(
                     "could not refresh {url}: {error}; using the cached copy"
                 )),
+                None,
             )),
             (Err(error), None) => Err(format!("could not download {url}: {error}")),
         }
@@ -195,6 +228,7 @@ impl SpecFetch<'_> {
         };
         let meta = CacheMeta {
             url: url.to_string(),
+            sha256: String::new(),
             etag: header(ETAG),
             last_modified: header(LAST_MODIFIED),
         };
@@ -214,11 +248,17 @@ enum Download {
     Fresh { meta: CacheMeta, bytes: Vec<u8> },
 }
 
-fn fetched(bytes: Vec<u8>, url: &Url, warning: Option<String>) -> FetchedSpec {
+fn fetched(
+    bytes: Vec<u8>,
+    url: &Url,
+    warning: Option<String>,
+    fresh: Option<CacheMeta>,
+) -> FetchedSpec {
     FetchedSpec {
         bytes,
         url: url.clone(),
         warning,
+        fresh,
     }
 }
 

@@ -141,8 +141,8 @@ fn seen(requests: &[Recorded]) -> Vec<(String, Option<String>, Option<String>)> 
 }
 
 // Covers: API keys, env headers, and literal headers go only to the base_url
-// origin. A same-origin redirect keeps them; a cross-origin redirect sends
-// none, and the URL the policy authorizes never holds the query key.
+// origin. A same-origin redirect keeps them; a cross-origin redirect is not
+// followed at all, and the URL the policy authorizes never holds the query key.
 // Owner: OpenAPI tool transport (credential placement)
 #[tokio::test]
 async fn credentials_reach_only_the_source_origin() {
@@ -165,10 +165,26 @@ auth = {{ type = "api_key", in = "query", name = "api_key", value_env = "KEY" }}
     let get_item = tool(&config, &env, MAX_RESPONSE_BYTES, "getItem").await;
 
     let policy = RecordingPolicy::default();
+    let mut outcomes = Vec::new();
     for id in ["same", "away"] {
-        let completion = call(get_item.clone(), json!({"id": id}), policy.clone()).await;
-        assert!(!completion.is_failure(), "{id}: {completion:?}");
+        outcomes.push(
+            match call(get_item.clone(), json!({"id": id}), policy.clone()).await {
+                ToolCompletion::Failure(failure) => Some(failure.message().to_owned()),
+                _ => None,
+            },
+        );
     }
+    assert_eq!(
+        outcomes,
+        vec![
+            None,
+            Some(format!(
+                "GET /items/{{id}} (test): could not follow redirect to {}: \
+                 redirects to another origin are not followed",
+                other.url("")
+            )),
+        ]
+    );
 
     let credentialed = |target: &str| {
         (
@@ -185,10 +201,7 @@ auth = {{ type = "api_key", in = "query", name = "api_key", value_env = "KEY" }}
             credentialed("/items/away?api_key=k"),
         ]
     );
-    assert_eq!(
-        seen(&other.requests()),
-        vec![("/landing".to_owned(), None, None)]
-    );
+    assert_eq!(seen(&other.requests()), Vec::new());
     assert_eq!(
         policy.authorized_urls(),
         vec![source.url("/items/same"), source.url("/items/away")]
@@ -309,9 +322,7 @@ async fn oversized_responses_fail_with_the_limit_and_the_size() {
         };
         assert_eq!(
             failure.message(),
-            format!(
-                "GET /items/{{id}} (test): response body is 1500 bytes, over max_response_bytes (1000 bytes)"
-            ),
+            "GET /items/{id} (test): response body is 1500 bytes, over max_response_bytes (1000 bytes)",
             "{id}"
         );
     }

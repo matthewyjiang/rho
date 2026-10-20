@@ -165,6 +165,7 @@ async fn load_source(
         Ok(fetched) => fetched,
         Err(error) => return (name, Err(error)),
     };
+    let cache = options.cache.clone();
     let source = SourceSettings {
         calls: calls.clone(),
         max_output_bytes: options.max_output_bytes,
@@ -180,6 +181,9 @@ async fn load_source(
             max_spec_bytes: DEFAULT_MAX_SPEC_BYTES,
         })
         .map_err(|error| error.to_string())?;
+        if let Some(cache) = &cache {
+            cache.remember(&fetched);
+        }
         for skipped in &spec.skipped {
             tracing::debug!(
                 source = %plan.name,
@@ -246,16 +250,13 @@ fn build_tools(
         if !plan.filter.admits(operation) {
             continue;
         }
-        let operation_server = operation
-            .servers
-            .as_ref()
-            .and_then(|servers| servers.iter().find_map(|server| server.as_ref().ok()));
-        let Some(base) = plan
-            .base_url
-            .as_ref()
-            .or(operation_server)
-            .or(default_server)
-        else {
+        // An operation that declares its own servers never falls back to the
+        // spec's: if none of them is usable, it has nowhere to go.
+        let base = plan.base_url.as_ref().or_else(|| match &operation.servers {
+            Some(servers) => servers.iter().find_map(|server| server.as_ref().ok()),
+            None => default_server,
+        });
+        let Some(base) = base else {
             tracing::debug!(source = %plan.name, path = %operation.path, "OpenAPI operation has no usable server");
             continue;
         };

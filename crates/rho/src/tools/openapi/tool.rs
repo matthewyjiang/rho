@@ -148,24 +148,31 @@ impl OpenApiTool {
         arguments: &Value,
     ) -> Result<CallResult, ToolError> {
         let PlannedRequest { url, headers, body } = planned;
+        // Only the first URL was authorized, so redirects stay on its origin.
+        let authorized = url.origin();
+        // Source headers and the query key go only to the source origin;
+        // without a `base_url` the source has none.
+        let trusted = authorized == self.source.origin;
+        let mut sent = headers;
+        if trusted {
+            // Source headers go last, so an argument cannot replace them.
+            for (name, value) in &self.source.headers.headers {
+                sent.insert(name, value.clone());
+            }
+        }
         let mut url = url;
         for _ in 0..=MAX_REDIRECTS {
-            let trusted = url.origin() == self.source.origin;
             let target = match (&self.source.headers.query, trusted) {
                 (Some(credential), true) => with_query_credential(&url, credential),
                 _ => url.clone(),
             };
-            let mut request = self.source.client.request(self.method.clone(), target);
+            let mut request = self
+                .source
+                .client
+                .request(self.method.clone(), target)
+                .headers(sent.clone());
             if let Some(accept) = &self.accept {
                 request = request.header(reqwest::header::ACCEPT, accept);
-            }
-            if trusted {
-                // Source headers go last, so an argument cannot replace them.
-                let mut sent = headers.clone();
-                for (name, value) in &self.source.headers.headers {
-                    sent.insert(name, value.clone());
-                }
-                request = request.headers(sent);
             }
             if let Some((media_type, bytes)) = &body {
                 request = request
@@ -184,6 +191,12 @@ impl OpenApiTool {
                         .and_then(|location| url.join(location).ok())
                         .filter(|target| matches!(target.scheme(), "http" | "https"))
                         .ok_or_else(|| self.failure("redirected to an invalid location".into()))?;
+                    if target.origin() != authorized {
+                        return Err(self.failure(format!(
+                            "could not follow redirect to {}: redirects to another origin are not followed",
+                            target.origin().ascii_serialization()
+                        )));
+                    }
                     url = target;
                     continue;
                 }

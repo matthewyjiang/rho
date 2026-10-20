@@ -174,7 +174,13 @@ impl RequestShape {
             let base = param.arg.clone();
             let mut suffix = 2;
             while used.contains(&param.arg) {
-                param.arg = cap(format!("{base}_{suffix}"));
+                // Cut the base, not the suffix: a 64-character base would
+                // otherwise lose every suffix and never become unique.
+                let suffix_text = format!("_{suffix}");
+                let mut numbered = base.clone();
+                numbered.truncate(MAX_ARG_NAME_LEN - suffix_text.len());
+                numbered.push_str(&suffix_text);
+                param.arg = numbered;
                 suffix += 1;
             }
             used.push(param.arg.clone());
@@ -332,6 +338,7 @@ impl RequestShape {
     /// The arguments for the page a `next` link points at: `current` with its
     /// query arguments replaced by the link's. Returns `None` when the link
     /// sets no declared query parameter or would repeat the same call.
+    /// Object arguments are kept as they are.
     pub(crate) fn next_arguments(
         &self,
         current: &Value,
@@ -339,11 +346,12 @@ impl RequestShape {
     ) -> Option<Value> {
         let mut next = current.as_object()?.clone();
         let mut matched = false;
-        for param in self
-            .params
-            .iter()
-            .filter(|param| param.location == Location::Query)
-        {
+        // Object arguments serialize as `filter[state]=open` or bare keys,
+        // which this cannot read back, so they carry over unchanged.
+        for param in self.params.iter().filter(|param| {
+            param.location == Location::Query
+                && !current.get(&param.arg).is_some_and(Value::is_object)
+        }) {
             let values: Vec<&String> = link_query
                 .iter()
                 .filter(|(name, _)| *name == param.param.name)

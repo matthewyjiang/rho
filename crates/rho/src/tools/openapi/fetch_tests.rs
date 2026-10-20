@@ -44,7 +44,12 @@ async fn revalidates_with_etag_and_falls_back_to_the_cache() {
         fetched.map(|fetched| (String::from_utf8(fetched.bytes).unwrap(), fetched.warning))
     };
 
-    let fresh = result(fetch(Some(&cache)).fetch(&location).await);
+    // The loader caches a download only once it parses.
+    let downloaded = fetch(Some(&cache)).fetch(&location).await;
+    if let Ok(fetched) = &downloaded {
+        cache.remember(fetched);
+    }
+    let fresh = result(downloaded);
     let revalidated = result(fetch(Some(&cache)).fetch(&location).await);
     failing.store(true, Ordering::SeqCst);
     let stale = result(fetch(Some(&cache)).fetch(&location).await);

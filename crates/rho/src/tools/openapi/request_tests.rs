@@ -64,6 +64,29 @@ fn colliding_names_get_location_prefixes_and_share_defs() {
             "$defs": {"Filter": {"type": "object", "properties": {"q": {"type": "string"}}}},
         })
     );
+
+    // Names that only differ past the 64-character cap still come apart.
+    let long = "a".repeat(70);
+    let (_, schema) = shape(json!({
+        "parameters": [
+            param("id", "path", json!({"type": "string"})),
+            param(&format!("{long}1"), "query", json!({"type": "string"})),
+            param(&format!("{long}2"), "query", json!({"type": "string"})),
+        ],
+        "responses": {"200": {"description": "ok"}},
+    }));
+    let names: std::collections::BTreeSet<&String> =
+        schema["properties"].as_object().unwrap().keys().collect();
+    assert_eq!(
+        names,
+        [
+            &"id".to_owned(),
+            &format!("query_{}", "a".repeat(58)),
+            &format!("query_{}_2", "a".repeat(56)),
+        ]
+        .into_iter()
+        .collect()
+    );
 }
 
 // Covers: no argument can change the request's origin or path shape. Path
@@ -155,6 +178,7 @@ fn next_arguments_replace_query_arguments_from_the_link() {
             param("page", "query", json!({"type": "integer"})),
             param("cursor", "query", json!({"type": "string"})),
             param("draft", "query", json!({"type": ["boolean", "null"]})),
+            json!({"name": "filter", "in": "query", "style": "deepObject", "explode": true, "schema": {"type": "object"}}),
         ],
         "responses": {"200": {"description": "ok"}},
     }));
@@ -189,6 +213,11 @@ fn next_arguments_replace_query_arguments_from_the_link() {
             json!({"id": "1"}),
             pairs(&[("page", "last")]),
             Some(json!({"id": "1", "page": "last"})),
+        ),
+        (
+            json!({"id": "1", "page": 1, "filter": {"state": "open"}}),
+            pairs(&[("page", "2"), ("filter[state]", "open")]),
+            Some(json!({"id": "1", "page": 2, "filter": {"state": "open"}})),
         ),
         (json!({"id": "1"}), pairs(&[("since", "x")]), None),
         (json!({"id": "1", "page": 2}), pairs(&[("page", "2")]), None),

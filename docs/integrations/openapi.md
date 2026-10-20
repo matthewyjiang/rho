@@ -47,7 +47,7 @@ auth = { type = "api_key", in = "header", name = "X-Api-Key", value_env = "API_K
 auth = { type = "api_key", in = "query", name = "api_key", value_env = "API_KEY" }
 ```
 
-Credentials and headers, literal ones included, go only to the source's origin: `base_url`, or the spec's first server when `base_url` is unset. A source that sends credentials or headers must set `base_url`, and it must use HTTPS unless its host is loopback. When a call is redirected to another origin, Rho follows the redirect without any of them. A missing environment variable fails that source at session start.
+Credentials and headers, literal ones included, go only to the source's origin: `base_url`, or the spec's first server when `base_url` is unset. A source that sends credentials or headers must set `base_url`, and it must use HTTPS unless its host is loopback. Rho follows redirects only within the origin of the URL it authorized; a redirect to another origin fails the call, so no request leaves the server the call was approved for. A missing environment variable fails that source at session start.
 
 ### Project sources
 
@@ -109,4 +109,4 @@ A non-2xx status fails the call for the model with a one-line summary and the fi
 | `max_response_bytes` | 4 MiB | A larger body fails the call, naming the limit and the actual size. GitHub's largest list pages at `per_page=100` measure about 1.9 MB. |
 | Codemode heap | 8 MiB | A parsed body takes 2.4x to 3x its size in a script's heap, so one script holds about 2.7 MB of response bodies in total. Use a smaller `per_page`, or one script per page, for larger results. |
 | `max_output_bytes` | [config](/configuration#tool-output-limit) | Truncates the text the model reads. Script `data` is not truncated. |
-| Redirects | 10 | More fails the call. |
+| Redirects | 10 | More fails the call, as does a redirect to another origin. |

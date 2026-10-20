@@ -110,6 +110,9 @@ impl App {
         self.reconcile_auto_classifier_gate(agent).await?;
         if agent.tool_sources_pending() {
             self.set_status_quiet("loading external tools");
+            // Claim the status so the hydrate poll clears it when loading
+            // lands before the first prompt.
+            self.status_source = super::StatusSource::ToolSourcesLoading;
         }
         let mut needs_redraw = true;
         let mut first_frame = true;

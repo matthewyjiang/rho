@@ -10,7 +10,7 @@ use super::*;
 #[test]
 fn next_link_finds_the_next_target() {
     let base = Url::parse("https://api.example.com/v3/items?page=1").unwrap();
-    let cases: [(&[&str], Option<&str>); 6] = [
+    let cases: [(&[&str], Option<&str>); 7] = [
         (
             &[
                 r#"<https://api.example.com/v3/items?page=2>; rel="next", <https://api.example.com/v3/items?page=9>; rel="last""#,
@@ -25,6 +25,10 @@ fn next_link_finds_the_next_target() {
         ),
         (
             &[r#"</v3/items?page=2>; title="more"; rel="next""#],
+            Some("https://api.example.com/v3/items?page=2"),
+        ),
+        (
+            &[r#"<?page=1>; title="back; rel=next", <?page=2>; rel="next""#],
             Some("https://api.example.com/v3/items?page=2"),
         ),
         (
