@@ -97,17 +97,17 @@ pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
         cwd,
         ToolStatus::Running,
     );
-    with_summary_primary(view, card)
+    with_summary_primary(view.kind, &view.metadata, card)
 }
 
 /// Generic tools describe a call through metadata; a `command_summary` fills
 /// the bare `name` header so a running card says what it is doing.
-fn with_summary_primary(view: &ToolView, mut card: ToolCard) -> ToolCard {
-    if view.kind != ToolKind::Other {
+fn with_summary_primary(kind: ToolKind, metadata: &ToolMetadata, mut card: ToolCard) -> ToolCard {
+    if kind != ToolKind::Other {
         return card;
     }
     if let (ToolHeader::Call { primary, .. }, Some(summary)) =
-        (&mut card.header, view.metadata.command_summary_text())
+        (&mut card.header, metadata.command_summary_text())
     {
         if primary.is_none() && !summary.is_empty() {
             *primary = Some(summary.to_string());
@@ -116,12 +116,37 @@ fn with_summary_primary(view: &ToolView, mut card: ToolCard) -> ToolCard {
     card
 }
 
-/// Live tool-call argument preview while the provider is still streaming JSON.
+/// The interactive card's header for a call, for hosts that title each tool
+/// call with one string, such as ACP clients. Built from the live-preview
+/// card, which reads no files, so it is cheap enough to run per call.
+pub(crate) fn call_header(
+    name: &str,
+    arguments: Option<&serde_json::Value>,
+    metadata: &ToolMetadata,
+    cwd: &std::path::Path,
+) -> ToolHeader {
+    let kind = ToolKind::from_name_and_args(name, arguments);
+    let card = streaming_preview_card(
+        kind,
+        name,
+        arguments,
+        cwd,
+        // A started or replayed call's arguments are complete.
+        rho_tools::apply_patch::ProposedDiffTrailingLine::Include,
+    );
+    with_summary_primary(kind, metadata, card).header
+}
+
+/// Live tool-call argument preview while the provider is still streaming
+/// JSON. Builds from the arguments alone and must not read files:
+/// [`call_header`] runs it for every ACP tool call. `trailing_line` says
+/// whether a patch's last unterminated line is final or still streaming.
 pub(super) fn streaming_preview_card(
     kind: ToolKind,
     name: &str,
     arguments: Option<&serde_json::Value>,
     cwd: &std::path::Path,
+    trailing_line: rho_tools::apply_patch::ProposedDiffTrailingLine,
 ) -> ToolCard {
     match kind {
         ToolKind::Agent => agent_format::agent_start_card(
@@ -133,12 +158,9 @@ pub(super) fn streaming_preview_card(
                 rho_tools::EditFormat::Hashline => {
                     edit_document_card(arguments, cwd, ToolStatus::Running)
                 }
-                rho_tools::EditFormat::ApplyPatch => apply_patch_card(
-                    arguments,
-                    cwd,
-                    ToolStatus::Running,
-                    rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
-                ),
+                rho_tools::EditFormat::ApplyPatch => {
+                    apply_patch_card(arguments, cwd, ToolStatus::Running, trailing_line)
+                }
                 // Streaming skips the file read; rows get numbers once proposed.
                 rho_tools::EditFormat::StrReplace => {
                     str_replace_card(arguments, cwd, ToolStatus::Running, /*live_file*/ None)

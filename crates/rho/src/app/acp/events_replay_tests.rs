@@ -17,7 +17,7 @@ fn call_block(id: &str) -> model::ContentBlock {
 }
 
 fn replay(messages: &[Message]) -> Vec<SessionNotification> {
-    let mut notifications = history(&SessionId::new("s1"), messages);
+    let mut notifications = history(&SessionId::new("s1"), messages, std::path::Path::new(""));
     // Canonicalize fresh ACP identities by announcement order, retaining
     // pairing and rejecting duplicate announcements or updates to unknown IDs.
     let mut ids = std::collections::HashMap::new();
