@@ -154,11 +154,18 @@ fn next_target(value: &str) -> Option<&str> {
         let mut start = close + 1;
         let mut end = after.len();
         let mut quoted = false;
+        let mut escaped = false;
         for (index, character) in after
             .char_indices()
             .skip_while(|(index, _)| *index <= close)
         {
+            if escaped {
+                escaped = false;
+                continue;
+            }
             match character {
+                // A quoted-pair such as `\"` stays inside the string.
+                '\\' if quoted => escaped = true,
                 '"' => quoted = !quoted,
                 ';' if !quoted => {
                     params.push(&after[start..index]);
