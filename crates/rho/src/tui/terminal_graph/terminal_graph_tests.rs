@@ -542,51 +542,113 @@ fn art_text(graph: &Graph) -> String {
         .join("\n")
 }
 
+// Covers: a labeled skip edge's label must render beside its right lane, not
+// on the target's fan-in bus row that the skip route itself occupies, where it
+// was silently dropped.
+// Owner: terminal graph skip-edge label placement.
+#[test]
+fn skip_edge_label_sits_beside_its_lane() {
+    let style = NodeStyle::default();
+    let graph = Graph::top_down(
+        vec![
+            Node::rectangular("plan", style),
+            Node::rectangular("edit", style),
+            Node::rectangular("test", style),
+            Node::rectangular("ship", style),
+        ],
+        vec![
+            Edge::directed(0, 1),
+            Edge::directed(1, 2),
+            labeled_edge(2, 1, "fail"),
+            Edge::directed(2, 3),
+            labeled_edge(0, 3, "trivial"),
+        ],
+        RankOrdering::PreserveInput,
+    )
+    .unwrap();
+
+    assert_eq!(
+        graph.render(Style::default()).unwrap().plain_lines,
+        vec![
+            "       ┌──────┐".to_owned(),
+            "       │ plan │".to_owned(),
+            "       └───┬──┘".to_owned(),
+            "           ├────────────┐".to_owned(),
+            "           ▼            │".to_owned(),
+            " fail  ┌──────┐         │".to_owned(),
+            "┌─────▶│ edit │         │".to_owned(),
+            "│      └───┬──┘         │".to_owned(),
+            "│          │    trivial │".to_owned(),
+            "│          ▼            │".to_owned(),
+            "│      ┌──────┐         │".to_owned(),
+            "└──────┤ test │         │".to_owned(),
+            "       └───┬──┘         │".to_owned(),
+            "           ├────────────┘".to_owned(),
+            "           ▼".to_owned(),
+            "       ┌──────┐".to_owned(),
+            "       │ ship │".to_owned(),
+            "       └──────┘".to_owned(),
+        ]
+    );
+}
+
 // Covers: wrapped edge labels keep every word visible: LR forward labels in the
 // inter-column gap (including below a same-rank sibling), TD back-edge labels in
-// the left gutter without clipping off the top, and LR back-route labels above
-// the top lane instead of stacking into node boxes.
+// the left gutter without clipping off the top, LR back-route labels above
+// the top lane instead of stacking into node boxes, and skip labels beside
+// their lanes in both directions.
 // Owner: terminal graph LR/TD label placement.
 #[test]
 fn wraps_edge_labels_without_dropping_words() {
     let style = NodeStyle::default();
-    let two_nodes = || {
+    let nodes = |labels: &[&str]| {
+        labels
+            .iter()
+            .map(|label| Node::rectangular(*label, style))
+            .collect::<Vec<_>>()
+    };
+    let skip = || {
         vec![
-            Node::rectangular("start", style),
-            Node::rectangular("end", style),
+            Edge::directed(0, 1),
+            Edge::directed(1, 2),
+            labeled_edge(0, 2, WRAPPED_EDGE_LABEL),
         ]
     };
-    for (case, nodes, labeled, direction) in [
+    let back = || vec![Edge::directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)];
+    for (case, nodes, edges, direction) in [
         (
             "LR forward",
-            vec![
-                Node::rectangular("start", style),
-                Node::rectangular("top", style),
-                Node::rectangular("end", style),
-            ],
-            labeled_edge(0, 2, WRAPPED_EDGE_LABEL),
+            nodes(&["start", "top", "end"]),
+            vec![Edge::directed(0, 1), labeled_edge(0, 2, WRAPPED_EDGE_LABEL)],
             Direction::LeftRight,
         ),
         (
             "TD back",
-            two_nodes(),
-            labeled_edge(1, 0, WRAPPED_EDGE_LABEL),
+            nodes(&["start", "end"]),
+            back(),
             Direction::TopDown,
         ),
         (
             "LR back",
-            two_nodes(),
-            labeled_edge(1, 0, WRAPPED_EDGE_LABEL),
+            nodes(&["start", "end"]),
+            back(),
+            Direction::LeftRight,
+        ),
+        (
+            "TD skip",
+            nodes(&["start", "mid", "end"]),
+            skip(),
+            Direction::TopDown,
+        ),
+        (
+            "LR skip",
+            nodes(&["start", "mid", "end"]),
+            skip(),
             Direction::LeftRight,
         ),
     ] {
-        let graph = Graph::from_parts(
-            nodes,
-            vec![Edge::directed(0, 1), labeled],
-            direction,
-            RankOrdering::PreserveInput,
-        )
-        .unwrap();
+        let graph =
+            Graph::from_parts(nodes, edges, direction, RankOrdering::PreserveInput).unwrap();
         let art = art_text(&graph);
         assert!(
             art.contains("when the renderer") && art.contains("width failure"),

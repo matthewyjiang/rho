@@ -33,7 +33,7 @@ flowchart TD
 | Rule | Detail |
 | --- | --- |
 | Fence info | First token is `mermaid` (case-insensitive). Extra tokens after it are allowed |
-| Streaming | Each completed line repaints the prefix. Valid prefixes show art immediately; a later bad line keeps the last good diagram. Closing the fence still decides the final panel |
+| Streaming | Each completed line repaints the prefix. Valid prefixes show art immediately, including a `{` block whose closing `}` has not arrived yet; a later bad line keeps the last good diagram. Closing the fence still decides the final panel |
 | Resize | Art is laid out again when the terminal or pane width changes |
 | Copy | Panel `COPY` always copies the original Mermaid source, for art and fallbacks |
 
@@ -77,6 +77,8 @@ so on) when it fits. Detours nest by span: a longer skip travels outside a
 shorter one so the stems do not cross. Forward edges that skip ranks travel on
 the trailing side (right in `TD`, bottom in `LR`) and loops return on the
 leading side (left in `TD`, top in `LR`), so those families cannot share ink.
+A skip edge's label sits beside its lane (left of the right-side lane in `TD`,
+right of the boxes above the bottom lane in `LR`).
 When the normal layout is wider than the pane, Rho wraps node labels and edge
 labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates node label text.
 Edge labels wrap to a few stacked rows; group titles, and sequence participant
@@ -96,7 +98,7 @@ Diagrams Rho cannot draw stay readable as source. The panel border says why:
 | `MERMAID · CLIPPED` | Art wider than the pane, cut at the right edge; marker row counts hidden columns |
 | `MERMAID · PANE TOO NARROW` | Pane too narrow even for clipped art; resize may produce art |
 | `MERMAID · UNSUPPORTED` | Kind or construct the terminal painter will not draw |
-| `MERMAID · INVALID` | Source did not parse |
+| `MERMAID · INVALID` | Source did not parse, or parsed but is not valid Mermaid (for example an unclosed `[` node shape or `state {` block, or a gitGraph `checkout` of a branch that was never created) |
 | `MERMAID · TOO LARGE` | Source, model, or painted output exceeded a hard cap |
 | `MERMAID · NOT RENDERED` | Blank, unsafe, or other decline |
 

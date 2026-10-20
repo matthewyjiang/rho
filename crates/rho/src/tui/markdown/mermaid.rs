@@ -17,6 +17,7 @@ mod model;
 mod policy;
 mod security;
 mod sequence;
+mod validity;
 
 pub(super) struct MermaidArt {
     pub(super) styled_lines: Vec<Line<'static>>,
@@ -69,6 +70,16 @@ impl MermaidFallback {
     }
 }
 
+/// How much of a fence body the renderer sees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SourceExtent {
+    /// The fence closed: the source must be a whole diagram.
+    Complete,
+    /// The fence is still streaming: complete lines so far, where blocks may
+    /// still be open.
+    StreamingPrefix,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum MermaidRender {
     Rendered(Vec<Line<'static>>),
@@ -83,7 +94,7 @@ pub(super) enum MermaidRender {
 }
 
 pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedPanel {
-    match mermaid_art(&source, inner_width) {
+    match mermaid_art(&source, inner_width, SourceExtent::Complete) {
         Ok((title, lines)) => ClosedPanel::Art {
             title,
             lines,
@@ -99,9 +110,10 @@ pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedP
 /// Live mermaid for an unclosed fence.
 ///
 /// Tries the complete-line prefix, then walks back through earlier complete
-/// lines on blank/malformed so a later bad line keeps last-good art. Sticky
-/// failures (unsafe, unsupported, too large) return `None` so the caller keeps
-/// an ordinary source fence until close.
+/// lines on blank/malformed so a later bad line keeps last-good art. A block
+/// still open at the prefix's end is not malformed: its closing line may not
+/// have streamed yet. Sticky failures (unsafe, unsupported, too large) return
+/// `None` so the caller keeps an ordinary source fence until close.
 pub(super) fn render_open_prefix(
     complete_body: &str,
     copy_source: &str,
@@ -109,7 +121,7 @@ pub(super) fn render_open_prefix(
 ) -> Option<ClosedPanel> {
     let mut body = complete_body;
     loop {
-        match mermaid_art(body, inner_width) {
+        match mermaid_art(body, inner_width, SourceExtent::StreamingPrefix) {
             Ok((title, lines)) => {
                 return Some(ClosedPanel::Art {
                     title,
@@ -129,8 +141,9 @@ pub(super) fn render_open_prefix(
 fn mermaid_art(
     source: &str,
     inner_width: usize,
+    extent: SourceExtent,
 ) -> Result<(&'static str, Vec<Line<'static>>), MermaidFallback> {
-    match render_mermaid(source, inner_width) {
+    match render_mermaid(source, inner_width, extent) {
         MermaidRender::Rendered(lines) => Ok(("MERMAID", lines)),
         MermaidRender::Clipped {
             mut lines,
@@ -146,14 +159,20 @@ fn mermaid_art(
     }
 }
 
-pub(super) fn render_mermaid(source: &str, inner_width: usize) -> MermaidRender {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| render_inner(source, inner_width))) {
+pub(super) fn render_mermaid(
+    source: &str,
+    inner_width: usize,
+    extent: SourceExtent,
+) -> MermaidRender {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        render_inner(source, inner_width, extent)
+    })) {
         Ok(result) => result,
         Err(_) => MermaidRender::Fallback(MermaidFallback::Panic),
     }
 }
 
-fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
+fn render_inner(source: &str, inner_width: usize, extent: SourceExtent) -> MermaidRender {
     if source.trim().is_empty() {
         return MermaidRender::Fallback(MermaidFallback::Blank);
     }
@@ -179,6 +198,15 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     }
     if !parsed.graph.node_links.is_empty() {
         return MermaidRender::Fallback(MermaidFallback::UnsafeContent);
+    }
+    // After the safety gates: unsafe content stays a sticky decline rather
+    // than a malformed walk-back while streaming.
+    match (validity::check(source, &parsed.graph), extent) {
+        (Ok(()), _) | (Err(validity::Defect::UnclosedBlock), SourceExtent::StreamingPrefix) => {}
+        (Err(validity::Defect::UnclosedBlock), SourceExtent::Complete)
+        | (Err(validity::Defect::Invalid), _) => {
+            return MermaidRender::Fallback(MermaidFallback::Malformed);
+        }
     }
     let (primary, relationships, groups, details) = model::complexity(&parsed.graph);
     if primary > MAX_PRIMARY_ENTITIES

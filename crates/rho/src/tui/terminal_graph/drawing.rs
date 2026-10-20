@@ -1,6 +1,8 @@
 // Adapted from Grok Build's terminal Mermaid renderer:
 // https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
+use std::ops::Range;
+
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -249,13 +251,14 @@ pub(in crate::tui) struct SkipPath {
 /// left along the target's own fan-in bus row and into the target from above.
 /// Joining the target's bus keeps every edge into one target on the same
 /// shared ink, so shared rows always mean joined edges rather than crossings.
+/// The label is placed separately by [`place_skip_label`] once every route
+/// is drawn.
 pub(in crate::tui) fn route_skip(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
     edge: &Edge,
     path: SkipPath,
-    label_lines: &[String],
 ) {
     let SkipPath {
         exit_row,
@@ -282,8 +285,48 @@ pub(in crate::tui) fn route_skip(
     if edge.head_from != Head::None {
         canvas.set(bx, by, head_glyph(edge.head_from, '▲'), Cls::Edge);
     }
+}
 
-    place_label_block(canvas, label_lines, join_row.saturating_sub(1), tx + 2);
+/// Place a top-down skip label beside its lane's vertical run: right-aligned
+/// one blank column before `lane_start`, on the free rows of `run` nearest
+/// its middle. Beside the target the label would land on the target's fan-in
+/// bus, which the skip route itself occupies.
+///
+/// Layout reserves the gutter left of the lanes, so only other skips' exit
+/// and join rows and labels contend for it. Call after every route is drawn
+/// so the free check sees all ink. A run with no free block keeps the middle
+/// row and truncates at ink, like other edge labels.
+pub(in crate::tui) fn place_skip_label(
+    canvas: &mut Canvas,
+    lines: &[String],
+    run: Range<usize>,
+    lane_start: usize,
+) {
+    let height = lines.len();
+    if height == 0 {
+        return;
+    }
+    // The run covers the head row below the exit plus at least one whole
+    // intermediate rank, so it always fits the tallest wrapped label.
+    debug_assert!(run.len() >= height, "skip run {run:?} shorter than label");
+    let block_free = |bottom: usize| {
+        lines.iter().enumerate().all(|(index, line)| {
+            let row = bottom + 1 + index - height;
+            let start = lane_start.saturating_sub(line.width() + 1);
+            (start..start + line.width()).all(|x| canvas.is_blank(x, row))
+        })
+    };
+    // Compare doubled centers so even-height blocks and runs center exactly.
+    let distance = |bottom: usize| (2 * bottom + 1 - height).abs_diff(run.start + run.end - 1);
+    let bottoms = (run.start + height - 1)..run.end;
+    let bottom = bottoms
+        .clone()
+        .filter(|&bottom| block_free(bottom))
+        .min_by_key(|&bottom| (distance(bottom), bottom))
+        .or_else(|| bottoms.min_by_key(|&bottom| (distance(bottom), bottom)));
+    if let Some(bottom) = bottom {
+        place_label_block_right(canvas, lines, bottom, lane_start);
+    }
 }
 
 pub(in crate::tui) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
@@ -494,11 +537,7 @@ fn place_label_line(canvas: &mut Canvas, label: &str, row: usize, start_x: usize
         if x + grapheme_width > canvas.w {
             break;
         }
-        let blocked = (0..grapheme_width).any(|offset| {
-            let index = canvas.idx(x + offset, row);
-            canvas.ch[index] != ' ' || canvas.mask[index] != 0 || canvas.occupied[index]
-        });
-        if blocked {
+        if !(0..grapheme_width).all(|offset| canvas.is_blank(x + offset, row)) {
             break;
         }
         canvas.set_grapheme(x, row, grapheme, Cls::EdgeLabel);

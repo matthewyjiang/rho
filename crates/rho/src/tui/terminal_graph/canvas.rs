@@ -58,6 +58,16 @@ impl Canvas {
         y * self.w + x
     }
 
+    /// True when the cell is on the canvas and holds no text, line ink, or
+    /// node area, so a label may claim it.
+    pub(in crate::tui) fn is_blank(&self, x: usize, y: usize) -> bool {
+        if x >= self.w || y >= self.h {
+            return false;
+        }
+        let index = self.idx(x, y);
+        self.ch[index] == ' ' && self.mask[index] == 0 && !self.occupied[index]
+    }
+
     pub(in crate::tui) fn set(&mut self, x: usize, y: usize, c: char, cls: Cls) {
         if x >= self.w || y >= self.h {
             return;

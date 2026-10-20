@@ -6,9 +6,9 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     canvas::{Canvas, STY_DOT, STY_SOLID, STY_THICK},
     drawing::{
-        art_node_rect, compute_ranks, draw_box, draw_compartment_box, draw_frame, route_back,
-        route_back_lr, route_forward, route_forward_lr, route_self, route_skip, route_skip_lr,
-        wrap_label, SkipPath,
+        art_node_rect, compute_ranks, draw_box, draw_compartment_box, draw_frame, place_skip_label,
+        route_back, route_back_lr, route_forward, route_forward_lr, route_self, route_skip,
+        route_skip_lr, wrap_label, SkipPath,
     },
     ordering::order_ranks,
     painter::{
@@ -335,6 +335,9 @@ pub(in crate::tui) fn layout_canvas(
             ),
         }
     }
+    // Top-down skip labels claim free gutter rows, so they wait until every
+    // route is on the canvas: (label rows, rows of the lane's vertical run).
+    let mut skip_labels = Vec::new();
     for (i, edge) in graph.edges.iter().enumerate() {
         canvas.cur_style = match edge.line {
             EdgeLine::Solid => STY_SOLID,
@@ -360,19 +363,21 @@ pub(in crate::tui) fn layout_canvas(
                 plan.source_anchors[edge.from],
                 label_lines,
             ),
-            (true, EdgeRoute::Skip) => route_skip(
-                &mut canvas,
-                from,
-                to,
-                edge,
-                SkipPath {
-                    exit_row: bus,
-                    lane_x: lane,
-                    join_row: plan.edge_join[i],
-                    source_anchor: plan.source_anchors[edge.from],
-                },
-                label_lines,
-            ),
+            (true, EdgeRoute::Skip) => {
+                route_skip(
+                    &mut canvas,
+                    from,
+                    to,
+                    edge,
+                    SkipPath {
+                        exit_row: bus,
+                        lane_x: lane,
+                        join_row: plan.edge_join[i],
+                        source_anchor: plan.source_anchors[edge.from],
+                    },
+                );
+                skip_labels.push((label_lines, (bus + 1)..plan.edge_join[i]));
+            }
             (true, EdgeRoute::Back) => route_back(&mut canvas, from, to, edge, lane, label_lines),
             (false, EdgeRoute::Adjacent) => route_forward_lr(
                 &mut canvas,
@@ -391,6 +396,9 @@ pub(in crate::tui) fn layout_canvas(
             }
             (_, EdgeRoute::SelfLoop) => continue,
         }
+    }
+    for (label_lines, run) in skip_labels {
+        place_skip_label(&mut canvas, label_lines, run, plan.skip_lane_start);
     }
 
     canvas.finalize_mask();
