@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use agent_client_protocol::schema::v1::{
     CompactionStatus, CompactionUpdate, ContentBlock, SessionId, SessionUpdate, StopReason,
     ToolCallStatus, ToolKind,
@@ -26,7 +28,7 @@ fn only_update(mapper: &mut EventMapper, event: RunEvent) -> SessionUpdate {
 
 /// A mapper that has already sent the host a `tool_call` for `call-1`.
 fn mapper_with_started_call() -> EventMapper {
-    let mut mapper = EventMapper::new(HostFeatures::default());
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
     only_update(
         &mut mapper,
         RunEvent::ToolStarted {
@@ -50,7 +52,7 @@ fn text_of(block: &ContentBlock) -> &str {
 #[test]
 fn assistant_delta_maps_to_agent_message_chunk() {
     let update = only_update(
-        &mut EventMapper::new(HostFeatures::default()),
+        &mut EventMapper::new(HostFeatures::default(), PathBuf::new()),
         RunEvent::AssistantTextDelta { text: "hi".into() },
     );
     match update {
@@ -71,7 +73,10 @@ fn reasoning_deltas_map_to_thought_chunks() {
             text: "think".into(),
         },
     ] {
-        let update = only_update(&mut EventMapper::new(HostFeatures::default()), event);
+        let update = only_update(
+            &mut EventMapper::new(HostFeatures::default(), PathBuf::new()),
+            event,
+        );
         match update {
             SessionUpdate::AgentThoughtChunk(chunk) => assert_eq!(text_of(&chunk.content), "think"),
             other => panic!("expected AgentThoughtChunk, got {other:?}"),
@@ -83,7 +88,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
 // Owner: acp event mapper
 #[test]
 fn proposed_started_finished_map_kind_and_status() {
-    let mut mapper = EventMapper::new(HostFeatures::default());
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
     let call_id = ToolCallId::from_string("call-1").unwrap();
     let proposed = mapper.map_event(
         &session_id(),
@@ -144,15 +149,37 @@ fn proposed_started_finished_map_kind_and_status() {
     }
 }
 
-// Covers: Zed renders an execute call's title verbatim as the command, so a
-// shell card must title with its command line alone, while execute tools
-// whose summary is display copy keep their tool name
+// Covers: hosts such as Zed list each call by its title, so a started call
+// must say what it does, as the interactive card header does, with paths
+// relative to the session directory, rather than only naming the tool. Zed
+// shows an execute title as the command, so a shell call's title is bare,
+// while execute tools whose summary is display copy keep their tool name.
+// A title is sent once, so it never carries a live phase such as "starting".
 // Owner: acp event mapper
 #[test]
-fn started_title_names_the_command_line_only_when_one_is_set() {
-    for (name, metadata, title) in [
+fn started_call_titles_describe_the_call() {
+    let cases = [
+        (
+            "read_file",
+            Some(json!({"path": "/work/src/a.rs", "offset": 10, "limit": 5})),
+            ToolMetadata::new(),
+            "read_file(src/a.rs:10-14)",
+        ),
+        (
+            "grep",
+            Some(json!({"pattern": "auth", "path": "crates"})),
+            ToolMetadata::new(),
+            "grep(auth, crates)",
+        ),
         (
             "bash",
+            Some(json!({"command": "cargo test -p rho"})),
+            ToolMetadata::new(),
+            "cargo test -p rho",
+        ),
+        (
+            "bash",
+            None,
             ToolMetadata::new()
                 .operation(OperationKind::Execute)
                 .command_line("cargo test"),
@@ -160,19 +187,51 @@ fn started_title_names_the_command_line_only_when_one_is_set() {
         ),
         (
             "computer",
+            Some(json!({})),
             ToolMetadata::new()
                 .operation(OperationKind::Execute)
                 .command_summary("click · x 4"),
-            "computer: click · x 4",
+            "computer(click · x 4)",
         ),
         (
-            "bash",
-            ToolMetadata::new().operation(OperationKind::Execute),
-            "bash",
+            "custom",
+            Some(json!({})),
+            ToolMetadata::new().command_summary("sync docs"),
+            "custom(sync docs)",
         ),
-    ] {
+        ("read_file", None, ToolMetadata::new(), "read_file"),
+        ("bash", None, ToolMetadata::new(), "bash"),
+        // Names the agent, not the "starting" phase the title would keep.
+        (
+            "agent",
+            Some(json!({"agent_id": "explorer", "prompt": "look"})),
+            ToolMetadata::new(),
+            "explorer",
+        ),
+        // Keeps the server, so it cannot pass for a built-in tool.
+        (
+            "mcp__fs__search",
+            Some(json!({"query": "auth"})),
+            ToolMetadata::new().command_summary("npx (1 arguments)"),
+            "fs/search(auth)",
+        ),
+    ];
+    for (name, arguments, metadata, expected) in cases {
+        let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::from("/work"));
+        if let Some(arguments) = arguments {
+            mapper.map_event(
+                &session_id(),
+                &RunEvent::ToolProposed {
+                    call: ToolCall {
+                        id: "call-1".into(),
+                        name: name.into(),
+                        arguments,
+                    },
+                },
+            );
+        }
         let started = only_update(
-            &mut EventMapper::new(HostFeatures::default()),
+            &mut mapper,
             RunEvent::ToolStarted {
                 call_id: ToolCallId::from_string("call-1").unwrap(),
                 name: name.into(),
@@ -180,7 +239,7 @@ fn started_title_names_the_command_line_only_when_one_is_set() {
             },
         );
         match started {
-            SessionUpdate::ToolCall(tool) => assert_eq!(tool.title, title),
+            SessionUpdate::ToolCall(tool) => assert_eq!(tool.title, expected, "{name}"),
             other => panic!("expected ToolCall, got {other:?}"),
         }
     }
@@ -191,7 +250,7 @@ fn started_title_names_the_command_line_only_when_one_is_set() {
 #[test]
 fn provider_stream_reset_emits_discard_thought() {
     let update = only_update(
-        &mut EventMapper::new(HostFeatures::default()),
+        &mut EventMapper::new(HostFeatures::default(), PathBuf::new()),
         RunEvent::ProviderStreamReset {
             reason: ProviderStreamResetReason::InvalidResponse,
             detail: "retry".into(),
@@ -210,7 +269,7 @@ fn provider_stream_reset_emits_discard_thought() {
 // Owner: acp event mapper
 #[test]
 fn ignored_events_emit_nothing() {
-    let mut mapper = EventMapper::new(HostFeatures::default());
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
     let ignored = [
         RunEvent::Started {
             run_id: RunId::from_string("run-1").unwrap(),
@@ -299,7 +358,7 @@ fn compaction_open_at_run_end_closes_with_the_ending() {
             Some("compaction ended without a result"),
         ),
     ] {
-        let mut mapper = EventMapper::new(compaction_host);
+        let mut mapper = EventMapper::new(compaction_host, PathBuf::new());
         let SessionUpdate::CompactionUpdate(opened) = only_update(
             &mut mapper,
             RunEvent::CompactionStarted {
@@ -458,28 +517,32 @@ fn replayed_display_rows_become_finished_tool_cards() {
         DisplayRow::Notification(Box::new(failed)),
         DisplayRow::Notice("workflow wf (fixture) finished - success".into()),
     ]);
-    let cards = EventMapper::replay_history(&session_id(), &[transcript.display_message()])
-        .into_iter()
-        .map(|notification| match notification.update {
-            SessionUpdate::ToolCall(call) => (
-                call.title,
-                call.kind,
-                call.status,
-                call.content
-                    .iter()
-                    .map(|content| match content {
-                        agent_client_protocol::schema::v1::ToolCallContent::Content(block) => {
-                            text_of(&block.content).to_owned()
-                        }
-                        other => panic!("expected text content, got {other:?}"),
-                    })
-                    .collect::<Vec<_>>(),
-                call.raw_output,
-                notification.meta.is_some(),
-            ),
-            other => panic!("expected ToolCall, got {other:?}"),
-        })
-        .collect::<Vec<_>>();
+    let cards = EventMapper::replay_history(
+        &session_id(),
+        &[transcript.display_message()],
+        Path::new(""),
+    )
+    .into_iter()
+    .map(|notification| match notification.update {
+        SessionUpdate::ToolCall(call) => (
+            call.title,
+            call.kind,
+            call.status,
+            call.content
+                .iter()
+                .map(|content| match content {
+                    agent_client_protocol::schema::v1::ToolCallContent::Content(block) => {
+                        text_of(&block.content).to_owned()
+                    }
+                    other => panic!("expected text content, got {other:?}"),
+                })
+                .collect::<Vec<_>>(),
+            call.raw_output,
+            notification.meta.is_some(),
+        ),
+        other => panic!("expected ToolCall, got {other:?}"),
+    })
+    .collect::<Vec<_>>();
     assert_eq!(
         cards,
         vec![

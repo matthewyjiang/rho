@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, Diff, Notice, NoticeSeverity, SessionId, SessionNotification,
@@ -9,6 +12,7 @@ use rho_sdk::{
     tool::{OperationKind, ToolMetadata, ToolOutput},
     RunEvent, ToolCompletion,
 };
+use rho_tools::tool_card::ToolHeader;
 use serde_json::Value;
 
 use super::{
@@ -16,8 +20,10 @@ use super::{
     HostFeatures,
 };
 use crate::{
+    app::interactive_presenter::call_header,
     display_transcript::{DisplayRow, DisplayTranscript},
     presentation::NotificationTone,
+    tools::mcp::exported_name::{parse_exported_name, ExportedNameDialect},
 };
 
 const PROVIDER_STREAM_RESET_NOTICE: &str = "[provider response discarded; retrying]";
@@ -43,6 +49,8 @@ mod replay;
 /// a card; one still open when the run ends is closed the same way.
 pub(super) struct EventMapper {
     features: HostFeatures,
+    /// Session working directory; titles show paths relative to it.
+    cwd: PathBuf,
     proposed: HashMap<String, rho_sdk::model::ToolCall>,
     announced: BTreeMap<String, CallState>,
     compaction: Option<CompactionCard>,
@@ -65,9 +73,10 @@ pub(super) enum RunEnding<'a> {
 }
 
 impl EventMapper {
-    pub(super) fn new(features: HostFeatures) -> Self {
+    pub(super) fn new(features: HostFeatures, cwd: PathBuf) -> Self {
         Self {
             features,
+            cwd,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
             compaction: None,
@@ -107,7 +116,7 @@ impl EventMapper {
                 self.announced
                     .insert(call_id.as_str().to_owned(), CallState::Open);
                 Some(SessionUpdate::ToolCall(started_tool_call(
-                    call_id, name, metadata, proposed,
+                    call_id, name, metadata, proposed, &self.cwd,
                 )))
             }
             RunEvent::ToolUpdated { call_id, progress } => self.tool_update(
@@ -230,16 +239,25 @@ impl EventMapper {
         }
         self.announced.insert(id.to_owned(), next);
         let proposed = self.proposed.remove(id);
-        let title = proposed
-            .as_ref()
-            .map_or(UNNAMED_TOOL_TITLE, |call| call.name.as_str());
-        let mut tool = ToolCall::new(ToolCallId::new(id), title)
+        let Some(call) = proposed else {
+            let tool = ToolCall::new(ToolCallId::new(id), UNNAMED_TOOL_TITLE)
+                .kind(ToolKind::Other)
+                .status(status)
+                .content(content);
+            return Some(SessionUpdate::ToolCall(tool));
+        };
+        let title = tool_title(
+            &call.name,
+            Some(&call.arguments),
+            &ToolMetadata::default(),
+            &self.cwd,
+        );
+        let tool = ToolCall::new(ToolCallId::new(id), title)
             .kind(ToolKind::Other)
             .status(status)
-            .content(content);
-        if let Some(call) = proposed {
-            tool = tool.name(call.name).raw_input(call.arguments);
-        }
+            .content(content)
+            .name(call.name)
+            .raw_input(call.arguments);
         Some(SessionUpdate::ToolCall(tool))
     }
 
@@ -250,8 +268,9 @@ impl EventMapper {
     pub(super) fn replay_history(
         session_id: &SessionId,
         messages: &[rho_sdk::model::Message],
+        cwd: &Path,
     ) -> Vec<SessionNotification> {
-        replay::history(session_id, messages)
+        replay::history(session_id, messages, cwd)
     }
 
     /// A live agent message outside any run, such as a notice at load.
@@ -316,29 +335,57 @@ fn started_tool_call(
     name: &str,
     metadata: &ToolMetadata,
     proposed: Option<Value>,
+    cwd: &Path,
 ) -> ToolCall {
-    let title = tool_title(name, metadata);
-    let mut tool = ToolCall::new(ToolCallId::new(call_id.as_str()), title)
+    let title = tool_title(name, proposed.as_ref(), metadata, cwd);
+    let tool = ToolCall::new(ToolCallId::new(call_id.as_str()), title)
         .name(name.to_owned())
         .kind(tool_kind(metadata))
         .status(ToolCallStatus::InProgress)
         .locations(tool_locations(metadata.affected_paths()));
-    if let Some(arguments) = proposed {
-        tool = tool.raw_input(arguments);
+    match proposed {
+        Some(arguments) => tool.raw_input(arguments),
+        None => tool,
     }
-    tool
 }
 
-/// Hosts such as Zed show an execute call's title verbatim as its command,
-/// so a call with a command line is titled with it alone; others lead with
-/// the tool name.
-fn tool_title(name: &str, metadata: &ToolMetadata) -> String {
+/// What a call does, as the interactive card header says it. ACP sends a
+/// title once, so it names the call, never a live phase:
+/// - a shell call is its bare command, since hosts such as Zed show an
+///   execute call's title verbatim as the command it runs; the call's
+///   `command_line` metadata is that command, and replay reads it from the
+///   arguments instead;
+/// - a status-first header keeps its identity and drops the phase;
+/// - an MCP call leads with its server, which the card shows on a fact line.
+///
+/// Replayed history has no metadata, so a generic tool that describes
+/// itself through `command_summary` is titled by name alone there.
+fn tool_title(
+    name: &str,
+    arguments: Option<&Value>,
+    metadata: &ToolMetadata,
+    cwd: &Path,
+) -> String {
     if let Some(command) = metadata.command_line_text().filter(|c| !c.is_empty()) {
         return command.to_owned();
     }
-    match metadata.command_summary_text() {
-        Some(summary) if !summary.is_empty() => format!("{name}: {summary}"),
-        _ => name.to_owned(),
+    let title = match call_header(name, arguments, metadata, cwd) {
+        ToolHeader::Shell {
+            command: Some(command),
+            ..
+        } => command,
+        // A shell call with no command yet; `$` alone would read as one.
+        ToolHeader::Shell { command: None, .. } => name.to_owned(),
+        ToolHeader::StatusFirst { identity, .. } => identity,
+        ToolHeader::Call {
+            verb,
+            primary: Some(primary),
+        } if !primary.is_empty() => format!("{verb}({primary})"),
+        ToolHeader::Call { verb, .. } => verb,
+    };
+    match parse_exported_name(name, ExportedNameDialect::Rho) {
+        Some(identity) => format!("{}/{title}", identity.server),
+        None => title,
     }
 }
 

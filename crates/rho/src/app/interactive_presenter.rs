@@ -29,6 +29,7 @@ mod sessions_format;
 mod todo_format;
 #[path = "interactive_presenter_tool_search.rs"]
 mod tool_search_format;
+pub(crate) use format::call_header;
 use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -280,7 +281,13 @@ impl InteractiveToolPresenter {
         let kind = ToolKind::from_name_and_args(name, preview.last_args.as_ref());
         // Keep the last successful parse so a mid-stream incomplete fragment
         // does not wipe a useful card back to a bare header.
-        let card = streaming_preview_card(kind, name, preview.last_args.as_ref(), &self.cwd);
+        let card = streaming_preview_card(
+            kind,
+            name,
+            preview.last_args.as_ref(),
+            &self.cwd,
+            rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
+        );
         preview.next_parse_length = preview
             .arguments
             .len()

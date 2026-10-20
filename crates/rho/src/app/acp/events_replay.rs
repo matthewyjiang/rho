@@ -1,23 +1,33 @@
 //! Rebuild a client's transcript from persisted display history, without
 //! executing tools. ACP tool updates always follow a full call for that id.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
     ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
-use rho_sdk::model::{self, Message, SemanticMessage};
+use rho_sdk::{
+    model::{self, Message, SemanticMessage},
+    tool::ToolMetadata,
+};
 use serde_json::Value;
 
-use super::{notify, text_chunk, EventMapper, UNNAMED_TOOL_TITLE};
+use super::{notify, text_chunk, tool_title, EventMapper, UNNAMED_TOOL_TITLE};
 use crate::display_transcript::DisplayTranscript;
 
 /// Hosts with their own transcript use this marker to avoid duplicating it.
 const REPLAY_META_KEY: &str = "isReplay";
 
-pub(super) fn history(session_id: &SessionId, messages: &[Message]) -> Vec<SessionNotification> {
-    let mut replay = Replay::default();
+pub(super) fn history(
+    session_id: &SessionId,
+    messages: &[Message],
+    cwd: &Path,
+) -> Vec<SessionNotification> {
+    let mut replay = Replay {
+        cwd,
+        tools: BTreeMap::new(),
+    };
     let mut updates = Vec::new();
     for message in messages {
         replay.message(session_id, message, &mut updates);
@@ -38,13 +48,14 @@ pub(super) fn history(session_id: &SessionId, messages: &[Message]) -> Vec<Sessi
         .collect()
 }
 
-#[derive(Default)]
-struct Replay {
+struct Replay<'a> {
+    /// Session working directory; titles show paths relative to it.
+    cwd: &'a Path,
     /// Latest occurrence by stored/provider ID; ACP identities are session-unique.
     tools: BTreeMap<String, ToolCall>,
 }
 
-impl Replay {
+impl Replay<'_> {
     fn message(
         &mut self,
         session_id: &SessionId,
@@ -144,7 +155,13 @@ impl Replay {
                     image.mime_type.clone(),
                 )),
                 model::ContentBlock::ToolCall(call) => {
-                    let tool = ToolCall::new(fresh_tool_call_id(), call.name.clone())
+                    let title = tool_title(
+                        &call.name,
+                        Some(&call.arguments),
+                        &ToolMetadata::default(),
+                        self.cwd,
+                    );
+                    let tool = ToolCall::new(fresh_tool_call_id(), title)
                         .name(call.name.clone())
                         .status(ToolCallStatus::Pending)
                         .raw_input(call.arguments.clone());

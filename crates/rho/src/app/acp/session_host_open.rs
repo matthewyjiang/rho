@@ -138,7 +138,7 @@ impl SessionHost {
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
         let replay_result =
-            replay_display_history(&request.session_id, &histories.display, client).await;
+            replay_display_history(&request.session_id, &histories.display, cwd, client).await;
         if let Err(error) = replay_result {
             built.teardown().await;
             return Err(error);
@@ -176,9 +176,10 @@ impl SessionHost {
 async fn replay_display_history(
     session_id: &SessionId,
     messages: &[Message],
+    cwd: &Path,
     client: &dyn AcpClientPort,
 ) -> anyhow::Result<()> {
-    for notification in EventMapper::replay_history(session_id, messages) {
+    for notification in EventMapper::replay_history(session_id, messages, cwd) {
         send_notification(client, notification).await?;
     }
     Ok(())

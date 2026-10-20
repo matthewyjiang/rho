@@ -680,7 +680,7 @@ impl SessionHost {
         };
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.built.approval_receiver.take();
-        let mut mapper = EventMapper::new(self.host_features);
+        let mut mapper = EventMapper::new(self.host_features, self.storage.cwd().to_path_buf());
         let mut signals = self.signals();
         signals.send_plan_change(&self.acp_session_id, client).await;
         let pump_result = self
