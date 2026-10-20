@@ -199,7 +199,7 @@ async fn invalid_regex_fails_prepare_without_capability_requests() {
 }
 
 #[tokio::test]
-async fn allowed_policy_runs_grep_and_glob_with_read_metadata() {
+async fn allowed_policy_runs_grep_and_glob_with_search_metadata() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("note.txt"), "hello world\n").unwrap();
     std::fs::write(dir.path().join("lib.rs"), "fn main() {}\n").unwrap();
