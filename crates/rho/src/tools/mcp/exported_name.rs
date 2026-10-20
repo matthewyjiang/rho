@@ -22,18 +22,23 @@ pub(crate) struct McpToolIdentity {
 
 /// Build Rho's unambiguous exported name for one MCP server tool.
 pub(crate) fn namespaced_tool_name(server: &str, tool: &str) -> String {
-    format!(
-        "mcp__{}__{}",
-        encode_component(server),
-        encode_component(tool)
-    )
+    format!("{}{}", exported_name_prefix(server), encode_component(tool))
+}
+
+/// The `mcp__<server>__` prefix every exported tool of `server` shares, so the
+/// prompt can name it exactly instead of leaving the model to guess the codec.
+pub(crate) fn exported_name_prefix(server: &str) -> String {
+    format!("mcp__{}__", encode_component(server))
 }
 
 fn encode_component(value: &str) -> String {
     const ESCAPE_PREFIX: &str = "_rho_";
+    // Every supported provider accepts `[a-zA-Z0-9_-]` in tool names, and `-`
+    // cannot merge with the `__` separator, so a hyphenated name such as
+    // `t3-code` stays readable.
     let already_safe = value
         .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
     // `__` joins the components. A component containing it or beginning or ending
     // with `_` could merge with that separator. The leading rule also reserves the
     // escape prefix for this codec.
@@ -106,6 +111,7 @@ mod tests {
             ("a", "_tool"),
             ("_a", "lint"),
             ("srv", "tool_"),
+            ("-t3-code-", "get-issue"),
         ] {
             let name = namespaced_tool_name(server, tool);
             assert_eq!(

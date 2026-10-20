@@ -255,9 +255,10 @@ fn remote_and_tool_policy_is_deterministic() {
         assert_eq!(parse_remote_url(url).is_ok(), expected, "{url}");
     }
 
+    // Hyphens stay readable because providers accept them; `/` does not.
     assert_eq!(
         namespaced_tool_name("git-hub", "issues/list"),
-        "mcp___rho_6769742d687562___rho_6973737565732f6c697374"
+        "mcp__git-hub___rho_6973737565732f6c697374"
     );
     assert_ne!(
         namespaced_tool_name("devtools/validator", "lint"),
