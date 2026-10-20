@@ -17,10 +17,10 @@ use tokio::sync::Mutex;
 use crate::provider::{CatalogConstruction, CatalogLookupMode, ProviderDescriptor, ProviderId};
 
 use super::{
-    document::{self, ModelsDevCatalog},
-    fetch_models_dev_api, model_metadata_needs_refresh, upstream_row_from_api,
-    with_models_dev_cache, write_cached_upstream_model_metadata_batch, CachedRow,
-    MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
+    document::{self, ModelsDevCanonicalCatalog, ModelsDevCatalog},
+    fetch_models_dev_api, fetch_models_dev_canonical, model_metadata_needs_refresh,
+    upstream_row_from_api, with_models_dev_cache, write_cached_upstream_model_metadata_batch,
+    CachedRow, MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
 };
 
 /// How long a successful full-catalog snapshot stays current across launches.
@@ -66,14 +66,29 @@ pub async fn force_refresh_models_dev_catalog() -> usize {
 }
 
 async fn hydrate_catalog_from_network() -> usize {
-    let Some(response) = fetch_models_dev_api().await else {
+    let (api, canonical) =
+        tokio::join!(fetch_models_dev_api(), fetch_canonical_for_model_id_hosts());
+    let Some(api) = api else {
         return 0;
     };
-    let written = hydrate_catalog_from_api(&response);
+    let written = hydrate_catalog_from_api(&api, &canonical);
     if written > 0 && mark_catalog_snapshot_current() {
         CATALOG_READY.store(true, Ordering::Release);
     }
     written
+}
+
+/// Canonical `models.json` rows when an interned model-id host reads the
+/// shared tree; empty otherwise, so other configs never download it.
+///
+/// Best effort: a failed download still lets the `api.json` snapshot land and
+/// be marked current. Retrying would redownload `api.json` on every ensure
+/// while `models.json` is down, and `/config` can force a refresh.
+pub(super) async fn fetch_canonical_for_model_id_hosts() -> ModelsDevCanonicalCatalog {
+    if !needed_extra_catalog_docs().full_tree {
+        return ModelsDevCanonicalCatalog::default();
+    }
+    fetch_models_dev_canonical().await.unwrap_or_default()
 }
 
 /// Fills catalog rows for several models with one models.dev download.
@@ -113,8 +128,14 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// Any interned `catalog_mode = "model-id"` host additionally needs the entire
 /// models.dev tree written once under [`MODEL_ID_CATALOG_CACHE_PROVIDER`] with
 /// unsplit `slug/model` ids, parsed with that mode's hydrate policy. Unborrowed
-/// upstream providers otherwise stay out of sqlite.
-pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
+/// upstream providers otherwise stay out of sqlite. `canonical` then fills
+/// tree ids no serving provider publishes under that slug: proxies expose lab
+/// ids such as `alibaba/qwen3.8-flash-next` that only resellers serve. An
+/// exact `api.json` tree row always wins over the canonical row.
+pub(super) fn hydrate_catalog_from_api(
+    api: &ModelsDevCatalog,
+    canonical: &ModelsDevCanonicalCatalog,
+) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
     for descriptor in crate::provider::builtin_providers() {
@@ -158,6 +179,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let extra = needed_extra_catalog_docs();
     if extra.full_tree {
         let policy = CatalogLookupMode::MODEL_ID_HYDRATE_REASONING;
+        let mut tree_ids = HashSet::new();
         for (slug, provider) in api.iter_providers() {
             for model_id in provider.models.keys() {
                 let Some(row) = document::cached_row_from_catalog(api, slug, model_id, policy)
@@ -165,12 +187,20 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
                 else {
                     continue;
                 };
-                entries.push((
-                    MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
-                    format!("{slug}/{model_id}"),
-                    row,
-                ));
+                let tree_id = format!("{slug}/{model_id}");
+                tree_ids.insert(tree_id.clone());
+                entries.push((MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(), tree_id, row));
             }
+        }
+        for (canonical_id, model) in canonical.iter() {
+            if tree_ids.contains(canonical_id) {
+                continue;
+            }
+            entries.push((
+                MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
+                canonical_id.to_string(),
+                document::cached_row_from_canonical(model),
+            ));
         }
     }
     let written = write_cached_upstream_model_metadata_batch(

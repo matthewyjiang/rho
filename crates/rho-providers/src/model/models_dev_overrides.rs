@@ -197,6 +197,11 @@ fn override_from_table(document: &toml::Table, provider: &str, model: &str) -> O
 }
 
 fn local_overrides_path() -> Option<PathBuf> {
+    // Unit tests must not read the developer's own models.toml; they pass
+    // fixture paths to `local_override_table_at` instead.
+    if cfg!(test) {
+        return None;
+    }
     if let Some(path) = std::env::var_os("RHO_MODELS_PATH") {
         return Some(path.into());
     }

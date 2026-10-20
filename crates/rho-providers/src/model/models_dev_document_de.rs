@@ -19,8 +19,8 @@ use serde::{
 };
 
 use super::{
-    context_over_threshold, CatalogReasoningOptions, ModelsDevCatalog, ModelsDevCost,
-    ModelsDevCostRates, ModelsDevCostTier, ModelsDevModel, ModelsDevProvider,
+    context_over_threshold, CatalogReasoningOptions, ModelsDevCanonicalCatalog, ModelsDevCatalog,
+    ModelsDevCost, ModelsDevCostRates, ModelsDevCostTier, ModelsDevModel, ModelsDevProvider,
 };
 
 /// Accept `T` or ignore a type mismatch. Untagged, so serde buffers `T` into
@@ -180,6 +180,13 @@ impl<'de> Deserialize<'de> for ModelMap {
         }
 
         deserializer.deserialize_map(ModelsVisitor)
+    }
+}
+
+/// `models.json` is one flat model map, so it shares the lenient per-model visitor.
+impl<'de> Deserialize<'de> for ModelsDevCanonicalCatalog {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ModelMap::deserialize(deserializer).map(|models| Self { models: models.0 })
     }
 }
 
