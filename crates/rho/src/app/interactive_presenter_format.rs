@@ -702,7 +702,9 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
 
 fn family_from_metadata(metadata: &ToolMetadata) -> ToolFamily {
     match metadata.operation_kind() {
-        Some(OperationKind::Read | OperationKind::Execute) => ToolFamily::FileCommand,
+        Some(OperationKind::Read | OperationKind::Search | OperationKind::Execute) => {
+            ToolFamily::FileCommand
+        }
         Some(OperationKind::Write) => ToolFamily::FileDiff,
         Some(OperationKind::Network) => ToolFamily::Web,
         Some(OperationKind::Other(kind)) if kind == "questionnaire" => ToolFamily::Form,

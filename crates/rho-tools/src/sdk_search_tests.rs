@@ -244,7 +244,7 @@ async fn allowed_policy_runs_grep_and_glob_with_read_metadata() {
                 ToolCompletion::Success(output) => {
                     assert_eq!(
                         output.presentation().operation_kind(),
-                        Some(&OperationKind::Read)
+                        Some(&OperationKind::Search)
                     );
                     outputs.push(output.content().to_string());
                 }

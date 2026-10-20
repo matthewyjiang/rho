@@ -56,6 +56,10 @@ pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolErr
 #[non_exhaustive]
 pub enum OperationKind {
     Read,
+    /// Searches files or names without changing anything, such as grep and
+    /// glob. As read-only as [`OperationKind::Read`], so approval that trusts
+    /// reads can trust searches; presentation can call them searches.
+    Search,
     Write,
     Execute,
     Network,
