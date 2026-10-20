@@ -2334,3 +2334,34 @@ fn provider_tree_row_wins_over_canonical_row() {
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
+
+// Covers: an opportunistic API-only hydrate that waited on the lock while the
+// first model-id host was interned must not mark canonical coverage current
+// Owner: models.dev catalog hydrate
+#[test]
+fn opportunistic_hydrate_rechecks_model_id_hosts_under_lock() {
+    use futures_util::FutureExt;
+
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let api = catalog(&api_without_lab_slug_row());
+        let held = hydrate::catalog_hydrate_lock_for_parent()
+            .try_lock()
+            .unwrap();
+        let mut hydrate = Box::pin(hydrate::hydrate_from_fetched_api(&api));
+        assert!(
+            (&mut hydrate).now_or_never().is_none(),
+            "hydrate must wait on the held lock"
+        );
+
+        install_model_id_host();
+        drop(held);
+        assert!((&mut hydrate).now_or_never().is_some());
+
+        assert!(!hydrate::catalog_snapshot_is_ready());
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}

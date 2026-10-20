@@ -92,9 +92,12 @@ pub(super) async fn hydrate_from_fetched_api(api: &ModelsDevCatalog) {
         return;
     }
     let _guard = catalog_hydrate_lock().lock().await;
-    if !catalog_snapshot_is_ready() {
-        write_snapshot(api, &ModelsDevCanonicalCatalog::default());
+    // Recheck under the lock: a model-id host interned while this call waited
+    // needs canonical rows, and an API-only snapshot must not claim them.
+    if catalog_snapshot_is_ready() || needed_extra_catalog_docs().full_tree {
+        return;
     }
+    write_snapshot(api, &ModelsDevCanonicalCatalog::default());
 }
 
 /// Writes one full snapshot and marks it current. Callers hold the hydrate lock.
