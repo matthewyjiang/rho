@@ -81,11 +81,13 @@ pub(crate) fn parse_exported_name(
 /// Hosts and servers spell MCP tool names their own way: T3 Code writes
 /// `mcp__t3_code__task_status` for Rho's `mcp__t3-code__task_status`, and
 /// sessions saved before hyphens stayed verbatim hold hex such as
-/// `mcp___rho_74332d636f6465__task_status`. Both sides decode Rho escapes and
-/// fold every character outside `[A-Za-z0-9]` to `_`. Only a unique match
-/// resolves, so a spelling two tools share stays unresolved. A registered name
-/// always matches itself, so it resolves to itself unless a sibling folds to
-/// the same key; callers then keep the exact name.
+/// `mcp___rho_74332d636f6465__task_status`. Both sides decode Rho escapes,
+/// rejoin as `mcp__<server>__<tool>`, and fold every character outside
+/// `[A-Za-z0-9]` to `_`. Comparing joined names, not split pairs, keeps a
+/// spelling such as `mcp__a__b__c` ambiguous between server `a` and server
+/// `a__b`, as it is in the dialects that produce it. Only a unique match
+/// resolves. A registered name always matches itself, so it resolves to itself
+/// unless a sibling folds to the same key; callers then keep the exact name.
 pub(crate) fn resolve_foreign_spelling<'a>(
     requested: &str,
     registered: impl IntoIterator<Item = &'a str>,
@@ -98,11 +100,12 @@ pub(crate) fn resolve_foreign_spelling<'a>(
     matches.next().is_none().then_some(found)
 }
 
-fn spelling_key(name: &str) -> Option<(String, String)> {
-    let identity = parse_exported_name(name, ExportedNameDialect::Rho)?;
-    let fold =
-        |value: &str| value.replace(|character: char| !character.is_ascii_alphanumeric(), "_");
-    Some((fold(&identity.server), fold(&identity.tool)))
+fn spelling_key(name: &str) -> Option<String> {
+    let McpToolIdentity { server, tool } = parse_exported_name(name, ExportedNameDialect::Rho)?;
+    Some(
+        format!("mcp__{server}__{tool}")
+            .replace(|character: char| !character.is_ascii_alphanumeric(), "_"),
+    )
 }
 
 /// Reverse Rho's `_rho_` + hex component escape. Invalid payloads remain
@@ -168,7 +171,8 @@ mod tests {
     }
 
     // Covers: other harnesses' spellings and legacy hex names find the one
-    // registered tool they mean; shared or non-MCP spellings resolve to nothing.
+    // registered tool they mean; spellings two tools share, including across
+    // the `__` separator, and non-MCP spellings resolve to nothing.
     #[test]
     fn foreign_spellings_resolve_only_to_a_unique_tool() {
         let registered = [
@@ -176,6 +180,9 @@ mod tests {
             namespaced_tool_name("acme/docs", "search"),
             namespaced_tool_name("srv", "get-issue"),
             namespaced_tool_name("srv", "get.issue"),
+            namespaced_tool_name("a", "b__c"),
+            namespaced_tool_name("a__b", "c"),
+            namespaced_tool_name("foo-", "tool"),
             "read_file".to_string(),
         ];
         let resolve = |requested: &str| {
@@ -186,9 +193,11 @@ mod tests {
                 "mcp__t3_code__task_status",
                 "mcp___rho_74332d636f6465__task_status",
                 "mcp__acme_docs__search",
+                "mcp__foo___tool",
                 "mcp__srv__get_issue",
-                "mcp__t3_code__missing",
                 "mcp__srv__get-issue",
+                "mcp__a__b__c",
+                "mcp__t3_code__missing",
                 "read_file",
             ]
             .map(resolve),
@@ -196,6 +205,8 @@ mod tests {
                 Some("mcp__t3-code__task_status"),
                 Some("mcp__t3-code__task_status"),
                 Some(registered[1].as_str()),
+                Some("mcp__foo-__tool"),
+                None,
                 None,
                 None,
                 None,
