@@ -305,6 +305,8 @@ fn validity_checks_keep_valid_lookalikes_painting() {
         "erDiagram\np[\"Person: admin\"] {\nstring name\n}",
         "flowchart TD\nA -- yes<br>no --> B",
         "flowchart TD\naccTitle: steps [draft\naccDescr: parser[accepts\nA --> B",
+        "flowchart TD\naccDescr: The opening delimiter is {\nA --> B",
+        "flowchart TD\naccDescr { one line [draft }\nA --> B",
         "gitGraph\ncommit\nbranch feat\ncheckout feat\ncommit\ncheckout main\nmerge feat",
         "gitGraph\n%% mainBranchName stays main here\ncommit id: \"set mainBranchName\"",
     ] {

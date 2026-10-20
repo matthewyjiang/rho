@@ -93,11 +93,15 @@ fn strip_trailing_comment(line: &str) -> &str {
 /// label stay text, which keeps lenient labels such as `A[x)]` painting.
 /// Requires every flowchart node shape to close on its line. Like upstream,
 /// skips free-text `accTitle`, `accDescr`, and `title` lines. Upstream reads
-/// the body of a multiline `accDescr { ... }` block as nodes, so that form is
-/// misread.
+/// the body of an `accDescr {` block that continues past its line as nodes,
+/// so that form is misread; `accDescr: text {` and `accDescr { text }` are
+/// single-line descriptions.
 fn flowchart_shapes_close(lines: &[&str]) -> Result<(), Defect> {
     for line in lines {
-        if line.starts_with("accDescr") && line.ends_with('{') {
+        let opens_block = line
+            .strip_prefix("accDescr")
+            .is_some_and(|rest| rest.trim_start().starts_with('{') && !rest.contains('}'));
+        if opens_block {
             return Err(Defect::Misread);
         }
         let free_text = ["accTitle", "accDescr", "title "]
