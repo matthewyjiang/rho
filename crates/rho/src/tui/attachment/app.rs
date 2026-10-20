@@ -151,7 +151,7 @@ pub(crate) async fn run(
     theme: &str,
     herdr: HerdrReporter,
 ) -> anyhow::Result<()> {
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
     let _syntax_warmup = tokio::task::spawn_blocking(crate::tui::syntax::warm_syntax_set);

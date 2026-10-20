@@ -609,7 +609,7 @@ fn ensure_cli_credential_store_choice(
         return Ok(());
     };
 
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() || !io::stderr().is_terminal() {
         anyhow::bail!(
             "credential store is unset; set it before non-interactive login with \
 `rho credential-store set os|file`, behavior.credential_store in config.toml, \
@@ -795,7 +795,8 @@ fn detect_first_run(repository: &ConfigRepository) -> Option<SetupEntry> {
 }
 
 fn validate_terminal_mode(cli: &Cli) -> anyhow::Result<()> {
-    if cli.command.is_none() && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
+    if cli.command.is_none() && (!crate::stdio::stdin_is_terminal() || !io::stdout().is_terminal())
+    {
         anyhow::bail!(
             "rho's default mode is the interactive TUI; use `rho run` for non-interactive automation"
         );

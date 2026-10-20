@@ -406,7 +406,7 @@ async fn run_frozen_plan(
 }
 
 fn confirm_exact_plan(yes: bool, action: &str) -> anyhow::Result<()> {
-    let terminal = io::stdin().is_terminal() && io::stderr().is_terminal();
+    let terminal = crate::stdio::stdin_is_terminal() && io::stderr().is_terminal();
     match confirmation_requirement(yes, terminal) {
         ConfirmationRequirement::Confirmed => Ok(()),
         ConfirmationRequirement::FlagRequired => {

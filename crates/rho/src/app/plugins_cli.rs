@@ -220,7 +220,7 @@ fn require_home(home: Option<&Path>) -> anyhow::Result<&Path> {
 
 fn confirm_remove(name: &str) -> anyhow::Result<bool> {
     use std::io::{self, IsTerminal, Write};
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() || !io::stdout().is_terminal() {
         anyhow::bail!(
             "refusing to remove `{name}` without --yes when not running in an interactive terminal"
         );

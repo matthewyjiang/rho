@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeMap,
-    io::{self, IsTerminal, Write},
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -306,7 +306,7 @@ fn confirm_missing_workspace_cleanup(
     directories: &BTreeMap<PathBuf, usize>,
     session_count: usize,
 ) -> anyhow::Result<()> {
-    if !io::stdin().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() {
         anyhow::bail!(
             "cleanup would delete {session_count} session(s) from {} missing workspace director{}; pass --yes to confirm",
             directories.len(),
@@ -358,7 +358,7 @@ fn resolve_candidate(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionSumma
 }
 
 fn confirm_cross_project(session: &SessionSummary) -> anyhow::Result<()> {
-    if !io::stdin().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() {
         anyhow::bail!(
             "session {} belongs to workspace {}; pass --yes to delete cross-project sessions without a prompt",
             short_id(&session.id),

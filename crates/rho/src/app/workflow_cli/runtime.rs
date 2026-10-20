@@ -240,7 +240,7 @@ pub(crate) async fn execute_run(
     output: Option<WorkflowRunFormat>,
     config_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let interactive_input = io::stdin().is_terminal();
+    let interactive_input = crate::stdio::stdin_is_terminal();
     let interactive_terminal = interactive_input && io::stdout().is_terminal();
     let interactive_display = io::stderr().is_terminal();
     let presentation = match output {
