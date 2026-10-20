@@ -72,23 +72,25 @@ pub(super) fn next_placeholder_tool_call_id(counter: &AtomicU64) -> String {
     format!("pending-{}", counter.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
+/// The prompt for one approval. A request for a call the host already saw
+/// reuses that card and keeps the kind it was announced with; only a
+/// placeholder card, which has no kind yet, takes one from the capability.
 pub(super) fn permission_request(
     session_id: &SessionId,
     request: &rho_sdk::ApprovalRequest,
     placeholder_tool_call_id: &str,
 ) -> RequestPermissionRequest {
-    let tool_call_id = request
-        .tool_call_id()
-        .map(|id| id.as_str().to_string())
-        .unwrap_or_else(|| placeholder_tool_call_id.to_string());
+    let fields = ToolCallUpdateFields::new().title(request.reason());
+    let (tool_call_id, fields) = match request.tool_call_id() {
+        Some(id) => (id.as_str(), fields),
+        None => (
+            placeholder_tool_call_id,
+            fields.kind(tool_kind_for_capability(request.capability().kind())),
+        ),
+    };
     RequestPermissionRequest::new(
         session_id.clone(),
-        ToolCallUpdate::new(
-            ToolCallId::new(tool_call_id),
-            ToolCallUpdateFields::new()
-                .title(request.reason())
-                .kind(tool_kind_for_capability(request.capability().kind())),
-        ),
+        ToolCallUpdate::new(ToolCallId::new(tool_call_id), fields),
         permission_options(),
     )
 }

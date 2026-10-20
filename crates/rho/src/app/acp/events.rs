@@ -392,6 +392,7 @@ fn tool_title(
 fn tool_kind(metadata: &ToolMetadata) -> ToolKind {
     match metadata.operation_kind() {
         Some(OperationKind::Read) => ToolKind::Read,
+        Some(OperationKind::Search) => ToolKind::Search,
         Some(OperationKind::Write) => ToolKind::Edit,
         Some(OperationKind::Execute) => ToolKind::Execute,
         Some(OperationKind::Network) => ToolKind::Fetch,

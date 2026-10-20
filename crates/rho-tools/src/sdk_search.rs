@@ -59,7 +59,7 @@ impl SearchTool<GlobSearch> {
 }
 
 fn start_metadata(arguments: &Value) -> ToolMetadata {
-    let mut metadata = ToolMetadata::new().operation(OperationKind::Read);
+    let mut metadata = ToolMetadata::new().operation(OperationKind::Search);
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
         metadata = metadata.affected_path(path);
     }
@@ -136,7 +136,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                             .limit_data(max_output_bytes)?
                             .into_tool_output(
                                 ToolMetadata::new()
-                                    .operation(OperationKind::Read)
+                                    .operation(OperationKind::Search)
                                     .affected_path(display),
                             )
                     })
