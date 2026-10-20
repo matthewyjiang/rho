@@ -60,55 +60,55 @@ pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> P
 }
 
 pub fn report_message_omissions(messages: &[Message], target: &ModelIdentity) -> HandoffReport {
-    let mut report = report_omissions(
-        messages.iter().filter_map(|message| match message {
-            Message::EnrichedAssistant(message) => Some(message.as_ref()),
+    collect_omissions(omitted_message_context(messages, target))
+}
+
+/// Yields the provider-native blocks in `messages` that `target` cannot
+/// replay, in history order: exactly the blocks [`report_message_omissions`]
+/// counts. SDK metadata blocks are skipped.
+pub fn omitted_message_context<'a>(
+    messages: &'a [Message],
+    target: &'a ModelIdentity,
+) -> impl Iterator<Item = &'a ProviderContextBlock> + 'a {
+    messages
+        .iter()
+        .flat_map(|message| match message {
+            Message::EnrichedAssistant(message) => message.provider_context.as_slice(),
+            Message::AbortedAssistant(message) => message.provider_context.as_slice(),
             Message::System(_)
             | Message::User(_)
             | Message::Assistant(_)
-            | Message::AbortedAssistant(_)
-            | Message::ToolResult(_) => None,
-        }),
-        target,
-    );
-    for message in messages {
-        let Message::AbortedAssistant(message) = message else {
-            continue;
-        };
-        collect_omissions(&message.provider_context, target, &mut report);
-    }
-    report.omitted_kinds.sort();
-    report
+            | Message::ToolResult(_) => &[],
+        })
+        .filter(|block| is_omitted(block, target))
 }
 
 pub fn report_omissions<'a>(
     messages: impl IntoIterator<Item = &'a AssistantMessage>,
     target: &ModelIdentity,
 ) -> HandoffReport {
+    collect_omissions(
+        messages
+            .into_iter()
+            .flat_map(|message| &message.provider_context)
+            .filter(|block| is_omitted(block, target)),
+    )
+}
+
+fn is_omitted(block: &ProviderContextBlock, target: &ModelIdentity) -> bool {
+    !block.is_sdk_metadata() && !block.is_replayable_to(target)
+}
+
+fn collect_omissions<'a>(omitted: impl Iterator<Item = &'a ProviderContextBlock>) -> HandoffReport {
     let mut report = HandoffReport::default();
-    for message in messages {
-        collect_omissions(&message.provider_context, target, &mut report);
+    for block in omitted {
+        report.omitted_provider_context += 1;
+        if !report.omitted_kinds.contains(&block.kind) {
+            report.omitted_kinds.push(block.kind.clone());
+        }
     }
     report.omitted_kinds.sort();
     report
-}
-
-fn collect_omissions(
-    blocks: &[ProviderContextBlock],
-    target: &ModelIdentity,
-    report: &mut HandoffReport,
-) {
-    for block in blocks {
-        if block.is_sdk_metadata() {
-            continue;
-        }
-        if !block.is_replayable_to(target) {
-            report.omitted_provider_context += 1;
-            if !report.omitted_kinds.contains(&block.kind) {
-                report.omitted_kinds.push(block.kind.clone());
-            }
-        }
-    }
 }
 
 #[cfg(test)]

@@ -1,9 +1,14 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::model::handoff::HandoffReport;
+use rho_providers::model::Message;
+use rho_sdk::model::{
+    handoff::HandoffReport, AssistantMessage, ModelIdentity, ProviderContextBlock,
+};
+use rho_sdk::SessionId;
 
 use super::{
-    confirm_send_choice, AuthorizedSendSubmission, CancellationSource, SendSubmission, TurnOrigin,
-    ACTION_COMPACT_SEND, ACTION_DONT_SEND, ACTION_SEND,
+    confirm_send_choice, AuthorizedSendSubmission, CancellationSource, SendOmissions,
+    SendSubmission, TurnOrigin, ACTION_COMPACT_SEND, ACTION_DONT_SEND, ACTION_SEND,
+    ACTION_SEND_SESSION,
 };
 use crate::tui::{
     goal, tests::test_app, ChatMedia, ChatTextDocument, ComposerAttachment, GoalState,
@@ -36,8 +41,9 @@ fn confirm_send_options_depend_on_compact_availability() {
             .collect::<Vec<_>>(),
         vec![
             (ACTION_SEND, '1'),
-            (ACTION_COMPACT_SEND, '2'),
-            (ACTION_DONT_SEND, '3')
+            (ACTION_SEND_SESSION, '2'),
+            (ACTION_COMPACT_SEND, '3'),
+            (ACTION_DONT_SEND, '4')
         ]
     );
 
@@ -48,8 +54,95 @@ fn confirm_send_options_depend_on_compact_availability() {
             .iter()
             .map(|option| (option.value.as_str(), option.shortcut))
             .collect::<Vec<_>>(),
-        vec![(ACTION_SEND, '1'), (ACTION_DONT_SEND, '2')]
+        vec![
+            (ACTION_SEND, '1'),
+            (ACTION_SEND_SESSION, '2'),
+            (ACTION_DONT_SEND, '3')
+        ]
     );
+}
+
+fn native_history(payloads: &[&str]) -> Vec<Message> {
+    let source = ModelIdentity::new("openai-codex", "openai-responses", "gpt-source");
+    payloads
+        .iter()
+        .map(|payload| {
+            Message::EnrichedAssistant(Box::new(AssistantMessage {
+                provider_context: vec![ProviderContextBlock {
+                    identity: source.clone(),
+                    kind: "openai_response_output_item".into(),
+                    position: None,
+                    data: serde_json::json!({"type": "message", "id": payload}),
+                }],
+                ..AssistantMessage::default()
+            }))
+        })
+        .collect()
+}
+
+// Covers: "Send for this session" consent skips later confirmations only while
+// the session, target, and omitted blocks stay within what the user saw;
+// compaction dropping blocks keeps it, anything new asks again.
+// Owner: send confirm gate
+#[test]
+fn session_acknowledgement_covers_only_seen_omissions() {
+    let session = SessionId::new();
+    let target = ModelIdentity::new("openai-codex", "openai-responses", "gpt-target");
+    let acknowledged = SendOmissions::new(
+        session.clone(),
+        target.clone(),
+        &native_history(&["a", "b", "c"]),
+    );
+    let other_target = ModelIdentity::new("openai-codex", "openai-responses", "gpt-other");
+
+    let cases = [
+        (
+            "unchanged",
+            session.clone(),
+            target.clone(),
+            vec!["a", "b", "c"],
+            true,
+        ),
+        (
+            "compacted",
+            session.clone(),
+            target.clone(),
+            vec!["c"],
+            true,
+        ),
+        (
+            "new block",
+            session.clone(),
+            target.clone(),
+            vec!["a", "b", "c", "d"],
+            false,
+        ),
+        (
+            "replaced block",
+            session.clone(),
+            target.clone(),
+            vec!["a", "b", "x"],
+            false,
+        ),
+        (
+            "target changed",
+            session.clone(),
+            other_target,
+            vec!["a", "b", "c"],
+            false,
+        ),
+        (
+            "session changed",
+            SessionId::new(),
+            target,
+            vec!["a", "b", "c"],
+            false,
+        ),
+    ];
+    for (name, session, target, payloads, expected) in cases {
+        let current = SendOmissions::new(session, target, &native_history(&payloads));
+        assert_eq!(acknowledged.covers(&current), expected, "{name}");
+    }
 }
 
 // Covers: approval for one exact submission and model cannot become an ambient

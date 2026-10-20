@@ -3,11 +3,21 @@
 //!
 //! A [`SendSubmission`] owns the exact provider-starting work while it moves
 //! through confirmation and optional compaction. Approval is scoped to that
-//! value and the model identity shown by the confirmation; there is no ambient
-//! bypass state for a later send to consume.
+//! value and the model identity shown by the confirmation. The only state a
+//! later send can consume is an explicit "Send for this session"
+//! acknowledgement, which [`SendOmissions::covers`] scopes to one session,
+//! one target, and the exact native blocks the user was shown.
+
+use std::collections::BTreeSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::tui::DefaultTerminal;
-use rho_sdk::model::{handoff::HandoffReport, ModelIdentity};
+use rho_providers::model::Message;
+use rho_sdk::model::{
+    handoff::{self, HandoffReport},
+    ModelIdentity, ProviderContextBlock,
+};
+use rho_sdk::SessionId;
 
 use super::{
     prompt_turn::FailedTurn, subagent_delivery::TurnBoundaryDelivery, App, ChatMedia, ComposerMode,
@@ -16,8 +26,53 @@ use super::{
 };
 
 pub(super) const ACTION_SEND: &str = "send";
+pub(super) const ACTION_SEND_SESSION: &str = "send-session";
 pub(super) const ACTION_COMPACT_SEND: &str = "compact-send";
 pub(super) const ACTION_DONT_SEND: &str = "dont-send";
+
+/// The provider-native blocks one session cannot send to one target. A
+/// confirmation shows one of these; "Send for this session" keeps it on the
+/// app so later sends can skip an unchanged confirmation.
+#[derive(Debug)]
+pub(super) struct SendOmissions {
+    session_id: SessionId,
+    target: ModelIdentity,
+    /// Content fingerprints of the omitted blocks.
+    blocks: BTreeSet<u64>,
+}
+
+impl SendOmissions {
+    fn new(session_id: SessionId, target: ModelIdentity, history: &[Message]) -> Self {
+        let blocks = handoff::omitted_message_context(history, &target)
+            .map(block_fingerprint)
+            .collect();
+        Self {
+            session_id,
+            target,
+            blocks,
+        }
+    }
+
+    /// Whether consent to omit `self` also covers `current`: the same session
+    /// and target, and no omitted block the user has not already been shown.
+    /// Compaction only drops blocks, so it never invalidates consent.
+    fn covers(&self, current: &Self) -> bool {
+        self.session_id == current.session_id
+            && self.target == current.target
+            && current.blocks.is_subset(&self.blocks)
+    }
+}
+
+/// In-process identity of one native block. A collision could only skip a
+/// warning, never change what is sent.
+fn block_fingerprint(block: &ProviderContextBlock) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    block.identity.hash(&mut hasher);
+    block.kind.hash(&mut hasher);
+    block.position.hash(&mut hasher);
+    block.data.to_string().hash(&mut hasher);
+    hasher.finish()
+}
 
 pub(super) enum SendPayload {
     Turn {
@@ -170,7 +225,8 @@ impl AuthorizedSendSubmission {
 
 pub(super) struct PendingConfirmSend {
     submission: SendSubmission,
-    confirmation_identity: ModelIdentity,
+    /// What the modal shows; the confirmed model identity is its target.
+    omissions: SendOmissions,
     /// Whether compaction may run before the send; the compact option is only
     /// offered when this is set.
     can_compact: bool,
@@ -180,7 +236,7 @@ impl std::fmt::Debug for PendingConfirmSend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PendingConfirmSend")
-            .field("confirmation_identity", &self.confirmation_identity)
+            .field("confirmation_identity", &self.omissions.target)
             .field("can_compact", &self.can_compact)
             .finish_non_exhaustive()
     }
@@ -195,7 +251,11 @@ impl PendingConfirmSend {
                 Vec::new(),
                 Vec::new(),
             ),
-            confirmation_identity: ModelIdentity::new("openai", "responses", "gpt-5"),
+            omissions: SendOmissions::new(
+                SessionId::new(),
+                ModelIdentity::new("openai", "responses", "gpt-5"),
+                &[],
+            ),
             can_compact: false,
         }
     }
@@ -217,6 +277,13 @@ fn confirm_send_choice(
             "{blocks} native block(s) will not be sent to {target_label}. Transcript and tool history remain."
         ),
     )];
+    shortcut = next_shortcut(shortcut);
+    options.push(InlineChoiceOption::available(
+        ACTION_SEND_SESSION,
+        shortcut,
+        "Send for this session",
+        "Don't ask again in this session unless the model or omitted blocks change.",
+    ));
     shortcut = next_shortcut(shortcut);
     if can_compact {
         options.push(InlineChoiceOption::available(
@@ -246,8 +313,9 @@ fn confirm_send_choice(
 
 impl App {
     /// The single omission-policy gate for every provider-starting main-session
-    /// turn. Returns ownership only when no confirmation is needed or this
-    /// exact submission was approved for the still-active model identity.
+    /// turn. Returns ownership only when no confirmation is needed, this exact
+    /// submission was approved for the still-active model identity, or a
+    /// session acknowledgement covers the current omissions.
     pub(super) fn gate_send(
         &mut self,
         submission: SendSubmission,
@@ -257,10 +325,21 @@ impl App {
         if submission.is_approved_for(&target_identity) {
             return Some(AuthorizedSendSubmission(submission));
         }
-        let omissions = agent.provider_context_omissions(&target_identity);
-        if !omissions.has_omissions() {
+        let history = agent.history();
+        let report = handoff::report_message_omissions(&history, &target_identity);
+        if !report.has_omissions() {
             return Some(AuthorizedSendSubmission(
                 submission.approve_for(target_identity),
+            ));
+        }
+        let omissions = SendOmissions::new(agent.session_id().clone(), target_identity, &history);
+        if self
+            .acknowledged_send_omissions
+            .as_ref()
+            .is_some_and(|acknowledged| acknowledged.covers(&omissions))
+        {
+            return Some(AuthorizedSendSubmission(
+                submission.approve_for(omissions.target),
             ));
         }
 
@@ -269,7 +348,7 @@ impl App {
             &self.info.runtime.model,
         );
         let can_compact = agent.can_compact();
-        let choice = confirm_send_choice(&target_label, &omissions, can_compact)
+        let choice = confirm_send_choice(&target_label, &report, can_compact)
             .inspect_err(|error| tracing::warn!(%error, "confirm-send choice unavailable"))
             .ok()?;
         self.input_ui
@@ -277,7 +356,7 @@ impl App {
                 choice,
                 pending: InlineChoicePending::ConfirmSend(Box::new(PendingConfirmSend {
                     submission,
-                    confirmation_identity: target_identity,
+                    omissions,
                     can_compact,
                 })),
                 parent_picker: None,
@@ -295,22 +374,26 @@ impl App {
     ) -> anyhow::Result<()> {
         let PendingConfirmSend {
             submission,
-            confirmation_identity,
+            omissions,
             can_compact,
         } = pending;
         match value {
             Some(ACTION_SEND) => {
                 self.start_approved_submission(
-                    submission.approve_for(confirmation_identity),
+                    submission.approve_for(omissions.target),
                     terminal,
                     agent,
                 )
                 .await?;
             }
+            Some(ACTION_SEND_SESSION) => {
+                let submission = submission.approve_for(omissions.target.clone());
+                self.acknowledged_send_omissions = Some(omissions);
+                self.start_approved_submission(submission, terminal, agent)
+                    .await?;
+            }
             Some(ACTION_COMPACT_SEND) if can_compact => {
-                let submission = submission
-                    .approve_for(confirmation_identity)
-                    .after_compact();
+                let submission = submission.approve_for(omissions.target).after_compact();
                 if let Err((err, submission)) = self.start_compact_send(agent, Box::new(submission))
                 {
                     self.insert_entry(&Entry::Error(format!(
