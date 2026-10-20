@@ -188,6 +188,9 @@ fn markdown_drain_waits_for_complete_constructs() {
 
 #[test]
 fn markdown_drain_keeps_streamed_heading_atomic_across_narrow_wraps() {
+    // Compares styled heading lines from two renders; a parallel theme switch
+    // between them would recolor one side.
+    let _guard = crate::tui::theme::theme_test_lock();
     let mut stream = AppendOnlyStream::default();
     let source = "## **streamed heading with unicode 你🙂**";
 

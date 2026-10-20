@@ -33,7 +33,7 @@ flowchart TD
 | Rule | Detail |
 | --- | --- |
 | Fence info | First token is `mermaid` (case-insensitive). Extra tokens after it are allowed |
-| Streaming | Each completed line repaints the prefix. Valid prefixes show art immediately; a later bad line keeps the last good diagram. Closing the fence still decides the final panel |
+| Streaming | Each completed line repaints the prefix. Valid prefixes show art immediately, including a `{` block whose closing `}` has not arrived yet; a later bad line keeps the last good diagram. Closing the fence still decides the final panel |
 | Resize | Art is laid out again when the terminal or pane width changes |
 | Copy | Panel `COPY` always copies the original Mermaid source, for art and fallbacks |
 
@@ -68,7 +68,12 @@ readable approximation over a source dump: styles are ignored, common shapes
 map onto rectangle / round / diamond, parallel edges share a route with joined
 labels, and a too-wide `LR`/`RL` flowchart retries as `TD`. State `[*]` markers
 paint as borderless `start` / `end` words so edges still have somewhere to
-attach. Exotic families and malformed input stay as source.
+attach. Exotic families and malformed input stay as source. So do gitGraph
+`branch`, `checkout`, and `merge` lines with attributes such as `order:`,
+`tag:`, or `type:`, and a custom `mainBranchName`: the parser cannot place
+those branches, so art would show missing forks or merges. A flowchart's
+multiline `accDescr { ... }` block also stays source, since the parser would
+draw its text as nodes; single-line `accTitle:` and `accDescr:` are fine.
 
 ### Flow and state layout
 
@@ -77,6 +82,9 @@ so on) when it fits. Detours nest by span: a longer skip travels outside a
 shorter one so the stems do not cross. Forward edges that skip ranks travel on
 the trailing side (right in `TD`, bottom in `LR`) and loops return on the
 leading side (left in `TD`, top in `LR`), so those families cannot share ink.
+Skip edge labels sit in a gutter just left of the right-side lanes in `TD`,
+level with their own lane's run, and right of the boxes above the bottom lane
+in `LR`.
 When the normal layout is wider than the pane, Rho wraps node labels and edge
 labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates node label text.
 Edge labels wrap to a few stacked rows; group titles, and sequence participant
@@ -96,7 +104,7 @@ Diagrams Rho cannot draw stay readable as source. The panel border says why:
 | `MERMAID · CLIPPED` | Art wider than the pane, cut at the right edge; marker row counts hidden columns |
 | `MERMAID · PANE TOO NARROW` | Pane too narrow even for clipped art; resize may produce art |
 | `MERMAID · UNSUPPORTED` | Kind or construct the terminal painter will not draw |
-| `MERMAID · INVALID` | Source did not parse |
+| `MERMAID · INVALID` | Source did not parse, or parsed but is not valid Mermaid (for example an unclosed `[` node shape or `state {` block, or a gitGraph `checkout` of a branch that was never created) |
 | `MERMAID · TOO LARGE` | Source, model, or painted output exceeded a hard cap |
 | `MERMAID · NOT RENDERED` | Blank, unsafe, or other decline |
 

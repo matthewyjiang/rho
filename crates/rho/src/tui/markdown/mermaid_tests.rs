@@ -16,7 +16,7 @@ fn plain(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
 }
 
 fn rendered(source: &str, width: usize) -> Vec<String> {
-    match render_mermaid(source, width) {
+    match render_mermaid(source, width, SourceExtent::Complete) {
         MermaidRender::Rendered(lines) => plain(&lines),
         MermaidRender::Clipped { hidden_columns, .. } => {
             panic!("unexpected clip for {source:?}: {hidden_columns} columns hidden")
@@ -71,7 +71,7 @@ fn unsupported_families_cleanly_fall_back() {
         "treemap-beta\nRoot",
     ] {
         assert_eq!(
-            render_mermaid(source, 240),
+            render_mermaid(source, 240, SourceExtent::Complete),
             MermaidRender::Fallback(MermaidFallback::Unsupported),
             "{source}"
         );
@@ -81,14 +81,18 @@ fn unsupported_families_cleanly_fall_back() {
 #[test]
 fn applies_source_model_and_canvas_limits_before_or_after_painting() {
     assert_eq!(
-        render_mermaid(&"x".repeat(MAX_SOURCE_BYTES + 1), 80),
+        render_mermaid(
+            &"x".repeat(MAX_SOURCE_BYTES + 1),
+            80,
+            SourceExtent::Complete
+        ),
         MermaidRender::Fallback(MermaidFallback::SourceBytes)
     );
     let too_many_lines = std::iter::repeat_n("%% comment", MAX_SOURCE_LINES + 1)
         .collect::<Vec<_>>()
         .join("\n");
     assert_eq!(
-        render_mermaid(&too_many_lines, 80),
+        render_mermaid(&too_many_lines, 80, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::SourceLines)
     );
     let too_many_nodes = format!(
@@ -99,11 +103,15 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
             .join("\n")
     );
     assert_eq!(
-        render_mermaid(&too_many_nodes, 240),
+        render_mermaid(&too_many_nodes, 240, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::StructuralLimit)
     );
     assert_eq!(
-        render_mermaid("flowchart LR\nA[a label that cannot fit]", 4),
+        render_mermaid(
+            "flowchart LR\nA[a label that cannot fit]",
+            4,
+            SourceExtent::Complete
+        ),
         MermaidRender::Fallback(MermaidFallback::TooWide)
     );
     // A grouped node label may fit the normal wrap but exceed the line budget
@@ -111,7 +119,7 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
     let compaction_label = "x".repeat(WRAP_WIDTH * (MAX_LINES - 1));
     let compacted_group = format!("flowchart TD\nsubgraph Group\nA[{compaction_label}]\nend");
     assert_eq!(
-        render_mermaid(&compacted_group, 20),
+        render_mermaid(&compacted_group, 20, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::TooWide)
     );
 }
@@ -134,8 +142,30 @@ fn open_prefix_paints_valid_walks_back_malformed_and_declines_sticky() {
     else {
         panic!("malformed last line should keep last-good art");
     };
-    let MermaidRender::Rendered(expected) = render_mermaid(good, 80) else {
+    let MermaidRender::Rendered(expected) = render_mermaid(good, 80, SourceExtent::Complete) else {
         panic!("control prefix should render");
+    };
+    assert_eq!(plain(&kept), plain(&expected));
+    // A block still open at the prefix's end is a valid prefix: its closing
+    // line may not have streamed yet, so it paints the closed block's art
+    // instead of walking back.
+    let open_block = "stateDiagram-v2\nstate Busy {\nA --> B";
+    let Some(ClosedPanel::Art { lines: live, .. }) = render_open_prefix(open_block, open_block, 80)
+    else {
+        panic!("open state block should paint while streaming");
+    };
+    assert_eq!(plain(&live), rendered(&format!("{open_block}\n}}"), 80));
+    // A line no continuation can repair keeps last-good art.
+    let git_good = "gitGraph\ncommit id: \"one\"";
+    let checkout_missing = format!("{git_good}\ncheckout nope\ncommit");
+    let Some(ClosedPanel::Art { lines: kept, .. }) =
+        render_open_prefix(&checkout_missing, &checkout_missing, 80)
+    else {
+        panic!("invalid checkout should keep last-good art");
+    };
+    let MermaidRender::Rendered(expected) = render_mermaid(git_good, 80, SourceExtent::Complete)
+    else {
+        panic!("control gitGraph should render");
     };
     assert_eq!(plain(&kept), plain(&expected));
     assert!(render_open_prefix("  \n", "  \n", 80).is_none());
@@ -151,17 +181,49 @@ fn open_prefix_paints_valid_walks_back_malformed_and_declines_sticky() {
 #[test]
 fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
     assert_eq!(
-        render_mermaid("  \n", 80),
+        render_mermaid("  \n", 80, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::Blank)
     );
     assert_eq!(
-        render_mermaid("unknownDiagram\nA", 80),
+        render_mermaid("unknownDiagram\nA", 80, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::Unsupported)
     );
-    assert_eq!(
-        render_mermaid("flowchart LR\nA -->", 80),
-        MermaidRender::Fallback(MermaidFallback::Malformed)
-    );
+    for source in [
+        // Rejected by the upstream strict parser.
+        "flowchart LR\nA -->",
+        // Parsed upstream but invalid Mermaid: our validity checks decline.
+        "flowchart LR\nA[open --> B",
+        "flowchart LR\nA[ok] --> B(open",
+        "flowchart LR\nA[\"unclosed quote] --> B",
+        "flowchart LR\nA -->|unclosed label B",
+        "stateDiagram-v2\nstate X {\nA --> B",
+        "stateDiagram-v2\nA --> B\n}",
+        "classDiagram\nclass A {\n+name",
+        "erDiagram\nCUSTOMER {\nstring name",
+        "gitGraph\ncommit\ncheckout nope",
+        "gitGraph\ncommit\nmerge nope",
+    ] {
+        assert_eq!(
+            render_mermaid(source, 80, SourceExtent::Complete),
+            MermaidRender::Fallback(MermaidFallback::Malformed),
+            "{source:?}"
+        );
+    }
+    // Valid Mermaid the upstream parser misreads into stray nodes, a
+    // parentless lane, or a one-parent merge stays source rather than art.
+    for source in [
+        "flowchart TD\naccDescr {\nnotes about the flow\n}\nA --> B",
+        "gitGraph\ncommit\nbranch feat order: 1\ncheckout feat\ncommit",
+        "gitGraph\ncommit\nbranch feat\ncommit\ncheckout main\nmerge feat tag: \"v1\"",
+        "gitGraph\ncommit\nbranch feat\ncommit\ncheckout main\nmerge feat type: HIGHLIGHT",
+        "%%{init: {'gitGraph': {'mainBranchName': 'trunk'}}}%%\ngitGraph\ncommit\nbranch feat\ncheckout trunk",
+    ] {
+        assert_eq!(
+            render_mermaid(source, 80, SourceExtent::Complete),
+            MermaidRender::Fallback(MermaidFallback::Unsupported),
+            "{source:?}"
+        );
+    }
     for source in [
         "flowchart LR\nclick A \"https://example.com\"",
         "flowchart LR\nA[<script>alert(1)</script>]",
@@ -169,7 +231,7 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
         "flowchart LR\nA[escape \u{1b}[31m]",
     ] {
         assert_eq!(
-            render_mermaid(source, 80),
+            render_mermaid(source, 80, SourceExtent::Complete),
             MermaidRender::Fallback(MermaidFallback::UnsafeContent),
             "{source:?}"
         );
@@ -221,6 +283,43 @@ fn paints_common_approximations() {
     }
 }
 
+// Covers: validity checks must not decline valid syntax that only looks
+// unbalanced: nested shapes, lenient label punctuation, quoted or piped
+// brackets, `%%` inside quotes, single-line bodies, `}` closing a member
+// line, namespaces, quoted entity aliases, braces in labels, and
+// accessibility text
+// Owner: mermaid validity checks
+#[test]
+fn validity_checks_keep_valid_lookalikes_painting() {
+    for source in [
+        "flowchart TD\nA((c)) --> B{{h}} --> C[(db)] --> D([s]) --> E[[s]] --> F>asym] --> G[/t\\]",
+        "flowchart TD\nA[Hello (world)] --> B[x)] --> C[\"q [ x\"] -->|l (| D",
+        "flowchart TD\nA@{ shape: rect } --> B %% note [\nsubgraph S [Title]\nC\nend",
+        "stateDiagram-v2\nstate X {\nA --> B\n}\nX --> C : go {",
+        "flowchart TD\nA[\"100%% done\"] --> B",
+        "classDiagram\nclass A { +x }\nA --> B : uses {",
+        "classDiagram\nclass A {\n+x }",
+        "classDiagram\nnamespace Shapes {\nclass A {\n+x\n}\n}",
+        "erDiagram\nCUSTOMER { string name }\nCUSTOMER ||--o{ ORDER : places",
+        "erDiagram\nCUSTOMER {\nstring name }",
+        "erDiagram\np[\"Person: admin\"] {\nstring name\n}",
+        "flowchart TD\nA -- yes<br>no --> B",
+        "flowchart TD\naccTitle: steps [draft\naccDescr: parser[accepts\nA --> B",
+        "flowchart TD\naccDescr: The opening delimiter is {\nA --> B",
+        "flowchart TD\naccDescr { one line [draft }\nA --> B",
+        "gitGraph\ncommit\nbranch feat\ncheckout feat\ncommit\ncheckout main\nmerge feat",
+        "gitGraph\n%% mainBranchName stays main here\ncommit id: \"set mainBranchName\"",
+    ] {
+        assert!(
+            matches!(
+                render_mermaid(source, 120, SourceExtent::Complete),
+                MermaidRender::Rendered(_)
+            ),
+            "{source:?}"
+        );
+    }
+}
+
 // Covers: a CJK grapheme straddling the clip boundary must not free a column
 // for a later span
 // Owner: mermaid clip math
@@ -246,7 +345,7 @@ fn clips_oversized_diagram_instead_of_source_fallback() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    match render_mermaid(&wide, 60) {
+    match render_mermaid(&wide, 60, SourceExtent::Complete) {
         MermaidRender::Clipped {
             lines,
             hidden_columns,
@@ -265,7 +364,7 @@ fn clips_oversized_diagram_instead_of_source_fallback() {
     }
     // Below the clip floor the source fallback remains.
     assert_eq!(
-        render_mermaid(&wide, MIN_CLIP_WIDTH - 1),
+        render_mermaid(&wide, MIN_CLIP_WIDTH - 1, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::TooWide)
     );
 }
@@ -340,7 +439,7 @@ fn empty_diagrams_stay_unsupported() {
         ("mindmap", "mindmap"),
     ] {
         assert_eq!(
-            render_mermaid(source, 240),
+            render_mermaid(source, 240, SourceExtent::Complete),
             MermaidRender::Fallback(MermaidFallback::Unsupported),
             "{case}"
         );
@@ -373,27 +472,6 @@ fn gitgraph_paints_messages_merges_and_hides_auto_ids() {
     assert!(
         !unlabeled.contains('-'),
         "auto ids must not appear:\n{unlabeled}"
-    );
-}
-
-// Covers: merge type: HIGHLIGHT must keep the join and use the highlight glyph
-// Owner: mermaid gitgraph layout
-#[test]
-fn gitgraph_highlight_merge_keeps_join() {
-    let art = rendered(
-        "gitGraph\n\
-            commit id: \"init\" msg: \"init\"\n\
-            branch develop\n\
-            commit id: \"parser\" msg: \"parser\"\n\
-            checkout main\n\
-            merge develop type: HIGHLIGHT",
-        80,
-    )
-    .join("\n");
-    assert!(art.contains('◆'), "highlight glyph missing:\n{art}");
-    assert!(
-        art.contains('─') || art.contains('├') || art.contains('└'),
-        "merge join missing:\n{art}"
     );
 }
 

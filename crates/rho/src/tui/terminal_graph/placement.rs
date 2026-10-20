@@ -197,9 +197,10 @@ fn max_extra_label_rows(
         .unwrap_or(0)
 }
 
-/// Extra rows each rank gap must add so stacked edge-label rows have room
-/// above their target's head row. Single-line labels need no extra row, which
-/// keeps existing single-line geometry byte-identical.
+/// Extra rows each rank gap must add so stacked adjacent-edge label rows have
+/// room above their target's head row. Single-line labels need no extra row,
+/// which keeps existing single-line geometry byte-identical. Skip labels sit
+/// in their own gutter beside the right lanes and need no gap rows.
 fn label_gap_rows(
     graph: &Graph,
     ranks: &[usize],
@@ -208,10 +209,7 @@ fn label_gap_rows(
 ) -> Vec<usize> {
     let mut rows = vec![0usize; max_rank + 1];
     for (index, edge) in graph.edges.iter().enumerate() {
-        if matches!(
-            edge_route(edge, ranks),
-            EdgeRoute::Adjacent | EdgeRoute::Skip
-        ) {
+        if edge_route(edge, ranks) == EdgeRoute::Adjacent {
             let extra = extra_label_rows(&edge_labels[index]);
             if extra > 0 {
                 let gap = ranks[edge.to] - 1;
@@ -332,21 +330,33 @@ pub(super) fn place_td(
     }
 
     let mut content_w = diagram_w;
+    let mut skip_label_w = 0;
     for (index, e) in graph.edges.iter().enumerate() {
         let lw = label_block_width(&edge_labels[index]);
-        if lw == 0 {
-            continue;
-        }
-        // Adjacent and skip labels sit beside the target, not in a side gutter.
-        if matches!(edge_route(e, ranks), EdgeRoute::Adjacent | EdgeRoute::Skip) {
-            content_w = content_w.max(placed[e.to].cx + 2 + lw);
+        match edge_route(e, ranks) {
+            // Adjacent labels sit beside the target's arrow.
+            EdgeRoute::Adjacent if lw > 0 => {
+                content_w = content_w.max(placed[e.to].cx + 2 + lw);
+            }
+            // Skip labels sit beside the right lane's run. The target side is
+            // taken by its fan-in bus, which a label there would collide with.
+            EdgeRoute::Skip => skip_label_w = skip_label_w.max(lw),
+            EdgeRoute::Adjacent | EdgeRoute::Back | EdgeRoute::SelfLoop => {}
         }
     }
 
+    // Right of the content: one blank column, then a label gutter with its
+    // own blank column when skip edges are labeled, then the skip lanes.
+    let skip_gutter = if skip_label_w == 0 {
+        0
+    } else {
+        skip_label_w + 1
+    };
     let (canvas_w, skip_base) = if detours.skip_count == 0 {
         (content_w, 0)
     } else {
-        (content_w + 1 + detours.skip_count, content_w + 1)
+        let skip_base = content_w + 1 + skip_gutter;
+        (skip_base + detours.skip_count, skip_base)
     };
 
     let mut edge_join = vec![0usize; graph.edges.len()];
@@ -361,6 +371,7 @@ pub(super) fn place_td(
         source_anchors,
         edge_lane: detours.into_absolute_lanes(graph, ranks, skip_base, /*back_base*/ 0),
         edge_join,
+        skip_lane_start: skip_base,
     }
 }
 
@@ -524,6 +535,7 @@ pub(super) fn place_lr(
         source_anchors,
         edge_lane: detours.into_absolute_lanes(graph, ranks, skip_base, back_base),
         edge_join: vec![0; graph.edges.len()],
+        skip_lane_start: 0,
     }
 }
 
@@ -541,6 +553,10 @@ pub(super) struct RoutePlan {
     /// from the right lane, so joined edges share ink and separate edges do
     /// not.
     pub(super) edge_join: Vec<usize>,
+    /// Column of the innermost top-down skip lane. Skip labels right-align in
+    /// the gutter one blank column before it. Zero in left-right layouts,
+    /// whose skip labels sit beside the bottom lanes instead.
+    pub(super) skip_lane_start: usize,
 }
 
 /// Columns to the left of the nodes: one per back-lane track, a label gutter
