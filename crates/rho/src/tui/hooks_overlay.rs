@@ -160,6 +160,14 @@ fn hook_lines(hook: &HookContractView, width: usize) -> Vec<Line<'static>> {
             Theme::warning(),
         ));
     }
+    if let Some(warning) = &hook.warning {
+        lines.extend(indented_wrapped_lines(
+            warning,
+            FIELD_INDENT,
+            width,
+            Theme::warning(),
+        ));
+    }
     let label_width = FIELD_LABELS
         .iter()
         .copied()

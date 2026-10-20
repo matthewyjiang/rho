@@ -278,7 +278,7 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. `auto` never picks the legacy `hashline` format; pin it (or set it on a custom provider) to keep using it. Format details: [Hash-line edit format](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. Built-in `auto` never picks the legacy `hashline` format; pin it, or set it as a custom provider's `edit_tool`, to keep using it. Format details: [Hash-line edit format](/tools-workspace/edit-format).
 
 ## Behavior
 

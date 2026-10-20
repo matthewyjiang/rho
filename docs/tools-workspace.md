@@ -29,7 +29,7 @@ Core workspace tools on every platform:
 | `grep` | Search file contents with a regex (in-process) |
 | `glob` | List paths that match a glob (in-process) |
 
-Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the format the active provider's models were trained to use in their first-party harness (`apply_patch` for Codex, `str_replace` for everything else). See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
+Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the edit tool from the active provider's first-party harness where one is known (`apply_patch` for Codex, `str_replace` for Anthropic and SpaceXAI) and `str_replace` otherwise. See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
 
 Additional tools:
 
@@ -102,7 +102,7 @@ Rho supports three edit formats and registers only the selected tool:
 
 Use `write` for a complete create-or-replace operation. Successful file mutations return model-facing snapshots for chaining, while unified diffs stay in tool metadata for UI cards. In the interactive TUI, added and removed lines wash toward the theme's green/red when RGB is available. Unhighlighted tokens sit on that wash, or use the add/remove color if there is no wash. Signs stay theme-colored, syntax roles keep their colors, and diff headers use the accent color.
 
-Details for the default format: [Hash-line edit format](/tools-workspace/edit-format).
+Details for the legacy hashline format: [Hash-line edit format](/tools-workspace/edit-format).
 
 ## Search tools
 

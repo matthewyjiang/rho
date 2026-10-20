@@ -17,6 +17,7 @@ fn hook(command: Vec<String>) -> HookContractView {
         working_directory: "/work".into(),
         timeout: "2s".into(),
         environment: vec!["PATH".into(), "RHO_IN_HOOK".into()],
+        warning: None,
     }
 }
 

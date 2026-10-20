@@ -44,7 +44,7 @@ env = ["MY_HOOK_TOKEN"]
 [[hook]]
 id = "fmt-rust"
 on = "after_tool_use"
-tools = ["edit", "write"]
+tools = ["str_replace", "apply_patch", "edit", "write"]
 command = [".rho/hooks/fmt-rust"]
 timeout = "5s"
 ```
@@ -129,6 +129,11 @@ contract and do not change with which tools a given run enables:
 `agent`, `agents`, `apply_patch`, `bash`, `edit`, `exit_plan_mode`,
 `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`,
 `process`, `questionnaire`, `read_file`, `rho`, `skill`, `str_replace`, `todo`, `web_search`, `write`.
+
+Each session exposes one file edit tool, `str_replace`, `apply_patch`, or `edit`,
+chosen by [`behavior.edit_tool`](/configuration#edit-tool) and the active
+provider. List all three in a hook that should see every file edit. A hook that
+names only some of them shows a warning in `/hooks` and `rho(action="hooks")`.
 
 ## Protocol reference
 

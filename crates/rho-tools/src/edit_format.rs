@@ -38,7 +38,7 @@ pub enum EditFormat {
 }
 
 impl EditFormat {
-    /// Every supported edit format, in UI display order. Legacy formats sort last.
+    /// Every supported edit format, in UI display order. Legacy formats ([`Self::is_legacy`]) sort last.
     pub const ALL: &'static [Self] = &[Self::StrReplace, Self::ApplyPatch, Self::Hashline];
 
     /// The canonical model-facing tool name.
@@ -76,11 +76,19 @@ impl EditFormat {
         matches!(self, Self::Hashline)
     }
 
+    /// Whether this format is legacy and slated for removal.
+    ///
+    /// Hosts should not select legacy formats by default and may label them
+    /// in selectors.
+    pub const fn is_legacy(self) -> bool {
+        matches!(self, Self::Hashline)
+    }
+
     /// The format detail shown when selecting an edit surface.
     pub const fn detail(self) -> &'static str {
         match self {
             Self::Hashline => {
-                "Legacy. Expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
+                "Expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
             }
             Self::ApplyPatch => {
                 "Expose `apply_patch` with a Codex-style multi-file patch document."

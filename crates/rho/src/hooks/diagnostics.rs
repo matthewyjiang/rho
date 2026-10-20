@@ -21,6 +21,8 @@ pub struct HookContractView {
     pub working_directory: String,
     pub timeout: String,
     pub environment: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// One recorded hook invocation.
@@ -141,6 +143,7 @@ pub fn contract_views(catalog: &HookCatalog) -> Vec<HookContractView> {
             working_directory: crate::paths::display(&contract.working_directory),
             timeout: humantime::format_duration(contract.timeout).to_string(),
             environment: contract.environment,
+            warning: contract.warning,
         })
         .collect()
 }

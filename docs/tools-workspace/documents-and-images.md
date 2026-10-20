@@ -14,7 +14,7 @@ User paste and path drop use the same extractors. See
 ```mermaid
 flowchart TD
     src["read_file / fetch_content"] --> kind{Input kind}
-    kind -->|UTF-8 text or source| text[Hashline text view]
+    kind -->|UTF-8 text or source| text[Numbered text view]
     kind -->|PDF DOCX XLSX XLS ODS| doc[Bounded document extract]
     kind -->|PNG JPEG GIF WebP| img[Bounded PNG thumbnail]
     doc --> out[Text plus warnings]
@@ -42,8 +42,9 @@ They do not page through a PDF or spreadsheet.
 2. If the magic bytes match PNG, JPEG, GIF, or WebP, build an image preview.
 3. Else if the path or bytes look like a supported rich document, run the shared
    extractor and return rendered text.
-4. Else treat the body as UTF-8 text and return a
-   [hashline](/tools-workspace/edit-format) view for default `edit` chaining.
+4. Else treat the body as UTF-8 text and return numbered lines. The header is a
+   `[path#TAG]` snapshot tag only when the edit tool is the legacy
+   [`hashline`](/tools-workspace/edit-format); otherwise it is the plain path.
 
 Rich documents are not editable source files. Use their extracted text to reason
 about them; write results back with `write` or the selected edit tool on real source files.
@@ -144,12 +145,12 @@ restore them.
 
 If preview fails (oversized file, decode error, worker failure), `read_file`
 still returns the text summary and records why the preview is missing. A file
-that looked like an image but decodes as UTF-8 text falls back to the hashline
+that looked like an image but decodes as UTF-8 text falls back to the numbered
 text view.
 
 ## Related
 
-- [Edit format](/tools-workspace/edit-format) - hashline tags from text
+- [Edit format](/tools-workspace/edit-format) - legacy hashline tags from text
   `read_file` results
 - [Web access](/tools-workspace/web-access) - `fetch_content` targets and
   storage

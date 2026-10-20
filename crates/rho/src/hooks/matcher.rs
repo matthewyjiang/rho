@@ -56,6 +56,24 @@ impl ToolMatcher {
         })
     }
 
+    /// Edit tool names this matcher misses when it names only some of them.
+    ///
+    /// Only one edit tool is registered per session, and which one depends on
+    /// `behavior.edit_tool` and the provider. A hook that lists `edit` but not
+    /// `str_replace` silently stops firing when the resolved format changes.
+    /// Empty when the matcher covers every edit tool or none of them.
+    pub fn missing_edit_tools(&self) -> Vec<&'static str> {
+        let (covered, missing): (Vec<_>, Vec<_>) = rho_tools::EditFormat::ALL
+            .iter()
+            .map(|format| format.tool_name())
+            .partition(|name| self.matches(name));
+        if covered.is_empty() {
+            Vec::new()
+        } else {
+            missing
+        }
+    }
+
     /// Rendering used in the spawn contract and diagnostics.
     pub fn describe(&self) -> String {
         match &self.patterns {

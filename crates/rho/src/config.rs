@@ -372,18 +372,15 @@ impl EditTool {
             Self::Auto => {
                 "Pick the preferred format for the active provider and switch when the provider changes."
             }
-            Self::Pinned(format) => match format {
-                rho_tools::EditFormat::Hashline => {
-                    "Legacy. Always expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
-                }
-                rho_tools::EditFormat::ApplyPatch => {
-                    "Always expose `apply_patch` with a Codex-style multi-file patch document."
-                }
-                rho_tools::EditFormat::StrReplace => {
-                    "Always expose `str_replace` with exact old_string/new_string replacement."
-                }
-                _ => "Always expose this pinned file edit format.",
-            },
+            Self::Pinned(format) => format.detail(),
+        }
+    }
+
+    /// Whether this preference pins a format slated for removal.
+    pub const fn is_legacy(self) -> bool {
+        match self {
+            Self::Auto => false,
+            Self::Pinned(format) => format.is_legacy(),
         }
     }
 }
@@ -430,8 +427,9 @@ pub fn preferred_edit_format_for_provider(provider: &str) -> rho_tools::EditForm
     match provider {
         // Codex harness trains on apply_patch documents.
         "openai-codex" => rho_tools::EditFormat::ApplyPatch,
-        // Claude Code and xAI first-party agent tooling train on string replace;
-        // it is also the most reliable surface when no first-party match is known.
+        // Claude Code and xAI first-party agent tooling train on string replace.
+        "anthropic" | "xai" => rho_tools::EditFormat::StrReplace,
+        // Most reliable surface when no first-party match is known.
         _ => rho_tools::EditFormat::StrReplace,
     }
 }

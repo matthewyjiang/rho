@@ -740,10 +740,17 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
             .into_iter()
             .map(|edit_tool| PickerItem {
                 detail: Some(edit_tool.detail().into()),
-                badge: (edit_tool == selected).then_some(PickerBadge {
-                    text: "selected".into(),
-                    tone: PickerBadgeTone::Selected,
-                }),
+                badge: if edit_tool == selected {
+                    Some(PickerBadge {
+                        text: "selected".into(),
+                        tone: PickerBadgeTone::Selected,
+                    })
+                } else {
+                    edit_tool.is_legacy().then_some(PickerBadge {
+                        text: "legacy".into(),
+                        tone: PickerBadgeTone::Muted,
+                    })
+                },
                 ..PickerItem::new(
                     edit_tool.label().into(),
                     format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),

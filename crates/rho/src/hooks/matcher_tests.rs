@@ -97,3 +97,25 @@ fn a_prefix_that_selects_nothing_fails_at_load() {
         })
     );
 }
+
+// Covers: a hook naming only some edit tools reports the ones it misses, since
+// the session's edit tool changes with the provider and `behavior.edit_tool`.
+// Owner: hook tool matcher
+#[test]
+fn partial_edit_tool_lists_report_missing_edit_tools() {
+    let cases: [(&[&str], &[&str]); 5] = [
+        (&["edit", "write"], &["str_replace", "apply_patch"]),
+        (&["str_replace"], &["apply_patch", "edit"]),
+        (&["edit", "apply_patch", "str_replace"], &[]),
+        (&["bash", "write"], &[]),
+        (&["*"], &[]),
+    ];
+    for (patterns, missing) in cases {
+        assert_eq!(
+            matcher(patterns).missing_edit_tools(),
+            missing.to_vec(),
+            "{patterns:?}"
+        );
+    }
+    assert_eq!(ToolMatcher::any().missing_edit_tools(), Vec::<&str>::new());
+}
