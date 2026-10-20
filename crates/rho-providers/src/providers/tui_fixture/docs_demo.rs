@@ -27,8 +27,7 @@ pub async fn request_id(mut request: Request, next: Next) -> Response {
     next.run(request).await
 }
 ";
-// FNV-1a tag for ORIGINAL via rho_tools::hashline::compute_file_hash.
-const ORIGINAL_TAG: &str = "C7A2";
+const ANCHOR_LINE: &str = "    let request_id = resolve_request_id(&request);";
 const EDITED_LINE: &str = "    span.record(\"request_id\", request_id.as_str());";
 const TEST_SCRIPT: &str = "\
 #!/usr/bin/env bash
@@ -88,8 +87,15 @@ async fn stream(
 
     if tool_result(request, EDIT_CALL_ID).is_none() {
         // Insert the span.record line after resolve_request_id.
-        let input = format!("[{TARGET_PATH}#{ORIGINAL_TAG}]\nPUT >2:\n+{EDITED_LINE}\n");
-        return completed_tool_call(EDIT_CALL_ID, "edit", serde_json::json!({ "input": input }));
+        return completed_tool_call(
+            EDIT_CALL_ID,
+            "str_replace",
+            serde_json::json!({
+                "path": TARGET_PATH,
+                "old_string": ANCHOR_LINE,
+                "new_string": format!("{ANCHOR_LINE}\n{EDITED_LINE}"),
+            }),
+        );
     }
 
     if tool_result(request, BASH_CALL_ID).is_none() {

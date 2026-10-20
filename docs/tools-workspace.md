@@ -29,7 +29,7 @@ Core workspace tools on every platform:
 | `grep` | Search file contents with a regex (in-process) |
 | `glob` | List paths that match a glob (in-process) |
 
-Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the format the active provider's models were trained to use in their first-party harness (`apply_patch` for Codex, `str_replace` for Anthropic and SpaceXAI, `hashline` otherwise). See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
+Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the format the active provider's models were trained to use in their first-party harness (`apply_patch` for Codex, `str_replace` for everything else). See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
 
 Additional tools:
 
@@ -96,7 +96,7 @@ Added directories belong to the session. They are saved with it and restored by 
 
 Rho supports three edit formats and registers only the selected tool:
 
-- `edit` (config/selector `hashline`) applies snapshot-tagged, line-anchored `PUT` and `CUT` operations to existing files.
+- `edit` (config/selector `hashline`, legacy) applies snapshot-tagged, line-anchored `PUT` and `CUT` operations to existing files. `auto` only selects it for a custom provider that sets it; otherwise pin it to keep using it. It will be removed in a future release.
 - `apply_patch` applies Codex-style add, delete, update, and move sections across one or more files. Paths may be absolute or relative to the working directory, including `..` where workspace policy permits it. The selected permission mode governs access to every affected path, including both ends of a move, before any file is changed. In `bypass`, absolute paths outside the workspace are allowed. `Add File` targets must not exist.
 - `str_replace` replaces an exact string in one existing file, with an optional `replace_all` flag.
 

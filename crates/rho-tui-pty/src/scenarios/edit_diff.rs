@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::{
+    env::IsolatedHome,
     harness::PtyHarness,
     scenario::{Scenario, Step},
 };
@@ -13,7 +14,27 @@ pub(super) const EDIT_DIFF_SCENARIO: Scenario = Scenario::new(
     DEFAULT_SIZE,
     EDIT_DIFF_STEPS,
     false,
-);
+)
+.with_setup(pin_hashline_edit_tool);
+
+/// The fixture streams a hashline `edit` call, and `auto` no longer resolves
+/// to the legacy hashline format, so pin it explicitly.
+fn pin_hashline_edit_tool(home: &IsolatedHome) -> Result<()> {
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search.mode = "off"
+
+[behavior]
+credential_store = "file"
+edit_tool = "hashline"
+"#,
+    )?;
+    Ok(())
+}
 
 const EDIT_DIFF_STEPS: &[Step] = &[
     Step::Phase("startup"),

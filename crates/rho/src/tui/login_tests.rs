@@ -126,21 +126,21 @@ async fn cross_provider_activation_reconciles_auto_edit_tool() {
         .update(|config| config.edit_tool = EditTool::Auto)
         .unwrap();
     let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
-    assert!(agent.has_tool("edit"));
+    assert!(agent.has_tool("str_replace"));
 
     let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
-        ModelIdentity::new("anthropic", "test", "claude-fable-5"),
+        ModelIdentity::new("openai-codex", "test", "gpt-5.5"),
         Vec::<ScriptedTurn>::new(),
     ));
     app.activate_provider(
         ProviderActivation {
-            provider: "anthropic".into(),
-            model: "claude-fable-5".into(),
+            provider: "openai-codex".into(),
+            model: "gpt-5.5".into(),
             reasoning: ModelSwitchReasoningResolution {
                 effective: ReasoningLevel::Medium,
                 source: ReasoningRequestSource::PersistedOrDefault,
             },
-            auth: "api-key".into(),
+            auth: "codex".into(),
             replacement,
         },
         &mut agent,
@@ -148,8 +148,8 @@ async fn cross_provider_activation_reconciles_auto_edit_tool() {
     .await
     .unwrap();
 
-    assert!(agent.has_tool("str_replace"));
-    assert!(!agent.has_tool("edit"));
+    assert!(agent.has_tool("apply_patch"));
+    assert!(!agent.has_tool("str_replace"));
 }
 
 // Covers: /login on an active custom host must persist `{name}-api-key`

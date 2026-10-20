@@ -152,9 +152,9 @@ fn applies_configured_tool_output_limit() {
     let output = run(&root, "read-file", &["run", "read the file"], None);
 
     assert_success(&output);
-    // The hashline header is emitted before any content line, so a 5-byte budget
+    // The path header is emitted before any content line, so a 5-byte budget
     // cuts inside the header itself.
-    assert_eq!(stdout(&output), "[larg\n[truncated]\n");
+    assert_eq!(stdout(&output), "large\n[truncated]\n");
     assert!(output.stderr.is_empty());
 }
 
@@ -179,10 +179,7 @@ fn reads_and_writes_paths_outside_the_working_directory() {
     let display = compact_display_path(&workspace_root, &relative_input_path.to_string_lossy());
     let read_stdout = stdout(&read_output);
     let (header, body) = read_stdout.trim_end().split_once('\n').unwrap();
-    assert!(
-        header.starts_with(&format!("[{display}#")) && header.ends_with(']'),
-        "{header}"
-    );
+    assert_eq!(header, display);
     assert_eq!(body, "1:outside content");
 
     let output_path = outside.path().join("output.txt");

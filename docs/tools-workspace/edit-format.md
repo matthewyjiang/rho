@@ -2,7 +2,11 @@
 
 Parent: [Tools and workspace](/tools-workspace).
 
-This page applies when the resolved edit format is `hashline` (the default for most providers under `edit_tool = "auto"`, or when you pin `edit_tool = "hashline"`).
+This page applies when the resolved edit format is `hashline`: when you pin `edit_tool = "hashline"`, or a custom provider sets it as its `auto` choice.
+
+::: warning Legacy
+`hashline` is a legacy edit format. Models handle `str_replace` and `apply_patch` more reliably, so `edit_tool = "auto"` no longer selects it unless a custom provider sets it. It stays available for now and will be removed in a future release.
+:::
 
 `edit` changes existing UTF-8 files with line-anchored hunks. You pass one
 hashline document in `input`. Each section names a path and a snapshot tag from
