@@ -2,6 +2,12 @@ use super::*;
 use crate::{app::acp::AcpStartup, config::Config};
 use pretty_assertions::assert_eq;
 
+/// Startup fixtures never sign in.
+const NO_LOGIN: LoginSetup = LoginSetup {
+    config: None,
+    store: CredentialStoreChoice::Pending,
+};
+
 // Covers: disconnect during model discovery must neither wait for discovery
 // nor let its eventual completion hand a usable agent to a queued request.
 // Owner: deferred ACP process startup.
@@ -24,6 +30,7 @@ async fn disconnect_during_startup_rejects_the_waiting_request() {
             .boxed()
         },
         Default::default(),
+        NO_LOGIN,
     ));
     let waiting = tokio::spawn({
         let lazy = Arc::clone(&lazy);
@@ -80,6 +87,7 @@ async fn only_auth_required_startup_failures_run_startup_again() {
                 }
             },
             Default::default(),
+            NO_LOGIN,
         );
         assert_eq!(
             lazy.ready().await.err().map(|error| error.code),

@@ -51,12 +51,17 @@ Point the host at `rho acp`. Rho speaks ACP protocol version 1 over stdio. stdou
 
 ## Sign in
 
-Hosts that support terminal sign-in, such as Zed and T3 Code, offer one sign-in method per Rho provider login, covering API keys and OAuth. Picking one opens a terminal that runs the same flow as `rho login <provider>`. API-key input stays hidden. Credentials go to Rho's own credential store and never travel over ACP.
+Hosts offer one sign-in method per Rho provider login, covering API keys and OAuth.
+
+- **OAuth in the host's own sign-in UI.** Hosts that can show a link from the agent, such as Zed, run OAuth logins without a terminal. Rho picks browser or device-code the same way `rho login <provider>` does. You get a browser callback on a desktop. Over SSH or headless you get device code, and the host also shows the code. Open the link, approve, and the host finishes signing in.
+- **A terminal everywhere else.** API keys, hosts without that support, and the first sign-in before a credential store is chosen open a terminal that runs `rho login <provider>`, on hosts that have one. API-key input stays hidden.
+
+Either way, credentials go to Rho's own credential store and never travel over ACP.
 
 When credentials are missing, unreadable, or refused by the provider (a revoked key or an expired OAuth session), Rho tells the host that sign-in is needed instead of failing with an internal error. Zed opens its sign-in screen. After you sign in, keep going. You do not need to reconnect.
 
 - Signing in does not change the configured provider or model. Sign in to the provider your config selects. Credentials for other providers show up in the model picker after you reconnect.
-- On a host without terminal sign-in, run `rho login <provider>` in a terminal as the same user and in the same environment, then connect.
+- On a host with neither kind of sign-in, run `rho login <provider>` in a terminal as the same user and in the same environment, then connect.
 - Ollama Cloud device-key login is not offered in the host. Run `rho login ollama-cloud-device` yourself and reconnect, or use the Ollama Cloud API-key method.
 
 ## What works in the host

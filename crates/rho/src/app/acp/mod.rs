@@ -1,5 +1,6 @@
 mod agent;
 mod auth;
+mod auth_login;
 mod commands;
 mod compaction_card;
 mod config_options;
@@ -22,9 +23,10 @@ use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 use agent_client_protocol::schema::v1::{DeleteSessionRequest, ListSessionsRequest};
 use agent_client_protocol::{
     schema::v1::{
-        AuthenticateRequest, CancelNotification, CloseSessionRequest, CreateElicitationRequest,
-        CreateElicitationResponse, InitializeRequest, LoadSessionRequest, NewSessionRequest,
-        PromptRequest, RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
+        AuthenticateRequest, CancelNotification, CloseSessionRequest,
+        CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
+        InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
+        RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
         SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
     Agent, Client, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role, Stdio,
@@ -148,6 +150,15 @@ pub(super) trait AcpClientPort: Send + Sync {
     {
         Box::pin(async { Err(AcpError::method_not_found()) })
     }
+
+    /// `elicitation/complete`: the out-of-band step behind a URL-mode
+    /// elicitation finished. Fakes that send no URL elicitation keep this.
+    fn complete_elicitation(
+        &self,
+        _notification: CompleteElicitationNotification,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// ACP connection adapter. Session hosts talk to this instead of the crate
@@ -185,6 +196,13 @@ impl AcpClientPort for ConnectionPort {
     {
         Box::pin(async move { self.cx.send_request(request).block_task().await })
     }
+
+    fn complete_elicitation(
+        &self,
+        notification: CompleteElicitationNotification,
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
+        Box::pin(async move { self.cx.send_notification(notification) })
+    }
 }
 
 pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
@@ -197,7 +215,7 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                 let agent = Arc::clone(&agent);
                 async move |request: InitializeRequest, responder, _cx| {
                     agent.record_client(&request);
-                    responder.respond(RhoAcpAgent::initialize(&request))
+                    responder.respond(RhoAcpAgent::initialize(&request, agent.oauth_sign_in()))
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -297,8 +315,20 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |request: AuthenticateRequest, responder, _cx| {
-                responder.respond_with_error(RhoAcpAgent::authenticate(&request))
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: AuthenticateRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    let port = ConnectionPort::new(cx.clone());
+                    let request_id = responder.id().clone();
+                    // A host that cancels sign-in drops the login with it.
+                    let cancellation = responder.cancellation();
+                    spawn_response(&cx, responder, async move {
+                        cancellation
+                            .run_until_cancelled(agent.authenticate(request, request_id, &port))
+                            .await
+                    })
+                }
             },
             agent_client_protocol::on_receive_request!(),
         )

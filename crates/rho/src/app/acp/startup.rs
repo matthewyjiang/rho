@@ -6,7 +6,10 @@ use std::sync::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{DeleteSessionRequest, DeleteSessionResponse, InitializeRequest},
+    schema::v1::{
+        AuthenticateRequest, AuthenticateResponse, DeleteSessionRequest, DeleteSessionResponse,
+        InitializeRequest, RequestId,
+    },
     Error as AcpError, ErrorCode,
 };
 use futures_util::{
@@ -14,7 +17,13 @@ use futures_util::{
     FutureExt,
 };
 
-use super::{agent::RhoAcpAgent, auth, host_features::NegotiatedFeatures};
+use super::{
+    agent::RhoAcpAgent,
+    auth::{self, CredentialStoreChoice, OAuthSignIn},
+    auth_login::LoginFlight,
+    host_features::NegotiatedFeatures,
+    AcpClientPort,
+};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
@@ -30,8 +39,9 @@ type Startup = Shared<StartupRun>;
 
 pub(super) struct LazyAgent {
     // Startup failures remain stable until the host reconnects, except
-    // `auth_required`: the host's sign-in runs a terminal login and then asks
-    // again on this connection, so that failure starts a fresh run.
+    // `auth_required`: the host's sign-in runs a login (in a terminal or
+    // through `authenticate`) and then asks again on this connection, so that
+    // failure starts a fresh run.
     pending: std::sync::Mutex<Startup>,
     start: Box<dyn Fn() -> StartupRun + Send + Sync>,
     // Store-only deletes must finish before ready hands out the first agent,
@@ -39,16 +49,33 @@ pub(super) struct LazyAgent {
     publication: tokio::sync::Mutex<()>,
     closed: AtomicBool,
     host_features: Arc<NegotiatedFeatures>,
+    login: LoginSetup,
+    flight: LoginFlight,
+}
+
+/// What `authenticate` needs from launch.
+#[derive(Clone, Debug)]
+struct LoginSetup {
+    /// The `--config` override, where `authenticate` finds the store.
+    config: Option<std::path::PathBuf>,
+    /// Read once at launch, before `initialize` advertises sign-in.
+    store: CredentialStoreChoice,
 }
 
 impl LazyAgent {
     pub(super) fn new(cli: Cli) -> anyhow::Result<Self> {
         // Only config-defined auth profiles are needed for initialize. Do not
         // resolve models, refresh catalogs, or bind an agent until a session.
-        ConfigRepository::new(cli.config.clone())
-            .load()?
-            .providers
-            .activate()?;
+        let config = ConfigRepository::new(cli.config.clone()).load()?;
+        config.providers.activate()?;
+        let login = LoginSetup {
+            config: cli.config.clone(),
+            store: if crate::credential_store::needs_explicit_choice(&config) {
+                CredentialStoreChoice::Pending
+            } else {
+                CredentialStoreChoice::Made
+            },
+        };
         let host_features = Arc::new(NegotiatedFeatures::default());
         let negotiated = Arc::clone(&host_features);
         // Polled first by a session request, which follows `initialize`.
@@ -64,12 +91,13 @@ impl LazyAgent {
             }
             .boxed()
         };
-        Ok(Self::starting_with(start, host_features))
+        Ok(Self::starting_with(start, host_features, login))
     }
 
     fn starting_with(
         start: impl Fn() -> StartupRun + Send + Sync + 'static,
         host_features: Arc<NegotiatedFeatures>,
+        login: LoginSetup,
     ) -> Self {
         Self {
             pending: std::sync::Mutex::new(start().shared()),
@@ -77,7 +105,35 @@ impl LazyAgent {
             publication: tokio::sync::Mutex::new(()),
             closed: AtomicBool::new(false),
             host_features,
+            login,
+            flight: LoginFlight::default(),
         }
+    }
+
+    /// Where OAuth logins run, from the features `initialize` recorded.
+    pub(super) fn oauth_sign_in(&self) -> OAuthSignIn {
+        auth::oauth_sign_in(self.host_features.get(), self.login.store)
+    }
+
+    /// Runs an `authenticate` login in this process, one at a time. It needs
+    /// no model or session, so it does not wait for startup; the next session
+    /// request after an `auth_required` failure starts a fresh run that sees
+    /// the saved credentials.
+    pub(super) async fn authenticate(
+        &self,
+        request: AuthenticateRequest,
+        request_id: RequestId,
+        port: &dyn AcpClientPort,
+    ) -> Result<AuthenticateResponse, AcpError> {
+        self.flight
+            .run(super::auth_login::authenticate(
+                &request.method_id.0,
+                self.oauth_sign_in(),
+                self.login.config.clone(),
+                request_id,
+                port,
+            ))
+            .await
     }
 
     /// Records the optional features the host advertised at `initialize`.

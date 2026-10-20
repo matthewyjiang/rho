@@ -181,6 +181,15 @@ pub(crate) fn initialize_from_config(
     Ok(())
 }
 
+/// Opens the configured backend for a login inside a running process, such as
+/// ACP `authenticate`. Unlike [`initialize_from_config`] it runs no migrations
+/// and writes nothing, so it is safe beside startup or a live session.
+pub(crate) fn activate_for_login(config: &Config, config_path: &Path) -> anyhow::Result<()> {
+    remember_config_path(config_path);
+    activate(resolve_backend(config.credential_store)?)?;
+    Ok(())
+}
+
 /// Whether config still needs an explicit credential-store choice before login.
 pub(crate) fn needs_explicit_choice(config: &Config) -> bool {
     env_backend_override().is_none() && config.credential_store.is_none()

@@ -1,40 +1,108 @@
-//! Terminal authentication uses the same login and credential store as the CLI.
+//! Sign-in uses the same login flows and credential store as the CLI.
 //! Requests that fail for want of usable credentials answer `auth_required`,
 //! so hosts offer these login methods instead of a generic failure.
+//!
+//! OAuth logins run in this process ([`AuthMethod::Agent`], see
+//! [`super::auth_login`]) when [`oauth_sign_in`] says so; otherwise, and
+//! always for API keys, the host runs `rho acp --login <auth>` in a terminal
+//! ([`AuthMethod::Terminal`]).
 
 use agent_client_protocol::{
-    schema::v1::{AuthMethod, AuthMethodTerminal, ClientCapabilities},
+    schema::v1::{
+        AuthMethod, AuthMethodAgent, AuthMethodTerminal, ClientCapabilities, InitializeRequest,
+    },
     Error as AcpError, ErrorCode,
 };
 use rho_providers::{
     model::ModelError,
-    provider::{self, ProviderAuthKind},
+    provider::{self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind},
 };
 
-pub(super) fn methods(capabilities: &ClientCapabilities) -> Vec<AuthMethod> {
-    if !capabilities.auth.terminal {
-        return Vec::new();
+use super::host_features::HostFeatures;
+
+/// Whether a credential store has been chosen. Only the terminal login asks
+/// for that choice, so until it is made every login runs in a terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CredentialStoreChoice {
+    Made,
+    Pending,
+}
+
+/// Where this connection's OAuth logins run, fixed at `initialize`.
+/// `initialize` advertises from it and `authenticate` accepts from it, so
+/// the two cannot disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OAuthSignIn {
+    /// `authenticate` runs the login and shows its URL as an elicitation.
+    InProcess,
+    /// The host's terminal runs `rho acp --login <auth>`, if it has one.
+    Terminal,
+}
+
+pub(super) fn oauth_sign_in(host: HostFeatures, store: CredentialStoreChoice) -> OAuthSignIn {
+    match (host.urls, store) {
+        (true, CredentialStoreChoice::Made) => OAuthSignIn::InProcess,
+        (true, CredentialStoreChoice::Pending) | (false, _) => OAuthSignIn::Terminal,
     }
+}
+
+/// What finishing one auth mode's login takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoginNeeds {
+    /// Typing a secret, which only the terminal's hidden entry may take.
+    KeyEntry,
+    /// Opening a URL (with a device code, for device grants), then a wait for
+    /// the provider to confirm.
+    UrlThenWait,
+    /// Nothing Rho can confirm finished; not advertised.
+    Unconfirmable,
+}
+
+fn login_needs(kind: ProviderAuthKind) -> LoginNeeds {
+    match kind {
+        // Device-key setup only prints an authorization URL; there is no
+        // completion to await, so it cannot promise sign-in success.
+        ProviderAuthKind::None | ProviderAuthKind::OllamaDeviceKey { .. } => {
+            LoginNeeds::Unconfirmable
+        }
+        ProviderAuthKind::ApiKey { .. } => LoginNeeds::KeyEntry,
+        ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
+            BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
+                LoginNeeds::UrlThenWait
+            }
+        },
+        ProviderAuthKind::CodexOAuth { .. }
+        | ProviderAuthKind::GithubCopilotDevice { .. }
+        | ProviderAuthKind::XaiOAuth { .. }
+        | ProviderAuthKind::KimiOAuth { .. }
+        | ProviderAuthKind::MetaOAuth { .. } => LoginNeeds::UrlThenWait,
+    }
+}
+
+/// Whether `auth` is a login `authenticate` can run, given `sign_in`.
+pub(super) fn runs_in_process(auth: &str, sign_in: OAuthSignIn) -> bool {
+    sign_in == OAuthSignIn::InProcess
+        && provider::resolve_auth_mode(auth)
+            .is_some_and(|(_, mode)| login_needs(mode.auth_kind) == LoginNeeds::UrlThenWait)
+}
+
+pub(super) fn methods(request: &InitializeRequest, sign_in: OAuthSignIn) -> Vec<AuthMethod> {
+    let capabilities: &ClientCapabilities = &request.client_capabilities;
+    let terminal = capabilities.auth.terminal;
     provider::providers()
         .into_iter()
         .flat_map(|provider| provider.auth_modes())
-        .filter(|mode| match mode.auth_kind {
-            // Device-key setup only prints an authorization URL; there is no
-            // completion to await, so it cannot promise terminal-auth success.
-            ProviderAuthKind::None | ProviderAuthKind::OllamaDeviceKey { .. } => false,
-            ProviderAuthKind::ApiKey { .. }
-            | ProviderAuthKind::CodexOAuth { .. }
-            | ProviderAuthKind::GithubCopilotDevice { .. }
-            | ProviderAuthKind::XaiOAuth { .. }
-            | ProviderAuthKind::BearerCredential { .. }
-            | ProviderAuthKind::KimiOAuth { .. }
-            | ProviderAuthKind::MetaOAuth { .. } => true,
-        })
-        .map(|mode| {
-            AuthMethod::Terminal(
-                AuthMethodTerminal::new(mode.id, mode.login_label)
-                    .args(vec!["--login".into(), mode.id.into()]),
-            )
+        .filter_map(|mode| match (login_needs(mode.auth_kind), sign_in) {
+            (LoginNeeds::UrlThenWait, OAuthSignIn::InProcess) => Some(AuthMethod::Agent(
+                AuthMethodAgent::new(mode.id, mode.login_label),
+            )),
+            (LoginNeeds::UrlThenWait | LoginNeeds::KeyEntry, _) if terminal => {
+                Some(AuthMethod::Terminal(
+                    AuthMethodTerminal::new(mode.id, mode.login_label)
+                        .args(vec!["--login".into(), mode.id.into()]),
+                ))
+            }
+            (LoginNeeds::UrlThenWait | LoginNeeds::KeyEntry | LoginNeeds::Unconfirmable, _) => None,
         })
         .collect()
 }
