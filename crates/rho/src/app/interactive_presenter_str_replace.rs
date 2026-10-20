@@ -74,8 +74,14 @@ struct ProposedRows {
 /// Diff `old` against `new` by trimming shared leading and trailing lines.
 /// `first_line` is the 1-based line where `old` starts in the live file.
 fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows {
-    let old_lines = split_lines(old);
-    let new_lines = split_lines(new);
+    let mut old_lines = split_lines(old);
+    let mut new_lines = split_lines(new);
+    // A terminator both sides share is not a change; drop its empty segment
+    // so it does not render as a blank context row.
+    if old_lines.last() == Some(&"") && new_lines.last() == Some(&"") {
+        old_lines.pop();
+        new_lines.pop();
+    }
     let prefix = old_lines
         .iter()
         .zip(&new_lines)
@@ -143,9 +149,15 @@ fn unique_match_line(file: &str, needle: &str) -> Option<u32> {
     u32::try_from(line).ok()
 }
 
-/// Lines of `text` without terminators. An empty string has no lines.
+/// Lines of `text` split on `\n`. A trailing newline yields a final empty
+/// segment so adding or removing a terminator still shows as a change. An
+/// empty string has no lines.
 fn split_lines(text: &str) -> Vec<&str> {
-    text.lines().collect()
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').collect()
+    }
 }
 
 /// `str_replace` matches across CRLF/LF differences, so compare normalized text.

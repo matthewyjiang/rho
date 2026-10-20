@@ -9,7 +9,7 @@ fn row(kind: DiffRowKind, line: Option<u32>, text: &str) -> DiffRow {
 
 // Covers: proposed str_replace cards show the change before the tool runs,
 // with shared edge lines as context and live line numbers only when the
-// match is unique; a no-op replacement stays silent.
+// match is unique; a changed final newline still shows; a no-op stays silent.
 // Owner: interactive presenter str_replace card
 #[test]
 fn proposed_str_replace_card_projects_old_and_new_strings() {
@@ -66,6 +66,26 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
             serde_json::json!({ "path": "src/lib.rs", "old_string": "foo" }),
             None,
             ToolBody::Diff(vec![row(Removed, None, "foo")]),
+        ),
+        (
+            "removed trailing newline",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "old_string": "foo\n",
+                "new_string": "foo",
+            }),
+            None,
+            ToolBody::Diff(vec![row(Context, None, "foo"), row(Removed, None, "")]),
+        ),
+        (
+            "shared trailing newline",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "old_string": "foo\n",
+                "new_string": "bar\n",
+            }),
+            None,
+            ToolBody::Diff(vec![row(Removed, None, "foo"), row(Added, None, "bar")]),
         ),
         (
             "no-op replacement",

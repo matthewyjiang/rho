@@ -377,11 +377,11 @@ impl EditTool {
     }
 
     /// Whether this preference pins a format slated for removal.
+    ///
+    /// Lives here rather than on `rho_tools::EditFormat` so this crate keeps
+    /// building against the published `rho-agent-tools`.
     pub const fn is_legacy(self) -> bool {
-        match self {
-            Self::Auto => false,
-            Self::Pinned(format) => format.is_legacy(),
-        }
+        matches!(self, Self::Pinned(rho_tools::EditFormat::Hashline))
     }
 }
 

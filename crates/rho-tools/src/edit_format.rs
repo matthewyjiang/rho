@@ -38,7 +38,7 @@ pub enum EditFormat {
 }
 
 impl EditFormat {
-    /// Every supported edit format, in UI display order. Legacy formats ([`Self::is_legacy`]) sort last.
+    /// Every supported edit format, in UI display order. The legacy [`Self::Hashline`] sorts last.
     pub const ALL: &'static [Self] = &[Self::StrReplace, Self::ApplyPatch, Self::Hashline];
 
     /// The canonical model-facing tool name.
@@ -73,14 +73,6 @@ impl EditFormat {
     /// Only [`Self::Hashline`] consumes those tags. The other formats still
     /// return numbered lines, but they skip the whole-file fingerprint.
     pub const fn mints_snapshot_tags(self) -> bool {
-        matches!(self, Self::Hashline)
-    }
-
-    /// Whether this format is legacy and slated for removal.
-    ///
-    /// Hosts should not select legacy formats by default and may label them
-    /// in selectors.
-    pub const fn is_legacy(self) -> bool {
         matches!(self, Self::Hashline)
     }
 
