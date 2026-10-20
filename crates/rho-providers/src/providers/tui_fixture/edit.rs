@@ -12,9 +12,9 @@ const PROMPT: &str = "fixture edit";
 const CANCEL_PROMPT: &str = "fixture cancel edit";
 const CALL_ID: &str = "tui-fixture-edit";
 const CANCEL_CALL_ID: &str = "tui-fixture-cancel-edit";
+const TOOL_NAME: &str = "str_replace";
+const ORIGINAL_LINE: &str = "original line";
 const ORIGINAL: &str = "original line\n";
-// FNV-1a tag for ORIGINAL via rho_tools::hashline::compute_file_hash.
-const ORIGINAL_TAG: &str = "8022";
 
 pub(super) async fn intercept(
     prompt: &str,
@@ -75,7 +75,7 @@ async fn stream_edit(
     sleep: Duration,
     complete_after_sleep: bool,
 ) -> Result<ModelResponse, ProviderError> {
-    // Seed the target so the real edit tool can apply against a known tag.
+    // Seed the target so the real str_replace tool can apply against it.
     let cwd = std::env::current_dir().map_err(|error| {
         ProviderError::new(
             rho_sdk::ProviderErrorKind::Other,
@@ -94,13 +94,20 @@ async fn stream_edit(
             rho_sdk::Retryability::Permanent,
         )
     })?;
-    let input = format!("[{file_name}#{ORIGINAL_TAG}]\nPUT 1.=1:\n+{edit_line}\n");
-    let open = format!("{{\"input\":\"[{file_name}#{ORIGINAL_TAG}]\\nPUT 1.=1:\\n+{edit_line}\\n");
+    let arguments = serde_json::json!({
+        "path": file_name,
+        "old_string": ORIGINAL_LINE,
+        "new_string": edit_line,
+    });
+    // Stream everything but the closing quote and brace so the card renders
+    // from partial JSON until completion.
+    let complete = arguments.to_string();
+    let open = complete[..complete.len() - 2].to_string();
     events
         .send(ModelEvent::ToolCallDelta {
             index: 0,
             id: None,
-            name: Some("edit".into()),
+            name: Some(TOOL_NAME.into()),
             arguments: open,
         })
         .await?;
@@ -123,7 +130,7 @@ async fn stream_edit(
             })
             .await?;
     }
-    completed_tool_call(call_id, "edit", serde_json::json!({"input": input}))
+    completed_tool_call(call_id, TOOL_NAME, arguments)
 }
 
 pub(super) fn completion_text(request: &ModelRequest<'_>) -> Option<String> {

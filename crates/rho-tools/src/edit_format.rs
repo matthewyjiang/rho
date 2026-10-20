@@ -17,7 +17,18 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditFormat {
-    /// Snapshot-tagged, line-anchored `edit` tool.
+    /// Legacy snapshot-tagged, line-anchored `edit` tool.
+    ///
+    /// Models struggle with this format, so hosts should prefer
+    /// [`Self::StrReplace`] or [`Self::ApplyPatch`]. It stays available for
+    /// explicit selection until removal.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-agent-tools): remove the legacy `Hashline` edit format and its `edit` tool, and make `StrReplace` the `Default`.
+    ///
+    /// Removing a variant and changing the SDK default edit surface would break
+    /// hosts, so the format stays registered and remains the `Default` until then.
     #[default]
     Hashline,
     /// Codex-compatible `apply_patch` tool.
@@ -27,8 +38,8 @@ pub enum EditFormat {
 }
 
 impl EditFormat {
-    /// Every supported edit format, in UI display order.
-    pub const ALL: &'static [Self] = &[Self::Hashline, Self::ApplyPatch, Self::StrReplace];
+    /// Every supported edit format, in UI display order. The legacy [`Self::Hashline`] sorts last.
+    pub const ALL: &'static [Self] = &[Self::StrReplace, Self::ApplyPatch, Self::Hashline];
 
     /// The canonical model-facing tool name.
     ///

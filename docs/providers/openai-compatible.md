@@ -16,7 +16,7 @@ base_url = "http://127.0.0.1:8000/v1"
 edit_tool = "apply_patch"
 ```
 
-`edit_tool` is optional. It sets the format that `[behavior].edit_tool = "auto"` uses for this provider. Choose `hashline`, `apply_patch`, or `str_replace`. A pinned global edit tool still wins.
+`edit_tool` is optional. It sets the format that `[behavior].edit_tool = "auto"` uses for this provider. Choose `str_replace`, `apply_patch`, or the legacy `hashline`. Without it, `auto` uses `str_replace`. A pinned global edit tool still wins.
 
 A mixed proxy that is not itself in [models.dev](https://models.dev/) can borrow another catalog for context windows, prices, and reasoning lists. Set `catalog` to that models.dev provider slug. Model ids must match the borrowed catalog (`gpt-5.6-sol`, not `openai/gpt-5.6-sol`):
 

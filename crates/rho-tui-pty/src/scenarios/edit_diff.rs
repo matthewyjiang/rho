@@ -23,7 +23,7 @@ const EDIT_DIFF_STEPS: &[Step] = &[
     },
     Step::SubmitText("fixture edit"),
     Step::WaitText {
-        text: "edit(",
+        text: "str_replace(",
         timeout: STREAM,
     },
     Step::Custom(assert_edit_is_still_streaming),
@@ -40,7 +40,7 @@ const EDIT_DIFF_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::SubmitText("fixture cancel edit"),
-    // Do not WaitText("edit(") here: the completed first card still matches and
+    // Do not WaitText("str_replace(") here: the completed first card still matches and
     // Esc can race ahead of the second stream. Wait for cancel-fixture content.
     Step::WaitText {
         text: "cancelled edit line",
@@ -102,7 +102,7 @@ fn assert_one_edit_card(harness: &mut PtyHarness) -> Result<()> {
 
 fn assert_two_edit_cards(harness: &mut PtyHarness) -> Result<()> {
     let contents = harness.screen().contents();
-    let count = contents.matches("edit(").count();
+    let count = contents.matches("str_replace(").count();
     if count != 2 {
         anyhow::bail!("expected 2 edit cards, found {count}");
     }
@@ -130,7 +130,7 @@ fn assert_one_questionnaire_card(harness: &mut PtyHarness) -> Result<()> {
 }
 
 fn assert_edit_card_count(harness: &mut PtyHarness, expected: usize) -> Result<()> {
-    let count = harness.screen().contents().matches("edit(").count();
+    let count = harness.screen().contents().matches("str_replace(").count();
     if count != expected {
         anyhow::bail!("expected {expected} edit cards, found {count}");
     }

@@ -226,7 +226,7 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
     for needle in [
         DEMO_PROMPT,
         "read_file(",
-        "edit(",
+        "str_replace(",
         "check-request-id.sh",
         "request_id",
         DEMO_MODEL,

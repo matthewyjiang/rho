@@ -20,6 +20,10 @@ pub(in crate::app::interactive_presenter) use results::{push_error_output, split
 mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
+#[path = "interactive_presenter_str_replace.rs"]
+mod str_replace_format;
+use str_replace_format::str_replace_card;
+
 #[path = "interactive_presenter_plan_exit.rs"]
 mod plan_exit_format;
 
@@ -135,8 +139,9 @@ pub(super) fn streaming_preview_card(
                     ToolStatus::Running,
                     rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
                 ),
+                // Streaming skips the file read; rows get numbers once proposed.
                 rho_tools::EditFormat::StrReplace => {
-                    preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running)
+                    str_replace_card(arguments, cwd, ToolStatus::Running, /*live_file*/ None)
                 }
                 // Published enum stays non_exhaustive; unknown future formats
                 // get a generic path/header card rather than hashline parsing.
@@ -306,14 +311,11 @@ fn edit_preview_card(
             status,
             rho_tools::apply_patch::ProposedDiffTrailingLine::Include,
         ),
-        rho_tools::EditFormat::StrReplace => kind_card(
-            status,
-            ToolKind::Edit(format),
-            ToolHeader::call(
-                format.tool_name(),
-                Some(display_path(arguments, cwd)).filter(|path| !path.is_empty()),
-            ),
-        ),
+        rho_tools::EditFormat::StrReplace => {
+            let live_file =
+                string_arg(arguments, "path").and_then(|path| read_planned_edit_file(cwd, &path));
+            str_replace_card(arguments, cwd, status, live_file.as_deref())
+        }
         // Published enum stays non_exhaustive; unknown future formats get a
         // path header rather than hashline/document parsing.
         _ => kind_card(

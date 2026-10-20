@@ -213,7 +213,9 @@ fn selecting_an_internal_agent_model_carries_explicit_reasoning() {
 async fn select_model_report_auto_edit_tool_follows_provider_change() {
     use std::sync::Arc;
 
-    use rho_providers::credentials::{save_provider_api_key, MemoryCredentialStore};
+    use rho_providers::credentials::{
+        save_codex_tokens, save_provider_api_key, CodexTokens, MemoryCredentialStore,
+    };
 
     use crate::{
         app::interactive_runtime::test_edit_tool_runtime,
@@ -221,13 +223,13 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
         tui::{tests::test_bootstrap, App, InteractiveRuntime},
     };
 
-    async fn switch_to_anthropic(app: &mut App, agent: &mut InteractiveRuntime) {
+    async fn switch_to_codex(app: &mut App, agent: &mut InteractiveRuntime) {
         app.select_model_report(
             InteractiveModelSelection {
                 selection: ModelSelection {
-                    provider: "anthropic".into(),
-                    model: "claude-fable-5".into(),
-                    auth: "api-key".into(),
+                    provider: "openai-codex".into(),
+                    model: "gpt-5.5".into(),
+                    auth: "codex".into(),
                     from_catalog: true,
                 },
                 alias: None,
@@ -247,78 +249,71 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
             .find(|name| agent.has_tool(name))
     }
 
-    // --- Auto follows the provider ---
-    let store = Arc::new(MemoryCredentialStore::default());
-    save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
-    save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
-    let mut app = App::new_with_credentials(
-        test_bootstrap(),
-        store,
-        crate::tools::mcp::McpSessionReport::default(),
-        crate::tools::mcp::McpCatalog::default(),
-        crate::plugins::PluginLoadReport::default(),
-        crate::tui::program_status::ProgramStatusSupport::Unsupported,
-    );
-    app.info
-        .services
-        .config_repository
-        .update(|config| {
-            config.edit_tool = EditTool::Auto;
-            config.provider = "openai".into();
-            config.model = "gpt-5.5".into();
-            config.auth = "api-key".into();
-        })
+    fn app_on_openai(edit_tool: EditTool) -> App {
+        let store = Arc::new(MemoryCredentialStore::default());
+        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
+        save_codex_tokens(
+            store.as_ref(),
+            &CodexTokens {
+                access_token: "test-access-token".into(),
+                refresh_token: None,
+                id_token: None,
+                account_id: None,
+            },
+        )
         .unwrap();
+        let app = App::new_with_credentials(
+            test_bootstrap(),
+            store,
+            crate::tools::mcp::McpSessionReport::default(),
+            crate::tools::mcp::McpCatalog::default(),
+            crate::plugins::PluginLoadReport::default(),
+            crate::tui::program_status::ProgramStatusSupport::Unsupported,
+        );
+        app.info
+            .services
+            .config_repository
+            .update(|config| {
+                config.edit_tool = edit_tool;
+                config.provider = "openai".into();
+                config.model = "gpt-5.5".into();
+                config.auth = "api-key".into();
+            })
+            .unwrap();
+        app
+    }
 
+    // --- Auto follows the provider ---
+    let mut app = app_on_openai(EditTool::Auto);
     let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
     assert_eq!(
         advertised_edit_name(&agent),
-        Some("edit"),
-        "Auto + openai should start on hashline (`edit`)"
+        Some("str_replace"),
+        "Auto + openai should start on str_replace"
     );
 
-    switch_to_anthropic(&mut app, &mut agent).await;
-    assert_eq!(app.info.runtime.provider, "anthropic");
+    switch_to_codex(&mut app, &mut agent).await;
+    assert_eq!(app.info.runtime.provider, "openai-codex");
     assert_eq!(
         advertised_edit_name(&agent),
-        Some("str_replace"),
-        "Auto must follow anthropic to str_replace after select_model_report"
+        Some("apply_patch"),
+        "Auto must follow openai-codex to apply_patch after select_model_report"
     );
 
     // --- Pinned does not follow ---
-    let store = Arc::new(MemoryCredentialStore::default());
-    save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
-    save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
-    let mut app = App::new_with_credentials(
-        test_bootstrap(),
-        store,
-        crate::tools::mcp::McpSessionReport::default(),
-        crate::tools::mcp::McpCatalog::default(),
-        crate::plugins::PluginLoadReport::default(),
-        crate::tui::program_status::ProgramStatusSupport::Unsupported,
-    );
-    app.info
-        .services
-        .config_repository
-        .update(|config| {
-            config.edit_tool = EditTool::Pinned(rho_tools::EditFormat::Hashline);
-            config.provider = "openai".into();
-            config.model = "gpt-5.5".into();
-            config.auth = "api-key".into();
-        })
-        .unwrap();
-
-    let mut agent = test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
+    let pinned = EditTool::Pinned(rho_tools::EditFormat::Hashline);
+    let mut app = app_on_openai(pinned);
+    let mut agent = test_edit_tool_runtime(pinned).await;
     assert_eq!(advertised_edit_name(&agent), Some("edit"));
 
-    switch_to_anthropic(&mut app, &mut agent).await;
-    assert_eq!(app.info.runtime.provider, "anthropic");
+    switch_to_codex(&mut app, &mut agent).await;
+    assert_eq!(app.info.runtime.provider, "openai-codex");
     assert_eq!(
         advertised_edit_name(&agent),
         Some("edit"),
-        "pinned hashline must not follow the anthropic provider change"
+        "pinned hashline must not follow the openai-codex provider change"
     );
-    assert!(!agent.has_tool("str_replace"));
+    assert!(!agent.has_tool("apply_patch"));
 }
 
 // Covers: a mid-session model switch remains visible in conversation history,

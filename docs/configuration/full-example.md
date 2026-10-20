@@ -93,7 +93,7 @@ base_url = "http://127.0.0.1:11434/v1"
 base_url = "http://127.0.0.1:8787/v1"
 # catalog = "llmgateway" # optional models.dev slug for context, price, and reasoning
 # catalog_mode = "model-id" # look up unsplit slug/model ids in models.dev
-# edit_tool = "apply_patch" # auto preference: hashline, apply_patch, or str_replace
+# edit_tool = "apply_patch" # auto preference: str_replace, apply_patch, or hashline (legacy)
 # request_compression = "zstd" # or "gzip"; only if the host decodes that request encoding
 
 [codemode]
@@ -105,7 +105,7 @@ check_for_updates = true
 enable_subagents = true
 agent_concurrency = 10
 workspace_rewind = true # native file-tool checkpoints; restart after changing; false opts out
-edit_tool = "auto" # auto, hashline, apply_patch, or str_replace
+edit_tool = "auto" # auto, str_replace, apply_patch, or hashline (legacy)
 permission_mode = "bypass" # bypass, auto, allow_edits, plan, or supervised
 rtk = true
 inline_shell = "bash" # bash default on macOS/Linux; powershell on Windows

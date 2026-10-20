@@ -372,19 +372,16 @@ impl EditTool {
             Self::Auto => {
                 "Pick the preferred format for the active provider and switch when the provider changes."
             }
-            Self::Pinned(format) => match format {
-                rho_tools::EditFormat::Hashline => {
-                    "Always expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
-                }
-                rho_tools::EditFormat::ApplyPatch => {
-                    "Always expose `apply_patch` with a Codex-style multi-file patch document."
-                }
-                rho_tools::EditFormat::StrReplace => {
-                    "Always expose `str_replace` with exact old_string/new_string replacement."
-                }
-                _ => "Always expose this pinned file edit format.",
-            },
+            Self::Pinned(format) => format.detail(),
         }
+    }
+
+    /// Whether this preference pins a format slated for removal.
+    ///
+    /// Lives here rather than on `rho_tools::EditFormat` so this crate keeps
+    /// building against the published `rho-agent-tools`.
+    pub const fn is_legacy(self) -> bool {
+        matches!(self, Self::Pinned(rho_tools::EditFormat::Hashline))
     }
 }
 
@@ -424,15 +421,16 @@ impl Config {
 /// Product defaults, not user config. Many models train inside a first-party
 /// harness that supplies one edit tool, so Auto picks that familiar surface.
 /// Pin a concrete [`EditTool`] when a session should ignore this table.
-/// Unknown providers fall back to hashline.
+/// Unknown providers fall back to str_replace. Hashline is legacy and is only
+/// reachable by pinning it or through a custom provider override.
 pub fn preferred_edit_format_for_provider(provider: &str) -> rho_tools::EditFormat {
     match provider {
         // Codex harness trains on apply_patch documents.
         "openai-codex" => rho_tools::EditFormat::ApplyPatch,
         // Claude Code and xAI first-party agent tooling train on string replace.
         "anthropic" | "xai" => rho_tools::EditFormat::StrReplace,
-        // Rho default when no first-party match is known.
-        _ => rho_tools::EditFormat::Hashline,
+        // Most reliable surface when no first-party match is known.
+        _ => rho_tools::EditFormat::StrReplace,
     }
 }
 
