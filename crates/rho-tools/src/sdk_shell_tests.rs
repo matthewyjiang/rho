@@ -79,9 +79,14 @@ mod unix {
         let session = runtime.session(SessionOptions::default()).await.unwrap();
         let mut run = session.start(UserInput::text("run it")).await.unwrap();
         let mut completion = None;
+        let mut started_summary = None;
         while let Some(event) = run.next_event().await {
-            if let RunEvent::ToolFinished { result, .. } = event {
-                completion = Some(result);
+            match event {
+                RunEvent::ToolStarted { metadata, .. } => {
+                    started_summary = metadata.command_summary_text().map(str::to_owned);
+                }
+                RunEvent::ToolFinished { result, .. } => completion = Some(result),
+                _ => {}
             }
         }
         run.outcome().await.unwrap();
@@ -92,6 +97,8 @@ mod unix {
             "$TOKEN; && | $(touch must-not-exist)"
         );
         assert!(!root.path().join("must-not-exist").exists());
+        // Hosts title the running call with the command, e.g. Zed's command card.
+        assert_eq!(started_summary.as_deref(), Some(command));
 
         let expected = ProcessExecution::new(
             root.path().canonicalize().unwrap(),
