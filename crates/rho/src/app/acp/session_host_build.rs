@@ -59,6 +59,8 @@ pub(super) async fn build_session(
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
+        // stdin is the protocol pipe, so no person can finish a login here.
+        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         diagnostics: &startup.diagnostics,
         agent,
         max_steps: None,

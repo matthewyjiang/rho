@@ -35,7 +35,7 @@ pub(crate) enum WorkflowTuiExit {
 pub(crate) async fn run(
     mut adapter: Box<dyn WorkflowEventAdapter>,
 ) -> anyhow::Result<WorkflowTuiExit> {
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!(
             "the workflow TUI requires an interactive terminal; use text or JSONL output"
         );

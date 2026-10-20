@@ -146,6 +146,11 @@ provider = "disabled"
         // An explicit provider makes startup discover its models, so the
         // missing key fails startup itself rather than the session build.
         .args(["--provider", "mock", "acp"]);
+    // Winsock cannot initialize without SystemRoot, so a cleared Windows
+    // environment fails every HTTP request before it reaches the fixture.
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", root);
+    }
     let mut server = AcpServer::from_command(&mut command);
     server
         .request("initialize", json!({"protocolVersion": 1}))

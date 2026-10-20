@@ -238,6 +238,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
         mcp_attach: McpAttach::None,
+        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         diagnostics: &diagnostics,
         agent: &agent,
         max_steps: NonZeroUsize::new(SIDE_CHAT_STEP_LIMIT),

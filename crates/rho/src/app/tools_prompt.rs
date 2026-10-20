@@ -35,6 +35,9 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) mcp_sampling: McpSamplingSupport,
     /// Whether this run starts MCP servers from user config and Agent Plugins.
     pub(crate) mcp_attach: McpAttach,
+    /// Whether a configured MCP server may start a browser login. The host
+    /// decides: probing stdin here would race the ACP transport's read of it.
+    pub(crate) mcp_authorization: crate::tools::mcp::McpAuthorizationMode,
     /// Startup system-prompt model labels should wait on a models.dev
     /// catalog hydrate. Interactive sessions stay cache-only on the first
     /// frame and rewrite once if the hydrate lands before the first request.
@@ -144,7 +147,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
         options.config.max_output_bytes,
         crate::tools::mcp::McpRoots::for_workspace(options.cwd),
-        crate::tools::mcp::McpAuthorizationMode::from_process(),
+        options.mcp_authorization,
     )
     .with_elicitation(options.mcp_elicitation);
     match options.mcp_sampling {

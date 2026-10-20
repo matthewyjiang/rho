@@ -102,6 +102,7 @@ pub(super) async fn initialize(
         // for completions.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
+        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::from_process(),
         await_catalog_names: false,
         defer_mcp_connect: true,
         diagnostics: &diagnostics,

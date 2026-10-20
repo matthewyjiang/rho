@@ -58,6 +58,12 @@
         ["ratatui", "::", "DefaultTerminal"]
       ],
       "reason": "ratatui's default terminal skips synchronized output, so the caret jumps across each redraw; use tui::synced_backend::{init, try_init, DefaultTerminal}"
+    },
+    {
+      "roots": ["crates/rho/src"],
+      "sequences": [["stdin", "is_terminal"]],
+      "allow": ["crates/rho/src/stdio.rs"],
+      "reason": "on Windows a stdin probe waits behind the ACP transport's pending stdin read and hangs session startup; use crate::stdio::stdin_is_terminal"
     }
   ]
 }

@@ -74,7 +74,7 @@ impl McpAuthorizationMode {
     pub(crate) fn from_process() -> Self {
         use std::io::IsTerminal;
 
-        let terminal = if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        let terminal = if crate::stdio::stdin_is_terminal() && std::io::stderr().is_terminal() {
             TerminalAttachment::Attached
         } else {
             TerminalAttachment::Detached

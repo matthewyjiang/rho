@@ -37,7 +37,7 @@ pub(crate) struct StartupKeyringNotice;
 impl StartupKeyringNotice {
     pub(crate) fn begin(interactive: bool) -> Self {
         let mut state = NOTICE.lock().unwrap_or_else(|error| error.into_inner());
-        *state = if interactive && io::stdin().is_terminal() && io::stderr().is_terminal() {
+        *state = if interactive && crate::stdio::stdin_is_terminal() && io::stderr().is_terminal() {
             NoticeState::Pending
         } else {
             NoticeState::Disabled

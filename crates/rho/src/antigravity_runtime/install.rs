@@ -145,7 +145,7 @@ pub(crate) async fn offer_install() -> anyhow::Result<PathBuf> {
             std::env::consts::ARCH
         );
     };
-    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() || !std::io::stderr().is_terminal() {
         bail!("{missing}; run `rho login antigravity` in a terminal to install it");
     }
     let root = ManagedRoot::from_env()?;

@@ -22,7 +22,7 @@ impl Drop for SecretTerminal {
 }
 
 pub(super) fn read(label: &str) -> anyhow::Result<String> {
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+    if !crate::stdio::stdin_is_terminal() || !io::stderr().is_terminal() {
         anyhow::bail!("API-key login requires an interactive terminal");
     }
     enable_raw_mode()?;

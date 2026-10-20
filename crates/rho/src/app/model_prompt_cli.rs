@@ -25,7 +25,7 @@ pub(super) async fn run(command: &ModelPromptCommand, cli: &Cli) -> anyhow::Resu
     // Nonterminal callers need the model flag even if no editor is configured.
     ensure!(
         model_reference.is_some()
-            || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal()),
+            || (crate::stdio::stdin_is_terminal() && std::io::stdout().is_terminal()),
         "model selection requires an interactive terminal; pass --model <MODEL> to edit directly"
     );
     let editor = resolve_editor(env::var_os("VISUAL"), env::var_os("EDITOR"))

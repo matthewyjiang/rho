@@ -419,12 +419,10 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
 /// would block on EOF, so interactive `cargo test` runs bail out immediately.
 #[test]
 fn child_store_observation_helper() {
-    use std::io::IsTerminal;
-
     // Parent tests always pipe stdin. A terminal means this helper was
     // discovered/run directly under an interactive harness - exit without
     // blocking on EOF.
-    if std::io::stdin().is_terminal() {
+    if crate::stdio::stdin_is_terminal() {
         return;
     }
     let mut stdin = std::io::stdin().lock();

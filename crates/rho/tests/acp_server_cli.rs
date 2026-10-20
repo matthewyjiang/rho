@@ -2,8 +2,6 @@
 //! automation fixture provider stands in for the model, so each prompt
 //! deterministically calls one tool and replies with its result.
 
-#![cfg(unix)]
-
 use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
