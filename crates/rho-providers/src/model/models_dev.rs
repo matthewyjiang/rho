@@ -246,11 +246,13 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     override_metadata(provider, model)
 }
 
-/// Cache provider for the shared ExactAdvertised `slug/model` tree.
+/// Cache provider for the shared `slug/model` tree.
 ///
 /// The slash keeps this out of custom host names and `catalog` slugs, so
 /// model-id lookup never aliases into built-in extract (Anthropic stores
-/// Unknown; this tree is ExactAdvertised).
+/// Unknown; `api.json` tree rows are ExactAdvertised). Canonical
+/// `models.json` rows fill ids no serving provider publishes; their reasoning
+/// stays unknown unless the row says the model does not reason.
 pub(super) const MODEL_ID_CATALOG_CACHE_PROVIDER: &str = "models.dev/tree";
 
 /// Why a custom host with `catalog_mode = "model-id"` has no models.dev row.
@@ -297,7 +299,7 @@ pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<Catal
 /// Cache provider and model id used for the sqlite catalog row.
 ///
 /// Custom hosts can borrow another slug (`catalog = "llmgateway"`) or read the
-/// shared ExactAdvertised tree with unsplit `slug/model` ids
+/// shared model-id tree with unsplit `slug/model` ids
 /// (`catalog_mode = "model-id"`). A models.toml
 /// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
 ///
@@ -522,16 +524,7 @@ pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<H
     let response = fetch_models_dev_api().await?;
     // Reuse the document for a full hydrate when this process has not already
     // marked the snapshot current, so a deprecation check also warms names.
-    if !hydrate::catalog_snapshot_is_ready() {
-        let _guard = hydrate::catalog_hydrate_lock_for_parent().lock().await;
-        if !hydrate::catalog_snapshot_is_ready() {
-            let canonical = hydrate::fetch_canonical_for_model_id_hosts().await;
-            let written = hydrate::hydrate_catalog_from_api(&response, &canonical);
-            if written > 0 && hydrate::mark_catalog_snapshot_current() {
-                hydrate::apply_in_memory_catalog_ready();
-            }
-        }
-    }
+    hydrate::hydrate_from_fetched_api(&response).await;
     Some(document::deprecated_provider_models(&response, provider))
 }
 

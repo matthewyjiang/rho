@@ -66,12 +66,40 @@ pub async fn force_refresh_models_dev_catalog() -> usize {
 }
 
 async fn hydrate_catalog_from_network() -> usize {
-    let (api, canonical) =
-        tokio::join!(fetch_models_dev_api(), fetch_canonical_for_model_id_hosts());
+    let needed = needed_extra_catalog_docs();
+    let (api, canonical) = tokio::join!(
+        fetch_models_dev_api(),
+        fetch_canonical_for_model_id_hosts(needed.full_tree)
+    );
     let Some(api) = api else {
         return 0;
     };
-    let written = hydrate_catalog_from_api(&api, &canonical);
+    if needed_extra_catalog_docs() != needed {
+        // A host was interned mid-download, so `canonical` may not cover it.
+        // Keep the rows but leave the snapshot stale; the next ensure refetches.
+        return hydrate_catalog_from_api(&api, &canonical);
+    }
+    write_snapshot(&api, &canonical)
+}
+
+/// Hydrates from an `api.json` a caller already downloaded for its own use.
+///
+/// Skipped while model-id hosts also need `models.json`: that second download
+/// belongs to [`ensure_models_dev_catalog`], not to the caller's latency
+/// budget (Google's deprecation lookup has one second).
+pub(super) async fn hydrate_from_fetched_api(api: &ModelsDevCatalog) {
+    if catalog_snapshot_is_ready() || needed_extra_catalog_docs().full_tree {
+        return;
+    }
+    let _guard = catalog_hydrate_lock().lock().await;
+    if !catalog_snapshot_is_ready() {
+        write_snapshot(api, &ModelsDevCanonicalCatalog::default());
+    }
+}
+
+/// Writes one full snapshot and marks it current. Callers hold the hydrate lock.
+fn write_snapshot(api: &ModelsDevCatalog, canonical: &ModelsDevCanonicalCatalog) -> usize {
+    let written = hydrate_catalog_from_api(api, canonical);
     if written > 0 && mark_catalog_snapshot_current() {
         CATALOG_READY.store(true, Ordering::Release);
     }
@@ -84,8 +112,8 @@ async fn hydrate_catalog_from_network() -> usize {
 /// Best effort: a failed download still lets the `api.json` snapshot land and
 /// be marked current. Retrying would redownload `api.json` on every ensure
 /// while `models.json` is down, and `/config` can force a refresh.
-pub(super) async fn fetch_canonical_for_model_id_hosts() -> ModelsDevCanonicalCatalog {
-    if !needed_extra_catalog_docs().full_tree {
+async fn fetch_canonical_for_model_id_hosts(full_tree: bool) -> ModelsDevCanonicalCatalog {
+    if !full_tree {
         return ModelsDevCanonicalCatalog::default();
     }
     fetch_models_dev_canonical().await.unwrap_or_default()
@@ -131,7 +159,8 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// upstream providers otherwise stay out of sqlite. `canonical` then fills
 /// tree ids no serving provider publishes under that slug: proxies expose lab
 /// ids such as `alibaba/qwen3.8-flash-next` that only resellers serve. An
-/// exact `api.json` tree row always wins over the canonical row.
+/// id any serving provider publishes keeps its `api.json` row, or no row when
+/// that one is incomplete; the canonical row never replaces it.
 pub(super) fn hydrate_catalog_from_api(
     api: &ModelsDevCatalog,
     canonical: &ModelsDevCanonicalCatalog,
@@ -179,27 +208,29 @@ pub(super) fn hydrate_catalog_from_api(
     let extra = needed_extra_catalog_docs();
     if extra.full_tree {
         let policy = CatalogLookupMode::MODEL_ID_HYDRATE_REASONING;
-        let mut tree_ids = HashSet::new();
+        // Every id a serving provider publishes, complete or not. Canonical
+        // rows only fill ids that are absent from api.json.
+        let mut api_ids = HashSet::new();
         for (slug, provider) in api.iter_providers() {
             for model_id in provider.models.keys() {
+                let tree_id = format!("{slug}/{model_id}");
+                api_ids.insert(tree_id.clone());
                 let Some(row) = document::cached_row_from_catalog(api, slug, model_id, policy)
                     .filter(|row| row.metadata.reasoning_metadata_complete)
                 else {
                     continue;
                 };
-                let tree_id = format!("{slug}/{model_id}");
-                tree_ids.insert(tree_id.clone());
                 entries.push((MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(), tree_id, row));
             }
         }
         for (canonical_id, model) in canonical.iter() {
-            if tree_ids.contains(canonical_id) {
+            if api_ids.contains(canonical_id) {
                 continue;
             }
             entries.push((
                 MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
                 canonical_id.to_string(),
-                document::cached_row_from_canonical(model),
+                document::cached_row_from_canonical(model, policy),
             ));
         }
     }
@@ -244,7 +275,7 @@ fn catalog_model_ids_for_provider(
 /// Extra models.dev rows this snapshot must contain besides Rho extract.
 ///
 /// Two independent dimensions: borrowed slug documents written slug-keyed
-/// (`catalog = "llmgateway"`), and one shared ExactAdvertised `slug/model`
+/// (`catalog = "llmgateway"`), and one shared `slug/model`
 /// tree for any interned `catalog_mode = "model-id"` host. A snapshot is only
 /// reusable when it covers both, so a new borrow or the first model-id host
 /// refetches. A second model-id host reuses the same tree.

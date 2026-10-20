@@ -191,20 +191,24 @@ pub(super) fn cached_row_from_catalog(
     ))
 }
 
-/// Cache row for one canonical `models.json` model.
+/// Cache row for one canonical `models.json` model, parsed with `policy`.
 ///
-/// Canonical rows carry no `reasoning_options`, so a reasoning model cannot
-/// name exact effort levels. Such a row is parsed with the `Unknown` policy:
-/// complete, so it reads as current, but with unknown capabilities so the
-/// picker keeps the full level list. Rows that are exact under
-/// `ExactAdvertised` (`reasoning: false`, or advertised options) keep that
-/// parse. Canonical rows publish no prices or SDK package, so both stay unknown.
-pub(super) fn cached_row_from_canonical(model: &ModelsDevModel) -> CachedRow {
-    let exact = cached_row_from_model(model, None, CatalogReasoningPolicy::ExactAdvertised);
-    if exact.metadata.reasoning_metadata_complete {
-        return exact;
-    }
-    cached_row_from_model(model, None, CatalogReasoningPolicy::Unknown)
+/// Canonical rows carry no `reasoning_options`, so a reasoning model (or one
+/// with no `reasoning` field) cannot be exact under `policy`. Such a row falls
+/// back to the `Unknown` policy: complete, so it reads as current, but with
+/// unknown capabilities so the picker keeps the full level list. Rows `policy`
+/// can parse exactly (`reasoning: false`) keep it. Canonical rows publish no
+/// prices or SDK package, so both stay unknown.
+pub(super) fn cached_row_from_canonical(
+    model: &ModelsDevModel,
+    policy: CatalogReasoningPolicy,
+) -> CachedRow {
+    let policy = if reasoning_metadata_complete(model, policy) {
+        policy
+    } else {
+        CatalogReasoningPolicy::Unknown
+    };
+    cached_row_from_model(model, None, policy)
 }
 
 fn cached_row_from_model(

@@ -2175,6 +2175,11 @@ fn api_without_lab_slug_row() -> Value {
                     "limit": { "context": 131072, "output": 8192 },
                     "cost": { "input": 1, "output": 2 },
                     "modalities": { "input": ["text"] }
+                },
+                "qwen-incomplete": {
+                    "name": "Qwen Incomplete (DashScope)",
+                    "reasoning": true,
+                    "limit": { "context": 65536 }
                 }
             }
         },
@@ -2210,6 +2215,11 @@ fn canonical_models() -> Value {
             "reasoning": false,
             "modalities": { "input": ["text"] },
             "limit": { "context": 32768, "output": 4096 }
+        },
+        "alibaba/qwen-incomplete": {
+            "name": "Qwen Incomplete",
+            "reasoning": true,
+            "limit": { "context": 1000000 }
         },
         "alibaba/qwen-shared": {
             "name": "Qwen Shared",
@@ -2278,8 +2288,8 @@ fn model_id_host_falls_back_to_canonical_row() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
-// Covers: an exact api.json provider-tree row wins over the canonical row
-// with the same `lab/model` id, keeping host prices and effort levels
+// Covers: an id api.json publishes never takes the canonical row: an exact
+// tree row keeps host prices and effort levels, an incomplete one stays absent
 // Owner: models.dev catalog hydrate
 #[test]
 fn provider_tree_row_wins_over_canonical_row() {
@@ -2314,6 +2324,13 @@ fn provider_tree_row_wins_over_canonical_row() {
             })
         );
         assert_eq!(image_input("cliproxyapi", model), ImageInput::Unsupported);
+
+        // A published but incomplete api.json row keeps base behavior (no
+        // row) rather than taking the canonical lab limits for this host.
+        assert_eq!(
+            current_model_metadata("cliproxyapi", "alibaba/qwen-incomplete"),
+            None
+        );
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
