@@ -205,3 +205,35 @@ fn replace_all_card_reports_every_occurrence() {
         assert_eq!(card.facts, expected, "{name}");
     }
 }
+
+// Covers: a bulk replacement whose result would exceed the exact-diff cap falls
+// back to the projection instead of building the oversized result.
+// Owner: interactive presenter str_replace card
+#[test]
+fn oversized_replace_all_result_falls_back_to_projection() {
+    let file = "a\n".repeat(1_000);
+    let arguments = serde_json::json!({
+        "path": "src/lib.rs",
+        "old_string": "a",
+        "new_string": "b".repeat(1_000),
+        "replace_all": true,
+    });
+
+    let card = str_replace_card(
+        &arguments,
+        std::path::Path::new("/workspace"),
+        ToolStatus::Running,
+        Some(&file),
+    );
+
+    assert_eq!(
+        card.facts,
+        vec![ToolFact::Meta {
+            text: "replaces all 1000 occurrences".into()
+        }]
+    );
+    let ToolBody::Diff(rows) = card.body else {
+        panic!("expected a projected diff body");
+    };
+    assert!(rows.iter().all(|row| row.line.is_none()));
+}

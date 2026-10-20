@@ -16,8 +16,8 @@ use super::{diff_card, display_path, EmptyDiffState};
 
 /// Same cap as the hashline and apply_patch proposed diffs.
 const MAX_PROPOSED_DIFF_ROWS: usize = 1_000;
-/// Same input cap as the result diff `str_replace` itself records, so the
-/// exact preview never costs more than the finished card.
+/// Same cap as the result diff `str_replace` itself records (old plus new
+/// bytes), so the exact preview never costs more than the finished card.
 const MAX_EXACT_DIFF_BYTES: usize = 128 * 1024;
 /// Shared lines kept on each side of a change, like a unified diff.
 const CONTEXT_LINES: usize = 3;
@@ -90,7 +90,9 @@ pub(super) fn str_replace_card(
 
 /// Diff of `file` before and after the replacement, when the tool would
 /// apply it: at least one match, exactly one unless `replace_all`, and a file
-/// small enough to diff. Matches are non-overlapping, like the tool's.
+/// small enough to diff before and after. Matches are non-overlapping, like
+/// the tool's. The result size is checked before it is built, so a bulk
+/// replacement cannot allocate past the cap.
 fn exact_diff(
     file: &str,
     old: &str,
@@ -101,11 +103,15 @@ fn exact_diff(
     if old.is_empty() || file.len() > MAX_EXACT_DIFF_BYTES {
         return None;
     }
-    match count_matches(file, old) {
+    let count = match count_matches(file, old) {
         0 => return None,
-        1 => {}
-        _ if !replace_all => return None,
-        _ => {}
+        count if count > 1 && !replace_all => return None,
+        count => usize::try_from(count).ok()?,
+    };
+    let updated_len =
+        (file.len() - count * old.len()).checked_add(count.checked_mul(new.len())?)?;
+    if file.len().checked_add(updated_len)? > MAX_EXACT_DIFF_BYTES {
+        return None;
     }
     let updated = file.replace(old, new);
     let diff = similar::TextDiff::from_lines(file, &updated)
