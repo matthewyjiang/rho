@@ -110,7 +110,17 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
                 "new_string": "foo",
             }),
             None,
-            ToolBody::Diff(vec![row(Context, None, "foo"), row(Removed, None, "")]),
+            ToolBody::Diff(vec![row(Removed, None, "foo"), row(Added, None, "foo")]),
+        ),
+        (
+            "deleted terminated line",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "old_string": "foo\n",
+                "new_string": "",
+            }),
+            None,
+            ToolBody::Diff(vec![row(Removed, None, "foo")]),
         ),
         (
             "shared trailing newline",

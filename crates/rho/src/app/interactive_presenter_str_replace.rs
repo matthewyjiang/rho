@@ -105,14 +105,8 @@ const CONTEXT_LINES: usize = 3;
 /// shared prefix can never crowd the change out of the row cap.
 /// `first_line` is the 1-based line where `old` starts in the live file.
 fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows {
-    let mut old_lines = split_lines(old);
-    let mut new_lines = split_lines(new);
-    // A terminator both sides share is not a change; drop its empty segment
-    // so it does not render as a blank context row.
-    if old_lines.last() == Some(&"") && new_lines.last() == Some(&"") {
-        old_lines.pop();
-        new_lines.pop();
-    }
+    let old_lines = split_lines(old);
+    let new_lines = split_lines(new);
     let prefix = old_lines
         .iter()
         .zip(&new_lines)
@@ -137,20 +131,24 @@ fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows 
         rows.push(skip());
     }
     for (index, text) in old_lines.iter().enumerate().take(prefix).skip(leading) {
-        rows.push(DiffRow::new(DiffRowKind::Context, line(index), *text));
+        rows.push(DiffRow::new(
+            DiffRowKind::Context,
+            line(index),
+            display(text),
+        ));
     }
     for (index, text) in removed.iter().enumerate() {
         rows.push(DiffRow::new(
             DiffRowKind::Removed,
             line(prefix + index),
-            *text,
+            display(text),
         ));
     }
     for (index, text) in added.iter().enumerate() {
         rows.push(DiffRow::new(
             DiffRowKind::Added,
             line(prefix + index),
-            *text,
+            display(text),
         ));
     }
     let suffix_start = prefix + added.len();
@@ -159,7 +157,7 @@ fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows 
         rows.push(DiffRow::new(
             DiffRowKind::Context,
             line(suffix_start + index),
-            *text,
+            display(text),
         ));
     }
     if trailing.len() > CONTEXT_LINES {
@@ -192,15 +190,16 @@ fn match_lines(file: &str, needle: &str) -> Vec<u32> {
     lines
 }
 
-/// Lines of `text` split on `\n`. A trailing newline yields a final empty
-/// segment so adding or removing a terminator still shows as a change. An
-/// empty string has no lines.
+/// Lines of `text`, each keeping its `\n`. Comparing with terminators makes
+/// `foo` and `foo\n` differ without inventing an extra empty line, so adding,
+/// removing, or deleting a terminated line counts exactly once.
 fn split_lines(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        Vec::new()
-    } else {
-        text.split('\n').collect()
-    }
+    text.split_inclusive('\n').collect()
+}
+
+/// Row text for a line, without its terminator.
+fn display(line: &str) -> &str {
+    line.strip_suffix('\n').unwrap_or(line)
 }
 
 /// `str_replace` treats CRLF, LF, and a bare CR as the same line break, so
