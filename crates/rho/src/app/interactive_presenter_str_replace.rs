@@ -55,17 +55,17 @@ pub(super) fn str_replace_card(
         let proposed = proposed_rows(&old_string, &new_string, first_line);
         truncated = proposed.truncated;
         // Without replace_all the tool fails unless there is exactly one match.
-        let scale = if replace_all {
-            occurrences.unwrap_or(1).max(1)
-        } else {
-            1
-        };
+        // With it and no readable file, the total is unknown, so show no stats
+        // rather than a single-occurrence count.
+        let scale = if replace_all { occurrences } else { Some(1) };
         if proposed.added > 0 || proposed.removed > 0 {
             files.push(DiffCardFile {
                 path: path.clone(),
                 source_path: None,
                 change: DiffCardChange::Content,
-                stats: Some((proposed.added * scale, proposed.removed * scale)),
+                stats: scale
+                    .map(|n| (proposed.added * n, proposed.removed * n))
+                    .filter(|(added, removed)| *added > 0 || *removed > 0),
                 rows: proposed.rows,
             });
         }

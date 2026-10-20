@@ -146,7 +146,8 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
 }
 
 // Covers: a replace_all approval card states how many occurrences it edits and
-// scales its line stats, so it never understates the approved change.
+// scales its line stats, or omits them when the count is unknown, so it never
+// understates the approved change.
 // Owner: interactive presenter str_replace card
 #[test]
 fn replace_all_card_reports_every_occurrence() {
@@ -172,7 +173,7 @@ fn replace_all_card_reports_every_occurrence() {
         (
             "unknown file",
             None,
-            vec![stat(1), meta("replaces every occurrence")],
+            vec![meta("replaces every occurrence")],
         ),
     ];
 
