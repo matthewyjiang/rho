@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolBody, ToolStatus};
+use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolBody, ToolFact, ToolStatus};
 
 use super::str_replace_card;
 
@@ -49,6 +49,20 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
                 row(Context, Some(2), "a"),
                 row(Added, Some(3), "X"),
                 row(Context, Some(4), "b"),
+            ]),
+        ),
+        (
+            "bare cr live file still matches",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "old_string": "a\nb",
+                "new_string": "a\nX\nb",
+            }),
+            Some("a\rb"),
+            ToolBody::Diff(vec![
+                row(Context, Some(1), "a"),
+                row(Added, Some(2), "X"),
+                row(Context, Some(3), "b"),
             ]),
         ),
         (
@@ -107,5 +121,47 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
             live_file,
         );
         assert_eq!(card.body, expected, "{name}");
+    }
+}
+
+// Covers: a replace_all approval card states how many occurrences it edits and
+// scales its line stats, so it never understates the approved change.
+// Owner: interactive presenter str_replace card
+#[test]
+fn replace_all_card_reports_every_occurrence() {
+    let arguments = serde_json::json!({
+        "path": "src/lib.rs",
+        "old_string": "foo",
+        "new_string": "bar",
+        "replace_all": true,
+    });
+    let stat = |n| ToolFact::DiffStat {
+        added: n,
+        removed: n,
+        path: None,
+    };
+    let meta = |text: &str| ToolFact::Meta { text: text.into() };
+    let cases = [
+        (
+            "three live matches",
+            Some("foo\nx\nfoo\nfoo\n"),
+            vec![stat(3), meta("replaces all 3 occurrences")],
+        ),
+        ("one live match", Some("foo\nx\n"), vec![stat(1)]),
+        (
+            "unknown file",
+            None,
+            vec![stat(1), meta("replaces every occurrence")],
+        ),
+    ];
+
+    for (name, live_file, expected) in cases {
+        let card = str_replace_card(
+            &arguments,
+            std::path::Path::new("/workspace"),
+            ToolStatus::Running,
+            live_file,
+        );
+        assert_eq!(card.facts, expected, "{name}");
     }
 }
