@@ -186,3 +186,102 @@ fn advertised_terminal_login_saves_or_cancels_without_echoing_keys() {
         );
     }
 }
+
+// Covers: a host that draws URL elicitations signs in to OAuth without a
+// terminal: `authenticate` shows the login URL through a URL elicitation tied
+// to that request, and a declined elicitation or a cancelled `authenticate`
+// fails as cancelled and releases the login's callback listener, so the next
+// attempt is not left fighting a stale one.
+// Owner: ACP authenticate over real stdio. OpenRouter's browser login is
+// local until its callback, so no provider is contacted.
+#[test]
+fn authenticate_shows_the_login_url_and_abandons_it_when_the_host_does() {
+    let workspace = Workspace::new();
+    let mut server = workspace.server();
+    let (initialized, _) = server.request(
+        "initialize",
+        json!({
+            "protocolVersion": 1,
+            "clientCapabilities": {"auth": {"terminal": true}, "elicitation": {"url": {}}},
+        }),
+    );
+    let methods = initialized.unwrap()["authMethods"].clone();
+    let method = |id: &str| {
+        methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|method| method["id"] == id)
+            .unwrap_or_else(|| panic!("{id} is advertised"))
+            .clone()
+    };
+    // An untagged method is ACP's default, agent-run sign-in.
+    let (oauth, api_key) = (method("openrouter-oauth"), method("openrouter-api-key"));
+    assert_eq!(
+        (oauth.get("type"), oauth.get("args"), &api_key["type"]),
+        (None, None, &json!("terminal"))
+    );
+
+    for abandon in ["decline", "cancel"] {
+        server.next_id += 1;
+        let id = server.next_id;
+        server.send(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "authenticate",
+            "params": {"methodId": "openrouter-oauth"},
+        }));
+        let shown = server
+            .messages
+            .recv_timeout(REPLY_TIMEOUT)
+            .expect("the login URL is shown");
+        assert_eq!(
+            (
+                shown["method"].clone(),
+                shown["params"]["mode"].clone(),
+                shown["params"]["requestId"].clone()
+            ),
+            (json!("elicitation/create"), json!("url"), json!(id)),
+            "{shown}"
+        );
+        let url = url::Url::parse(shown["params"]["url"].as_str().unwrap()).unwrap();
+        assert_eq!(url.origin().ascii_serialization(), "https://openrouter.ai");
+        let callback = url
+            .query_pairs()
+            .find(|(key, _)| key == "callback_url")
+            .map(|(_, value)| url::Url::parse(&value).unwrap())
+            .expect("the login waits on a local callback");
+        let listener = format!(
+            "{}:{}",
+            callback.host_str().unwrap(),
+            callback.port().unwrap()
+        );
+        assert!(
+            std::net::TcpStream::connect(&listener).is_ok(),
+            "listening while shown"
+        );
+
+        match abandon {
+            "decline" => server.send(&json!({
+                "jsonrpc": "2.0", "id": shown["id"], "result": {"action": "decline"},
+            })),
+            _ => server.send(&json!({
+                "jsonrpc": "2.0", "method": "$/cancel_request", "params": {"requestId": id},
+            })),
+        }
+        let reply = loop {
+            let message = server
+                .messages
+                .recv_timeout(REPLY_TIMEOUT)
+                .expect("authenticate answers");
+            if message["id"] == id && message.get("method").is_none() {
+                break message;
+            }
+            // A cancelled authenticate withdraws its pending elicitation.
+            assert_eq!(message["method"], "$/cancel_request", "{message}");
+        };
+        assert_eq!(reply["error"]["code"], json!(-32800), "{abandon}: {reply}");
+        assert!(
+            std::net::TcpStream::connect(&listener).is_err(),
+            "{abandon} releases the callback listener"
+        );
+    }
+}

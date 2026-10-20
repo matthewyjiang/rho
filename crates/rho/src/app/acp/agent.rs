@@ -16,12 +16,11 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{
     schema::v1::{
-        AgentCapabilities, AuthenticateRequest, CancelNotification, CloseSessionRequest,
-        CloseSessionResponse, InitializeRequest, InitializeResponse, LoadSessionRequest,
-        LoadSessionResponse, McpCapabilities, NewSessionRequest, NewSessionResponse,
-        PromptCapabilities, PromptRequest, PromptResponse,
-        SessionAdditionalDirectoriesCapabilities, SessionCapabilities, SessionCloseCapabilities,
-        SessionId, SessionNotification, SetSessionConfigOptionRequest,
+        AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
+        InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+        McpCapabilities, NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest,
+        PromptResponse, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
+        SessionCloseCapabilities, SessionId, SessionNotification, SetSessionConfigOptionRequest,
         SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
     },
     schema::ProtocolVersion,
@@ -127,7 +126,10 @@ impl RhoAcpAgent {
     /// Rho speaks ACP v1 only, so the version does not depend on the request:
     /// any other requested version, including the pre-release v0 and T3's v2,
     /// gets v1 back and the client decides whether to continue.
-    pub(super) fn initialize(request: &InitializeRequest) -> InitializeResponse {
+    pub(super) fn initialize(
+        request: &InitializeRequest,
+        sign_in: super::auth::OAuthSignIn,
+    ) -> InitializeResponse {
         InitializeResponse::new(ProtocolVersion::V1)
             .agent_capabilities(
                 AgentCapabilities::new()
@@ -152,7 +154,7 @@ impl RhoAcpAgent {
                             .delete(SessionDeleteCapabilities::new()),
                     ),
             )
-            .auth_methods(super::auth::methods(&request.client_capabilities))
+            .auth_methods(super::auth::methods(request, sign_in))
             // Hosts display `version` as the agent version; it matches `rho --version`.
             .agent_info(
                 agent_client_protocol::schema::v1::Implementation::new(
@@ -161,10 +163,6 @@ impl RhoAcpAgent {
                 )
                 .title("Rho"),
             )
-    }
-
-    pub(super) fn authenticate(_request: &AuthenticateRequest) -> AcpError {
-        not_yet_supported("authenticate")
     }
 
     /// Deletes a saved session, closing it first if it is open on this
@@ -521,13 +519,6 @@ impl RhoAcpAgent {
         let held = Arc::clone(&live.host).lock_owned().await;
         (held, Arc::clone(&live.replaced))
     }
-}
-
-/// The agent implements and advertises these methods, so `MethodNotFound`
-/// would lie about the surface. `InvalidRequest` says the call cannot be
-/// served as sent, and the data string says why.
-fn not_yet_supported(method: &str) -> AcpError {
-    AcpError::invalid_request().data(format!("{method} is not yet supported"))
 }
 
 fn missing_session(session_id: &SessionId) -> AcpError {

@@ -5,11 +5,12 @@
 //! `type: "boolean"` config options only to clients that advertise
 //! `clientCapabilities.session.configOptions.boolean`, and
 //! `elicitation/create` in form mode only to clients that advertise
-//! `clientCapabilities.elicitation.form`. Other hosts keep the baseline:
-//! `/compact` replies with an agent message, automatic compaction shows only
-//! in `usage_update`, notices are agent messages, on/off options are
-//! two-value selects, and Rho offers no questionnaire tool and declines MCP
-//! elicitation.
+//! `clientCapabilities.elicitation.form`, and in URL mode only to clients that
+//! advertise `.url`. Other hosts keep the baseline: `/compact` replies with an
+//! agent message, automatic compaction shows only in `usage_update`, notices
+//! are agent messages, on/off options are two-value selects, Rho offers no
+//! questionnaire tool and declines MCP elicitation, and OAuth sign-in runs in
+//! a terminal.
 
 use std::sync::OnceLock;
 
@@ -26,6 +27,9 @@ pub(in crate::app) struct HostFeatures {
     pub(super) toggles: Toggles,
     /// Form-mode `elicitation/create`: questions put to the user.
     pub(super) forms: Forms,
+    /// URL-mode `elicitation/create`: links the user opens, such as an OAuth
+    /// sign-in page.
+    pub(super) urls: bool,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -70,10 +74,8 @@ impl HostFeatures {
             Some(_) => Toggles::Boolean,
             None => Toggles::Select,
         };
-        let advertises_forms = capabilities
-            .elicitation
-            .as_ref()
-            .is_some_and(|elicitation| elicitation.form.is_some());
+        let elicitation = capabilities.elicitation.as_ref();
+        let advertises_forms = elicitation.is_some_and(|elicitation| elicitation.form.is_some());
         let client = request.client_info.as_ref().map(|info| info.name.as_str());
         let forms = match (advertises_forms, client) {
             (false, _) => Forms::Unavailable,
@@ -85,6 +87,7 @@ impl HostFeatures {
             notices: session.is_some_and(|session| session.notices.is_some()),
             toggles,
             forms,
+            urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
         }
     }
 }
