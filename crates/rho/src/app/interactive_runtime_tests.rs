@@ -306,7 +306,7 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         ),
         tools,
         mcp_report: Default::default(),
-        pending_mcp: None,
+        pending_tool_sources: None,
         pending_catalog_names: None,
         may_rewrite_startup_prompt: false,
         plugins_report: Default::default(),

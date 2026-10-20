@@ -215,6 +215,7 @@ pub struct AppToolSet {
     web_search_capable: bool,
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
+    openapi_report: super::openapi::report::OpenApiReport,
     file_view: rho_tools::FileViewPolicy,
     session_search: super::sessions::SessionBinding,
     /// Present only when the `sessions` tool is installed, since recall is
@@ -242,6 +243,7 @@ impl AppToolSet {
             web_search_capable: false,
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
+            openapi_report: super::openapi::report::OpenApiReport::default(),
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
@@ -386,6 +388,14 @@ impl AppToolSet {
         }
     }
 
+    /// Attach loaded OpenAPI sources onto an already-built tool set.
+    pub(crate) fn attach_openapi(&mut self, outcome: super::openapi::bundle::OpenApiLoadOutcome) {
+        self.openapi_report = outcome.report;
+        if let Some(bundle) = outcome.bundle {
+            self.add_bundle(bundle);
+        }
+    }
+
     /// Registers a bundle so nested calls and discovery see its tools immediately.
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.inventory
@@ -451,6 +461,10 @@ impl AppToolSet {
 
     pub(crate) fn mcp_report(&self) -> &super::mcp::McpSessionReport {
         &self.mcp_report
+    }
+
+    pub(crate) fn openapi_report(&self) -> &super::openapi::report::OpenApiReport {
+        &self.openapi_report
     }
 
     /// Full executable tool list for a runtime build.

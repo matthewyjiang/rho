@@ -7,11 +7,12 @@ Rho ships host and shell integrations in the binary. You do not install a plugin
 | Herdr | Agent state, sibling-pane attach, host image paste under a Herdr workspace | [Herdr](/integrations/herdr) |
 | RTK | Rewrites agent shell commands when the `rtk` binary is on `PATH` | [RTK](/integrations/rtk) |
 | MCP | Native stdio and Streamable HTTP tools | [Model Context Protocol](/integrations/mcp) |
+| OpenAPI | Read-only REST tools generated from an OpenAPI spec | [OpenAPI](/integrations/openapi) |
 | ACP | Run Rho in Zed, [T3 Code](/integrations/acp/t3-code), and other editor hosts | [Agent Client Protocol](/integrations/acp) |
 | Computer use | Optional desktop control, off until you enable it | [Computer use](/integrations/computer-use) |
 | Agent Plugins | Local packages installed by the user; Rho has no plugin store or remote registry | [Agent Plugins](/integrations/plugins) |
 
-All stay optional. Outside Herdr, Rho skips host reporting. Without RTK, shell tools run commands unchanged. MCP stays inert until you add an enabled server under `[mcp.servers]` or a plugin package provides one. Agent Plugins load only from the explicit plugin roots. Disabled packages stay visible in `rho plugins list` but do not contribute components.
+All stay optional. Outside Herdr, Rho skips host reporting. Without RTK, shell tools run commands unchanged. MCP stays inert until you add an enabled server under `[mcp.servers]` or a plugin package provides one. OpenAPI stays inert until you add a source under `[openapi]` or a trusted project declares one in `.rho/openapi.toml`. Agent Plugins load only from the explicit plugin roots. Disabled packages stay visible in `rho plugins list` but do not contribute components.
 
 Check setup with `/doctor`. Inspect MCP with `/mcp` or `rho mcp list`. Manage packages with `rho plugins`.
 

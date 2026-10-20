@@ -79,7 +79,7 @@ pub(super) async fn initialize(
         prompt,
         prompt_template,
         inventory,
-        pending_mcp,
+        pending_tool_sources,
         mcp_sampling,
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -101,10 +101,10 @@ pub(super) async fn initialize(
         // Interactive sessions bind a model below, so opted-in servers may ask
         // for completions.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
-        mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
+        tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::from_process(),
         await_catalog_names: false,
-        defer_mcp_connect: true,
+        defer_tool_sources: true,
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &added_dirs,
@@ -252,7 +252,7 @@ pub(super) async fn initialize(
         tools,
         mcp_sampling,
         mcp_report,
-        pending_mcp,
+        pending_tool_sources,
         pending_catalog_names,
         may_rewrite_startup_prompt,
         plugins_report,

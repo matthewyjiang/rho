@@ -69,6 +69,12 @@ pub(crate) fn parse_oauth_endpoint(value: &str, purpose: &str) -> anyhow::Result
     .with_context(|| format!("invalid OAuth {purpose}"))
 }
 
+/// Apply the `parse_remote_url` transport rule to another URL that carries
+/// credentials, naming it `subject` in the error.
+pub(crate) fn parse_secure_url(value: &str, subject: &str) -> anyhow::Result<url::Url> {
+    parse_transport_secure_url(value, subject, McpHttpSecurity::HttpsOrLoopback)
+}
+
 /// One transport-security rule for every URL Rho talks to: HTTPS, or plain
 /// HTTP only when the host is loopback, unless the user opted this server into
 /// cleartext HTTP.

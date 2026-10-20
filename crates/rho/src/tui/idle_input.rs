@@ -15,7 +15,7 @@ use super::{
     InteractiveRuntime, PasteSegment, PendingLoginFinish, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
-/// A turn held until MCP connect settles.
+/// A turn held until MCP servers and OpenAPI sources finish loading.
 pub(super) struct HeldTurn {
     pub(super) turn: TurnPrompt,
     pub(super) media: Vec<ChatMedia>,
@@ -296,13 +296,13 @@ impl App {
         let paste_segments = self.input_ui.paste_segments().to_vec();
         self.clear_submitted_input();
 
-        // MCP connect now runs after the first frame, so a prompt can land
-        // before the servers report. Hold the turn and start it once connect
-        // settles; the alternative is a person watching a status line and
-        // pressing enter again for up to the full connect budget.
-        if agent.mcp_connect_pending() {
+        // MCP connect and OpenAPI loading run after the first frame, so a
+        // prompt can land before their tools exist. Hold the turn and start it
+        // once loading settles; the alternative is a person watching a status
+        // line and pressing enter again for up to the full connect budget.
+        if agent.tool_sources_pending() {
             // Queue rather than replace: someone who submits twice while the
-            // servers are still connecting must not lose the first prompt.
+            // tools are still loading must not lose the first prompt.
             self.hold_turn(turn, media, paste_segments);
             return Ok(());
         }
@@ -311,7 +311,7 @@ impl App {
             .await
     }
 
-    /// Submit a skill or command-backed model turn through the same MCP hold,
+    /// Submit a skill or command-backed model turn through the same tool-loading hold,
     /// compaction, goal, and follow-up path as a regular composer prompt.
     pub(super) async fn submit_interactive_turn(
         &mut self,
@@ -321,7 +321,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if agent.mcp_connect_pending() {
+        if agent.tool_sources_pending() {
             self.hold_turn(turn, media, paste_segments);
             return Ok(());
         }
@@ -340,9 +340,10 @@ impl App {
             media,
             paste_segments,
         });
-        self.turn.set_activity_phase(ActivityPhase::ConnectingMcp);
+        self.turn
+            .set_activity_phase(ActivityPhase::LoadingToolSources);
         self.turn.start_loading_if_needed();
-        self.set_mcp_connecting_status();
+        self.set_tool_sources_loading_status();
     }
 
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
@@ -374,12 +375,15 @@ impl App {
             // `poll_startup_hydrates` would never retire the indicator.
             return;
         }
-        self.clear_mcp_connecting_activity();
+        self.clear_tool_sources_loading_activity();
         self.set_status_quiet("");
     }
 
-    pub(super) fn clear_mcp_connecting_activity(&mut self) {
-        if matches!(self.turn.activity_phase(), ActivityPhase::ConnectingMcp) {
+    pub(super) fn clear_tool_sources_loading_activity(&mut self) {
+        if matches!(
+            self.turn.activity_phase(),
+            ActivityPhase::LoadingToolSources
+        ) {
             self.turn.set_activity_phase(ActivityPhase::default());
             if !self.turn.is_busy() {
                 self.turn.stop_loading();
@@ -387,16 +391,20 @@ impl App {
         }
     }
 
-    pub(super) fn restore_mcp_hold_activity_if_needed(&mut self, mcp_pending: bool) {
-        if self.held_turns.is_empty() || !mcp_pending || self.turn.is_busy() {
+    pub(super) fn restore_tool_sources_hold_activity_if_needed(
+        &mut self,
+        tool_sources_pending: bool,
+    ) {
+        if self.held_turns.is_empty() || !tool_sources_pending || self.turn.is_busy() {
             return;
         }
-        self.turn.set_activity_phase(ActivityPhase::ConnectingMcp);
+        self.turn
+            .set_activity_phase(ActivityPhase::LoadingToolSources);
         self.turn.start_loading_if_needed();
     }
 
-    fn first_held_turn_is_releasable(&self, mcp_pending: bool, compacting: bool) -> bool {
-        !self.held_turns.is_empty() && !mcp_pending && !compacting
+    fn first_held_turn_is_releasable(&self, tool_sources_pending: bool, compacting: bool) -> bool {
+        !self.held_turns.is_empty() && !tool_sources_pending && !compacting
     }
 
     /// Start the next held turn whose wait is over. One per call, so several
@@ -410,7 +418,8 @@ impl App {
         if self.input_ui.composer().blocks_held_turn_start() {
             return Ok(false);
         }
-        if !self.first_held_turn_is_releasable(agent.mcp_connect_pending(), agent.is_compacting()) {
+        if !self.first_held_turn_is_releasable(agent.tool_sources_pending(), agent.is_compacting())
+        {
             return Ok(false);
         }
         let Some(HeldTurn {
@@ -423,7 +432,7 @@ impl App {
         };
         self.set_status_quiet("");
         if self.held_turns.is_empty() {
-            self.clear_mcp_connecting_activity();
+            self.clear_tool_sources_loading_activity();
         }
         self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
             .await?;
@@ -440,7 +449,7 @@ impl App {
         if self.start_follow_ups.is_none() {
             return Ok(false);
         }
-        if agent.is_compacting() || agent.mcp_connect_pending() {
+        if agent.is_compacting() || agent.tool_sources_pending() {
             return Ok(false);
         }
         if self.input_ui.composer().blocks_held_turn_start() {

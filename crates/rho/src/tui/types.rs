@@ -204,7 +204,7 @@ impl ExtraCosts {
 pub(super) enum StatusSource {
     #[default]
     Other,
-    McpConnecting,
+    ToolSourcesLoading,
     /// The keep-warm ping counter; cleared when warming stops.
     CacheWarm,
 }
@@ -251,7 +251,7 @@ pub(super) enum PanelOverlay {
 }
 
 impl ComposerMode {
-    /// Whether a turn held during MCP connect must keep waiting. Every mode
+    /// Whether a turn held while external tools load must keep waiting. Every mode
     /// except plain input owns the keyboard, and during-turn key routing has no
     /// arm for them, so releasing underneath one would leave it painted but
     /// deaf to its own keys.

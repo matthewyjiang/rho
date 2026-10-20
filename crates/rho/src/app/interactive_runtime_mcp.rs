@@ -1,4 +1,5 @@
-//! Deferred MCP connect and pre-request system prompt refresh.
+//! Deferred MCP connect and OpenAPI loading, and pre-request system prompt
+//! refresh.
 
 #[cfg(test)]
 #[path = "interactive_runtime_mcp_tests.rs"]
@@ -8,7 +9,10 @@ use futures_util::FutureExt;
 use rho_sdk::SystemPrompt;
 
 use super::InteractiveRuntime;
-use crate::{model_identity::PromptModel, prompt, tools::mcp::McpConnectOutcome};
+use crate::{
+    app::tools_prompt::ToolSourcesOutcome, model_identity::PromptModel, prompt,
+    tools::openapi::report::OpenApiReport,
+};
 
 enum StartupPromptRefresh {
     Rewritten,
@@ -20,23 +24,25 @@ enum StartupPromptRefresh {
 /// reset an open MCP inventory picker.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct StartupHydrateChanges {
-    pub(crate) mcp_inventory_changed: bool,
+    pub(crate) tool_inventory_changed: bool,
     pub(crate) catalog_completed: bool,
+    /// The OpenAPI load that just landed, so its problems reach the transcript.
+    pub(crate) openapi: Option<OpenApiReport>,
 }
 
 impl StartupHydrateChanges {
     pub(crate) fn any(&self) -> bool {
-        self.mcp_inventory_changed || self.catalog_completed
+        self.tool_inventory_changed || self.catalog_completed
     }
 }
 
 impl InteractiveRuntime {
-    pub(crate) fn mcp_connect_pending(&self) -> bool {
-        self.pending_mcp.is_some()
+    pub(crate) fn tool_sources_pending(&self) -> bool {
+        self.pending_tool_sources.is_some()
     }
 
     pub(crate) fn startup_hydrate_pending(&self) -> bool {
-        self.pending_mcp.is_some() || self.pending_catalog_names.is_some()
+        self.pending_tool_sources.is_some() || self.pending_catalog_names.is_some()
     }
 
     /// Whether a startup hydrate finished and is waiting for
@@ -44,7 +50,7 @@ impl InteractiveRuntime {
     /// this stays false while the work is still in flight, so the UI only
     /// redraws when there is something to apply.
     pub(crate) fn startup_hydrate_ready(&self) -> bool {
-        self.pending_mcp
+        self.pending_tool_sources
             .as_ref()
             .is_some_and(tokio::task::JoinHandle::is_finished)
             || self
@@ -54,7 +60,7 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn cancel_startup_hydrates(&mut self) {
-        if let Some(handle) = self.pending_mcp.take() {
+        if let Some(handle) = self.pending_tool_sources.take() {
             handle.abort();
         }
         if let Some(handle) = self.pending_catalog_names.take() {
@@ -66,20 +72,27 @@ impl InteractiveRuntime {
     /// inventory changed so consumers only refresh the affected UI.
     pub(crate) async fn poll_startup_hydrates(&mut self) -> anyhow::Result<StartupHydrateChanges> {
         let mut changes = StartupHydrateChanges::default();
-        if let Some(handle) = self.pending_mcp.as_mut() {
+        if let Some(handle) = self.pending_tool_sources.as_mut() {
             if handle.is_finished() {
-                if let Some(handle) = self.pending_mcp.take() {
+                if let Some(handle) = self.pending_tool_sources.take() {
                     match handle.now_or_never() {
                         Some(Ok(outcome)) => {
-                            self.apply_mcp_connect(outcome).await?;
-                            changes.mcp_inventory_changed = true;
+                            self.apply_tool_sources(outcome).await?;
+                            changes.tool_inventory_changed = true;
+                            changes.openapi = Some(self.tools.openapi_report().clone());
                         }
-                        // The connect task died without reporting. Say so, or
+                        // The load task died without reporting. Say so, or
                         // `/mcp` sits on `connecting` until the session ends.
                         Some(Err(error)) => {
                             self.mcp_report
                                 .fail_connecting(&format!("MCP connect did not finish: {error}"));
-                            changes.mcp_inventory_changed = true;
+                            changes.tool_inventory_changed = true;
+                            changes.openapi = Some(OpenApiReport {
+                                errors: vec![format!(
+                                    "could not load OpenAPI sources: loading did not finish: {error}"
+                                )],
+                                ..OpenApiReport::default()
+                            });
                         }
                         None => {}
                     }
@@ -92,7 +105,7 @@ impl InteractiveRuntime {
                     let _ = handle.now_or_never();
                     // Capabilities may change even if the prompt is unchanged or frozen.
                     changes.catalog_completed = true;
-                    if self.pending_mcp.is_none() {
+                    if self.pending_tool_sources.is_none() {
                         match self.refresh_startup_system_prompt() {
                             StartupPromptRefresh::Rewritten => {
                                 self.replace_history_system_prompt()?;
@@ -106,11 +119,12 @@ impl InteractiveRuntime {
         Ok(changes)
     }
 
-    async fn apply_mcp_connect(&mut self, outcome: McpConnectOutcome) -> anyhow::Result<()> {
-        self.tools.attach_mcp(outcome);
+    async fn apply_tool_sources(&mut self, outcome: ToolSourcesOutcome) -> anyhow::Result<()> {
+        self.tools.attach_mcp(outcome.mcp);
+        self.tools.attach_openapi(outcome.openapi);
         self.mcp_report = self.tools.mcp_report().clone();
         if let Some(template) = self.prompt_template.as_mut() {
-            template.replace_mcp(&self.mcp_report);
+            template.replace_tool_sources(&self.mcp_report, self.tools.openapi_report());
         }
         let refresh = self.refresh_startup_system_prompt();
         self.rebind_current_session().await?;
@@ -119,7 +133,8 @@ impl InteractiveRuntime {
             StartupPromptRefresh::Rewritten => self.replace_history_system_prompt()?,
             StartupPromptRefresh::Unchanged => {}
             StartupPromptRefresh::Frozen => {
-                let notice = prompt::mcp_context(&self.mcp_report);
+                let notice =
+                    prompt::tool_sources_context(&self.mcp_report, self.tools.openapi_report());
                 if !notice.is_empty() {
                     self.append_user_context_with_display(notice.clone(), notice)?;
                 }

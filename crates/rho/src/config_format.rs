@@ -55,6 +55,8 @@ struct GroupedConfig<'a> {
     prompt_templates: &'a crate::prompt_templates::PromptTemplates,
     #[serde(skip_serializing_if = "crate::tools::mcp::config::McpConfig::is_empty")]
     mcp: &'a crate::tools::mcp::config::McpConfig,
+    #[serde(skip_serializing_if = "crate::tools::openapi::config::OpenApiConfig::is_empty")]
+    openapi: &'a crate::tools::openapi::config::OpenApiConfig,
     #[serde(skip_serializing_if = "PersistedProviderConfigs::is_empty")]
     providers: PersistedProviderConfigs<'a>,
 }
@@ -318,6 +320,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             keybindings: &config.keybindings,
             prompt_templates: &config.prompt_templates,
             mcp: &config.mcp,
+            openapi: &config.openapi,
             providers: PersistedProviderConfigs::from(&config.providers),
         }
     }

@@ -86,6 +86,12 @@ connection = "api" # api or mcp; missing API credentials do not switch transport
 # See /integrations/mcp for stdio and Streamable HTTP examples.
 [mcp.servers]
 
+# Read-only REST tools from an OpenAPI spec. See /integrations/openapi.
+# [openapi.github]
+# spec = "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json"
+# base_url = "https://api.github.com"
+# auth = { type = "bearer", token_env = "GITHUB_TOKEN" }
+
 [providers.ollama]
 base_url = "http://127.0.0.1:11434/v1"
 

@@ -23,6 +23,13 @@ pub(crate) enum SchemaDirection {
     /// Parameters and request bodies: `readOnly` properties are dropped.
     Request,
     /// Response bodies: `writeOnly` properties are dropped.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the signature renderer will render response schemas"
+        )
+    )]
     Response,
 }
 
@@ -155,17 +162,43 @@ fn collect_refs(
     for_each_subschema(map, |subschema| collect_refs(document, subschema, pending))
 }
 
+/// Schemas rendered together. Every `$ref` in `roots` and `defs` points into
+/// `defs`, so the roots are self-contained once `defs` sits at the root of the
+/// document that holds them.
+#[derive(Debug)]
+pub(crate) struct RenderedSchemas {
+    pub(crate) roots: Vec<Value>,
+    pub(crate) defs: Map<String, Value>,
+}
+
 impl Document {
     /// Render the schema at `at` as self-contained JSON Schema 2020-12, with
-    /// properties hidden in `direction` removed.
+    /// properties hidden in `direction` removed. Tests use it to check one
+    /// schema at a time; tools render through [`Self::render_schemas`].
+    #[cfg(test)]
     pub(crate) fn render_schema(
         &self,
         at: &JsonPointer,
         direction: SchemaDirection,
     ) -> Result<Value, RefError> {
-        let root = self
-            .get(at)
-            .ok_or_else(|| RefError::Broken(at.to_string()))?;
+        let RenderedSchemas { mut roots, defs } = self.render_schemas([at], direction)?;
+        let mut rendered = roots.pop().unwrap_or_default();
+        if !defs.is_empty() {
+            // Every ref was rewritten into `defs`, so a root `$defs` is unused.
+            if let Value::Object(map) = &mut rendered {
+                map.insert("$defs".to_owned(), Value::Object(defs));
+            }
+        }
+        Ok(rendered)
+    }
+
+    /// Render several schemas that will share one document, such as the
+    /// properties of a tool's input schema, with one `$defs` map for all.
+    pub(crate) fn render_schemas<'a>(
+        &self,
+        ats: impl IntoIterator<Item = &'a JsonPointer>,
+        direction: SchemaDirection,
+    ) -> Result<RenderedSchemas, RefError> {
         let mut renderer = Renderer {
             document: self,
             direction,
@@ -173,8 +206,15 @@ impl Document {
             used_keys: HashSet::new(),
             pending: Vec::new(),
         };
-        let mut rendered = root.clone();
-        renderer.transform(&mut rendered, Hiding::On(&BTreeSet::new()))?;
+        let mut roots = Vec::new();
+        for at in ats {
+            let mut rendered = self
+                .get(at)
+                .ok_or_else(|| RefError::Broken(at.to_string()))?
+                .clone();
+            renderer.transform(&mut rendered, Hiding::On(&BTreeSet::new()))?;
+            roots.push(rendered);
+        }
         let mut defs = Map::new();
         while let Some((target, mode, key)) = renderer.pending.pop() {
             let mut def = self
@@ -190,14 +230,8 @@ impl Document {
             renderer.transform(&mut def, hiding)?;
             defs.insert(key, def);
         }
-        if !defs.is_empty() {
-            defs.sort_keys();
-            // Every ref was rewritten into `defs`, so a root `$defs` is unused.
-            if let Value::Object(map) = &mut rendered {
-                map.insert("$defs".to_owned(), Value::Object(defs));
-            }
-        }
-        Ok(rendered)
+        defs.sort_keys();
+        Ok(RenderedSchemas { roots, defs })
     }
 }
 

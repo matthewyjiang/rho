@@ -116,7 +116,8 @@ pub(crate) struct InteractiveRuntime {
     /// The model MCP sampling runs against, rebound whenever it changes.
     mcp_sampling: crate::tools::mcp::McpSamplingBridge,
     mcp_report: crate::tools::mcp::McpSessionReport,
-    pending_mcp: Option<tokio::task::JoinHandle<crate::tools::mcp::McpConnectOutcome>>,
+    pending_tool_sources:
+        Option<tokio::task::JoinHandle<crate::app::tools_prompt::ToolSourcesOutcome>>,
     pending_catalog_names: Option<tokio::task::JoinHandle<usize>>,
     /// Hydrates may refresh a fresh session before its first request. Resumes
     /// and model switches rebuild explicitly from the retained prompt recipe.
