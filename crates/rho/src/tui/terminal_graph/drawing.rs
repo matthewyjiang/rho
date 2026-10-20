@@ -246,6 +246,14 @@ pub(in crate::tui) struct SkipPath {
     pub(in crate::tui) source_anchor: usize,
 }
 
+impl SkipPath {
+    /// Rows of the lane's vertical run strictly between the exit and join
+    /// rows: where the edge's label may sit.
+    pub(in crate::tui) fn label_run(&self) -> Range<usize> {
+        (self.exit_row + 1)..self.join_row
+    }
+}
+
 /// Route a forward edge that skips ranks: down from the source to its exit
 /// row, right along the shared lane, down past the intermediate ranks, then
 /// left along the target's own fan-in bus row and into the target from above.
@@ -290,7 +298,8 @@ pub(in crate::tui) fn route_skip(
 /// Place a top-down skip label beside its lane's vertical run: right-aligned
 /// one blank column before `lane_start`, on the free rows of `run` nearest
 /// its middle. Beside the target the label would land on the target's fan-in
-/// bus, which the skip route itself occupies.
+/// bus, which the skip route itself occupies. Rows where no inner lane runs
+/// between the label and `lane_x` win, so the nearest line is the edge's own.
 ///
 /// Layout reserves the gutter left of the lanes, so only other skips' exit
 /// and join rows and labels contend for it. Call after every route is drawn
@@ -301,6 +310,7 @@ pub(in crate::tui) fn place_skip_label(
     lines: &[String],
     run: Range<usize>,
     lane_start: usize,
+    lane_x: usize,
 ) {
     let height = lines.len();
     if height == 0 {
@@ -310,20 +320,26 @@ pub(in crate::tui) fn place_skip_label(
     // intermediate rank, so it always fits the tallest wrapped label.
     debug_assert!(run.len() >= height, "skip run {run:?} shorter than label");
     let block_free = |bottom: usize| {
-        lines.iter().enumerate().all(|(index, line)| {
-            let row = bottom + 1 + index - height;
-            let start = lane_start.saturating_sub(line.width() + 1);
+        right_aligned_rows(lines, bottom, lane_start).all(|(row, start, line)| {
             (start..start + line.width()).all(|x| canvas.is_blank(x, row))
         })
     };
+    let beside_own_lane = |bottom: usize| {
+        right_aligned_rows(lines, bottom, lane_start)
+            .all(|(row, _, _)| (lane_start..lane_x).all(|x| canvas.is_blank(x, row)))
+    };
     // Compare doubled centers so even-height blocks and runs center exactly.
     let distance = |bottom: usize| (2 * bottom + 1 - height).abs_diff(run.start + run.end - 1);
-    let bottoms = (run.start + height - 1)..run.end;
-    let bottom = bottoms
-        .clone()
-        .filter(|&bottom| block_free(bottom))
-        .min_by_key(|&bottom| (distance(bottom), bottom))
-        .or_else(|| bottoms.min_by_key(|&bottom| (distance(bottom), bottom)));
+    // Free blocks first, then beside the edge's own lane, then nearest the
+    // run's middle, then highest.
+    let bottom = ((run.start + height - 1)..run.end).min_by_key(|&bottom| {
+        (
+            !block_free(bottom),
+            !beside_own_lane(bottom),
+            distance(bottom),
+            bottom,
+        )
+    });
     if let Some(bottom) = bottom {
         place_label_block_right(canvas, lines, bottom, lane_start);
     }
@@ -515,12 +531,26 @@ fn place_label_block(canvas: &mut Canvas, lines: &[String], bottom_row: usize, s
 
 /// Right-aligned variant for lane-side labels: every row ends before `end_x`.
 fn place_label_block_right(canvas: &mut Canvas, lines: &[String], bottom_row: usize, end_x: usize) {
-    for (index, line) in lines.iter().enumerate() {
-        let rows_above = lines.len() - 1 - index;
-        if let Some(row) = bottom_row.checked_sub(rows_above) {
-            place_label_line(canvas, line, row, end_x.saturating_sub(line.width() + 1));
-        }
+    for (row, start, line) in right_aligned_rows(lines, bottom_row, end_x) {
+        place_label_line(canvas, line, row, start);
     }
+}
+
+/// Where each row of a right-aligned label block lands: `(row, start column,
+/// text)`, with the last row on `bottom_row` and every row ending one blank
+/// column before `end_x`. Rows that would rise above the canvas are skipped.
+fn right_aligned_rows(
+    lines: &[String],
+    bottom_row: usize,
+    end_x: usize,
+) -> impl Iterator<Item = (usize, usize, &str)> {
+    lines.iter().enumerate().filter_map(move |(index, line)| {
+        let rows_above = lines.len() - 1 - index;
+        let start = end_x.saturating_sub(line.width() + 1);
+        bottom_row
+            .checked_sub(rows_above)
+            .map(|row| (row, start, line.as_str()))
+    })
 }
 
 fn place_label_line(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {

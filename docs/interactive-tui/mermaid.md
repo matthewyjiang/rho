@@ -68,7 +68,10 @@ readable approximation over a source dump: styles are ignored, common shapes
 map onto rectangle / round / diamond, parallel edges share a route with joined
 labels, and a too-wide `LR`/`RL` flowchart retries as `TD`. State `[*]` markers
 paint as borderless `start` / `end` words so edges still have somewhere to
-attach. Exotic families and malformed input stay as source.
+attach. Exotic families and malformed input stay as source. So do gitGraph
+`branch`, `checkout`, and `merge` lines with attributes such as `order:`,
+`tag:`, or `type:`, and a custom `mainBranchName`: the parser cannot place
+those branches, so art would show missing forks or merges.
 
 ### Flow and state layout
 
@@ -77,8 +80,9 @@ so on) when it fits. Detours nest by span: a longer skip travels outside a
 shorter one so the stems do not cross. Forward edges that skip ranks travel on
 the trailing side (right in `TD`, bottom in `LR`) and loops return on the
 leading side (left in `TD`, top in `LR`), so those families cannot share ink.
-A skip edge's label sits beside its lane (left of the right-side lane in `TD`,
-right of the boxes above the bottom lane in `LR`).
+Skip edge labels sit in a gutter just left of the right-side lanes in `TD`,
+level with their own lane's run, and right of the boxes above the bottom lane
+in `LR`.
 When the normal layout is wider than the pane, Rho wraps node labels and edge
 labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates node label text.
 Edge labels wrap to a few stacked rows; group titles, and sequence participant

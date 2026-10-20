@@ -336,7 +336,7 @@ pub(in crate::tui) fn layout_canvas(
         }
     }
     // Top-down skip labels claim free gutter rows, so they wait until every
-    // route is on the canvas: (label rows, rows of the lane's vertical run).
+    // route is on the canvas: (label rows, lane run rows, lane column).
     let mut skip_labels = Vec::new();
     for (i, edge) in graph.edges.iter().enumerate() {
         canvas.cur_style = match edge.line {
@@ -364,19 +364,14 @@ pub(in crate::tui) fn layout_canvas(
                 label_lines,
             ),
             (true, EdgeRoute::Skip) => {
-                route_skip(
-                    &mut canvas,
-                    from,
-                    to,
-                    edge,
-                    SkipPath {
-                        exit_row: bus,
-                        lane_x: lane,
-                        join_row: plan.edge_join[i],
-                        source_anchor: plan.source_anchors[edge.from],
-                    },
-                );
-                skip_labels.push((label_lines, (bus + 1)..plan.edge_join[i]));
+                let path = SkipPath {
+                    exit_row: bus,
+                    lane_x: lane,
+                    join_row: plan.edge_join[i],
+                    source_anchor: plan.source_anchors[edge.from],
+                };
+                skip_labels.push((label_lines, path.label_run(), lane));
+                route_skip(&mut canvas, from, to, edge, path);
             }
             (true, EdgeRoute::Back) => route_back(&mut canvas, from, to, edge, lane, label_lines),
             (false, EdgeRoute::Adjacent) => route_forward_lr(
@@ -397,8 +392,8 @@ pub(in crate::tui) fn layout_canvas(
             (_, EdgeRoute::SelfLoop) => continue,
         }
     }
-    for (label_lines, run) in skip_labels {
-        place_skip_label(&mut canvas, label_lines, run, plan.skip_lane_start);
+    for (label_lines, run, lane_x) in skip_labels {
+        place_skip_label(&mut canvas, label_lines, run, plan.skip_lane_start, lane_x);
     }
 
     canvas.finalize_mask();

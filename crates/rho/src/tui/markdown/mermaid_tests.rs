@@ -188,10 +188,10 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
         render_mermaid("unknownDiagram\nA", 80, SourceExtent::Complete),
         MermaidRender::Fallback(MermaidFallback::Unsupported)
     );
-    // The last group parses upstream but is invalid Mermaid; our validity
-    // checks must still decline it.
     for source in [
+        // Rejected by the upstream strict parser.
         "flowchart LR\nA -->",
+        // Parsed upstream but invalid Mermaid: our validity checks decline.
         "flowchart LR\nA[open --> B",
         "flowchart LR\nA[ok] --> B(open",
         "flowchart LR\nA[\"unclosed quote] --> B",
@@ -206,6 +206,20 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
         assert_eq!(
             render_mermaid(source, 80, SourceExtent::Complete),
             MermaidRender::Fallback(MermaidFallback::Malformed),
+            "{source:?}"
+        );
+    }
+    // Valid Mermaid the upstream parser misreads into a parentless lane or a
+    // one-parent merge stays source rather than misleading art.
+    for source in [
+        "gitGraph\ncommit\nbranch feat order: 1\ncheckout feat\ncommit",
+        "gitGraph\ncommit\nbranch feat\ncommit\ncheckout main\nmerge feat tag: \"v1\"",
+        "gitGraph\ncommit\nbranch feat\ncommit\ncheckout main\nmerge feat type: HIGHLIGHT",
+        "%%{init: {'gitGraph': {'mainBranchName': 'trunk'}}}%%\ngitGraph\ncommit\nbranch feat\ncheckout trunk",
+    ] {
+        assert_eq!(
+            render_mermaid(source, 80, SourceExtent::Complete),
+            MermaidRender::Fallback(MermaidFallback::Unsupported),
             "{source:?}"
         );
     }
@@ -270,7 +284,9 @@ fn paints_common_approximations() {
 
 // Covers: validity checks must not decline valid syntax that only looks
 // unbalanced: nested shapes, lenient label punctuation, quoted or piped
-// brackets, single-line bodies, braces in labels, and branch attributes
+// brackets, `%%` inside quotes, single-line bodies, `}` closing a member
+// line, namespaces, quoted entity aliases, braces in labels, and branch
+// attributes
 // Owner: mermaid validity checks
 #[test]
 fn validity_checks_keep_valid_lookalikes_painting() {
@@ -279,9 +295,15 @@ fn validity_checks_keep_valid_lookalikes_painting() {
         "flowchart TD\nA[Hello (world)] --> B[x)] --> C[\"q [ x\"] -->|l (| D",
         "flowchart TD\nA@{ shape: rect } --> B %% note [\nsubgraph S [Title]\nC\nend",
         "stateDiagram-v2\nstate X {\nA --> B\n}\nX --> C : go {",
+        "flowchart TD\nA[\"100%% done\"] --> B",
         "classDiagram\nclass A { +x }\nA --> B : uses {",
+        "classDiagram\nclass A {\n+x }",
+        "classDiagram\nnamespace Shapes {\nclass A {\n+x\n}\n}",
         "erDiagram\nCUSTOMER { string name }\nCUSTOMER ||--o{ ORDER : places",
-        "gitGraph\ncommit\nbranch feat order: 1\ncheckout feat\ncommit\ncheckout main\nmerge feat",
+        "erDiagram\nCUSTOMER {\nstring name }",
+        "erDiagram\np[\"Person: admin\"] {\nstring name\n}",
+        "flowchart TD\nA -- yes<br>no --> B",
+        "gitGraph\ncommit\nbranch feat\ncheckout feat\ncommit\ncheckout main\nmerge feat",
     ] {
         assert!(
             matches!(
@@ -445,27 +467,6 @@ fn gitgraph_paints_messages_merges_and_hides_auto_ids() {
     assert!(
         !unlabeled.contains('-'),
         "auto ids must not appear:\n{unlabeled}"
-    );
-}
-
-// Covers: merge type: HIGHLIGHT must keep the join and use the highlight glyph
-// Owner: mermaid gitgraph layout
-#[test]
-fn gitgraph_highlight_merge_keeps_join() {
-    let art = rendered(
-        "gitGraph\n\
-            commit id: \"init\" msg: \"init\"\n\
-            branch develop\n\
-            commit id: \"parser\" msg: \"parser\"\n\
-            checkout main\n\
-            merge develop type: HIGHLIGHT",
-        80,
-    )
-    .join("\n");
-    assert!(art.contains('◆'), "highlight glyph missing:\n{art}");
-    assert!(
-        art.contains('─') || art.contains('├') || art.contains('└'),
-        "merge join missing:\n{art}"
     );
 }
 

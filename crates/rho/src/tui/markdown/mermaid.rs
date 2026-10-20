@@ -72,11 +72,11 @@ impl MermaidFallback {
 
 /// How much of a fence body the renderer sees.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SourceExtent {
+enum SourceExtent {
     /// The fence closed: the source must be a whole diagram.
     Complete,
-    /// The fence is still streaming: complete lines so far, where blocks may
-    /// still be open.
+    /// The fence is still streaming: complete lines so far, where a `{`
+    /// block may still be open.
     StreamingPrefix,
 }
 
@@ -110,9 +110,9 @@ pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedP
 /// Live mermaid for an unclosed fence.
 ///
 /// Tries the complete-line prefix, then walks back through earlier complete
-/// lines on blank/malformed so a later bad line keeps last-good art. A block
-/// still open at the prefix's end is not malformed: its closing line may not
-/// have streamed yet. Sticky failures (unsafe, unsupported, too large) return
+/// lines on blank/malformed so a later bad line keeps last-good art. A `{`
+/// block still open at the prefix's end is not malformed: its closing line
+/// may not have streamed yet. Sticky failures (unsafe, unsupported, too large) return
 /// `None` so the caller keeps an ordinary source fence until close.
 pub(super) fn render_open_prefix(
     complete_body: &str,
@@ -159,11 +159,7 @@ fn mermaid_art(
     }
 }
 
-pub(super) fn render_mermaid(
-    source: &str,
-    inner_width: usize,
-    extent: SourceExtent,
-) -> MermaidRender {
+fn render_mermaid(source: &str, inner_width: usize, extent: SourceExtent) -> MermaidRender {
     match std::panic::catch_unwind(AssertUnwindSafe(|| {
         render_inner(source, inner_width, extent)
     })) {
@@ -193,19 +189,22 @@ fn render_inner(source: &str, inner_width: usize, extent: SourceExtent) -> Merma
         Ok(parsed) => parsed,
         Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
     };
-    if !policy::paints(parsed.graph.kind) {
+    let Some(kind) = policy::painted(parsed.graph.kind) else {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
-    }
+    };
     if !parsed.graph.node_links.is_empty() {
         return MermaidRender::Fallback(MermaidFallback::UnsafeContent);
     }
     // After the safety gates: unsafe content stays a sticky decline rather
     // than a malformed walk-back while streaming.
-    match (validity::check(source, &parsed.graph), extent) {
+    match (validity::check(source, kind, &parsed.graph), extent) {
         (Ok(()), _) | (Err(validity::Defect::UnclosedBlock), SourceExtent::StreamingPrefix) => {}
         (Err(validity::Defect::UnclosedBlock), SourceExtent::Complete)
         | (Err(validity::Defect::Invalid), _) => {
             return MermaidRender::Fallback(MermaidFallback::Malformed);
+        }
+        (Err(validity::Defect::Misread), _) => {
+            return MermaidRender::Fallback(MermaidFallback::Unsupported);
         }
     }
     let (primary, relationships, groups, details) = model::complexity(&parsed.graph);
