@@ -8,12 +8,12 @@ fn row(kind: DiffRowKind, line: Option<u32>, text: &str) -> DiffRow {
 }
 
 // Covers: proposed str_replace cards show the change before the tool runs,
-// with shared edge lines as context and live line numbers only when the
+// with up to three shared edge lines as context and live line numbers only when the
 // match is unique; a changed final newline still shows; a no-op stays silent.
 // Owner: interactive presenter str_replace card
 #[test]
 fn proposed_str_replace_card_projects_old_and_new_strings() {
-    use DiffRowKind::{Added, Context, Removed};
+    use DiffRowKind::{Added, Context, Removed, Skip};
 
     let insert = serde_json::json!({
         "path": "src/lib.rs",
@@ -63,6 +63,27 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
                 row(Context, Some(1), "a"),
                 row(Added, Some(2), "X"),
                 row(Context, Some(3), "b"),
+            ]),
+        ),
+        (
+            "long shared context trims to three lines",
+            serde_json::json!({
+                "path": "src/lib.rs",
+                "old_string": "c1\nc2\nc3\nc4\nold\nt1\nt2\nt3\nt4",
+                "new_string": "c1\nc2\nc3\nc4\nnew\nt1\nt2\nt3\nt4",
+            }),
+            Some("c1\nc2\nc3\nc4\nold\nt1\nt2\nt3\nt4\n"),
+            ToolBody::Diff(vec![
+                row(Skip, None, "⋯"),
+                row(Context, Some(2), "c2"),
+                row(Context, Some(3), "c3"),
+                row(Context, Some(4), "c4"),
+                row(Removed, Some(5), "old"),
+                row(Added, Some(5), "new"),
+                row(Context, Some(6), "t1"),
+                row(Context, Some(7), "t2"),
+                row(Context, Some(8), "t3"),
+                row(Skip, None, "⋯"),
             ]),
         ),
         (

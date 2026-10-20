@@ -97,7 +97,12 @@ struct ProposedRows {
     truncated: bool,
 }
 
+/// Shared lines kept on each side of the change, like a unified diff.
+const CONTEXT_LINES: usize = 3;
+
 /// Diff `old` against `new` by trimming shared leading and trailing lines.
+/// Only [`CONTEXT_LINES`] of shared context render on each side, so a long
+/// shared prefix can never crowd the change out of the row cap.
 /// `first_line` is the 1-based line where `old` starts in the live file.
 fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows {
     let mut old_lines = split_lines(old);
@@ -124,9 +129,14 @@ fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows 
     let line = |offset: usize| {
         first_line.map(|first| first.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)))
     };
+    let skip = || DiffRow::new(DiffRowKind::Skip, None, "⋯");
 
     let mut rows = Vec::new();
-    for (index, text) in old_lines[..prefix].iter().enumerate() {
+    let leading = prefix.saturating_sub(CONTEXT_LINES);
+    if leading > 0 {
+        rows.push(skip());
+    }
+    for (index, text) in old_lines.iter().enumerate().take(prefix).skip(leading) {
         rows.push(DiffRow::new(DiffRowKind::Context, line(index), *text));
     }
     for (index, text) in removed.iter().enumerate() {
@@ -144,12 +154,16 @@ fn proposed_rows(old: &str, new: &str, first_line: Option<u32>) -> ProposedRows 
         ));
     }
     let suffix_start = prefix + added.len();
-    for (index, text) in old_lines[old_lines.len() - suffix..].iter().enumerate() {
+    let trailing = &old_lines[old_lines.len() - suffix..];
+    for (index, text) in trailing.iter().take(CONTEXT_LINES).enumerate() {
         rows.push(DiffRow::new(
             DiffRowKind::Context,
             line(suffix_start + index),
             *text,
         ));
+    }
+    if trailing.len() > CONTEXT_LINES {
+        rows.push(skip());
     }
     let truncated = rows.len() > MAX_PROPOSED_DIFF_ROWS;
     rows.truncate(MAX_PROPOSED_DIFF_ROWS);
