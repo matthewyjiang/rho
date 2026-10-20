@@ -7,9 +7,10 @@ fn row(kind: DiffRowKind, line: Option<u32>, text: &str) -> DiffRow {
     DiffRow::new(kind, line, text)
 }
 
-// Covers: proposed str_replace cards show the change before the tool runs,
-// with up to three shared edge lines as context and live line numbers only when the
-// match is unique; a changed final newline still shows; a no-op stays silent.
+// Covers: proposed str_replace cards show the change before the tool runs: the
+// exact file diff when the live file has an applicable match, otherwise a
+// numberless projection with up to three shared edge lines; a changed final
+// newline still shows; a no-op stays silent.
 // Owner: interactive presenter str_replace card
 #[test]
 fn proposed_str_replace_card_projects_old_and_new_strings() {
@@ -22,10 +23,11 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
     });
     let cases = [
         (
-            "unique live match numbers rows",
+            "unique live match renders the exact file diff",
             insert.clone(),
             Some("z\na\nb\n"),
             ToolBody::Diff(vec![
+                row(Context, Some(1), "z"),
                 row(Context, Some(2), "a"),
                 row(Added, Some(3), "X"),
                 row(Context, Some(4), "b"),
@@ -46,6 +48,7 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
             insert,
             Some("z\r\na\r\nb\r\n"),
             ToolBody::Diff(vec![
+                row(Context, Some(1), "z"),
                 row(Context, Some(2), "a"),
                 row(Added, Some(3), "X"),
                 row(Context, Some(4), "b"),
@@ -66,23 +69,23 @@ fn proposed_str_replace_card_projects_old_and_new_strings() {
             ]),
         ),
         (
-            "long shared context trims to three lines",
+            "long shared context without live file trims to three lines",
             serde_json::json!({
                 "path": "src/lib.rs",
                 "old_string": "c1\nc2\nc3\nc4\nold\nt1\nt2\nt3\nt4",
                 "new_string": "c1\nc2\nc3\nc4\nnew\nt1\nt2\nt3\nt4",
             }),
-            Some("c1\nc2\nc3\nc4\nold\nt1\nt2\nt3\nt4\n"),
+            None,
             ToolBody::Diff(vec![
                 row(Skip, None, "⋯"),
-                row(Context, Some(2), "c2"),
-                row(Context, Some(3), "c3"),
-                row(Context, Some(4), "c4"),
-                row(Removed, Some(5), "old"),
-                row(Added, Some(5), "new"),
-                row(Context, Some(6), "t1"),
-                row(Context, Some(7), "t2"),
-                row(Context, Some(8), "t3"),
+                row(Context, None, "c2"),
+                row(Context, None, "c3"),
+                row(Context, None, "c4"),
+                row(Removed, None, "old"),
+                row(Added, None, "new"),
+                row(Context, None, "t1"),
+                row(Context, None, "t2"),
+                row(Context, None, "t3"),
                 row(Skip, None, "⋯"),
             ]),
         ),
@@ -178,6 +181,11 @@ fn replace_all_card_reports_every_occurrence() {
             "three live matches",
             Some("foo\nx\nfoo\nfoo\n"),
             vec![stat(3), meta("replaces all 3 occurrences")],
+        ),
+        (
+            "two matches on one line",
+            Some("foo foo\nx\n"),
+            vec![stat(1), meta("replaces all 2 occurrences")],
         ),
         ("one live match", Some("foo\nx\n"), vec![stat(1)]),
         (
