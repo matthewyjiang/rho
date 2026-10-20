@@ -5,6 +5,7 @@ mod call_log;
 mod engine;
 mod exposure;
 pub(crate) mod script_output;
+mod search;
 mod tool;
 mod tool_search;
 
