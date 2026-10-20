@@ -209,9 +209,10 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
             "{source:?}"
         );
     }
-    // Valid Mermaid the upstream parser misreads into a parentless lane or a
-    // one-parent merge stays source rather than misleading art.
+    // Valid Mermaid the upstream parser misreads into stray nodes, a
+    // parentless lane, or a one-parent merge stays source rather than art.
     for source in [
+        "flowchart TD\naccDescr {\nnotes about the flow\n}\nA --> B",
         "gitGraph\ncommit\nbranch feat order: 1\ncheckout feat\ncommit",
         "gitGraph\ncommit\nbranch feat\ncommit\ncheckout main\nmerge feat tag: \"v1\"",
         "gitGraph\ncommit\nbranch feat\ncommit\ncheckout main\nmerge feat type: HIGHLIGHT",
@@ -285,8 +286,8 @@ fn paints_common_approximations() {
 // Covers: validity checks must not decline valid syntax that only looks
 // unbalanced: nested shapes, lenient label punctuation, quoted or piped
 // brackets, `%%` inside quotes, single-line bodies, `}` closing a member
-// line, namespaces, quoted entity aliases, braces in labels, and branch
-// attributes
+// line, namespaces, quoted entity aliases, braces in labels, and
+// accessibility text
 // Owner: mermaid validity checks
 #[test]
 fn validity_checks_keep_valid_lookalikes_painting() {
@@ -303,6 +304,7 @@ fn validity_checks_keep_valid_lookalikes_painting() {
         "erDiagram\nCUSTOMER {\nstring name }",
         "erDiagram\np[\"Person: admin\"] {\nstring name\n}",
         "flowchart TD\nA -- yes<br>no --> B",
+        "flowchart TD\naccTitle: steps [draft\naccDescr: parser[accepts\nA --> B",
         "gitGraph\ncommit\nbranch feat\ncheckout feat\ncommit\ncheckout main\nmerge feat",
         "gitGraph\n%% mainBranchName stays main here\ncommit id: \"set mainBranchName\"",
     ] {

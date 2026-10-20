@@ -71,7 +71,9 @@ paint as borderless `start` / `end` words so edges still have somewhere to
 attach. Exotic families and malformed input stay as source. So do gitGraph
 `branch`, `checkout`, and `merge` lines with attributes such as `order:`,
 `tag:`, or `type:`, and a custom `mainBranchName`: the parser cannot place
-those branches, so art would show missing forks or merges.
+those branches, so art would show missing forks or merges. A flowchart's
+multiline `accDescr { ... }` block also stays source, since the parser would
+draw its text as nodes; single-line `accTitle:` and `accDescr:` are fine.
 
 ### Flow and state layout
 

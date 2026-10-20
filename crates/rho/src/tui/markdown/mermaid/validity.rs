@@ -34,13 +34,7 @@ pub(super) enum Defect {
 pub(super) fn check(source: &str, kind: PaintedKind, ir: &Graph) -> Result<(), Defect> {
     let lines = code_lines(source);
     match kind {
-        PaintedKind::Flowchart => {
-            if lines.iter().all(|line| node_shapes_close(line)) {
-                Ok(())
-            } else {
-                Err(Defect::Invalid)
-            }
-        }
+        PaintedKind::Flowchart => flowchart_shapes_close(&lines),
         PaintedKind::State => blocks_close(&lines, state_block_opener),
         PaintedKind::Class => blocks_close(&lines, class_block_opener),
         PaintedKind::Er => blocks_close(&lines, er_block_opener),
@@ -97,6 +91,25 @@ fn strip_trailing_comment(line: &str) -> &str {
 /// id; inside a shape every opener nests, so `A[(db)]` and `A[f (x)]` close.
 /// Quoted strings and `|edge labels|` are opaque. Unmatched closers inside a
 /// label stay text, which keeps lenient labels such as `A[x)]` painting.
+/// Requires every flowchart node shape to close on its line. Like upstream,
+/// skips free-text `accTitle`, `accDescr`, and `title` lines. Upstream reads
+/// the body of a multiline `accDescr { ... }` block as nodes, so that form is
+/// misread.
+fn flowchart_shapes_close(lines: &[&str]) -> Result<(), Defect> {
+    for line in lines {
+        if line.starts_with("accDescr") && line.ends_with('{') {
+            return Err(Defect::Misread);
+        }
+        let free_text = ["accTitle", "accDescr", "title "]
+            .iter()
+            .any(|prefix| line.starts_with(prefix));
+        if !free_text && !node_shapes_close(line) {
+            return Err(Defect::Invalid);
+        }
+    }
+    Ok(())
+}
+
 fn node_shapes_close(line: &str) -> bool {
     let mut expected: Vec<char> = Vec::new();
     let mut previous = None;
