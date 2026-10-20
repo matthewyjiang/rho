@@ -10,7 +10,7 @@
 //! Declining the elicitation or cancelling `authenticate` drops the login,
 //! which also releases a browser login's callback port.
 
-use std::{future::Future, path::PathBuf, sync::PoisonError};
+use std::{future::Future, path::PathBuf};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -24,7 +24,7 @@ use rho_providers::auth::{
     login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
     login_prompt::LoginPrompt,
 };
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 
 use super::{auth::OAuthSignIn, AcpClientPort};
 use crate::{
@@ -87,15 +87,24 @@ pub(super) async fn authenticate(
     Ok(AuthenticateResponse::new())
 }
 
-/// One login at a time per connection. A new `authenticate` cancels the one
-/// before it and waits until that login is dropped, so its callback port is
-/// free before the new login binds one. Hosts may leave a sign-in without
-/// sending `$/cancel_request`, which would otherwise hold the port until the
-/// provider times out.
-#[derive(Default)]
+/// One login at a time per connection. A new `authenticate` supersedes every
+/// earlier one, running or still queued, and starts only after the running
+/// login is dropped, so its callback port is free before the new login binds
+/// one. Hosts may leave a sign-in without sending `$/cancel_request`, which
+/// would otherwise hold the port until the provider times out.
 pub(super) struct LoginFlight {
     running: tokio::sync::Mutex<()>,
-    cancel_running: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+    /// The generation of the newest `run`; older runs end when it moves.
+    latest: watch::Sender<u64>,
+}
+
+impl Default for LoginFlight {
+    fn default() -> Self {
+        Self {
+            running: tokio::sync::Mutex::new(()),
+            latest: watch::channel(0).0,
+        }
+    }
 }
 
 impl LoginFlight {
@@ -103,24 +112,29 @@ impl LoginFlight {
         &self,
         login: impl Future<Output = Result<T, AcpError>>,
     ) -> Result<T, AcpError> {
-        if let Some(cancel) = self.cancel_slot().take() {
-            let _ = cancel.send(());
-        }
-        let _running = self.running.lock().await;
-        let (cancel, superseded) = oneshot::channel();
-        *self.cancel_slot() = Some(cancel);
-        // The losing branch, and with it the login, drops here, before
-        // `_running` lets the next login start.
-        tokio::select! {
+        let mut generation = 0;
+        self.latest.send_modify(|latest| {
+            *latest += 1;
+            generation = *latest;
+        });
+        let mut newer = self.latest.subscribe();
+        let mut superseded = std::pin::pin!(async move {
+            // A closed channel cannot happen while `self` lives; treat it
+            // as superseded rather than wait forever.
+            let _ = newer.wait_for(|latest| *latest != generation).await;
+        });
+        let running = tokio::select! {
+            running = self.running.lock() => running,
+            () = &mut superseded => return Err(AcpError::request_cancelled()),
+        };
+        // `select!` drops the losing login before this statement ends, so the
+        // next run cannot take `running` while this login still holds a port.
+        let result = tokio::select! {
             result = login => result,
-            _ = superseded => Err(AcpError::request_cancelled()),
-        }
-    }
-
-    fn cancel_slot(&self) -> std::sync::MutexGuard<'_, Option<oneshot::Sender<()>>> {
-        self.cancel_running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            () = &mut superseded => Err(AcpError::request_cancelled()),
+        };
+        drop(running);
+        result
     }
 }
 

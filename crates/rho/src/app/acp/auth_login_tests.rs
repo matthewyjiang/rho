@@ -194,31 +194,39 @@ impl Drop for Releases {
     }
 }
 
-// Covers: a new authenticate supersedes a login the host abandoned without
-// `$/cancel_request`: the old one ends cancelled, and the new one starts only
-// after the old login was dropped, so a fixed callback port is free to bind.
+// Covers: a new authenticate supersedes every login the host abandoned
+// without `$/cancel_request`, the running one and one still queued behind it;
+// both end cancelled, and the newest starts only after the running login was
+// dropped, so a fixed callback port is free to bind.
 // Owner: ACP authenticate single-flight.
 #[tokio::test]
-async fn a_new_sign_in_replaces_the_abandoned_one_after_it_lets_go() {
+async fn a_new_sign_in_replaces_abandoned_ones_after_they_let_go() {
     use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc};
     let flight = LoginFlight::default();
     let released = Arc::new(AtomicBool::new(false));
-    let abandoned = {
+    let running = {
         let guard = Releases(Arc::clone(&released));
         async move {
             let _port = guard;
-            std::future::pending::<Result<&str, AcpError>>().await
+            std::future::pending::<Result<bool, AcpError>>().await
         }
     };
-    let retry = async { Ok(released.load(Ordering::SeqCst)) };
-    let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        tokio::join!(flight.run(abandoned), flight.run(retry))
+    let queued = std::future::pending::<Result<bool, AcpError>>();
+    let newest = async { Ok(released.load(Ordering::SeqCst)) };
+    // `join!` polls in order: the first holds the flight, the second queues
+    // behind it, and the third supersedes both.
+    let outcomes = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(flight.run(running), flight.run(queued), flight.run(newest))
     })
     .await
-    .expect("the abandoned login does not block the retry");
+    .expect("abandoned logins do not block the newest sign-in");
     assert_eq!(
-        (first, second),
-        (Err(AcpError::request_cancelled()), Ok(true)),
-        "the retry ran after the abandoned login was dropped"
+        outcomes,
+        (
+            Err(AcpError::request_cancelled()),
+            Err(AcpError::request_cancelled()),
+            Ok(true),
+        ),
+        "the newest sign-in ran after the running login was dropped"
     );
 }
