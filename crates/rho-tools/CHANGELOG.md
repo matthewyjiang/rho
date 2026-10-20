@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.12.1...rho-agent-tools-v1.13.0) (2026-10-20)
+
+
+### Features
+
+* **tools:** default auto edit tool to str_replace and mark hashline legacy ([#1575](https://github.com/matthewyjiang/rho/issues/1575)) ([d5c2f77](https://github.com/matthewyjiang/rho/commit/d5c2f772284ec8a7365d2ee1a2340ed88274407d))
+
+
+### Bug Fixes
+
+* **acp:** show the running shell command in Zed tool cards ([#1577](https://github.com/matthewyjiang/rho/issues/1577)) ([bf62172](https://github.com/matthewyjiang/rho/commit/bf621725bb3aaff02127dc41d044505b7bbf90d4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.13.0 to 5.12.2
+
 ## [1.12.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.12.0...rho-agent-tools-v1.12.1) (2026-10-19)
 
 

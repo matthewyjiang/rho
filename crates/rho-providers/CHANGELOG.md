@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.22.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.21.0...rho-providers-v2.22.0) (2026-10-20)
+
+
+### Features
+
+* **tools:** default auto edit tool to str_replace and mark hashline legacy ([#1575](https://github.com/matthewyjiang/rho/issues/1575)) ([d5c2f77](https://github.com/matthewyjiang/rho/commit/d5c2f772284ec8a7365d2ee1a2340ed88274407d))
+
+
+### Bug Fixes
+
+* **acp:** show the running shell command in Zed tool cards ([#1577](https://github.com/matthewyjiang/rho/issues/1577)) ([bf62172](https://github.com/matthewyjiang/rho/commit/bf621725bb3aaff02127dc41d044505b7bbf90d4))
+* **providers:** fill metadata for lab ids that only canonical models.dev rows describe ([#1574](https://github.com/matthewyjiang/rho/issues/1574)) ([7d8c5aa](https://github.com/matthewyjiang/rho/commit/7d8c5aab954735dff8ec61c63d4b2a6193415895))
+
+
+### Performance Improvements
+
+* **tui-pty:** cut PTY suite wall time by 40%, move CI to nextest, fix exposed races ([#1568](https://github.com/matthewyjiang/rho/issues/1568)) ([a42ff2d](https://github.com/matthewyjiang/rho/commit/a42ff2d98842e67cdca28ac6ed8992947467eef0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.13.0 to 5.12.2
+
 ## [2.21.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.20.0...rho-providers-v2.21.0) (2026-10-19)
 
 

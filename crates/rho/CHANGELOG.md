@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.28.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.27.0...rho-coding-agent-v2.28.0) (2026-10-20)
+
+
+### Features
+
+* **acp:** sign in to OAuth through the host's own UI instead of a terminal ([#1581](https://github.com/matthewyjiang/rho/issues/1581)) ([407ef9a](https://github.com/matthewyjiang/rho/commit/407ef9a1c8defad1faee9171a6821ee7b99d3441))
+* **openapi:** add a spec loader that skips bad operations instead of failing ([#1571](https://github.com/matthewyjiang/rho/issues/1571)) ([dbe0308](https://github.com/matthewyjiang/rho/commit/dbe0308eb4e97d16d491e0674eb9eb1f76a96ac0))
+* **tools:** default auto edit tool to str_replace and mark hashline legacy ([#1575](https://github.com/matthewyjiang/rho/issues/1575)) ([d5c2f77](https://github.com/matthewyjiang/rho/commit/d5c2f772284ec8a7365d2ee1a2340ed88274407d))
+
+
+### Bug Fixes
+
+* **acp:** show the running shell command in Zed tool cards ([#1577](https://github.com/matthewyjiang/rho/issues/1577)) ([bf62172](https://github.com/matthewyjiang/rho/commit/bf621725bb3aaff02127dc41d044505b7bbf90d4))
+* **acp:** start sessions on windows ([#1576](https://github.com/matthewyjiang/rho/issues/1576)) ([1559262](https://github.com/matthewyjiang/rho/commit/155926259a573baf14d81c203212509f01dfc01d))
+* **acp:** title tool calls with what they do ([#1579](https://github.com/matthewyjiang/rho/issues/1579)) ([27df1e9](https://github.com/matthewyjiang/rho/commit/27df1e93ba073e4868788e4a8ddf21ba7ca45e57))
+
+
+### Performance Improvements
+
+* **tui-pty:** cut PTY suite wall time by 40%, move CI to nextest, fix exposed races ([#1568](https://github.com/matthewyjiang/rho/issues/1568)) ([a42ff2d](https://github.com/matthewyjiang/rho/commit/a42ff2d98842e67cdca28ac6ed8992947467eef0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.13.0 to 5.12.2
+    * rho-providers bumped from 2.21.0 to 2.22.0
+
 ## [2.27.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.26.0...rho-coding-agent-v2.27.0) (2026-10-19)
 
 

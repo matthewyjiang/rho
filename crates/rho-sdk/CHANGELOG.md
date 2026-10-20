@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.12.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.12.1...rho-sdk-v5.12.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **acp:** show the running shell command in Zed tool cards ([#1577](https://github.com/matthewyjiang/rho/issues/1577)) ([bf62172](https://github.com/matthewyjiang/rho/commit/bf621725bb3aaff02127dc41d044505b7bbf90d4))
+
 ## [5.12.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.12.0...rho-sdk-v5.12.1) (2026-10-19)
 
 
