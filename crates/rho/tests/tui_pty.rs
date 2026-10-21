@@ -920,11 +920,11 @@ fn process_rail_click_opens_peek_and_q_returns() {
     assert_pass("process_rail_peek");
 }
 
-// Covers: a click selects a questionnaire choice without submitting, and a
-// double click confirms it like Enter.
+// Covers: hover lifts and drops a questionnaire choice, a click selects it
+// without submitting, and a double click confirms it like Enter.
 // Owner: interactive TUI
 #[test]
-fn questionnaire_choice_click_and_double_click_submit() {
+fn questionnaire_choice_hover_click_and_double_click_submit() {
     assert_pass("questionnaire_click");
 }
 

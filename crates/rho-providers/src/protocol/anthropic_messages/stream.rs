@@ -435,14 +435,33 @@ mod tests {
             &mut on_event,
         )
         .unwrap();
+        // The delta's output count is cumulative and already includes the
+        // start seed, so it must be forwarded whole rather than diffed.
+        handle_anthropic_stream_line(
+            r#"data: {"type":"message_delta","usage":{"output_tokens":5}}"#,
+            &mut state,
+            &mut on_event,
+        )
+        .unwrap();
 
-        assert!(events.iter().any(|event| {
-            matches!(
-                event,
-                ModelEvent::Usage(usage)
-                    if usage.input_tokens == Some(7) && usage.output_tokens.is_none()
-            )
-        }));
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    ModelEvent::Usage(usage) => Some((usage.input_tokens, usage.output_tokens)),
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. }
+                    | ModelEvent::GenerationOutputTokens(_)
+                    | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ServiceTierFallback { .. } => None,
+                })
+                .collect::<Vec<_>>(),
+            [(Some(7), None), (None, Some(5))]
+        );
         assert_eq!(
             events
                 .iter()

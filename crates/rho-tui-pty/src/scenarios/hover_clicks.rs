@@ -45,7 +45,7 @@ fn span_bold(harness: &PtyHarness, (column, row): (u16, u16), len: u16) -> Vec<b
 }
 
 /// Poll until every cell of the span reads `bold`, failing with `what`.
-fn wait_for_span_bold(
+pub(super) fn wait_for_span_bold(
     harness: &mut PtyHarness,
     cell: (u16, u16),
     len: u16,
