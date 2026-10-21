@@ -73,14 +73,14 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
     assert_eq!(hint_lines(&destructive.spec.description), 1);
 }
 
-// Covers: every exported name fits the provider limit, and `tool_search`,
-// which matches query terms against names and descriptions, still finds a
-// tool by its remote name after capping cut that name short.
+// Covers: every exported name fits the provider limit and spells the remote
+// name somewhere `tool_search` reads it: in the name, or in the description
+// when capping cut the name short or escaping spelled it in hex.
 // Owner: MCP tool declaration mapping.
 #[test]
 fn exported_tools_fit_the_limit_and_stay_findable_by_remote_name() {
     let long_remote = "performance_analyze_insight_for_extended_trace_sessions";
-    for remote_name in ["search", long_remote] {
+    for remote_name in ["search", long_remote, "files.read"] {
         let spec =
             McpToolDefinition::from_remote("chrome-devtools", remote_name, &remote(None, false))
                 .unwrap()

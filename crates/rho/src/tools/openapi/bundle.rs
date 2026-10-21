@@ -296,8 +296,10 @@ fn build_tools(
     (tools, loaded)
 }
 
-/// What search matches on: the summary, route, source, and tags. Spec text is
-/// untrusted, like MCP tool descriptions.
+/// What search matches on: the summary, route, source, and tags. Codemode
+/// search weights the first paragraph above the rest, so the summary leads,
+/// separated by a blank line. Spec text is untrusted, like MCP tool
+/// descriptions.
 fn description(source: &str, route: &str, operation: &Operation) -> String {
     let mut text = String::new();
     if let Some(summary) = operation.summary.as_deref().map(str::trim) {

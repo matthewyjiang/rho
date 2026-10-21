@@ -15,7 +15,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::call_log::{NestedCallRecord, NestedCallStatus};
-use super::exposure::{search_entries, CodeModeSurface, ScriptTool, ToolCatalogEntry};
+use super::exposure::{CodeModeSurface, ScriptTool, ToolCatalogEntry};
+use super::search::search_entries;
 use crate::tools::mcp::exported_name::resolve_foreign_spelling;
 
 pub(crate) const CODEMODE_TOOL_NAME: &str = "codemode";
@@ -65,7 +66,7 @@ impl ToolHostBridge {
     }
 
     pub(super) fn search(&self, query: &str, limit: usize) -> Vec<&ToolCatalogEntry> {
-        search_entries(self.catalog().iter(), query, limit)
+        search_entries(self.catalog(), query, limit)
     }
 
     pub(super) fn describe(&self, name: &str) -> Option<&ToolCatalogEntry> {

@@ -49,6 +49,18 @@ Loading belongs to the selected conversation branch: `/new` starts unloaded,
 and resume/tree navigation restores the destination's saved loadout. Rebuilding
 the runtime for the same conversation does not clear loaded tools.
 
+Both `tool_search` and script `search_tools` rank tools locally with weighted
+BM25, without model or network calls. A match in the tool name counts most,
+then the description's first paragraph, then the rest of the description and
+parameter names, and rarer words count more than common ones such as `get` or
+`list`. A query that is exactly a tool's name ranks that tool first. Queries
+and tools are compared as lowercase words: `snake_case`, `camelCase`,
+`kebab-case`, dotted, and slashed names split into words, and light stemming
+lets `creating issues` find `create_issue`. The `mcp__` and `openapi__` name
+prefixes count only as low-weight words, so they do not crowd out the tool's
+own name; MCP descriptions also start with `MCP server <name>`, so `mcp` or a
+server name lists that server's tools.
+
 Use focused queries and small result limits: every returned tool adds its full
 schema to subsequent requests. For broad catalog browsing or large inventories,
 prefer script-side discovery and execution so those schemas stay out of context.
