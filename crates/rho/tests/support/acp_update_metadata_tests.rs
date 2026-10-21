@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
-use super::Workspace;
+use super::{AcpServer, Workspace};
 
 /// `(sessionUpdate, messageId)` of each message chunk, in order.
 fn message_ids(updates: &[Value]) -> Vec<(String, String)> {
@@ -97,4 +97,75 @@ fn message_chunks_carry_ids_live_and_across_loads() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(distinct.len(), 4, "{loads:#?}");
     assert_eq!(loads[0], loads[1]);
+}
+
+// Covers: tool calls point hosts at lines the real tools know, as the 0-based
+// rows Zed reads: a read at its offset, a grep at each matched file's first
+// hit, and an edit at its first changed line, all as absolute paths.
+// Owner: ACP wire contract, through the real server and coding tools
+#[test]
+fn tool_call_locations_name_known_lines() {
+    let workspace = Workspace::new();
+    let config = workspace.home.path().join("config.toml");
+    let settings = std::fs::read_to_string(&config).unwrap().replace(
+        "permission_mode = \"plan\"",
+        "permission_mode = \"bypass\"\nedit_tool = \"str_replace\"",
+    );
+    std::fs::write(config, settings).unwrap();
+    std::fs::write(workspace.project.join("a.txt"), "alpha\nbeta\ngamma\n").unwrap();
+    std::fs::write(workspace.project.join("b.txt"), "one\ntwo\nbeta\n").unwrap();
+    let mut server = AcpServer::spawn(
+        workspace.home.path(),
+        &workspace.project,
+        "tool-call",
+        &workspace.project,
+    );
+    server
+        .request("initialize", json!({"protocolVersion": 1}))
+        .0
+        .unwrap();
+    let created = server
+        .request(
+            "session/new",
+            json!({"cwd": workspace.project, "mcpServers": []}),
+        )
+        .0
+        .unwrap();
+    let a = workspace.project.join("a.txt");
+    let b = workspace.project.join("b.txt");
+    for (call, update, expected) in [
+        (
+            json!({"name": "read_file", "arguments": {"path": "a.txt", "offset": 2}}),
+            "tool_call",
+            json!([{"path": a, "line": 1}]),
+        ),
+        (
+            json!({"name": "grep", "arguments": {"pattern": "beta"}}),
+            "tool_call_update",
+            json!([{"path": a, "line": 1}, {"path": b, "line": 2}]),
+        ),
+        (
+            json!({"name": "str_replace", "arguments": {"path": "a.txt", "old_string": "gamma", "new_string": "delta"}}),
+            "tool_call_update",
+            json!([{"path": a, "line": 2}]),
+        ),
+    ] {
+        let mut call = call;
+        call["id"] = json!("located");
+        let (reply, updates) = server.request(
+            "session/prompt",
+            json!({
+                "sessionId": created["sessionId"],
+                "prompt": [{"type": "text", "text": call.to_string()}],
+            }),
+        );
+        reply.unwrap();
+        let located = updates
+            .iter()
+            .find(|candidate| {
+                candidate["sessionUpdate"] == update && candidate.get("locations").is_some()
+            })
+            .unwrap_or_else(|| panic!("no {update} with locations: {updates:#?}"));
+        assert_eq!(located["locations"], expected, "{}", call["name"]);
+    }
 }

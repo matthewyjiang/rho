@@ -20,6 +20,9 @@ pub(super) fn sdk_bundle(state: TodoState) -> super::sdk_registry::StaticToolBun
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(TodoTool { state })])
 }
 
+/// The tool's name; ACP hosts see its calls as planning.
+pub(crate) const TOOL_NAME: &str = "todo";
+
 pub(super) struct TodoTool {
     state: TodoState,
 }
@@ -27,7 +30,7 @@ pub(super) struct TodoTool {
 impl Tool for TodoTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
-            name: "todo".into(),
+            name: TOOL_NAME.into(),
             description: "Track a short task checklist shown to the user. Replace the whole list on every call; include all items you want to keep. Use for multi-step work with three or more steps, and skip trivial single-step tasks. Keep exactly one item in_progress while working, and update the list as soon as a step finishes. Mark finished items completed.".into(),
             input_schema: serde_json::json!({
                 "type": "object",

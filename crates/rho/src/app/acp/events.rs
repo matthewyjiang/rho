@@ -9,7 +9,7 @@ use agent_client_protocol::schema::v1::{
     ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use rho_sdk::{
-    tool::{OperationKind, ToolMetadata, ToolOutput},
+    tool::{ToolMetadata, ToolOutput},
     RunEvent, ToolCompletion,
 };
 use rho_tools::tool_card::ToolHeader;
@@ -32,6 +32,8 @@ const UNNAMED_TOOL_TITLE: &str = "tool";
 
 #[path = "events_replay.rs"]
 mod replay;
+#[path = "events_tools.rs"]
+mod tools;
 
 /// Maps one prompt's SDK events onto ACP session updates.
 ///
@@ -154,10 +156,14 @@ impl EventMapper {
                 CallState::Open,
                 ToolCallStatus::InProgress,
                 vec![ToolCallContent::from(progress.text())],
+                /*locations*/ None,
             ),
             RunEvent::ToolFinished { call_id, result } => {
                 let (status, content) = finished_content(result);
-                self.tool_update(call_id, CallState::Finished, status, content)
+                let locations = result
+                    .output()
+                    .and_then(|output| tools::finished_locations(output, &self.cwd));
+                self.tool_update(call_id, CallState::Finished, status, content, locations)
             }
             RunEvent::ProviderStreamReset { .. } => {
                 self.proposed.clear();
@@ -282,12 +288,14 @@ impl EventMapper {
     /// A progress or result update for a call, sent as a full `tool_call`
     /// when the host has not seen the call yet. Progress that arrives after
     /// a call finished is dropped, so it cannot reopen the host's card.
+    /// `locations` replace the call's earlier ones when given.
     fn tool_update(
         &mut self,
         call_id: &rho_sdk::ToolCallId,
         next: CallState,
         status: ToolCallStatus,
         content: Vec<ToolCallContent>,
+        locations: Option<Vec<ToolCallLocation>>,
     ) -> Option<SessionUpdate> {
         let id = call_id.as_str();
         if let Some(state) = self.announced.get_mut(id) {
@@ -297,7 +305,10 @@ impl EventMapper {
             *state = next;
             return Some(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                 ToolCallId::new(id),
-                ToolCallUpdateFields::new().status(status).content(content),
+                ToolCallUpdateFields::new()
+                    .status(status)
+                    .content(content)
+                    .locations(locations),
             )));
         }
         self.announced.insert(id.to_owned(), next);
@@ -306,7 +317,8 @@ impl EventMapper {
             let tool = ToolCall::new(ToolCallId::new(id), UNNAMED_TOOL_TITLE)
                 .kind(ToolKind::Other)
                 .status(status)
-                .content(content);
+                .content(content)
+                .locations(locations.unwrap_or_default());
             return Some(SessionUpdate::ToolCall(tool));
         };
         let title = tool_title(
@@ -320,6 +332,7 @@ impl EventMapper {
             .kind(ToolKind::Other)
             .status(status)
             .content(content)
+            .locations(locations.unwrap_or_default())
             .name(call.name)
             .raw_input(call.arguments);
         Some(SessionUpdate::ToolCall(tool))
@@ -414,9 +427,14 @@ fn started_tool_call(
     let title = tool_title(name, proposed.as_ref(), metadata, cwd, mcp_tools);
     let tool = ToolCall::new(ToolCallId::new(call_id.as_str()), title)
         .name(name.to_owned())
-        .kind(tool_kind(metadata))
+        .kind(tools::kind(name, proposed.as_ref(), metadata))
         .status(ToolCallStatus::InProgress)
-        .locations(tool_locations(metadata.affected_paths()));
+        .locations(tools::started_locations(
+            name,
+            proposed.as_ref(),
+            metadata,
+            cwd,
+        ));
     match proposed {
         Some(arguments) => tool.raw_input(arguments),
         None => tool,
@@ -462,21 +480,6 @@ fn tool_title(
         Some(identity) => format!("{}/{title}", identity.server),
         None => title,
     }
-}
-
-fn tool_kind(metadata: &ToolMetadata) -> ToolKind {
-    match metadata.operation_kind() {
-        Some(OperationKind::Read) => ToolKind::Read,
-        Some(OperationKind::Search) => ToolKind::Search,
-        Some(OperationKind::Write) => ToolKind::Edit,
-        Some(OperationKind::Execute) => ToolKind::Execute,
-        Some(OperationKind::Network) => ToolKind::Fetch,
-        _ => ToolKind::Other,
-    }
-}
-
-fn tool_locations(paths: &[std::path::PathBuf]) -> Vec<ToolCallLocation> {
-    paths.iter().cloned().map(ToolCallLocation::new).collect()
 }
 
 fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallContent>) {
