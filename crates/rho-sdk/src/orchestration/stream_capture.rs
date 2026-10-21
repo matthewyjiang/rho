@@ -208,6 +208,15 @@ pub(super) fn capture_provider_event(
     accumulated_usage: &ModelUsage,
     capture: &mut StreamCapture,
 ) -> Option<RunEvent> {
+    // NEXT_MAJOR(rho-sdk): match a typed `ModelEvent::Stopped` variant instead.
+    // SDK metadata, not provider-native context: never persisted or announced.
+    if matches!(&event, ModelEvent::ProviderContext { kind, .. } if kind == STOP_REASON_CONTEXT_KIND)
+    {
+        if let Some(reason) = event.as_stop_reason() {
+            capture.stop_reason = Some(reason);
+        }
+        return None;
+    }
     match event {
         ModelEvent::OutputDelta(text) => {
             if capture.merge_output_text {
@@ -279,13 +288,6 @@ pub(super) fn capture_provider_event(
                 name,
                 arguments_delta: arguments,
             })
-        }
-        // SDK metadata, not provider-native context: never persisted or announced.
-        ModelEvent::ProviderContext { kind, data, .. } if kind == STOP_REASON_CONTEXT_KIND => {
-            if let Some(reason) = ModelStopReason::from_marker_data(&data) {
-                capture.stop_reason = Some(reason);
-            }
-            None
         }
         ModelEvent::ProviderContext {
             kind,

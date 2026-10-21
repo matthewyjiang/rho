@@ -245,18 +245,12 @@ pub(crate) fn handle_anthropic_stream_line(
                     ..ModelUsage::default()
                 }))?;
             }
-            let stop_reason = match value
+            if let Some(reason) = value
                 .get("delta")
                 .and_then(|delta| delta.get("stop_reason"))
                 .and_then(|reason| reason.as_str())
+                .and_then(anthropic_stop_reason)
             {
-                Some("max_tokens" | "model_context_window_exceeded") => {
-                    Some(ModelStopReason::MaxTokens)
-                }
-                Some("refusal") => Some(ModelStopReason::Refusal),
-                _ => None,
-            };
-            if let Some(reason) = stop_reason {
                 on_event(ModelEvent::stop_reason(reason))?;
             }
         }
@@ -308,6 +302,15 @@ pub(crate) fn handle_anthropic_stream_line(
         Some(_) => {}
     }
     Ok(true)
+}
+
+/// Early stops among Anthropic `stop_reason` values; normal finishes map to `None`.
+fn anthropic_stop_reason(stop_reason: &str) -> Option<ModelStopReason> {
+    match stop_reason {
+        "max_tokens" | "model_context_window_exceeded" => Some(ModelStopReason::MaxTokens),
+        "refusal" => Some(ModelStopReason::Refusal),
+        _ => None,
+    }
 }
 
 /// Map an Anthropic error code/type to the retryability-kind surface.

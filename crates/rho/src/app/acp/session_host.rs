@@ -347,7 +347,7 @@ impl SessionHost {
         .await;
         let completed = result
             .as_ref()
-            .is_ok_and(|response| turn_answered(&response.stop_reason));
+            .is_ok_and(|response| turn_answered(response.stop_reason));
         let _ = self
             .herdr
             .report_state(

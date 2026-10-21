@@ -39,7 +39,7 @@ impl SessionHost {
             response
         });
         let turn = match &result {
-            Ok(response) if turn_answered(&response.stop_reason) => ProposalTurn::Completed,
+            Ok(response) if turn_answered(response.stop_reason) => ProposalTurn::Completed,
             Ok(_) | Err(_) => ProposalTurn::Unfinished,
         };
         let target = match decision.resolve(turn, self.permission.mode) {

@@ -172,6 +172,14 @@ impl FinishReason {
         matches!(self, Self::Stop | Self::MaxTokens)
     }
 
+    /// Early stop to report for a successful finish; `None` for a normal stop.
+    pub fn model_stop_reason(self) -> Option<rho_sdk::model::ModelStopReason> {
+        match self {
+            Self::MaxTokens => Some(rho_sdk::model::ModelStopReason::MaxTokens),
+            _ => None,
+        }
+    }
+
     /// A non-success finish that is a transient generation artifact rather than
     /// a content-policy block, so re-rolling the request may succeed.
     pub fn is_transient(self) -> bool {

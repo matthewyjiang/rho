@@ -50,8 +50,6 @@ pub(crate) struct ChatStreamAccumulator {
     /// publishing each report downstream would double-count. `finish` derives
     /// and publishes one `ModelUsage` snapshot plus one throughput carrier.
     usage_snapshot: Option<RawUsage>,
-    /// Early stop from the choice's `finish_reason`, reported once in `finish`.
-    stop_reason: Option<ModelStopReason>,
 }
 
 impl Default for ChatStreamAccumulator {
@@ -73,7 +71,6 @@ impl ChatStreamAccumulator {
             policy,
             hidden_reasoning_risk,
             usage_snapshot: None,
-            stop_reason: None,
         }
     }
 
@@ -105,10 +102,13 @@ impl ChatStreamAccumulator {
         else {
             return Ok(true);
         };
-        match choice.get("finish_reason").and_then(|v| v.as_str()) {
-            Some("length") => self.stop_reason = Some(ModelStopReason::MaxTokens),
-            Some("content_filter") => self.stop_reason = Some(ModelStopReason::Refusal),
-            _ => {}
+        let stop_reason = match choice.get("finish_reason").and_then(|v| v.as_str()) {
+            Some("length") => Some(ModelStopReason::MaxTokens),
+            Some("content_filter") => Some(ModelStopReason::Refusal),
+            _ => None,
+        };
+        if let Some(reason) = stop_reason {
+            on_event(ModelEvent::stop_reason(reason))?;
         }
         let delta = choice.get("delta");
         if let Some(reasoning_delta) = delta
@@ -231,12 +231,8 @@ impl ChatStreamAccumulator {
         if let Some(usage) = self.usage_snapshot {
             on_event(ModelEvent::Usage(usage.into_model_usage()))?;
         }
-        let stop_reason = self.stop_reason;
         let finish = self.into_finish()?;
         emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
-        if let Some(reason) = stop_reason {
-            on_event(ModelEvent::stop_reason(reason))?;
-        }
         Ok(finish.response)
     }
 

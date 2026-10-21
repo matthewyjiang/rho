@@ -4,6 +4,8 @@ use serde_json::Value;
 
 use super::ModelEvent;
 
+// NEXT_MAJOR(rho-sdk): replace the stop-reason ProviderContext marker with a
+// typed `ModelEvent::Stopped(ModelStopReason)` variant.
 /// Reserved [`ModelEvent::ProviderContext`] kind that carries a [`ModelStopReason`].
 pub(crate) const STOP_REASON_CONTEXT_KIND: &str = "rho.sdk.stop_reason.v1";
 
@@ -40,23 +42,19 @@ impl ModelStopReason {
             Self::Refusal => "refusal",
         }
     }
-
-    /// Parses marker data. Unknown names come from a newer producer and are ignored.
-    pub(crate) fn from_marker_data(data: &Value) -> Option<Self> {
-        match data.as_str()? {
-            "max_tokens" => Some(Self::MaxTokens),
-            "refusal" => Some(Self::Refusal),
-            _ => None,
-        }
-    }
 }
 
 impl ModelEvent {
     /// Reports why the provider ended the current model turn.
     ///
-    /// Send it at most once per turn, before returning the response. The
-    /// runtime consumes the event; it never reaches session history or
-    /// [`crate::RunEvent::ProviderContextUpdated`].
+    /// Send it once the reason is known; if a turn reports more than once, the
+    /// last report wins. The runtime consumes the event; it never reaches
+    /// session history or [`crate::RunEvent::ProviderContextUpdated`].
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): replace the stop-reason ProviderContext marker with a
+    /// typed `ModelEvent::Stopped(ModelStopReason)` variant.
     pub fn stop_reason(reason: ModelStopReason) -> Self {
         Self::ProviderContext {
             kind: STOP_REASON_CONTEXT_KIND.into(),
@@ -66,13 +64,28 @@ impl ModelEvent {
     }
 
     /// Returns the reason when this event was built by [`Self::stop_reason`].
+    ///
+    /// A hand-built event with the reserved kind but other data returns `None`.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): replace the stop-reason ProviderContext marker with a
+    /// typed `ModelEvent::Stopped(ModelStopReason)` variant.
     pub fn as_stop_reason(&self) -> Option<ModelStopReason> {
-        match self {
-            Self::ProviderContext {
-                kind,
-                position: None,
-                data,
-            } if kind == STOP_REASON_CONTEXT_KIND => ModelStopReason::from_marker_data(data),
+        let Self::ProviderContext {
+            kind,
+            position: None,
+            data,
+        } = self
+        else {
+            return None;
+        };
+        if kind != STOP_REASON_CONTEXT_KIND {
+            return None;
+        }
+        match data.as_str()? {
+            "max_tokens" => Some(ModelStopReason::MaxTokens),
+            "refusal" => Some(ModelStopReason::Refusal),
             _ => None,
         }
     }
