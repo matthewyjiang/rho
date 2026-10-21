@@ -233,10 +233,17 @@ impl super::App {
         let Some(provisional) = self.provisional_history.take() else {
             return;
         };
-        let entries = self.transcript_entries(&provisional.messages);
-        if entries.len() == provisional.rendered && self.history.len() >= entries.len() {
-            self.history.replace_prefix(entries);
+        let mut entries = self.transcript_entries(&provisional.messages);
+        if entries.len() != provisional.rendered || self.history.len() < entries.len() {
+            return;
         }
+        // Keep cards the user expanded or collapsed while servers connected.
+        for (entry, shown) in entries.iter_mut().zip(self.history.entries()) {
+            if let (Entry::Tool(entry), Entry::Tool(shown)) = (entry, shown) {
+                entry.expanded = shown.expanded;
+            }
+        }
+        self.history.replace_prefix(entries);
     }
 
     pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {

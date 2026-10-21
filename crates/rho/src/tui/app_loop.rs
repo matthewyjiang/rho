@@ -63,7 +63,7 @@ impl App {
         Ok(self.poll_side_chat())
     }
 
-    fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
+    pub(super) fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
         let messages = std::mem::take(&mut self.info.session.recovered_messages);
         let had_recovered_messages = !messages.is_empty();
         let entries = self.transcript_entries(&messages);
