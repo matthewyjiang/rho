@@ -305,7 +305,7 @@ Each result that reaches the model is also sent as a finished tool call card, th
 
 Only the turn that ends the prompt counts. If a cut-off turn still produced complete tool calls, Rho runs the tools and the prompt continues. Any partial answer streams as `agent_message_chunk` before the stop reason arrives.
 
-ACP says that after `refusal` the prompt and everything after it are left out of the next prompt. Rho does not roll the turn back. The refused turn and the prompt that led to it stay in the session's history, so the model still sees them and `session/load` replays them. A host may still hide them: Zed removes a refused prompt from its thread view unless a tool finished during that turn. To continue without the refused prompt, start a new session.
+After `refusal`, the refused prompt and the reply leave the session: the next prompt does not send them to the model, and `session/load` does not replay them. The session file keeps them as an abandoned branch, which the TUI's `/tree` shows. A refused turn that ran tools, or that took steering or background results, is kept instead, because its effects already happened. This matches Zed, which removes a refused prompt from its thread unless a tool finished during that turn.
 
 Some providers report a limit or a refusal as a failure instead, and the prompt fails with a JSON-RPC error just as it does in the TUI. These include an OpenAI Responses `response.incomplete` (for example `max_output_tokens` or `content_filter`), a Gemini `SAFETY` or other blocking finish, and an Anthropic refusal with no output.
 

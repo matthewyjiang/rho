@@ -351,6 +351,44 @@ fn turn_display_follows_only_history_that_extends_the_turn() {
     }
 }
 
+// Covers: a refusal rolls back only a turn that produced nothing but model
+// replies; a turn that ran tools or took other input keeps its history, and a
+// compacted turn cannot be cut at its old position.
+// Owner: ACP session host turn persistence
+#[test]
+fn only_a_prompt_answered_by_replies_alone_rolls_back() {
+    let earlier = Message::user_text("earlier");
+    let input = Message::user_text("input");
+    let reply = Message::assistant_text("refused");
+    let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call".into(),
+        name: "read_file".into(),
+        arguments: serde_json::json!({}),
+    })]);
+    let result = Message::ToolResult(rho_sdk::model::ToolResult {
+        id: "call".into(),
+        ok: true,
+        content: "file".into(),
+    });
+    let steer = Message::user_text("steer");
+    let display = TurnDisplay::new(input.clone(), input.clone(), 1);
+
+    for (history, expected) in [
+        (vec![earlier.clone(), input.clone(), reply.clone()], Some(1)),
+        (
+            vec![earlier.clone(), input.clone(), call, result, reply.clone()],
+            None,
+        ),
+        (
+            vec![earlier.clone(), input.clone(), steer, reply.clone()],
+            None,
+        ),
+        (vec![Message::user_text("summary"), reply], None),
+    ] {
+        assert_eq!(display.prompt_only_start(&history), expected, "{history:?}");
+    }
+}
+
 // Covers: a background result reaches history before the pump records the
 // row shown for it, so a step save must wait for that row rather than write
 // the model's copy; once recorded, the shown row takes its place in order.

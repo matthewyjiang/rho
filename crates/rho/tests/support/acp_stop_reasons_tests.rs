@@ -3,6 +3,7 @@
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
+    sync::{Arc, Mutex},
 };
 
 use pretty_assertions::assert_eq;
@@ -11,21 +12,25 @@ use tempfile::TempDir;
 
 use super::AcpServer;
 
+/// Chat request bodies the fake host received, in order.
+type Requests = Arc<Mutex<Vec<String>>>;
+
 /// An OpenAI-compatible host that streams `partial` and then finishes with the
 /// `finish_reason` the prompt names after `finish=`.
-fn spawn_provider() -> SocketAddr {
+fn spawn_provider(requests: Requests) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { return };
-            std::thread::spawn(move || answer(stream));
+            let requests = Arc::clone(&requests);
+            std::thread::spawn(move || answer(stream, &requests));
         }
     });
     address
 }
 
-fn answer(stream: TcpStream) {
+fn answer(stream: TcpStream, requests: &Mutex<Vec<String>>) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
@@ -61,6 +66,7 @@ fn answer(stream: TcpStream) {
             .filter_map(|reason| Some((body.rfind(&format!("finish={reason}"))?, reason)))
             .max()
             .map_or("stop", |(_, reason)| reason);
+        requests.lock().unwrap().push(body);
         let chunk = |delta: Value, finish: Value| json!({"id": "fixture", "object": "chat.completion.chunk", "created": 0, "model": "mock-model", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]});
         (
             "text/event-stream",
@@ -81,14 +87,31 @@ fn answer(stream: TcpStream) {
     let _ = reader.get_mut().write_all(reply.as_bytes());
 }
 
+/// Sends `text` and returns the stop reason with the streamed reply.
+fn prompt(server: &mut AcpServer, session_id: &str, text: &str) -> (Value, String) {
+    let (reply, updates) = server.request(
+        "session/prompt",
+        json!({"sessionId": session_id, "prompt": [{"type": "text", "text": text}]}),
+    );
+    let streamed = updates
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
+        .filter_map(|update| update["content"]["text"].as_str())
+        .collect();
+    (reply.unwrap()["stopReason"].clone(), streamed)
+}
+
 // Covers: a turn the provider truncated or content-filtered must end the ACP
 // prompt with `max_tokens` / `refusal` instead of `end_turn`, after streaming
-// the partial answer, and the session must keep taking prompts.
+// the partial answer. A refused prompt must then leave the model's context and
+// the replayed session, as ACP `refusal` promises, while the truncated turn
+// stays.
 // Owner: provider finish-reason parsing through the SDK run outcome to the
-// ACP prompt response, over real stdio and HTTP.
+// ACP prompt response and session history, over real stdio and HTTP.
 #[test]
 fn provider_finish_reasons_reach_the_prompt_stop_reason() {
-    let address = spawn_provider();
+    let requests = Requests::default();
+    let address = spawn_provider(Arc::clone(&requests));
     let home = TempDir::new().unwrap();
     let project = home.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -140,28 +163,49 @@ provider = "disabled"
         .unwrap();
     let session_id = session["sessionId"].as_str().unwrap().to_owned();
 
-    for (finish, stop_reason) in [
-        ("length", "max_tokens"),
-        ("content_filter", "refusal"),
-        ("stop", "end_turn"),
+    // A refused first prompt rolls back to an empty session.
+    for (text, stop_reason) in [
+        ("finish=content_filter first-refused", "refusal"),
+        ("finish=length truncated", "max_tokens"),
+        ("finish=content_filter later-refused", "refusal"),
+        ("finish=stop kept", "end_turn"),
     ] {
-        let (reply, updates) = server.request(
-            "session/prompt",
-            json!({
-                "sessionId": session_id,
-                "prompt": [{"type": "text", "text": format!("finish={finish}")}],
-            }),
-        );
-        let streamed: String = updates
-            .iter()
-            .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
-            .filter_map(|update| update["content"]["text"].as_str())
-            .collect();
-
         assert_eq!(
-            (reply.unwrap()["stopReason"].clone(), streamed),
+            prompt(&mut server, &session_id, text),
             (json!(stop_reason), "partial".to_owned()),
-            "finish_reason {finish}"
+            "{text}"
         );
     }
+    // Earlier prompts the model was sent with `marker`'s prompt. Title jobs
+    // also reach the host, so pick the request by its prompt, not its order.
+    let sent_with = |marker: &str| {
+        let requests = requests.lock().unwrap();
+        let body = requests
+            .iter()
+            .rev()
+            .find(|body| body.contains(marker))
+            .unwrap();
+        ["first-refused", "truncated", "later-refused", "kept"]
+            .into_iter()
+            .filter(|text| body.contains(text))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(sent_with("kept"), ["truncated", "kept"]);
+
+    let (loaded, replay) = server.request(
+        "session/load",
+        json!({"sessionId": session_id, "cwd": project, "mcpServers": []}),
+    );
+    loaded.unwrap();
+    let replayed_prompts = replay
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "user_message_chunk")
+        .filter_map(|update| update["content"]["text"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        replayed_prompts,
+        ["finish=length truncated", "finish=stop kept"]
+    );
+    prompt(&mut server, &session_id, "finish=stop after-load");
+    assert_eq!(sent_with("after-load"), ["truncated", "kept"]);
 }

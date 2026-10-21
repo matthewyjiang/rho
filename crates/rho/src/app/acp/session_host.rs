@@ -728,7 +728,7 @@ impl SessionHost {
         self.sent_plan = signals.into_sent_plan();
         match outcome {
             Ok(outcome) => {
-                if let Err(error) = self.persist_turn(checkpoint, Some(outcome.text())) {
+                if let Err(error) = self.settle_turn(checkpoint, &outcome) {
                     self.dispatch_failed(&error.to_string());
                     return Err(error);
                 }
