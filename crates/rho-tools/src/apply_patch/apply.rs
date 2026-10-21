@@ -6,13 +6,11 @@
 //! 3. revalidate and commit in patch order
 //! 4. roll back complete mutations and report any dirty targets
 
-use std::path::PathBuf;
-
-#[cfg(test)]
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     file_mutation::FileMutationOutcome,
+    host_files::HostTextFiles,
     tool::{truncate, ToolError},
 };
 
@@ -30,17 +28,21 @@ pub(crate) use super::planning::reject_symlink_entry;
 #[cfg(test)]
 pub(super) use super::transaction::rollback_one;
 
+/// Applies `hunks`. Additions and in-place updates of paths `host_files`
+/// serves go through the host; deletions and moves stay on disk.
 pub(crate) async fn apply_hunks(
     hunks: Vec<Hunk>,
     resolve_path: impl Fn(&str) -> Result<PathBuf, ToolError>,
     display_path: impl Fn(&str) -> String,
     max_output_bytes: usize,
+    host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<FileMutationOutcome, ToolError> {
     apply_hunks_inner(
         hunks,
         resolve_path,
         display_path,
         max_output_bytes,
+        host_files,
         /*rewrite_fault*/ None,
         /*create_fault*/ None,
     )
@@ -61,6 +63,7 @@ pub(super) async fn apply_hunks_with_faults(
         resolve_path,
         display_path,
         max_output_bytes,
+        /*host_files*/ None,
         rewrite_fault,
         create_fault,
     )
@@ -72,10 +75,26 @@ async fn apply_hunks_inner(
     resolve_path: impl Fn(&str) -> Result<PathBuf, ToolError>,
     display_path: impl Fn(&str) -> String,
     max_output_bytes: usize,
+    host_files: Option<&Arc<dyn HostTextFiles>>,
     rewrite_fault: RewriteFault,
     create_fault: CreateFault,
 ) -> Result<FileMutationOutcome, ToolError> {
-    let planned = plan_hunks(&hunks, &resolve_path, &display_path).await?;
+    let mut planned = plan_hunks(&hunks, &resolve_path, &display_path, host_files).await?;
+    // The commit runs to its end, rollback included, even when the call is
+    // cancelled, so a dropped call never leaves only some changes applied.
+    let (returned, saved) = tokio::spawn(async move {
+        let saved = commit_changes(&planned, rewrite_fault, create_fault).await;
+        (planned, saved)
+    })
+    .await
+    .map_err(|error| ToolError::Message(format!("patch task failed: {error}")))?;
+    planned = returned;
+    let saved = saved?;
+    for (change, saved) in planned.iter_mut().zip(saved) {
+        if let Some(saved) = saved {
+            change.record_saved(saved);
+        }
+    }
 
     let summary_lines = planned
         .iter()
@@ -95,8 +114,6 @@ async fn apply_hunks_inner(
         .iter()
         .filter_map(FileChange::chain_snapshot)
         .collect::<Vec<_>>();
-
-    commit_changes(&planned, rewrite_fault, create_fault).await?;
 
     let mut content = format!(
         "Success. Updated the following files:\n{}",

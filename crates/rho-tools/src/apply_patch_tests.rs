@@ -39,6 +39,7 @@ async fn apply(
         |path| Ok(ctx.cwd.join(path)),
         str::to_string,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
 }
@@ -529,17 +530,16 @@ async fn rollback_preserves_a_concurrent_external_change() {
     let (_dir, ctx) = test_context();
     let target = ctx.cwd.join("shared.txt");
     std::fs::write(&target, "external\n").unwrap();
-    let permissions = std::fs::metadata(&target).unwrap().permissions();
     let change = FileChange::Update {
         target: target.clone(),
         display_path: "shared.txt".into(),
         old_content: "before\n".into(),
         new_content: "ours\n".into(),
-        permissions,
         move_from: None,
+        route: crate::host_files::TextRoute::Disk,
     };
 
-    rollback_one(&change).await.unwrap_err();
+    rollback_one(&change, /*saved*/ None).await.unwrap_err();
     assert_eq!(std::fs::read_to_string(target).unwrap(), "external\n");
 }
 
@@ -604,6 +604,212 @@ async fn rejects_delete_and_move_of_same_source() {
     assert!(!ctx.cwd.join("b.txt").exists());
 }
 
+// Covers: in a host-served directory, an in-place update patches the host's
+// (unsaved) text and an addition is created through the host, both without
+// touching disk, while a deletion, which ACP hosts cannot do, runs on disk.
+// Owner: apply_patch transaction routing
+#[tokio::test]
+async fn host_served_updates_and_additions_go_through_the_host() {
+    use crate::host_files::{test_support::MemoryHost, HostTextFiles};
+
+    let (_dir, ctx) = test_context();
+    let (updated, added, deleted) = (
+        ctx.cwd.join("updated.txt"),
+        ctx.cwd.join("new/added.txt"),
+        ctx.cwd.join("deleted.txt"),
+    );
+    std::fs::write(&updated, "on disk\n").unwrap();
+    std::fs::write(&deleted, "gone\n").unwrap();
+    let host = Arc::new(MemoryHost::new(&ctx.cwd, &[(&updated, "in buffer\n")]));
+    let host_files: Arc<dyn HostTextFiles> = host.clone();
+    let hunks = parse_patch(
+        "*** Begin Patch\n*** Update File: updated.txt\n@@\n-in buffer\n+patched\n*** Add File: new/added.txt\n+added\n*** Delete File: deleted.txt\n*** End Patch",
+    )
+    .unwrap();
+
+    apply_hunks(
+        hunks,
+        |path| Ok(ctx.cwd.join(path)),
+        str::to_string,
+        ctx.max_output_bytes,
+        Some(&host_files),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        (
+            host.writes.lock().unwrap().clone(),
+            std::fs::read_to_string(&updated).unwrap(),
+            added.exists(),
+            deleted.exists(),
+        ),
+        (
+            vec![
+                (updated.clone(), "patched\n".to_string()),
+                (added.clone(), "added\n".to_string()),
+            ],
+            "on disk\n".to_string(),
+            false,
+            false,
+        )
+    );
+}
+
+// Covers: when a host formats what it saves, a later failed write rolls an
+// earlier host update back from the text the host holds, and the result of a
+// patch that succeeds shows that text.
+// Owner: apply_patch transaction rollback, through host_files
+#[tokio::test]
+async fn host_formatted_updates_roll_back_and_show_the_saved_text() {
+    use crate::host_files::{test_support::MemoryHost, HostTextFiles};
+
+    let (_dir, ctx) = test_context();
+    let (first, second) = (ctx.cwd.join("a.txt"), ctx.cwd.join("b.txt"));
+    std::fs::write(&first, "on disk\n").unwrap();
+    std::fs::write(&second, "on disk\n").unwrap();
+    let patch = "*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+edited\n*** Update File: b.txt\n@@\n-beta\n+edited\n*** End Patch";
+    let apply = |refused: Option<std::path::PathBuf>| {
+        let mut host = MemoryHost::new(&ctx.cwd, &[(&first, "alpha\n"), (&second, "beta\n")]);
+        host.format = str::to_uppercase;
+        host.refused = refused;
+        let host = Arc::new(host);
+        let host_files: Arc<dyn HostTextFiles> = host.clone();
+        let (cwd, first) = (ctx.cwd.clone(), first.clone());
+        async move {
+            let outcome = apply_hunks(
+                parse_patch(patch).unwrap(),
+                |path| Ok(cwd.join(path)),
+                str::to_string,
+                12_000,
+                Some(&host_files),
+            )
+            .await
+            .map(|outcome| outcome.file_changes)
+            .map_err(|error| {
+                error
+                    .to_string()
+                    .ends_with("applied changes were rolled back")
+            });
+            let first_text = host.files.lock().unwrap().get(&first).cloned();
+            (outcome, first_text)
+        }
+    };
+
+    assert_eq!(
+        (apply(Some(second.clone())).await, apply(None).await),
+        (
+            (Err(true), Some("ALPHA\n".to_string())),
+            (
+                Ok(vec![
+                    rho_sdk::tool::ToolFileChange::modified(&first, "alpha\n", "EDITED\n"),
+                    rho_sdk::tool::ToolFileChange::modified(&second, "beta\n", "EDITED\n"),
+                ]),
+                Some("EDITED\n".to_string())
+            ),
+        )
+    );
+}
+
+// Covers: on a host that keeps added files unsaved, such a file can be
+// updated in place, adding or moving onto a path the host already holds,
+// even past the input limit, is refused with its text kept, and a rollback, which cannot remove a host-added file,
+// leaves it and the directories created for it, reporting it unrecovered.
+// Owner: apply_patch host additions
+#[tokio::test]
+async fn host_additions_respect_what_only_the_host_holds() {
+    use crate::host_files::{test_support::MemoryHost, HostTextFiles};
+
+    let (_dir, ctx) = test_context();
+    let (held, added, refused) = (
+        ctx.cwd.join("held.txt"),
+        ctx.cwd.join("new/added.txt"),
+        ctx.cwd.join("refused.txt"),
+    );
+    std::fs::write(&refused, "on disk\n").unwrap();
+    std::fs::write(ctx.cwd.join("moved.txt"), "a\n").unwrap();
+    let draft = ctx.cwd.join("draft.txt");
+    let mut host = MemoryHost::new(
+        &ctx.cwd,
+        &[
+            (&held, "unsaved\n"),
+            (&refused, "before\n"),
+            (&draft, "draft\n"),
+        ],
+    );
+    host.refused = Some(refused.clone());
+    let host = Arc::new(host);
+    let host_files: Arc<dyn HostTextFiles> = host.clone();
+    let apply = |patch: &'static str| {
+        let (cwd, host_files) = (ctx.cwd.clone(), Arc::clone(&host_files));
+        async move {
+            apply_hunks(
+                parse_patch(patch).unwrap(),
+                |path| Ok(cwd.join(path)),
+                str::to_string,
+                12_000,
+                Some(&host_files),
+            )
+            .await
+            .map(drop)
+            .map_err(|error| error.to_string())
+        }
+    };
+
+    let existing = apply("*** Begin Patch\n*** Add File: held.txt\n+new\n*** End Patch")
+        .await
+        .unwrap_err();
+    let oversized = "x".repeat(crate::document::MAX_DOCUMENT_INPUT_BYTES + 1);
+    host.files
+        .lock()
+        .unwrap()
+        .insert(ctx.cwd.join("big.txt"), oversized.clone());
+    let existing_big = apply("*** Begin Patch\n*** Add File: big.txt\n+new\n*** End Patch")
+        .await
+        .unwrap_err();
+    let moved_onto = apply(
+        "*** Begin Patch\n*** Update File: moved.txt\n*** Move to: held.txt\n@@\n-a\n+b\n*** End Patch",
+    )
+    .await
+    .unwrap_err();
+    apply("*** Begin Patch\n*** Update File: draft.txt\n@@\n-draft\n+patched\n*** End Patch")
+        .await
+        .unwrap();
+    let unrecovered = apply(
+        "*** Begin Patch\n*** Add File: new/added.txt\n+new\n*** Update File: refused.txt\n@@\n-before\n+after\n*** End Patch",
+    )
+    .await
+    .unwrap_err();
+
+    let files = host.files.lock().unwrap().clone();
+    assert_eq!(
+        (
+            existing,
+            existing_big,
+            moved_onto,
+            std::fs::read_to_string(ctx.cwd.join("moved.txt")).unwrap(),
+            unrecovered.ends_with("unrecovered paths: new/added.txt"),
+            files.get(&held).cloned(),
+            files.get(&ctx.cwd.join("big.txt")) == Some(&oversized),
+            files.contains_key(&added),
+            (files.get(&draft).cloned(), draft.exists()),
+            ctx.cwd.join("new").is_dir(),
+        ),
+        (
+            "Refusing to add 'held.txt': file already exists".to_string(),
+            "Refusing to add 'big.txt': file already exists".to_string(),
+            "Refusing to move to 'held.txt': destination already exists".to_string(),
+            "a\n".to_string(),
+            true,
+            Some("unsaved\n".to_string()),
+            true,
+            true,
+            (Some("patched\n".to_string()), false),
+            true,
+        )
+    );
+}
+
 // Covers: a source changed after planning aborts the whole commit.
 // Owner: apply_patch transaction commit
 #[tokio::test]
@@ -630,6 +836,7 @@ async fn fails_closed_when_a_planned_file_changes() {
         },
         str::to_string,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
     .unwrap_err();

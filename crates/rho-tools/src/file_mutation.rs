@@ -427,7 +427,7 @@ pub(crate) async fn atomic_create_file(
     }
 }
 
-async fn create_missing_parents(
+pub(crate) async fn create_missing_parents(
     path: &Path,
     display_path: &str,
 ) -> Result<Vec<PathBuf>, AtomicCreateFailure> {

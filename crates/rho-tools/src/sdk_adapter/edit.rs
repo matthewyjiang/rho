@@ -45,6 +45,7 @@ struct HashlineEditTool {
 struct ApplyPatchTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 struct StrReplaceTool {
@@ -68,6 +69,7 @@ pub(super) fn build_sdk_tool(
         crate::EditFormat::ApplyPatch => Arc::new(ApplyPatchTool {
             max_output_bytes,
             mutation_observer,
+            host_files,
         }),
         crate::EditFormat::StrReplace => Arc::new(StrReplaceTool {
             max_output_bytes,
@@ -266,8 +268,7 @@ impl Tool for ApplyPatchTool {
                 metadata,
                 move |context| {
                     execute_prepared_patch(
-                        self.max_output_bytes,
-                        self.mutation_observer.clone(),
+                        self,
                         workspace,
                         resolved_by_canonical,
                         resolved_by_request,
@@ -472,14 +473,16 @@ fn execute_prepared_string_edit(
 }
 
 fn execute_prepared_patch(
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    tool: &ApplyPatchTool,
     workspace: Workspace,
     resolved: BTreeMap<PathBuf, ResolvedWorkspacePath>,
     requested_paths: HashMap<String, PathBuf>,
     hunks: Vec<Hunk>,
     context: AuthorizedToolContext,
 ) -> ToolFuture<'static> {
+    let max_output_bytes = tool.max_output_bytes;
+    let mutation_observer = tool.mutation_observer.clone();
+    let host_files = tool.host_files.clone();
     Box::pin(async move {
         let total = hunks.len() as u64;
         let _ = context
@@ -520,6 +523,7 @@ fn execute_prepared_patch(
                 },
                 |path| compact_display_path(workspace.root(), path),
                 max_output_bytes,
+                host_files.as_ref(),
             ),
         )
         .await?;
