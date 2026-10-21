@@ -7,10 +7,7 @@ use super::{
 };
 use crate::{
     tools::process::{LiveProcessSummary, State},
-    tui::{
-        activity,
-        theme::{self, Theme},
-    },
+    tui::{activity, theme::Theme},
 };
 
 fn summary(id: &str, command: &str, elapsed_seconds: u64) -> LiveProcessSummary {
@@ -164,7 +161,6 @@ fn live_count_excludes_finished_rows() {
 // Owner: pure layout
 #[test]
 fn process_verdict_styles_paint_on_wide_rows() {
-    let _guard = theme::theme_test_lock();
     Theme::apply_committed("one-half-dark");
     let mut panel = ProcessPanel::default();
     panel.ingest(vec![LiveProcessSummary {

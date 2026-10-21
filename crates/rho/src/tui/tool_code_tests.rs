@@ -20,7 +20,6 @@ fn styled(lines: &[ratatui::text::Line<'static>]) -> Vec<(String, ratatui::style
 #[test]
 fn code_lines_highlight_by_language_and_keep_state() {
     warm_syntax_set();
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     let keyword = Theme::syntax(SyntaxRole::Keyword);
 

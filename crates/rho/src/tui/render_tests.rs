@@ -547,7 +547,6 @@ fn error_entries_include_text_severity_marker() {
         }
     }
 
-    let _theme_lock = crate::tui::theme::theme_test_lock();
     let _restore_theme = RestoreTheme(Theme::committed_id());
     Theme::apply_committed("monochrome-dark");
 
@@ -584,7 +583,6 @@ fn error_entries_include_text_severity_marker() {
 // Owner: entry render layout.
 #[test]
 fn duration_receipt_leaves_a_blank_row_after_body() {
-    let _theme_lock = crate::tui::theme::theme_test_lock();
     let elapsed = std::time::Duration::from_millis(2_300);
     let body_only = crate::tui::Entry::Assistant("Hello".into());
     let with_receipt = crate::tui::Entry::Assistant(crate::tui::AssistantEntry {

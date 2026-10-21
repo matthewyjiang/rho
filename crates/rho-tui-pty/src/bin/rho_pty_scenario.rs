@@ -21,7 +21,7 @@ struct Args {
     #[arg(long)]
     list: bool,
 
-    /// Run the CI smoke subset.
+    /// Run the `smoke: true` local subset. CI runs the `tui_pty` tests instead.
     #[arg(long)]
     smoke: bool,
 

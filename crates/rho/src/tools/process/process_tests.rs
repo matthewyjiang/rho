@@ -1,5 +1,7 @@
 use super::types::{terminal, Stream};
 use super::*;
+#[cfg(unix)]
+use crate::process_tree::process_is_running;
 use rho_tools::tool::{Tool, ToolContext, ToolError};
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
@@ -358,27 +360,6 @@ async fn concurrent_poll_and_stop_do_not_deadlock() {
     .await
     .unwrap();
     eventually(&manager, &id).await;
-}
-
-#[cfg(unix)]
-fn process_is_running(pid: i32) -> bool {
-    if unsafe { libc::kill(pid, 0) } == -1 {
-        return false;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-            return false;
-        };
-        // A container's PID 1 may not reap orphaned grandchildren. Zombies are
-        // terminated even though kill(pid, 0) continues to find their PID.
-        let Some((_, fields)) = stat.rsplit_once(") ") else {
-            return true;
-        };
-        !fields.starts_with("Z ")
-    }
-    #[cfg(not(target_os = "linux"))]
-    true
 }
 
 #[cfg(unix)]

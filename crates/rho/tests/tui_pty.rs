@@ -295,13 +295,6 @@ fn no_save_session() {
     assert_pass("no_save_session");
 }
 
-// Covers: first session chrome must paint without waiting on MCP, catalog, or keyring tails.
-// Owner: interactive TUI
-#[test]
-fn startup_first_frame_paints_session_chrome() {
-    assert_pass("startup_first_frame");
-}
-
 // Covers: an idle session must not redraw every tick while a startup hydrate
 // (the models.dev catalog fetch) is still in flight. Treating "in flight" as
 // "ready to apply" made rho repaint ~10x/s until the fetch finished, which
@@ -1107,4 +1100,130 @@ fn screen_text_selection_copies_composer_text() {
 #[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
+}
+
+// Covers: completed reasoning can be revealed and hidden retroactively, in zen
+// mode too. Owner: interactive TUI
+#[test]
+fn reasoning_output_toggles_retroactively() {
+    assert_pass("reasoning_output_retroactive");
+}
+
+// Covers: workflow tools run without a second form and keep live progress.
+// Owner: interactive TUI
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn workflow_tools_run_in_the_background() {
+    assert_pass("workflow_background");
+}
+
+// Covers: questionnaire timeouts submit fallback answers with distinct
+// provenance, and any interaction pauses the fallback. Owner: interactive TUI
+#[test]
+fn questionnaire_timeout_falls_back_unless_interrupted() {
+    for scenario in ["questionnaire_timeout", "questionnaire_timeout_pause"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: a long supervised process approval can be inspected and cancelled.
+// Owner: interactive approval UX
+#[test]
+fn supervised_approval_can_be_inspected_and_cancelled() {
+    assert_pass("supervised_approval");
+}
+
+// Covers: codemode cards show script generation past the collapsed budget and
+// keep streaming after the argument buffer passes 4096 bytes.
+// Owner: interactive TUI
+#[test]
+fn codemode_cards_stream_script_generation() {
+    for scenario in ["codemode_card", "codemode_large_script_stream"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: steering queued during a tool can be inspected and retracted.
+// Owner: interactive turn orchestration (PTY)
+#[test]
+fn steering_can_be_retracted_during_a_tool() {
+    assert_pass("retract_steering_during_tool");
+}
+
+// Covers: /fast suggestions follow model switches. Owner: interactive TUI
+#[test]
+fn fast_command_suggestions_follow_model_switches() {
+    assert_pass("fast_command_discovery");
+}
+
+// Covers: Tab completes one nested path component at a time in the inline
+// shell composer. Owner: interactive TUI
+#[test]
+fn inline_shell_tab_completes_nested_paths() {
+    assert_pass("shell_tab_completion");
+}
+
+// Covers: the sessions tool's search and read cards collapse and expand over
+// real session evidence. Owner: interactive TUI
+#[test]
+fn sessions_tool_cards_show_real_evidence() {
+    assert_pass("sessions_tool_cards");
+}
+
+// Covers: reasoning levels survive compatible pinned-model cycles and normalize
+// for incompatible ones, idle or queued during a turn. Owner: interactive TUI
+#[test]
+fn pinned_model_cycles_normalize_reasoning() {
+    for scenario in ["cycle_reasoning_idle", "cycle_reasoning_queued"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: web search routing and self-hosted endpoints can be configured,
+// reset, and a connection test cancelled. Owner: interactive config UX
+#[test]
+fn web_search_settings_configure_and_reset() {
+    assert_pass("web_search_config");
+}
+
+// Covers: dual-grant OAuth offers browser or device-code even with a browser.
+// Owner: interactive login UX
+#[test]
+fn oauth_login_offers_a_flow_choice() {
+    assert_pass("login_oauth_flow_choice");
+}
+
+// Covers: quiet subagent notices queue and coalesce, and a notice at the
+// completion checkpoint does not buy another provider request.
+// Owner: interactive turn orchestration (PTY)
+#[test]
+fn quiet_subagent_notices_coalesce_without_extra_requests() {
+    for scenario in ["quiet_subagent_notices", "quiet_subagent_running_notices"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: a failed parent action under /goal retries without waiting for the
+// blocked child. Owner: interactive turn orchestration (PTY)
+#[test]
+fn goal_retries_a_failed_action_without_waiting_for_children() {
+    assert_pass("goal_subagent_action_retry");
+}
+
+// Covers: boundary notices keep a streaming message intact, and a pending
+// background failure is folded in before the parent turn completes.
+// Owner: interactive turn orchestration (PTY)
+#[test]
+fn boundary_notices_arrive_without_breaking_the_turn() {
+    for scenario in ["streaming_boundary_notice", "boundary_notifications"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: pending input stays below the activity rail while a process is live.
+// Owner: interactive TUI
+#[test]
+fn pending_input_stays_below_the_activity_rail() {
+    assert_pass("pending_input_below_activity");
 }

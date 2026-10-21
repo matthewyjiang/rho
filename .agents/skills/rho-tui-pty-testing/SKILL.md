@@ -33,16 +33,15 @@ cargo build -p rho-coding-agent >"$BUILD_LOG" 2>&1
 
 On failure, inspect focused excerpts and stop.
 
-## Run the smoke suite
+## Run the CI scenario suite
 
 ```bash
-TEST_LOG=$(mktemp /tmp/rho-pty-smoke.XXXXXX.log)
-cargo test -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
+TEST_LOG=$(mktemp /tmp/rho-pty-suite.XXXXXX.log)
+cargo nextest run -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
 ```
 
-Smoke scenarios:
+CI runs exactly the `assert_pass` tests in `crates/rho/tests/tui_pty.rs`. Key scenarios:
 
-- see `Scenario.smoke` / `rho-pty-scenario --list` for the live set
 - core lifecycle: `startup_stream_exit`, `cancel_and_resubmit`, `type_during_stream`, `resize_during_stream`, `scroll_during_stream`, `terminal_restoration`
 - fragility champions: `streaming_markdown_stability`, `spinner_activity_anchor`
 
@@ -58,7 +57,7 @@ cargo run -p rho-tui-pty --bin rho-pty-scenario -- \
 
 Useful flags:
 
-- `--smoke` runs the CI subset
+- `--smoke` runs the `smoke: true` scenarios locally; it does not decide CI coverage
 - `--timing` prints wait latency samples and p50/p95/p99
 - `--artifacts <dir>` writes failure bundles
 - `--bin <path>` selects the Rho binary
@@ -102,7 +101,7 @@ Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:
 5. Keep scenarios independent of the developer HOME, credentials, and host terminal markers.
    Matrix launches are offline: every proxy points at a refusing loopback port and only loopback
    bypasses it, so mock servers must listen on `127.0.0.1`/`localhost`.
-6. Mark stable CI cases with `smoke: true`.
+6. Run a scenario in CI by adding an `assert_pass` test to `crates/rho/tests/tui_pty.rs`. `smoke: true` only adds it to the local `--smoke` subset.
 7. Keep scenario sync deterministic under load. Wait only on conditions that stay true until the scenario advances. Intermediate or timer-driven states race on slow CI - wait on the durable outcome instead, and unit-test short-lived rendering next to the pure function. Fix the wait target before you raise the timeout.
 
 ## Failure artifacts

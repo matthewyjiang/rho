@@ -9,7 +9,6 @@ use crate::tui::ReasoningEntry;
 // directly and checks that soft updates do not rebuild unrelated entries.
 #[test]
 fn reasoning_visibility_preserves_receipts_and_resplices_only_reasoning() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let width = 40;
     for zen_mode in [false, true] {
         for initially_visible in [false, true] {

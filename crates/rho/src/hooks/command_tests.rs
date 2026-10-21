@@ -81,42 +81,40 @@ async fn a_nonzero_exit_is_reported_with_its_code_and_stderr() {
     assert_eq!(output.stderr_summary(), "boom");
 }
 
-#[tokio::test]
-async fn a_slow_handler_times_out() {
-    let home = TempDir::new().unwrap();
-    let hook = hook_running("sleep 30", "1s", &[], &home);
-
-    let error = run(&hook, "{}").await.unwrap_err();
-
-    assert_eq!(
-        error,
-        HookRunError::TimedOut {
-            timeout: Duration::from_secs(1)
-        }
-    );
-}
-
+// Covers: a hook that outlives its timeout fails with `TimedOut`, and its
+// background descendants die with it instead of leaking.
+// Owner: hook process supervision.
 #[tokio::test]
 async fn a_timed_out_handler_takes_its_descendants_with_it() {
     let home = TempDir::new().unwrap();
     let marker = home.path().join("descendant.pid");
+    // `$!` is the background sleep itself. `$$` would name the hook's own
+    // shell, which dies with the direct child even when the group survives.
     let hook = hook_running(
-        &format!("( echo $$ > {}; sleep 60 ) & sleep 30", marker.display()),
+        &format!("sleep 60 & echo $! > {}; wait", marker.display()),
         "1s",
         &[],
         &home,
     );
 
     let error = run(&hook, "{}").await.unwrap_err();
-    assert!(matches!(error, HookRunError::TimedOut { .. }));
+    assert_eq!(
+        error,
+        HookRunError::TimedOut {
+            timeout: Duration::from_secs(1)
+        }
+    );
 
     let pid = wait_for_pid(&marker).await;
-    // Give the kernel a moment to reap the group before probing it.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(
-        !process_is_alive(pid),
-        "descendant {pid} outlived its hook timeout"
-    );
+    // The group kill is asynchronous; bound the wait instead of guessing it.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while crate::process_tree::process_is_running(pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "descendant {pid} outlived its hook timeout"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
 }
 
 #[tokio::test]
@@ -228,8 +226,4 @@ async fn wait_for_pid(path: &Path) -> i32 {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-}
-
-fn process_is_alive(pid: i32) -> bool {
-    unsafe { libc::kill(pid, 0) == 0 }
 }

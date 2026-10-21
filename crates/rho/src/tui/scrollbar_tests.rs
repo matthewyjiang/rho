@@ -145,7 +145,6 @@ fn overlay_track_style_drops_tool_card_row_styles() {
     use ratatui::buffer::Cell;
     use ratatui::style::{Color, Modifier, Style};
 
-    let _guard = crate::tui::theme::theme_test_lock();
     let thumb = ScrollbarThumb { top: 0, height: 1 };
     let leftover = Style::default()
         .fg(Color::Green)

@@ -24,7 +24,6 @@ fn preview(text: &str) -> LiveStreamPreview {
 // Owner: tui stream preview render cache
 #[test]
 fn stream_preview_cache_hits_when_preview_and_fence_are_unchanged() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut streams = StreamUi::default();
     streams.set_live_preview(Some(preview("hello **world**")));
     let first = streams
@@ -46,7 +45,6 @@ fn stream_preview_cache_hits_when_preview_and_fence_are_unchanged() {
 // Owner: tui stream preview render cache
 #[test]
 fn stream_preview_cache_misses_on_content_width_fence_and_theme() {
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     let mut streams = StreamUi::default();
     streams.set_live_preview(Some(preview("hello")));

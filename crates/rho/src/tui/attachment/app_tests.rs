@@ -781,7 +781,6 @@ fn row_look(
 fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pin the global theme: terminal mode without a palette sample lifts named
     // ink to bold, guaranteeing an observable change on the body row.
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
@@ -837,7 +836,6 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
 // Owner: attach draw
 #[test]
 fn draw_hover_lift_skips_untoggleable_card() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),

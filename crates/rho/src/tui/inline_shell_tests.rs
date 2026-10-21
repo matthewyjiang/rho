@@ -276,7 +276,6 @@ fn display_text_preserves_command_output() {
 // Owner: tui inline shell render cache
 #[tokio::test]
 async fn shell_render_cache_misses_after_theme_generation_change() {
-    let _guard = crate::tui::theme::theme_test_lock();
     crate::tui::theme::Theme::apply_committed("terminal");
     let mut task = PendingShellTask::test_task("hello");
     let first = task

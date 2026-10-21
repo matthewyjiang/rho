@@ -8,7 +8,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STREAM};
+use super::{assert_helpers::wait_for_turn_completion_after, SETTLE, STREAM};
 
 // Covers: startup prompts, later turns, and /new must not re-enable persistence.
 // Owner: interactive lifecycle and its on-disk effects.
@@ -26,6 +26,9 @@ pub(super) const NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::AssertText("not saved"),
+        // /resume and /new are idle-only; during a turn they only set a status.
+        // The response text can paint before the turn returns to idle.
+        Step::Custom(wait_for_startup_turn),
         Step::Phase("resume_blocked"),
         Step::SubmitText("/resume"),
         Step::WaitText {
@@ -40,6 +43,7 @@ pub(super) const NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
         },
         Step::AssertText("not saved"),
         Step::Custom(assert_no_conversation_files),
+        Step::Custom(wait_for_follow_up_turn),
         Step::Phase("new_conversation"),
         Step::SubmitText("/new"),
         Step::WaitTextGone {
@@ -61,6 +65,14 @@ pub(super) const NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
     true,
 )
 .with_args(&["--no-save", "--prompt", "private startup"]);
+
+fn wait_for_startup_turn(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "fixture response: private startup")
+}
+
+fn wait_for_follow_up_turn(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "fixture response: private follow-up")
+}
 
 fn assert_no_conversation_files(harness: &mut PtyHarness) -> Result<()> {
     let root = harness
