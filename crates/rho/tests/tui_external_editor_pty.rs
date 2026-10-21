@@ -265,8 +265,10 @@ trap 'exit 130' INT
 trap 'printf "INTERRUPTIBLE_EDITOR_CONTINUED\\n"' CONT
 trap 'printf "INTERRUPTIBLE_EDITOR_SUSPEND_REQUESTED\\n"' TSTP
 printf 'INTERRUPTIBLE_EDITOR_READY\n'
-# `wait` returns for a trapped signal; a foreground `sleep` would delay traps.
-while :; do sleep 1 & wait $!; done
+# Keep `sleep` in the foreground: a background one ignores SIGINT, and macOS
+# bash then never runs the INT trap from `wait`. Traps run once `sleep` exits,
+# so a short nap keeps each trap prompt.
+while :; do sleep 0.05; done
 "#,
     )
     .unwrap();
