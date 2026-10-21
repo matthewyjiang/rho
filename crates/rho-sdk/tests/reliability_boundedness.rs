@@ -10,7 +10,7 @@ use std::{
 };
 
 use rho_sdk::{
-    model::{Message, ModelEvent, ModelResponse, ToolSpec},
+    model::{Message, ModelEvent, ModelResponse, ModelStopReason, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{
         OperationKind, Tool, ToolContext, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
@@ -163,6 +163,66 @@ async fn max_steps_completes_with_a_distinct_resumable_stop_reason() {
     assert_eq!(outcome.stop_reason(), StopReason::MaxSteps);
     assert_eq!(session.state(), SessionState::Completed);
     assert_eq!(session.history().len(), 3);
+}
+
+// Covers: a provider-reported early stop completes the run only when the final
+// model turn reports it, and stays SDK metadata outside history and host events.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn final_model_turn_stop_reason_completes_the_run_outside_history() {
+    let max_tokens = ModelEvent::stop_reason(ModelStopReason::MaxTokens);
+    let refusal = ModelEvent::stop_reason(ModelStopReason::Refusal);
+    let cases = [
+        (
+            "truncated answer",
+            vec![ScriptedTurn::streaming(
+                vec![max_tokens.clone()],
+                text_response("partial"),
+            )],
+            StopReason::MaxTokens,
+        ),
+        (
+            "refused answer",
+            vec![ScriptedTurn::streaming(
+                vec![refusal],
+                text_response("cannot help"),
+            )],
+            StopReason::Refusal,
+        ),
+        (
+            "truncated tool step, then a full answer",
+            vec![
+                ScriptedTurn::streaming(vec![max_tokens], tool_call_response("call", "large")),
+                ScriptedTurn::completed(text_response("done")),
+            ],
+            StopReason::EndTurn,
+        ),
+    ];
+    for (name, turns, expected) in cases {
+        let runtime = Rho::builder()
+            .provider(ScriptedProvider::new(identity(), turns))
+            .tool(LargeOutputTool { bytes: 8 })
+            .build()
+            .unwrap();
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        let mut run = session.start(UserInput::text("go")).await.unwrap();
+        while let Some(event) = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+            .await
+            .expect("run stalled")
+        {
+            assert!(
+                !matches!(event, RunEvent::ProviderContextUpdated { .. }),
+                "{name}: stop reason leaked as provider context"
+            );
+        }
+
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.stop_reason(), expected, "{name}");
+        let persisted_context = session.history().iter().any(|message| {
+            matches!(message, Message::EnrichedAssistant(assistant) if !assistant.provider_context.is_empty())
+        });
+        assert!(!persisted_context, "{name}: stop reason entered history");
+    }
 }
 
 #[tokio::test]

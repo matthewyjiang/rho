@@ -406,6 +406,8 @@ fn map_stop_maps_sdk_stop_reasons() {
     let cases = [
         (rho_sdk::StopReason::EndTurn, StopReason::EndTurn),
         (rho_sdk::StopReason::MaxSteps, StopReason::MaxTurnRequests),
+        (rho_sdk::StopReason::MaxTokens, StopReason::MaxTokens),
+        (rho_sdk::StopReason::Refusal, StopReason::Refusal),
     ];
     for (sdk, expected) in cases {
         assert_eq!(map_sdk_stop_reason(sdk), expected);

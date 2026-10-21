@@ -15,6 +15,12 @@
 //! does, so a resumed session shows the work and not only the final answer.
 //! Background results the run applied are saved as the rows the host was
 //! shown for them, in place of the model's copy.
+//!
+//! ACP `refusal` promises that the refused prompt and everything after it
+//! leave the next prompt. A turn that only produced model replies is rolled
+//! back after it is saved: the session moves back to the node it started
+//! from, so the refused turn stays in the file as an abandoned branch that
+//! neither the model nor `session/load` sees.
 
 use std::{
     collections::VecDeque,
@@ -26,13 +32,15 @@ use std::{
 };
 
 use rho_sdk::{
-    model::{Message, SemanticMessage},
-    SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
+    model::{ContentBlock, Message, SemanticMessage},
+    RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
 use super::SessionHost;
 use crate::{
-    added_dirs::AddedDirs, app::active_prompt::ActivePrompt, session::Session as StoredSession,
+    added_dirs::AddedDirs,
+    app::active_prompt::ActivePrompt,
+    session::{tree::NodeId, Session as StoredSession},
     tools::todo::TodoState,
 };
 
@@ -121,8 +129,10 @@ impl SessionHost {
         model: &UserInput,
     ) -> anyhow::Result<TurnCheckpoint> {
         let stored = self.stored()?.clone();
+        let base = turn_base(&stored, || self.durable_snapshot())?;
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
+            base,
             todo: self.built.tools.todo_state(),
             code_mode: self.built.tools.code_mode().clone(),
             prompt: self.built.prompt.clone(),
@@ -167,6 +177,44 @@ impl SessionHost {
         Ok(())
     }
 
+    /// Saves a completed turn, then rolls back a refused prompt as ACP
+    /// `refusal` requires. A refused turn that ran tools or took other input
+    /// stays, since its effects are already real.
+    pub(super) fn settle_turn(
+        &mut self,
+        checkpoint: &TurnCheckpoint,
+        outcome: &RunOutcome,
+    ) -> anyhow::Result<()> {
+        self.persist_turn(checkpoint, Some(outcome.text()))?;
+        if outcome.stop_reason() != rho_sdk::StopReason::Refusal || self.is_replaced() {
+            return Ok(());
+        }
+        let history = self.built.session.history();
+        let Some(start) = checkpoint.0.lock_display().prompt_only_start(&history) else {
+            return Ok(());
+        };
+        // Durable first, as tree selection does: if the leaf commit fails, the
+        // live session still matches the refusal branch the file selects.
+        let stored = self.stored()?.clone();
+        let refused_leaf = stored.with_session_tree(|tree| Ok(tree.active_leaf_id().cloned()))?;
+        stored.set_leaf(&checkpoint.0.base)?;
+        if let Err(error) = self
+            .built
+            .session
+            .replace_history(history[..start].to_vec())
+        {
+            if let Some(leaf) = refused_leaf {
+                stored.set_leaf(&leaf)?;
+            }
+            return Err(error.into());
+        }
+        // A new node on the base keeps host state that changed since the base
+        // was saved, such as the selected model, without the refused rows. If
+        // it fails, the file still selects the base, which matches the live
+        // history; only that host state waits for the next save.
+        stored.save_snapshot(&self.durable_snapshot(), &[])
+    }
+
     /// Saves what a failed turn already showed, such as background results
     /// delivered before the failure. The turn's own error is the one to
     /// report, so a failed save is only logged.
@@ -209,6 +257,20 @@ pub(super) fn decorate(
     )
 }
 
+/// The node a refused turn rolls back to: the active leaf, or for a session's
+/// first turn a new session-start node holding the state before the prompt.
+fn turn_base(
+    stored: &StoredSession,
+    snapshot: impl FnOnce() -> SessionSnapshot,
+) -> anyhow::Result<NodeId> {
+    let active_leaf = || stored.with_session_tree(|tree| Ok(tree.active_leaf_id().cloned()));
+    if let Some(leaf) = active_leaf()? {
+        return Ok(leaf);
+    }
+    stored.save_snapshot(&snapshot(), &[])?;
+    active_leaf()?.ok_or_else(|| anyhow::anyhow!("session start was saved without a leaf"))
+}
+
 /// One turn's SDK checkpoint store, installed by
 /// [`SessionHost::install_turn_checkpoint`].
 pub(super) struct TurnCheckpoint(Arc<CheckpointStore>);
@@ -226,6 +288,8 @@ impl TurnCheckpoint {
 
 struct CheckpointStore {
     stored: StoredSession,
+    /// The session node before this turn; see [`turn_base`].
+    base: NodeId,
     todo: TodoState,
     code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     prompt: ActivePrompt,
@@ -381,6 +445,26 @@ impl TurnDisplay {
         self.unsaved_user = None;
         self.applied.drain(..pending.applied_written);
         self.followed = pending.followed;
+    }
+
+    /// Where this turn's input sits in `history` when everything after it is
+    /// model replies without tool calls; `None` once the turn ran tools, took
+    /// steering or background input, or was compacted.
+    fn prompt_only_start(&self, history: &[Message]) -> Option<usize> {
+        let start = self.history_start;
+        if history.get(start) != Some(&self.input) {
+            return None;
+        }
+        history[start + 1..]
+            .iter()
+            .all(|row| {
+                row.completed_assistant_content().is_some_and(|content| {
+                    !content
+                        .iter()
+                        .any(|block| matches!(block, ContentBlock::ToolCall(_)))
+                })
+            })
+            .then_some(start)
     }
 
     /// Whether `history` still extends this turn. When it does not, the

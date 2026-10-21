@@ -146,6 +146,9 @@ rather than a first-class event or field. That block is never replayed as
 provider-native context and is never counted as a handoff omission.
 `NEXT_MAJOR(rho-sdk): replace the async-call marker block with a ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode } variant and an execution field on ToolCall.`
 
+`ModelEvent` and `ModelResponse` also cannot carry a turn's stop reason in this major, so providers report it with `ModelEvent::stop_reason(ModelStopReason)`. That builds a `ProviderContext` event with an SDK-reserved kind, and the runtime consumes it instead of storing it. Build and read it only through `ModelEvent::stop_reason` and `ModelEvent::as_stop_reason`.
+`NEXT_MAJOR(rho-sdk): replace the stop-reason ProviderContext marker with a typed ModelEvent::Stopped(ModelStopReason) variant.`
+
 `RunEvent::ToolDetached` is a sibling of `ToolStarted` because this major cannot add fields to existing event variants.
 `NEXT_MAJOR(rho-sdk): fold ToolDetached into ToolStarted as an execution field.`
 

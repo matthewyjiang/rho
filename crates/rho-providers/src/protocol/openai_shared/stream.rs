@@ -1,3 +1,5 @@
+use rho_sdk::model::ModelStopReason;
+
 use crate::model::{ModelError, ModelEvent, ModelResponse};
 
 use super::{
@@ -100,6 +102,14 @@ impl ChatStreamAccumulator {
         else {
             return Ok(true);
         };
+        let stop_reason = match choice.get("finish_reason").and_then(|v| v.as_str()) {
+            Some("length") => Some(ModelStopReason::MaxTokens),
+            Some("content_filter") => Some(ModelStopReason::Refusal),
+            _ => None,
+        };
+        if let Some(reason) = stop_reason {
+            on_event(ModelEvent::stop_reason(reason))?;
+        }
         let delta = choice.get("delta");
         if let Some(reasoning_delta) = delta
             .and_then(|v| {

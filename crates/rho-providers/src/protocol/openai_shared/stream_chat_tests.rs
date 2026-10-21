@@ -250,3 +250,46 @@ fn final_message_snapshot_fills_incomplete_streamed_tool_calls() {
                 && !call.id.is_empty()
     ));
 }
+
+// Covers: chat finish_reason length/content_filter reach the SDK as a typed stop
+// Owner: openai chat completions streaming
+#[test]
+fn chat_finish_reason_reports_early_stops() {
+    use rho_sdk::model::ModelStopReason;
+
+    for (finish_reason, expected) in [
+        ("stop", None),
+        ("tool_calls", None),
+        ("length", Some(ModelStopReason::MaxTokens)),
+        ("content_filter", Some(ModelStopReason::Refusal)),
+    ] {
+        let mut chat_stream = ChatStreamAccumulator::default();
+        let mut stops = Vec::new();
+        let mut on_event = |event: ModelEvent| {
+            stops.extend(event.as_stop_reason());
+            Ok(())
+        };
+        chat_stream
+            .handle_line(
+                r#"data: {"choices":[{"delta":{"content":"partial"}}]}"#,
+                &mut on_event,
+            )
+            .unwrap();
+        chat_stream
+            .handle_line(
+                &format!(
+                    r#"data: {{"choices":[{{"delta":{{}},"finish_reason":"{finish_reason}"}}]}}"#
+                ),
+                &mut on_event,
+            )
+            .unwrap();
+
+        let response = chat_stream.finish(&mut on_event).unwrap();
+
+        assert_eq!(
+            response,
+            ModelResponse::Assistant(vec![ContentBlock::Text("partial".into())])
+        );
+        assert_eq!(stops, Vec::from_iter(expected), "{finish_reason}");
+    }
+}

@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     model::{
-        AbortedAssistant, ContentBlock, ModelEvent, ModelUsage, PartialToolCall,
-        ProviderContextBlock, ToolCall,
+        AbortedAssistant, ContentBlock, ModelEvent, ModelStopReason, ModelUsage, PartialToolCall,
+        ProviderContextBlock, ToolCall, STOP_REASON_CONTEXT_KIND,
     },
     ProviderErrorKind, RunEvent,
 };
@@ -22,11 +22,17 @@ pub(super) struct StreamCapture {
     partial_tool_calls: BTreeMap<usize, CapturedToolCall>,
     usage: ModelUsage,
     failed_attempts: Vec<(ProviderErrorKind, ModelUsage)>,
+    stop_reason: Option<ModelStopReason>,
 }
 
 impl StreamCapture {
     pub(super) fn usage(&self) -> &ModelUsage {
         &self.usage
+    }
+
+    /// Provider-reported reason this turn ended early; `None` is a normal finish.
+    pub(super) fn stop_reason(&self) -> Option<ModelStopReason> {
+        self.stop_reason
     }
 
     pub(super) fn take_failed_attempts(&mut self) -> Vec<(ProviderErrorKind, ModelUsage)> {
@@ -40,6 +46,8 @@ impl StreamCapture {
     ) {
         let attempt_usage = self.usage.saturating_add(&usage);
         self.usage = ModelUsage::default();
+        // The provider retries with a fresh request; its stop belongs to that one.
+        self.stop_reason = None;
         self.failed_attempts.push((kind, attempt_usage));
     }
 
@@ -200,6 +208,15 @@ pub(super) fn capture_provider_event(
     accumulated_usage: &ModelUsage,
     capture: &mut StreamCapture,
 ) -> Option<RunEvent> {
+    // NEXT_MAJOR(rho-sdk): match a typed `ModelEvent::Stopped` variant instead.
+    // SDK metadata, not provider-native context: never persisted or announced.
+    if matches!(&event, ModelEvent::ProviderContext { kind, .. } if kind == STOP_REASON_CONTEXT_KIND)
+    {
+        if let Some(reason) = event.as_stop_reason() {
+            capture.stop_reason = Some(reason);
+        }
+        return None;
+    }
     match event {
         ModelEvent::OutputDelta(text) => {
             if capture.merge_output_text {

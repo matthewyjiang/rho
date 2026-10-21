@@ -1,3 +1,4 @@
+use rho_sdk::model::ModelStopReason;
 use serde::Deserialize;
 
 use crate::{
@@ -244,6 +245,14 @@ pub(crate) fn handle_anthropic_stream_line(
                     ..ModelUsage::default()
                 }))?;
             }
+            if let Some(reason) = value
+                .get("delta")
+                .and_then(|delta| delta.get("stop_reason"))
+                .and_then(|reason| reason.as_str())
+                .and_then(anthropic_stop_reason)
+            {
+                on_event(ModelEvent::stop_reason(reason))?;
+            }
         }
         Some("error") => {
             let error = value.get("error");
@@ -293,6 +302,15 @@ pub(crate) fn handle_anthropic_stream_line(
         Some(_) => {}
     }
     Ok(true)
+}
+
+/// Early stops among Anthropic `stop_reason` values; normal finishes map to `None`.
+fn anthropic_stop_reason(stop_reason: &str) -> Option<ModelStopReason> {
+    match stop_reason {
+        "max_tokens" | "model_context_window_exceeded" => Some(ModelStopReason::MaxTokens),
+        "refusal" => Some(ModelStopReason::Refusal),
+        _ => None,
+    }
 }
 
 /// Map an Anthropic error code/type to the retryability-kind surface.
@@ -556,3 +574,7 @@ mod stream_cost_tests;
 #[cfg(test)]
 #[path = "stream_index_tests.rs"]
 mod stream_index_tests;
+
+#[cfg(test)]
+#[path = "stream_stop_reason_tests.rs"]
+mod stream_stop_reason_tests;
