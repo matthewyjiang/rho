@@ -90,10 +90,10 @@ fn test_agent() -> Arc<RhoAcpAgent> {
 
 // Covers: the initialize wire shape hosts parse: loadSession, image,
 // embeddedContext, no audio, the MCP transports host `mcpServers` may use,
-// additionalDirectories, session/close (Zed and T3 Code only close sessions
-// when it is advertised), session/list and session/delete (which gate Zed's
-// thread history), and `agentInfo` with the same version `rho --version`
-// prints.
+// additionalDirectories, session/resume, session/close (Zed and T3 Code
+// only close sessions when it is advertised), session/list and
+// session/delete (which gate Zed's thread history), and `agentInfo` with the
+// same version `rho --version` prints.
 // Owner: ACP agent handshake
 #[test]
 fn initialize_response_wire_shape() {
@@ -116,6 +116,7 @@ fn initialize_response_wire_shape() {
                 "mcpCapabilities": { "http": true, "sse": false },
                 "sessionCapabilities": {
                     "additionalDirectories": {},
+                    "resume": {},
                     "close": {},
                     "list": {},
                     "delete": {},

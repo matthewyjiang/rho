@@ -20,7 +20,9 @@ mod thought_level;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
-use agent_client_protocol::schema::v1::{DeleteSessionRequest, ListSessionsRequest};
+use agent_client_protocol::schema::v1::{
+    DeleteSessionRequest, ListSessionsRequest, ResumeSessionRequest,
+};
 use agent_client_protocol::{
     schema::v1::{
         AuthenticateRequest, CancelNotification, CloseSessionRequest,
@@ -251,6 +253,18 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
         .on_receive_request(
             {
                 let agent = Arc::clone(&agent);
+                async move |request: ResumeSessionRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    spawn_session_start(&cx, responder, async move {
+                        agent.ready().await?.resume_session(request).await
+                    })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
                 async move |request: PromptRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort::new(cx.clone()));
@@ -379,9 +393,10 @@ where
     })
 }
 
-/// Like [`spawn_response`] for `session/new` and `session/load`, then sends
-/// the session's command advertisement. Updates name a session the client
-/// learns from the response, so they follow it on the wire.
+/// Like [`spawn_response`] for `session/new`, `session/load`, and
+/// `session/resume`, then sends the session's command advertisement. Updates
+/// name a session the client learns from the response, so they follow it on
+/// the wire.
 fn spawn_session_start<Resp, Fut>(
     cx: &ConnectionTo<Client>,
     responder: Responder<Resp>,

@@ -38,6 +38,9 @@ mod login;
 #[path = "support/acp_questions_tests.rs"]
 mod questions;
 
+#[path = "support/acp_session_lifecycle_tests.rs"]
+mod session_lifecycle;
+
 #[path = "support/acp_session_titles_tests.rs"]
 mod session_titles;
 

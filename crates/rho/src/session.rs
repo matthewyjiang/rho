@@ -89,6 +89,8 @@ pub struct SessionSummary {
     pub title: Option<String>,
     pub first_user_message: Option<String>,
     pub last_user_message: Option<String>,
+    /// Added directories as last saved, some possibly gone since.
+    pub added_dirs: Vec<PathBuf>,
 }
 
 /// Exact identity for a session within its owning workspace.

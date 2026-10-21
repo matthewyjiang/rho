@@ -84,6 +84,7 @@ use convert::user_input_from_prompt;
 pub(super) use convert::RejectedDirectory;
 use credentials::SessionCredentials;
 use mode::SessionPermission;
+pub(super) use open::{History, ReopenRequest, Reopened};
 use persist::{HostStorage, TurnCheckpoint};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
 pub(super) use title::PendingTitle;
@@ -118,8 +119,9 @@ pub(super) struct SessionHost {
     herdr: HerdrReporter,
     /// The todo checklist the client last received as an ACP `plan`.
     sent_plan: Vec<agent_client_protocol::schema::v1::PlanEntry>,
-    /// Notice found during `session/load`, sent with the first prompt because
-    /// hosts such as T3 Code discard live updates while a load is in flight.
+    /// Notice found while reopening (`session/load` or `session/resume`),
+    /// sent with the first prompt because hosts such as T3 Code discard live
+    /// updates while a load is in flight; resume defers it the same way.
     load_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<crate::app::headless_delegation::HeldNotices>,

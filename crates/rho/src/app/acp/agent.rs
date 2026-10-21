@@ -8,11 +8,12 @@ use std::{
 };
 
 use super::{
-    session_host::{PromptGate, SessionHost},
+    session_host::{History, PromptGate, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
 use agent_client_protocol::schema::v1::{
-    DeleteSessionRequest, DeleteSessionResponse, SessionDeleteCapabilities, SessionListCapabilities,
+    DeleteSessionRequest, DeleteSessionResponse, ResumeSessionRequest, ResumeSessionResponse,
+    SessionDeleteCapabilities, SessionListCapabilities, SessionResumeCapabilities,
 };
 use agent_client_protocol::{
     schema::v1::{
@@ -34,9 +35,9 @@ use publication::PublicationGuard;
 #[path = "agent_titles.rs"]
 mod titles;
 
-/// A published `session/new` or `session/load` result. `commands` is sent
-/// after `response`, once the client knows the session. The guard keeps new
-/// requests out until both have been enqueued.
+/// A published `session/new`, `session/load`, or `session/resume` result.
+/// `commands` is sent after `response`, once the client knows the session.
+/// The guard keeps new requests out until both have been enqueued.
 #[derive(Debug)]
 pub(super) struct SessionStart<Response> {
     pub(super) response: Response,
@@ -143,12 +144,13 @@ impl RhoAcpAgent {
                     // Host stdio servers are the ACP baseline; Streamable
                     // HTTP is the transport Rho also speaks. SSE is not.
                     .mcp_capabilities(McpCapabilities::new().http(true))
-                    // `additionalDirectories` on `session/new` and `session/load`;
-                    // `session/close`; `session/list` and `session/delete` for
-                    // host history.
+                    // `additionalDirectories` on `session/new`, `session/load`,
+                    // and `session/resume`; `session/close`; `session/list` and
+                    // `session/delete` for host history.
                     .session_capabilities(
                         SessionCapabilities::new()
                             .additional_directories(SessionAdditionalDirectoriesCapabilities::new())
+                            .resume(SessionResumeCapabilities::new())
                             .close(SessionCloseCapabilities::new())
                             .list(SessionListCapabilities::new())
                             .delete(SessionDeleteCapabilities::new()),
@@ -165,26 +167,28 @@ impl RhoAcpAgent {
             )
     }
 
-    /// Deletes a saved session, closing it first if it is open on this
-    /// connection. Hosts such as Zed delete from history without closing the
+    /// Closes the session if it is open on this connection, then deletes it
+    /// if saved. Hosts such as Zed delete from history without closing the
     /// thread, so refusing an open session would make the delete never stick.
+    /// Closing first also lets a cancelled first turn save before the store
+    /// looks, so it is deleted rather than left behind.
     pub(super) async fn delete_session(
         &self,
         request: DeleteSessionRequest,
     ) -> Result<DeleteSessionResponse, AcpError> {
         let _gate = self.begin_install().await?;
-        let target = super::session_list::delete_target(request.session_id.clone()).await?;
         let _install = self.retire(&request.session_id).await;
-        // A refusal past this point leaves the session closed here but still
-        // saved; `session/load` reopens it.
-        super::session_list::delete(target).await
+        // A store refusal leaves the session closed here but still saved;
+        // `session/load` reopens it.
+        super::session_list::delete(request.session_id).await
     }
 
     /// Closes session `session_id` on this connection, if open, the way
     /// `session/close` does, and returns its install lock so nothing
-    /// republishes it until the guard drops. A `session/load` of the same ID
-    /// holds that lock from reading the file until publication, so retiring
-    /// waits for it and closes the session it published.
+    /// republishes it until the guard drops. A `session/load` or
+    /// `session/resume` of the same ID holds that lock from reading the file
+    /// until publication, so retiring waits for it and closes the session it
+    /// published.
     async fn retire(&self, session_id: &SessionId) -> tokio::sync::OwnedMutexGuard<()> {
         let install = self.install_lock_for(session_id).await.lock_owned().await;
         let live = self.sessions.lock().await.remove(session_id);
@@ -240,6 +244,24 @@ impl RhoAcpAgent {
         request: LoadSessionRequest,
         port: &dyn AcpClientPort,
     ) -> Result<SessionStart<LoadSessionResponse>, AcpError> {
+        self.reopen(request.into(), History::Replay(port)).await
+    }
+
+    /// `session/load` without the history replay: the client keeps its own
+    /// transcript.
+    pub(super) async fn resume_session(
+        self: &Arc<Self>,
+        request: ResumeSessionRequest,
+    ) -> Result<SessionStart<ResumeSessionResponse>, AcpError> {
+        self.reopen(request.into(), History::Skip).await
+    }
+
+    /// Restores a saved session in place of any live one with its ID.
+    async fn reopen<Response: From<Reopened>>(
+        self: &Arc<Self>,
+        request: ReopenRequest,
+        history: History<'_>,
+    ) -> Result<SessionStart<Response>, AcpError> {
         let _gate = self.begin_install().await?;
         let session_id = request.session_id.clone();
         let install = self.install_lock_for(&session_id).await;
@@ -256,8 +278,8 @@ impl RhoAcpAgent {
             previous.replaced.store(true, Ordering::Release);
             retired = Some(host);
         }
-        let (mut host, response) = match SessionHost::load(&self.startup, request, port).await {
-            Ok(loaded) => loaded,
+        let mut host = match SessionHost::reopen(&self.startup, request, history).await {
+            Ok(host) => host,
             Err(error) => {
                 // The old session stays published, so it must keep saving.
                 if let Some(previous) = &previous {
@@ -266,6 +288,7 @@ impl RhoAcpAgent {
                 return Err(session_start_error(error));
             }
         };
+        let response = host.reopened(&self.startup.config).into();
         let commands = host.available_commands(&self.startup.config);
         let old_host = retired.and_then(|mut slot| slot.take());
         let live = LiveSession::new(host);

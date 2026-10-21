@@ -332,6 +332,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 file_mtime: Some(1),
                 message_count: 1,
                 first_user_message: Some("x".into()),
+                added_dirs_read_at: None,
             },
         ),
         (
@@ -343,6 +344,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 file_mtime: Some(1),
                 message_count: 0,
                 first_user_message: None,
+                added_dirs_read_at: None,
             },
         ),
         (
@@ -354,6 +356,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 file_mtime: Some(1),
                 message_count: 0,
                 first_user_message: None,
+                added_dirs_read_at: None,
             },
         ),
         (
@@ -365,6 +368,7 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
                 file_mtime: Some(1),
                 message_count: 0,
                 first_user_message: None,
+                added_dirs_read_at: None,
             },
         ),
     ]);
@@ -383,6 +387,58 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
             ("ws".to_string(), "seen-unreadable".to_string()),
         ]
     );
+}
+
+// Covers: the roots a listing reports must follow the transcript even when
+// an older Rho, which writes rows without the `added_dirs` column, refreshed
+// the row's stamps: an older update keeps the previous roots, an older insert
+// (or a pre-column index) leaves none, and both must re-summarize.
+// Owner: session index reconciliation
+#[test]
+fn listed_roots_survive_older_writers() {
+    let root = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let cwd = workspace.path().canonicalize().unwrap();
+    let session = crate::session::Session::create_in_root(root.path(), &cwd).unwrap();
+    let id = rho_sdk::SessionId::from_string(session.id().to_owned()).unwrap();
+    let save_roots = |revision: u64, dirs: &[&str]| {
+        let history = vec![Message::user_text("hi")];
+        let snapshot = rho_sdk::SessionSnapshot::new(
+            id.clone(),
+            rho_sdk::Revision::from_u64(revision),
+            history.clone(),
+            rho_providers::model::ModelIdentity::new("provider", "api", "model"),
+            rho_sdk::CompactionState::default(),
+        )
+        .with_metadata(
+            crate::added_dirs::METADATA_KEY,
+            serde_json::to_string(dirs).unwrap(),
+        );
+        session.save_snapshot(&snapshot, &history).unwrap();
+    };
+    let listed_roots = || {
+        list_workspace_sessions(root.path(), &cwd).unwrap()[0]
+            .added_dirs
+            .clone()
+    };
+    let connection = open_index(root.path()).unwrap();
+    let column = |connection: &Connection| -> Option<String> {
+        connection
+            .query_row("select added_dirs from sessions", [], |row| row.get(0))
+            .unwrap()
+    };
+    save_roots(1, &["/roots/a"]);
+    let before_older_save = column(&connection.lock().unwrap());
+
+    save_roots(2, &["/roots/b"]);
+    for (writer, left_behind) in [("older update", before_older_save), ("older insert", None)] {
+        connection
+            .lock()
+            .unwrap()
+            .execute("update sessions set added_dirs = ?1", [&left_behind])
+            .unwrap();
+        assert_eq!(listed_roots(), vec![PathBuf::from("/roots/b")], "{writer}");
+    }
 }
 
 // Covers: cross-project list must index never-synced workspace dirs
@@ -554,6 +610,7 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
             title: None,
             first_user_message: Some(first_user.into()),
             last_user_message: Some(first_user.into()),
+            added_dirs: Vec::new(),
         },
         file_size: Some(10),
         file_mtime: Some(10),

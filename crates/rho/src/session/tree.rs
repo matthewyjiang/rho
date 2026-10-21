@@ -648,6 +648,9 @@ impl SessionTree {
                 title: None,
                 first_user_message,
                 last_user_message,
+                added_dirs: crate::added_dirs::saved_dirs(
+                    self.newest_node_metadata(crate::added_dirs::METADATA_KEY),
+                ),
             },
             file_size,
             file_mtime,

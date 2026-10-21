@@ -46,6 +46,7 @@ fn session_picker_offers_only_other_sessions_with_messages() {
         title: None,
         first_user_message: None,
         last_user_message: None,
+        added_dirs: Vec::new(),
     };
     let picker = session_picker(
         vec![session("empty", 0), session("open", 2), session("saved", 2)],

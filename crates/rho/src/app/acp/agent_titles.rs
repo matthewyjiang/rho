@@ -3,11 +3,12 @@
 //!
 //! A title lands seconds after the turn that asked for it, and the session
 //! may have changed hands by then. Only the asking host reports it, and only
-//! while that host is still published: once a `session/load` of the ID
-//! replaced it, or a close or delete retired it, the title is not sent.
+//! while that host is still published: once a `session/load` or
+//! `session/resume` of the ID replaced it, or a close or delete retired it,
+//! the title is not sent.
 //!
-//! The check and send hold the ID's install lock, which `load_session`
-//! holds from before its replay until it publishes or fails, so no title
+//! The check and send hold the ID's install lock, which a load or resume
+//! holds from before it reads the session until it publishes or fails, so no title
 //! goes out while Rho loads the session; hosts such as T3 Code discard all
 //! but replay then. A load that publishes retires the asking host. After a
 //! failed load the title may still precede the load's error response, and

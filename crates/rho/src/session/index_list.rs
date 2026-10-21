@@ -24,10 +24,10 @@ pub(in crate::session) fn list_all_sessions(
         .expect("session index connection poisoned");
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message
+                title, first_user_message, last_user_message, added_dirs
          from (
              select id, path, cwd, created_at, updated_at, message_count,
-                    title, first_user_message, last_user_message,
+                    title, first_user_message, last_user_message, added_dirs,
                     row_number() over (
                         partition by path
                         order by updated_at desc, cwd asc
@@ -59,10 +59,10 @@ pub(in crate::session) fn summaries_matching_id_prefix(
         .expect("session index connection poisoned");
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message
+                title, first_user_message, last_user_message, added_dirs
          from (
              select id, path, cwd, created_at, updated_at, message_count,
-                    title, first_user_message, last_user_message,
+                    title, first_user_message, last_user_message, added_dirs,
                     row_number() over (
                         partition by path
                         order by updated_at desc, cwd asc
