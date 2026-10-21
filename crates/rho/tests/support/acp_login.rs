@@ -88,10 +88,6 @@ fn unauthenticated_cold_start_can_discover_login() {
 // Cancellation/invalid input must not return success or replace credentials.
 // Owner: ACP host login boundary, real stdio handshake and terminal subprocess.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "the secret prompt cannot read bracketed paste on Windows: https://github.com/matthewyjiang/rho/issues/1578"
-)]
 fn advertised_terminal_login_saves_or_cancels_without_echoing_keys() {
     let workspace = Workspace::new();
     let mut server = workspace.server();

@@ -23,7 +23,7 @@ use windows_sys::Win32::{
 
 #[path = "windows_input_mode.rs"]
 mod mode;
-pub(in crate::tui) use mode::PasteMode;
+pub(in crate::tui) use mode::VtInput;
 #[path = "windows_input_records.rs"]
 mod records;
 

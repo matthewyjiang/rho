@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 #[path = "windows_input.rs"]
 mod windows;
 #[cfg(windows)]
-pub(super) use windows::PasteMode;
+pub(super) use windows::VtInput;
 
 #[cfg(any(windows, test))]
 #[path = "windows_input_parser.rs"]
