@@ -71,7 +71,13 @@ impl App {
             return Ok(had_recovered_messages);
         }
 
+        let rendered = entries.len();
         self.set_history_entries(entries);
+        if self.mcp_report.summary().connecting > 0 {
+            self.provisional_history = Some(super::message_history::ProvisionalHistory::new(
+                messages, rendered,
+            ));
+        }
         Ok(had_recovered_messages)
     }
 

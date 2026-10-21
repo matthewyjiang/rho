@@ -223,6 +223,7 @@ impl App {
         self.session_title_locked = false;
         self.turn.set_current_turn_start(None);
         self.discard_side_chat();
+        self.provisional_history = None;
         self.history.clear_entries();
         self.history.images_mut().clear();
         self.history.set_images_dirty_from(None);

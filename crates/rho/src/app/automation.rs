@@ -698,7 +698,10 @@ impl RunReporter {
         Ok(Self {
             sink,
             // MCP tools connect with the session, after this reporter exists.
-            adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd, Default::default()),
+            adapter: crate::tui::event_adapter::SdkEventAdapter::new(
+                cwd,
+                crate::tools::mcp::exported_name::McpToolNames::default(),
+            ),
             stream_output,
             steering_slot: None,
         })
@@ -723,7 +726,10 @@ impl RunReporter {
         )?;
         Ok(Self {
             sink,
-            adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd, Default::default()),
+            adapter: crate::tui::event_adapter::SdkEventAdapter::new(
+                cwd,
+                crate::tools::mcp::exported_name::McpToolNames::default(),
+            ),
             stream_output: false,
             steering_slot,
         })

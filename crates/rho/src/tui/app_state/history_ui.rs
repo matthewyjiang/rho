@@ -58,6 +58,12 @@ impl HistoryUi {
         self.lines.mark_unmeasured(self.transcript.len());
     }
 
+    /// Replace the leading `entries.len()` entries, keeping later ones.
+    pub(in crate::tui) fn replace_prefix(&mut self, entries: Vec<Entry>) {
+        self.transcript.splice(..entries.len(), entries);
+        self.invalidate_from(0);
+    }
+
     pub(in crate::tui) fn push(&mut self, entry: Entry) {
         self.transcript.push(entry);
     }

@@ -70,9 +70,9 @@ pub(crate) fn namespaced_tool_name(server: &str, tool: &str) -> String {
     ))
 }
 
-/// The `mcp__<server>__` prefix every exported tool of `server` shares, so the
-/// prompt can name it exactly instead of leaving the model to guess the codec.
-/// A capped name keeps only as much of it as fits.
+/// The `mcp__<server>__` prefix every uncapped exported tool of `server`
+/// starts with, so the prompt can name it exactly instead of leaving the model
+/// to guess the codec. A capped name may keep only part of it.
 pub(crate) fn exported_name_prefix(server: &str) -> String {
     format!("mcp__{}__", encode_component(server))
 }
@@ -138,11 +138,17 @@ pub(crate) fn parse_exported_name(
 /// `a__b`, as it is in the dialects that produce it. Only a unique match
 /// resolves. A registered name always matches itself, so it resolves to itself
 /// unless a sibling folds to the same key; callers then keep the exact name.
-/// Capped names do not decode, so only their exact spelling reaches them.
+/// Capped names do not decode, so they match only their exact spelling or the
+/// full Rho spelling that caps to them.
 pub(crate) fn resolve_foreign_spelling<'a>(
     requested: &str,
     registered: impl IntoIterator<Item = &'a str>,
 ) -> Option<&'a str> {
+    let registered: Vec<&'a str> = registered.into_iter().collect();
+    let capped = cap_tool_name(requested.to_owned());
+    if capped != requested {
+        return registered.into_iter().find(|name| *name == capped);
+    }
     let key = spelling_key(requested)?;
     let mut matches = registered
         .into_iter()

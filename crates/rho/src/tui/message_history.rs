@@ -211,7 +211,34 @@ fn push_generated_image_entries(entries: &mut Vec<Entry>, blocks: &[ContentBlock
     }
 }
 
+/// Recovered history rendered while deferred MCP servers were still
+/// connecting. A capped MCP name only resolves through the session's MCP
+/// inventory, so those cards are rebuilt once it lands.
+pub(super) struct ProvisionalHistory {
+    messages: Vec<Message>,
+    /// Entries the messages rendered to, which lead the transcript.
+    rendered: usize,
+}
+
+impl ProvisionalHistory {
+    pub(super) fn new(messages: Vec<Message>, rendered: usize) -> Self {
+        Self { messages, rendered }
+    }
+}
+
 impl super::App {
+    /// Rebuild provisional recovered history with the MCP inventory that just
+    /// connected, keeping any entries added after it.
+    pub(super) fn refresh_provisional_history(&mut self) {
+        let Some(provisional) = self.provisional_history.take() else {
+            return;
+        };
+        let entries = self.transcript_entries(&provisional.messages);
+        if entries.len() == provisional.rendered && self.history.len() >= entries.len() {
+            self.history.replace_prefix(entries);
+        }
+    }
+
     pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {
         transcript_entries_from_messages(
             messages,
@@ -221,6 +248,7 @@ impl super::App {
     }
 
     pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {
+        self.provisional_history = None;
         self.history.set_entries(entries);
         self.history.images_mut().clear();
     }

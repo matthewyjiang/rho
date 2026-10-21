@@ -157,6 +157,7 @@ impl App {
             last_mouse_position: None,
             screen_selection: None,
             mcp_report,
+            provisional_history: None,
             computer_use: None,
             mcp_catalog,
             mcp_argument_completions:

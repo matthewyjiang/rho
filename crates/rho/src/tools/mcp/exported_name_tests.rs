@@ -2,6 +2,9 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
+/// Long enough that `chrome-devtools` exports it capped.
+const LONG_TOOL: &str = "performance_analyze_insight_for_extended_trace_sessions";
+
 #[test]
 fn rho_codec_round_trips_unsafe_and_reserved_components() {
     for (server, tool) in [
@@ -37,10 +40,7 @@ fn capped_names_resolve_only_through_registered_names() {
     };
     let capped = [
         // The cut lands in the tool, after an intact server prefix.
-        identity(
-            "chrome-devtools",
-            "performance_analyze_insight_for_extended_trace_sessions",
-        ),
+        identity("chrome-devtools", LONG_TOOL),
         // A plugin server's escaped identity, cut inside the server.
         identity("devtools-suite/validator-service", "echo/value"),
     ];
@@ -103,6 +103,7 @@ fn foreign_spellings_resolve_only_to_a_unique_tool() {
         namespaced_tool_name("a", "b__c"),
         namespaced_tool_name("a__b", "c"),
         namespaced_tool_name("foo-", "tool"),
+        namespaced_tool_name("chrome-devtools", LONG_TOOL),
         "read_file".to_string(),
     ];
     let resolve = |requested: &str| {
@@ -118,6 +119,8 @@ fn foreign_spellings_resolve_only_to_a_unique_tool() {
             "mcp__srv__get-issue",
             "mcp__a__b__c",
             "mcp__t3_code__missing",
+            format!("mcp__chrome-devtools__{LONG_TOOL}").as_str(),
+            format!("mcp__chrome-devtools__{LONG_TOOL}_v2").as_str(),
             "read_file",
         ]
         .map(resolve),
@@ -129,6 +132,8 @@ fn foreign_spellings_resolve_only_to_a_unique_tool() {
             None,
             None,
             None,
+            None,
+            Some(registered[7].as_str()),
             None,
             None,
         ]

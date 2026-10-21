@@ -152,7 +152,10 @@ impl SdkEventAdapter {
 
     fn presenter(&mut self) -> &mut InteractiveToolPresenter {
         self.presenter.get_or_insert_with(|| {
-            InteractiveToolPresenter::new(std::path::PathBuf::new(), Default::default())
+            InteractiveToolPresenter::new(
+                std::path::PathBuf::new(),
+                crate::tools::mcp::exported_name::McpToolNames::default(),
+            )
         })
     }
 

@@ -660,6 +660,8 @@ struct App {
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
+    /// Recovered history rendered before deferred MCP servers connected.
+    provisional_history: Option<message_history::ProvisionalHistory>,
     computer_use: Option<crate::tools::computer_use::ComputerUseControl>,
     /// Prompts and resources connected MCP servers offer, for palette matching.
     mcp_catalog: crate::tools::mcp::McpCatalog,
