@@ -52,15 +52,13 @@ async fn expired_api_key_is_reminted_before_use() {
     });
 
     let store = Arc::new(MemoryCredentialStore::default());
-    let manager = MetaAuthManager::from_tokens_at(
-        store.clone(),
-        MetaTokens {
-            identity_token: "identity-token".into(),
-            api_key: "LLM|old".into(),
-            api_key_expires_at_unix: now_unix() - 1,
-        },
-        endpoint,
-    );
+    let signed_in = MetaTokens {
+        identity_token: "identity-token".into(),
+        api_key: "LLM|old".into(),
+        api_key_expires_at_unix: now_unix() - 1,
+    };
+    crate::credentials::save_meta_tokens(store.as_ref(), &signed_in).unwrap();
+    let manager = MetaAuthManager::from_tokens_at(store.clone(), signed_in, endpoint);
 
     let api_key = manager.access_token().await.unwrap();
     assert_eq!(api_key, "LLM|fresh");

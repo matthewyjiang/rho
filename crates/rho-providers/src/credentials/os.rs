@@ -37,6 +37,14 @@ impl OsCredentialStore {
         }
     }
 
+    /// Drops the cached read of `account`, so the next read goes to the
+    /// keyring.
+    pub(crate) fn forget_cached_secret(account: &str) {
+        if let Ok(mut cache) = Self::secret_cache().lock() {
+            cache.remove(account);
+        }
+    }
+
     /// Drops every cached read, including cached misses, so the next read of
     /// each account goes to the keyring. Reads are cached for the life of the
     /// process; call this when another process, such as a terminal login,

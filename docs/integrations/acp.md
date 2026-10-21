@@ -63,6 +63,7 @@ When credentials are missing, unreadable, or refused by the provider (a revoked 
 - Signing in does not change the configured provider or model. Sign in to the provider your config selects. Credentials for other providers show up in the model picker after you reconnect.
 - On a host with neither kind of sign-in, run `rho login <provider>` in a terminal as the same user and in the same environment, then connect.
 - Ollama Cloud device-key login is not offered in the host. Run `rho login ollama-cloud-device` yourself and reconnect, or use the Ollama Cloud API-key method.
+- Logging out from the host signs you out of the provider your config selects, like `/logout <provider>` in the TUI. It deletes those saved credentials, so the terminal and other Rho processes need to sign in again the next time they load them. Open sessions ask you to sign in again on their next message.
 
 ## What works in the host
 

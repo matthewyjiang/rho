@@ -77,7 +77,7 @@ async fn only_auth_required_startup_failures_run_startup_again() {
                 move || {
                     let run = runs.fetch_add(1, Ordering::SeqCst);
                     let result = match run {
-                        0 => Err(failure.clone()),
+                        0 => Err(failure.clone().into()),
                         _ => Ok(Arc::new(RhoAcpAgent::new(AcpStartup::for_tests(
                             Config::default(),
                             &cwd,

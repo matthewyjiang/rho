@@ -7,8 +7,9 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::kimi_oauth::{refresh_kimi_tokens, KimiOAuthError},
-    credentials::{save_kimi_tokens, CredentialStore, KimiTokens},
+    credentials::{save_refreshed_tokens, CredentialStore, KimiTokens},
     model::ModelError,
+    provider::KIMI_TOKENS_ACCOUNT,
 };
 
 const MIN_REFRESH_THRESHOLD_SECONDS: i64 = 300;
@@ -81,7 +82,7 @@ async fn refresh_locked(
                 }
                 error => ModelError::InvalidResponse(error.to_string()),
             })?;
-    save_kimi_tokens(store, &refreshed)?;
+    save_refreshed_tokens(store, KIMI_TOKENS_ACCOUNT, tokens, &refreshed)?;
     *tokens = refreshed;
     Ok(())
 }

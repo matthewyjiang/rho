@@ -177,3 +177,92 @@ fn auth_env_override_requires_a_nonblank_value_for_that_mode() {
         panic!("unknown auth must not look up an environment credential")
     }));
 }
+
+// Covers: an OAuth refresh that finishes after the sign-in it started from
+// changed must not save: over a logout it would sign the user back in, over
+// a new login it would restore the old session. A refresh of the sign-in
+// still stored replaces it.
+// Owner: credential store refresh write-back.
+#[test]
+fn refreshed_tokens_replace_only_the_sign_in_they_refreshed() {
+    let tokens = |access: &str| CodexTokens {
+        access_token: access.into(),
+        refresh_token: Some(format!("{access}-refresh")),
+        id_token: None,
+        account_id: None,
+    };
+    for (meanwhile, expected) in [
+        ("nothing", Some("refreshed")),
+        ("logout", None),
+        ("new login", Some("new")),
+        ("logout, then a new login", Some("new")),
+    ] {
+        let store = MemoryCredentialStore::default();
+        let first = tokens("first");
+        save_codex_tokens(&store, &first).unwrap();
+        match meanwhile {
+            "logout" => {
+                delete_auth_credentials(&store, "codex").unwrap();
+            }
+            "new login" => save_codex_tokens(&store, &tokens("new")).unwrap(),
+            "logout, then a new login" => {
+                delete_auth_credentials(&store, "codex").unwrap();
+                save_codex_tokens(&store, &tokens("new")).unwrap();
+            }
+            _ => {}
+        }
+        save_refreshed_tokens(&store, CODEX_TOKENS_ACCOUNT, &first, &tokens("refreshed")).unwrap();
+        assert_eq!(
+            load_codex_tokens(&store)
+                .unwrap()
+                .map(|stored| stored.access_token),
+            expected.map(String::from),
+            "{meanwhile}"
+        );
+    }
+}
+
+// Covers: two sessions share one Copilot sign-in. One saves a fresh Copilot
+// API token; the other then rotates the GitHub OAuth pair, which GitHub
+// invalidates on use, so that rotation must still be saved or every later
+// session needs a new sign-in.
+// Owner: credential store refresh write-back.
+#[test]
+fn a_refresh_saves_over_another_sessions_cache_of_the_same_sign_in() {
+    let signed_in = GitHubCopilotTokens {
+        github_access_token: "github-access".into(),
+        github_refresh_token: Some("github-refresh".into()),
+        github_expires_at_unix: Some(100),
+        copilot_token: None,
+        copilot_expires_at_unix: None,
+        copilot_refresh_after_unix: None,
+        copilot_token_endpoint: None,
+        copilot_chat_endpoint: None,
+        copilot_models_endpoint: None,
+    };
+    let store = MemoryCredentialStore::default();
+    save_github_copilot_tokens(&store, &signed_in).unwrap();
+    let first_session = GitHubCopilotTokens {
+        copilot_token: Some("copilot".into()),
+        ..signed_in.clone()
+    };
+    save_refreshed_tokens(
+        &store,
+        GITHUB_COPILOT_TOKENS_ACCOUNT,
+        &signed_in,
+        &first_session,
+    )
+    .unwrap();
+    let rotated = GitHubCopilotTokens {
+        github_access_token: "github-access-2".into(),
+        github_refresh_token: Some("github-refresh-2".into()),
+        ..signed_in.clone()
+    };
+    save_refreshed_tokens(&store, GITHUB_COPILOT_TOKENS_ACCOUNT, &signed_in, &rotated).unwrap();
+    assert_eq!(
+        load_github_copilot_tokens(&store)
+            .unwrap()
+            .and_then(|stored| stored.github_refresh_token),
+        Some("github-refresh-2".into())
+    );
+}

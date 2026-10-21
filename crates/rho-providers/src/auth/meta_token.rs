@@ -6,8 +6,9 @@ use crate::{
     auth::meta_oauth::{
         mint_meta_tokens, now_unix, MetaOAuthError, API_KEY_MINT_URL, SESSION_EXPIRED,
     },
-    credentials::{save_meta_tokens, CredentialStore, MetaTokens},
+    credentials::{save_refreshed_tokens, CredentialStore, MetaTokens},
     model::{ModelError, ProviderReportedErrorKind},
+    provider::META_MUSE_TOKENS_ACCOUNT,
 };
 
 /// Remint this long before the assumed 24 hour key lifetime.
@@ -113,7 +114,7 @@ pub(crate) async fn refresh_locked(
     mint_url: &str,
 ) -> Result<(), ModelError> {
     let refreshed = refresh_meta_tokens(client, tokens, mint_url).await?;
-    save_meta_tokens(store, &refreshed)?;
+    save_refreshed_tokens(store, META_MUSE_TOKENS_ACCOUNT, tokens, &refreshed)?;
     *tokens = refreshed;
     Ok(())
 }

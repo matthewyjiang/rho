@@ -307,6 +307,7 @@ fn delete_auth_kind_credentials(
     store: &dyn CredentialStore,
     auth_kind: ProviderAuthKind,
 ) -> CredentialResult<bool> {
+    let _fence = refresh_fence();
     if matches!(auth_kind, ProviderAuthKind::OllamaDeviceKey { .. }) {
         return store.delete_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT);
     }
@@ -331,6 +332,83 @@ pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialRe
     store.set_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT, "1")
 }
 
+/// Serializes refreshed-token saves with credential deletes and login saves
+/// in this process, so a refresh cannot save over a change made between its
+/// check and its write. Another process's change is fenced only by the check
+/// in [`save_refreshed_tokens`].
+fn refresh_fence() -> std::sync::MutexGuard<'static, ()> {
+    static FENCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    FENCE.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Stored OAuth tokens a refresh may replace.
+pub(crate) trait RefreshableTokens: Serialize + serde::de::DeserializeOwned {
+    /// The long-lived credential a refresh presents, which identifies the
+    /// sign-in: a logout or a new login changes it, while caches refreshed
+    /// alongside it (access tokens, Copilot API tokens) do not.
+    fn sign_in(&self) -> &str;
+}
+
+impl RefreshableTokens for CodexTokens {
+    fn sign_in(&self) -> &str {
+        self.refresh_token.as_deref().unwrap_or(&self.access_token)
+    }
+}
+
+impl RefreshableTokens for GitHubCopilotTokens {
+    fn sign_in(&self) -> &str {
+        self.github_refresh_token
+            .as_deref()
+            .unwrap_or(&self.github_access_token)
+    }
+}
+
+impl RefreshableTokens for KimiTokens {
+    fn sign_in(&self) -> &str {
+        self.refresh_token.as_deref().unwrap_or(&self.access_token)
+    }
+}
+
+impl RefreshableTokens for MetaTokens {
+    fn sign_in(&self) -> &str {
+        &self.identity_token
+    }
+}
+
+impl RefreshableTokens for XaiTokens {
+    fn sign_in(&self) -> &str {
+        self.refresh_token.as_deref().unwrap_or(&self.access_token)
+    }
+}
+
+/// Saves the `refreshed` tokens a refresh of `replacing` produced over
+/// `account`, only while `account` still holds `replacing`'s sign-in.
+/// Otherwise the sign-in changed while the refresh ran: a logout deleted it,
+/// and saving would sign the user back in, or a new login replaced it, and
+/// saving would restore the old session. The refreshed tokens then live only
+/// as long as the provider holding them. Another session refreshing a cache
+/// of the same sign-in does not block the save. Logins save with the
+/// `save_*_tokens` functions, which always write.
+pub(crate) fn save_refreshed_tokens<T: RefreshableTokens>(
+    store: &dyn CredentialStore,
+    account: &str,
+    replacing: &T,
+    refreshed: &T,
+) -> CredentialResult<()> {
+    let secret = serde_json::to_string(refreshed)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
+    // Another process may have signed out or in since this one cached it.
+    OsCredentialStore::forget_cached_secret(account);
+    let stored = store
+        .get_secret(account)?
+        .and_then(|stored| serde_json::from_str::<T>(&stored).ok());
+    if stored.as_ref().map(RefreshableTokens::sign_in) != Some(replacing.sign_in()) {
+        return Ok(());
+    }
+    store.set_secret(account, &secret)
+}
+
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {
     let Some(secret) = store.get_secret(CODEX_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -346,6 +424,7 @@ pub fn save_codex_tokens(
 ) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(CODEX_TOKENS_ACCOUNT, &secret)
 }
 
@@ -361,6 +440,7 @@ pub fn load_kimi_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<
 pub fn save_kimi_tokens(store: &dyn CredentialStore, tokens: &KimiTokens) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(crate::provider::KIMI_TOKENS_ACCOUNT, &secret)
 }
 
@@ -376,6 +456,7 @@ pub fn load_meta_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<
 pub fn save_meta_tokens(store: &dyn CredentialStore, tokens: &MetaTokens) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(crate::provider::META_MUSE_TOKENS_ACCOUNT, &secret)
 }
 
@@ -391,6 +472,7 @@ pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<X
 pub fn save_xai_tokens(store: &dyn CredentialStore, tokens: &XaiTokens) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(XAI_TOKENS_ACCOUNT, &secret)
 }
 
@@ -411,6 +493,7 @@ pub fn save_github_copilot_tokens(
 ) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, &secret)
 }
 

@@ -124,6 +124,7 @@ fn startup(cwd: &Path) -> AcpStartup {
         herdr: HerdrReporter::default(),
         added_dirs: Default::default(),
         host_features: Default::default(),
+        logouts: Default::default(),
     }
 }
 

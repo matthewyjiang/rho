@@ -85,6 +85,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
         herdr: HerdrReporter::default(),
         added_dirs: Default::default(),
         host_features: Default::default(),
+        logouts: Default::default(),
     }))
 }
 
@@ -121,7 +122,7 @@ fn initialize_response_wire_shape() {
                     "list": {},
                     "delete": {},
                 },
-                "auth": {},
+                "auth": { "logout": {} },
             },
             "authMethods": [],
             "agentInfo": {
