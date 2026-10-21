@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.13.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.12.2...rho-sdk-v5.13.0) (2026-10-21)
+
+
+### Features
+
+* **acp:** show grep and glob as searches, not file reads ([#1583](https://github.com/matthewyjiang/rho/issues/1583)) ([20b23ed](https://github.com/matthewyjiang/rho/commit/20b23ede2c94e11c45344611aa4a795c09fbba66))
+* **tui:** add "Send for this session" so unchanged native-context warnings stop repeating ([#1586](https://github.com/matthewyjiang/rho/issues/1586)) ([eb083c1](https://github.com/matthewyjiang/rho/commit/eb083c191d1cc3680a0f3c565b25d0108f396aaa))
+
 ## [5.12.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.12.1...rho-sdk-v5.12.2) (2026-10-20)
 
 
