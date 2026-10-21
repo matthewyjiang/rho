@@ -237,6 +237,7 @@ async fn refresh_copilot_token_with_store(
     }
     let response: CopilotTokenResponse = response.json().await?;
 
+    let replacing = tokens.clone();
     let now = now_unix_seconds();
     tokens.copilot_token = Some(response.token.clone());
     tokens.copilot_expires_at_unix = response.expires_at;
@@ -244,7 +245,12 @@ async fn refresh_copilot_token_with_store(
     if let Some(endpoints) = response.endpoints {
         apply_token_endpoints(tokens, endpoints);
     }
-    save_refreshed_tokens(store, provider::GITHUB_COPILOT_TOKENS_ACCOUNT, tokens)?;
+    save_refreshed_tokens(
+        store,
+        provider::GITHUB_COPILOT_TOKENS_ACCOUNT,
+        &replacing,
+        tokens,
+    )?;
     Ok(material_from_stored_token(response.token, tokens))
 }
 
@@ -287,12 +293,18 @@ async fn refresh_github_token(
         github_copilot_device::refresh_github_copilot_github_token(client, refresh_token)
             .await
             .map_err(|_| crate::model::registry::missing_credentials_error("github-copilot"))?;
+    let replacing = tokens.clone();
     tokens.github_access_token = refreshed.access_token;
     if refreshed.refresh_token.is_some() {
         tokens.github_refresh_token = refreshed.refresh_token;
     }
     tokens.github_expires_at_unix = refreshed.expires_at_unix;
-    save_refreshed_tokens(store, provider::GITHUB_COPILOT_TOKENS_ACCOUNT, tokens)?;
+    save_refreshed_tokens(
+        store,
+        provider::GITHUB_COPILOT_TOKENS_ACCOUNT,
+        &replacing,
+        tokens,
+    )?;
     Ok(true)
 }
 

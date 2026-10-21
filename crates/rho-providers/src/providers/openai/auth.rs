@@ -143,7 +143,7 @@ pub(crate) async fn refresh_codex_token_at(
     };
 
     if source == CodexAuthSource::Store {
-        save_refreshed_tokens(store, CODEX_TOKENS_ACCOUNT, &refreshed)?;
+        save_refreshed_tokens(store, CODEX_TOKENS_ACCOUNT, previous, &refreshed)?;
     }
 
     Ok(refreshed)

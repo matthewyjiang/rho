@@ -82,7 +82,7 @@ async fn refresh_locked(
                 }
                 error => ModelError::InvalidResponse(error.to_string()),
             })?;
-    save_refreshed_tokens(store, KIMI_TOKENS_ACCOUNT, &refreshed)?;
+    save_refreshed_tokens(store, KIMI_TOKENS_ACCOUNT, tokens, &refreshed)?;
     *tokens = refreshed;
     Ok(())
 }

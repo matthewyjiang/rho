@@ -178,31 +178,41 @@ fn auth_env_override_requires_a_nonblank_value_for_that_mode() {
     }));
 }
 
-// Covers: an OAuth refresh that finishes after a logout deleted its tokens
-// must not save them back and sign the user in again, while a refresh of
-// tokens still stored replaces them.
+// Covers: an OAuth refresh that finishes after the sign-in it started from
+// changed must not save: over a logout it would sign the user back in, over
+// a new login it would restore the old session. A refresh of the sign-in
+// still stored replaces it.
 // Owner: credential store refresh write-back.
 #[test]
-fn refreshed_tokens_are_saved_only_while_still_signed_in() {
+fn refreshed_tokens_replace_only_the_sign_in_they_refreshed() {
     let tokens = |access: &str| CodexTokens {
         access_token: access.into(),
-        refresh_token: Some("refresh".into()),
+        refresh_token: Some(format!("{access}-refresh")),
         id_token: None,
         account_id: None,
     };
-    for (signed_in, expected) in [(true, Some("refreshed")), (false, None)] {
+    for (meanwhile, expected) in [
+        ("nothing", Some("refreshed")),
+        ("logout", None),
+        ("new login", Some("new")),
+    ] {
         let store = MemoryCredentialStore::default();
-        save_codex_tokens(&store, &tokens("first")).unwrap();
-        if !signed_in {
-            delete_auth_credentials(&store, "codex").unwrap();
+        let first = tokens("first");
+        save_codex_tokens(&store, &first).unwrap();
+        match meanwhile {
+            "logout" => {
+                delete_auth_credentials(&store, "codex").unwrap();
+            }
+            "new login" => save_codex_tokens(&store, &tokens("new")).unwrap(),
+            _ => {}
         }
-        save_refreshed_tokens(&store, CODEX_TOKENS_ACCOUNT, &tokens("refreshed")).unwrap();
+        save_refreshed_tokens(&store, CODEX_TOKENS_ACCOUNT, &first, &tokens("refreshed")).unwrap();
         assert_eq!(
             load_codex_tokens(&store)
                 .unwrap()
                 .map(|stored| stored.access_token),
             expected.map(String::from),
-            "signed in: {signed_in}"
+            "{meanwhile}"
         );
     }
 }

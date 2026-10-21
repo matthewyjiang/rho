@@ -114,7 +114,7 @@ pub(crate) async fn refresh_locked(
     mint_url: &str,
 ) -> Result<(), ModelError> {
     let refreshed = refresh_meta_tokens(client, tokens, mint_url).await?;
-    save_refreshed_tokens(store, META_MUSE_TOKENS_ACCOUNT, &refreshed)?;
+    save_refreshed_tokens(store, META_MUSE_TOKENS_ACCOUNT, tokens, &refreshed)?;
     *tokens = refreshed;
     Ok(())
 }

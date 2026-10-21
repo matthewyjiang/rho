@@ -148,7 +148,12 @@ impl XaiAuthManager {
             crate::model::registry::missing_credentials_error("xai-oauth"),
         )?;
         let refreshed = refresh_xai_tokens(&self.client, &refresh_token, &current).await?;
-        save_refreshed_tokens(self.store.as_ref(), XAI_TOKENS_ACCOUNT, &refreshed)?;
+        save_refreshed_tokens(
+            self.store.as_ref(),
+            XAI_TOKENS_ACCOUNT,
+            &*current,
+            &refreshed,
+        )?;
         let access_token = refreshed.access_token.clone();
         *current = refreshed;
         Ok(XaiAuthMaterial { access_token })

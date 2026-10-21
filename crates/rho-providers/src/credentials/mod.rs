@@ -332,29 +332,40 @@ pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialRe
     store.set_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT, "1")
 }
 
-/// Serializes refreshed-token saves with credential deletes in this process,
-/// so a refresh that loaded tokens before a logout cannot save them after it.
-/// Another process's logout is fenced only by the check in
-/// [`save_refreshed_tokens`].
+/// Serializes refreshed-token saves with credential deletes and login saves
+/// in this process, so a refresh cannot save over a change made between its
+/// check and its write. Another process's change is fenced only by the check
+/// in [`save_refreshed_tokens`].
 fn refresh_fence() -> std::sync::MutexGuard<'static, ()> {
     static FENCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     FENCE.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-/// Saves OAuth `tokens` a refresh produced over `account`, unless `account`
-/// no longer holds credentials. A logout deleted them while the refresh ran,
-/// and saving would sign the user back in; the refreshed tokens then live
-/// only as long as the provider holding them. Logins save with the
-/// `save_*_tokens` functions, which always write.
-pub(crate) fn save_refreshed_tokens(
+/// Saves the `refreshed` tokens a refresh of `replacing` produced over
+/// `account`, only while `account` still holds `replacing`. Otherwise the
+/// sign-in changed while the refresh ran: a logout deleted it, and saving
+/// would sign the user back in, or a new login replaced it, and saving would
+/// restore the old session. The refreshed tokens then live only as long as
+/// the provider holding them. Logins save with the `save_*_tokens` functions,
+/// which always write.
+pub(crate) fn save_refreshed_tokens<T>(
     store: &dyn CredentialStore,
     account: &str,
-    tokens: &impl Serialize,
-) -> CredentialResult<()> {
-    let secret = serde_json::to_string(tokens)
+    replacing: &T,
+    refreshed: &T,
+) -> CredentialResult<()>
+where
+    T: Serialize + serde::de::DeserializeOwned + PartialEq,
+{
+    let secret = serde_json::to_string(refreshed)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
     let _fence = refresh_fence();
-    if store.get_secret(account)?.is_none() {
+    // Another process may have signed out or in since this one cached it.
+    OsCredentialStore::forget_cached_secret(account);
+    let stored = store
+        .get_secret(account)?
+        .and_then(|stored| serde_json::from_str::<T>(&stored).ok());
+    if stored.as_ref() != Some(replacing) {
         return Ok(());
     }
     store.set_secret(account, &secret)
@@ -375,6 +386,7 @@ pub fn save_codex_tokens(
 ) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(CODEX_TOKENS_ACCOUNT, &secret)
 }
 
@@ -390,6 +402,7 @@ pub fn load_kimi_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<
 pub fn save_kimi_tokens(store: &dyn CredentialStore, tokens: &KimiTokens) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(crate::provider::KIMI_TOKENS_ACCOUNT, &secret)
 }
 
@@ -405,6 +418,7 @@ pub fn load_meta_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<
 pub fn save_meta_tokens(store: &dyn CredentialStore, tokens: &MetaTokens) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(crate::provider::META_MUSE_TOKENS_ACCOUNT, &secret)
 }
 
@@ -420,6 +434,7 @@ pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<X
 pub fn save_xai_tokens(store: &dyn CredentialStore, tokens: &XaiTokens) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(XAI_TOKENS_ACCOUNT, &secret)
 }
 
@@ -440,6 +455,7 @@ pub fn save_github_copilot_tokens(
 ) -> CredentialResult<()> {
     let secret = serde_json::to_string(tokens)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
     store.set_secret(GITHUB_COPILOT_TOKENS_ACCOUNT, &secret)
 }
 
