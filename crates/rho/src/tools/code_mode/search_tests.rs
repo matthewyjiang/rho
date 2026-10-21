@@ -146,8 +146,52 @@ fn search_normalizes_case_styles_separators_and_inflections() {
             ("string", vec![]),
             // A query made only of filler matches nothing.
             ("a to", vec![]),
+            // A plural acronym also counts whole, not only as `ur` and `ls`.
+            ("URLs", vec!["mcp__playwright__browser_navigate"]),
+            // A camelCase brand still matches its lowercase spelling.
+            (
+                "GitHub",
+                vec![
+                    "mcp__github__create_issue",
+                    "mcp__github__list_issues",
+                    "openapi__github__repos_getContent",
+                ],
+            ),
+            (
+                "github",
+                vec![
+                    "mcp__github__create_issue",
+                    "mcp__github__list_issues",
+                    "openapi__github__repos_getContent",
+                ],
+            ),
+            (
+                "GITHUB",
+                vec![
+                    "mcp__github__create_issue",
+                    "mcp__github__list_issues",
+                    "openapi__github__repos_getContent",
+                ],
+            ),
         ],
     );
+}
+
+// Covers: two names that normalize to the same words, as `get-issue` and
+// `get_issue` do, tied and fell back to name order, so searching one exact name
+// with limit 1 loaded the other. Owner: search ranking.
+#[test]
+fn search_ranks_an_exact_name_first() {
+    let catalog = [
+        entry("mcp__github__get-issue", "Get a GitHub issue."),
+        entry("mcp__github__get_issue", "Get a GitHub issue."),
+    ];
+    for name in ["mcp__github__get-issue", "mcp__github__get_issue"] {
+        let first = search_entries(&catalog, name, 1)
+            .first()
+            .map(|hit| hit.name.as_str());
+        assert_eq!((name, first), (name, Some(name)));
+    }
 }
 
 // Covers: the substring scorer gave every `get` + `repository` operation the
@@ -156,9 +200,9 @@ fn search_normalizes_case_styles_separators_and_inflections() {
 // term outweigh a common one. Owner: search ranking.
 #[test]
 fn search_prefers_specific_matches_and_rare_terms() {
-    let catalog = [
+    let mut catalog = vec![
         entry(
-            "openapi__github__actions_get_github_actions_permissions_repository",
+            "openapi__github__actions_get_permissions_repository",
             "Get GitHub Actions permissions for a repository\n\nGET /repos/{owner}/{repo}/actions/permissions on OpenAPI source `github` (tags: actions).",
         ),
         entry(
@@ -183,6 +227,21 @@ fn search_prefers_specific_matches_and_rare_terms() {
         // `sort` appears only as a parameter name.
         ("sort repositories", "openapi__github__repos_list_for_org"),
     ];
+    // Common `data` words count for a `database` query only as related
+    // words, so they must not make `database` look as common as they are.
+    catalog.extend([
+        entry(
+            "mcp__sqlite__query_database",
+            "Run a SQL query on the database.",
+        ),
+        entry("mcp__sqlite__create_table", "Create a table for data."),
+        entry("mcp__sqlite__create_record", "Create a data record."),
+        entry("mcp__sqlite__create_view", "Create a view over data."),
+    ]);
+    catalog.sort_by(|left, right| left.name.cmp(&right.name));
+    let expected_first = expected_first
+        .into_iter()
+        .chain([("create database", "mcp__sqlite__query_database")]);
     for (query, expected) in expected_first {
         let first = search_entries(&catalog, query, 1)
             .first()

@@ -23,10 +23,10 @@ const K1: f64 = 1.2;
 const B: f64 = 0.75;
 
 /// How much a related word counts against an exact one. A related word shares
-/// the query word's stem (`issues` for `issue`) or extends it (`repository`
-/// for `repo`). Counting related words fully ranked inflected noise such as
-/// `list_issue_types` level with exact hits; ignoring them lost `repo` ->
-/// `repository`. Tuned on real MCP and GitHub REST tools (see the PR that
+/// the query word's stem (`issues` for `issue`), or one of the two stems
+/// extends the other (`repository` and `repo`). Counting related words fully
+/// ranked inflected noise such as `list_issue_types` level with exact hits;
+/// ignoring them lost `repo` -> `repository`. Tuned on real MCP and GitHub REST tools (see the PR that
 /// introduced this ranker).
 const RELATED_WEIGHT: f64 = 0.3;
 
@@ -86,7 +86,9 @@ impl<T> PerField<T> {
 ///
 /// An entry matches when any query word, or a word related to it, occurs in
 /// any of its fields. Higher scores rank first and ties keep catalog (name)
-/// order. A query without any words lists every entry; a query made only of
+/// order. A query that is exactly an entry's name ranks that entry first, since
+/// `mcp__github__get-issue` and `mcp__github__get_issue` normalize to the same
+/// words. A query without any words lists every entry; a query made only of
 /// filler such as `a` or `to` matches nothing, since filler would otherwise
 /// match every description.
 pub(super) fn search_entries<'a>(
@@ -101,6 +103,7 @@ pub(super) fn search_entries<'a>(
     let mut query_words: Vec<_> = words(query).collect();
     query_words.sort_unstable();
     query_words.dedup();
+    let exact_name = query.trim();
     let terms: Vec<_> = query_words
         .iter()
         .map(|word| index.term(word))
@@ -110,7 +113,11 @@ pub(super) fn search_entries<'a>(
         .iter()
         .zip(&index.documents)
         .filter_map(|(entry, document)| {
-            let score = index.score(document, &terms);
+            let score = if entry.name == exact_name {
+                f64::INFINITY
+            } else {
+                index.score(document, &terms)
+            };
             (score > 0.0).then_some((score, entry))
         })
         .collect();
@@ -206,28 +213,39 @@ impl Index {
     }
 
     /// Finds the catalog words that count for `word` and how rare they are.
+    ///
+    /// Rarity comes from the words sharing `word`'s stem when the catalog has
+    /// any, so common words that only extend it, like `data` for `database`,
+    /// do not make a rare word look common.
     fn term(&self, word: &str) -> Term<'_> {
         let word_stem = stem(word);
-        let matches: Vec<_> = self
-            .vocabulary
-            .iter()
-            .filter_map(|(candidate, candidate_stem)| {
-                if candidate == word {
-                    Some((candidate.as_str(), 1.0))
-                } else if related(&word_stem, candidate_stem) {
-                    Some((candidate.as_str(), RELATED_WEIGHT))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut matches = Vec::new();
+        let mut same_stem = Vec::new();
+        for (candidate, candidate_stem) in &self.vocabulary {
+            let weight = if candidate == word {
+                1.0
+            } else if *candidate_stem == word_stem || extends(&word_stem, candidate_stem) {
+                RELATED_WEIGHT
+            } else {
+                continue;
+            };
+            matches.push((candidate.as_str(), weight));
+            if *candidate_stem == word_stem {
+                same_stem.push(candidate.as_str());
+            }
+        }
+        let rarity_words = if same_stem.is_empty() {
+            matches.iter().map(|(word, _)| *word).collect()
+        } else {
+            same_stem
+        };
         let containing = self
             .documents
             .iter()
             .filter(|document| {
                 Field::ALL.into_iter().any(|field| {
                     let counts = &document.get(field).counts;
-                    matches.iter().any(|(word, _)| counts.contains_key(*word))
+                    rarity_words.iter().any(|word| counts.contains_key(*word))
                 })
             })
             .count() as f64;
@@ -268,20 +286,24 @@ impl Index {
     }
 }
 
-/// Whether two different words count as related: the same stem, or one stem
-/// is a prefix of the other and the shorter is at least [`MIN_PREFIX_LEN`]
-/// long.
-fn related(left: &str, right: &str) -> bool {
-    left == right
-        || (left.len().min(right.len()) >= MIN_PREFIX_LEN
-            && (left.starts_with(right) || right.starts_with(left)))
+/// Whether one stem extends the other and the shorter is at least
+/// [`MIN_PREFIX_LEN`] long. Both directions count: `repo` finds `repository`,
+/// and `repository` finds the `repos` in `repos_get`.
+fn extends(left: &str, right: &str) -> bool {
+    left.len().min(right.len()) >= MIN_PREFIX_LEN
+        && (left.starts_with(right) || right.starts_with(left))
 }
 
 /// Lowercase words of `text`, split on punctuation (`_`, `-`, `.`, `/`,
-/// spaces, ...) and camelCase boundaries, without filler.
+/// spaces, ...) and camelCase boundaries, without filler. A camelCase token
+/// also counts whole, so `GitHub` matches `github` as well as `git` and `hub`.
 fn words(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric())
-        .flat_map(camel_case_words)
+        .flat_map(|token| {
+            let parts = camel_case_words(token);
+            let whole = (parts.len() > 1).then_some(token);
+            whole.into_iter().chain(parts)
+        })
         .map(str::to_lowercase)
         .filter(|word| !STOPWORDS.contains(&word.as_str()))
 }
