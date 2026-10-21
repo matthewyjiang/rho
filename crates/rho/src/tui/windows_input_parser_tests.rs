@@ -93,6 +93,22 @@ fn vt_events_preserve_key_and_mouse_semantics() {
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         ),
         (
+            b"\x1b[27u",
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        ),
+        (
+            b"\x1b[13;2u",
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+        ),
+        (
+            b"\x1b[9;2u",
+            Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+        ),
+        (
+            b"\x1b[127u",
+            Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+        ),
+        (
             b"\x1b[A",
             Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
         ),
