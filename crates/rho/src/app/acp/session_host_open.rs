@@ -13,6 +13,7 @@ use agent_client_protocol::schema::v1::{
 use rho_sdk::{model::Message, SessionOptions};
 
 use super::{
+    super::client_io::ClientIo,
     agent,
     build::{build_session, mode_state, session_config},
     convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
@@ -46,6 +47,7 @@ impl SessionHost {
             cwd,
             added_dirs,
             rho_sdk::SessionId::new(),
+            &request.additional_directories,
             request.mcp_servers,
         )
         .await?;
@@ -63,11 +65,19 @@ impl SessionHost {
         cwd: &Path,
         added_dirs: AddedDirs,
         sdk_id: rho_sdk::SessionId,
+        host_dirs: &[PathBuf],
         host_mcp_servers: Vec<McpServer>,
     ) -> anyhow::Result<Self> {
-        let assembly = build_session(startup, &startup.agent, config, cwd, &added_dirs, |_| {
-            Ok(session_options_for_id(sdk_id))
-        })
+        let io = ClientIo::new(startup, SessionId::new(sdk_id.as_str()), cwd, host_dirs);
+        let assembly = build_session(
+            startup,
+            &io,
+            &startup.agent,
+            config,
+            cwd,
+            &added_dirs,
+            |_| Ok(session_options_for_id(sdk_id)),
+        )
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
         let storage = HostStorage::deferred(
@@ -77,7 +87,7 @@ impl SessionHost {
             startup.agent.fingerprint().to_string(),
         );
         Ok(Self::from_built(
-            SessionId::new(built.session.id().as_str()),
+            io,
             built,
             storage,
             added_dirs,
@@ -120,6 +130,7 @@ impl SessionHost {
                         cwd,
                         added_dirs,
                         sdk_id,
+                        &request.additional_directories,
                         request.mcp_servers,
                     )
                     .await;
@@ -129,11 +140,25 @@ impl SessionHost {
         let (agent, config) = agent::loaded_agent(startup, &stored, config, || {
             Ok(crate::agent::AgentCatalog::discover(cwd)?)
         })?;
-        let assembly = build_session(startup, &agent, &config, cwd, &added_dirs, |provider| {
-            let snapshot =
-                stored.snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
-            Ok(SessionOptions::from_snapshot(snapshot))
-        })
+        let io = ClientIo::new(
+            startup,
+            request.session_id.clone(),
+            cwd,
+            &request.additional_directories,
+        );
+        let assembly = build_session(
+            startup,
+            &io,
+            &agent,
+            &config,
+            cwd,
+            &added_dirs,
+            |provider| {
+                let snapshot = stored
+                    .snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
+                Ok(SessionOptions::from_snapshot(snapshot))
+            },
+        )
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
         if let History::Replay(client) = history {
@@ -161,7 +186,7 @@ impl SessionHost {
             })
             .flatten();
         let mut host = Self::from_built(
-            request.session_id,
+            io,
             built,
             HostStorage::saved(stored),
             added_dirs,

@@ -107,6 +107,13 @@ impl SubagentManager {
         }
     }
 
+    /// Delegated Rho agents read and edit these host-served files as the
+    /// parent does, so both see the same unsaved text.
+    pub(crate) fn with_host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
+        self.executor = self.executor.with_host_io(host_io);
+        self
+    }
+
     pub(crate) fn bind_host_input(&self) -> tokio::sync::mpsc::Receiver<SubagentHostInputRequest> {
         self.executor.host_input().bind_parent()
     }

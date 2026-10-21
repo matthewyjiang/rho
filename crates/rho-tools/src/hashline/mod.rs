@@ -93,7 +93,9 @@ impl Tool for Edit {
                     section,
                 })
                 .collect();
-            let outcome = apply_prepared_sections(sections, ctx.max_output_bytes).await?;
+            let outcome =
+                apply_prepared_sections(sections, ctx.max_output_bytes, /*host_files*/ None)
+                    .await?;
             Ok(ToolResult {
                 id,
                 ok: true,

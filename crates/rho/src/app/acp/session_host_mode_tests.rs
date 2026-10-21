@@ -80,7 +80,7 @@ async fn host(
     };
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home);
     SessionHost::from_built(
-        SessionId::new(stored.id()),
+        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
         built,
         super::super::persist::HostStorage::saved(stored),
         Default::default(),

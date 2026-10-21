@@ -1,20 +1,15 @@
-//! Multi-file plan / lock / commit / rollback for prepared hashline sections.
+//! Multi-file plan / commit / rollback for prepared hashline sections.
 //!
 //! Path policy stays with the caller ([`PreparedSection`] is already resolved).
 //! Path uniqueness for a mutation is owned here via [`claim_unique_path`] so
 //! prepare and execute share one predicate.
 
-use std::{
-    collections::BTreeMap,
-    io::Read,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use crate::{
     diff::unified_diff,
-    file_mutation::{
-        lock_for_rewrite, locked_path_identity_matches, rewrite_locked_file, FileMutationOutcome,
-    },
+    file_mutation::FileMutationOutcome,
+    host_files::{CommitError, HostTextFiles, TextRoute},
     tool::*,
 };
 
@@ -69,10 +64,12 @@ pub(crate) fn claim_unique_path(
     }
 }
 
-/// Apply already-resolved hashline sections to the workspace.
+/// Apply already-resolved hashline sections to the workspace. Each path goes
+/// to the host when `host_files` serves it, and to local disk otherwise.
 pub(crate) async fn apply_prepared_sections(
     sections: Vec<PreparedSection>,
     max_output_bytes: usize,
+    host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<FileMutationOutcome, ToolError> {
     let mut seen = BTreeMap::new();
     for prepared in &sections {
@@ -80,51 +77,21 @@ pub(crate) async fn apply_prepared_sections(
             .map_err(ToolError::Message)?;
     }
 
-    tokio::task::spawn_blocking(move || apply_sections_locked(sections, max_output_bytes))
-        .await
-        .map_err(|error| ToolError::Message(format!("hashline edit task failed: {error}")))?
-}
-
-/// One file's planned rewrite, before anything is written.
-struct PlannedFile {
-    path: PathBuf,
-    display_path: String,
-    original: String,
-    outcome: super::apply::ApplyOutcome,
-    anchor_lines: Vec<usize>,
-    ops_summary: String,
-    structural: bool,
-}
-
-/// A file already rewritten in this call, kept so a later failure can undo it.
-struct AppliedFile<'a> {
-    path: &'a Path,
-    display_path: &'a str,
-    original: &'a str,
-    /// Committed text; rollback refuses to restore if the live file no longer
-    /// matches this (another writer raced after our commit).
-    applied_text: &'a str,
-}
-
-fn apply_sections_locked(
-    sections: Vec<PreparedSection>,
-    max_output_bytes: usize,
-) -> Result<FileMutationOutcome, ToolError> {
     // Plan every file first so a later section failure cannot leave earlier
-    // writes applied. Each commit re-checks its file under lock, so no separate
+    // writes applied. Each commit re-checks its file, so no separate
     // revalidation pass is needed here.
     let mut planned = Vec::with_capacity(sections.len());
     for prepared in sections {
         let display_path = prepared.display_path.clone();
-        let original = std::fs::read_to_string(&prepared.path).map_err(|error| {
-            ToolError::Message(format!("could not read {display_path}: {error}"))
-        })?;
+        let route = TextRoute::for_path(host_files, &prepared.path);
+        let original = route.read(&prepared.path, &display_path).await?;
         let anchor_lines = collect_focus_anchors(&prepared.section.ops);
         let structural = ops_are_structural(&prepared.section.ops);
         let ops_summary = format_ops_summary(&prepared.section.ops);
         let outcome = apply_ops(&original, &prepared.section.tag, prepared.section.ops)
             .map_err(|error| recovery_error(&display_path, &original, &anchor_lines, error))?;
         planned.push(PlannedFile {
+            route,
             path: prepared.path,
             display_path,
             original,
@@ -135,24 +102,11 @@ fn apply_sections_locked(
         });
     }
 
-    let mut applied: Vec<AppliedFile<'_>> = Vec::new();
-    for file in &planned {
-        if let Err(error) = commit_planned_file(file) {
-            let mut message = error.to_string();
-            if let Err(rollback_error) = rollback_applied(&applied) {
-                message = format!("{message}; rollback also failed: {rollback_error}");
-            } else if !applied.is_empty() {
-                message = format!("{message}; applied changes were rolled back");
-            }
-            return Err(ToolError::Message(message));
-        }
-        applied.push(AppliedFile {
-            path: &file.path,
-            display_path: &file.display_path,
-            original: &file.original,
-            applied_text: &file.outcome.text,
-        });
-    }
+    // The commit runs to its end, rollback included, even when the call is
+    // cancelled, so a dropped call never leaves only some files committed.
+    let planned = tokio::spawn(commit_planned(planned))
+        .await
+        .map_err(|error| ToolError::Message(format!("edit task failed: {error}")))??;
 
     let mut previews = Vec::new();
     let mut diffs = Vec::new();
@@ -190,35 +144,102 @@ fn apply_sections_locked(
     })
 }
 
-fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
+/// Commits every planned file in order, rolling back the committed ones
+/// when one fails. Returns the files holding the text each now has.
+async fn commit_planned(mut planned: Vec<PlannedFile>) -> Result<Vec<PlannedFile>, ToolError> {
+    for index in 0..planned.len() {
+        match commit_planned_file(&planned[index]).await {
+            // What the file holds now, which a host may have formatted, is
+            // what rollback must find and what the result shows.
+            Ok(written) => planned[index].record_written(written),
+            Err(error) => {
+                let applied = &planned[..index];
+                let mut message = error.to_string();
+                if let Err(rollback_error) = rollback_applied(applied).await {
+                    message = format!("{message}; rollback also failed: {rollback_error}");
+                } else if !applied.is_empty() {
+                    message = format!("{message}; applied changes were rolled back");
+                }
+                return Err(ToolError::Message(message));
+            }
+        }
+    }
+    Ok(planned)
+}
+
+/// One file's planned rewrite, before anything is written.
+struct PlannedFile {
+    route: TextRoute,
+    path: PathBuf,
+    display_path: String,
+    original: String,
+    outcome: super::apply::ApplyOutcome,
+    anchor_lines: Vec<usize>,
+    ops_summary: String,
+    structural: bool,
+}
+
+impl PlannedFile {
+    /// Records the text the file holds after its commit. A host that
+    /// reformatted it may have moved the edited lines, so the preview then
+    /// focuses on the span the saved text changed.
+    fn record_written(&mut self, written: String) {
+        if written != self.outcome.text {
+            self.outcome.focus_lines = changed_span(&self.original, &written);
+            self.outcome.text = written;
+        }
+    }
+}
+
+/// The first and last 1-indexed lines of `updated` that differ from
+/// `original`, or none when the texts match.
+pub(super) fn changed_span(original: &str, updated: &str) -> Vec<usize> {
+    let (before, after) = (
+        original.lines().collect::<Vec<_>>(),
+        updated.lines().collect::<Vec<_>>(),
+    );
+    let prefix = before
+        .iter()
+        .zip(&after)
+        .take_while(|(old, new)| old == new)
+        .count();
+    let suffix = before[prefix..]
+        .iter()
+        .rev()
+        .zip(after[prefix..].iter().rev())
+        .take_while(|(old, new)| old == new)
+        .count();
+    let last = after.len() - suffix;
+    if last > prefix {
+        vec![prefix + 1, last]
+    } else if original == updated {
+        Vec::new()
+    } else {
+        // Lines were only removed; focus where they were.
+        vec![(prefix + 1).min(after.len().max(1))]
+    }
+}
+
+async fn commit_planned_file(file: &PlannedFile) -> Result<String, ToolError> {
     let display_path = &file.display_path;
-    let mut handle = lock_for_rewrite(&file.path, display_path, "")?;
-    if !locked_path_identity_matches(&handle, &file.path, display_path)? {
-        return Err(recovery_error(
-            display_path,
-            &file.original,
-            &file.anchor_lines,
-            "path changed after validation",
-        ));
-    }
-    let mut live = String::new();
-    handle
-        .read_to_string(&mut live)
-        .map_err(|error| ToolError::Message(format!("could not read {display_path}: {error}")))?;
-    if live != file.original {
-        return Err(recovery_error(
-            display_path,
-            &live,
-            &file.anchor_lines,
-            "changed during edit",
-        ));
-    }
-    rewrite_locked_file(
-        &mut handle,
-        display_path,
-        /*original*/ &file.original,
-        /*updated*/ &file.outcome.text,
-    )
+    file.route
+        .commit(&file.path, display_path, &file.original, &file.outcome.text)
+        .await
+        .map_err(|error| match error {
+            CommitError::PathChanged => recovery_error(
+                display_path,
+                &file.original,
+                &file.anchor_lines,
+                "path changed after validation",
+            ),
+            CommitError::Changed { live } => recovery_error(
+                display_path,
+                &live,
+                &file.anchor_lines,
+                "changed during edit",
+            ),
+            CommitError::Failed(error) => error,
+        })
 }
 
 fn recovery_error(
@@ -233,10 +254,10 @@ fn recovery_error(
     ))
 }
 
-fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {
+async fn rollback_applied(applied: &[PlannedFile]) -> Result<(), ToolError> {
     let mut failures = Vec::new();
     for file in applied.iter().rev() {
-        if let Err(error) = rollback_one(file) {
+        if let Err(error) = rollback_one(file).await {
             failures.push(error.to_string());
         }
     }
@@ -247,33 +268,25 @@ fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {
     }
 }
 
-fn rollback_one(file: &AppliedFile<'_>) -> Result<(), ToolError> {
-    let mut handle = lock_for_rewrite(file.path, file.display_path, " for rollback")?;
-    if !locked_path_identity_matches(&handle, file.path, file.display_path)? {
-        return Err(ToolError::Message(format!(
-            "{}: path changed after apply; refusing rollback",
-            file.display_path
-        )));
-    }
-    let mut live = String::new();
-    handle.read_to_string(&mut live).map_err(|error| {
-        ToolError::Message(format!(
-            "could not read {} for rollback: {error}",
-            file.display_path
-        ))
-    })?;
-    if live != file.applied_text {
-        return Err(ToolError::Message(format!(
-            "{}: changed after apply; refusing rollback to avoid clobbering concurrent writers",
-            file.display_path
-        )));
-    }
-    rewrite_locked_file(
-        &mut handle,
-        file.display_path,
-        /*original*/ file.applied_text,
-        /*updated*/ file.original,
-    )
+/// Restores a committed file, unless another writer changed it after the
+/// commit; restoring then would clobber that writer.
+async fn rollback_one(file: &PlannedFile) -> Result<(), ToolError> {
+    let display_path = &file.display_path;
+    file.route
+        .commit(&file.path, display_path, &file.outcome.text, &file.original)
+        .await
+        .map(drop)
+        .map_err(|error| match error {
+            CommitError::PathChanged => ToolError::Message(format!(
+                "{display_path}: path changed after apply; refusing rollback"
+            )),
+            CommitError::Changed { .. } => ToolError::Message(format!(
+                "{display_path}: changed after apply; refusing rollback to avoid clobbering concurrent writers"
+            )),
+            CommitError::Failed(error) => ToolError::Message(format!(
+                "could not roll back {display_path}: {error}"
+            )),
+        })
 }
 
 /// Span endpoints and insert anchors for focused live snapshots on failure.

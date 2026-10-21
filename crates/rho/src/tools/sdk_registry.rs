@@ -86,6 +86,7 @@ pub struct ToolSetOptions {
     workflow: Option<Arc<dyn super::workflow::WorkflowToolService>>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     process_keep_warm: super::process::KeepWarmOffer,
+    host_io: crate::tools::host_io::HostIo,
 }
 
 impl Default for ToolSetOptions {
@@ -103,7 +104,15 @@ impl ToolSetOptions {
             workflow: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             process_keep_warm: super::process::KeepWarmOffer::Hidden,
+            host_io: Default::default(),
         }
+    }
+
+    /// What the host does in place of local disk. File tools and delegated
+    /// Rho agents use it.
+    pub(crate) fn host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
+        self.host_io = host_io;
+        self
     }
 
     /// Advertises `keep_warm` on `process start`. Only a host that runs a
@@ -217,6 +226,8 @@ pub struct AppToolSet {
     mcp_catalog: super::mcp::McpCatalog,
     openapi_report: super::openapi::report::OpenApiReport,
     file_view: rho_tools::FileViewPolicy,
+    /// Kept so a mid-session edit-tool switch uses the same host I/O.
+    host_io: crate::tools::host_io::HostIo,
     session_search: super::sessions::SessionBinding,
     /// Present only when the `sessions` tool is installed, since recall is
     /// the only way to read an elided result back.
@@ -245,6 +256,7 @@ impl AppToolSet {
             mcp_catalog: super::mcp::McpCatalog::default(),
             openapi_report: super::openapi::report::OpenApiReport::default(),
             file_view: rho_tools::FileViewPolicy::default(),
+            host_io: Default::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
             todo: super::todo::TodoState::default(),
@@ -259,9 +271,11 @@ impl AppToolSet {
             workflow,
             workflow_tracker,
             process_keep_warm,
+            host_io,
         } = options;
         let mut tool_set = Self::disabled();
         tool_set.workflow_tracker = workflow_tracker;
+        tool_set.host_io = host_io;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
                 config.workspace_rewind,
@@ -281,6 +295,7 @@ impl AppToolSet {
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
             tool_set.file_view.clone(),
+            &tool_set.host_io,
         ));
         if capabilities.contains(&ToolCapability::Process) {
             let bundle = super::process::sdk_bundle(
@@ -356,6 +371,7 @@ impl AppToolSet {
                     tools: selection,
                     config_path: delegation.config_path,
                     catalog: delegation.catalog,
+                    host_io: tool_set.host_io.clone(),
                 },
                 tool_set.checkpoint_tracker.clone(),
             );
@@ -659,7 +675,12 @@ impl AppToolSet {
             .position(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.spec().name.as_str()))?;
         let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
             self.checkpoint_tracker.clone();
-        let replacement = super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
+        let replacement = super::coding::edit_tool(
+            edit_tool,
+            max_output_bytes,
+            mutation_observer,
+            &self.host_io,
+        );
         self.inventory.mutate(|tools| tools[position] = replacement);
         self.file_view.set(edit_tool);
         Some(previous)

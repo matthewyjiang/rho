@@ -2,6 +2,8 @@ mod agent;
 mod auth;
 mod auth_login;
 mod auth_logout;
+mod client_files;
+mod client_io;
 mod commands;
 mod compaction_card;
 mod config_options;
@@ -29,8 +31,9 @@ use agent_client_protocol::{
         AuthenticateRequest, CancelNotification, CloseSessionRequest,
         CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
         InitializeRequest, LoadSessionRequest, LogoutRequest, NewSessionRequest, PromptRequest,
-        RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
-        SetSessionConfigOptionRequest, SetSessionModeRequest,
+        ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+        RequestPermissionResponse, SessionNotification, SetSessionConfigOptionRequest,
+        SetSessionModeRequest, WriteTextFileRequest, WriteTextFileResponse,
     },
     Agent, Client, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role, Stdio,
 };
@@ -79,6 +82,9 @@ pub(super) struct AcpStartup {
     pub(super) host_features: HostFeatures,
     /// `logout`s so far, which mark sessions' credentials stale.
     pub(super) logouts: auth_logout::Logouts,
+    /// The connection `initialize` arrived on, for host-served files. `None`
+    /// when the host skipped `initialize`.
+    pub(super) client: Option<Arc<dyn AcpClientPort>>,
 }
 
 #[cfg(test)]
@@ -125,6 +131,7 @@ impl AcpStartup {
             added_dirs: Default::default(),
             host_features: HostFeatures::default(),
             logouts: Default::default(),
+            client: None,
         }
     }
 }
@@ -164,6 +171,23 @@ pub(super) trait AcpClientPort: Send + Sync {
         _notification: CompleteElicitationNotification,
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
         Box::pin(async { Ok(()) })
+    }
+
+    /// `fs/read_text_file`. Sent only to hosts that advertised `fs`; see
+    /// `client_files`.
+    fn read_text_file(
+        &self,
+        _request: ReadTextFileRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ReadTextFileResponse, AcpError>> + Send + '_>> {
+        Box::pin(async { Err(AcpError::method_not_found()) })
+    }
+
+    /// `fs/write_text_file`. Sent only to hosts that advertised `fs`.
+    fn write_text_file(
+        &self,
+        _request: WriteTextFileRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<WriteTextFileResponse, AcpError>> + Send + '_>> {
+        Box::pin(async { Err(AcpError::method_not_found()) })
     }
 }
 
@@ -209,6 +233,20 @@ impl AcpClientPort for ConnectionPort {
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
         Box::pin(async move { self.cx.send_notification(notification) })
     }
+
+    fn read_text_file(
+        &self,
+        request: ReadTextFileRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ReadTextFileResponse, AcpError>> + Send + '_>> {
+        Box::pin(async move { self.cx.send_request(request).block_task().await })
+    }
+
+    fn write_text_file(
+        &self,
+        request: WriteTextFileRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<WriteTextFileResponse, AcpError>> + Send + '_>> {
+        Box::pin(async move { self.cx.send_request(request).block_task().await })
+    }
 }
 
 pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
@@ -222,8 +260,8 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
         .on_receive_request(
             {
                 let agent = Arc::clone(&agent);
-                async move |request: InitializeRequest, responder, _cx| {
-                    agent.record_client(&request);
+                async move |request: InitializeRequest, responder, cx| {
+                    agent.record_client(&request, Arc::new(ConnectionPort::new(cx)));
                     responder.respond(RhoAcpAgent::initialize(&request, agent.oauth_sign_in()))
                 }
             },

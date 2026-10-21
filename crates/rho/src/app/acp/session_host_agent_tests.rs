@@ -125,6 +125,7 @@ fn startup(cwd: &Path) -> AcpStartup {
         added_dirs: Default::default(),
         host_features: Default::default(),
         logouts: Default::default(),
+        client: None,
     }
 }
 
@@ -173,7 +174,7 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
     )
     .await;
     SessionHost::from_built(
-        SessionId::new(stored.id()),
+        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
         built,
         super::super::persist::HostStorage::saved(stored),
         Default::default(),

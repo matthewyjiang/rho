@@ -36,6 +36,8 @@ pub(crate) struct AgentExecutor {
     /// The parent session's added workspace directories, inherited by future
     /// Rho runtime launches.
     added_dirs: Arc<std::sync::RwLock<crate::added_dirs::AddedDirs>>,
+    /// The parent's host I/O, shared by Rho runtime launches.
+    host_io: crate::tools::host_io::HostIo,
 }
 
 pub(crate) struct AgentLaunchRequest {
@@ -226,7 +228,14 @@ impl AgentExecutor {
             approval_session: None,
             approval_classifier: None,
             added_dirs: Arc::default(),
+            host_io: Default::default(),
         }
+    }
+
+    /// Rho runtime launches use the parent's host I/O, such as its files.
+    pub(crate) fn with_host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
+        self.host_io = host_io;
+        self
     }
 
     /// Routes workflow-agent capability requests through the workflow run's
@@ -460,6 +469,7 @@ impl AgentExecutor {
             .clone();
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
+        let host_io = self.host_io.clone();
         let host_input = self.host_input.clone();
         let notices = self.notices.clone();
         let persisted_output = output_file.clone();
@@ -574,6 +584,7 @@ impl AgentExecutor {
                         approval_classifier,
                         checkpoint,
                         added_dirs,
+                        host_io,
                     })
                     .await
                 }
@@ -779,6 +790,7 @@ struct RhoAgentRun {
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     checkpoint: Option<automation::SessionCheckpoint>,
     added_dirs: crate::added_dirs::AddedDirs,
+    host_io: crate::tools::host_io::HostIo,
 }
 
 /// Drive a delegated run through Rho's own automation loop.
@@ -805,6 +817,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         approval_classifier,
         checkpoint,
         added_dirs,
+        host_io,
     } = run;
 
     super::cli_config::prepare_model_metadata(
@@ -874,6 +887,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         hook_host_labels,
         checkpoint,
         added_dirs,
+        host_io,
     };
     let result =
         automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;

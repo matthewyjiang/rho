@@ -53,8 +53,9 @@ pub(crate) fn build_edit_sdk_tool(
     format: crate::EditFormat,
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
 ) -> Arc<dyn Tool> {
-    edit::build_sdk_tool(format, max_output_bytes, mutation_observer)
+    edit::build_sdk_tool(format, max_output_bytes, mutation_observer, host_files)
 }
 
 #[path = "sdk_adapter/mutation.rs"]
@@ -75,12 +76,14 @@ pub(super) struct ListDirTool {
 pub(super) struct ReadFileTool {
     pub(super) max_output_bytes: usize,
     pub(super) file_view: crate::FileViewPolicy,
+    pub(super) host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 pub(super) struct WriteFileTool {
     pub(super) max_output_bytes: usize,
     pub(super) mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     pub(super) file_view: crate::FileViewPolicy,
+    pub(super) host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 #[derive(Deserialize)]
@@ -205,6 +208,7 @@ impl Tool for ReadFileTool {
                             args.offset,
                             args.limit,
                             self.file_view.style(),
+                            self.host_files.as_ref(),
                         )
                         .await
                         .map_err(map_app_error)?;
@@ -282,31 +286,23 @@ impl Tool for WriteFileTool {
                 accesses,
                 capabilities,
                 metadata,
-                move |context| {
-                    execute_prepared_write(
-                        self.max_output_bytes,
-                        self.mutation_observer.clone(),
-                        self.file_view.clone(),
-                        workspace,
-                        resolved,
-                        args,
-                        context,
-                    )
-                },
+                move |context| execute_prepared_write(self, workspace, resolved, args, context),
             ))
         })
     }
 }
 
 fn execute_prepared_write(
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    file_view: crate::FileViewPolicy,
+    tool: &WriteFileTool,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
     args: WriteArgs,
     context: AuthorizedToolContext,
 ) -> ToolFuture<'static> {
+    let max_output_bytes = tool.max_output_bytes;
+    let mutation_observer = tool.mutation_observer.clone();
+    let file_view = tool.file_view.clone();
+    let host_files = tool.host_files.clone();
     Box::pin(async move {
         let display = compact_display_path(workspace.root(), &args.path);
         let _ = context
@@ -327,6 +323,7 @@ fn execute_prepared_write(
                 &args.content,
                 max_output_bytes,
                 file_view.style(),
+                host_files.as_ref(),
             ),
         )
         .await?;

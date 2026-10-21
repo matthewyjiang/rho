@@ -63,6 +63,7 @@ async fn replaces_unique_occurrence_with_numbered_snapshot() {
         "delta",
         /*replace_all*/ false,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
     .unwrap();
@@ -100,6 +101,7 @@ async fn rejects_ambiguous_match_without_mutation() {
         "new",
         /*replace_all*/ false,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
     .unwrap_err();
@@ -126,6 +128,7 @@ async fn preserves_crlf_when_arguments_use_lf() {
         "gamma\n",
         /*replace_all*/ false,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
     .unwrap();
@@ -148,6 +151,7 @@ async fn replaces_all_occurrences_through_str_replace_content() {
         "new",
         /*replace_all*/ true,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
     .unwrap();
@@ -178,6 +182,7 @@ async fn rejects_symlink_leaf_without_mutating_target() {
         "new",
         /*replace_all*/ false,
         ctx.max_output_bytes,
+        /*host_files*/ None,
     )
     .await
     .unwrap_err();

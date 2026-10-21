@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::host_io::HostIo;
 use crate::agent::{AgentCapabilities, ToolCapability};
 use rho_sdk::{tool::Tool, ProcessEnvironment};
 
@@ -8,13 +9,16 @@ pub(super) fn edit_tool(
     edit_format: rho_tools::EditFormat,
     max_output_bytes: usize,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+    host_io: &HostIo,
 ) -> Arc<dyn Tool> {
     rho_tools::coding_tool(
         rho_tools::CodingToolKind::Edit,
-        rho_tools::CodingToolOptions::new()
-            .max_output_bytes(max_output_bytes)
-            .edit_tool(edit_format)
-            .mutation_observer(mutation_observer),
+        host_io.coding_options(
+            rho_tools::CodingToolOptions::new()
+                .max_output_bytes(max_output_bytes)
+                .edit_tool(edit_format)
+                .mutation_observer(mutation_observer),
+        ),
     )
 }
 
@@ -24,13 +28,16 @@ pub(super) fn sdk_bundle(
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
     file_view: rho_tools::FileViewPolicy,
+    host_io: &HostIo,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
-    let options = rho_tools::CodingToolOptions::new()
-        .max_output_bytes(max_output_bytes)
-        .file_view(file_view)
-        .mutation_observer(Arc::clone(&mutation_observer));
+    let options = host_io.coding_options(
+        rho_tools::CodingToolOptions::new()
+            .max_output_bytes(max_output_bytes)
+            .file_view(file_view)
+            .mutation_observer(Arc::clone(&mutation_observer)),
+    );
     let mut tools = Vec::new();
     for (capability, kind) in [
         (ToolCapability::ListDir, CodingToolKind::ListDir),

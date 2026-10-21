@@ -133,6 +133,8 @@ pub(super) struct Startup<'a> {
     pub checkpoint: Option<SessionCheckpoint>,
     /// Directories added to the workspace scope beyond `cwd`.
     pub added_dirs: crate::added_dirs::AddedDirs,
+    /// What the host does in place of local disk, such as serving files.
+    pub host_io: crate::tools::host_io::HostIo,
 }
 
 /// Step checkpoints for one headless run.
@@ -480,6 +482,7 @@ async fn run_session_with_output(
         usage_parent_session_id: startup.parent_session_id.clone(),
         hook_host_labels: startup.hook_host_labels.clone(),
         added_dirs: &startup.added_dirs,
+        host_io: startup.host_io.clone(),
         system_prompt_suffix: startup.system_prompt_suffix,
         extend_tools: |mut tool_set: crate::tools::sdk_registry::AppToolSet| {
             if let Some(poster) = startup.notice_poster.clone() {

@@ -112,6 +112,7 @@ impl SessionHost {
         let model_override = task.model_override.clone();
         let cwd = self.storage.cwd().to_path_buf();
         let added_dirs = self.added_dirs.clone();
+        let io = self.client_io.clone();
         self.run_as_agent_with(
             display,
             task,
@@ -126,9 +127,15 @@ impl SessionHost {
                 )
             },
             async |agent, config, id| {
-                build_session(startup, &agent, &config, &cwd, &added_dirs, |_| {
-                    Ok(session_options_for_id(id))
-                })
+                Box::pin(build_session(
+                    startup,
+                    &io,
+                    &agent,
+                    &config,
+                    &cwd,
+                    &added_dirs,
+                    |_| Ok(session_options_for_id(id)),
+                ))
                 .await
             },
         )

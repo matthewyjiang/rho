@@ -55,6 +55,7 @@ async fn falls_back_to_hashline_text_when_an_ascii_signature_is_not_a_decodable_
         None,
         None,
         crate::FileViewStyle::Hashline,
+        /*host_files*/ None,
     )
     .await
     .unwrap();
@@ -79,6 +80,7 @@ async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
         None,
         None,
         crate::FileViewStyle::Hashline,
+        /*host_files*/ None,
     )
     .await
     .unwrap();
@@ -182,6 +184,7 @@ async fn reports_truncated_document_extraction() {
         None,
         None,
         crate::FileViewStyle::Hashline,
+        /*host_files*/ None,
     )
     .await
     .unwrap();
@@ -259,6 +262,7 @@ async fn rejects_documents_over_the_input_limit() {
         None,
         None,
         crate::FileViewStyle::Hashline,
+        /*host_files*/ None,
     )
     .await
     {
@@ -273,6 +277,51 @@ async fn rejects_documents_over_the_input_limit() {
             path.display(),
             crate::document::MAX_DOCUMENT_INPUT_BYTES + 1,
             crate::document::MAX_DOCUMENT_INPUT_BYTES
+        )
+    );
+}
+
+// Covers: a host-served range read checks the file on disk first, so a file
+// that is not UTF-8 text fails as it would locally instead of reaching the
+// host, and a text file shows the window of the host's text.
+// Owner: read_file routing, through host_files
+#[tokio::test]
+async fn host_served_range_reads_check_the_disk_kind_first() {
+    use std::sync::Arc;
+
+    use crate::host_files::{test_support::MemoryHost, HostTextFiles};
+
+    let (_dir, ctx) = test_context();
+    let binary = ctx.cwd.join("blob.bin");
+    let text = ctx.cwd.join("notes.txt");
+    fs::write(&binary, [0xFF, 0xFE]).unwrap();
+    fs::write(&text, "on disk\n").unwrap();
+    let host: Arc<dyn HostTextFiles> = Arc::new(MemoryHost::new(
+        &ctx.cwd,
+        &[(&binary, "buffer\n"), (&text, "one\ntwo\n")],
+    ));
+    let read = |path: std::path::PathBuf| {
+        let host = Arc::clone(&host);
+        async move {
+            read_file_content(
+                &path,
+                "f",
+                Some(2),
+                Some(1),
+                crate::FileViewStyle::Hashline,
+                Some(&host),
+            )
+            .await
+            .map(|output| output.content)
+            .map_err(|error| error.to_string().contains("UTF-8"))
+        }
+    };
+
+    assert_eq!(
+        (read(binary.clone()).await, read(text.clone()).await),
+        (
+            Err(true),
+            Ok(format_hashline_view("f", "one\ntwo\n", Some(2), Some(1)).unwrap())
         )
     );
 }
