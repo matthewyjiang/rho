@@ -377,6 +377,12 @@ impl ResponseCollector {
                         ModelError::InvalidResponse(message)
                     });
                 }
+                if reason == FinishReason::MaxTokens {
+                    emit(
+                        &mut on_event,
+                        ModelEvent::stop_reason(rho_sdk::model::ModelStopReason::MaxTokens),
+                    )?;
+                }
             }
             let Some(content) = candidate.content else {
                 continue;

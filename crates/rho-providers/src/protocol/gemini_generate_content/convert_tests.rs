@@ -672,3 +672,40 @@ fn empty_gemini_assistant_is_retryable() {
         ));
     }
 }
+
+// Covers: a MAX_TOKENS finish keeps its output and reaches the SDK as a typed stop
+// Owner: gemini generateContent response conversion
+#[test]
+fn max_tokens_finish_reports_a_truncated_turn() {
+    use rho_sdk::model::ModelStopReason;
+
+    for (finish_reason, expected) in [
+        ("STOP", None),
+        ("MAX_TOKENS", Some(ModelStopReason::MaxTokens)),
+    ] {
+        let response: GenerateContentResponse = serde_json::from_value(json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "partial"}]},
+                "finishReason": finish_reason
+            }]
+        }))
+        .unwrap();
+        let mut collector = ResponseCollector::default();
+        let mut stops = Vec::new();
+        collector
+            .apply(
+                response,
+                Some(&mut |event: crate::model::ModelEvent| {
+                    stops.extend(event.as_stop_reason());
+                    Ok(())
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            collector.finish().unwrap(),
+            crate::model::ModelResponse::Assistant(vec![ContentBlock::Text("partial".into())])
+        );
+        assert_eq!(stops, Vec::from_iter(expected), "{finish_reason}");
+    }
+}

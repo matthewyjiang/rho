@@ -254,6 +254,8 @@ pub(crate) struct BoundedFailure<'a> {
 pub enum HookStopReason {
     EndTurn,
     MaxSteps,
+    MaxTokens,
+    Refusal,
 }
 
 impl From<StopReason> for HookStopReason {
@@ -261,6 +263,8 @@ impl From<StopReason> for HookStopReason {
         match reason {
             StopReason::EndTurn => Self::EndTurn,
             StopReason::MaxSteps => Self::MaxSteps,
+            StopReason::MaxTokens => Self::MaxTokens,
+            StopReason::Refusal => Self::Refusal,
         }
     }
 }

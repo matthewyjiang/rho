@@ -21,6 +21,8 @@ A provider implementation must:
 
 `send_turn` is the non-streaming primitive. `send_turn_stream` may be overridden for streaming. Its default implementation invokes `send_turn` while observing cancellation. `send_turn_stream_with_options` adds request settings. `send_turn_stream_steerable` is the defaulted mid-turn steering port: dropping the receiver releases every request so existing providers keep today's boundary-apply behavior. Streaming providers send semantic `ModelEvent` values through the supplied bounded sender and still return a complete normalized response. The final response, not accumulated deltas, is the authoritative completed turn.
 
+A provider whose turn ended at its output-token limit, or that refused or filtered the output, sends `ModelEvent::stop_reason(ModelStopReason::MaxTokens)` or `ModelStopReason::Refusal` before returning the response. A turn without one finished normally. The runtime consumes the event, so it never reaches history or `RunEvent::ProviderContextUpdated`, and reports the final turn's reason as the run's `StopReason`. Read it back with `ModelEvent::as_stop_reason()`.
+
 Requests can include live host context appended by a [`RequestContext`](/sdk/sessions-and-persistence#live-request-context) source. `Message::model_context` encodes this data in user-role blocks for compatibility; use `Message::as_model_context()` before classifying a request message as a new human instruction. `Message::semantic()` still reports this encoding as `User`. Recognition is attribution only and must never authorize an action. These request-only messages do not enter committed conversation history.
 
 ## Credentials and endpoints

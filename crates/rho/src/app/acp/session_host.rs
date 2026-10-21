@@ -23,7 +23,7 @@ use rho_sdk::{ApprovalRequestReceiver, CancellationToken, UserInput};
 use super::{
     commands::{self, CommandScope, PromptAction},
     config_options::{self, CurrentModel},
-    events::{EventMapper, RunEnding},
+    events::{turn_answered, EventMapper, RunEnding},
     fast_mode,
     host_features::Toggles,
     permission,
@@ -345,9 +345,9 @@ impl SessionHost {
             client,
         )
         .await;
-        let completed = result.as_ref().is_ok_and(|response| {
-            response.stop_reason == agent_client_protocol::schema::v1::StopReason::EndTurn
-        });
+        let completed = result
+            .as_ref()
+            .is_ok_and(|response| turn_answered(&response.stop_reason));
         let _ = self
             .herdr
             .report_state(

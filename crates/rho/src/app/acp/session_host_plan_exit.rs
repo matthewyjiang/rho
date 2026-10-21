@@ -7,7 +7,9 @@ use agent_client_protocol::schema::v1::{
 };
 use rho_sdk::UserInput;
 
-use super::{permission, send_notification, AcpClientPort, Config, EventMapper, SessionHost};
+use super::{
+    permission, send_notification, turn_answered, AcpClientPort, Config, EventMapper, SessionHost,
+};
 use crate::tools::plan_exit::{PlanExitResolution, ProposalTurn};
 
 const IMPLEMENT_PLAN: &str = "Implement the approved plan now. Follow the plan and verify the changes; the host has switched this session's permission mode.";
@@ -37,7 +39,7 @@ impl SessionHost {
             response
         });
         let turn = match &result {
-            Ok(response) if response.stop_reason == StopReason::EndTurn => ProposalTurn::Completed,
+            Ok(response) if turn_answered(&response.stop_reason) => ProposalTurn::Completed,
             Ok(_) | Err(_) => ProposalTurn::Unfinished,
         };
         let target = match decision.resolve(turn, self.permission.mode) {

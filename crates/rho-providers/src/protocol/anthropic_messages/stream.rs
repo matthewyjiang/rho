@@ -1,3 +1,4 @@
+use rho_sdk::model::ModelStopReason;
 use serde::Deserialize;
 
 use crate::{
@@ -243,6 +244,20 @@ pub(crate) fn handle_anthropic_stream_line(
                     cost_usd_micros,
                     ..ModelUsage::default()
                 }))?;
+            }
+            let stop_reason = match value
+                .get("delta")
+                .and_then(|delta| delta.get("stop_reason"))
+                .and_then(|reason| reason.as_str())
+            {
+                Some("max_tokens" | "model_context_window_exceeded") => {
+                    Some(ModelStopReason::MaxTokens)
+                }
+                Some("refusal") => Some(ModelStopReason::Refusal),
+                _ => None,
+            };
+            if let Some(reason) = stop_reason {
+                on_event(ModelEvent::stop_reason(reason))?;
             }
         }
         Some("error") => {
@@ -556,3 +571,7 @@ mod stream_cost_tests;
 #[cfg(test)]
 #[path = "stream_index_tests.rs"]
 mod stream_index_tests;
+
+#[cfg(test)]
+#[path = "stream_stop_reason_tests.rs"]
+mod stream_stop_reason_tests;

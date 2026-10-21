@@ -418,6 +418,7 @@ async fn execute_turn_loop(
             })
             .collect::<Vec<_>>();
         let async_ids = capture.async_call_ids();
+        let model_stop_reason = capture.stop_reason();
         let (reasoning_summary, provider_context) = capture.take_assistant_context();
         let assistant = AssistantMessage {
             content,
@@ -560,7 +561,12 @@ async fn execute_turn_loop(
         }
         let content = final_assistant_content(&history);
         let revision = core.commit(history)?;
-        let outcome = RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);
+        let outcome = RunOutcome::new(
+            content,
+            accumulated_usage,
+            StopReason::from_final_turn(model_stop_reason),
+            revision,
+        );
         core.set_state(SessionState::Completed);
         send_terminal(
             &events,

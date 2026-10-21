@@ -291,6 +291,24 @@ ACP v1 gives an agent no way to start a turn, so Rho keeps a prompt open instead
 
 Each result that reaches the model is also sent as a finished tool call card, the same notification card the TUI shows: a process's outcome, command, run time, and output tail, a delegated agent's result, or a workflow's outcome. A failed process or agent marks its card `failed`. The card's `content` is markdown, with process output in a code fence. Its `rawOutput` is the same text as a plain string with the output unfenced, for hosts such as T3 Code that show tool output as is. These cards are saved with the session, so `session/load` replays them. A background process has no live card while it runs; its card appears once its result is delivered.
 
+## Stop reasons
+
+`session/prompt` ends with one of the ACP v1 stop reasons:
+
+| Stop reason | When |
+| --- | --- |
+| `end_turn` | The model finished its answer. Commands that run no model turn, such as `/compact` and `/workflow:`, also end this way. |
+| `max_tokens` | The model's final turn hit the provider's output-token limit, so the answer may be cut off. Anthropic `max_tokens` and `model_context_window_exceeded`, Chat Completions `length`, and Gemini `MAX_TOKENS` report it. |
+| `refusal` | The provider refused or filtered the model's final turn. Anthropic `refusal` and Chat Completions `content_filter` report it. |
+| `max_turn_requests` | The run used its model-step budget. |
+| `cancelled` | The host cancelled the prompt or closed the session. |
+
+Only the turn that ends the prompt counts. If a cut-off turn still produced complete tool calls, Rho runs the tools and the prompt continues. Any partial answer streams as `agent_message_chunk` before the stop reason arrives.
+
+ACP says that after `refusal` the prompt and everything after it are left out of the next prompt. Rho does not do that: the refused turn and the prompt that led to it stay in the session, in what `session/load` replays, and in the model's context. Hosts that drop a refused prompt from their UI, as Zed does, should still treat it as part of the conversation.
+
+Some providers report a limit or a refusal as a failure instead, and the prompt fails with a JSON-RPC error just as it does in the TUI. These include an OpenAI Responses `response.incomplete` (for example `max_output_tokens` or `content_filter`), a Gemini `SAFETY` or other blocking finish, and an Anthropic refusal with no output.
+
 ## Commands
 
 Right after each `session/new` and `session/load` response, Rho sends an `available_commands_update`. Hosts show it as their command menu and send a picked command back as `/name args` prompt text. The commands are listed in [Commands](/integrations/acp#commands).

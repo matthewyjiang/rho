@@ -30,6 +30,23 @@ pub enum StopReason {
     EndTurn,
     /// The configured model-step budget was exhausted after committing progress.
     MaxSteps,
+    /// The final model turn reached the provider's output-token limit, so its
+    /// text may be truncated. Progress is committed like [`Self::EndTurn`].
+    MaxTokens,
+    /// The provider refused or filtered the final model turn. The turn and the
+    /// prompt that led to it stay in session history.
+    Refusal,
+}
+
+impl StopReason {
+    /// Run stop reason for a run whose final model turn ended with `reason`.
+    pub(crate) fn from_final_turn(reason: Option<crate::model::ModelStopReason>) -> Self {
+        match reason {
+            None => Self::EndTurn,
+            Some(crate::model::ModelStopReason::MaxTokens) => Self::MaxTokens,
+            Some(crate::model::ModelStopReason::Refusal) => Self::Refusal,
+        }
+    }
 }
 
 /// Final typed result of a successful run.

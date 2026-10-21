@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     model::{
-        AbortedAssistant, ContentBlock, ModelEvent, ModelUsage, PartialToolCall,
-        ProviderContextBlock, ToolCall,
+        AbortedAssistant, ContentBlock, ModelEvent, ModelStopReason, ModelUsage, PartialToolCall,
+        ProviderContextBlock, ToolCall, STOP_REASON_CONTEXT_KIND,
     },
     ProviderErrorKind, RunEvent,
 };
@@ -22,11 +22,17 @@ pub(super) struct StreamCapture {
     partial_tool_calls: BTreeMap<usize, CapturedToolCall>,
     usage: ModelUsage,
     failed_attempts: Vec<(ProviderErrorKind, ModelUsage)>,
+    stop_reason: Option<ModelStopReason>,
 }
 
 impl StreamCapture {
     pub(super) fn usage(&self) -> &ModelUsage {
         &self.usage
+    }
+
+    /// Provider-reported reason this turn ended early; `None` is a normal finish.
+    pub(super) fn stop_reason(&self) -> Option<ModelStopReason> {
+        self.stop_reason
     }
 
     pub(super) fn take_failed_attempts(&mut self) -> Vec<(ProviderErrorKind, ModelUsage)> {
@@ -40,6 +46,8 @@ impl StreamCapture {
     ) {
         let attempt_usage = self.usage.saturating_add(&usage);
         self.usage = ModelUsage::default();
+        // The provider retries with a fresh request; its stop belongs to that one.
+        self.stop_reason = None;
         self.failed_attempts.push((kind, attempt_usage));
     }
 
@@ -271,6 +279,13 @@ pub(super) fn capture_provider_event(
                 name,
                 arguments_delta: arguments,
             })
+        }
+        // SDK metadata, not provider-native context: never persisted or announced.
+        ModelEvent::ProviderContext { kind, data, .. } if kind == STOP_REASON_CONTEXT_KIND => {
+            if let Some(reason) = ModelStopReason::from_marker_data(&data) {
+                capture.stop_reason = Some(reason);
+            }
+            None
         }
         ModelEvent::ProviderContext {
             kind,

@@ -47,6 +47,9 @@ mod session_lifecycle;
 #[path = "support/acp_session_titles_tests.rs"]
 mod session_titles;
 
+#[path = "support/acp_stop_reasons_tests.rs"]
+mod stop_reasons;
+
 #[path = "support/acp_update_metadata_tests.rs"]
 mod update_metadata;
 

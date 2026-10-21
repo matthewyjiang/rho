@@ -25,10 +25,13 @@ pub mod context;
 pub mod handoff;
 mod model_context;
 mod semantic;
+mod stop_reason;
 mod tool_image_supplement;
 
 pub use compaction_summary::CompactionSummary;
 pub use semantic::SemanticMessage;
+pub use stop_reason::ModelStopReason;
+pub(crate) use stop_reason::STOP_REASON_CONTEXT_KIND;
 pub use tool_image_supplement::ToolImageSupplement;
 
 /// Provider-neutral specification for a tool available during a model turn.
