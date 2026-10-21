@@ -68,7 +68,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<Log
             anyhow::bail!("provider '{provider}' does not require login")
         }
         AuthenticationMethod::ApiKey { entry_label, .. } => {
-            let key = secret::read(entry_label)?;
+            let key = secret::read(entry_label).await?;
             ProviderAuthentication::save_api_key(&AppCredentialStore, &target.auth, &key)?;
             eprintln!("saved credentials for {}", target.auth);
             return Ok(LoginCompletion::Saved);

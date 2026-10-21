@@ -1,7 +1,6 @@
-use std::io::Write;
+use std::io::{self, Write};
 
-#[cfg(not(windows))]
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use super::paste_mode::PasteMode;
 use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
@@ -15,12 +14,10 @@ const DISABLE_MODIFY_OTHER_KEYS: &[u8] = b"\x1b[>4;0m";
 /// Session-scoped keyboard terminal protocols armed for the TUI lifetime.
 ///
 /// Call [`Enabled::release`] during shutdown (before `ratatui::restore`) so
-/// teardown order stays explicit at the call site.
+/// teardown order stays explicit at the call site. Dropping without release
+/// undoes only bracketed paste.
 pub(super) struct Enabled {
-    #[cfg(not(windows))]
-    bracketed_paste: bool,
-    #[cfg(windows)]
-    bracketed_paste: Option<super::terminal_events::PasteMode>,
+    bracketed_paste: Option<PasteMode<io::Stdout>>,
     modified_keys: bool,
     keyboard_enhancements: bool,
 }
@@ -29,10 +26,7 @@ impl Enabled {
     pub(super) fn acquire() -> Self {
         let extended = should_request_extended_keyboard_protocols();
         Self {
-            #[cfg(not(windows))]
-            bracketed_paste: enable_bracketed_paste().is_ok(),
-            #[cfg(windows)]
-            bracketed_paste: super::terminal_events::PasteMode::acquire().ok(),
+            bracketed_paste: PasteMode::acquire(io::stdout()).ok(),
             // Extended protocols share one Windows/ConPTY policy: see
             // should_request_extended_keyboard_protocols.
             modified_keys: extended && enable_modified_keys().is_ok(),
@@ -52,11 +46,6 @@ impl Enabled {
         if self.modified_keys {
             record_first_error(&mut first_error, disable_modified_keys());
         }
-        #[cfg(not(windows))]
-        if self.bracketed_paste {
-            record_first_error(&mut first_error, disable_bracketed_paste());
-        }
-        #[cfg(windows)]
         if let Some(mode) = self.bracketed_paste {
             record_first_error(&mut first_error, mode.release());
         }
@@ -68,16 +57,6 @@ fn record_first_error(first_error: &mut Option<std::io::Error>, result: std::io:
     if let Err(error) = result {
         first_error.get_or_insert(error);
     }
-}
-
-#[cfg(not(windows))]
-fn enable_bracketed_paste() -> std::io::Result<()> {
-    execute!(std::io::stdout(), EnableBracketedPaste)
-}
-
-#[cfg(not(windows))]
-fn disable_bracketed_paste() -> std::io::Result<()> {
-    execute!(std::io::stdout(), DisableBracketedPaste)
 }
 
 fn enable_keyboard_enhancements() -> std::io::Result<()> {

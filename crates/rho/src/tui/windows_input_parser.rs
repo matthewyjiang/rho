@@ -203,12 +203,14 @@ fn modifiers(mods: Modifiers) -> KeyModifiers {
 
 fn key_code(key: Key, mods: Modifiers) -> Option<KeyCode> {
     Some(match key {
+        // termwiz keeps CSI u control codepoints (such as `\x1b[27u`) as
+        // characters; crossterm names them, so match its identities.
+        Key::Char('\x7f') | Key::Backspace => KeyCode::Backspace,
+        Key::Char('\t') | Key::Tab if mods.contains(Modifiers::SHIFT) => KeyCode::BackTab,
+        Key::Char('\t') | Key::Tab => KeyCode::Tab,
+        Key::Char('\r') | Key::Enter => KeyCode::Enter,
+        Key::Char('\x1b') | Key::Escape => KeyCode::Esc,
         Key::Char(ch) => KeyCode::Char(ch),
-        Key::Backspace => KeyCode::Backspace,
-        Key::Tab if mods.contains(Modifiers::SHIFT) => KeyCode::BackTab,
-        Key::Tab => KeyCode::Tab,
-        Key::Enter => KeyCode::Enter,
-        Key::Escape => KeyCode::Esc,
         Key::LeftArrow | Key::ApplicationLeftArrow => KeyCode::Left,
         Key::RightArrow | Key::ApplicationRightArrow => KeyCode::Right,
         Key::UpArrow | Key::ApplicationUpArrow => KeyCode::Up,

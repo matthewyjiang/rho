@@ -2,32 +2,22 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use crossterm::{
-    event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
-        KeyModifiers,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
-struct SecretTerminal;
+use crate::tui::InlinePromptInput;
 
-impl Drop for SecretTerminal {
-    fn drop(&mut self) {
-        let _ = execute!(io::stderr(), DisableBracketedPaste);
-        let _ = disable_raw_mode();
-        let _ = writeln!(io::stderr());
-    }
-}
-
-pub(super) fn read(label: &str) -> anyhow::Result<String> {
+pub(super) async fn read(label: &str) -> anyhow::Result<String> {
     if !crate::stdio::stdin_is_terminal() || !io::stderr().is_terminal() {
         anyhow::bail!("API-key login requires an interactive terminal");
     }
-    enable_raw_mode()?;
-    let _terminal = SecretTerminal;
-    execute!(io::stderr(), EnableBracketedPaste)?;
+    let secret = read_hidden(label).await;
+    // Raw mode has ended, so this newline also returns the cursor.
+    let _ = writeln!(io::stderr());
+    secret
+}
+
+async fn read_hidden(label: &str) -> anyhow::Result<String> {
+    let mut input = InlinePromptInput::acquire()?;
     write!(
         io::stderr(),
         "enter {label} (input hidden; Enter save, Esc cancel): "
@@ -36,7 +26,7 @@ pub(super) fn read(label: &str) -> anyhow::Result<String> {
 
     let mut secret = String::new();
     loop {
-        match event::read()? {
+        match input.next().await? {
             Event::Key(key) if key.kind != KeyEventKind::Release => match key.code {
                 KeyCode::Esc => anyhow::bail!("login cancelled"),
                 KeyCode::Char('c' | 'C' | 'd' | 'D')
