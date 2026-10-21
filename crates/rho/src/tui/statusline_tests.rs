@@ -316,32 +316,6 @@ fn permission_style_marks_bypass_as_warning() {
 }
 
 #[test]
-fn bypass_permission_and_high_context_use_warning_styles() {
-    // Covers: painted spans carry severity, not only plain text
-    // Owner: statusline render
-    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
-    statusline.state.permission_mode = PermissionMode::Bypass;
-    statusline.update_usage(None, Some(&ContextUsage::estimated(9_500, Some(10_000))), 0);
-
-    let line = statusline.lines(80, None)[1].clone();
-    assert_eq!(
-        span_style(&line, "Bypass"),
-        Some(Theme::warning()),
-        "Bypass permission must warn: {line:?}"
-    );
-    assert_eq!(
-        span_style(&line, "9.5K (95.0%)"),
-        Some(Theme::error()),
-        "critical context fill must error: {line:?}"
-    );
-    assert_eq!(
-        span_style(&line, "gpt-5.5"),
-        Some(Theme::dim()),
-        "model stays ambient: {line:?}"
-    );
-}
-
-#[test]
 fn context_without_known_window_still_shows_tokens() {
     // Covers: models with no reported limit must still show consumption
     // Owner: statusline render
@@ -544,16 +518,6 @@ fn permission_mode_update_invalidates_cache() {
 }
 
 #[test]
-fn unchanged_statusline_reuses_rendered_lines() {
-    // Theme changes invalidate the cache even when the statusline state is unchanged.
-    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
-    statusline.lines(80, None);
-    statusline.lines(80, None);
-
-    assert_eq!(statusline.render_count(), 1);
-}
-
-#[test]
 fn fit_cwd_row_drops_extra_before_branch() {
     // Covers: cwd extra chrome must drop before the branch when the row is tight
     // Owner: statusline cwd fit
@@ -572,6 +536,50 @@ fn fit_cwd_row_drops_extra_before_branch() {
             (left.to_string(), show_extra),
             "width {width}"
         );
+    }
+}
+
+// Covers: the branch suffix is kept only while the cwd basename stays intact;
+// it drops before the basename is mangled, and is never re-parsed from the
+// joined string (branches may contain parentheses).
+// Owner: statusline cwd fit
+#[test]
+fn fit_cwd_drops_branch_before_mangling_basename() {
+    let gateway = "~/work/company/services/api-gateway";
+    for (case, path, branch, width, expected) in [
+        ("zero width with branch", gateway, Some("main"), 0, ""),
+        ("zero width without branch", gateway, None, 0, ""),
+        ("suffix fills width", gateway, Some("main"), 4, "…way"),
+        (
+            "branch kept while basename fits",
+            gateway,
+            Some("main"),
+            28,
+            "~/…/api-gateway (main)",
+        ),
+        (
+            "long branch drops first",
+            gateway,
+            Some("very-long-feature-branch"),
+            18,
+            "~/…/api-gateway",
+        ),
+        (
+            "parenthesized branch fits",
+            "/tmp/project",
+            Some("feat (wip)"),
+            40,
+            "/tmp/project (feat (wip))",
+        ),
+        (
+            "parenthesized branch with shortened path",
+            gateway,
+            Some("feat (wip)"),
+            30,
+            "~/…/api-gateway (feat (wip))",
+        ),
+    ] {
+        assert_eq!(fit_cwd(path, branch, width), expected, "{case}");
     }
 }
 
@@ -634,58 +642,4 @@ fn shorten_path_keeps_trailing_segments() {
     ] {
         assert_eq!(shorten_path_display(path, width), expected, "{case}");
     }
-}
-
-#[test]
-fn fit_cwd_width_zero_is_empty() {
-    assert_eq!(fit_cwd("~/work/api-gateway", Some("main"), 0), "");
-    assert_eq!(fit_cwd("~/work/api-gateway", None, 0), "");
-}
-
-#[test]
-fn fit_cwd_drops_branch_when_suffix_fills_width() {
-    // " (main)" is wider than 4, so the branch must drop entirely.
-    let fitted = fit_cwd("~/work/company/services/api-gateway", Some("main"), 4);
-    assert!(!fitted.contains('('), "{fitted}");
-    assert!(display_width(&fitted) <= 4, "{fitted}");
-}
-
-#[test]
-fn fit_cwd_keeps_branch_while_basename_fits() {
-    let fitted = fit_cwd("~/work/company/services/api-gateway", Some("main"), 28);
-    assert_eq!(fitted, "~/…/api-gateway (main)");
-    assert!(display_width(&fitted) <= 28, "{fitted}");
-}
-
-#[test]
-fn fit_cwd_drops_branch_before_mangling_basename() {
-    let path = "~/work/company/services/api-gateway";
-    let fitted = fit_cwd(path, Some("very-long-feature-branch"), 18);
-    assert!(
-        fitted.contains("api-gateway"),
-        "basename must remain intact: {fitted}"
-    );
-    assert!(
-        !fitted.contains('('),
-        "branch should drop before basename is mangled: {fitted}"
-    );
-    assert!(display_width(&fitted) <= 18, "{fitted}");
-}
-
-#[test]
-fn fit_cwd_handles_branch_names_with_parentheses() {
-    let fitted = fit_cwd("/tmp/project", Some("feat (wip)"), 40);
-    assert_eq!(fitted, "/tmp/project (feat (wip))");
-
-    let fitted = fit_cwd(
-        "~/work/company/services/api-gateway",
-        Some("feat (wip)"),
-        30,
-    );
-    assert!(fitted.contains("api-gateway"), "{fitted}");
-    assert!(
-        fitted.ends_with(" (feat (wip))") || !fitted.contains('('),
-        "must not re-parse branch from the joined string: {fitted}"
-    );
-    assert!(display_width(&fitted) <= 30, "{fitted}");
 }

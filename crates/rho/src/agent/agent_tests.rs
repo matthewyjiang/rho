@@ -138,25 +138,6 @@ fn edit_capability_format_names_match_edit() {
     }
 }
 
-#[test]
-fn current_fingerprint_uses_v2_marker_and_differs_from_legacy_v1() {
-    let definition = parse_definition(
-        Path::new("default.md"),
-        "default",
-        "---\ndescription: demo\ntools: all\n---\n",
-    )
-    .unwrap();
-    let current = definition.fingerprint().to_string();
-    let legacy = definition
-        .legacy_v1_fingerprint()
-        .expect("default rho definition encodes legacy v1")
-        .to_string();
-    assert_ne!(current, legacy);
-    assert!(definition.accepts_stored_fingerprint(&current));
-    assert!(definition.accepts_stored_fingerprint(&legacy));
-    assert!(!definition.accepts_stored_fingerprint("deadbeef"));
-}
-
 /// Golden v1 fingerprints for builtin agents, so resume keeps accepting the
 /// values sessions stored before the runtime axis.
 ///
@@ -266,32 +247,6 @@ fn internal_agents_are_visible_but_not_selectable() {
         .all(|origin| *origin != AgentOrigin::Internal));
 }
 
-// Covers: model-required internal agents stay unconfigured until a model is chosen
-// Owner: internal agent definitions
-#[test]
-fn model_required_internal_agents_require_their_own_model() {
-    let requires = internal_definitions()
-        .iter()
-        .map(|definition| {
-            (
-                definition.id.as_str(),
-                internal_agent_requires_model(definition.id.as_str()),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        requires,
-        vec![
-            (SESSION_TITLE_AGENT_ID, false),
-            (GOAL_JUDGE_AGENT_ID, false),
-            (ADVISOR_AGENT_ID, true),
-            (PERMISSION_CLASSIFIER_AGENT_ID, true),
-            (COMPACTION_AGENT_ID, false),
-        ]
-    );
-}
-
 #[test]
 fn project_definitions_require_explicit_trust() {
     let project = tempfile::tempdir().unwrap();
@@ -360,20 +315,6 @@ fn workflow_entry_loads_local_agents_directory() {
     let entry = with.find("boundary-reviewer").unwrap();
     assert_eq!(entry.metadata.origin, AgentOrigin::Workflow);
     assert_eq!(entry.definition.description, "workflow-local specialist");
-}
-
-// Covers: path helper keeps agents next to the workflow entry parent.
-// Owner: agent catalog discovery.
-#[test]
-fn workflow_local_agents_root_is_sibling_agents_dir() {
-    assert_eq!(
-        workflow_local_agents_root(Path::new(".rho/workflows/review/workflow.star")),
-        PathBuf::from(".rho/workflows/review/agents")
-    );
-    assert_eq!(
-        workflow_local_agents_root(Path::new("workflow.star")),
-        PathBuf::from("agents")
-    );
 }
 
 // Covers: plugin agents rank above built-ins but below every user file tier,

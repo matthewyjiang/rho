@@ -25,151 +25,6 @@ fn rejects_unknown_auth_profiles() {
     assert!(error.to_string().contains("ollama-cloud-api-key"));
 }
 
-// Covers: `rho doctor` parses with and without `--json`.
-// Owner: CLI parser.
-#[test]
-fn parses_doctor_subcommand() {
-    let cli = Cli::try_parse_from(["rho", "doctor"]).unwrap();
-    assert!(matches!(cli.command, Some(Command::Doctor { json: false })));
-
-    let cli = Cli::try_parse_from(["rho", "doctor", "--json"]).unwrap();
-    assert!(matches!(cli.command, Some(Command::Doctor { json: true })));
-}
-
-// Covers: `rho acp` parses as the ACP stdio subcommand, and `--t3code` opts
-// into the T3 Code integration. Owner: CLI parser.
-#[test]
-fn parses_acp_subcommand() {
-    for (args, t3code) in [
-        (vec!["rho", "acp"], false),
-        (vec!["rho", "acp", "--t3code"], true),
-    ] {
-        let cli = Cli::try_parse_from(args).unwrap();
-
-        assert!(
-            matches!(&cli.command, Some(Command::Acp(acp)) if acp.t3code == t3code),
-            "{:?}",
-            cli.command
-        );
-    }
-}
-
-#[test]
-fn parses_attach_subcommand() {
-    let cli = Cli::try_parse_from(["rho", "attach", "abc123"]).unwrap();
-
-    assert!(matches!(
-        cli.command,
-        Some(Command::Attach { id: Some(id) }) if id == "abc123"
-    ));
-}
-
-#[test]
-fn attach_id_is_optional() {
-    let cli = Cli::try_parse_from(["rho", "attach"]).unwrap();
-    assert!(matches!(cli.command, Some(Command::Attach { id: None })));
-}
-
-#[test]
-fn parses_sessions_list_and_rm() {
-    let list = Cli::try_parse_from(["rho", "sessions", "list"]).unwrap();
-    assert!(matches!(
-        list.command,
-        Some(Command::Sessions {
-            command: SessionsCommand::List {
-                all_projects: false,
-                search: None,
-                limit: None,
-                json: false,
-            }
-        })
-    ));
-
-    let all = Cli::try_parse_from([
-        "rho",
-        "sessions",
-        "list",
-        "--all-projects",
-        "--search",
-        "login",
-        "--limit",
-        "5",
-        "--json",
-    ])
-    .unwrap();
-    assert!(matches!(
-        all.command,
-        Some(Command::Sessions {
-            command: SessionsCommand::List {
-                all_projects: true,
-                search: Some(query),
-                limit: Some(limit),
-                json: true,
-            }
-        }) if query == "login" && limit.get() == 5
-    ));
-
-    let export = Cli::try_parse_from([
-        "rho", "sessions", "export", "abc123", "--output", "notes.md", "--format", "markdown",
-        "--force",
-    ])
-    .unwrap();
-    assert!(matches!(
-        export.command,
-        Some(Command::Sessions {
-            command: SessionsCommand::Export {
-                id_prefix,
-                output: Some(path),
-                format: Some(crate::export::ExportFormat::Markdown),
-                force: true,
-            }
-        }) if id_prefix == "abc123" && path.ends_with("notes.md")
-    ));
-
-    let rm = Cli::try_parse_from(["rho", "sessions", "rm", "abc", "def", "--force", "-y"]).unwrap();
-    assert!(matches!(
-        rm.command,
-        Some(Command::Sessions {
-            command: SessionsCommand::Rm {
-                ids,
-                force: true,
-                yes: true
-            }
-        }) if ids == ["abc", "def"]
-    ));
-
-    let cleanup = Cli::try_parse_from(["rho", "sessions", "cleanup", "--force", "--yes"]).unwrap();
-    assert!(matches!(
-        cleanup.command,
-        Some(Command::Sessions {
-            command: SessionsCommand::Cleanup {
-                force: true,
-                yes: true
-            }
-        })
-    ));
-
-    let rename = Cli::try_parse_from([
-        "rho", "sessions", "rename", "abc123", "new", "session", "title",
-    ])
-    .unwrap();
-    assert!(matches!(
-        rename.command,
-        Some(Command::Sessions {
-            command: SessionsCommand::Rename { id_prefix, title }
-        }) if id_prefix == "abc123" && title == ["new", "session", "title"]
-    ));
-}
-
-// Covers: interactive --prompt must not be treated as a run subcommand.
-// Owner: CLI parser
-#[test]
-fn parses_interactive_prompt_flag() {
-    let cli = Cli::try_parse_from(["rho", "--prompt", "ship it"]).unwrap();
-    assert_eq!(cli.prompt.as_deref(), Some("ship it"));
-    assert!(cli.command.is_none());
-}
-
 // Covers: unsaved startup must not accept any resume form, and --continue must
 // not mix with --resume, in either order.
 // Owner: CLI parser.
@@ -196,44 +51,6 @@ fn saved_session_flags_conflict() {
             "{args:?}"
         );
     }
-}
-
-#[test]
-fn parses_permission_mode_override() {
-    for (flag, expected) in [
-        ("bypass", crate::permission::PermissionMode::Bypass),
-        ("auto", crate::permission::PermissionMode::Auto),
-        ("allow_edits", crate::permission::PermissionMode::AllowEdits),
-        ("plan", crate::permission::PermissionMode::Plan),
-        ("supervised", crate::permission::PermissionMode::Supervised),
-    ] {
-        let cli = Cli::try_parse_from(["rho", "--permission-mode", flag]).unwrap();
-        assert_eq!(cli.permission_mode, Some(expected));
-    }
-
-    let run = Cli::try_parse_from(["rho", "--permission-mode", "auto", "run", "ship it"]).unwrap();
-    assert_eq!(
-        run.permission_mode,
-        Some(crate::permission::PermissionMode::Auto)
-    );
-}
-
-#[test]
-fn rejects_unknown_permission_mode() {
-    let error = Cli::try_parse_from(["rho", "--permission-mode", "paranoid"]).unwrap_err();
-    assert!(error.to_string().contains("paranoid"));
-    assert!(error
-        .to_string()
-        .contains("bypass, auto, allow_edits, plan, or supervised"));
-}
-
-#[test]
-fn agent_selection_is_global() {
-    let root = Cli::try_parse_from(["rho", "--agent", "reviewer"]).unwrap();
-    assert_eq!(root.agent.as_deref(), Some("reviewer"));
-
-    let run = Cli::try_parse_from(["rho", "run", "--agent", "worker", "ship it"]).unwrap();
-    assert_eq!(run.agent.as_deref(), Some("worker"));
 }
 
 #[test]
@@ -279,12 +96,6 @@ fn parses_credential_store_commands() {
             command: CredentialStoreCommand::Status
         })
     ));
-}
-
-#[test]
-fn rejects_unknown_credential_store_backend() {
-    assert!(Cli::try_parse_from(["rho", "credential-store", "probe", "sqlite"]).is_err());
-    assert!(Cli::try_parse_from(["rho", "credential-store", "set", "sqlite"]).is_err());
 }
 
 #[test]

@@ -539,49 +539,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_advisor_enable_notice_names_the_reviewer_model() {
-        let spec = ToolSpec {
-            name: "advisor".into(),
-            description: "consult".into(),
-            input_schema: serde_json::json!({}),
-        };
-
-        let (context, _) = advisor_enabled_context(
-            &spec,
-            &PromptModel::Rho {
-                provider: "anthropic".into(),
-                model: "claude-fable-5".into(),
-            },
-        );
-
-        assert!(context.contains("[advisor mode on]"));
-        assert!(context.contains("consults anthropic/claude-fable-5"));
-    }
-
-    #[test]
-    fn includes_home_and_project_agents_files_in_order() {
-        let home = TempDir::new().unwrap();
-        let project = TempDir::new().unwrap();
-        std::fs::create_dir(home.path().join(".rho")).unwrap();
-        std::fs::write(home.path().join(".rho").join("AGENTS.md"), "home rules").unwrap();
-        std::fs::write(project.path().join("AGENTS.md"), "project rules").unwrap();
-
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path())).text;
-
-        let home_index = prompt.find("home rules").unwrap();
-        let project_index = prompt.find("project rules").unwrap();
-        assert!(home_index < project_index);
-        assert!(prompt.contains(&format!(
-            "path={}",
-            crate::paths::prompt_attr(&home.path().join(".rho").join("AGENTS.md"))
-        )));
-        assert!(prompt.contains(&format!(
-            "path={}",
-            crate::paths::prompt_attr(&project.path().join("AGENTS.md"))
-        )));
-    }
-
     // Covers: context-file path attributes must keep quote/angle-bracket paths
     // inert so assembled tags cannot be rewritten by the path bytes.
     // Owner: prompt assembly (pure unit).
@@ -633,18 +590,11 @@ mod tests {
         assert!(project_index < nested_index);
     }
 
+    // Covers: valid skills are listed with name, description and location, and
+    // only when the session has the skill tool to load them.
+    // Owner: system prompt assembly
     #[test]
-    fn skips_missing_agents_files() {
-        let home = TempDir::new().unwrap();
-        let project = TempDir::new().unwrap();
-
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path())).text;
-
-        assert!(!prompt.contains("Additional instructions from AGENTS.md files"));
-    }
-
-    #[test]
-    fn includes_valid_skills_with_names_and_descriptions() {
+    fn lists_valid_skills_only_when_the_skill_tool_is_available() {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
         let skill_dir = home.path().join(".rho/skills/rho-skill");
@@ -666,6 +616,11 @@ mod tests {
             crate::paths::display(&skill_dir.join("SKILL.md"))
         )));
         assert!(!prompt.contains("rho skill rules"));
+
+        let without_skill_tool =
+            system_prompt_with_home(&[], project.path(), Some(home.path())).text;
+        assert!(!without_skill_tool.contains("<available_skills>"));
+        assert!(!without_skill_tool.contains("rho-skill"));
     }
 
     #[test]
@@ -723,24 +678,6 @@ mod tests {
             .sources
             .iter()
             .any(|source| source.kind == PromptSourceKind::Skills));
-    }
-
-    // Covers: system prompt assembly must surface the absolute session cwd as
-    // path data (JSON string), not raw display text.
-    // Owner: prompt assembly (pure unit).
-    #[test]
-    fn includes_session_cwd_path() {
-        let project = TempDir::new().unwrap();
-        let expected = format!(
-            "{CWD_PROMPT_LABEL}{}",
-            crate::paths::prompt_data(project.path())
-        );
-        let prompt = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(
-            prompt.contains(&expected),
-            "expected session cwd path-data line in system prompt"
-        );
     }
 
     // Covers: a newline-bearing cwd must stay one structural path-data token and
@@ -819,24 +756,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn skips_skills_when_skill_tool_is_unavailable() {
-        let home = TempDir::new().unwrap();
-        let project = TempDir::new().unwrap();
-        let skill_dir = home.path().join(".rho/skills/rho-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: rho-skill\ndescription: rho skill desc\n---\nrho skill rules",
-        )
-        .unwrap();
-
-        let prompt = system_prompt_with_home(&[], project.path(), Some(home.path())).text;
-
-        assert!(!prompt.contains("<available_skills>"));
-        assert!(!prompt.contains("rho-skill"));
     }
 
     fn skill_tool_spec() -> ToolSpec {

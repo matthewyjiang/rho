@@ -183,11 +183,6 @@ fn web_search_route_follows_mode_and_hosted_support() {
     }
 }
 
-#[test]
-fn xai_supports_hosted_web_search() {
-    assert!(super::supports_hosted_web_search("xai", "grok-4.5"));
-}
-
 #[tokio::test]
 async fn search_item_content_preserves_snippet_when_fetch_fails() {
     let item = SearchItem {

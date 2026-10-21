@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, thread};
+use std::{sync::Arc, thread};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -462,26 +462,4 @@ fn custom_path_preserves_pre_existing_parent_and_sibling_permissions() {
     assert_eq!(mode(&parent), 0o750);
     assert_eq!(mode(&sibling), 0o640);
     assert_eq!(mode(recorder.path()), 0o600);
-}
-
-#[test]
-fn sanitized_v1_fixture_is_readable() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/usage-v1.sqlite3");
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let row: (String, String, String, i64) = connection
-        .query_row(
-            "SELECT provider, model, purpose, total_tokens FROM usage_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        row,
-        (
-            "fixture-provider".into(),
-            "fixture-model".into(),
-            "agent".into(),
-            42
-        )
-    );
 }

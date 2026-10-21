@@ -193,3 +193,7 @@ fn is_lock_busy(error: &io::Error) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "file_lock_tests.rs"]
+mod tests;

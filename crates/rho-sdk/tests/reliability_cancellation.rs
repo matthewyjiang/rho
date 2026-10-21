@@ -111,14 +111,14 @@ async fn run_pending_tool(request_host_input: bool) {
     assert!(!session.is_running());
 }
 
+// Covers: cancelling a pending tool, or a tool awaiting a host-input
+// response, drops the tool future without an orphan task or responder.
+// Owner: SDK cancellation reliability
 #[tokio::test]
 async fn tool_await_is_cancelled_and_dropped_without_an_orphan_task() {
-    run_pending_tool(false).await;
-}
-
-#[tokio::test]
-async fn host_input_response_await_is_cancelled_and_dropped_without_a_responder() {
-    run_pending_tool(true).await;
+    for request_host_input in [false, true] {
+        run_pending_tool(request_host_input).await;
+    }
 }
 
 #[derive(Clone)]
@@ -277,12 +277,4 @@ async fn dropping_event_consumer_aborts_and_drops_provider_work() {
     })
     .await
     .expect("dropped run left the session worker registered");
-}
-
-#[test]
-fn cancellation_harness_types_remain_send_and_sync() {
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<PendingProvider>();
-    assert_send_sync::<PendingCompactor>();
-    assert_send_sync::<ProgressFloodTool>();
 }

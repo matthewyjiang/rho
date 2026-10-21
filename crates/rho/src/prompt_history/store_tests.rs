@@ -11,7 +11,7 @@ fn store() -> (TempDir, PromptHistoryStore) {
     (directory, store)
 }
 
-// Covers: appends survive a reopen and load oldest-first.
+// Covers: appends survive a reopen and load the newest N oldest-first.
 // Owner: prompt history store
 #[test]
 fn append_round_trips_oldest_first() {
@@ -29,6 +29,7 @@ fn append_round_trips_oldest_first() {
         reopened.load_tail(10).unwrap(),
         vec!["first".to_string(), "second".to_string()]
     );
+    assert_eq!(reopened.load_tail(1).unwrap(), vec!["second".to_string()]);
 }
 
 // Covers: enforce_limit drops oldest rows without inserting.
@@ -78,49 +79,6 @@ fn consecutive_duplicate_is_skipped() {
             "world".to_string(),
             "hello".to_string()
         ]
-    );
-}
-
-// Covers: load_tail smaller than stored returns the newest N, oldest first.
-// Owner: prompt history store
-#[test]
-fn load_tail_returns_newest_n() {
-    let (_directory, store) = store();
-    store.append("one", 10).unwrap();
-    store.append("two", 10).unwrap();
-    store.append("three", 10).unwrap();
-
-    assert_eq!(
-        store.load_tail(2).unwrap(),
-        vec!["two".to_string(), "three".to_string()]
-    );
-}
-
-// Covers: clear empties the table and later appends still work.
-// Owner: prompt history store
-#[test]
-fn clear_empties_then_accepts_appends() {
-    let (_directory, store) = store();
-    store.append("keep", 10).unwrap();
-    store.clear().unwrap();
-    assert!(store.load_tail(10).unwrap().is_empty());
-
-    store.append("after", 10).unwrap();
-    assert_eq!(store.load_tail(10).unwrap(), vec!["after".to_string()]);
-}
-
-// Covers: two handles on one path can append without error.
-// Owner: prompt history store
-#[test]
-fn concurrent_handles_append_without_error() {
-    let (_directory, first) = store();
-    let second = PromptHistoryStore::open_path(first.path()).unwrap();
-    first.append("from-first", 10).unwrap();
-    second.append("from-second", 10).unwrap();
-
-    assert_eq!(
-        first.load_tail(10).unwrap(),
-        vec!["from-first".to_string(), "from-second".to_string()]
     );
 }
 

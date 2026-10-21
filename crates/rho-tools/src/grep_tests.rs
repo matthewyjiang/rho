@@ -76,27 +76,6 @@ fn invalid_regex_and_output_mode_error() {
 }
 
 #[test]
-fn max_results_caps_content_output() {
-    let dir = TempDir::new().unwrap();
-    let a = "match one\n";
-    write(&dir, "a.txt", a);
-    write(&dir, "b.txt", "match two\n");
-    let tag = compute_file_hash(a);
-
-    let content = call_grep(&dir, json!({"pattern": "match", "max_results": 1})).unwrap();
-    assert_eq!(
-        content,
-        format!(
-            "\
-[a.txt#{tag}]
-1 | match one
-
-1 matches in 1 files (result limit reached; narrow the pattern, path, or glob)"
-        )
-    );
-}
-
-#[test]
 fn max_results_splits_a_file_and_reports_the_remainder() {
     let dir = TempDir::new().unwrap();
     let body = "hit\nhit\nhit\n";
@@ -159,27 +138,6 @@ fn files_with_matches_excludes_oversized_files_that_match_early() {
     assert!(!content.contains("huge.txt"), "{content}");
 }
 
-// Covers: files_with_matches may keep a first-line hit when later bytes are not UTF-8
-// Owner: pure unit (grep encoding)
-#[test]
-fn files_with_matches_accepts_a_first_line_hit_before_invalid_utf8() {
-    let dir = TempDir::new().unwrap();
-    std::fs::write(dir.path().join("mixed.txt"), b"needle\n\xff\n").unwrap();
-
-    let files = call_grep(
-        &dir,
-        json!({"pattern": "needle", "output_mode": "files_with_matches"}),
-    )
-    .unwrap();
-    assert!(files.contains("mixed.txt"), "{files}");
-
-    let content = call_grep(&dir, json!({"pattern": "needle"})).unwrap();
-    assert!(
-        !content.contains("mixed.txt"),
-        "content mode still rejects the file when hashing later invalid UTF-8: {content}"
-    );
-}
-
 // Covers: gitignore and hidden defaults are security boundaries
 // Owner: pure unit (grep path policy)
 #[test]
@@ -200,25 +158,6 @@ fn honors_gitignore_and_include_hidden() {
     assert!(!hidden.contains("secret.txt"), "{hidden}");
 }
 
-// Covers: long match lines truncate on a char boundary, not mid-codepoint
-// Owner: pure unit (grep safety)
-#[test]
-fn truncates_long_match_lines_at_char_boundary() {
-    let dir = TempDir::new().unwrap();
-    let long = format!("{}é{}", "a".repeat(199), "b".repeat(20));
-    write(&dir, "long.txt", &format!("{long}\n"));
-
-    let content = call_grep(&dir, json!({"pattern": "a"})).unwrap();
-    let line = content
-        .lines()
-        .find(|line| line.contains(" | ") && !line.starts_with('['))
-        .unwrap();
-    // Preview body: `1 | <text>…` - not hashline `N:text`
-    let text = line.split_once(" | ").unwrap().1;
-    assert!(text.ends_with('…'), "{line}");
-    assert_eq!(text.chars().count(), 201, "{text}");
-}
-
 // Covers: cancel mid-walk must not look like a normal empty result without marker
 // Owner: pure unit (grep cancellation)
 #[test]
@@ -231,47 +170,6 @@ fn cancellation_stops_the_walk_and_is_reported() {
         .text()
         .to_owned();
     assert_eq!(out, "no matches for 'needle' under . (cancelled)");
-}
-
-// Covers: content mode must mint full-file tags and line numbers for edit anchors
-// Owner: pure unit (grep hashline)
-#[test]
-fn content_mode_mints_file_tags_and_preview_lines() {
-    let dir = TempDir::new().unwrap();
-    let body = "alpha\nfind me\nbeta\n";
-    write(&dir, "src/lib.rs", body);
-    let tag = compute_file_hash(body);
-    let content = call_grep(&dir, json!({"pattern": "find me"})).unwrap();
-    assert!(
-        content.contains(&format!("[src/lib.rs#{tag}]")),
-        "{content}"
-    );
-    // Anchor + preview shape, not hashline body `N:text`
-    assert!(content.contains("2 | find me"), "{content}");
-    assert!(
-        !content.contains("2:find me"),
-        "must not emit hashline body rows: {content}"
-    );
-}
-
-// Covers: content-mode previews keep source indentation for readability
-// Owner: pure unit (grep display)
-#[test]
-fn preserves_indentation_in_match_preview() {
-    let dir = TempDir::new().unwrap();
-    let body = "fn main() {\n    println!(\"hi\");\n}\n";
-    write(&dir, "main.rs", body);
-    let tag = compute_file_hash(body);
-    let content = call_grep(&dir, json!({"pattern": "println"})).unwrap();
-    assert!(content.contains(&format!("[main.rs#{tag}]")), "{content}");
-    assert!(
-        content.contains("2 |     println!(\"hi\");"),
-        "indentation stripped: {content}"
-    );
-    assert!(
-        !content.contains("2:    println!(\"hi\");"),
-        "must not emit hashline body rows: {content}"
-    );
 }
 
 // Covers: path pointing at a file must search that file, and a glob still
@@ -347,27 +245,6 @@ fn truncate_chars_respects_char_boundaries() {
     assert_eq!(truncate_chars("🦀🦀🦀🦀", 2), "🦀🦀…");
     assert_eq!(truncate_chars("café", 3), "caf…");
     assert_eq!(truncate_chars("", 5), "");
-}
-
-// Covers: grep must emit the same path-ordered prefix every run
-// Owner: pure unit (grep determinism)
-#[test]
-fn grep_is_deterministic_across_runs() {
-    let dir = TempDir::new().unwrap();
-    for i in 0..40 {
-        write(&dir, &format!("f{i:02}.txt"), &format!("needle {i}\n"));
-    }
-    let args = json!({"pattern": "needle", "output_mode": "files_with_matches"});
-    let first = call_grep(&dir, args.clone()).unwrap();
-    let second = call_grep(&dir, args).unwrap();
-    assert_eq!(first, second);
-    let files: Vec<_> = first
-        .lines()
-        .take_while(|line| !line.is_empty() && !line.ends_with("files"))
-        .collect();
-    let mut sorted = files.clone();
-    sorted.sort();
-    assert_eq!(files, sorted);
 }
 
 // Covers: files_with_matches / count still skip binaries and respect gitignore

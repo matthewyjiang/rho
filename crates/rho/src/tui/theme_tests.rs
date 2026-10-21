@@ -107,25 +107,6 @@ fn resolves_windows_console_palette_in_attribute_bit_order() {
 }
 
 #[test]
-fn chooses_dark_block_foreground_for_light_resolved_backgrounds() {
-    Theme::apply_committed("terminal");
-    assert_eq!(
-        block_foreground(Some(Rgb::new(240, 240, 240))),
-        Color::Black
-    );
-    assert_eq!(block_foreground(Some(Rgb::new(20, 20, 20))), Color::White);
-    assert_eq!(block_foreground(None), Color::White);
-}
-
-#[test]
-fn blends_toward_terminal_ansi_color() {
-    let base = Rgb::new(10, 10, 10);
-    let green = Rgb::new(10, 110, 10);
-
-    assert_eq!(base.blend_toward(green, 0.16), Rgb::new(10, 26, 10));
-}
-
-#[test]
 fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
     Theme::apply_committed("terminal");
     let palette = TerminalPalette {
@@ -139,6 +120,8 @@ fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
 
     assert_eq!(background.color, Color::Rgb(254, 254, 254));
     assert_eq!(block_foreground(background.rgb), Color::Black);
+    assert_eq!(block_foreground(Some(Rgb::new(20, 20, 20))), Color::White);
+    assert_eq!(block_foreground(None), Color::White);
 }
 
 // Covers: reasoning uses Theme::dim only, not a second DIM modifier
@@ -508,14 +491,17 @@ fn role_ink_darkens_bright_yellow_on_light_surface() {
     );
 }
 
-// Covers: preview does not commit; cancel restores committed
+// Covers: apply commits and bumps the generation; preview does not commit;
+// cancel restores committed
 // Owner: tui theme state
 #[test]
 fn preview_then_cancel_restores_committed() {
     Theme::apply_committed("terminal");
+    let generation = Theme::generation();
     Theme::apply_committed("one-half-dark");
     assert_eq!(Theme::committed_id(), "one-half-dark");
     assert_eq!(Theme::active_id(), "one-half-dark");
+    assert!(Theme::generation() > generation);
 
     Theme::preview("monochrome-light");
     assert_eq!(Theme::committed_id(), "one-half-dark");
@@ -528,16 +514,13 @@ fn preview_then_cancel_restores_committed() {
     Theme::apply_committed("terminal");
 }
 
-// Covers: apply_committed updates both active and committed
+// Covers: re-applying the active theme is not a change, so it does not bump
+// the generation that triggers a full repaint
 // Owner: tui theme state
 #[test]
-fn apply_committed_updates_active_and_committed() {
+fn reapplying_the_active_theme_keeps_the_generation() {
     Theme::apply_committed("terminal");
+    let generation = Theme::generation();
     Theme::apply_committed("terminal");
-    let gen = Theme::generation();
-    Theme::apply_committed("one-half-light");
-    assert_eq!(Theme::committed_id(), "one-half-light");
-    assert_eq!(Theme::active_id(), "one-half-light");
-    assert!(Theme::generation() > gen);
-    Theme::apply_committed("terminal");
+    assert_eq!(Theme::generation(), generation);
 }

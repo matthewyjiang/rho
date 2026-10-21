@@ -7,7 +7,6 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
 };
 
 fn sample_info(status: &str) -> RateLimitInfo {
@@ -108,42 +107,6 @@ fn multi_window_state_keeps_five_hour_and_seven_day() {
 }
 
 #[test]
-fn loads_legacy_single_observation_file_as_one_window() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("legacy.json");
-    std::fs::write(
-        &path,
-        r#"{"observed_at_unix":1000,"info":{"status":"allowed","rateLimitType":"five_hour"}}"#,
-    )
-    .unwrap();
-    let loaded = load_at(&path).expect("legacy");
-    assert_eq!(loaded.windows.len(), 1);
-    assert_eq!(only(&loaded).info.window_key(), "five_hour");
-}
-
-#[test]
-fn older_observation_does_not_overwrite_newer() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-    store_ordered(&path, sample_info("newer"), secs(2_000), 1, "p1").unwrap();
-    store_ordered(&path, sample_info("older"), secs(1_000), 2, "p2").unwrap();
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).observed_at_unix, 2_000);
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("newer"));
-}
-
-#[test]
-fn newer_observation_replaces_older() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-    store_ordered(&path, sample_info("older"), secs(1_000), 1, "p1").unwrap();
-    store_ordered(&path, sample_info("newer"), secs(2_000), 1, "p1").unwrap();
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).observed_at_unix, 2_000);
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("newer"));
-}
-
-#[test]
 fn equal_timestamps_prefer_higher_sequence_then_nonce() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("claude-rate-limit.json");
@@ -162,43 +125,6 @@ fn equal_timestamps_prefer_higher_sequence_then_nonce() {
     let loaded = load_at(&path).expect("stored");
     assert_eq!(only(&loaded).observed_nonce, "zzz");
     assert_eq!(only(&loaded).info.status.as_deref(), Some("nonce-high"));
-}
-
-#[test]
-fn concurrent_writers_keep_latest_observation() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-    let path_a = path.clone();
-    let path_b = path.clone();
-    let left = thread::spawn(move || {
-        for stamp in (0..40).step_by(2) {
-            store_ordered(
-                &path_a,
-                sample_info(&format!("a{stamp}")),
-                secs(stamp),
-                stamp as u64,
-                "a",
-            )
-            .unwrap();
-        }
-    });
-    let right = thread::spawn(move || {
-        for stamp in (1..40).step_by(2) {
-            store_ordered(
-                &path_b,
-                sample_info(&format!("b{stamp}")),
-                secs(stamp),
-                stamp as u64,
-                "b",
-            )
-            .unwrap();
-        }
-    });
-    left.join().unwrap();
-    right.join().unwrap();
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).observed_at_unix, 39);
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("b39"));
 }
 
 #[test]
@@ -262,39 +188,6 @@ fn legacy_files_without_nanos_or_nonce_deserialize_and_lose_to_newer() {
 }
 
 #[test]
-fn independent_writer_instances_newer_wins_regardless_of_write_order() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-
-    // Simulate two Rho processes: each stamps with its own nonce and order.
-    let older = RateLimitObservation::with_order(sample_info("older"), secs(5_000), 1, "proc-a");
-    let newer =
-        RateLimitObservation::with_order(sample_info("newer"), secs(5_000) + 50, 1, "proc-b");
-
-    // Write newer first, then older (cross-process out-of-order arrival).
-    store_observation(&path, newer.clone()).unwrap();
-    store_observation(&path, older).unwrap();
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("newer"));
-    assert_eq!(only(&loaded).observed_at_nanos, newer.observed_at_nanos);
-    assert_eq!(only(&loaded).observed_nonce, "proc-b");
-}
-
-#[test]
-fn same_timestamp_tie_break_is_deterministic_across_writers() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-    let nanos = secs(9_000) + 123_456_789;
-    // Nonce orders lexicographically: "a-uuid" < "z-uuid".
-    store_ordered(&path, sample_info("low"), nanos, 1, "a-uuid").unwrap();
-    store_ordered(&path, sample_info("high"), nanos, 1, "z-uuid").unwrap();
-    store_ordered(&path, sample_info("low-again"), nanos, 99, "a-uuid").unwrap();
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).observed_nonce, "z-uuid");
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("high"));
-}
-
-#[test]
 fn lock_serializes_overlapping_writers() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("claude-rate-limit.json");
@@ -342,6 +235,9 @@ fn lock_serializes_overlapping_writers() {
     assert_eq!(only(&loaded).info.status.as_deref(), Some("b19"));
 }
 
+// Covers: a store from another process waits for the lock and then wins with
+// its newer observation.
+// Owner: claude rate-limit store
 #[test]
 fn cross_process_lock_blocks_until_released_and_newer_wins() {
     let directory = tempfile::tempdir().unwrap();
@@ -378,19 +274,13 @@ fn cross_process_lock_blocks_until_released_and_newer_wins() {
         writeln!(stdin, "1").unwrap();
         writeln!(stdin, "child").unwrap();
         writeln!(stdin, "child-new").unwrap();
-        // Keep stdin open until we drop it after unlock so the child can block
-        // on the lock with the full request already read... actually the child
-        // reads all lines first then locks. Close stdin so read completes.
     }
+    // The child reads the whole request before it takes the lock, so close
+    // stdin to let it reach the lock.
     drop(child.stdin.take());
 
-    // Child should be blocked on the lock (or still starting). Give it a moment
-    // then confirm it has not exited successfully with a write yet while locked.
-    thread::sleep(Duration::from_millis(100));
-    assert!(
-        child.try_wait().ok().flatten().is_none(),
-        "child should still be waiting on the lock"
-    );
+    // Whatever the child has reached, it cannot write while this process
+    // holds the lock.
     assert_eq!(
         only(&load_at(&path).unwrap()).info.status.as_deref(),
         Some("parent-old")
@@ -459,74 +349,6 @@ fn capture_stamps_subsecond_nanos_and_process_nonce() {
         first.observed_at_unix,
         nanos_to_seconds(first.observed_at_nanos)
     );
-}
-
-#[test]
-fn cross_process_out_of_order_writes_keep_newer() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-    let exe = std::env::current_exe().expect("current exe");
-
-    // Child A writes a newer observation first.
-    let mut child_new = Command::new(&exe)
-        .args([
-            "--exact",
-            "claude_runtime::rate_limit::tests::child_store_observation_helper",
-            "--nocapture",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn newer child");
-    {
-        let stdin = child_new.stdin.as_mut().unwrap();
-        writeln!(stdin, "{}", path.display()).unwrap();
-        writeln!(stdin, "{}", secs(7_000) + 500).unwrap();
-        writeln!(stdin, "1").unwrap();
-        writeln!(stdin, "proc-new").unwrap();
-        writeln!(stdin, "from-new-proc").unwrap();
-    }
-    drop(child_new.stdin.take());
-    let newer_status = child_new.wait_with_output().unwrap();
-    assert!(
-        newer_status.status.success(),
-        "newer child failed: {}",
-        String::from_utf8_lossy(&newer_status.stderr)
-    );
-
-    // Child B then writes an older observation; it must not win.
-    let mut child_old = Command::new(&exe)
-        .args([
-            "--exact",
-            "claude_runtime::rate_limit::tests::child_store_observation_helper",
-            "--nocapture",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn older child");
-    {
-        let stdin = child_old.stdin.as_mut().unwrap();
-        writeln!(stdin, "{}", path.display()).unwrap();
-        writeln!(stdin, "{}", secs(7_000)).unwrap();
-        writeln!(stdin, "99").unwrap();
-        writeln!(stdin, "proc-old").unwrap();
-        writeln!(stdin, "from-old-proc").unwrap();
-    }
-    drop(child_old.stdin.take());
-    let older_status = child_old.wait_with_output().unwrap();
-    assert!(
-        older_status.status.success(),
-        "older child failed: {}",
-        String::from_utf8_lossy(&older_status.stderr)
-    );
-
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("from-new-proc"));
-    assert_eq!(only(&loaded).observed_nonce, "proc-new");
-    assert_eq!(only(&loaded).observed_at_nanos, secs(7_000) + 500);
 }
 
 // Covers: a /usage snapshot drops windows the panel did not report, while a

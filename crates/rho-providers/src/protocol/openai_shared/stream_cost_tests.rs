@@ -44,21 +44,6 @@ fn reported_cost_includes_byok_upstream_inference_cost() {
     );
 }
 
-#[test]
-fn reported_cost_accepts_strings_and_preserves_zero() {
-    let string_cost = json!({"usage": {"cost": "$0.0042"}});
-    let zero_cost = json!({"usage": {"cost": 0}});
-
-    assert_eq!(
-        extract_usage(&string_cost).and_then(|usage| usage.cost_usd_micros),
-        Some(4_200)
-    );
-    assert_eq!(
-        extract_usage(&zero_cost).and_then(|usage| usage.cost_usd_micros),
-        Some(0)
-    );
-}
-
 // Covers: custom OpenAI-compatible hosts (composer-api) report object usage.cost
 // Owner: OpenAI shared usage parser
 #[test]
@@ -97,38 +82,34 @@ fn reported_cost_reads_composer_api_usage_object() {
     );
 }
 
+// Covers: reported cost accepts formatted strings and keeps zero, falls back
+// past a malformed preferred alias or to the BYOK upstream component, and an
+// invalid cost stays absent so the catalog fallback applies
+// Owner: OpenAI shared usage parser
 #[test]
-fn valid_cost_components_survive_missing_or_malformed_aliases() {
-    let upstream_only = json!({
-        "usage": {"cost_details": {"upstream_inference_cost": 0.0000973}}
-    });
-    let malformed_preferred_alias = json!({
-        "usage": {"cost_usd": "invalid", "cost": 0.0042}
-    });
-
-    assert_eq!(
-        extract_usage(&upstream_only).and_then(|usage| usage.cost_usd_micros),
-        Some(97)
-    );
-    assert_eq!(
-        extract_usage(&malformed_preferred_alias).and_then(|usage| usage.cost_usd_micros),
-        Some(4_200)
-    );
-}
-
-#[test]
-fn invalid_reported_costs_do_not_replace_catalog_fallback() {
-    let negative_cost = json!({"usage": {"cost": -1}});
-    let malformed_cost = json!({"usage": {"cost": "not a cost"}});
-
-    assert_eq!(
-        extract_usage(&negative_cost).and_then(|usage| usage.cost_usd_micros),
-        None
-    );
-    assert_eq!(
-        extract_usage(&malformed_cost).and_then(|usage| usage.cost_usd_micros),
-        None
-    );
+fn reported_cost_aliases_and_invalid_values() {
+    for (case, usage, expected) in [
+        ("dollar string", json!({"cost": "$0.0042"}), Some(4_200)),
+        ("zero is preserved", json!({"cost": 0}), Some(0)),
+        (
+            "upstream component alone",
+            json!({"cost_details": {"upstream_inference_cost": 0.0000973}}),
+            Some(97),
+        ),
+        (
+            "malformed preferred alias",
+            json!({"cost_usd": "invalid", "cost": 0.0042}),
+            Some(4_200),
+        ),
+        ("negative", json!({"cost": -1}), None),
+        ("malformed", json!({"cost": "not a cost"}), None),
+    ] {
+        assert_eq!(
+            extract_usage(&json!({ "usage": usage })).and_then(|usage| usage.cost_usd_micros),
+            expected,
+            "{case}"
+        );
+    }
 }
 
 // Covers: a bare prompt_tokens total still includes cache hits, so it must not

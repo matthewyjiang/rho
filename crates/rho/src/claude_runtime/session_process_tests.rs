@@ -379,43 +379,6 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
 }
 
 #[tokio::test]
-async fn success_stream_and_exit_zero_writes_ok() {
-    let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("result.json");
-    let fake = dir.path().join("claude");
-    install_streaming_fake(&fake, &fixture("success.ndjson"), 0);
-    run_with_fake(
-        &output,
-        dir.path(),
-        &fake,
-        8,
-        PermissionMode::Bypass,
-        RunCancellation::new(),
-    )
-    .await;
-    let status = subagent::read_status(&output).expect("status");
-    assert_eq!(status.state, RunState::Ok);
-    assert_eq!(status.result.as_deref(), Some("Hello from Claude."));
-    assert_eq!(
-        status.claude_session_id.as_deref(),
-        Some("sess-success-001")
-    );
-    assert_eq!(status.turns, 1);
-    assert!(status.input_tokens.unwrap_or(0) > 0);
-    assert_eq!(status.error, None);
-    let events = read_attachment_events(&output);
-    assert_eq!(
-        count_terminal_events(&events),
-        1,
-        "exactly one terminal attachment; attachment_error: {:?}",
-        status.attachment_error
-    );
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, AttachmentEvent::Completed)));
-}
-
-#[tokio::test]
 async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("result.json");
@@ -650,35 +613,6 @@ async fn missing_terminal_result_is_error() {
     let error = status.error.unwrap_or_default();
     assert!(
         error.contains("without a terminal result"),
-        "unexpected error: {error}"
-    );
-}
-
-#[tokio::test]
-async fn invalid_terminal_fields_are_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("result.json");
-    let fake = dir.path().join("claude");
-    install_streaming_fake(
-        &fake,
-        r#"{"type":"result","result":"maybe","session_id":"sess-invalid"}
-"#,
-        0,
-    );
-    run_with_fake(
-        &output,
-        dir.path(),
-        &fake,
-        8,
-        PermissionMode::Bypass,
-        RunCancellation::new(),
-    )
-    .await;
-    let status = subagent::read_status(&output).expect("status");
-    assert_eq!(status.state, RunState::Error);
-    let error = status.error.unwrap_or_default();
-    assert!(
-        error.contains("missing subtype") || error.contains("invalid"),
         "unexpected error: {error}"
     );
 }

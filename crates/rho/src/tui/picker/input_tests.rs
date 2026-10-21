@@ -61,25 +61,6 @@ fn filter_accepts_shift_modified_characters() {
     assert_eq!(picker.filter, "Q");
 }
 
-// Covers: Tab must not complete the filter when Tab has no binding.
-// Owner: tui picker key dispatch
-#[test]
-fn tab_is_ignored_without_a_tab_binding() {
-    let mut picker = UiPicker::new("Config", vec![item("mode")], PickerAction::Config);
-    picker.filter = "mo".into();
-
-    let effect = apply_picker_key(
-        &mut picker,
-        key(KeyCode::Tab),
-        None,
-        /*space_confirms*/ true,
-        &keys(),
-    );
-
-    assert_eq!(effect, PickerKeyEffect::None);
-    assert_eq!(picker.filter, "mo");
-}
-
 // Covers: row-delete bindings map keys exactly; under DeleteOnly, `d` must
 // still type into the filter (agent ids are filtered by name).
 // Owner: tui picker key dispatch
@@ -115,7 +96,8 @@ fn row_delete_keys_map_per_binding() {
     }
 }
 
-// Covers: Tab completes the selected row only when Tab is bound to CompleteFilter.
+// Covers: Tab completes the selected row only when Tab is bound to
+// CompleteFilter; without a binding it leaves the filter alone.
 // Owner: tui picker key dispatch
 #[test]
 fn tab_completes_filter_when_tab_complete_enabled() {
@@ -142,6 +124,18 @@ fn tab_completes_filter_when_tab_complete_enabled() {
 
     assert_eq!(effect, PickerKeyEffect::Handled);
     assert_eq!(picker.filter, "openai/gpt-5.5");
+
+    let mut unbound = UiPicker::new("Config", vec![item("mode")], PickerAction::Config);
+    unbound.filter = "mo".into();
+    let effect = apply_picker_key(
+        &mut unbound,
+        key(KeyCode::Tab),
+        None,
+        /*space_confirms*/ true,
+        &keys(),
+    );
+    assert_eq!(effect, PickerKeyEffect::None);
+    assert_eq!(unbound.filter, "mo");
 }
 
 // Covers: model pickers must treat Ctrl-O as a scope toggle, not a dead key

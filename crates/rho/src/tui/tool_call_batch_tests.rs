@@ -57,19 +57,6 @@ fn proposal_reuses_stream_preview_slot_when_call_id_matches() {
 }
 
 #[test]
-fn proposal_without_stream_appends_in_arrival_order() {
-    let mut batch = ToolCallBatch::default();
-    let first = call_id("call-a");
-    let second = call_id("call-b");
-    batch.preview_call(first.clone(), card("first starting"));
-    batch.preview_call(second.clone(), card("second starting"));
-    batch.started(first, card("first running"));
-    batch.started(second, card("second running"));
-
-    assert_eq!(live_labels(&batch), ["● first running", "● second running"]);
-}
-
-#[test]
 fn late_stream_preview_is_ignored_after_start() {
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-agent");
@@ -110,17 +97,6 @@ fn latest_is_last_model_order_entry() {
 }
 
 #[test]
-fn finished_removes_running_and_returns_expanded() {
-    let mut batch = ToolCallBatch::default();
-    let call = call_id("call-1");
-    batch.started(call.clone(), card("running"));
-    batch.latest_mut().unwrap().expanded = true;
-    assert!(batch.finished(&call));
-    assert!(!batch.is_running());
-    assert!(batch.live_entries().next().is_none());
-}
-
-#[test]
 fn unbound_index_preview_is_a_separate_slot_from_call_id_proposal() {
     // Batch binding is call-id keyed. An index-only preview cannot be claimed by
     // a later proposal for a different address space.
@@ -151,24 +127,11 @@ fn identity_only_preview_binds_call_id_without_replacing_card() {
     assert!(batch.previews.is_empty());
 }
 
-// Covers: shell elapsed clock must not reset when progress replaces the card
+// Covers: argument-stream previews must not start the shell elapsed clock, and
+// the clock must not reset when progress replaces the card
 // Owner: pure unit (tool call batch)
 #[test]
 fn updates_preserve_started_at_from_the_first_running_card() {
-    let mut batch = ToolCallBatch::default();
-    let call = call_id("call-shell");
-    batch.started(call.clone(), card("running"));
-    let started_at = batch.running[&call]
-        .started_at
-        .expect("timer starts on start");
-    batch.updated(call.clone(), card("still running"));
-    assert_eq!(batch.running[&call].started_at, Some(started_at));
-}
-
-// Covers: argument-stream previews must not start the shell elapsed clock
-// Owner: pure unit (tool call batch)
-#[test]
-fn previews_do_not_start_elapsed_until_started() {
     let mut batch = ToolCallBatch::default();
     let call = call_id("call-shell");
     batch.preview_call(call.clone(), card("preview"));
@@ -177,7 +140,11 @@ fn previews_do_not_start_elapsed_until_started() {
         .values()
         .all(|entry| entry.started_at.is_none()));
     batch.started(call.clone(), card("running"));
-    assert!(batch.running[&call].started_at.is_some());
+    let started_at = batch.running[&call]
+        .started_at
+        .expect("timer starts on start");
+    batch.updated(call.clone(), card("still running"));
+    assert_eq!(batch.running[&call].started_at, Some(started_at));
 }
 
 // Covers: interrupted rows must not carry a live clock into the retained feed

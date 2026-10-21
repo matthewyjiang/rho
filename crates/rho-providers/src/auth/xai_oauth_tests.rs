@@ -139,20 +139,27 @@ async fn device_setup_sends_client_and_offline_scopes() {
     assert!(form.get("scope").unwrap().contains("offline_access"));
 }
 
+// Covers: callback parsing checks state, accepts GET query and form POST,
+// keeps the OAuth error description, and ignores browser probes
+// Owner: xAI OAuth callback
 #[test]
-fn callback_requires_matching_state() {
-    assert!(matches!(
-        parse_callback_http_request("GET /callback?code=ok&state=state HTTP/1.1", "state"),
-        CallbackParse::Outcome(CallbackOutcome::Code(code)) if code == "ok"
-    ));
+fn callback_parser_outcomes() {
+    let form_post = "POST /callback HTTP/1.1\r\n\
+content-type: application/x-www-form-urlencoded\r\n\
+content-length: 27\r\n\
+\r\n\
+code=ok&state=state";
+    for request in ["GET /callback?code=ok&state=state HTTP/1.1", form_post] {
+        let parsed = parse_callback_http_request(request, "state");
+        assert!(
+            matches!(&parsed, CallbackParse::Outcome(CallbackOutcome::Code(code)) if code == "ok"),
+            "{parsed:?}"
+        );
+    }
     assert!(matches!(
         parse_callback_http_request("GET /callback?code=ok&state=wrong HTTP/1.1", "state"),
         CallbackParse::Invalid(XaiOAuthError::InvalidCallback(_))
     ));
-}
-
-#[test]
-fn callback_preserves_oauth_error_description() {
     assert!(matches!(
         parse_callback_http_request(
             "GET /callback?error=access_denied&error_description=not+allowed&state=state HTTP/1.1",
@@ -160,35 +167,14 @@ fn callback_preserves_oauth_error_description() {
         ),
         CallbackParse::Outcome(CallbackOutcome::Error(message)) if message == "not allowed"
     ));
-}
-
-#[test]
-fn callback_accepts_form_post_body() {
-    let request = "POST /callback HTTP/1.1\r\n\
-content-type: application/x-www-form-urlencoded\r\n\
-content-length: 27\r\n\
-\r\n\
-code=ok&state=state";
-    match parse_callback_http_request(request, "state") {
-        CallbackParse::Outcome(CallbackOutcome::Code(code)) => assert_eq!(code, "ok"),
-        other => panic!("expected code outcome, got {other:?}"),
+    for probe in [
+        "",
+        "GET /favicon.ico HTTP/1.1\r\n\r\n",
+        "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+    ] {
+        let parsed = parse_callback_http_request(probe, "state");
+        assert!(matches!(parsed, CallbackParse::Ignored), "{probe:?}");
     }
-}
-
-#[test]
-fn callback_ignores_probes_and_non_callback_paths() {
-    assert!(matches!(
-        parse_callback_http_request("", "state"),
-        CallbackParse::Ignored
-    ));
-    assert!(matches!(
-        parse_callback_http_request("GET /favicon.ico HTTP/1.1\r\n\r\n", "state"),
-        CallbackParse::Ignored
-    ));
-    assert!(matches!(
-        parse_callback_http_request("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "state"),
-        CallbackParse::Ignored
-    ));
 }
 
 #[test]

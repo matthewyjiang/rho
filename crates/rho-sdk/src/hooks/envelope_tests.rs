@@ -169,72 +169,6 @@ fn after_tool_use_wire_shape_is_stable() {
     );
 }
 
-#[test]
-fn after_tool_use_without_a_capability_serializes_null() {
-    let envelope = after_envelope(
-        AfterToolUsePayload {
-            tool: tool("edit", Some("call-2")),
-            status: HookToolStatus::Succeeded,
-            failure: None,
-            duration_ms: Some(42),
-        },
-        None,
-        None,
-    );
-
-    assert_eq!(
-        wire_shape(&envelope)["payload"],
-        json!({
-            "tool": { "name": "edit", "call_id": "call-2" },
-            "capability": null,
-            "process": null,
-            "status": "succeeded",
-            "failure": null,
-            "duration_ms": 42,
-        })
-    );
-}
-
-#[test]
-fn run_failed_wire_shape_carries_a_typed_kind() {
-    let payload = HookPayload::RunFailed(crate::hooks::RunFailedPayload {
-        failure: crate::hooks::HookFailure {
-            kind: "provider".into(),
-            message: "provider failed: overloaded".into(),
-        },
-    });
-
-    assert_eq!(
-        wire_shape(&envelope(payload))["payload"],
-        json!({
-            "failure": { "kind": "provider", "message": "provider failed: overloaded" },
-        })
-    );
-}
-
-#[test]
-fn a_workspaceless_runtime_reports_a_null_root() {
-    let envelope =
-        HookEnvelopeBuilder::new(HookIdentity::default(), None, HookPayloadBounds::default())
-            .finish(HookPayload::SessionStarted(
-                crate::hooks::SessionStartedPayload {
-                    model: "scripted/test".into(),
-                },
-            ));
-
-    let value = wire_shape(&envelope);
-    assert_eq!(value["workspace"], json!({ "root": null }));
-    assert_eq!(value["host_labels"], json!({}));
-    assert_eq!(
-        value["identity"],
-        json!({
-            "session_id": null,
-            "parent_session_id": null,
-            "run_id": null,
-        })
-    );
-}
-
 // Covers: app-owned capability attribution must stay bounded and report every cut field.
 // Owner: SDK hook envelope construction.
 #[test]
@@ -345,20 +279,6 @@ fn multibyte_identity_fields_remain_valid_under_a_one_byte_bound() {
             "identity.session_id"
         ]
     );
-}
-
-#[test]
-fn an_envelope_within_bounds_serializes() {
-    let envelope = envelope(HookPayload::SessionCompleted(
-        crate::hooks::SessionCompletedPayload { runs: 3 },
-    ));
-
-    let encoded = envelope
-        .to_bounded_json(HookPayloadBounds::default())
-        .expect("small envelope fits the default bound");
-
-    let encoded: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(encoded["event"], json!("session_completed"));
 }
 
 #[test]

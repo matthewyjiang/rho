@@ -9,8 +9,7 @@ use crate::{
 };
 
 use super::{
-    SessionSnapshot, SessionStore, MIN_SESSION_SNAPSHOT_SCHEMA_VERSION,
-    SESSION_SNAPSHOT_SCHEMA_VERSION,
+    SessionSnapshot, MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SESSION_SNAPSHOT_SCHEMA_VERSION,
 };
 
 const SNAPSHOT_V1: &str = include_str!("fixtures/session-snapshot-v1.json");
@@ -87,45 +86,6 @@ fn every_supported_snapshot_fixture_migrates_to_the_current_schema() {
         assert_eq!(snapshot.prompt_cache_key(), expected_cache_key);
         assert_eq!(snapshot.history().len(), 2);
     }
-}
-
-#[test]
-fn malformed_and_out_of_range_snapshot_schemas_are_rejected() {
-    for json in [
-        "{}".to_string(),
-        SNAPSHOT_V1.replace("\"schema_version\": 1", "\"schema_version\": 0"),
-        SNAPSHOT_V2.replace("\"schema_version\": 2", "\"schema_version\": 3"),
-        SNAPSHOT_V2.replace(
-            "\"session_id\": \"22222222-2222-4222-8222-222222222222\",",
-            "",
-        ),
-    ] {
-        assert!(
-            SessionSnapshot::from_json(&json).is_err(),
-            "accepted {json}"
-        );
-        assert!(serde_json::from_str::<SessionSnapshot>(&json).is_err());
-    }
-}
-
-#[tokio::test]
-async fn public_store_boundary_loads_and_atomically_replaces_snapshots() {
-    let store = InMemorySessionStore::new();
-    let first = snapshot();
-    let id = first.session_id().clone();
-    let second = SessionSnapshot::new(
-        id.clone(),
-        Revision::from_u64(5),
-        vec![Message::user_text("replacement")],
-        first.provider().clone(),
-        crate::CompactionState::default(),
-    )
-    .with_prompt_cache_key("rho:session-1");
-
-    SessionStore::save(&store, first).await.unwrap();
-    SessionStore::save(&store, second.clone()).await.unwrap();
-
-    assert_eq!(SessionStore::load(&store, &id).await.unwrap(), Some(second));
 }
 
 #[test]

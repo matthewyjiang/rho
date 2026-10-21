@@ -540,34 +540,29 @@ mod tests {
     }
 
     #[test]
+    fn scoop_update_command_refreshes_buckets_then_updates_rho() {
+        for (scope, method, expected) in [
+            (
+                ScoopInstallScope::User,
+                InstallMethod::Scoop,
+                "scoop update; scoop update rho",
+            ),
+            (
+                ScoopInstallScope::Global,
+                InstallMethod::ScoopGlobal,
+                "scoop update; scoop update -g rho",
+            ),
+        ] {
+            assert_eq!(scoop_update_command_display(scope), expected);
+            assert_eq!(method.update_command("main"), expected);
+        }
+    }
+
+    #[test]
     fn pacman_update_command_syncs_only_rho_from_mjiang_extras() {
         assert_eq!(
             pacman_update_command_display(),
             "sudo pacman -Sy mjiang-extras/rho-coding-agent"
-        );
-    }
-
-    #[test]
-    fn scoop_update_command_refreshes_buckets_then_updates_rho() {
-        assert_eq!(
-            scoop_update_command_display(ScoopInstallScope::User),
-            "scoop update; scoop update rho"
-        );
-        assert_eq!(
-            InstallMethod::Scoop.update_command("main"),
-            "scoop update; scoop update rho"
-        );
-    }
-
-    #[test]
-    fn scoop_global_update_command_uses_global_flag() {
-        assert_eq!(
-            scoop_update_command_display(ScoopInstallScope::Global),
-            "scoop update; scoop update -g rho"
-        );
-        assert_eq!(
-            InstallMethod::ScoopGlobal.update_command("main"),
-            "scoop update; scoop update -g rho"
         );
     }
 }

@@ -253,20 +253,6 @@ async fn wait_until_replaced(live: &LiveSession) {
     .expect("replacement should mark the previous session");
 }
 
-// Covers: a second session/prompt must report a busy session, not a missing one.
-// Owner: ACP agent session map
-#[tokio::test]
-async fn prompt_on_a_locked_session_is_busy() {
-    let live = vacant_session();
-    let _held = live.host.lock().await;
-
-    let error = live
-        .try_lock_host(&SessionId::new("busy"))
-        .err()
-        .expect("busy session");
-    assert_eq!(error.code, ErrorCode::InvalidRequest);
-}
-
 // Covers: a prompt sent while the previous one is cancelled and winding down
 // waits for the host instead of failing as busy, so hosts that steer by cancel
 // and resend (T3 Code) keep the user's message. A prompt behind an uncancelled
@@ -637,20 +623,6 @@ async fn shutdown_all_prevents_later_publication() {
         .await
         .expect_err("load after shutdown");
     assert_eq!(load.code, ErrorCode::InternalError);
-}
-
-// Covers: session/set_config_option on an unknown id must not invent a session
-// Owner: ACP agent session map
-#[tokio::test]
-async fn set_config_option_on_missing_session_is_not_found() {
-    let error = test_agent()
-        .set_config_option(
-            SetSessionConfigOptionRequest::new(SessionId::new("missing"), "model", "xai/grok-3"),
-            &NullPort,
-        )
-        .await
-        .expect_err("missing session");
-    assert_eq!(error.code, ErrorCode::ResourceNotFound);
 }
 
 // Covers: a same-ID replacement must not become promptable until the old host

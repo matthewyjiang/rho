@@ -21,23 +21,22 @@ fn planned(index: usize, dependencies: Vec<Dependency>) -> PlannedCall {
     }
 }
 
+// Covers: shared accesses (workspace paths or manager state) and empty plans
+// never serialize against each other.
+// Owner: SDK tool batch planner
 #[test]
 fn shared_accesses_and_empty_plans_can_overlap() {
     let shared = ToolResourceAccess::shared(ToolResource::workspace_path("/workspace/file"));
-
-    assert_eq!(
-        plan(&[aware([shared.clone()]), aware([shared]), aware([]),]),
-        vec![planned(0, vec![]), planned(1, vec![]), planned(2, vec![])]
-    );
-}
-
-#[test]
-fn shared_manager_state_launches_can_overlap() {
     let manager = || ToolResourceAccess::shared(ToolResource::manager_state("subagents"));
+    let independent = vec![planned(0, vec![]), planned(1, vec![]), planned(2, vec![])];
 
     assert_eq!(
-        plan(&[aware([manager()]), aware([manager()]), aware([manager()]),]),
-        vec![planned(0, vec![]), planned(1, vec![]), planned(2, vec![])]
+        plan(&[aware([shared.clone()]), aware([shared]), aware([])]),
+        independent
+    );
+    assert_eq!(
+        plan(&[aware([manager()]), aware([manager()]), aware([manager()])]),
+        independent
     );
 }
 

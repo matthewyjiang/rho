@@ -5,14 +5,12 @@ use serde_json::Value;
 
 use super::*;
 
+// Covers: version parsing with and without the `rtk` prefix gates rewrite support at 0.23.0
+// Owner: pure unit (rtk version policy)
 #[test]
-fn parses_rtk_versions() {
+fn rewrite_support_follows_the_parsed_version() {
     assert_eq!(parse_version("rtk 0.23.0"), Some((0, 23, 0)));
     assert_eq!(parse_version("0.28.2"), Some((0, 28, 2)));
-}
-
-#[test]
-fn old_rtk_versions_do_not_support_rewrite() {
     assert!(!supports_rewrite("rtk 0.22.9"));
     assert!(supports_rewrite("rtk 0.23.0"));
 }

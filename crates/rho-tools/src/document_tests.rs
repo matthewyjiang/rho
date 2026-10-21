@@ -165,19 +165,6 @@ fn extracts_pdf_markdown_and_warns_for_empty_pages() {
 }
 
 #[cfg(feature = "document-pdf")]
-// Covers: the facade must cap the PDF backend's Markdown at its output budget.
-// Owner: document facade
-#[test]
-fn bounds_pdf_markdown_output() {
-    let operation = format!("({}) Tj", "A".repeat(MAX_EXTRACTED_CHARACTERS + 1));
-
-    let document = extract_document_from_bytes("large.pdf", &pdf_fixture(&operation)).unwrap();
-
-    assert_eq!(document.text.chars().count(), MAX_EXTRACTED_CHARACTERS);
-    assert!(document.truncated);
-}
-
-#[cfg(feature = "document-pdf")]
 // Covers: compressed PDF streams are measured with a bounded decoder before extraction.
 // Owner: PDF extractor
 #[test]

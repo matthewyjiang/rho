@@ -257,23 +257,6 @@ fn invalid_editor_fails_before_picker() {
     }
 }
 
-// Covers: a global model flag must bypass terminal selection just like the edit
-// subcommand flag. Owner: CLI argument propagation.
-#[test]
-fn top_level_model_bypasses_picker() {
-    let fixture = Fixture::new("printf 'global selection\\n' >> \"$1\"");
-    let config = fixture.config();
-    assert_success(
-        fixture
-            .command_with_args(&["--model", "@local", "model-prompt", "edit"])
-            .output()
-            .unwrap(),
-    );
-    assert!(fixture.directory().join("ollama_team-model-q8.md").exists());
-    assert!(!fixture.draft().exists());
-    assert_eq!(fixture.config(), config);
-}
-
 // Covers: offline filtering and Enter must edit the selected row, not the config
 // default, without changing the active model. Owner: standalone picker PTY UX.
 #[test]

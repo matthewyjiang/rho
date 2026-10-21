@@ -19,13 +19,6 @@ fn pending(prompt: LoginPrompt) -> PendingLoginComposer {
     }
 }
 
-fn line_text(line: &ratatui::text::Line<'_>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
-}
-
 fn device_pending() -> PendingLoginComposer {
     pending(LoginPrompt::device_code(
         "https://auth.example/device",
@@ -33,26 +26,6 @@ fn device_pending() -> PendingLoginComposer {
         Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
         "Visit this URL and enter the code.",
     ))
-}
-
-// Covers: pending login composer must show the authorize URL and code
-// Owner: login presentation
-#[test]
-fn pending_login_composer_includes_url_and_code() {
-    let pending = device_pending();
-    let view = login_composer_view(&pending, 80, /*hovered*/ false);
-    let texts: Vec<String> = view.lines.iter().map(line_text).collect();
-    assert!(
-        texts
-            .iter()
-            .any(|line| line.contains("https://auth.example/device")),
-        "{texts:?}"
-    );
-    assert!(
-        texts.iter().any(|line| line.contains("WD4E-T6MC")),
-        "{texts:?}"
-    );
-    assert!(view.copy_hit.is_some(), "{texts:?}");
 }
 
 // Covers: copy hit-testing uses the painted origin and composer_start, not line==row
@@ -163,22 +136,6 @@ fn copy_span_style(
         .and_then(|line| line.spans.last())
         .expect("copy span")
         .style
-}
-
-// Covers: login COPY must use hovered vs unhovered theme, not a hardcoded false
-// Owner: login presentation
-#[test]
-fn copy_button_span_follows_hovered_flag() {
-    let pending = device_pending();
-    for hovered in [false, true] {
-        let view = login_composer_view(&pending, 80, /*hovered*/ hovered);
-        let hit = view.copy_hit.as_ref().expect("copy button");
-        pretty_assertions::assert_eq!(
-            copy_span_style(&view.lines, hit),
-            Theme::markdown_code_copy_button(hovered),
-            "hovered={hovered}"
-        );
-    }
 }
 
 // Covers: moving onto the session login COPY button highlights it; moving off clears it

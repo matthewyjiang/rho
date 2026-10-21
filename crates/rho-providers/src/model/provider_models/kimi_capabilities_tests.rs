@@ -1,80 +1,82 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 
-fn parse(value: serde_json::Value) -> KimiReasoningMetadata {
-    serde_json::from_value(value).unwrap()
-}
-
+// Covers: Kimi /models reasoning metadata maps to canonical levels: valid
+// efforts are deduplicated and gain Off, the default effort adds no level,
+// non-reasoning models only offer Off, and missing or malformed efforts stay
+// Unknown
+// Owner: kimi model discovery
 #[test]
-fn authenticated_efforts_are_canonical_and_include_off() {
-    let metadata = parse(serde_json::json!({
-        "supports_reasoning": true,
-        "supports_thinking_type": "only",
-        "think_efforts": {
-            "support": true,
-            "valid_efforts": ["max", "low", "high", "low"],
-            "default_effort": "max"
-        }
-    }));
+fn reasoning_metadata_maps_to_canonical_levels() {
+    use ReasoningLevel::{High, Low, Max, Off};
 
-    assert_eq!(
-        reasoning_capabilities(&metadata),
-        ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::Low,
-            ReasoningLevel::High,
-            ReasoningLevel::Max,
-        ]))
-    );
-}
+    let levels =
+        |levels: Vec<ReasoningLevel>| ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels));
+    let cases = [
+        (
+            "efforts are canonical and include off",
+            json!({
+                "supports_reasoning": true,
+                "supports_thinking_type": "only",
+                "think_efforts": {
+                    "support": true,
+                    "valid_efforts": ["max", "low", "high", "low"],
+                    "default_effort": "max"
+                }
+            }),
+            levels(vec![Off, Low, High, Max]),
+        ),
+        (
+            "default effort is not a selection level",
+            json!({
+                "supports_reasoning": true,
+                "think_efforts": {
+                    "support": true,
+                    "valid_efforts": ["low"],
+                    "default_effort": "max"
+                }
+            }),
+            levels(vec![Off, Low]),
+        ),
+        (
+            "non-reasoning model has only off",
+            json!({"supports_reasoning": false}),
+            levels(vec![Off]),
+        ),
+        (
+            "missing efforts",
+            json!({"supports_reasoning": true}),
+            ReasoningCapabilities::Unknown,
+        ),
+        (
+            "unsupported efforts",
+            json!({
+                "supports_reasoning": true,
+                "think_efforts": {"support": false, "valid_efforts": ["low"]}
+            }),
+            ReasoningCapabilities::Unknown,
+        ),
+        (
+            "empty efforts",
+            json!({
+                "supports_reasoning": true,
+                "think_efforts": {"support": true, "valid_efforts": []}
+            }),
+            ReasoningCapabilities::Unknown,
+        ),
+        (
+            "unknown effort",
+            json!({
+                "supports_reasoning": true,
+                "think_efforts": {"support": true, "valid_efforts": ["turbo"]}
+            }),
+            ReasoningCapabilities::Unknown,
+        ),
+    ];
 
-#[test]
-fn default_effort_does_not_add_a_selection_level() {
-    let metadata = parse(serde_json::json!({
-        "supports_reasoning": true,
-        "think_efforts": {
-            "support": true,
-            "valid_efforts": ["low"],
-            "default_effort": "max"
-        }
-    }));
-
-    assert_eq!(
-        reasoning_capabilities(&metadata).levels(),
-        Some([ReasoningLevel::Off, ReasoningLevel::Low].as_slice())
-    );
-}
-
-#[test]
-fn missing_or_malformed_efforts_are_unknown() {
-    for value in [
-        serde_json::json!({"supports_reasoning": true}),
-        serde_json::json!({
-            "supports_reasoning": true,
-            "think_efforts": {"support": false, "valid_efforts": ["low"]}
-        }),
-        serde_json::json!({
-            "supports_reasoning": true,
-            "think_efforts": {"support": true, "valid_efforts": []}
-        }),
-        serde_json::json!({
-            "supports_reasoning": true,
-            "think_efforts": {"support": true, "valid_efforts": ["turbo"]}
-        }),
-    ] {
-        assert_eq!(
-            reasoning_capabilities(&parse(value)),
-            ReasoningCapabilities::Unknown
-        );
+    for (case, value, expected) in cases {
+        let metadata: KimiReasoningMetadata = serde_json::from_value(value).unwrap();
+        assert_eq!(reasoning_capabilities(&metadata), expected, "{case}");
     }
-}
-
-#[test]
-fn non_reasoning_model_has_only_off() {
-    let metadata = parse(serde_json::json!({"supports_reasoning": false}));
-
-    assert_eq!(
-        reasoning_capabilities(&metadata).levels(),
-        Some([ReasoningLevel::Off].as_slice())
-    );
 }

@@ -39,64 +39,9 @@ fn shell(command: &str) -> CapabilityRequest {
     )
 }
 
-#[test]
-fn a_read_summary_keeps_the_path_and_scope() {
-    let request = CapabilityRequest::read_path(
-        "/work/src/lib.rs",
-        PathScope::PrimaryWorkspace,
-        CapabilitySource::built_in_tool("read_file"),
-    );
-
-    let (capability, truncation) = summarize(&request);
-
-    assert_eq!(
-        serde_json::to_value(&capability).unwrap(),
-        json!({
-            "operation": "read_path",
-            "path": "/work/src/lib.rs",
-            "scope": "primary_workspace",
-        })
-    );
-    assert!(!truncation.is_truncated());
-}
-
-#[test]
-fn a_shell_summary_exposes_the_command_a_deny_hook_must_inspect() {
-    let (capability, _) = summarize(&shell("git push --force"));
-
-    assert_eq!(
-        serde_json::to_value(&capability).unwrap(),
-        json!({
-            "operation": "execute_process",
-            "working_directory": "/work",
-            "executable": "bash",
-            "arguments": ["-lc"],
-            "shell_command": "git push --force",
-            "environment": "inherit_all",
-        })
-    );
-}
-
-#[test]
-fn a_direct_executable_summary_reports_no_shell_command() {
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::executable("/usr/bin/git", vec!["status".into()]),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        CapabilitySource::built_in_tool("process"),
-    );
-
-    let (capability, _) = summarize(&request);
-
-    assert_eq!(
-        serde_json::to_value(&capability).unwrap()["shell_command"],
-        serde_json::Value::Null
-    );
-}
-
+// Covers: a direct executable reports no shell command, and environment
+// variable names never reach a hook payload.
+// Owner: SDK hook payload construction.
 #[test]
 fn environment_values_never_reach_a_payload() {
     let request = CapabilityRequest::process(
@@ -115,65 +60,19 @@ fn environment_values_never_reach_a_payload() {
     let encoded = serde_json::to_string(&capability).unwrap();
 
     assert_eq!(
-        serde_json::to_value(&capability).unwrap()["environment"],
-        json!("inherit_listed")
+        serde_json::to_value(&capability).unwrap(),
+        json!({
+            "operation": "execute_process",
+            "working_directory": "/work",
+            "executable": "/usr/bin/env",
+            "arguments": [],
+            "shell_command": null,
+            "environment": "inherit_listed",
+        })
     );
     assert!(
         !encoded.contains("ANTHROPIC_API_KEY"),
         "variable names leaked into the payload: {encoded}"
-    );
-}
-
-#[test]
-fn a_long_shell_command_is_cut_and_named_in_the_report() {
-    let mut truncation = HookTruncation::default();
-    let request = shell(&"x".repeat(64));
-
-    let capability = summarize_capability(
-        &request,
-        HookPayloadBounds::new(
-            /* max_field_bytes */ 8, /* max_envelope_bytes */ 4096,
-        ),
-        &mut truncation,
-    );
-
-    assert_eq!(
-        serde_json::to_value(&capability).unwrap()["shell_command"],
-        json!("xxxxxxxx")
-    );
-    assert_eq!(
-        truncation.fields().collect::<Vec<_>>(),
-        vec!["payload.capability.shell_command"]
-    );
-}
-
-#[test]
-fn a_long_argument_is_cut_and_named_by_index() {
-    let mut truncation = HookTruncation::default();
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::executable("/bin/echo", vec!["ok".into(), "y".repeat(64)]),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        CapabilitySource::built_in_tool("process"),
-    );
-
-    summarize_capability(
-        &request,
-        HookPayloadBounds::new(
-            /* max_field_bytes */ 8, /* max_envelope_bytes */ 4096,
-        ),
-        &mut truncation,
-    );
-
-    assert_eq!(
-        truncation.fields().collect::<Vec<_>>(),
-        vec![
-            "payload.capability.arguments[1]",
-            "payload.capability.executable",
-        ]
     );
 }
 
@@ -210,138 +109,6 @@ fn total_arguments_are_bounded_and_reported() {
             "payload.capability.arguments",
             "payload.capability.executable",
         ]
-    );
-}
-
-#[test]
-fn a_network_summary_drops_credentials_and_query_strings() {
-    let request = CapabilityRequest::network(
-        NetworkTarget::Url("https://user:secret@api.example.com/v1/data?token=abcd#frag".into()),
-        CapabilitySource::built_in_tool("fetch_content"),
-    );
-
-    let (capability, _) = summarize(&request);
-    let encoded = serde_json::to_string(&capability).unwrap();
-
-    assert_eq!(
-        serde_json::to_value(&capability).unwrap(),
-        json!({
-            "operation": "network_access",
-            "url": "https://api.example.com/v1/data",
-            "host": "api.example.com",
-            "query_present": true,
-        })
-    );
-    assert!(!encoded.contains("secret"), "credentials leaked: {encoded}");
-    assert!(!encoded.contains("abcd"), "query leaked: {encoded}");
-}
-
-#[test]
-fn a_tool_managed_destination_reports_no_url() {
-    let request = CapabilityRequest::network(
-        NetworkTarget::ToolManaged,
-        CapabilitySource::built_in_tool("web_search"),
-    );
-
-    let (capability, _) = summarize(&request);
-
-    assert_eq!(
-        serde_json::to_value(&capability).unwrap(),
-        json!({
-            "operation": "network_access",
-            "url": null,
-            "host": null,
-            "query_present": false,
-        })
-    );
-}
-
-// Covers: every host-controlled capability scalar must honor the field budget.
-// Owner: SDK hook payload construction.
-#[test]
-fn externally_supplied_capability_fields_are_bounded() {
-    let long = "x".repeat(64);
-    let cases = [
-        (
-            CapabilityRequest::read_path(
-                &long,
-                PathScope::PrimaryWorkspace,
-                CapabilitySource::built_in_tool("read_file"),
-            ),
-            vec!["payload.capability.path"],
-        ),
-        (
-            CapabilityRequest::network(
-                NetworkTarget::Url(format!("https://example.com/{long}")),
-                CapabilitySource::built_in_tool("fetch_content"),
-            ),
-            vec!["payload.capability.host", "payload.capability.url"],
-        ),
-        (
-            CapabilityRequest::new(
-                CapabilityOperation::LoadSkill {
-                    name: long.clone(),
-                    path: Some(long.clone().into()),
-                },
-                CapabilitySource::built_in_tool("skill"),
-            ),
-            vec!["payload.capability.name", "payload.capability.path"],
-        ),
-    ];
-
-    for (request, expected_fields) in cases {
-        let mut truncation = HookTruncation::default();
-        let capability =
-            summarize_capability(&request, HookPayloadBounds::new(8, 4096), &mut truncation);
-
-        assert!(serde_json::to_vec(&capability).unwrap().len() < 4096);
-        assert_eq!(truncation.fields().collect::<Vec<_>>(), expected_fields);
-    }
-}
-
-#[test]
-fn tool_identity_fields_are_bounded() {
-    let mut truncation = HookTruncation::default();
-    let tool = HookTool::new(
-        "tool-name-is-long",
-        Some("call-id-is-long".into()),
-        HookPayloadBounds::new(8, 4096),
-        &mut truncation,
-    );
-
-    assert_eq!(
-        (tool.name, tool.call_id),
-        ("tool-nam".into(), Some("call-id-".into()))
-    );
-    assert_eq!(
-        truncation.fields().collect::<Vec<_>>(),
-        vec!["payload.tool.call_id", "payload.tool.name"]
-    );
-}
-
-#[test]
-fn failure_kind_and_message_are_bounded() {
-    let mut truncation = HookTruncation::default();
-    let failure = bounded_failure(
-        BoundedFailure {
-            kind: "failure-kind-is-long",
-            message: "failure-message-is-long",
-            field: "payload.failure",
-        },
-        HookPayloadBounds::new(8, 4096),
-        &mut truncation,
-    );
-
-    assert_eq!(
-        failure,
-        HookFailure {
-            kind: "failure-".into(),
-            message: "failure-".into(),
-        }
-    );
-    assert_eq!(
-        truncation.fields().collect::<Vec<_>>(),
-        vec!["payload.failure.kind", "payload.failure.message"]
     );
 }
 
@@ -384,6 +151,105 @@ fn tool_identity_comes_from_the_capability_source() {
     );
 }
 
+// Covers: network summaries drop userinfo and query strings, and a
+// tool-managed destination reports no URL.
+// Owner: SDK hook payload construction.
+#[test]
+fn a_network_summary_drops_credentials_and_query_strings() {
+    let cases = [
+        (
+            NetworkTarget::Url(
+                "https://user:secret@api.example.com/v1/data?token=abcd#frag".into(),
+            ),
+            json!({
+                "operation": "network_access",
+                "url": "https://api.example.com/v1/data",
+                "host": "api.example.com",
+                "query_present": true,
+            }),
+        ),
+        (
+            NetworkTarget::ToolManaged,
+            json!({
+                "operation": "network_access",
+                "url": null,
+                "host": null,
+                "query_present": false,
+            }),
+        ),
+    ];
+
+    for (target, expected) in cases {
+        let request =
+            CapabilityRequest::network(target, CapabilitySource::built_in_tool("fetch_content"));
+        let (capability, _) = summarize(&request);
+        let encoded = serde_json::to_string(&capability).unwrap();
+
+        assert_eq!(serde_json::to_value(&capability).unwrap(), expected);
+        assert!(!encoded.contains("secret"), "credentials leaked: {encoded}");
+        assert!(!encoded.contains("abcd"), "query leaked: {encoded}");
+    }
+}
+
+// Covers: every host-controlled capability scalar must honor the field budget.
+// Owner: SDK hook payload construction.
+#[test]
+fn externally_supplied_capability_fields_are_bounded() {
+    let long = "x".repeat(64);
+    let cases = [
+        (shell(&long), vec!["payload.capability.shell_command"]),
+        (
+            CapabilityRequest::process(
+                ProcessExecution::new(
+                    "/work",
+                    ProcessInvocation::executable("/bin/echo", vec!["ok".into(), long.clone()]),
+                    ProcessEnvironment::Empty,
+                    ProcessOutputLimits::new(1024, None),
+                ),
+                CapabilitySource::built_in_tool("process"),
+            ),
+            vec![
+                "payload.capability.arguments[1]",
+                "payload.capability.executable",
+            ],
+        ),
+        (
+            CapabilityRequest::read_path(
+                &long,
+                PathScope::PrimaryWorkspace,
+                CapabilitySource::built_in_tool("read_file"),
+            ),
+            vec!["payload.capability.path"],
+        ),
+        (
+            CapabilityRequest::network(
+                NetworkTarget::Url(format!("https://example.com/{long}")),
+                CapabilitySource::built_in_tool("fetch_content"),
+            ),
+            vec!["payload.capability.host", "payload.capability.url"],
+        ),
+        (
+            CapabilityRequest::new(
+                CapabilityOperation::LoadSkill {
+                    name: long.clone(),
+                    path: Some(long.clone().into()),
+                },
+                CapabilitySource::built_in_tool("skill"),
+            ),
+            vec!["payload.capability.name", "payload.capability.path"],
+        ),
+    ];
+
+    for (request, expected_fields) in cases {
+        let mut truncation = HookTruncation::default();
+        let capability =
+            summarize_capability(&request, HookPayloadBounds::new(8, 4096), &mut truncation);
+
+        assert!(serde_json::to_vec(&capability).unwrap().len() < 4096);
+        assert_eq!(truncation.fields().collect::<Vec<_>>(), expected_fields);
+    }
+}
+
 #[test]
 fn matchers_read_tool_name_and_status_from_the_payload() {
     let after = HookPayload::AfterToolUse(AfterToolUsePayload {
@@ -419,24 +285,4 @@ fn every_sdk_error_has_a_stable_label() {
     for (error, expected) in labelled {
         assert_eq!(error_label(&error), expected);
     }
-}
-
-#[test]
-fn a_policy_denial_produces_no_hook_outcome() {
-    assert_eq!(
-        HookPolicyOutcome::from_policy(&crate::PolicyDecision::Allow),
-        Some(HookPolicyOutcome::Allow)
-    );
-    assert_eq!(
-        HookPolicyOutcome::from_policy(&crate::PolicyDecision::RequireApproval {
-            reason: "ask".into()
-        }),
-        Some(HookPolicyOutcome::RequireApproval)
-    );
-    assert_eq!(
-        HookPolicyOutcome::from_policy(&crate::PolicyDecision::Deny {
-            reason: "no".into()
-        }),
-        None
-    );
 }

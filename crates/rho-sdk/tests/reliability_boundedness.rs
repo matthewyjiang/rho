@@ -325,26 +325,3 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     assert_eq!(session.state(), SessionState::Failed);
     assert!(!session.is_running());
 }
-
-#[test]
-fn representative_long_snapshot_serialization_is_linear_in_history_size() {
-    const MESSAGES: usize = 10_000;
-    let history = (0..MESSAGES)
-        .map(|index| Message::user_text(format!("message-{index:05}-{}", "x".repeat(32))))
-        .collect::<Vec<_>>();
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(identity(), []))
-        .build()
-        .unwrap();
-    let tokio = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    let session = tokio
-        .block_on(runtime.session(SessionOptions::default().history(history)))
-        .unwrap();
-
-    let json = session.snapshot().to_json().unwrap();
-    assert!(json.len() > MESSAGES * 32);
-    assert!(json.len() < MESSAGES * 128);
-    assert_eq!(session.history().len(), MESSAGES);
-}

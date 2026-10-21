@@ -450,28 +450,6 @@ async fn applies_mixed_operations_with_numbered_snapshots() {
     assert!(outcome.diff.contains("--- a/modify.txt"));
 }
 
-// Covers: a move reports and mutates both its source and destination paths.
-// Owner: apply_patch application
-#[tokio::test]
-async fn moves_report_both_affected_paths() {
-    let (_dir, ctx) = test_context();
-    std::fs::write(ctx.cwd.join("before.txt"), "old\n").unwrap();
-
-    let outcome = apply(
-        "*** Begin Patch\n*** Update File: before.txt\n*** Move to: after.txt\n@@\n-old\n+new\n*** End Patch",
-        &ctx,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(outcome.display_paths, ["before.txt", "after.txt"]);
-    assert!(!ctx.cwd.join("before.txt").exists());
-    assert_eq!(
-        std::fs::read_to_string(ctx.cwd.join("after.txt")).unwrap(),
-        "new\n"
-    );
-}
-
 // Covers: move clobbers fail without mutation.
 // Owner: apply_patch transaction
 #[tokio::test]

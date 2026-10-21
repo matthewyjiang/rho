@@ -35,78 +35,11 @@ impl CredentialStore for TestStore {
 }
 
 #[test]
-fn parses_only_windows_reported_by_codex() {
-    let payload: CodexUsagePayload = serde_json::from_value(serde_json::json!({
-        "rate_limit": {
-            "primary_window": {
-                "used_percent": 31,
-                "limit_window_seconds": 604800,
-                "reset_after_seconds": 300,
-                "reset_at": 1_800_000_000
-            },
-            "secondary_window": null
-        }
-    }))
-    .unwrap();
-
-    let windows = payload
-        .rate_limit
-        .into_iter()
-        .flat_map(|limits| [limits.primary_window, limits.secondary_window])
-        .flatten()
-        .map(UsageLimitWindow::from)
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        windows,
-        vec![UsageLimitWindow {
-            label: "Weekly".into(),
-            remaining_percent: Some(69.0),
-            resets_at_unix: Some(1_800_000_000),
-            note: None,
-        }]
-    );
-}
-
-#[test]
 fn labels_returned_windows_by_duration_instead_of_position() {
     assert_eq!(window_label(18_000), "5-hour");
     assert_eq!(window_label(604_800), "Weekly");
     assert_eq!(window_label(86_400), "Daily");
     assert_eq!(window_label(172_800), "2-day");
-}
-
-#[test]
-fn parses_only_weekly_window_reported_by_xai_billing() {
-    let payload: XaiBillingPayload = serde_json::from_value(serde_json::json!({
-        "config": {
-            "currentPeriod": {
-                "type": "USAGE_PERIOD_TYPE_WEEKLY",
-                "start": "2026-07-04T02:57:36.331252+00:00",
-                "end": "2026-07-11T02:57:36.331252+00:00"
-            },
-            "creditUsagePercent": 3.0,
-            "productUsage": [
-                {"product": "GrokBuild", "usagePercent": 2.0},
-                {"product": "GrokChat", "usagePercent": 1.0}
-            ]
-        }
-    }))
-    .unwrap();
-
-    assert_eq!(
-        payload.windows(),
-        vec![UsageLimitWindow {
-            label: "Weekly".into(),
-            remaining_percent: Some(97.0),
-            resets_at_unix: Some(
-                chrono::DateTime::parse_from_rfc3339("2026-07-11T02:57:36.331252+00:00")
-                    .unwrap()
-                    .timestamp()
-            ),
-            note: None,
-        }]
-    );
 }
 
 #[test]

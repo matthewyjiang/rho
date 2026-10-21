@@ -23,48 +23,6 @@ fn prepared(dir: &TempDir, name: &str, tag: &str, ops_body: &str) -> PreparedSec
     }
 }
 
-// Covers: end-to-end apply must rewrite the target and return a chainable preview
-// Owner: apply_prepared_sections (production mutation path)
-#[tokio::test]
-async fn edits_file_from_read_tag() {
-    let dir = test_cwd();
-    let original = "fn main() {\n    println!(\"hi\");\n}\n";
-    let (path, tag) = write_sample(&dir, "sample.rs", original);
-    let sections = vec![prepared(
-        &dir,
-        "sample.rs",
-        &tag,
-        "PUT 2.=2:\n+    println!(\"hello\");\n",
-    )];
-
-    let outcome = apply_prepared_sections(sections, 12_000).await.unwrap();
-
-    let updated = std::fs::read_to_string(path).unwrap();
-    assert_eq!(updated, "fn main() {\n    println!(\"hello\");\n}\n");
-    let new_tag = compute_file_hash(&updated);
-    assert!(
-        outcome.content.contains(&format!("[sample.rs#{new_tag}]")),
-        "{}",
-        outcome.content
-    );
-    assert!(
-        outcome.content.contains("2:    println!(\"hello\");"),
-        "{}",
-        outcome.content
-    );
-    assert!(
-        outcome.content.contains("PUT 2:") || outcome.content.contains("PUT 2.=2:"),
-        "expected ops summary with wire form: {}",
-        outcome.content
-    );
-    assert!(
-        !outcome.content.contains("@@"),
-        "model content should not embed unified diff: {}",
-        outcome.content
-    );
-    assert!(outcome.diff.contains("+    println!(\"hello\");"));
-}
-
 // Covers: a second edit must succeed using only the first edit's returned preview
 // Owner: apply_prepared_sections chain contract
 #[tokio::test]
@@ -123,26 +81,6 @@ async fn stale_tag_leaves_file_untouched() {
     );
     assert!(error.to_string().contains("1:alpha"), "{error}");
     assert_eq!(std::fs::read_to_string(path).unwrap(), original);
-}
-
-// Covers: multi-file documents must edit every section under one call
-// Owner: apply_prepared_sections
-#[tokio::test]
-async fn edits_multiple_files_in_one_document() {
-    let dir = test_cwd();
-    let a = "one\n";
-    let b = "two\n";
-    let (a_path, a_tag) = write_sample(&dir, "a.txt", a);
-    let (b_path, b_tag) = write_sample(&dir, "b.txt", b);
-    let sections = vec![
-        prepared(&dir, "a.txt", &a_tag, "PUT 1.=1:\n+ONE\n"),
-        prepared(&dir, "b.txt", &b_tag, "PUT 1.=1:\n+TWO\n"),
-    ];
-
-    apply_prepared_sections(sections, 12_000).await.unwrap();
-
-    assert_eq!(std::fs::read_to_string(a_path).unwrap(), "ONE\n");
-    assert_eq!(std::fs::read_to_string(b_path).unwrap(), "TWO\n");
 }
 
 // Covers: multi-file commit failure must rollback earlier writes

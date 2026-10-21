@@ -13,9 +13,9 @@ use super::super::persistence::{
 };
 use super::super::{SessionIndexRecord, SessionSummary};
 use super::{
-    apply_reconciliation_updates, indexed_files_for_scope, list_all_sessions,
-    list_workspace_sessions, migrate_index, open_index, reconcile_sessions_with_hook,
-    stale_index_keys, sync_workspace, IndexedFile, ReconcileScope,
+    apply_reconciliation_updates, list_all_sessions, list_workspace_sessions, migrate_index,
+    open_index, reconcile_sessions_with_hook, stale_index_keys, sync_workspace, IndexedFile,
+    ReconcileScope,
 };
 
 #[test]
@@ -385,32 +385,6 @@ fn stale_index_keys_uses_loaded_map_without_requery() {
     );
 }
 
-#[test]
-fn warm_sync_skips_current_files_using_loaded_map() {
-    let root = TempDir::new().unwrap();
-    let cwd = TempDir::new().unwrap();
-    write_test_session(root.path(), cwd.path(), "warm", 50, "warm prompt");
-    sync_workspace(root.path(), cwd.path()).unwrap();
-
-    let connection = open_index(root.path()).unwrap();
-    let connection = connection.lock().unwrap();
-    let workspace_key = workspace_key(cwd.path());
-    let scope = ReconcileScope::Workspace {
-        workspace_key: workspace_key.clone(),
-        dir: session_dir_in_root(root.path(), cwd.path()),
-    };
-    let indexed = indexed_files_for_scope(&connection, &scope).unwrap();
-    let warm = indexed
-        .get(&(workspace_key, "warm".into()))
-        .expect("warm row");
-    let path = PathBuf::from(&warm.path);
-    let (size, mtime) = session_file_stats(&path);
-    assert!(
-        warm.is_current(&path, size, mtime),
-        "freshly synced row must compare current against the loaded map"
-    );
-}
-
 // Covers: cross-project list must index never-synced workspace dirs
 // Owner: session index
 #[test]
@@ -429,20 +403,6 @@ fn list_all_sessions_discovers_unindexed_workspaces() {
     assert!(ids.contains("a-session"));
     assert!(ids.contains("b-session"));
     assert_eq!(all.len(), 2);
-}
-
-// Covers: bulk reconcile must drop index rows whose files are gone
-// Owner: session index
-#[test]
-fn list_all_sessions_drops_missing_files() {
-    let root = TempDir::new().unwrap();
-    let cwd = TempDir::new().unwrap();
-    let path = write_test_session(root.path(), cwd.path(), "gone", 30, "delete me");
-    assert_eq!(list_all_sessions(root.path()).unwrap().len(), 1);
-
-    fs::remove_file(&path).unwrap();
-    let all = list_all_sessions(root.path()).unwrap();
-    assert!(all.is_empty());
 }
 
 // Covers: global listing must return one canonical summary when two index rows

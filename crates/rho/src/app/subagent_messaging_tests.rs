@@ -88,39 +88,6 @@ fn notice_permit_release_is_scoped_to_binding_generation() {
     assert_eq!(new_permits.outstanding(), 2);
 }
 
-// Covers: posts that reserved against a binding which is then replaced fail
-// closed when the old receiver is dropped, without corrupting the new budget.
-// Keeps the retired receiver alive across rebind (inbox ordering) so a stale
-// enqueue path would still be open if post released the lock too early.
-// Owner: app notice bridge
-#[test]
-fn notice_post_after_rebind_uses_only_the_active_generation() {
-    let bridge = SubagentNoticeBridge::new();
-    let (_old_receiver, old_permits) = bridge.bind_parent();
-
-    let (mut new_receiver, new_permits) = bridge.bind_parent();
-    bridge
-        .post(sample_notice("active"))
-        .expect("active binding accepts posts");
-    assert_eq!(new_receiver.try_recv().unwrap().run_id, "active");
-    assert_eq!(new_permits.outstanding(), 1);
-    assert_eq!(old_permits.outstanding(), 0);
-
-    // Fill the active generation; the abandoned counter must not absorb load.
-    for index in 1..NOTICE_QUEUE_CAPACITY {
-        bridge
-            .post(sample_notice(&format!("n{index}")))
-            .expect("active generation fills to capacity");
-    }
-    assert_eq!(
-        bridge.post(sample_notice("overflow")),
-        Err(NoticePostError::QueueFull {
-            capacity: NOTICE_QUEUE_CAPACITY,
-        })
-    );
-    assert_eq!(new_permits.outstanding(), NOTICE_QUEUE_CAPACITY);
-}
-
 // Covers: rebind drains the retired receiver under the binding lock so a post
 // that already returned Ok is retained with its matching permit generation
 // instead of being dropped with the old receiver.

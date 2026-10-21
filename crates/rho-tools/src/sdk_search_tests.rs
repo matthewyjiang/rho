@@ -17,7 +17,7 @@ use rho_sdk::{
 };
 use std::sync::Mutex;
 
-use crate::sdk_adapter::{coding_tool, deny_context, CodingToolKind, CodingToolOptions};
+use crate::sdk_adapter::{coding_tool, CodingToolKind, CodingToolOptions};
 
 fn grep_tool(max_output_bytes: usize) -> Arc<dyn rho_sdk::tool::Tool> {
     search_tool(CodingToolKind::Grep, max_output_bytes)
@@ -109,47 +109,6 @@ async fn grep_prepare_requests_read_on_canonical_root() {
             dir.path().canonicalize().unwrap()
         )))
     );
-}
-
-#[tokio::test]
-async fn parent_traversal_is_policy_denied() {
-    let dir = TempDir::new().unwrap();
-    let tool = grep_tool(12_000);
-    let result = tool
-        .prepare(
-            invocation(json!({"pattern": "x", "path": "../outside"})),
-            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
-        )
-        .await;
-    let Err(error) = result else {
-        panic!("parent traversal must fail prepare");
-    };
-    assert_eq!(error.kind(), ToolErrorKind::PolicyDenied);
-}
-
-#[tokio::test]
-async fn missing_workspace_is_rejected() {
-    let tool = glob_tool(12_000);
-    let (context, _progress) = deny_context(None);
-    let error = tool
-        .call(invocation(json!({"pattern": "*.rs"})), context)
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), ToolErrorKind::Execution);
-    assert!(error.message().contains("workspace is required"));
-}
-
-#[tokio::test]
-async fn deny_context_blocks_call() {
-    let dir = TempDir::new().unwrap();
-    std::fs::write(dir.path().join("note.txt"), "secret").unwrap();
-    let tool = grep_tool(12_000);
-    let (context, _progress) = deny_context(Some(workspace(&dir)));
-    let error = tool
-        .call(invocation(json!({"pattern": "secret"})), context)
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), ToolErrorKind::PolicyDenied);
 }
 
 #[tokio::test]

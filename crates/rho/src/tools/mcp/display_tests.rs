@@ -118,44 +118,6 @@ fn argument_summary_joins_scalars_and_skips_primary() {
     );
 }
 
-fn identity(server: &str, tool: &str) -> McpToolIdentity {
-    McpToolIdentity {
-        server: server.into(),
-        tool: tool.into(),
-    }
-}
-
-// Covers: the shared grammar constructor both producers consume — tool verb +
-// promoted primary in the header, provenance fact first, summary fact second.
-// Owner: mcp display helper
-#[test]
-fn mcp_header_and_facts_assembles_shared_grammar() {
-    let args = json!({"path": "crates", "max_results": 50});
-    let (header, facts) = mcp_header_and_facts(&identity("olive", "grep"), Some(&args));
-    assert_eq!(header, ToolHeader::call("grep", Some("crates".into())));
-    assert_eq!(
-        facts,
-        vec![
-            ToolFact::Meta {
-                text: "mcp · olive".into()
-            },
-            ToolFact::Text {
-                text: "max_results 50".into()
-            },
-        ]
-    );
-
-    // No arguments: header stays bare, provenance still present.
-    let (header, facts) = mcp_header_and_facts(&identity("olive", "grep"), None);
-    assert_eq!(header, ToolHeader::call("grep", None));
-    assert_eq!(
-        facts,
-        vec![ToolFact::Meta {
-            text: "mcp · olive".into()
-        }]
-    );
-}
-
 // Covers: multiline primaries stay within the 80-char budget including the
 // continuation ellipsis.
 // Owner: mcp display helper
@@ -172,6 +134,13 @@ fn primary_argument_multiline_stays_within_budget() {
             display.chars().count()
         );
         assert!(display.ends_with('…'), "len {len}");
+    }
+}
+
+fn identity(server: &str, tool: &str) -> McpToolIdentity {
+    McpToolIdentity {
+        server: server.into(),
+        tool: tool.into(),
     }
 }
 

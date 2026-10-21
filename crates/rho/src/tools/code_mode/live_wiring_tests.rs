@@ -529,14 +529,6 @@ async fn cancelled_parent_does_not_start_subsequent_nested_calls() {
     assert_eq!((*calls.lock().unwrap(), bridge.call_count()), (1, 1));
 }
 
-// Covers: scripts branch and loop over actual nested outputs.
-// Owner: Starlark evaluator / ToolHost integration.
-#[tokio::test]
-async fn control_flow_composes_nested_results() {
-    let host = host(StubTool::output(ToolOutput::text("ok")));
-    assert_eq!(script(&host, "seen = []\nfor name in [\"a\", \"b\", \"c\"]:\n    if name != \"b\":\n        seen.append(call_tool(\"probe\")[\"content\"])\nresult = seen").await.unwrap(), json!(["ok", "ok"]));
-}
-
 // Covers: evaluation budget, non-JSON result, and nested-call budget fail at
 // their owning seam, without collapsing all causes into a copy assertion.
 // Owner: Starlark evaluator and its typed native bridge errors.

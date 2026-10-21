@@ -4,13 +4,6 @@ use super::super::{
     markdown::StreamLineStart, theme::Theme, LiveStreamPreview, StreamKind, StreamUi,
 };
 
-fn line_text(line: &ratatui::text::Line<'_>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>()
-}
-
 fn preview(text: &str) -> LiveStreamPreview {
     LiveStreamPreview {
         kind: StreamKind::Assistant,
@@ -18,27 +11,6 @@ fn preview(text: &str) -> LiveStreamPreview {
         line_start: StreamLineStart::Fresh,
         include_leading_blank: false,
     }
-}
-
-// Covers: unchanged live preview must not re-markdown or clone the fence highlighter.
-// Owner: tui stream preview render cache
-#[test]
-fn stream_preview_cache_hits_when_preview_and_fence_are_unchanged() {
-    let mut streams = StreamUi::default();
-    streams.set_live_preview(Some(preview("hello **world**")));
-    let first = streams
-        .cached_preview_lines(40)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>();
-    assert_eq!(streams.preview_cache_paints(), 1);
-    let second = streams
-        .cached_preview_lines(40)
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>();
-    assert_eq!(streams.preview_cache_paints(), 1);
-    assert_eq!(first, second);
 }
 
 // Covers: new preview text, width, fence advance, and theme must miss.

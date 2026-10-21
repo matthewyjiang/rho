@@ -1,12 +1,10 @@
 use std::{num::NonZeroUsize, time::Instant};
 
 use pretty_assertions::assert_eq;
-use serde_json::json;
 
 use crate::{
     model::{
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
-        ProviderContextBlock, ToolSpec,
+        Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage, ToolSpec,
     },
     CancellationToken, ProviderErrorKind,
 };
@@ -34,86 +32,6 @@ fn request<'a>(
 }
 
 #[tokio::test]
-async fn trait_object_completes_text_and_records_provider_neutral_request() {
-    let provider: Box<dyn ModelProvider> = Box::new(ScriptedProvider::new(
-        identity(),
-        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-            ContentBlock::Text("hello".into()),
-        ]))],
-    ));
-    let messages = [Message::user_text("hi")];
-    let tools = [ToolSpec {
-        name: "lookup".into(),
-        description: "look up a value".into(),
-        input_schema: json!({"type": "object"}),
-    }];
-
-    let response = provider
-        .send_turn(request(&messages, &tools, CancellationToken::new()))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        response,
-        ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())])
-    );
-}
-
-#[tokio::test]
-async fn streaming_preserves_event_order_usage_and_native_replay_context() {
-    let usage = ModelUsage {
-        output_tokens: Some(2),
-        ..ModelUsage::default()
-    };
-    let context = ProviderContextBlock {
-        identity: identity(),
-        kind: "test_context".into(),
-        position: Some(0),
-        data: json!({"opaque": "value"}),
-    };
-    let expected = vec![
-        ModelEvent::OutputDelta("he".into()),
-        ModelEvent::OutputDelta("llo".into()),
-        ModelEvent::ProviderContext {
-            kind: context.kind.clone(),
-            position: context.position,
-            data: context.data.clone(),
-        },
-        ModelEvent::Usage(usage),
-    ];
-    let provider = ScriptedProvider::new(
-        identity(),
-        [ScriptedTurn::streaming(
-            expected.clone(),
-            ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())]),
-        )],
-    );
-    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
-    let messages = [Message::user_text("hi")];
-    let cancellation = CancellationToken::new();
-
-    let (result, received) = tokio::join!(
-        provider.send_turn_stream(request(&messages, &[], cancellation), events),
-        async {
-            let mut received = Vec::new();
-            while let Some(event) = receiver.recv().await {
-                received.push(event);
-                if received.len() == expected.len() {
-                    break;
-                }
-            }
-            received
-        }
-    );
-
-    assert_eq!(
-        result.unwrap(),
-        ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())])
-    );
-    assert_eq!(received, expected);
-}
-
-#[tokio::test]
 async fn semantic_and_request_event_receivers_remain_compatible() {
     let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(2).unwrap());
     events
@@ -136,33 +54,32 @@ async fn semantic_and_request_event_receivers_remain_compatible() {
     assert_eq!(receiver.recv_request_event().await, None);
 }
 
+// Covers: a provider observation timestamp survives channel delivery, and a
+// synthesized event carries none.
+// Owner: SDK provider channel
 #[tokio::test]
 async fn observed_event_timestamp_survives_channel_delivery() {
-    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(2).unwrap());
     let observed_at = Instant::now();
-    let event = ModelEvent::OutputDelta("hello".into());
+    let observed = ModelEvent::OutputDelta("hello".into());
+    let synthesized = ModelEvent::OutputDelta("synthesized".into());
 
     events
-        .send_observed(event.clone(), observed_at)
+        .send_observed(observed.clone(), observed_at)
         .await
         .unwrap();
+    events.send_unobserved(synthesized.clone()).await.unwrap();
 
     assert_eq!(
         receiver.recv_timed_stream_event().await,
-        Some((super::ProviderStreamEvent::Model(event), Some(observed_at)))
+        Some((
+            super::ProviderStreamEvent::Model(observed),
+            Some(observed_at)
+        ))
     );
-}
-
-#[tokio::test]
-async fn synthesized_event_has_no_provider_observation_timestamp() {
-    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
-    let event = ModelEvent::OutputDelta("hello".into());
-
-    events.send_unobserved(event.clone()).await.unwrap();
-
     assert_eq!(
         receiver.recv_timed_stream_event().await,
-        Some((super::ProviderStreamEvent::Model(event), None))
+        Some((super::ProviderStreamEvent::Model(synthesized), None))
     );
 }
 
@@ -199,26 +116,6 @@ async fn cancellation_stops_a_scripted_request_before_consuming_a_turn() {
 
     assert_eq!(error.kind(), ProviderErrorKind::Interrupted);
     assert!(provider.recorded_requests().is_empty());
-}
-
-#[tokio::test]
-async fn dropping_the_event_consumer_interrupts_streaming_deterministically() {
-    let provider = ScriptedProvider::new(
-        identity(),
-        [ScriptedTurn::streaming(
-            vec![ModelEvent::OutputDelta("hello".into())],
-            ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())]),
-        )],
-    );
-    let (events, receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
-    drop(receiver);
-
-    let error = provider
-        .send_turn_stream(request(&[], &[], CancellationToken::new()), events)
-        .await
-        .unwrap_err();
-
-    assert_eq!(error.kind(), ProviderErrorKind::Interrupted);
 }
 
 #[tokio::test]

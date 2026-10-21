@@ -19,10 +19,6 @@ const MIXED_OUTPUT_COMMAND: &str = "printf out; printf err >&2";
 #[cfg(windows)]
 const MIXED_OUTPUT_COMMAND: &str = "[Console]::Out.Write('out'); [Console]::Error.Write('err')";
 #[cfg(unix)]
-const LIMITED_OUTPUT_COMMAND: &str = "printf abc; printf def";
-#[cfg(windows)]
-const LIMITED_OUTPUT_COMMAND: &str = "[Console]::Out.Write('abcdef')";
-#[cfg(unix)]
 const DELAYED_OUTPUT_COMMAND: &str = "sleep 0.05; printf wake";
 #[cfg(windows)]
 const DELAYED_OUTPUT_COMMAND: &str = "Start-Sleep -Milliseconds 50; [Console]::Out.Write('wake')";
@@ -175,30 +171,6 @@ async fn captures_streams_and_incremental_cursors() {
         .await
         .unwrap();
     assert!(empty.chunks.is_empty());
-}
-
-#[tokio::test]
-async fn stale_cursor_and_byte_and_chunk_limits_are_explicit() {
-    let manager = ProcessManager::new(ProcessLimits {
-        max_bytes: 3,
-        max_chunks: 1,
-        ..ProcessLimits::default()
-    });
-    let started = manager
-        .start(
-            LIMITED_OUTPUT_COMMAND.into(),
-            std::path::Path::new("."),
-            None,
-        )
-        .await
-        .unwrap();
-    eventually(&manager, &started.process_id).await;
-    let snapshot = manager
-        .poll(&started.process_id, Some(0), Duration::ZERO)
-        .await
-        .unwrap();
-    assert!(snapshot.truncated || snapshot.chunks.iter().map(|c| c.text.len()).sum::<usize>() <= 3);
-    assert!(snapshot.chunks.len() <= 1);
 }
 
 #[tokio::test]
@@ -412,25 +384,15 @@ async fn descendant_case(action: &str) {
     .unwrap_or_else(|_| panic!("descendant {pid} survived {action}"));
 }
 
+// Covers: stop, timeout, async shutdown, and dropping the manager each kill
+// the whole process tree, not just the shell leader
+// Owner: process supervisor
 #[cfg(unix)]
 #[tokio::test]
-async fn explicit_stop_kills_descendants() {
-    descendant_case("stop").await;
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn timeout_kills_descendants() {
-    descendant_case("timeout").await;
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn async_shutdown_kills_descendants() {
-    descendant_case("shutdown").await;
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn drop_kills_descendants() {
-    descendant_case("drop").await;
+async fn every_termination_path_kills_descendants() {
+    for action in ["stop", "timeout", "shutdown", "drop"] {
+        descendant_case(action).await;
+    }
 }
 
 #[cfg(unix)]

@@ -41,26 +41,22 @@ fn disabled_when_platform_does_not_support_herdr_socket() {
     assert!(!reporter.is_enabled());
 }
 
+// Covers: only a live listening socket counts as reachable; a regular file at
+// the socket path does not.
+// Owner: herdr socket probe
 #[cfg(unix)]
 #[test]
-fn socket_reachability_connects_to_live_socket() {
+fn socket_reachability_requires_a_live_socket() {
     let socket_dir = tempfile::tempdir().unwrap();
-    let socket_path = socket_dir.path().join("herdr.sock");
-    let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
-    let reporter = super::test_support::reporter_for_socket(&socket_path);
+    let live = socket_dir.path().join("live.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&live).unwrap();
+    let regular_file = socket_dir.path().join("file.sock");
+    std::fs::write(&regular_file, "not a socket").unwrap();
 
-    assert_eq!(reporter.socket_is_reachable(), Some(true));
-}
-
-#[cfg(unix)]
-#[test]
-fn socket_reachability_rejects_regular_file() {
-    let socket_dir = tempfile::tempdir().unwrap();
-    let socket_path = socket_dir.path().join("herdr.sock");
-    std::fs::write(&socket_path, "not a socket").unwrap();
-    let reporter = super::test_support::reporter_for_socket(&socket_path);
-
-    assert_eq!(reporter.socket_is_reachable(), Some(false));
+    for (path, expected) in [(&live, Some(true)), (&regular_file, Some(false))] {
+        let reporter = super::test_support::reporter_for_socket(path);
+        assert_eq!(reporter.socket_is_reachable(), expected, "{path:?}");
+    }
 }
 
 // Covers: Herdr only accepts a self-reported resume command from a report that

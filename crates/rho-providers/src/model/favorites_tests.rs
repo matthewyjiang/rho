@@ -10,21 +10,6 @@ fn entry(provider: &str, model: &str) -> ModelCatalogEntry {
 }
 
 #[test]
-fn poolside_favorites_normalize_to_internal_model_and_match_legacy_forms() {
-    let favorites = normalized_favorite_models(&[
-        "poolside/poolside/laguna-m.1".into(),
-        "poolside/laguna-m.1".into(),
-    ]);
-
-    assert_eq!(favorites.len(), 1);
-    assert_eq!(favorites[0].model, "laguna-m.1");
-    assert_eq!(favorites[0].value(), "poolside/laguna-m.1");
-    assert!(favorites[0].matches("poolside", "laguna-m.1"));
-    assert!(favorites[0].matches("poolside", "poolside/laguna-m.1"));
-    assert!(favorites[0].matches("poolside", "poolside/poolside/laguna-m.1"));
-}
-
-#[test]
 fn legacy_provider_aliases_normalize_favorites() {
     let favorites = normalized_favorite_models(&[
         "openrouter-oauth/anthropic/claude-sonnet-4".into(),
@@ -38,6 +23,22 @@ fn legacy_provider_aliases_normalize_favorites() {
     );
     assert!(favorites[0].matches("openrouter-oauth", "anthropic/claude-sonnet-4"));
     assert!(favorites[1].matches("xai-oauth", "grok-4.5"));
+
+    let poolside = normalized_favorite_models(&[
+        "poolside/poolside/laguna-m.1".into(),
+        "poolside/laguna-m.1".into(),
+    ]);
+    assert_eq!(
+        favorite_model_values(&poolside),
+        vec!["poolside/laguna-m.1"]
+    );
+    for legacy in [
+        "laguna-m.1",
+        "poolside/laguna-m.1",
+        "poolside/poolside/laguna-m.1",
+    ] {
+        assert!(poolside[0].matches("poolside", legacy), "{legacy}");
+    }
 }
 
 #[test]

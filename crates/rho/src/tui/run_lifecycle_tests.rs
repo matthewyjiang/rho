@@ -86,42 +86,32 @@ fn interrupt_expands_pasted_draft_before_restoring_it() {
 }
 
 // Covers: a turn that finishes while the user is scrolled up flags the jump
-// chip until they return to bottom or the next turn starts.
+// chip until they return to bottom or the next turn starts. A turn finished at
+// the bottom, and failed / cancelled / abandoned turns (which end via
+// end_busy_ui), must not flag it as "response ready".
 // Owner: behavior (turn-finished attention cue)
 #[test]
 fn turn_finished_while_scrolled_up_flags_jump_chip() {
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+    for (case, scrolled_up, finished, expected) in [
+        ("scrolled up", true, true, JumpChipState::ResponseReady),
+        ("at bottom", false, true, JumpChipState::Neutral),
+        ("failed", true, false, JumpChipState::Neutral),
+    ] {
+        let mut app = test_app();
+        app.begin_provider_turn_ui();
+        if scrolled_up {
+            app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+        }
 
-    app.end_provider_turn_ui();
+        if finished {
+            app.end_provider_turn_ui();
+        } else {
+            app.end_busy_ui();
+            assert!(!app.turn_finished_attention, "{case}");
+        }
 
-    assert_eq!(app.jump_chip_state(), JumpChipState::ResponseReady);
-}
-
-#[test]
-fn turn_finished_at_bottom_keeps_chip_neutral() {
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-
-    app.end_provider_turn_ui();
-
-    assert_eq!(app.jump_chip_state(), JumpChipState::Neutral);
-}
-
-// Covers: failed / cancelled / abandoned turns end via end_busy_ui and must
-// not flag the chip as "response ready".
-// Owner: behavior (turn-finished attention cue)
-#[test]
-fn failed_turn_end_keeps_chip_neutral() {
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
-
-    app.end_busy_ui();
-
-    assert!(!app.turn_finished_attention);
-    assert_eq!(app.jump_chip_state(), JumpChipState::Neutral);
+        assert_eq!(app.jump_chip_state(), expected, "{case}");
+    }
 }
 
 #[test]

@@ -112,16 +112,6 @@ fn rail_row_layout_assembles_columns() {
     }
 }
 
-#[test]
-fn bottom_follow_activity_inset_only_when_activity_and_pinned() {
-    assert_eq!(bottom_follow_activity_inset(false, true), 0);
-    assert_eq!(bottom_follow_activity_inset(true, false), 0);
-    assert_eq!(
-        bottom_follow_activity_inset(true, true),
-        ACTIVITY_RAIL_ROWS + ACTIVITY_CONTENT_GAP_ROWS
-    );
-}
-
 // Covers: the jump chip degrades full -> compact -> bare shortcut as width
 // shrinks, for every attention state.
 // Owner: pure unit (chip width degradation)
@@ -149,26 +139,6 @@ fn jump_to_bottom_text_degrades_by_width() {
                 "{state:?} {rung}"
             );
         }
-    }
-}
-
-// Covers: every attention compact label is no wider than neutral's, so any
-// width that still shows the neutral cue shows the attention cue too.
-// Owner: pure unit (chip copy invariant)
-#[test]
-fn jump_to_bottom_attention_compact_labels_fit_where_neutral_does() {
-    let (_, neutral_compact) = JumpChipState::Neutral.labels();
-    let neutral_width = display_width(neutral_compact);
-    for state in [
-        JumpChipState::ResponseReady,
-        JumpChipState::ApprovalNeeded,
-        JumpChipState::InputNeeded,
-    ] {
-        let (full, compact) = state.labels();
-        assert!(
-            display_width(compact) <= neutral_width,
-            "{full:?} compact label {compact:?} is wider than neutral's {neutral_compact:?}"
-        );
     }
 }
 

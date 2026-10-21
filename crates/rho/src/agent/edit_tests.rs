@@ -216,18 +216,6 @@ fn save_lock_survives_drop_and_rejects_a_contender() {
     }
 }
 
-// Covers: first save of a new agent creates parent directories.
-// Owner: agent edit
-#[test]
-fn save_definition_creates_missing_parent_dirs() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("nested/agents/draft.md");
-    let contents = save_definition(&rho_draft(), &path, "").unwrap();
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
-    let reparsed = parse_definition(&path, "draft", &contents).unwrap();
-    assert_eq!(reparsed, rho_draft());
-}
-
 // Covers: saving through a symlink cannot modify the linked target
 // Owner: agent edit
 #[cfg(unix)]
@@ -349,32 +337,6 @@ fn toggle_tool_flips_membership_per_runtime() {
     assert_eq!(cursor.tools_text(), "[read_tool_call]");
 }
 
-// Covers: the nav badge collapses long lists to a count while the summary
-// keeps every name for the detail pane.
-// Owner: agent edit
-#[test]
-fn tools_badge_collapses_to_count_but_summary_keeps_names() {
-    let mut rho = rho_draft();
-    assert_eq!(
-        (rho.tools_badge(), rho.tools_summary()),
-        ("all".into(), "all".into())
-    );
-
-    rho.set_tools_text("[]").unwrap();
-    assert_eq!(
-        (rho.tools_badge(), rho.tools_summary()),
-        ("none".into(), "none".into())
-    );
-
-    rho.set_tools_text("[read_file, grep, glob]").unwrap();
-    assert_eq!(rho.tools_badge(), "glob, grep, read_file");
-
-    rho.set_tools_text("[read_file, grep, glob, shell]")
-        .unwrap();
-    assert_eq!(rho.tools_badge(), "4 tools");
-    assert_eq!(rho.tools_summary(), "glob, grep, read_file, shell");
-}
-
 // Covers: prompt policy preserves body
 // Owner: agent edit
 #[test]
@@ -404,23 +366,6 @@ fn validate_for_edit_flags_overlong_description_and_empty_replace() {
     );
 }
 
-// Covers: model text pins select policy for rho
-// Owner: agent edit
-#[test]
-fn setting_model_text_pins_select_policy_for_rho() {
-    let mut draft = rho_draft();
-    draft.set_model_text("gpt-5.5".into());
-    assert_eq!(
-        draft.model_policy().as_ref(),
-        &ModelPolicy::Select(ModelSelection {
-            provider: None,
-            model: "gpt-5.5".into(),
-            auth: None,
-            fast: false,
-        })
-    );
-}
-
 // Covers: save rejects invalid drafts before writing
 // Owner: agent edit
 #[test]
@@ -440,18 +385,6 @@ fn save_definition_rejects_empty_replace_without_writing() {
     let error = save_definition(&draft, &path, "").unwrap_err();
     assert!(matches!(error, SaveDefinitionError::Validation(_)));
     assert!(!path.exists());
-}
-
-// Covers: write errors surface for unwritable paths
-// Owner: agent edit
-#[test]
-fn save_definition_reports_write_error_for_unwritable_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let blocker = dir.path().join("not-a-directory");
-    std::fs::write(&blocker, b"x").unwrap();
-    let path = blocker.join("draft.md");
-    let error = save_definition(&rho_draft(), &path, "").unwrap_err();
-    assert!(matches!(error, SaveDefinitionError::Write(_)));
 }
 
 // Covers: same runtime switch is a no-op

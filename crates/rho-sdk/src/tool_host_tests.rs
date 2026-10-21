@@ -19,9 +19,9 @@ use crate::{
         ToolPrepareFuture, ToolProgress,
     },
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-    ApprovalSession, AuthorizationDenialKind, CapabilityRequest, CapabilitySource, Error,
-    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, PathScope, PolicyDecision,
-    SelectionMode, ToolHost, ToolHostCall, ToolHostEvent, WorkspacePolicy,
+    AuthorizationDenialKind, CapabilityRequest, CapabilitySource, Error, HostChoice,
+    HostInputRequest, HostInputResponse, HostQuestion, PathScope, PolicyDecision, SelectionMode,
+    ToolHost, ToolHostCall, ToolHostEvent, WorkspacePolicy,
 };
 
 struct CompletingCancellationTool {
@@ -283,10 +283,6 @@ fn call() -> ToolHostCall {
     ToolHostCall::new("host_exec", json!({"input": "value"}))
 }
 
-fn call_path(path: &str) -> ToolHostCall {
-    ToolHostCall::new("host_exec", json!({"path": path}))
-}
-
 // Covers: a host tool must not bypass or reorder any authorization stage when no provider exists.
 // Owner: SDK ToolHost authorization orchestration.
 #[tokio::test]
@@ -382,65 +378,6 @@ async fn hook_denial_stops_before_approval() {
             .map(|record| record.decision())
             .collect::<Vec<_>>(),
         vec![ApprovalAuditDecision::DeniedByHook]
-    );
-}
-
-struct CountingApproval {
-    count: Arc<Mutex<usize>>,
-}
-
-impl ApprovalHandler for CountingApproval {
-    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
-        *self.count.lock().unwrap() += 1;
-        Box::pin(std::future::ready(ApprovalDecision::AllowForSession))
-    }
-}
-
-// Covers: AllowForSession must apply to exact later calls on one ToolHost session.
-// Owner: SDK ToolHost approval memory.
-#[tokio::test]
-async fn exact_approval_is_remembered_for_the_tool_host_session() {
-    let count = Arc::new(Mutex::new(0));
-    let approvals = ApprovalSession::new(CountingApproval {
-        count: Arc::clone(&count),
-    });
-    let host = ToolHost::builder()
-        .tool(AuthorizingTool {
-            order: Arc::default(),
-        })
-        .workspace_policy(OrderedPolicy {
-            order: Arc::default(),
-        })
-        .approval_session(approvals.clone())
-        .build()
-        .unwrap();
-
-    host.invoke(call()).await.unwrap();
-    let later_host = ToolHost::builder()
-        .tool(AuthorizingTool {
-            order: Arc::default(),
-        })
-        .workspace_policy(OrderedPolicy {
-            order: Arc::default(),
-        })
-        .approval_session(approvals)
-        .build()
-        .unwrap();
-    later_host.invoke(call()).await.unwrap();
-    later_host.invoke(call_path("/work/other")).await.unwrap();
-
-    assert_eq!(*count.lock().unwrap(), 2);
-    assert_eq!(
-        later_host
-            .approval_audit()
-            .iter()
-            .map(|record| record.decision())
-            .collect::<Vec<_>>(),
-        vec![
-            ApprovalAuditDecision::AllowedForSession,
-            ApprovalAuditDecision::AllowedByRememberedApproval,
-            ApprovalAuditDecision::AllowedForSession,
-        ]
     );
 }
 

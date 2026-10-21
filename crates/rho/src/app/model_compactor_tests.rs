@@ -92,7 +92,9 @@ fn seeded_diagnostics() -> crate::diagnostics::RuntimeDiagnostics {
     diagnostics
 }
 
-// Covers: native compaction returns the replacement and records successful usage
+// Covers: native compaction returns the replacement, records successful usage,
+// and receives the session service tier so xAI fast mode can stamp the request
+// model without rebuilding the provider
 // Owner: ModelCompactor runtime.
 #[tokio::test]
 async fn native_compaction_success_records_usage_and_returns_replacement() {
@@ -115,11 +117,18 @@ async fn native_compaction_success_records_usage_and_returns_replacement() {
     let compactor = compactor(provider.clone(), usage.clone(), Some(8_000));
 
     let output = compactor
-        .compact(CompactionRequest::new(messages(), Default::default()))
+        .compact(
+            CompactionRequest::new(messages(), Default::default())
+                .with_service_tier(ServiceTier::Priority),
+        )
         .await
         .unwrap();
 
     assert_eq!(output.messages(), replacement.as_slice());
+    assert_eq!(
+        provider.recorded_requests()[0].service_tier,
+        Some(ServiceTier::Priority)
+    );
     assert_eq!(output.usage().input_tokens, Some(11));
     let events = usage.events();
     assert_eq!(events.len(), 1);
@@ -133,36 +142,6 @@ async fn native_compaction_success_records_usage_and_returns_replacement() {
         .recorded_requests()
         .iter()
         .all(|request| request.tools.is_empty() && request.prompt_cache_key.is_none()));
-}
-
-// Covers: native compaction receives the session service tier so xAI fast mode
-// can stamp the request model without rebuilding the provider.
-// Owner: compaction runtime
-#[tokio::test]
-async fn native_compaction_forwards_the_service_tier() {
-    let usage = RecordingUsage::default();
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("xai", "openai-responses", "grok-4.7"),
-        [],
-    )
-    .with_native_compactions([Ok(rho_sdk::CompactionOutput::new(vec![
-        Message::user_text("kept"),
-    ])
-    .unwrap())]);
-    let compactor = compactor(provider.clone(), usage, None);
-
-    compactor
-        .compact(
-            CompactionRequest::new(messages(), Default::default())
-                .with_service_tier(ServiceTier::Priority),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(
-        provider.recorded_requests()[0].service_tier,
-        Some(ServiceTier::Priority)
-    );
 }
 
 // Covers: native failure falls back to summary with monotonic usage attempts

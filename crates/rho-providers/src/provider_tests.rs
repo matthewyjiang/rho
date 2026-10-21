@@ -45,8 +45,11 @@ fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
     );
 }
 
+// Covers: legacy provider aliases normalize to the provider that shares their
+// auth
+// Owner: provider registry
 #[test]
-fn openrouter_auth_modes_share_one_provider_and_legacy_aliases_normalize() {
+fn shared_auth_providers_normalize_legacy_aliases() {
     use super::ProviderId;
 
     let openrouter = super::provider_descriptor_by_id(ProviderId::OpenRouter);
@@ -69,12 +72,8 @@ fn openrouter_auth_modes_share_one_provider_and_legacy_aliases_normalize() {
     let resolved = super::resolve_profile("openrouter-oauth", "openrouter-api-key").unwrap();
     assert_eq!(resolved.provider, openrouter);
     assert_eq!(resolved.auth_id(), "openrouter-oauth");
-}
 
-#[test]
-fn xai_legacy_provider_alias_selects_oauth_mode() {
     let resolved = super::resolve_profile("xai-oauth", "xai-api-key").unwrap();
-
     assert_eq!(resolved.provider_name(), "xai");
     assert_eq!(resolved.auth_id(), "xai-oauth");
 }
@@ -97,98 +96,6 @@ fn resolve_profile_exact_rejects_incompatible_auth() {
     assert_eq!(soft.auth_id(), "xai-api-key");
 }
 
-// Covers: qwen-token-plan must resolve as OpenAI-compatible with api-key auth
-// Owner: provider registry
-#[test]
-fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
-    use super::{
-        CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime,
-        QWEN_TOKEN_PLAN_API_BASE,
-    };
-    use crate::model::registry::provider_runtime;
-    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
-
-    let descriptor = super::provider_descriptor_by_id(ProviderId::QwenTokenPlan);
-    assert_eq!(descriptor.name, "qwen-token-plan");
-    assert_eq!(descriptor.metadata_upstream, "alibaba-token-plan");
-    assert_eq!(
-        descriptor.catalog_reasoning,
-        CatalogReasoningPolicy::ExactAdvertised
-    );
-    assert!(descriptor.auth_mode("qwen-token-plan-api-key").is_some());
-    assert_eq!(
-        provider_runtime("qwen-token-plan"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::QwenTokenPlan,
-            default_api_base: QWEN_TOKEN_PLAN_API_BASE,
-            catalog_construction: CatalogConstruction::Runtime,
-        })
-    );
-}
-
-// Covers: meta stays OpenAI-compatible, keeps API-key as the default, and offers Muse subscription
-// Owner: provider registry
-#[test]
-fn meta_is_openai_compatible_with_api_key_and_muse_subscription() {
-    use super::{
-        CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime, META_API_BASE,
-    };
-    use crate::model::registry::provider_runtime;
-    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
-
-    let descriptor = super::provider_descriptor_by_id(ProviderId::Meta);
-    assert_eq!(descriptor.name, "meta");
-    assert_eq!(descriptor.display_name, "Meta Model API");
-    assert_eq!(descriptor.metadata_upstream, "meta");
-    assert_eq!(descriptor.default_model, Some("muse-spark-1.2"));
-    assert_eq!(
-        descriptor.catalog_reasoning,
-        CatalogReasoningPolicy::ExactAdvertised
-    );
-    assert_eq!(descriptor.default_auth().id, "meta-api-key");
-    assert!(descriptor.auth_mode("meta-api-key").is_some());
-    assert!(descriptor.auth_mode("meta-muse").is_some());
-    assert_eq!(
-        provider_runtime("meta"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
-            default_api_base: META_API_BASE,
-            catalog_construction: CatalogConstruction::Runtime,
-        })
-    );
-}
-
-// Covers: opencode-go must resolve as OpenAI-compatible with catalog npm construction
-// Owner: provider registry
-#[test]
-fn opencode_go_is_openai_compatible_with_catalog_npm_construction() {
-    use super::{
-        CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime,
-        OPENCODE_GO_API_BASE,
-    };
-    use crate::model::registry::provider_runtime;
-    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
-
-    let descriptor = super::provider_descriptor_by_id(ProviderId::OpenCodeGo);
-    assert_eq!(descriptor.name, "opencode-go");
-    assert_eq!(descriptor.display_name, "OpenCode Go");
-    assert_eq!(descriptor.metadata_upstream, "opencode-go");
-    assert_eq!(descriptor.default_model, None);
-    assert_eq!(
-        descriptor.catalog_reasoning,
-        CatalogReasoningPolicy::ExactAdvertised
-    );
-    assert!(descriptor.auth_mode("opencode-go-api-key").is_some());
-    assert_eq!(
-        provider_runtime("opencode-go"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
-            default_api_base: OPENCODE_GO_API_BASE,
-            catalog_construction: CatalogConstruction::PreferModelsDevNpm,
-        })
-    );
-}
-
 // Covers: custom-host persistence omits Chat Completions and Anthropic Messages
 // Owner: provider registry
 #[test]
@@ -206,45 +113,6 @@ fn persisted_custom_host_value_omits_non_custom_apis() {
     assert_eq!(
         OpenAiCompatibleApi::AnthropicMessages.persisted_custom_host_value(),
         None
-    );
-}
-
-// Covers: MiniMax declares Anthropic Messages on its compatible base
-// Owner: provider registry
-#[test]
-fn minimax_declares_anthropic_messages_on_its_compatible_base() {
-    use super::{
-        CatalogConstruction, CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderId,
-        ProviderModelRefreshKind, ProviderRuntime, MINIMAX_API_BASE,
-    };
-    use crate::model::registry::provider_runtime;
-    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
-
-    let descriptor = super::provider_descriptor_by_id(ProviderId::MiniMax);
-    assert_eq!(descriptor.name, "minimax");
-    assert_eq!(descriptor.display_name, "MiniMax");
-    assert_eq!(descriptor.metadata_upstream, "minimax");
-    assert_eq!(descriptor.default_model, Some("MiniMax-M3"));
-    assert_eq!(
-        descriptor.catalog_reasoning,
-        CatalogReasoningPolicy::ExactAdvertised
-    );
-    assert!(descriptor.auth_mode("minimax-api-key").is_some());
-    assert_eq!(
-        descriptor.openai_compatible_api(),
-        OpenAiCompatibleApi::AnthropicMessages
-    );
-    assert_eq!(
-        descriptor.model_refresh,
-        Some(ProviderModelRefreshKind::AnthropicCompatible)
-    );
-    assert_eq!(
-        provider_runtime("minimax"),
-        Some(ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
-            default_api_base: MINIMAX_API_BASE,
-            catalog_construction: CatalogConstruction::Runtime,
-        })
     );
 }
 

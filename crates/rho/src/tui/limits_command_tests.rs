@@ -224,32 +224,70 @@ fn live_ready_section_uses_in_memory_fetch_time_not_cache() {
     assert_eq!(section.windows, windows);
 }
 
-// Covers: Claude observations appear without a live probe even with no OAuth.
+// Covers: Claude observations appear without a live probe even with no OAuth;
+// a probe-capable binary shows checking while the disk probe is stale or
+// absent; no state at all leaves the empty note instead of inventing a section.
 // Owner: pure unit
 #[test]
-fn claude_section_is_present_without_oauth() {
-    let overlay = build_limits_overlay(
-        &MemoryCredentialStore::default(),
-        &BTreeMap::new(),
-        &[],
-        UsageLimitsCache::default(),
-        super::limits_claude::ClaudeLimitsView {
-            disk: Some(&sample_claude_state(1_000)),
-            pending: false,
-            probe_available: false,
-        },
-        1_125,
-    );
-    assert_eq!(overlay.sections.len(), 1);
-    assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
-    assert_eq!(overlay.sections[0].windows.len(), 1);
-    assert!(overlay.sections[0].windows[0].remaining_percent.is_none());
-    assert!(matches!(
-        overlay.sections[0].status,
-        LimitsSectionStatus::Observed {
-            observed_at_unix: 1_000
-        }
-    ));
+fn claude_section_follows_disk_state_and_probe_availability() {
+    let observed = sample_claude_state(1_000);
+    let mut stale_probe = sample_claude_state(1_000);
+    stale_probe.last_probe_unix = Some(1);
+    let cases = [
+        (
+            "disk observation without oauth",
+            Some(&observed),
+            /*probe_available*/ false,
+            1_125,
+            Some(LimitsSectionStatus::Observed {
+                observed_at_unix: 1_000,
+            }),
+        ),
+        (
+            "stale disk probe with binary",
+            Some(&stale_probe),
+            true,
+            1_400,
+            Some(LimitsSectionStatus::Checking {
+                cached_at_unix: Some(1),
+            }),
+        ),
+        (
+            "probe without disk",
+            None,
+            true,
+            0,
+            Some(LimitsSectionStatus::Checking {
+                cached_at_unix: None,
+            }),
+        ),
+        ("no state", None, false, 0, None),
+    ];
+    for (name, disk, probe_available, now_unix, expected) in cases {
+        let overlay = build_limits_overlay(
+            &MemoryCredentialStore::default(),
+            &BTreeMap::new(),
+            &[],
+            UsageLimitsCache::default(),
+            super::limits_claude::ClaudeLimitsView {
+                disk,
+                pending: false,
+                probe_available,
+            },
+            now_unix,
+        );
+        let sections: Vec<_> = overlay
+            .sections
+            .iter()
+            .map(|section| (section.id, section.status.clone()))
+            .collect();
+        let expected: Vec<_> = expected
+            .map(|status| (LimitsSectionId::ClaudeCode, status))
+            .into_iter()
+            .collect();
+        assert_eq!(sections, expected, "{name}");
+        assert_eq!(overlay.empty_note.is_some(), sections.is_empty(), "{name}");
+    }
 }
 
 #[test]
@@ -320,74 +358,6 @@ fn fresh_probe_omits_windows_the_panel_did_not_report() {
     assert_eq!(labels, vec!["5-hour", "Weekly"]);
     assert_eq!(section.windows[0].note, None);
     assert_eq!(section.windows[1].note, None);
-}
-
-// Covers: a live Claude probe must occupy /limits before any disk cache exists.
-// Owner: pure unit
-#[test]
-fn stale_disk_probe_with_binary_shows_checking() {
-    let mut disk = sample_claude_state(1_000);
-    disk.last_probe_unix = Some(1);
-    let overlay = build_limits_overlay(
-        &MemoryCredentialStore::default(),
-        &BTreeMap::new(),
-        &[],
-        UsageLimitsCache::default(),
-        super::limits_claude::ClaudeLimitsView {
-            disk: Some(&disk),
-            pending: false,
-            probe_available: true,
-        },
-        1_000 + 400,
-    );
-    assert!(matches!(
-        overlay.sections[0].status,
-        LimitsSectionStatus::Checking {
-            cached_at_unix: Some(1)
-        }
-    ));
-}
-
-#[test]
-fn claude_probe_without_disk_shows_checking() {
-    let overlay = build_limits_overlay(
-        &MemoryCredentialStore::default(),
-        &BTreeMap::new(),
-        &[],
-        UsageLimitsCache::default(),
-        super::limits_claude::ClaudeLimitsView {
-            disk: None,
-            pending: false,
-            probe_available: true,
-        },
-        0,
-    );
-    assert_eq!(overlay.sections.len(), 1);
-    assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
-    assert!(matches!(
-        overlay.sections[0].status,
-        LimitsSectionStatus::Checking {
-            cached_at_unix: None
-        }
-    ));
-}
-
-#[test]
-fn missing_claude_state_does_not_invent_a_section() {
-    let overlay = build_limits_overlay(
-        &MemoryCredentialStore::default(),
-        &BTreeMap::new(),
-        &[],
-        UsageLimitsCache::default(),
-        super::limits_claude::ClaudeLimitsView {
-            disk: None,
-            pending: false,
-            probe_available: false,
-        },
-        0,
-    );
-    assert!(overlay.sections.is_empty());
-    assert!(overlay.empty_note.is_some());
 }
 
 // Covers: bars share one label column across providers so they line up.

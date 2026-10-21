@@ -145,48 +145,171 @@ fn image_input_follows_advertised_input_modalities() {
     });
 }
 
-// Covers: first effort option wins; a missing values list still uses toggle
+// Covers: models.dev reasoning options map to capabilities per provider policy:
+// first effort option wins, toggle adds Off only when advertised, `none`
+// becomes the Off wire value (and only then sends an effort for Off), unknown
+// efforts or schemas stay Unknown, and providers that ignore reasoning are not
+// configurable. Each row asserts capabilities, off behaviour, the Off wire
+// effort and catalog completeness together.
 // Owner: models.dev catalog parse
 #[test]
-fn first_effort_option_wins_and_missing_values_use_toggle() {
-    let first_effort = json!({
-        "openai": {
-            "models": {
-                "gpt-test": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "effort", "values": ["low"]},
-                        {"type": "effort", "values": ["high"]},
-                    ]
-                }
-            }
-        }
-    });
-    assert_eq!(
-        model_metadata_from_api(&first_effort, "openai", "gpt-test")
-            .and_then(|metadata| metadata.supported_reasoning_levels),
-        Some(vec![ReasoningLevel::Low])
-    );
+fn reasoning_options_map_to_capabilities() {
+    use ReasoningLevel::{High, Low, Max, Medium, Off, Xhigh};
 
-    let effort_without_values = json!({
-        "openai": {
-            "models": {
-                "gpt-test": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "effort"},
-                        {"type": "toggle"},
-                    ]
-                }
-            }
-        }
-    });
-    let metadata = model_metadata_from_api(&effort_without_values, "openai", "gpt-test").unwrap();
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
-    );
-    assert!(metadata.reasoning_metadata_complete);
+    let levels =
+        |levels: Vec<ReasoningLevel>| ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels));
+    let options = |options: Value| json!({"reasoning": true, "reasoning_options": options});
+    let effort = |values: Value| options(json!([{"type": "effort", "values": values}]));
+    let toggle_and_effort =
+        |values: Value| options(json!([{"type": "toggle"}, {"type": "effort", "values": values}]));
+    let cases = [
+        (
+            "first effort option wins",
+            ("openai", "gpt-test"),
+            options(json!([
+                {"type": "effort", "values": ["low"]},
+                {"type": "effort", "values": ["high"]},
+            ])),
+            levels(vec![Low]),
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "effort without values falls back to toggle",
+            ("openai", "gpt-test"),
+            options(json!([{"type": "effort"}, {"type": "toggle"}])),
+            levels(vec![Off, Max]),
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "exact toggle beside effort does not imply off",
+            ("moonshotai", "kimi-k3"),
+            toggle_and_effort(json!(["low", "high", "max"])),
+            levels(vec![Low, High, Max]),
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "exact effort without toggle",
+            ("xai", "grok-4.5"),
+            effort(json!(["low", "medium", "high"])),
+            levels(vec![Low, Medium, High]),
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "toggle-off provider keeps off",
+            ("xai", "grok-4.3"),
+            toggle_and_effort(json!(["low", "high"])),
+            levels(vec![Off, Low, High]),
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "provider path ignores reasoning",
+            ("github-copilot", "gpt-test"),
+            effort(json!(["none", "low", "high"])),
+            ReasoningCapabilities::NotConfigurable,
+            ReasoningOffBehavior::EffortNone,
+            Some("none"),
+            true,
+        ),
+        (
+            "none effort is off on the wire",
+            ("openai", "gpt-test"),
+            effort(json!(["none", "low", "high", "xhigh"])),
+            levels(vec![Off, Low, High, Xhigh]),
+            ReasoningOffBehavior::EffortNone,
+            Some("none"),
+            true,
+        ),
+        (
+            "efforts without none do not inject off",
+            ("openai", "gpt-test"),
+            effort(json!(["low", "medium", "high", "xhigh"])),
+            levels(vec![Low, Medium, High, Xhigh]),
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "unknown effort leaves capabilities incomplete",
+            ("xai", "grok-test"),
+            effort(json!(["low", "turbo", "high"])),
+            ReasoningCapabilities::Unknown,
+            ReasoningOffBehavior::Omit,
+            None,
+            false,
+        ),
+        (
+            "empty options are not configurable",
+            ("openai", "gpt-test"),
+            options(json!([])),
+            ReasoningCapabilities::NotConfigurable,
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "anthropic effort stays unknown but complete",
+            ("anthropic", "claude-test"),
+            effort(json!(["low", "medium", "high"])),
+            ReasoningCapabilities::Unknown,
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "unknown option schema stays unknown",
+            ("anthropic", "claude-test"),
+            options(json!([{"type": "budget_tokens", "min": 1024}])),
+            ReasoningCapabilities::Unknown,
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "non-reasoning model is not configurable",
+            ("openai", "gpt-test"),
+            json!({"reasoning": false}),
+            ReasoningCapabilities::NotConfigurable,
+            ReasoningOffBehavior::Omit,
+            None,
+            true,
+        ),
+        (
+            "reasoning without options is unknown",
+            ("xai", "grok-4.5"),
+            json!({"reasoning": true, "limit": {"context": 500000, "output": 500000}}),
+            ReasoningCapabilities::Unknown,
+            ReasoningOffBehavior::Omit,
+            None,
+            false,
+        ),
+    ];
+
+    for (case, (provider, model_id), model, capabilities, off_behavior, off_effort, complete) in
+        cases
+    {
+        let api = json!({ provider: { "models": { model_id: model } } });
+        let metadata = model_metadata_from_api(&api, provider, model_id).unwrap();
+        assert_eq!(
+            (
+                metadata.reasoning_capabilities(),
+                metadata.reasoning_off_behavior,
+                metadata.reasoning_effort(Off),
+                metadata.reasoning_metadata_complete,
+            ),
+            (capabilities, off_behavior, off_effort, complete),
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -401,73 +524,69 @@ fn stale_rows_remain_available_as_offline_fallback() {
     });
 }
 
-#[test]
-fn poolside_version_five_metadata_is_stale_after_reasoning_policy_change() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        let old_metadata = ModelMetadata {
-            reasoning_capabilities_known: true,
-            reasoning_metadata_complete: true,
-            ..ModelMetadata::default()
-        };
-        write_cached_upstream_model_metadata("poolside", "laguna-s-2.1", &old_metadata);
-        with_models_dev_cache(|connection| {
-            connection.execute(
-                "update model_metadata set cache_version = 5
-                 where provider = 'poolside' and model = 'laguna-s-2.1'",
-                [],
-            )
-        })
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            current_cached_upstream_model_metadata("poolside", "laguna-s-2.1"),
-            None
-        );
-        assert_eq!(
-            cached_upstream_model_metadata("poolside", "laguna-s-2.1"),
-            Some(old_metadata)
-        );
-    });
-}
-
-// Covers: Unknown-era Token Plan rows must not block ExactAdvertised rehydrate
+// Covers: rows written before a provider's reasoning policy changed are stale
+// (so they rehydrate) yet stay readable as an offline fallback: Poolside v5
+// rows, and Unknown-era Token Plan rows that must not block ExactAdvertised
 // Owner: models.dev cache freshness
 #[test]
-fn qwen_token_plan_unknown_complete_rows_are_stale_after_policy_change() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        // Shape written while catalog_reasoning was Unknown: complete, but no levels.
-        let old_metadata = ModelMetadata {
-            reasoning_capabilities_known: false,
-            reasoning_metadata_complete: true,
-            ..ModelMetadata::default()
-        };
-        write_cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max", &old_metadata);
-        with_models_dev_cache(|connection| {
-            connection.execute(
-                "update model_metadata set cache_version = 6
-                 where provider = 'qwen-token-plan' and model = 'qwen3.8-max'",
-                [],
-            )
-        })
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(
-            current_cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max"),
-            None
-        );
-        assert!(model_metadata_needs_refresh(
+fn rows_older_than_a_reasoning_policy_change_are_stale() {
+    for (provider, model, cache_version, needs_refresh, old_metadata) in [
+        (
+            "poolside",
+            "laguna-s-2.1",
+            5,
+            None,
+            ModelMetadata {
+                reasoning_capabilities_known: true,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        ),
+        (
             "qwen-token-plan",
-            "qwen3.8-max"
-        ));
-        assert_eq!(
-            cached_upstream_model_metadata("qwen-token-plan", "qwen3.8-max"),
-            Some(old_metadata)
-        );
-    });
+            "qwen3.8-max",
+            6,
+            Some(true),
+            // Shape written while catalog_reasoning was Unknown: complete, but no levels.
+            ModelMetadata {
+                reasoning_capabilities_known: false,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        ),
+    ] {
+        let cache = tempfile::tempdir().unwrap();
+        with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+            write_cached_upstream_model_metadata(provider, model, &old_metadata);
+            with_models_dev_cache(|connection| {
+                connection.execute(
+                    "update model_metadata set cache_version = ?1
+                     where provider = ?2 and model = ?3",
+                    rusqlite::params![cache_version, provider, model],
+                )
+            })
+            .unwrap()
+            .unwrap();
+
+            assert_eq!(
+                current_cached_upstream_model_metadata(provider, model),
+                None,
+                "{provider}"
+            );
+            if let Some(needs_refresh) = needs_refresh {
+                assert_eq!(
+                    model_metadata_needs_refresh(provider, model),
+                    needs_refresh,
+                    "{provider}"
+                );
+            }
+            assert_eq!(
+                cached_upstream_model_metadata(provider, model),
+                Some(old_metadata.clone()),
+                "{provider}"
+            );
+        });
+    }
 }
 
 #[test]
@@ -512,296 +631,6 @@ fn provider_context_length_overrides_generic_effective_context() {
         assert_eq!(metadata.effective_context_window, Some(262_144));
         assert_eq!(metadata.display_context_window(), Some(262_144));
     });
-}
-
-#[test]
-fn exact_catalog_toggle_does_not_imply_off() {
-    let api = json!({
-        "moonshotai": {
-            "models": {
-                "kimi-k3": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "toggle"},
-                        {"type": "effort", "values": ["low", "high", "max"]}
-                    ]
-                }
-            }
-        },
-        "xai": {
-            "models": {
-                "grok-4.5": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "effort", "values": ["low", "medium", "high"]}
-                    ]
-                },
-                "grok-4.3": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "toggle"},
-                        {"type": "effort", "values": ["low", "high"]}
-                    ]
-                }
-            }
-        }
-    });
-
-    assert_eq!(
-        model_metadata_from_api(&api, "moonshotai", "kimi-k3")
-            .unwrap()
-            .supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::High,
-            ReasoningLevel::Max,
-        ])
-    );
-    assert_eq!(
-        model_metadata_from_api(&api, "xai", "grok-4.5")
-            .unwrap()
-            .supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-        ])
-    );
-    assert_eq!(
-        model_metadata_from_api(&api, "xai", "grok-4.3")
-            .unwrap()
-            .supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::Low,
-            ReasoningLevel::High,
-        ])
-    );
-}
-
-#[test]
-fn provider_path_that_ignores_reasoning_is_not_configurable() {
-    let api = json!({
-        "github-copilot": {
-            "models": {
-                "gpt-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["none", "low", "high"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "github-copilot", "gpt-test").unwrap();
-    assert!(metadata.reasoning_capabilities_known);
-    assert_eq!(
-        metadata.reasoning_capabilities(),
-        ReasoningCapabilities::NotConfigurable
-    );
-}
-
-#[test]
-fn parses_reasoning_effort_options() {
-    let api = serde_json::json!({
-        "openai": {
-            "models": {
-                "gpt-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["none", "low", "high", "xhigh"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-    assert_eq!(
-        metadata.reasoning_off_behavior,
-        ReasoningOffBehavior::EffortNone
-    );
-    assert_eq!(metadata.reasoning_effort(ReasoningLevel::Off), Some("none"));
-    assert!(metadata.reasoning_capabilities_known);
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Off,
-            ReasoningLevel::Low,
-            ReasoningLevel::High,
-            ReasoningLevel::Xhigh,
-        ])
-    );
-}
-
-#[test]
-fn effort_options_without_none_do_not_inject_off_for_openai() {
-    let api = serde_json::json!({
-        "openai": {
-            "models": {
-                "gpt-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["low", "medium", "high", "xhigh"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-    assert_eq!(metadata.reasoning_off_behavior, ReasoningOffBehavior::Omit);
-    assert_eq!(metadata.reasoning_effort(ReasoningLevel::Off), None);
-    assert!(metadata.reasoning_capabilities_known);
-    assert_eq!(
-        metadata.supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-            ReasoningLevel::Xhigh,
-        ])
-    );
-}
-
-#[test]
-fn mixed_known_and_unknown_efforts_leave_capabilities_incomplete() {
-    let api = json!({
-        "xai": {
-            "models": {
-                "grok-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["low", "turbo", "high"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "xai", "grok-test").unwrap();
-
-    assert!(!metadata.reasoning_capabilities_known);
-    assert!(!metadata.reasoning_metadata_complete);
-    assert_eq!(
-        metadata.reasoning_capabilities(),
-        ReasoningCapabilities::Unknown
-    );
-}
-
-#[test]
-fn models_without_effort_choices_are_not_configurable() {
-    let api = serde_json::json!({
-        "openai": {
-            "models": {
-                "gpt-test": {"reasoning": true, "reasoning_options": []}
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-    assert!(metadata.reasoning_capabilities_known);
-    assert_eq!(metadata.supported_reasoning_levels, None);
-    assert_eq!(
-        ReasoningCapabilities::from_metadata(
-            metadata.supported_reasoning_levels,
-            metadata.reasoning_capabilities_known,
-        ),
-        ReasoningCapabilities::NotConfigurable
-    );
-}
-
-#[test]
-fn anthropic_effort_catalog_stays_unknown_until_protocols_are_modeled() {
-    let api = json!({
-        "anthropic": {
-            "models": {
-                "claude-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{
-                        "type": "effort",
-                        "values": ["low", "medium", "high"]
-                    }]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "anthropic", "claude-test").unwrap();
-    assert_eq!(
-        metadata.reasoning_capabilities(),
-        ReasoningCapabilities::Unknown
-    );
-    assert!(metadata.reasoning_metadata_complete);
-    assert!(!should_rehydrate_cached_metadata(
-        MODEL_METADATA_CACHE_VERSION,
-        &metadata
-    ));
-}
-
-#[test]
-fn leaves_unknown_reasoning_option_schemas_unknown() {
-    let api = serde_json::json!({
-        "anthropic": {
-            "models": {
-                "claude-test": {
-                    "reasoning": true,
-                    "reasoning_options": [{"type": "budget_tokens", "min": 1024}]
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "anthropic", "claude-test").unwrap();
-
-    assert!(!metadata.reasoning_capabilities_known);
-    assert_eq!(metadata.supported_reasoning_levels, None);
-}
-
-#[test]
-fn non_reasoning_models_are_not_configurable() {
-    let api = serde_json::json!({
-        "openai": {"models": {"gpt-test": {"reasoning": false}}}
-    });
-
-    let metadata = model_metadata_from_api(&api, "openai", "gpt-test").unwrap();
-
-    assert!(metadata.reasoning_capabilities_known);
-    assert_eq!(metadata.supported_reasoning_levels, None);
-    assert_eq!(
-        ReasoningCapabilities::from_metadata(
-            metadata.supported_reasoning_levels,
-            metadata.reasoning_capabilities_known,
-        ),
-        ReasoningCapabilities::NotConfigurable
-    );
-}
-
-#[test]
-fn reasoning_models_without_options_are_not_capability_complete() {
-    let api = json!({
-        "xai": {
-            "models": {
-                "grok-4.5": {
-                    "reasoning": true,
-                    "limit": { "context": 500000, "output": 500000 }
-                }
-            }
-        }
-    });
-
-    let metadata = model_metadata_from_api(&api, "xai", "grok-4.5").unwrap();
-
-    assert!(!metadata.reasoning_capabilities_known);
-    assert_eq!(metadata.supported_reasoning_levels, None);
 }
 
 // Covers: fractional prices survive the `arbitrary_precision` number shape the
@@ -1347,49 +1176,6 @@ fn hydrate_writes_opencode_go_rows_that_only_advertise_sdk_package() {
         assert_eq!(
             metadata.supported_reasoning_levels,
             Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
-        );
-    });
-}
-
-// Covers: batch metadata writes insert all records in one transaction
-// Owner: models.dev cache
-#[test]
-fn batch_metadata_writes_inserts_all_records() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        let meta_a = ModelMetadata {
-            display_name: Some("Model A".into()),
-            advertised_context_window: Some(100_000),
-            reasoning_capabilities_known: true,
-            reasoning_metadata_complete: true,
-            ..ModelMetadata::default()
-        };
-        let meta_b = ModelMetadata {
-            display_name: Some("Model B".into()),
-            advertised_context_window: Some(200_000),
-            reasoning_capabilities_known: true,
-            reasoning_metadata_complete: true,
-            ..ModelMetadata::default()
-        };
-
-        let (row_a, row_b) = (row(meta_a), row(meta_b));
-        let written = write_cached_upstream_model_metadata_batch([
-            ("provider-x", "model-1", &row_a),
-            ("provider-x", "model-2", &row_b),
-        ]);
-        assert_eq!(written, 2);
-
-        assert_eq!(
-            cached_upstream_model_metadata("provider-x", "model-1")
-                .unwrap()
-                .display_name,
-            Some("Model A".into())
-        );
-        assert_eq!(
-            cached_upstream_model_metadata("provider-x", "model-2")
-                .unwrap()
-                .display_name,
-            Some("Model B".into())
         );
     });
 }

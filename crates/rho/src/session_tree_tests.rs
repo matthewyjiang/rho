@@ -519,122 +519,91 @@ fn changed_history_prefix_uses_a_full_snapshot() {
     );
 }
 
+// Covers: a tampered explicit tree log fails to load, naming the broken rule,
+// instead of guessing from file order.
+// Owner: session tree loader
 #[test]
-fn loader_rejects_legacy_records_in_a_v4_log() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
-    let entry = SessionEntry::Message {
-        timestamp: "2".into(),
-        message: Message::user_text("legacy record"),
-        display_message: None,
-    };
-    let mut contents = fs::read_to_string(session.path()).unwrap();
-    contents.push_str(&serde_json::to_string(&entry).unwrap());
-    contents.push('\n');
-    fs::write(session.path(), contents).unwrap();
+fn loader_rejects_tampered_tree_records() {
+    fn edit_last_node(lines: &mut [String], edit: impl FnOnce(&mut serde_json::Value)) {
+        let mut node: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        edit(&mut node);
+        *lines.last_mut().unwrap() = serde_json::to_string(&node).unwrap();
+    }
+    /// Shape of the second saved snapshot: `Full` is not a prefix extension,
+    /// so it is stored whole (the "revision" case rewrites its revision);
+    /// `Delta` extends the first, so it is stored as a delta whose parent link
+    /// the "missing parent" case breaks.
+    #[derive(Clone, Copy)]
+    enum Tail {
+        Full,
+        Delta,
+    }
+    type Tamper = fn(&mut Vec<String>);
+    let cases: [(&str, Tail, Tamper); 5] = [
+        (
+            "legacy record appears in the explicit tree phase",
+            Tail::Full,
+            |lines| {
+                let entry = SessionEntry::Message {
+                    timestamp: "3".into(),
+                    message: Message::user_text("legacy record"),
+                    display_message: None,
+                };
+                lines.push(serde_json::to_string(&entry).unwrap());
+            },
+        ),
+        ("session node id cannot be empty", Tail::Full, |lines| {
+            edit_last_node(lines, |node| node["id"] = String::new().into());
+        }),
+        ("disconnected root", Tail::Full, |lines| {
+            edit_last_node(lines, |node| {
+                node.as_object_mut().unwrap().remove("parent_id");
+            });
+        }),
+        ("revision", Tail::Full, |lines| {
+            edit_last_node(lines, |node| {
+                node["transition"]["snapshot"]["revision"] = 1.into();
+            });
+        }),
+        ("missing parent", Tail::Delta, |lines| {
+            edit_last_node(lines, |node| node["parent_id"] = "missing-parent".into());
+        }),
+    ];
+    for (expected, tail, tamper) in cases {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+        let first = snapshot(
+            &session,
+            1,
+            vec![Message::user_text("root")],
+            CompactionState::default(),
+        );
+        let second_messages = match tail {
+            Tail::Full => vec![Message::assistant_text("changed")],
+            Tail::Delta => vec![Message::user_text("root"), Message::assistant_text("tail")],
+        };
+        let second = snapshot(&session, 2, second_messages, CompactionState::default());
+        session.save_snapshot(&first, &[]).unwrap();
+        session.save_snapshot(&second, &[]).unwrap();
+        let error = session
+            .set_leaf(&NodeId::from_string("missing-parent").unwrap())
+            .unwrap_err();
+        assert!(error.to_string().contains("missing session node"));
+        let mut lines = fs::read_to_string(session.path())
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        tamper(&mut lines);
+        fs::write(session.path(), format!("{}\n", lines.join("\n"))).unwrap();
 
-    let error = session.session_tree().unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("legacy record appears in the explicit tree phase"));
-}
-
-#[test]
-fn loader_rejects_invalid_explicit_node_ids() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
-    let state = snapshot(
-        &session,
-        1,
-        vec![Message::user_text("root")],
-        CompactionState::default(),
-    );
-    session.save_snapshot(&state, &[]).unwrap();
-    let mut lines = fs::read_to_string(session.path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let mut node: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    node["id"] = serde_json::Value::String(String::new());
-    *lines.last_mut().unwrap() = serde_json::to_string(&node).unwrap();
-    fs::write(session.path(), format!("{}\n", lines.join("\n"))).unwrap();
-
-    let error = session.session_tree().unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("session node id cannot be empty"));
-}
-
-#[test]
-fn loader_rejects_a_second_explicit_root() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
-    let first = snapshot(
-        &session,
-        1,
-        vec![Message::assistant_text("first")],
-        CompactionState::default(),
-    );
-    session.save_snapshot(&first, &[]).unwrap();
-    let second = snapshot(
-        &session,
-        2,
-        vec![Message::assistant_text("second")],
-        CompactionState::default(),
-    );
-    session.save_snapshot(&second, &[]).unwrap();
-    let mut lines = fs::read_to_string(session.path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let mut node: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    node.as_object_mut().unwrap().remove("parent_id");
-    *lines.last_mut().unwrap() = serde_json::to_string(&node).unwrap();
-    fs::write(session.path(), format!("{}\n", lines.join("\n"))).unwrap();
-
-    let error = session.session_tree().unwrap_err();
-    assert!(error.to_string().contains("disconnected root"));
-}
-
-#[test]
-fn loader_rejects_changed_state_without_revision_advance() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
-    let first = snapshot(
-        &session,
-        1,
-        vec![Message::assistant_text("first")],
-        CompactionState::default(),
-    );
-    session.save_snapshot(&first, &[]).unwrap();
-    let second = snapshot(
-        &session,
-        2,
-        vec![Message::assistant_text("changed")],
-        CompactionState::default(),
-    );
-    session.save_snapshot(&second, &[]).unwrap();
-    let mut lines = fs::read_to_string(session.path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let mut node: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    node["transition"]["snapshot"]["revision"] = serde_json::Value::from(1);
-    *lines.last_mut().unwrap() = serde_json::to_string(&node).unwrap();
-    fs::write(session.path(), format!("{}\n", lines.join("\n"))).unwrap();
-
-    let error = session.session_tree().unwrap_err();
-    assert!(
-        error.to_string().contains("revision"),
-        "unexpected error: {error}"
-    );
+        let error = session.session_tree().unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "{expected}: {error:#}"
+        );
+    }
 }
 
 #[test]
@@ -689,45 +658,6 @@ fn legacy_projection_uses_stable_byte_offset_ids_and_one_upgrade_marker() {
             .count(),
         1
     );
-}
-
-#[test]
-fn loader_rejects_missing_declared_parent_without_using_file_order() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
-    let first = snapshot(
-        &session,
-        1,
-        vec![Message::user_text("root")],
-        CompactionState::default(),
-    );
-    let second = snapshot(
-        &session,
-        2,
-        vec![Message::user_text("root"), Message::assistant_text("tail")],
-        CompactionState::default(),
-    );
-    session.save_snapshot(&first, &[]).unwrap();
-    session.save_snapshot(&second, &[]).unwrap();
-
-    let error = session
-        .set_leaf(&NodeId::from_string("missing-parent").unwrap())
-        .unwrap_err();
-    assert!(error.to_string().contains("missing session node"));
-
-    let mut lines = fs::read_to_string(session.path())
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let mut node: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    node["parent_id"] = serde_json::Value::String("missing-parent".into());
-    *lines.last_mut().unwrap() = serde_json::to_string(&node).unwrap();
-    fs::write(session.path(), format!("{}\n", lines.join("\n"))).unwrap();
-
-    let error = session.session_tree().unwrap_err();
-    assert!(error.to_string().contains("missing parent"), "{error:#}");
 }
 
 #[test]
@@ -848,116 +778,70 @@ fn mirrored_tree_index_record_equals_reloaded_file_summary() {
     assert_mirrored_record_matches_file(&session, &after_branch_record);
 }
 
-// Covers: upgrade-marker save and set_leaf on a v3 transcript must mirror the file
+// Covers: upgrade-marker save and set_leaf on a v3 transcript, and attaching
+// to a parentless v1 virtual leaf, must mirror the file
 // Owner: session persistence
 #[test]
 fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let id = "33333333-3333-4333-8333-333333333333";
-    let dir = session_dir_in_root(root.path(), cwd.path());
-    fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("1_{id}.jsonl"));
-    let fixture = include_str!("session/fixtures/session-v3.jsonl");
-    let mut lines = fixture.lines();
-    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
-    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
-    let transcript = std::iter::once(header.to_string())
-        .chain(lines.map(str::to_owned))
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(&path, format!("{transcript}\n")).unwrap();
+    for (id, fixture) in [
+        (
+            "33333333-3333-4333-8333-333333333333",
+            include_str!("session/fixtures/session-v3.jsonl"),
+        ),
+        (
+            "11111111-1111-4111-8111-111111111111",
+            include_str!("session/fixtures/session-v1.jsonl"),
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let dir = session_dir_in_root(root.path(), cwd.path());
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("1_{id}.jsonl"));
+        let mut lines = fixture.lines();
+        let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+        header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+        let transcript = std::iter::once(header.to_string())
+            .chain(lines.map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, format!("{transcript}\n")).unwrap();
 
-    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
-    let legacy_leaf_id = session
-        .session_tree()
-        .unwrap()
-        .active_leaf_id()
-        .unwrap()
-        .clone();
+        let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+        let legacy_leaf_id = session
+            .session_tree()
+            .unwrap()
+            .active_leaf_id()
+            .unwrap()
+            .clone();
 
-    // Save a new turn triggering the upgrade marker path
-    let resumed = session
-        .snapshot_for_resume(
-            ModelIdentity::new("provider", "api", "model"),
-            "prompt-key".into(),
-        )
-        .unwrap();
-    let mut history = resumed.history().to_vec();
-    history.push(Message::user_text("new turn after upgrade"));
-    let upgraded_snapshot = SessionSnapshot::new(
-        SessionId::from_string(session.id().to_owned()).unwrap(),
-        Revision::from_u64(resumed.revision().get() + 1),
-        history.clone(),
-        resumed.provider().clone(),
-        resumed.compaction().clone(),
-    );
-    let upgraded_record = session
-        .save_snapshot_mirrored_record(
-            &upgraded_snapshot,
-            &[Message::user_text("new turn after upgrade")],
-        )
-        .unwrap();
-    assert_mirrored_record_matches_file(&session, &upgraded_record);
+        // Save a new turn triggering the upgrade marker path.
+        let resumed = session
+            .snapshot_for_resume(
+                ModelIdentity::new("provider", "api", "model"),
+                "prompt-key".into(),
+            )
+            .unwrap();
+        let mut history = resumed.history().to_vec();
+        history.push(Message::user_text("new turn after upgrade"));
+        let upgraded_snapshot = SessionSnapshot::new(
+            SessionId::from_string(session.id().to_owned()).unwrap(),
+            Revision::from_u64(resumed.revision().get() + 1),
+            history.clone(),
+            resumed.provider().clone(),
+            resumed.compaction().clone(),
+        );
+        let upgraded_record = session
+            .save_snapshot_mirrored_record(
+                &upgraded_snapshot,
+                &[Message::user_text("new turn after upgrade")],
+            )
+            .unwrap();
+        assert_mirrored_record_matches_file(&session, &upgraded_record);
 
-    let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
-    assert_mirrored_record_matches_file(&session, &branched_record);
-}
-
-// Covers: attaching to a parentless v1 virtual leaf and set_leaf must mirror the file
-// Owner: session persistence
-#[test]
-fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reloaded_file_summary() {
-    let root = tempfile::tempdir().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    let id = "11111111-1111-4111-8111-111111111111";
-    let dir = session_dir_in_root(root.path(), cwd.path());
-    fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("1_{id}.jsonl"));
-    let fixture = include_str!("session/fixtures/session-v1.jsonl");
-    let mut lines = fixture.lines();
-    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
-    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
-    let transcript = std::iter::once(header.to_string())
-        .chain(lines.map(str::to_owned))
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(&path, format!("{transcript}\n")).unwrap();
-
-    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
-    let legacy_leaf_id = session
-        .session_tree()
-        .unwrap()
-        .active_leaf_id()
-        .unwrap()
-        .clone();
-
-    // Save a new turn attaching an explicit node to the legacy virtual leaf with no parent snapshot
-    let resumed = session
-        .snapshot_for_resume(
-            ModelIdentity::new("provider", "api", "model"),
-            "prompt-key".into(),
-        )
-        .unwrap();
-    let mut history = resumed.history().to_vec();
-    history.push(Message::user_text("new turn after v1 upgrade"));
-    let upgraded_snapshot = SessionSnapshot::new(
-        SessionId::from_string(session.id().to_owned()).unwrap(),
-        Revision::from_u64(resumed.revision().get() + 1),
-        history.clone(),
-        resumed.provider().clone(),
-        resumed.compaction().clone(),
-    );
-    let upgraded_record = session
-        .save_snapshot_mirrored_record(
-            &upgraded_snapshot,
-            &[Message::user_text("new turn after v1 upgrade")],
-        )
-        .unwrap();
-    assert_mirrored_record_matches_file(&session, &upgraded_record);
-
-    let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
-    assert_mirrored_record_matches_file(&session, &branched_record);
+        let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
+        assert_mirrored_record_matches_file(&session, &branched_record);
+    }
 }
 
 fn open_v1_session_with_tail(extra: &[Message]) -> (tempfile::TempDir, tempfile::TempDir, Session) {

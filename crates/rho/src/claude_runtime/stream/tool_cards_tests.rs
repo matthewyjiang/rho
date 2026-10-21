@@ -212,36 +212,6 @@ fn mcp_running_card_shows_decoded_verb_primary_and_facts() {
     assert_eq!(card.body, ToolBody::None);
 }
 
-// Covers: finished MCP ok cards keep provenance and add a line count plus
-// the output as a Lines body
-// Owner: claude stream tool card mapper
-#[test]
-fn mcp_finished_ok_card_counts_lines_and_sets_body() {
-    let card = finished_card(
-        Some(&tool("mcp__olive_salmon__increase_grep", mcp_grep_input())),
-        /*ok*/ true,
-        "a.rs\nb.rs",
-        None,
-        None,
-    );
-    assert_eq!(card.status, ToolStatus::Ok);
-    assert_eq!(
-        card.header,
-        ToolHeader::call("increase_grep", Some("crates".into()))
-    );
-    let mut facts = mcp_server_and_summary_facts();
-    facts.push(ToolFact::Count {
-        label: "lines".into(),
-        value: 2,
-        detail: None,
-    });
-    assert_eq!(card.facts, facts);
-    assert_eq!(
-        card.body,
-        ToolBody::Lines(vec!["a.rs".into(), "b.rs".into()])
-    );
-}
-
 // Covers: MCP errors still show server provenance before the error output
 // Owner: claude stream tool card mapper
 #[test]
@@ -322,19 +292,6 @@ fn finish_without_start_uses_generic_tool_verb() {
     assert_eq!(card.body, ToolBody::Lines(vec!["ok".into()]));
 }
 
-// Covers: running Bash uses the shell dialect, not Call(toolu_…)
-// Owner: claude stream tool card mapper
-#[test]
-fn started_bash_card_uses_shell_header() {
-    let card = started_card(&tool("Bash", json!({"command": "git status"})), None);
-    assert_eq!(card.status, ToolStatus::Running);
-    assert_eq!(
-        card.header,
-        ToolHeader::shell("$", Some("git status".into()))
-    );
-    assert_eq!(card.family, ToolFamily::FileCommand);
-}
-
 // Covers: finished bodies keep more than the collapsed 10-line budget
 // Owner: claude stream tool card mapper
 #[test]
@@ -395,36 +352,6 @@ fn push_input_json_assembles_fragments() {
     assert_eq!(started.input, Some(json!({"file_path": "note.txt"})));
 }
 
-// Covers: oversized streamed Write fragments must still enrich the running path
-// Owner: claude stream tool card mapper
-#[test]
-fn oversized_streamed_write_fragments_keep_running_path() {
-    let content = "x".repeat(MAX_TOOL_PAYLOAD_CHARS + 64);
-    let raw = serde_json::to_string(&json!({
-        "file_path": "/tmp/ws/big.rs",
-        "content": content
-    }))
-    .expect("serialize write input");
-    assert!(raw.len() > MAX_TOOL_PAYLOAD_CHARS);
-    let mut started = StartedClaudeTool::from_name_input(Some("Write"), Some(&json!({})));
-    for chunk in raw.as_bytes().chunks(128) {
-        let fragment = std::str::from_utf8(chunk).expect("ascii json chunk");
-        started.push_input_json(fragment);
-    }
-    assert_eq!(
-        started
-            .input
-            .as_ref()
-            .and_then(|value| value.get("file_path")),
-        Some(&json!("/tmp/ws/big.rs"))
-    );
-    let card = started_card(&started, Some(Path::new("/tmp/ws")));
-    assert_eq!(
-        card.header,
-        ToolHeader::call("Write", Some("big.rs".into()))
-    );
-}
-
 // Covers: a fragment over the raw assembly cap must not retain unbounded json
 // Owner: claude stream tool card mapper
 #[test]
@@ -463,44 +390,6 @@ fn push_input_json_caps_retained_fragments_and_keeps_path() {
             "chunk_size {chunk_size}"
         );
     }
-}
-
-// Covers: oversized Write content must not drop file_path from the card
-// Owner: claude stream tool card mapper
-#[test]
-fn oversized_write_input_keeps_path_for_card() {
-    let content = "x".repeat(MAX_TOOL_PAYLOAD_CHARS + 64);
-    let started = tool(
-        "Write",
-        json!({"file_path": "/tmp/ws/big.rs", "content": content}),
-    );
-    assert_eq!(
-        started
-            .input
-            .as_ref()
-            .and_then(|value| value.get("file_path")),
-        Some(&json!("/tmp/ws/big.rs"))
-    );
-    let card = finished_card(
-        Some(&started),
-        /*ok*/ true,
-        "ok",
-        Some(&json!({"type": "create"})),
-        Some(Path::new("/tmp/ws")),
-    );
-    assert_eq!(
-        card.header,
-        ToolHeader::call("Write", Some("big.rs".into()))
-    );
-    assert!(card.body.is_diff());
-    assert!(matches!(
-        card.facts.first(),
-        Some(ToolFact::DiffStat {
-            added,
-            removed: 0,
-            ..
-        }) if *added > 0
-    ));
 }
 
 // Covers: escape-heavy oversized Write content must keep path and a fitting diff

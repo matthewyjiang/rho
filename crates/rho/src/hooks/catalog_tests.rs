@@ -20,26 +20,24 @@ fn user_hooks(ids: &[&str]) -> String {
     contents
 }
 
+// Covers: with no user or project hooks file, discovery succeeds with an empty
+// catalog and no untrusted-project notice.
+// Owner: host hook discovery.
 #[test]
-fn a_missing_hooks_file_yields_an_empty_catalog() {
+fn missing_hooks_files_yield_an_empty_catalog() {
     let home = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
 
-    let catalog = HookCatalog::discover(Some(home.path()), None, ProjectTrust::Untrusted).unwrap();
+    let catalog = HookCatalog::discover(
+        Some(home.path()),
+        Some(project.path()),
+        ProjectTrust::Untrusted,
+    )
+    .unwrap();
 
     assert!(catalog.is_empty());
     assert!(catalog.files().is_empty());
     assert_eq!(catalog.skipped_untrusted(), None);
-}
-
-#[test]
-fn user_hooks_load_without_any_trust_grant() {
-    let home = TempDir::new().unwrap();
-    write(&home.path().join("hooks.toml"), &user_hooks(&["log"]));
-
-    let catalog = HookCatalog::discover(Some(home.path()), None, ProjectTrust::Untrusted).unwrap();
-
-    assert_eq!(catalog.len(), 1);
-    assert_eq!(catalog.hooks()[0].qualified_id(), "user:log");
 }
 
 // Covers: project commands must be inspectable before they become executable.
@@ -77,16 +75,6 @@ fn an_untrusted_project_file_is_inactive_but_inspectable() {
             .map(|skipped| skipped.path.clone()),
         Some(project.path().join(".rho/hooks.toml"))
     );
-}
-
-#[test]
-fn an_untrusted_workspace_without_a_project_file_reports_nothing() {
-    let project = TempDir::new().unwrap();
-
-    let catalog =
-        HookCatalog::discover(None, Some(project.path()), ProjectTrust::Untrusted).unwrap();
-
-    assert_eq!(catalog.skipped_untrusted(), None);
 }
 
 #[test]
@@ -200,26 +188,6 @@ timeout = "1s"
         .collect();
 
     assert_eq!(matched, vec!["user:first", "user:second"]);
-}
-
-#[test]
-fn matching_without_a_tool_selects_only_the_event() {
-    let home = TempDir::new().unwrap();
-    write(&home.path().join("hooks.toml"), &user_hooks(&["log"]));
-    let catalog = HookCatalog::discover(Some(home.path()), None, ProjectTrust::Untrusted).unwrap();
-
-    assert_eq!(
-        catalog
-            .matching(rho_sdk::hooks::HookEventKind::RunCompleted, None)
-            .len(),
-        0
-    );
-    assert_eq!(
-        catalog
-            .matching(rho_sdk::hooks::HookEventKind::AfterToolUse, None)
-            .len(),
-        1
-    );
 }
 
 #[test]

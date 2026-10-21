@@ -29,6 +29,8 @@ fn maps_pointer_rows_to_scroll_positions() {
     assert_eq!(scrollbar.top_line_for_pointer(0, drag), 0);
     assert_eq!(scrollbar.top_line_for_pointer(5, drag), 50);
     assert_eq!(scrollbar.top_line_for_pointer(9, drag), 90);
+    // A press on the track (off the thumb) centers the thumb on the pointer.
+    assert_eq!(scrollbar.begin_drag(9), drag);
 }
 
 #[test]
@@ -46,20 +48,6 @@ fn dragging_thumb_does_not_jump_on_mouse_down() {
     );
     assert_eq!(scrollbar.top_line_for_pointer(5, drag), 45);
     assert_eq!(scrollbar.top_line_for_pointer(6, drag), 60);
-}
-
-#[test]
-fn clicking_track_centers_thumb_on_pointer() {
-    let scrollbar = HistoryScrollbar::new(Rect::new(0, 0, 40, 10), 100, 0).unwrap();
-    let drag = scrollbar.begin_drag(9);
-
-    assert_eq!(
-        drag,
-        HistoryScrollbarDrag::Track {
-            thumb_grab_offset: 0
-        }
-    );
-    assert_eq!(scrollbar.top_line_for_pointer(9, drag), 90);
 }
 
 #[test]

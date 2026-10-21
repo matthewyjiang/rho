@@ -22,17 +22,15 @@ fn model_conversion_filters_methods_and_strips_resource_prefix() {
         models[0].reasoning_capabilities,
         ReasoningCapabilities::Levels(_)
     ));
-}
 
-#[test]
-fn non_thinking_models_are_not_configurable() {
-    let model: Model = serde_json::from_str(
+    let non_thinking: Model = serde_json::from_str(
         r#"{"name":"models/gemma-test","thinking":false,"supportedGenerationMethods":["generateContent"]}"#,
     )
     .unwrap();
-
     assert_eq!(
-        model.into_provider_model("google").reasoning_capabilities,
+        non_thinking
+            .into_provider_model("google")
+            .reasoning_capabilities,
         ReasoningCapabilities::NotConfigurable
     );
 }

@@ -232,57 +232,48 @@ fn process_meta_is_one_line_and_summarizes_env_modes() {
     );
 }
 
-// Covers: direct (non-shell) process approvals lead with JSON argv and pack
-// lookup/env/limits onto one meta line without a redundant via-payload.
+// Covers: every approval leads with its bare primary target (JSON argv for
+// direct processes, then path, URL, or skill name) so the user sees what is
+// being approved before any meta.
 // Owner: tui approval layout
 #[test]
-fn direct_process_approval_leads_with_json_argv() {
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::executable("/usr/bin/git", vec!["status".into(), "--short".into()]),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(2048, Some(std::time::Duration::from_secs(30))),
+fn approvals_lead_with_the_primary_target() {
+    let cases = [
+        (
+            CapabilityRequest::process(
+                ProcessExecution::new(
+                    "/work",
+                    ProcessInvocation::executable(
+                        "/usr/bin/git",
+                        vec!["status".into(), "--short".into()],
+                    ),
+                    ProcessEnvironment::Empty,
+                    ProcessOutputLimits::new(2048, Some(std::time::Duration::from_secs(30))),
+                ),
+                source(),
+            ),
+            r#"["/usr/bin/git", "status", "--short"]"#,
         ),
-        source(),
-    );
-    let details = approval_details(&request);
-    assert_eq!(details.len(), 2, "{details:?}");
-    assert_eq!(details[0], r#"["/usr/bin/git", "status", "--short"]"#);
-    assert!(
-        details[1].contains("cwd /work")
-            && details[1].contains("exact path")
-            && details[1].contains("env empty")
-            && details[1].contains("2048 B out")
-            && details[1].contains("timeout 30s")
-            && !details[1].contains("via "),
-        "direct meta: {}",
-        details[1]
-    );
-}
-
-// Covers: path/network/skill approvals lead with the bare primary target.
-// Owner: tui approval layout
-#[test]
-fn non_process_approvals_lead_with_bare_primary() {
-    let path = CapabilityRequest::write_path("src/main.rs", PathScope::PrimaryWorkspace, source());
-    let path_details = approval_details(&path);
-    assert_eq!(path_details[0], "src/main.rs");
-    assert_eq!(path_details[1], "scope primary workspace");
-
-    let network =
-        CapabilityRequest::network(NetworkTarget::Url("https://example.test".into()), source());
-    let network_details = approval_details(&network);
-    assert_eq!(network_details, vec!["https://example.test".to_string()]);
-
-    let skill = CapabilityRequest::skill(
-        "demo-skill",
-        Some(std::path::PathBuf::from("/skills/demo/SKILL.md")),
-        source(),
-    );
-    let skill_details = approval_details(&skill);
-    assert_eq!(skill_details[0], "demo-skill");
-    assert_eq!(skill_details[1], "path /skills/demo/SKILL.md");
+        (
+            CapabilityRequest::write_path("src/main.rs", PathScope::PrimaryWorkspace, source()),
+            "src/main.rs",
+        ),
+        (
+            CapabilityRequest::network(NetworkTarget::Url("https://example.test".into()), source()),
+            "https://example.test",
+        ),
+        (
+            CapabilityRequest::skill(
+                "demo-skill",
+                Some(std::path::PathBuf::from("/skills/demo/SKILL.md")),
+                source(),
+            ),
+            "demo-skill",
+        ),
+    ];
+    for (request, primary) in cases {
+        assert_eq!(approval_details(&request)[0], primary);
+    }
 }
 
 // Covers: host-provided tools are labeled in the title without burying the

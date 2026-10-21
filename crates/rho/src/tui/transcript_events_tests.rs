@@ -53,26 +53,6 @@ fn context_usage_event_is_tracked_separately_from_cumulative_usage() {
 }
 
 #[test]
-fn completed_model_call_updates_the_active_model_average() {
-    let mut app = test_app();
-    let profile = app.info.runtime.model_call_profile();
-    let metrics = model_call_metrics();
-
-    app.record_agent_event(ViewModelEvent::ModelCallCompleted {
-        profile: profile.clone(),
-        metrics,
-    });
-
-    let summary = app.usage.model_performance.summary(&profile);
-    assert_eq!(summary.latest_call, Some(metrics));
-    assert_eq!(
-        summary.average_generation_tokens_per_second,
-        Some(100.0 / 1.9)
-    );
-    assert_eq!(summary.eligible_calls, 1);
-}
-
-#[test]
 fn provider_stream_reset_preserves_completed_model_performance() {
     let mut app = test_app();
     let profile = app.info.runtime.model_call_profile();

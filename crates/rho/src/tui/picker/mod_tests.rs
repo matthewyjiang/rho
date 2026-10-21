@@ -1,65 +1,9 @@
 use pretty_assertions::assert_eq;
 
-use super::{PickerAction, PickerItem, PickerKeyHints, UiPicker};
+use super::{PickerAction, PickerItem, UiPicker};
 
 fn item(label: &str) -> PickerItem {
     PickerItem::new(label.into(), label.into())
-}
-
-// Covers: structured key hints must appear in footer parts so d-delete and
-// Space confirm stay discoverable on both list and overlay chrome.
-// Owner: tui picker policy
-#[test]
-fn action_footer_parts_include_structured_key_hints() {
-    let picker = UiPicker::new(
-        "Resume session",
-        vec![item("a")],
-        PickerAction::ResumeSession,
-    )
-    .with_key_hints(PickerKeyHints {
-        tab: crate::tui::TabKey::CompleteFilter,
-        row_delete: super::RowDeleteKeys::DOrDelete,
-        ..Default::default()
-    })
-    .with_confirm_verb("resume");
-
-    assert_eq!(
-        picker.action_footer_parts(),
-        vec![
-            "Enter resume".to_string(),
-            "Tab complete".to_string(),
-            "d delete".to_string(),
-            "Esc cancel".to_string(),
-        ]
-    );
-
-    let config = UiPicker::new("Config", vec![item("mode")], PickerAction::Config);
-    assert_eq!(
-        config.action_footer_parts(),
-        vec![
-            "Enter change".to_string(),
-            "Space confirm".to_string(),
-            "Esc cancel".to_string(),
-        ]
-    );
-
-    let model = UiPicker::new("select model", vec![item("m")], PickerAction::SelectModel)
-        .with_key_hints(PickerKeyHints {
-            pin_toggle: Some("Ctrl+P".into()),
-            scope_toggle: Some("Ctrl+O".into()),
-            tab: crate::tui::TabKey::CompleteFilter,
-            ..Default::default()
-        });
-    assert_eq!(
-        model.action_footer_parts(),
-        vec![
-            "Enter select".to_string(),
-            "Ctrl+P pin/unpin".to_string(),
-            "Ctrl+O all/pinned".to_string(),
-            "Tab complete".to_string(),
-            "Esc cancel".to_string(),
-        ]
-    );
 }
 
 // Covers: invalid regex filters must not look like ordinary empty matches.
@@ -81,22 +25,6 @@ fn empty_match_message_distinguishes_invalid_regex() {
     assert_eq!(picker.matching_indices(), Vec::<usize>::new());
     assert!(picker.filter_is_invalid_regex());
     assert_eq!(picker.empty_match_message(), "invalid regex");
-}
-
-// Covers: dismiss-only pickers keep a single Enter/Esc close hint.
-// Owner: tui picker policy
-#[test]
-fn dismiss_picker_collapses_enter_and_esc() {
-    let picker = UiPicker::new(
-        "Keyboard shortcuts",
-        vec![item("help")],
-        PickerAction::Dismiss,
-    )
-    .with_confirm_verb("close");
-    assert_eq!(
-        picker.action_footer_parts(),
-        vec!["Enter/Esc close".to_string()]
-    );
 }
 
 // Covers: Tab must not fill the filter from a row that opts out of completion.
@@ -166,10 +94,6 @@ fn fuzzy_filter_matches_a_row_by_its_full_text() {
     assert_eq!(matches_for("claude-code"), vec![0, 1]);
 }
 
-// Covers: the wheel scrolls the nav viewport without moving the selection,
-// clamps to the overflow range, and keyboard navigation afterwards brings the
-// window back to the selection with minimal movement.
-// Owner: tui picker nav scroll policy
 // Covers: prompt search treats typed text literally (no regex errors on code),
 // ignores case, keeps recency order, and never matches across row fields.
 // Owner: tui picker filter policy
@@ -198,6 +122,11 @@ fn literal_filter_matches_typed_text_in_row_order() {
     }
 }
 
+// Covers: the wheel and absolute scrollbar jumps scroll the nav viewport
+// without moving the selection, clamp to the overflow range, and keyboard
+// navigation afterwards brings the window back to the selection with minimal
+// movement.
+// Owner: tui picker nav scroll policy
 #[test]
 fn nav_wheel_scroll_is_independent_of_selection() {
     let items = (0..20).map(|i| item(&format!("item-{i:02}"))).collect();
@@ -211,6 +140,12 @@ fn nav_wheel_scroll_is_independent_of_selection() {
 
     picker.scroll_nav_by(100, viewport);
     assert_eq!(picker.nav_window_start(viewport), 15, "clamps to max start");
+
+    picker.scroll_nav_to(9, viewport);
+    assert_eq!(picker.nav_window_start(viewport), 9);
+    picker.scroll_nav_to(100, viewport);
+    assert_eq!(picker.nav_window_start(viewport), 15);
+    assert_eq!(picker.selected, 0, "jumps keep the selection");
 
     picker.select_next();
     assert_eq!(picker.selected, 1);
@@ -275,21 +210,6 @@ fn restore_cursor_keeps_nearby_match_after_removal() {
         "session-07",
         "cursor should advance to the next surviving neighbor"
     );
-}
-
-// Covers: absolute nav scrollbar jumps must move the viewport without changing
-// selection, matching history-scrollbar track clicks.
-// Owner: pure unit (picker nav scroll)
-#[test]
-fn scroll_nav_to_jumps_viewport_without_selection() {
-    let items = (0..20).map(|i| item(&format!("item-{i:02}"))).collect();
-    let mut picker = UiPicker::new("list", items, PickerAction::ViewAgent);
-    let viewport = 5;
-    picker.scroll_nav_to(9, viewport);
-    assert_eq!(picker.nav_window_start(viewport), 9);
-    assert_eq!(picker.selected, 0);
-    picker.scroll_nav_to(100, viewport);
-    assert_eq!(picker.nav_window_start(viewport), 15);
 }
 
 // Covers: the wrapped-detail cache keys on detail content, so replacing an

@@ -150,14 +150,6 @@ fn a_new_burst_cannot_spend_time_when_the_reserve_was_empty() {
 }
 
 #[test]
-fn releases_nothing_when_no_text_is_held() {
-    let mut pacer = StreamPacer::default();
-    let now = Instant::now();
-
-    assert_eq!(pacer.release_allowance(now + TICK, 0), 0);
-}
-
-#[test]
 fn partial_preview_tick_does_not_reschedule_after_hold_drains() {
     let mut streams = StreamUi::default();
     let start = Instant::now();

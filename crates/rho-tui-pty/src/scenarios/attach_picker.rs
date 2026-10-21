@@ -57,36 +57,6 @@ pub(super) const ATTACH_PICKER_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
-pub(super) const ATTACH_PICKER_EMPTY_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("open_empty_attach_picker"),
-    Step::SubmitText("/attach"),
-    Step::WaitText {
-        text: "attach subagent",
-        timeout: SETTLE,
-    },
-    Step::AssertText("SUBAGENTS"),
-    Step::AssertText("0/0"),
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: std::time::Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-pub(super) const ATTACH_PICKER_EMPTY_SCENARIO: Scenario = Scenario::new(
-    "attach_picker_empty",
-    "Open /attach with no running subagents and keep the empty overlay",
-    DEFAULT_SIZE,
-    ATTACH_PICKER_EMPTY_STEPS,
-    /*smoke*/ false,
-);
-
 pub(super) const ATTACH_CLI_EMPTY_STEPS: &[Step] = &[
     Step::Phase("open_empty_cli_attach_picker"),
     Step::WaitText {

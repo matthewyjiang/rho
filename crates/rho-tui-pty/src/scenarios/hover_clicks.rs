@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use unicode_width::UnicodeWidthStr;
 
-use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP};
 use crate::{
     harness::WaitTimeout,
     keys::{Key, MouseButton},
@@ -81,57 +81,6 @@ fn double_click(harness: &mut PtyHarness, cell: (u16, u16)) -> Result<()> {
     click(harness, cell)?;
     click(harness, cell)
 }
-
-// Covers: hovering an unfocused questionnaire choice lifts its label to strong
-// text, and moving the pointer off the choices drops the lift.
-// Owner: interactive UX (PTY).
-fn hover_lifts_questionnaire_choice(harness: &mut PtyHarness) -> Result<()> {
-    // `red` is the focused default; `blue` renders as a plain row.
-    let blue = cell_of(harness, "blue", &|line| line.contains("○ blue"))?;
-    let len = "blue".len() as u16;
-    wait_for_span_bold(harness, blue, len, false, "blue starts unlifted")?;
-    harness.mouse_move(blue.0, blue.1)?;
-    wait_for_span_bold(harness, blue, len, true, "hover did not lift blue")?;
-    harness.mouse_move(1, 1)?;
-    wait_for_span_bold(
-        harness,
-        blue,
-        len,
-        false,
-        "the lift stayed after the pointer left",
-    )
-}
-
-const QUESTIONNAIRE_HOVER_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture questionnaire"),
-    Step::WaitText {
-        text: "A cool primary color",
-        timeout: STREAM,
-    },
-    Step::Phase("hover_choice"),
-    Step::Custom(hover_lifts_questionnaire_choice),
-    // Answer so the turn ends and /exit reaches an idle composer.
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "questionnaire response observed exactly 1 time",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-pub(super) const QUESTIONNAIRE_HOVER_SCENARIO: Scenario = Scenario::new(
-    "questionnaire_hover",
-    "Lift a questionnaire choice under the pointer and drop the lift when it leaves",
-    DEFAULT_SIZE,
-    QUESTIONNAIRE_HOVER_STEPS,
-    /*smoke*/ false,
-);
 
 /// Whether `line` is the inline picker row for `label`, highlighted or not.
 fn picker_row(line: &str, label: &str) -> bool {

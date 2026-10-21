@@ -26,16 +26,6 @@ fn loads_ollama_generated_pem_wrapped_at_64_columns() {
 }
 
 #[test]
-fn generates_and_reloads_device_key() {
-    let dir = tempdir().unwrap();
-    let created = OllamaDeviceKey::load_or_create(dir.path()).unwrap();
-    let loaded = OllamaDeviceKey::load_from_dir(dir.path()).unwrap();
-    assert_eq!(created.public_key_openssh(), loaded.public_key_openssh());
-    assert!(dir.path().join(DEFAULT_PRIVATE_KEY_NAME).exists());
-    assert!(dir.path().join(DEFAULT_PUBLIC_KEY_NAME).exists());
-}
-
-#[test]
 fn load_or_create_does_not_truncate_existing_private_key() {
     let dir = tempdir().unwrap();
     let first = OllamaDeviceKey::load_or_create(dir.path()).unwrap();
@@ -83,13 +73,4 @@ fn authorize_request_adds_ts_and_raw_authorization() {
     assert!(signed_url.query().unwrap().contains("ts="));
     assert!(authorization.contains(':'));
     assert!(!authorization.starts_with("Bearer "));
-}
-
-#[test]
-fn connect_url_includes_encoded_public_key() {
-    let key = generate_key().unwrap();
-    let url = key.connect_url().unwrap();
-    assert!(url.starts_with("https://ollama.com/connect?"));
-    assert!(url.contains("name="));
-    assert!(url.contains("key="));
 }

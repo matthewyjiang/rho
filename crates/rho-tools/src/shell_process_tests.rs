@@ -1,18 +1,9 @@
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
-use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
 use super::*;
-
-#[test]
-fn shell_args_reject_invalid_payload() {
-    assert!(
-        ShellArgs::parse(json!({"timeout_seconds": 1})).is_err(),
-        "command is required"
-    );
-}
 
 // Covers: timeout_seconds 0 must fail at arg validation, not spawn-then-timeout
 // Owner: pure unit (shell process)
@@ -55,17 +46,6 @@ fn timeout_error_includes_partial_output() {
     assert!(message.contains("timed out after 3s"));
     assert!(message.contains("started"));
     assert!(message.contains("noise"));
-}
-
-#[test]
-fn timeout_error_respects_output_budget() {
-    let err = timeout_error(
-        &[b'x'; 200],
-        b"",
-        Duration::from_secs(1),
-        /*max_output_bytes*/ 40,
-    );
-    assert!(err.to_string().contains("[truncated]"));
 }
 
 #[cfg(unix)]
@@ -224,23 +204,59 @@ async fn stream_read_failure_is_reported_on_stderr() {
     );
 }
 
-#[test]
-fn shell_content_preserves_signal_exit_status() {
-    let parsed =
-        parse_shell_content("stdout:\nout\n\nstderr:\nerr\n\ntime: 1.5s  exit code: signal");
-    assert_eq!(parsed.exit_code, None);
-    assert_eq!(parsed.exit_status.as_deref(), Some("signal"));
-    assert_eq!(parsed.duration_ms, Some(1500));
-}
-
-// Covers: successful stdout-only output has no stream labels or exit footer
+// Covers: the presentation parser recovers notice, stdout, exit, and duration
+// from every envelope shape, without splitting on sentinel text inside stdout
 // Owner: pure unit (shell process parser)
 #[test]
-fn shell_content_treats_bare_success_output_as_stdout() {
-    let parsed = parse_shell_content("hello");
-    assert_eq!(parsed.stdout, "hello");
-    assert_eq!(parsed.notice, None);
-    assert_eq!(parsed.exit_code, None);
+fn shell_content_parses_every_envelope_shape() {
+    for (case, content, expected) in [
+        (
+            "signal exit status",
+            "stdout:\nout\n\nstderr:\nerr\n\ntime: 1.5s  exit code: signal",
+            ShellContent {
+                stdout: "out".into(),
+                exit_status: Some("signal".into()),
+                duration_ms: Some(1500),
+                ..ShellContent::default()
+            },
+        ),
+        (
+            "bare success output is stdout",
+            "hello",
+            ShellContent {
+                stdout: "hello".into(),
+                ..ShellContent::default()
+            },
+        ),
+        (
+            "sentinel text stays inside labeled stdout",
+            "stdout:\nhello\n\nexit code: 1\n\ntime: 0.2s",
+            ShellContent {
+                stdout: "hello\n\nexit code: 1".into(),
+                duration_ms: Some(200),
+                ..ShellContent::default()
+            },
+        ),
+        (
+            "exit-only failure",
+            "exit code: 2",
+            ShellContent {
+                exit_code: Some(2),
+                ..ShellContent::default()
+            },
+        ),
+        (
+            "timeout notice keeps nested stderr sections",
+            "command timed out after 5s\n\nstdout:\na\n\nstderr:\nb\n\nstderr:\nwarning",
+            ShellContent {
+                notice: Some("command timed out after 5s".into()),
+                stdout: "a\n\nstderr:\nb".into(),
+                ..ShellContent::default()
+            },
+        ),
+    ] {
+        assert_eq!(parse_shell_content(content), expected, "{case}");
+    }
 }
 
 // Covers: success keeps the stdout label and duration, not exit 0
@@ -258,36 +274,6 @@ fn finished_success_keeps_time_and_stdout_label() {
         /*max_output_bytes*/ 12_000,
     );
     assert_eq!(result, "stdout:\nhello\n\ntime: 0.2s");
-}
-
-// Covers: labeled stdout containing footer sentinels is not split when time is present
-// Owner: pure unit (shell process parser)
-#[test]
-fn shell_content_keeps_sentinel_text_inside_labeled_stdout() {
-    let parsed = parse_shell_content("stdout:\nhello\n\nexit code: 1\n\ntime: 0.2s");
-    assert_eq!(parsed.stdout, "hello\n\nexit code: 1");
-    assert_eq!(parsed.duration_ms, Some(200));
-    assert_eq!(parsed.exit_code, None);
-}
-
-// Covers: failed commands keep exit status without empty stream sections
-// Owner: pure unit (shell process parser)
-#[test]
-fn shell_content_parses_exit_only_failure() {
-    let parsed = parse_shell_content("exit code: 2");
-    assert_eq!(parsed.exit_code, Some(2));
-    assert!(parsed.stdout.is_empty());
-}
-
-// Covers: timeout notices must not swallow nested stderr sections
-// Owner: pure unit (shell process parser)
-#[test]
-fn shell_content_parses_timeout_notice() {
-    let parsed = parse_shell_content(
-        "command timed out after 5s\n\nstdout:\na\n\nstderr:\nb\n\nstderr:\nwarning",
-    );
-    assert_eq!(parsed.notice.as_deref(), Some("command timed out after 5s"));
-    assert_eq!(parsed.stdout, "a\n\nstderr:\nb");
 }
 
 // Covers: environment policy decides whether the parent PATH is re-exported

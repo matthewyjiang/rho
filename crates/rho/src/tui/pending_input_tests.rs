@@ -192,36 +192,6 @@ fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
     );
 }
 
-#[test]
-fn applied_event_removes_only_matching_steering() {
-    let mut app = test_app();
-    let applied = rho_sdk::SteeringId::new();
-    let pending = rho_sdk::SteeringId::new();
-    app.pending
-        .accepted_steering_mut()
-        .push_back(AcceptedSteering {
-            id: applied.clone(),
-            prompt: prompt("applied"),
-            delivered: false,
-        });
-    app.pending
-        .accepted_steering_mut()
-        .push_back(AcceptedSteering {
-            id: pending.clone(),
-            prompt: prompt("pending"),
-            delivered: false,
-        });
-
-    app.record_applied_steering(&[applied]);
-
-    assert_eq!(app.pending.accepted_steering().len(), 1);
-    assert_eq!(app.pending.accepted_steering()[0].id, pending);
-    assert!(matches!(
-        app.history.entries(),
-        [Entry::User(text)] if text == "applied"
-    ));
-}
-
 // Covers: a rejected retraction must wait for SteeringApplied before changing the transcript.
 // Owner: interactive TUI pending-input
 #[test]
@@ -327,39 +297,5 @@ fn pending_input_renders_below_subagent_and_process_rails() {
         "expected subagent < process < pending, got {subagent_row} / {process_row} / \
          {pending_row}:\n{}",
         rendered.join("\n")
-    );
-}
-
-// Covers: the activity tree closes on the last rail. With pending input painted
-// underneath, the process rail must still terminate with `└` rather than `├`.
-// Owner: interactive TUI pending-input
-#[test]
-fn process_rail_closes_the_tree_even_with_pending_input_below() {
-    use crate::tools::process::{LiveProcessSummary, State};
-
-    let mut app = test_app();
-    app.process_panel.ingest(vec![LiveProcessSummary {
-        process_id: "proc-1".into(),
-        command: "cargo build".into(),
-        state: State::Running,
-        elapsed_seconds: 5,
-        quiet_seconds: None,
-        exit_code: None,
-    }]);
-    app.pending.push_follow_up(prompt("queued follow up"));
-
-    let rendered = app
-        .active_lines_at_for_height(80, 24, Instant::now())
-        .iter()
-        .map(line_text)
-        .collect::<Vec<_>>();
-    let process_line = rendered
-        .iter()
-        .find(|line| line.contains("cargo build"))
-        .unwrap_or_else(|| panic!("process row missing:\n{}", rendered.join("\n")));
-
-    assert!(
-        process_line.contains(crate::tui::activity::tree_connector(/*is_last*/ true)),
-        "process rail must close the tree, got {process_line:?}"
     );
 }

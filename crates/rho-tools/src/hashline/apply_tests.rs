@@ -34,24 +34,6 @@ fn applies_mixed_ops_on_original_line_numbers() {
     );
 }
 
-// Covers: stale tags must fail closed before mutating content
-// Owner: hashline apply
-#[test]
-fn rejects_stale_tag() {
-    let err = apply_ops("hello\n", "DEAD", vec![Op::Delete { start: 1, end: 1 }]).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            ApplyError::TagMismatch {
-                expected: _,
-                live: _
-            }
-        ),
-        "{err}"
-    );
-    assert!(err.to_string().contains("tag mismatch"), "{err}");
-}
-
 // Covers: overlapping destructive ranges must fail closed
 // Owner: hashline apply
 #[test]

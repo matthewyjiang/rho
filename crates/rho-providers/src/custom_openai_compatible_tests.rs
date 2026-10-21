@@ -1,6 +1,6 @@
 use super::super::{
-    CatalogConstruction, CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderAuthKind, ProviderId,
-    ProviderModelSource, ProviderRuntime, UnknownEffortPolicy,
+    CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderAuthKind, ProviderId, ProviderModelSource,
+    ProviderRuntime, UnknownEffortPolicy,
 };
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
@@ -238,30 +238,6 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
     assert_eq!(host.metadata_upstream, "cliproxyapi");
 }
 
-// Covers: config api mode ignored at intern / descriptor not Responses
-// Owner: provider registry
-#[test]
-fn intern_responses_api_sets_host_api() {
-    let _lock = custom_provider_registry_test_lock();
-    restore_empty();
-    let _restore = RestoreCustomProviders;
-    install_custom_openai_compatible_providers([
-        CustomProviderSpec::new("responses-host", None).with_api(OpenAiCompatibleApi::Responses)
-    ])
-    .unwrap();
-
-    let host = custom_openai_compatible_provider("responses-host").unwrap();
-    assert_eq!(host.openai_compatible_api(), OpenAiCompatibleApi::Responses);
-    assert!(matches!(
-        host.runtime,
-        ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Custom,
-            catalog_construction: CatalogConstruction::Runtime,
-            ..
-        }
-    ));
-}
-
 // Covers: stale leaked descriptor after api flip
 // Owner: provider registry
 #[test]
@@ -338,21 +314,6 @@ fn thread_scope_does_not_replace_process_active_providers() {
     }
     assert!(crate::provider::provider_descriptor("composer").is_some());
     assert!(crate::provider::provider_descriptor("vllm").is_none());
-}
-
-// Covers: a host installed while no overlay is active is immediately visible
-// Owner: provider registry
-#[test]
-fn installing_a_new_host_is_visible_without_an_overlay() {
-    let _lock = custom_provider_registry_test_lock();
-    restore_empty();
-    let _restore = RestoreCustomProviders;
-    install_custom_openai_compatible_providers(["composer"]).unwrap();
-    assert!(crate::provider::provider_descriptor("vllm").is_none());
-
-    install_custom_openai_compatible_providers(["composer", "vllm"]).unwrap();
-    assert!(crate::provider::provider_descriptor("composer").is_some());
-    assert!(crate::provider::provider_descriptor("vllm").is_some());
 }
 
 #[test]

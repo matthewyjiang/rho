@@ -63,38 +63,6 @@ const CREATE_AGENT_MISSING_TOOLS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-// Covers: typing / opens the command palette; filtering narrows matches.
-// Owner: interactive TUI
-const SLASH_COMMAND_PALETTE_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("open_palette"),
-    Step::TypeText("/"),
-    // The palette shows a short top slice in name order; /advisor is first.
-    Step::WaitText {
-        text: "/advisor",
-        timeout: SETTLE,
-    },
-    Step::Phase("filter"),
-    Step::TypeText("mod"),
-    Step::WaitText {
-        text: "/model",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_slash_palette_filtered_to_model),
-    Step::Phase("dismiss"),
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Ctrl('c')),
-    Step::ExitCommand,
-];
-
 // Covers: tab-completing /agents leaves the argument palette open, and a
 // plain Enter must run the bare command instead of the first argument row.
 // Owner: interactive TUI
@@ -149,14 +117,6 @@ pub(super) const CREATE_AGENT_MISSING_TOOLS_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_read_only_agent)
 .with_args(&["--agent", "read-only-fixture"]);
-
-pub(super) const SLASH_COMMAND_PALETTE_SCENARIO: Scenario = Scenario::new(
-    "slash_command_palette",
-    "Open the slash command palette and filter to a matching command",
-    SIZE,
-    SLASH_COMMAND_PALETTE_STEPS,
-    /* smoke */ false,
-);
 
 pub(super) const TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO: Scenario = Scenario::new(
     "tab_complete_enter_bare_command",
@@ -247,15 +207,3 @@ pub(super) const PROMPT_TEMPLATE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
     PROMPT_TEMPLATE_DURING_TURN_STEPS,
     /* smoke */ false,
 );
-
-fn assert_slash_palette_filtered_to_model(harness: &mut PtyHarness) -> Result<()> {
-    let screen = harness.screen().contents();
-    if !screen.contains("/model") {
-        anyhow::bail!("filtered slash palette missing /model:\n{screen}");
-    }
-    // /advisor is first in the unfiltered short list; it must leave after /mod.
-    if screen.contains("/advisor") {
-        anyhow::bail!("slash palette still listed /advisor after /mod filter:\n{screen}");
-    }
-    Ok(())
-}

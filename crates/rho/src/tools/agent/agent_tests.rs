@@ -2,10 +2,7 @@ use std::{ffi::OsString, num::NonZeroUsize, sync::MutexGuard, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    tool::{
-        tool_progress_channel, Tool, ToolAccessMode, ToolContext, ToolExecutionPolicy,
-        ToolInvocation, ToolPreparationContext, ToolResourceKind,
-    },
+    tool::{tool_progress_channel, Tool, ToolContext, ToolInvocation},
     CancellationToken, ToolCallId, Workspace,
 };
 
@@ -98,14 +95,6 @@ async fn call_agent(tool: &AgentTool, root: &Path, arguments: serde_json::Value)
     tool.call(invocation(arguments), tool_context(root))
         .await
         .expect("agent tool call")
-}
-
-#[tokio::test]
-async fn stopping_unknown_run_is_actionable() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let error = fixture.manager().stop("abcdef").await.unwrap_err();
-    assert!(error.to_string().contains("unknown delegated run"));
 }
 
 fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotification {
@@ -345,83 +334,6 @@ fn rail_summaries_keep_finished_runs_until_delivered() {
         .collect::<Vec<_>>();
     assert_eq!(ids, expected);
     assert_eq!(manager.list().len(), 5);
-}
-
-fn one_access(
-    prepared: &rho_sdk::tool::PreparedToolInvocation<'_>,
-) -> (ToolResourceKind, ToolAccessMode) {
-    let ToolExecutionPolicy::ResourceAware { accesses } = prepared.execution_policy() else {
-        panic!("expected a resource-aware invocation");
-    };
-    assert_eq!(accesses.len(), 1);
-    (accesses[0].resource().kind(), accesses[0].mode())
-}
-
-fn preparation_context(root: &Path) -> ToolPreparationContext {
-    ToolPreparationContext::new(
-        Some(Workspace::new(root).unwrap()),
-        CancellationToken::new(),
-    )
-}
-
-#[tokio::test]
-async fn agent_and_agents_prepare_subagent_manager_resources() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = manager(root.path());
-    let manager = fixture.manager();
-    let agent = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
-    let agents = AgentsTool::new(manager);
-
-    let launch = agent
-        .prepare(
-            invocation(serde_json::json!({
-                "agent_id": "default",
-                "prompt": "task",
-            })),
-            preparation_context(root.path()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&launch),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
-    );
-
-    let list = agents
-        .prepare(
-            invocation(serde_json::json!({"action": "list"})),
-            preparation_context(root.path()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&list),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
-    );
-
-    let status = agents
-        .prepare(
-            invocation(serde_json::json!({"action": "status", "id": "run-1"})),
-            preparation_context(root.path()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&status),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
-    );
-
-    let stop = agents
-        .prepare(
-            invocation(serde_json::json!({"action": "stop", "id": "run-1"})),
-            preparation_context(root.path()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&stop),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
-    );
 }
 
 // Covers: launches resolve the definition from disk, so an agent deleted

@@ -2,31 +2,28 @@ use super::*;
 use crate::tui::line_editor::LineEditor;
 use crate::tui::text_input::{TextInput, TextInputTarget};
 
-// Covers: concurrent-agent edits clamp to the named max instead of accepting 1000.
+// Covers: number edits clamp to the named max instead of accepting any value
+// (1000 concurrent agents), while an in-range zero stays valid.
 // Owner: config editor
 #[test]
-fn agent_concurrency_clamps_to_named_max() {
-    let mut over_max = ConfigNumberInput::new(ConfigNumberKey::AgentConcurrency, 1);
-    over_max.editor.value = "1000".into();
-    assert_eq!(
-        over_max.parsed_value().unwrap(),
-        crate::config::MAX_AGENT_CONCURRENCY
-    );
-}
-
-// Covers: prompt history limit 0 is valid and the max is clamped in parse.
-// Owner: config editor
-#[test]
-fn prompt_history_limit_allows_zero_and_clamps_max() {
-    let zero = ConfigNumberInput::new(ConfigNumberKey::PromptHistoryLimit, 0);
-    assert_eq!(zero.parsed_value().unwrap(), 0);
-
-    let mut over_max = ConfigNumberInput::new(ConfigNumberKey::PromptHistoryLimit, 0);
-    over_max.editor.value = "50000".into();
-    assert_eq!(
-        over_max.parsed_value().unwrap(),
-        crate::config::MAX_PROMPT_HISTORY_LIMIT
-    );
+fn number_inputs_clamp_to_named_max() {
+    for (key, typed, expected) in [
+        (
+            ConfigNumberKey::AgentConcurrency,
+            "1000",
+            crate::config::MAX_AGENT_CONCURRENCY,
+        ),
+        (ConfigNumberKey::PromptHistoryLimit, "0", 0),
+        (
+            ConfigNumberKey::PromptHistoryLimit,
+            "50000",
+            crate::config::MAX_PROMPT_HISTORY_LIMIT,
+        ),
+    ] {
+        let mut input = ConfigNumberInput::new(key, 1);
+        input.editor.value = typed.into();
+        assert_eq!(input.parsed_value().unwrap(), expected, "{key:?} {typed}");
+    }
 }
 
 #[test]

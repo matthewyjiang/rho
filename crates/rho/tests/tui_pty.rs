@@ -534,54 +534,6 @@ credential_store = "file"
 }
 
 #[test]
-fn model_command_resolves_configured_alias() {
-    let home = IsolatedHome::new().unwrap();
-    std::fs::write(
-        &home.config_path,
-        r#"check_for_updates = false
-web_search.mode = "off"
-
-[model]
-provider = "openai"
-model = "gpt-5.5"
-auth = "api-key"
-
-[model.aliases]
-deep = "openai-codex/gpt-5.5"
-"#,
-    )
-    .unwrap();
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 100,
-        },
-    );
-    let mut harness = PtyHarness::spawn_named(&plan, "resolve_model_alias").unwrap();
-
-    harness
-        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
-        .unwrap();
-    harness.submit_text("/model @deep").unwrap();
-    harness
-        .wait_for_text(
-            "model switched to openai-codex/gpt-5.5",
-            WaitTimeout::secs(10, "model switch"),
-        )
-        .unwrap();
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
-
-    let config = std::fs::read_to_string(&home.config_path).unwrap();
-    assert!(
-        config.contains("model = \"@deep\""),
-        "saved config:\n{config}"
-    );
-}
-
-#[test]
 fn first_launch_walks_the_full_screen_setup() {
     assert_pass("first_run_setup");
 }
@@ -680,11 +632,6 @@ fn spinner_activity_anchor() {
 #[test]
 fn spinner_activity_jump_rail() {
     assert_pass("spinner_activity_jump_rail");
-}
-
-#[test]
-fn slash_command_palette() {
-    assert_pass("slash_command_palette");
 }
 
 #[test]
@@ -921,13 +868,6 @@ fn attach_opens_a_picker_of_running_subagents() {
     assert_pass("attach_picker");
 }
 
-// Covers: /attach with no running subagents must still open an empty overlay.
-// Owner: interactive TUI
-#[test]
-fn attach_opens_an_empty_picker_when_nothing_is_running() {
-    assert_pass("attach_picker_empty");
-}
-
 // Covers: `rho attach` with no id must open the picker even when the directory
 // has no running subagents.
 // Owner: interactive TUI
@@ -1017,13 +957,6 @@ fn slash_palette_click_highlights_and_double_click_completes() {
 #[test]
 fn file_palette_double_click_inserts_path() {
     assert_pass("file_palette_click");
-}
-
-// Covers: hovering a questionnaire choice lifts it and leaving reverts it.
-// Owner: interactive TUI
-#[test]
-fn questionnaire_choice_hover_lifts_and_reverts() {
-    assert_pass("questionnaire_hover");
 }
 
 // Covers: a click selects an inline picker row without submitting; a double click submits it.

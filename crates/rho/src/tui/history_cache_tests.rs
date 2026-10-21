@@ -38,21 +38,6 @@ fn settings_with(
 }
 
 #[test]
-fn caches_code_block_copy_target_and_raw_contents() {
-    let mut cache = HistoryLineCache::default();
-    let entries = vec![Entry::Assistant(
-        "before\n```rust\nlet x = 1;\nprintln!(\"{x}\");\n```\nafter".into(),
-    )];
-
-    let blocks = cache.code_blocks(&entries, settings(40), &no_images);
-
-    assert_eq!(blocks.len(), 1);
-    assert_eq!(blocks[0].text.as_ref(), "let x = 1;\nprintln!(\"{x}\");");
-    assert_eq!(blocks[0].line, 1);
-    assert_eq!(blocks[0].copy_columns, 32..38);
-}
-
-#[test]
 fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
@@ -387,23 +372,47 @@ fn expected_entry_lines(entry: &Entry, width: usize) -> Vec<ratatui::text::Line<
     )
 }
 
-// Covers: prose after a closed fence in the same buffer must stay visible.
+// Covers: one incremental append must paint exactly what a full render does:
+// prose after a closed fence or a table stays visible, new table rows paint
+// against frozen widths, and a later wider cell reflows the table.
 // Owner: history line cache (incremental append)
 #[test]
-fn incrementally_keeps_prose_after_a_closed_fence() {
-    let mut cache = HistoryLineCache::default();
-    let mut entries = vec![Entry::Assistant("```rust\nlet value = 1;\n".into())];
-    let _ = paint_cached(&mut cache, &entries, settings(80));
+fn incremental_appends_match_a_full_render() {
+    let table = "| Name | Value |\n| --- | --- |\n| rho | 1 |\n";
+    let cases = [
+        (
+            "prose after a closed fence",
+            "```rust\nlet value = 1;\n",
+            "```\nThe function",
+        ),
+        ("new table rows", table, "| agent | 2 |\n"),
+        (
+            "later wider cell",
+            "| A | B |\n| --- | --- |\n| x | y |\n",
+            "| much-longer-cell | z |\n",
+        ),
+        ("prose after a table", table, "After the table"),
+    ];
+    for (name, initial, appended) in cases {
+        let mut cache = HistoryLineCache::default();
+        let mut entries = vec![Entry::Assistant(initial.into())];
+        assert_eq!(
+            paint_cached(&mut cache, &entries, settings(40)),
+            expected_entry_lines(&entries[0], 40),
+            "{name}: initial paint"
+        );
 
-    let Entry::Assistant(text) = &mut entries[0] else {
-        unreachable!();
-    };
-    text.push_str("```\nThe function");
-    cache.entry_appended(0);
-    assert_eq!(
-        paint_cached(&mut cache, &entries, settings(80)),
-        expected_entry_lines(&entries[0], 80)
-    );
+        let Entry::Assistant(text) = &mut entries[0] else {
+            unreachable!();
+        };
+        text.push_str(appended);
+        cache.entry_appended(0);
+        assert_eq!(
+            paint_cached(&mut cache, &entries, settings(40)),
+            expected_entry_lines(&entries[0], 40),
+            "{name}: after append"
+        );
+    }
 }
 
 #[path = "history_cache_copy_tests.rs"]
@@ -411,72 +420,6 @@ mod copy;
 
 #[path = "history_cache_reasoning_tests.rs"]
 mod reasoning;
-
-// Covers: new table rows paint against frozen widths without a full reflow.
-// Owner: history line cache (incremental append)
-#[test]
-fn incrementally_extends_table_rows_without_rendering_drift() {
-    let mut cache = HistoryLineCache::default();
-    let mut entries = vec![Entry::Assistant(
-        "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
-    )];
-    assert_eq!(
-        paint_cached(&mut cache, &entries, settings(40)),
-        expected_entry_lines(&entries[0], 40)
-    );
-
-    let Entry::Assistant(text) = &mut entries[0] else {
-        unreachable!();
-    };
-    text.push_str("| agent | 2 |\n");
-    cache.entry_appended(0);
-    assert_eq!(
-        paint_cached(&mut cache, &entries, settings(40)),
-        expected_entry_lines(&entries[0], 40)
-    );
-}
-
-// Covers: a later wider cell must reflow instead of wrapping at frozen widths.
-// Owner: history line cache (incremental append)
-#[test]
-fn incrementally_reflows_a_table_when_a_later_cell_is_wider() {
-    let mut cache = HistoryLineCache::default();
-    let mut entries = vec![Entry::Assistant(
-        "| A | B |\n| --- | --- |\n| x | y |\n".into(),
-    )];
-    let _ = paint_cached(&mut cache, &entries, settings(40));
-
-    let Entry::Assistant(text) = &mut entries[0] else {
-        unreachable!();
-    };
-    text.push_str("| much-longer-cell | z |\n");
-    cache.entry_appended(0);
-    assert_eq!(
-        paint_cached(&mut cache, &entries, settings(40)),
-        expected_entry_lines(&entries[0], 40)
-    );
-}
-
-// Covers: leftover prose after a table must not disappear before the newline.
-// Owner: history line cache (incremental append)
-#[test]
-fn incrementally_keeps_prose_after_a_table() {
-    let mut cache = HistoryLineCache::default();
-    let mut entries = vec![Entry::Assistant(
-        "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
-    )];
-    let _ = paint_cached(&mut cache, &entries, settings(40));
-
-    let Entry::Assistant(text) = &mut entries[0] else {
-        unreachable!();
-    };
-    text.push_str("After the table");
-    cache.entry_appended(0);
-    assert_eq!(
-        paint_cached(&mut cache, &entries, settings(40)),
-        expected_entry_lines(&entries[0], 40)
-    );
-}
 
 #[test]
 fn streams_mermaid_then_caches_the_closed_diagram_by_width() {

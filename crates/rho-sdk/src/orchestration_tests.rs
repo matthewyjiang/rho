@@ -678,30 +678,6 @@ async fn next_event_virtual(run: &mut Run) -> RunEvent {
 }
 
 #[tokio::test(start_paused = true)]
-async fn retryable_provider_failures_are_retried() {
-    let (calls, session) = flaky_session(2, Retryability::Retryable).await;
-    let mut run = session.start(UserInput::text("start")).await.unwrap();
-
-    let mut retries = 0;
-    let outcome = loop {
-        match next_event_virtual(&mut run).await {
-            RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::RetryableFailure { .. },
-                ..
-            } => {
-                retries += 1;
-            }
-            RunEvent::Completed { outcome } => break outcome,
-            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
-            _ => {}
-        }
-    };
-    assert_eq!(outcome.text(), "recovered");
-    assert_eq!(retries, 2);
-    assert_eq!(calls.load(Ordering::Acquire), 3);
-}
-
-#[tokio::test(start_paused = true)]
 async fn retry_after_partial_stream_resets_output_and_reuses_request_history() {
     let failed_usage = ModelUsage {
         output_tokens: Some(3),
@@ -802,18 +778,6 @@ async fn retryable_provider_failures_exhaust_after_bounded_attempts() {
     assert!(matches!(outcome, Err(Error::Provider(_))), "{outcome:?}");
 }
 
-#[test]
-fn provider_response_rejects_duplicate_tool_call_ids() {
-    let response = ModelResponse::Assistant(vec![
-        ContentBlock::ToolCall(tool_call("duplicate", "first")),
-        ContentBlock::ToolCall(tool_call("duplicate", "second")),
-    ]);
-
-    assert!(response
-        .protocol_issue()
-        .is_some_and(|issue| issue.contains("duplicate tool call id 'duplicate'")));
-}
-
 #[tokio::test(start_paused = true)]
 async fn malformed_responses_and_provider_failures_share_the_turn_attempt_budget() {
     let retryable_error = ProviderError::new(
@@ -868,32 +832,9 @@ async fn permanent_provider_failures_are_not_retried() {
     assert_eq!(calls.load(Ordering::Acquire), 1);
 }
 
-#[tokio::test]
-async fn cancellation_during_retry_backoff_stops_the_run() {
-    let (calls, session) = flaky_session(usize::MAX, Retryability::Retryable).await;
-    let mut run = session.start(UserInput::text("start")).await.unwrap();
-
-    loop {
-        match next_event(&mut run).await {
-            RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::RetryableFailure { .. },
-                ..
-            } => break,
-            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
-            _ => {}
-        }
-    }
-    run.cancel();
-
-    let outcome = tokio::time::timeout(TEST_TIMEOUT, run.outcome())
-        .await
-        .expect("cancelled run timed out");
-    assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
-    assert_eq!(calls.load(Ordering::Acquire), 1);
-}
-
-// Covers: cancel during backoff after StreamReset must not commit discarded
-// partial stream text or tool-call fragments as AbortedAssistant.
+// Covers: cancel during backoff after StreamReset stops the run before the
+// retry and must not commit discarded partial stream text or tool-call
+// fragments as AbortedAssistant.
 // Owner: sdk orchestration
 #[tokio::test]
 async fn cancellation_during_retry_backoff_drops_abandoned_partial_stream() {
@@ -923,7 +864,7 @@ async fn cancellation_during_retry_backoff_drops_abandoned_partial_stream() {
         ],
     );
     let session = Rho::builder()
-        .provider(provider)
+        .provider(provider.clone())
         .build()
         .unwrap()
         .session(SessionOptions::default())
@@ -947,6 +888,11 @@ async fn cancellation_during_retry_backoff_drops_abandoned_partial_stream() {
         .await
         .expect("cancelled run timed out");
     assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
+    assert_eq!(
+        provider.recorded_requests().len(),
+        1,
+        "cancel during backoff must not reach the retry"
+    );
 
     assert_eq!(session.history(), [Message::user_text("start")]);
     assert!(

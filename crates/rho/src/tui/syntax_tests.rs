@@ -22,20 +22,34 @@ fn role_of(segments: &[HighlightSegment], text: &str) -> Option<SyntaxRole> {
         .role
 }
 
-// Covers: rust fence tokens map onto distinct syntax roles
+// Covers: rust and TypeScript fence tokens map onto distinct syntax roles
 // Owner: pure unit (syntax highlight)
 #[test]
 fn rust_tokens_map_to_distinct_roles() {
-    let mut highlighter = highlighter("rust");
-    let segments = highlighter.highlight_line("let answer = 42; // note");
+    for (language, line, keyword) in [
+        ("rust", "let answer = 42; // note", "let"),
+        ("ts", "const answer: number = 42; // note", "const"),
+    ] {
+        let mut highlighter = highlighter(language);
+        let segments = highlighter.highlight_line(line);
 
-    assert_eq!(
-        segment_texts(&segments).concat(),
-        "let answer = 42; // note"
-    );
-    assert_eq!(role_of(&segments, "let"), Some(SyntaxRole::Keyword));
-    assert_eq!(role_of(&segments, "42"), Some(SyntaxRole::Constant));
-    assert_eq!(role_of(&segments, "// note"), Some(SyntaxRole::Comment));
+        assert_eq!(segment_texts(&segments).concat(), line, "{language}");
+        assert_eq!(
+            role_of(&segments, keyword),
+            Some(SyntaxRole::Keyword),
+            "{language}"
+        );
+        assert_eq!(
+            role_of(&segments, "42"),
+            Some(SyntaxRole::Constant),
+            "{language}"
+        );
+        assert_eq!(
+            role_of(&segments, "// note"),
+            Some(SyntaxRole::Comment),
+            "{language}"
+        );
+    }
 }
 
 // Covers: multi-line string grammar state survives across highlight_line calls
@@ -51,15 +65,8 @@ fn string_state_carries_across_lines() {
         .all(|segment| segment.role == Some(SyntaxRole::String)));
 }
 
-// Covers: unknown fence language falls back to no highlighter
-// Owner: pure unit (syntax language lookup)
-#[test]
-fn unknown_language_has_no_highlighter() {
-    warm_syntax_set();
-    assert!(BlockHighlighter::for_language("no-such-language").is_none());
-}
-
-// Covers: TypeScript fence tags and common aliases resolve to dump-native grammars
+// Covers: TypeScript fence tags and common aliases resolve to dump-native
+// grammars; unknown languages fall back to no highlighter
 // Owner: pure unit (syntax language lookup)
 #[test]
 fn fence_tokens_and_aliases_resolve() {
@@ -80,22 +87,7 @@ fn fence_tokens_and_aliases_resolve() {
             "expected highlighter for fence token {token}"
         );
     }
-}
-
-// Covers: TypeScript keywords and constants get role segments
-// Owner: pure unit (syntax highlight)
-#[test]
-fn typescript_tokens_map_to_roles() {
-    let mut highlighter = highlighter("ts");
-    let segments = highlighter.highlight_line("const answer: number = 42; // note");
-
-    assert_eq!(
-        segment_texts(&segments).concat(),
-        "const answer: number = 42; // note"
-    );
-    assert_eq!(role_of(&segments, "const"), Some(SyntaxRole::Keyword));
-    assert_eq!(role_of(&segments, "42"), Some(SyntaxRole::Constant));
-    assert_eq!(role_of(&segments, "// note"), Some(SyntaxRole::Comment));
+    assert!(BlockHighlighter::for_language("no-such-language").is_none());
 }
 
 // Covers: empty line still yields one plain segment so layout keeps the row
@@ -206,46 +198,34 @@ fn match_overlay_splits_segments() {
     assert_eq!(answer.style, Theme::search_match(Theme::text()));
 }
 
-// Covers: literal match keeps regex metacharacters inert
+// Covers: literal queries keep regex metacharacters inert, case-sensitive
+// queries skip other cases, and case-insensitive literals fold Unicode case
+// pairs like grep
 // Owner: pure unit (search match semantics)
 #[test]
 fn literal_match_does_not_treat_dot_as_wildcard() {
-    let ranges = match_byte_ranges(
-        "a.b",
-        &MatchQuery::new(".", /*literal*/ true, /*case_sensitive*/ true),
-    );
-    assert_eq!(ranges, vec![(1, 2)]);
-}
-
-// Covers: case-sensitive regex match skips differently-cased hits
-// Owner: pure unit (search match semantics)
-#[test]
-fn case_sensitive_regex_skips_different_case() {
-    let ranges = match_byte_ranges(
-        "FOO foo",
-        &MatchQuery::new("foo", /*literal*/ false, /*case_sensitive*/ true),
-    );
-    assert_eq!(ranges, vec![(4, 7)]);
-}
-
-// Covers: case-insensitive literal overlay matches Unicode case pairs like grep
-// Owner: pure unit (search match semantics)
-#[test]
-fn case_insensitive_literal_matches_unicode_case_pair() {
-    let ranges = match_byte_ranges(
-        "prefix ä suffix",
-        &MatchQuery::new("Ä", /*literal*/ true, /*case_sensitive*/ false),
-    );
-    assert_eq!(ranges, vec![(7, 9)], "ä is two UTF-8 bytes at offset 7");
-}
-
-// Covers: case-insensitive literal still treats metacharacters as plain text
-// Owner: pure unit (search match semantics)
-#[test]
-fn case_insensitive_literal_keeps_metacharacters_inert() {
-    let ranges = match_byte_ranges(
-        "A.B a.b",
-        &MatchQuery::new("a.b", /*literal*/ true, /*case_sensitive*/ false),
-    );
-    assert_eq!(ranges, vec![(0, 3), (4, 7)]);
+    for (case, haystack, pattern, literal, case_sensitive, expected) in [
+        ("literal dot", "a.b", ".", true, true, vec![(1, 2)]),
+        ("cased regex", "FOO foo", "foo", false, true, vec![(4, 7)]),
+        // ä is two UTF-8 bytes at offset 7.
+        (
+            "unicode case pair",
+            "prefix ä suffix",
+            "Ä",
+            true,
+            false,
+            vec![(7, 9)],
+        ),
+        (
+            "caseless literal metacharacters",
+            "A.B a.b",
+            "a.b",
+            true,
+            false,
+            vec![(0, 3), (4, 7)],
+        ),
+    ] {
+        let query = MatchQuery::new(pattern, literal, case_sensitive);
+        assert_eq!(match_byte_ranges(haystack, &query), expected, "{case}");
+    }
 }

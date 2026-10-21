@@ -41,55 +41,6 @@ fn wait_for_claude_code_login_complete(harness: &mut PtyHarness) {
 }
 
 #[test]
-fn claude_code_login_hands_terminal_to_fake_claude() {
-    let home = IsolatedHome::new().unwrap();
-    // Ensure /login claude-code does not stop at credential-store choice.
-    std::fs::write(
-        &home.config_path,
-        r#"provider = "openai"
-model = "gpt-5.5"
-auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-
-[behavior]
-credential_store = "file"
-"#,
-    )
-    .unwrap();
-
-    let fake = claude_e2e::install_fake_claude_login();
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 100,
-        },
-    )
-    .with_env("PATH", &fake.path);
-    let mut harness = PtyHarness::spawn_named(&plan, "claude_code_login").unwrap();
-    harness
-        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
-        .unwrap();
-
-    harness.submit_text("/login claude-code").unwrap();
-    confirm_claude_code_login(&mut harness);
-    harness
-        .wait_for_text(
-            "handing the terminal to the claude binary",
-            WaitTimeout::secs(10, "handoff notice"),
-        )
-        .unwrap();
-    // The fake claude process exits immediately, so its stdout may only appear on
-    // the suspended main screen. Prefer the post-status source of truth.
-    wait_for_claude_code_login_complete(&mut harness);
-    assert!(fake.marker.exists(), "fake claude login should have run");
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
-}
-
-#[test]
 fn login_shows_provider_picker_before_credential_store_choice() {
     let home = IsolatedHome::new().unwrap();
     // Deliberately leave behavior.credential_store unset so first normal

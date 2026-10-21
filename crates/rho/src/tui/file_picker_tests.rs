@@ -319,19 +319,6 @@ fn parent_directory_prefix_scopes_outside_cwd() {
 }
 
 #[test]
-fn home_directory_prefix_scopes_to_home_relative_path() {
-    let home = tempdir().unwrap();
-    let nested = home.path().join("docs");
-    fs::create_dir_all(&nested).unwrap();
-    fs::write(nested.join("guide.md"), "").unwrap();
-    fs::write(nested.join("todo.txt"), "").unwrap();
-
-    let matches =
-        matching_file_paths_with_home_for_test(Path::new("/tmp"), "~/docs/", Some(home.path()));
-    assert_eq!(matches.as_slice(), ["~/docs/guide.md", "~/docs/todo.txt"]);
-}
-
-#[test]
 fn non_existing_directory_prefix_falls_back_to_workspace_fuzzy() {
     let workspace = tempdir().unwrap();
     fs::create_dir_all(workspace.path().join("src")).unwrap();

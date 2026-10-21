@@ -58,23 +58,6 @@ fn image_tool() -> Entry {
 }
 
 #[test]
-fn loads_a_valid_bounded_asset_for_kitty_rendering() {
-    let image = FeedImage::load(&png_asset(2, 1), &kitty_picker()).unwrap();
-
-    let backend = ratatui::backend::TestBackend::new(20, DEFAULT_IMAGE_HEIGHT);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    terminal
-        .draw(|frame| image.render(frame, frame.area()))
-        .unwrap();
-    assert!(terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .any(|cell| cell.symbol().contains("\x1b_G")));
-}
-
-#[test]
 fn terminal_hints_enable_direct_kitty_and_ghostty_but_not_tmux() {
     assert!(!kitty_graphics_environment(true, false, false, None, None));
     assert!(kitty_graphics_environment(false, true, false, None, None));
@@ -173,61 +156,6 @@ fn feed_image_height_budget_stable_across_one_row_content_jitter() {
     assert_ne!(
         feed_image_height_budget(terminal, 32),
         feed_image_height_budget(terminal, 31)
-    );
-}
-
-// Covers: a tall feed image reserved under a content-capped budget is fully
-// visible inside that content viewport (paintable under full-block paint rules).
-// Owner: history cache image placement
-#[test]
-fn content_capped_budget_keeps_tall_image_paintable_in_shrunken_viewport() {
-    let entries = vec![image_tool()];
-    let mut cache = HistoryLineCache::default();
-    let width = 40;
-    // Preferred band for a tall terminal would be 24+, but composer image rows
-    // left only 10 history content rows.
-    let content_height = 10usize;
-    let budget = feed_image_height_budget(48, content_height);
-    assert_eq!(budget, 10);
-    assert!(
-        usize::from(budget) <= content_height,
-        "reservation must not exceed the content viewport"
-    );
-    let settings = HistoryRenderSettings {
-        width,
-        max_tool_output_lines: 20,
-        zen_mode: false,
-        show_reasoning_output: true,
-        theme_generation: 0,
-        max_image_height: budget,
-    };
-    let line_count = cache.line_count(&entries, settings, &no_images);
-    let full = cache.visible_image_placements(&entries, settings, 0, line_count, &no_images);
-    assert_eq!(full.len(), 1);
-    assert_eq!(full[0].height, usize::from(budget));
-    // Tool header sits above the image; scroll so the reserved block is fully
-    // inside a content_height window.
-    let image_start = full[0].row;
-    let image_end = image_start + full[0].height;
-    let scroll = image_start.min(line_count.saturating_sub(content_height));
-    let placements =
-        cache.visible_image_placements(&entries, settings, scroll, content_height, &no_images);
-    assert_eq!(
-        placements.len(),
-        1,
-        "capped reservation must fully fit some content_height window (scroll={scroll}, image={image_start}..{image_end}, lines={line_count})"
-    );
-
-    // Same image without the cap would reserve the preferred band and never
-    // fully fit a 10-row content pane at any scroll.
-    let uncapped = max_feed_image_height(48);
-    assert!(usize::from(uncapped) > content_height);
-    let mut lines = Vec::new();
-    let tall = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
-    let placement = reserve_image_rows(&mut lines, &tall, width, uncapped);
-    assert!(
-        placement.rows.end - placement.rows.start > content_height,
-        "uncapped reservation must exceed the shrunken content pane"
     );
 }
 

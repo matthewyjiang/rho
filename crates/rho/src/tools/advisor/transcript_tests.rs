@@ -165,16 +165,6 @@ fn keeps_empty_object_args_on_the_call_line() {
 }
 
 #[test]
-fn reports_an_empty_session() {
-    let rendered = render_transcript(None, &[], generous());
-
-    assert_eq!(
-        rendered,
-        "# Session transcript\n\nThe session has no messages yet.\n"
-    );
-}
-
-#[test]
 fn clips_oversized_items_to_their_own_budgets() {
     let budget = TranscriptBudget {
         body_bytes: 1_000_000,

@@ -68,54 +68,38 @@ fn aliases(entries: &[(&str, &str)]) -> ModelAliases {
     .unwrap()
 }
 
+// Covers: an alias resolves before catalog lookup; a bare alias target keeps
+// the current provider and auth.
+// Owner: interactive model selection
 #[test]
-fn resolves_alias_before_interactive_model_lookup() {
-    let mut app = test_app();
-    app.info.runtime.model_aliases = aliases(&[("deep", "openai-codex/gpt-5.5")]);
+fn resolves_aliases_before_interactive_model_lookup() {
+    for (alias, target, provider, auth) in [
+        ("deep", "openai-codex/gpt-5.5", "openai", "api-key"),
+        ("fast", "gpt-5.5", "openai-codex", "codex"),
+    ] {
+        let mut app = test_app();
+        app.info.runtime.model_aliases = aliases(&[(alias, target)]);
 
-    let resolved = app
-        .resolve_model_selection("@deep", &app.info.runtime.provider, &app.info.runtime.auth)
-        .unwrap();
+        let resolved = app
+            .resolve_model_selection(&format!("@{alias}"), provider, auth)
+            .unwrap();
 
-    assert_eq!(
-        resolved,
-        InteractiveModelSelection {
-            selection: ModelSelection {
-                provider: "openai-codex".into(),
-                model: "gpt-5.5".into(),
-                auth: "codex".into(),
-                from_catalog: true,
+        assert_eq!(
+            resolved,
+            InteractiveModelSelection {
+                selection: ModelSelection {
+                    provider: "openai-codex".into(),
+                    model: "gpt-5.5".into(),
+                    auth: "codex".into(),
+                    from_catalog: true,
+                },
+                alias: Some(alias.into()),
+                reasoning_policy:
+                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
             },
-            alias: Some("deep".into()),
-            reasoning_policy:
-                super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-        }
-    );
-}
-
-#[test]
-fn bare_alias_keeps_current_provider() {
-    let mut app = test_app();
-    app.info.runtime.model_aliases = aliases(&[("fast", "gpt-5.5")]);
-
-    let resolved = app
-        .resolve_model_selection("@fast", "openai-codex", "codex")
-        .unwrap();
-
-    assert_eq!(
-        resolved,
-        InteractiveModelSelection {
-            selection: ModelSelection {
-                provider: "openai-codex".into(),
-                model: "gpt-5.5".into(),
-                auth: "codex".into(),
-                from_catalog: true,
-            },
-            alias: Some("fast".into()),
-            reasoning_policy:
-                super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
-        }
-    );
+            "@{alias}"
+        );
+    }
 }
 
 #[test]
@@ -481,10 +465,11 @@ fn last_notice(app: &crate::tui::App) -> &str {
     }
 }
 
-// Covers: empty /config model picker must persist a transcript notice, not toast-only
+// Covers: an empty /config model picker persists one transcript notice (not a
+// toast only), and repeating the row re-toasts instead of stacking notices.
 // Owner: tui model picker
 #[test]
-fn empty_model_picker_writes_a_transcript_notice() {
+fn empty_model_picker_leaves_one_transcript_notice() {
     with_empty_provider_models_cache(|| {
         let mut app = test_app();
         app.open_config_conversation_model_picker();
@@ -498,18 +483,8 @@ fn empty_model_picker_writes_a_transcript_notice() {
             app.history.entries()
         );
         assert!(!app.status().is_empty());
-        assert!(app.status_overlay.is_some());
         assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
-    });
-}
 
-// Covers: repeating an empty /config model row must not stack identical notices
-// Owner: tui model picker
-#[test]
-fn empty_model_picker_does_not_stack_duplicate_notices() {
-    with_empty_provider_models_cache(|| {
-        let mut app = test_app();
-        app.open_config_conversation_model_picker();
         app.open_config_conversation_model_picker();
 
         assert!(

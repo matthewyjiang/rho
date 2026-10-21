@@ -1,6 +1,5 @@
 use super::{
-    classify_idle_screen, classify_usage_screen, trust_yes_selected, waiting_on_named_windows,
-    IdleScreen, UsageScreen,
+    classify_idle_screen, classify_usage_screen, trust_yes_selected, IdleScreen, UsageScreen,
 };
 
 // Covers: host renderer overrides must not change the probe's mode, while
@@ -79,26 +78,6 @@ No, exit
 Do you trust this folder?
 "#;
     assert!(trust_yes_selected(yes));
-}
-
-// Covers: session+week paint must not finish while Fable is named without %.
-// Owner: pure unit
-#[test]
-fn waits_while_named_fable_header_has_no_percent() {
-    let partial =
-        super::super::usage_parse::parse_usage_screen("Current session\n0%used\nResets in 1h\n", 0);
-    assert!(waiting_on_named_windows(
-        "Current session\n0%used\nCurrent week (Fable)\n",
-        partial.as_ref()
-    ));
-    let complete = super::super::usage_parse::parse_usage_screen(
-        "Current session\n0%used\nResets in 1h\nCurrent week (Fable)\n33%used\nResets in 2d\n",
-        0,
-    );
-    assert!(!waiting_on_named_windows(
-        "Current session\n0%used\nCurrent week (Fable)\n33%used\n",
-        complete.as_ref()
-    ));
 }
 
 // Covers: every /usage frame kind maps to the right decision, and failure

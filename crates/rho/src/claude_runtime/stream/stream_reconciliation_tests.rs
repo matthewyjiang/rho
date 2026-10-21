@@ -250,37 +250,6 @@ fn ordered_indexless_slots_preserve_complete_only_then_streamed_text() {
 }
 
 #[test]
-fn ordered_indexless_slots_preserve_complete_only_then_streamed_reasoning() {
-    // Emissions follow arrival time (streamed body before the complete-only
-    // body), not ordered slot position.
-    let lines = [
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"message_start","message":{"id":"msg_ord_reason","role":"assistant"}}}"#,
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}}"#,
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_stop"}}"#,
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_start","content_block":{"type":"thinking","thinking":""}}}"#,
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"streamed"}}}"#,
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"content_block_stop"}}"#,
-        r#"{"type":"stream_event","session_id":"s","event":{"type":"message_stop"}}"#,
-        r#"{"type":"assistant","session_id":"s","message":{"id":"msg_ord_reason","role":"assistant","content":[{"type":"thinking","thinking":"complete-only"},{"type":"thinking","thinking":"streamed"}]}}"#,
-        r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}"#,
-    ];
-    let mut mapper = StreamMapper::new();
-    let effects: Vec<_> = lines
-        .iter()
-        .flat_map(|line| mapper.push_line(line))
-        .collect();
-
-    assert_eq!(joined_reasoning(&effects), "streamedcomplete-only");
-    assert_eq!(
-        count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ReasoningDelta(_))
-        }),
-        2
-    );
-    assert_no_terminal_attachment(&effects);
-}
-
-#[test]
 fn ordered_indexless_slots_preserve_complete_only_then_streamed_tool() {
     // Two index-less tool starts both present on the stream; the complete
     // envelope must not re-emit either ToolStarted.

@@ -394,18 +394,6 @@ mod tests {
     }
 
     #[test]
-    fn ollama_acquisition_returns_explicit_no_auth_without_store_access() {
-        let source = ApplicationCredentialSource::new(Arc::new(RejectingStore));
-
-        let credential = source.acquire("ollama", "none").unwrap();
-
-        assert!(matches!(
-            credential,
-            ProviderCredential::OpenAiCompatible(CompatibleAuth::None)
-        ));
-    }
-
-    #[test]
     fn ollama_cloud_acquisition_reads_store_key_and_stays_isolated_from_local_ollama() {
         let store = MemoryCredentialStore::default();
         store

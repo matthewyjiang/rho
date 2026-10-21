@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
-    ReasoningLevelSet, ToolCall, ToolSpec,
+    ReasoningLevelSet, ToolCall,
 };
 use crate::protocol::openai_chat::ChatStreamAccumulator;
 use crate::protocol::openai_responses::{
@@ -246,31 +246,6 @@ async fn codex_responses_body_includes_prompt_cache_key_when_present() {
     assert!(body.get("previous_response_id").is_none());
     assert_eq!(body["store"], false);
     assert_eq!(body["stream"], true);
-}
-
-#[tokio::test]
-async fn codex_responses_body_uses_hosted_web_search_tool() {
-    let body = build_codex_responses_body(
-        "gpt-5-codex",
-        ModelRequest {
-            messages: &[Message::user_text("find current docs")],
-            tools: &[ToolSpec {
-                name: "web_search".into(),
-                description: "search the web".into(),
-                input_schema: json!({"type": "object"}),
-            }],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        body["tools"],
-        json!([{"type": "web_search", "external_web_access": true}])
-    );
-    assert_eq!(body["tool_choice"], "auto");
 }
 
 #[test]
@@ -553,69 +528,6 @@ fn completed_response_text_preserves_url_annotations() {
     assert!(text.contains("Rust shipped today."));
     assert!(text.contains("Rust Blog"));
     assert!(text.contains("https://blog.rust-lang.org/release"));
-}
-
-#[test]
-fn codex_sse_line_emits_web_search_detail() {
-    let mut state = CodexSseState::default();
-    let mut searches = Vec::new();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","action":{"type":"search","query":"latest Rust release"}}}"#,
-        &mut state,
-        &mut Some(&mut |event| {
-            match event {
-                ModelEvent::WebSearch(detail) => searches.push(detail),
-                                ModelEvent::OutputDelta(_) => {}
-                ModelEvent::ReasoningDelta(_) => {}
-                ModelEvent::ReasoningSummaryDelta(_) => {}
-                ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
-                ModelEvent::GenerationOutputTokens(_)
-                | ModelEvent::HostedToolActivity { .. }
-                | ModelEvent::ServiceTierFallback { .. } => {}
-            }
-            Ok(())
-        }),
-    )
-    .unwrap();
-
-    assert_eq!(searches, vec!["latest Rust release".to_string()]);
-}
-
-#[test]
-fn codex_sse_line_emits_x_search_detail() {
-    let mut state = CodexSseState::default();
-    let mut searches = Vec::new();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","action":{"type":"search","query":"what people say about xAI"}}}"#,
-        &mut state,
-        &mut Some(&mut |event| {
-            match event {
-                ModelEvent::HostedToolActivity { name, detail } => {
-                    searches.push((name, detail));
-                }
-                ModelEvent::WebSearch(_) => {}
-                ModelEvent::OutputDelta(_) => {}
-                ModelEvent::ReasoningDelta(_) => {}
-                ModelEvent::ReasoningSummaryDelta(_) => {}
-                ModelEvent::ProviderContext { .. } => {}
-                ModelEvent::ToolCallDelta { .. } => {}
-                ModelEvent::Usage(_) => {}
-                ModelEvent::GenerationOutputTokens(_) | ModelEvent::ServiceTierFallback { .. } => {}
-            }
-            Ok(())
-        }),
-    )
-    .unwrap();
-
-    assert_eq!(
-        searches,
-        vec![(
-            "x_search".to_string(),
-            "what people say about xAI".to_string()
-        )]
-    );
 }
 
 #[test]

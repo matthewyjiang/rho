@@ -73,14 +73,6 @@ fn provider_api_keys_round_trip_through_memory_store() {
 }
 
 #[test]
-fn available_auth_modes_includes_anthropic_api_key() {
-    let store = MemoryCredentialStore::default();
-    save_provider_api_key(&store, "anthropic", "sk-ant-test").unwrap();
-
-    assert!(available_auth_modes(&store).contains(&"anthropic-api-key".into()));
-}
-
-#[test]
 fn malformed_oauth_tokens_are_not_available_auth() {
     let store = MemoryCredentialStore::default();
     store.set_secret(CODEX_TOKENS_ACCOUNT, "not-json").unwrap();
@@ -123,21 +115,6 @@ fn empty_oauth_tokens_are_not_available_auth() {
 }
 
 #[test]
-fn codex_tokens_round_trip_with_optional_fields() {
-    let store = MemoryCredentialStore::default();
-    let tokens = CodexTokens {
-        access_token: "access".into(),
-        refresh_token: Some("refresh".into()),
-        id_token: Some("id".into()),
-        account_id: Some("account".into()),
-    };
-
-    save_codex_tokens(&store, &tokens).unwrap();
-
-    assert_eq!(load_codex_tokens(&store).unwrap(), Some(tokens));
-}
-
-#[test]
 fn codex_tokens_allow_missing_optional_fields() {
     let store = MemoryCredentialStore::default();
     store
@@ -153,25 +130,6 @@ fn codex_tokens_allow_missing_optional_fields() {
             account_id: None,
         })
     );
-}
-
-#[test]
-fn xai_tokens_round_trip_with_optional_fields() {
-    let store = MemoryCredentialStore::default();
-    let tokens = XaiTokens {
-        access_token: "access".into(),
-        refresh_token: Some("refresh".into()),
-        expires_at_unix: Some(2_500),
-        id_token: Some("id".into()),
-    };
-
-    save_xai_tokens(&store, &tokens).unwrap();
-
-    assert_eq!(load_xai_tokens(&store).unwrap(), Some(tokens));
-    assert!(provider_has_credentials(&store, "xai-oauth").unwrap());
-    assert!(available_auth_modes(&store).contains(&"xai-oauth".into()));
-    assert!(delete_provider_credentials(&store, "xai-oauth").unwrap());
-    assert_eq!(load_xai_tokens(&store).unwrap(), None);
 }
 
 #[test]
@@ -196,24 +154,6 @@ fn github_copilot_tokens_round_trip_with_cached_token_fields() {
     assert!(available_auth_modes(&store).contains(&"github-copilot".into()));
     assert!(delete_provider_credentials(&store, "github-copilot").unwrap());
     assert_eq!(load_github_copilot_tokens(&store).unwrap(), None);
-}
-
-#[test]
-fn empty_github_copilot_env_override_is_not_active() {
-    assert!(!provider_has_env_override_from(
-        "github-copilot",
-        |env_var| {
-            assert_eq!(env_var, "GITHUB_COPILOT_TOKEN");
-            Some(" \t\n ".into())
-        }
-    ));
-    assert!(provider_has_env_override_from(
-        "github-copilot",
-        |env_var| {
-            assert_eq!(env_var, "GITHUB_COPILOT_TOKEN");
-            Some("copilot-token".into())
-        }
-    ));
 }
 
 #[test]

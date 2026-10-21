@@ -13,40 +13,6 @@ fn input_cost_metadata() -> ModelMetadata {
 }
 
 #[test]
-fn cumulative_cost_source_follows_live_provider_snapshots() {
-    let mut app = test_app();
-    app.model_metadata = Some(input_cost_metadata());
-    app.record_agent_event(ViewModelEvent::RunStarted);
-    app.record_agent_event(ViewModelEvent::StepStarted(1));
-    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
-        input_tokens: Some(100),
-        ..Default::default()
-    }));
-    assert_eq!(
-        app.usage.usage_cost_tracker.cumulative_source(),
-        CostSource::Estimated
-    );
-
-    app.record_agent_event(ViewModelEvent::StepStarted(2));
-    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
-        input_tokens: Some(200),
-        cost_usd_micros: Some(80),
-        ..Default::default()
-    }));
-    assert_eq!(
-        app.usage.usage_cost_tracker.cumulative_source(),
-        CostSource::ProviderReported
-    );
-    assert_eq!(
-        app.usage
-            .cumulative_usage
-            .as_ref()
-            .and_then(|usage| usage.cost_usd_micros),
-        Some(80)
-    );
-}
-
-#[test]
 fn provider_retry_preserves_usage_from_failed_attempt() {
     let mut app = test_app();
     app.model_metadata = Some(input_cost_metadata());

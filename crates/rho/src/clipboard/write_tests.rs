@@ -33,15 +33,6 @@ fn fallback_preserves_host_error_when_terminal_also_fails() {
     );
 }
 
-#[test]
-fn join_host_errors_keeps_both_messages() {
-    let error = join_host_errors(
-        io::Error::other("clip.exe missing"),
-        io::Error::other("native failed"),
-    );
-    assert_eq!(error.to_string(), "clip.exe missing; native failed");
-}
-
 // Covers: doctor marks text copy healthy only when a confirmed clipboard path
 // exists; remote OSC 52 is intended, while local/WSL OSC 52 fallback is degraded.
 // Owner: clipboard doctor probe (pure unit).

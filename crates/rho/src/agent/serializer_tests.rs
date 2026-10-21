@@ -4,9 +4,8 @@ use pretty_assertions::assert_eq;
 
 use super::serialize_definition;
 use crate::agent::{
-    parse_definition, AgentDefinition, AgentId, AgentRuntimeSpec, ClaudeAgentConfig,
-    ClaudeToolPolicy, ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability,
-    ToolCapabilitySet, ToolPolicy,
+    parse_definition, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, ModelSelection,
+    PromptPolicy, ReasoningLevel, ToolCapability, ToolCapabilitySet, ToolPolicy,
 };
 
 fn parse(contents: &str) -> AgentDefinition {
@@ -27,6 +26,9 @@ fn supported_definitions_round_trip() {
         "---\ndescription: demo\nruntime: claude-cli\ninherit_claude_config: true\nreasoning: high\ntools: [Read]\n---\nbody\n",
         "---\ndescription: demo\nruntime: claude-cli\ntools: []\n---\nbody\n",
         "---\ndescription: demo\nprompt: replace\n---\nReplacement body.\n",
+        "---\ndescription: demo\n---\nFirst line.\n\nSecond paragraph.\n- bullet\n- bullet\n",
+        "---\ndescription: demo\nmodel-policy: prefer\nmodel: grok-4.5\nprovider: xai\nauth: xai-oauth\n---\nbody\n",
+        "---\nid: demo\ndescription: demo\nruntime: cursor\nmodel: \"gpt-5.3-codex[effort=high,fast=false]\"\ntools: [read_tool_call, shell_tool_call]\n---\nbody\n",
     ];
 
     for contents in cases {
@@ -57,40 +59,6 @@ fn empty_extend_body_stays_empty() {
 
     assert!(serialized.ends_with("---\n"));
     assert!(!serialized.ends_with("---\n\n"));
-    assert_eq!(definition, parse(&serialized));
-}
-
-// Covers: Claude tool patterns that need list quoting remain one tool after parsing.
-// Owner: agent definition serializer
-#[test]
-fn quotes_claude_tool_patterns() {
-    let definition = AgentDefinition {
-        id: AgentId::new("demo").unwrap(),
-        description: "demo".into(),
-        prompt: PromptPolicy::Extend("body".into()),
-        runtime: AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
-            tools: ClaudeToolPolicy::Allow(vec!["Bash(git *)".into()]),
-            inherit_claude_config: false,
-            model: None,
-            reasoning: None,
-        }),
-    };
-
-    let serialized = serialize_definition(&definition);
-
-    assert_eq!(definition, parse(&serialized));
-}
-
-// Covers: multiline Markdown body content is not flattened or trimmed.
-// Owner: agent definition serializer
-#[test]
-fn preserves_multiline_body() {
-    let body = "First line.\n\nSecond paragraph.\n- bullet\n- bullet\n";
-    let definition = parse(&format!("---\ndescription: demo\n---\n{body}"));
-
-    let serialized = serialize_definition(&definition);
-
-    assert!(serialized.ends_with(body));
     assert_eq!(definition, parse(&serialized));
 }
 
@@ -127,19 +95,4 @@ fn canonicalizes_ordered_fields() {
     assert!(serialized.contains("model: model-x\nprovider: openai\nreasoning: low"));
     assert!(serialized.contains("tools: [bash, grep, read_file]"));
     assert_eq!(definition, parse(&serialized));
-}
-
-// Covers: cursor definitions round-trip, including models whose bracket
-// overrides contain commas and must be quoted.
-// Owner: agent definition serializer
-#[test]
-fn cursor_definition_round_trips() {
-    let contents = "---\nid: demo\ndescription: demo\nruntime: cursor\nmodel: \"gpt-5.3-codex[effort=high,fast=false]\"\ntools: [read_tool_call, shell_tool_call]\n---\nbody\n";
-    let first = parse(contents);
-    let serialized = serialize_definition(&first);
-    let second = parse(&serialized);
-    assert_eq!(first, second, "round trip changed:\n{serialized}");
-    assert_eq!(serialized, serialize_definition(&second));
-    assert!(serialized.contains("runtime: cursor\n"));
-    assert!(serialized.contains("gpt-5.3-codex[effort=high,fast=false]"));
 }

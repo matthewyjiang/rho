@@ -9,19 +9,17 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     crate::paths::process_env_lock()
 }
 
+// Covers: an environment backend overrides the configured one, and an unknown
+// environment value is an error instead of a silent fallback.
+// Owner: credential store backend resolution
 #[test]
-fn environment_overrides_config_choice() {
+fn environment_backend_overrides_config_and_rejects_unknown_values() {
+    let configured = Some(CredentialStoreBackend::File);
     assert_eq!(
-        resolve_backend_from(Some("os"), Some(CredentialStoreBackend::File)).unwrap(),
+        resolve_backend_from(Some("os"), configured).unwrap(),
         CredentialStoreBackend::Os
     );
-}
-
-#[test]
-fn rejects_invalid_environment() {
-    let error = resolve_backend_from(Some("plaintext-maybe"), Some(CredentialStoreBackend::File))
-        .unwrap_err();
-    assert!(error.to_string().contains("expected os or file"));
+    assert!(resolve_backend_from(Some("plaintext-maybe"), configured).is_err());
 }
 
 #[test]

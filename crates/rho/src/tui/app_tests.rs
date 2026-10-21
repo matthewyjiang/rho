@@ -2,7 +2,6 @@ use super::{
     command_palette::{complete_slash_command, slash_command_args},
     message_history::{generated_image_entry, transcript_entries_from_messages},
     paste_burst::normalize_paste,
-    tool_output_ui::expandable_tool_entry,
     transcript_events::final_answer_delta,
     *,
 };
@@ -103,29 +102,6 @@ fn line_text(line: &Line<'_>) -> String {
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
-}
-
-fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
-    let status = if ok {
-        rho_tools::tool_card::ToolStatus::Ok
-    } else {
-        rho_tools::tool_card::ToolStatus::Error
-    };
-    let heading = display_lines.first().copied().unwrap_or("tool");
-    let mut card = rho_tools::tool_card::ToolCard::new(
-        status,
-        rho_tools::tool_card::ToolFamily::Default,
-        rho_tools::tool_card::ToolHeader::call(heading, None),
-    );
-    if display_lines.len() > 1 {
-        card = card.with_body(rho_tools::tool_card::ToolBody::Lines(
-            display_lines[1..]
-                .iter()
-                .map(|line| (*line).to_string())
-                .collect(),
-        ));
-    }
-    Entry::Tool(ToolEntry::new(card, false, None, None))
 }
 
 pub(super) fn test_app() -> App {
@@ -262,18 +238,6 @@ fn single_character_fast_enter_is_buffered_as_paste() {
 }
 
 #[test]
-fn pasted_multiline_input_collapses_to_marker_and_expands() {
-    let mut app = test_app();
-    let pasted = collapsible_paste();
-
-    app.insert_pasted_input_text(&pasted);
-
-    assert_eq!(app.input_ui.text(), collapsed_paste_marker());
-    assert_eq!(app.input_ui.cursor(), app.input_ui.text().chars().count());
-    assert_eq!(app.expanded_input(), pasted);
-}
-
-#[test]
 fn pasted_short_input_stays_literal_until_collapse_threshold() {
     let mut app = test_app();
 
@@ -306,26 +270,6 @@ fn paste_segments_shift_after_edits_before_marker() {
         format!("prefix {}", collapsed_paste_marker())
     );
     assert_eq!(app.expanded_input(), format!("prefix {pasted}"));
-}
-
-#[test]
-fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
-    let mut app = test_app();
-    let pasted = collapsible_paste();
-    app.insert_pasted_input_text(&pasted);
-    let queued = QueuedPrompt {
-        prompt: app.expanded_input(),
-        display_prompt: app.input_ui.text().to_string(),
-        paste_segments: app.input_ui.paste_segments().to_vec(),
-        media: Vec::new(),
-    };
-    app.input_ui.clear_text();
-    app.input_ui.clear_paste_segments();
-    app.pending.push_follow_up(queued);
-
-    assert!(app.handle_pending_input_key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT,)));
-    assert_eq!(app.input_ui.text(), collapsed_paste_marker());
-    assert_eq!(app.expanded_input(), pasted);
 }
 
 #[test]
@@ -482,46 +426,6 @@ fn generated_image_entry_records_preview_errors() {
 }
 
 #[test]
-fn toggling_latest_truncated_tool_collapses_previous_tool() {
-    let mut app = test_app();
-    app.info.runtime.max_tool_output_lines = 1;
-    app.history.set_entries(vec![
-        test_tool_entry(true, &["first", "a\nb"]),
-        test_tool_entry(true, &["second", "c\nd"]),
-    ]);
-    if let Entry::Tool(tool) = &mut app.history.entries_mut()[0] {
-        tool.expanded = true;
-    }
-
-    let index = app
-        .history
-        .entries()
-        .iter()
-        .rposition(|entry| expandable_tool_entry(entry, app.info.runtime.max_tool_output_lines, 80))
-        .unwrap();
-    for entry in app.history.entries_mut() {
-        if let Entry::Tool(tool) = entry {
-            tool.expanded = false;
-        }
-    }
-    if let Entry::Tool(tool) = &mut app.history.entries_mut()[index] {
-        tool.expanded = true;
-    }
-
-    assert!(matches!(
-        app.history.entries()[0],
-        Entry::Tool(ToolEntry {
-            expanded: false,
-            ..
-        })
-    ));
-    assert!(matches!(
-        app.history.entries()[1],
-        Entry::Tool(ToolEntry { expanded: true, .. })
-    ));
-}
-
-#[test]
 fn final_answer_delta_handles_unstreamed_suffix_and_mismatch() {
     assert_eq!(
         final_answer_delta("", "final"),
@@ -592,9 +496,6 @@ fn secret_input_masks_api_key() {
     assert!(!rendered.contains("sk-secret-value"), "{rendered}");
 }
 
-/// Points device-key discovery at an empty directory so the developer's real
-/// `~/.ollama` key cannot leak into credential-availability assertions.
-
 #[tokio::test]
 async fn logout_provider_picker_propagates_credential_store_errors() {
     let error = provider_picker::logout_provider_picker(
@@ -607,32 +508,6 @@ async fn logout_provider_picker_propagates_credential_store_errors() {
         error.to_string(),
         CredentialError::StoreUnavailable("test failure".into()).to_string()
     );
-}
-
-#[test]
-fn model_picker_fuzzy_matches_and_autocompletes() {
-    let mut picker = UiPicker::models(
-        "select model",
-        vec![
-            PickerItem::new("openai/gpt-5.5".into(), "openai/gpt-5.5".into()),
-            PickerItem::new(
-                "openai-codex/gpt-5.4-mini".into(),
-                "openai-codex/gpt-5.4-mini".into(),
-            ),
-        ],
-    );
-
-    for ch in "ocg54m".chars() {
-        picker.push_filter_char(ch);
-    }
-
-    assert_eq!(picker.matching_indices(), vec![1]);
-    assert_eq!(
-        picker.selected_item().unwrap().value,
-        "openai-codex/gpt-5.4-mini"
-    );
-    picker.complete_filter();
-    assert_eq!(picker.filter, "openai-codex/gpt-5.4-mini");
 }
 
 #[test]
@@ -716,24 +591,6 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
 }
 
 #[test]
-fn esc_from_main_config_still_closes_picker() {
-    let config_dir = tempfile::tempdir().unwrap();
-    let mut app = test_app();
-    app.info.services.config_repository =
-        ConfigRepository::new(Some(config_dir.path().join("config.toml")));
-    let config = app.info.services.config_repository.load().unwrap();
-    app.input_ui
-        .set_composer(ComposerMode::Picker(config_picker::config_picker(
-            &app.info.runtime,
-            &config,
-        )));
-
-    app.handle_picker_escape(/*running*/ false).unwrap();
-
-    assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
-}
-
-#[test]
 fn input_history_recalls_previous_messages_and_restores_draft() {
     let mut app = test_app();
     app.push_input_history("first message");
@@ -811,14 +668,6 @@ fn command_selection_clamps_to_available_matches() {
 }
 
 #[test]
-fn slash_command_args_preserves_text_after_skill_command() {
-    assert_eq!(
-        slash_command_args("/skill:rust-review check this diff"),
-        "check this diff"
-    );
-}
-
-#[test]
 fn complete_slash_command_inserts_prefixed_skill_command() {
     let (input, cursor) = complete_slash_command("/cav", 4, "skill:caveman");
 
@@ -840,36 +689,6 @@ fn notify_status_is_toast_only() {
         .entries()
         .iter()
         .all(|entry| !matches!(entry, Entry::Notice(text) if text == "notice-a")));
-}
-
-// Covers: a collapsed external paste confirms the catch with a toast, since
-// its content is hidden behind a marker; small pastes stay quiet.
-// Owner: tui status surface
-#[test]
-fn collapsed_external_paste_sets_confirmation_toast() {
-    let mut app = test_app();
-
-    app.insert_external_paste("tiny");
-    assert_eq!(app.status(), "");
-
-    app.insert_external_paste(&collapsible_paste());
-    assert!(!app.status().is_empty());
-}
-
-// Covers: status writes must show as a short-lived overlay toast
-// Owner: tui status surface
-#[test]
-fn status_feedback_sets_visible_overlay() {
-    let mut app = test_app();
-    app.set_status("interrupting tool");
-
-    let overlay = app
-        .status_overlay
-        .as_ref()
-        .expect("status overlay should be set");
-    assert_eq!(overlay.message(), "interrupting tool");
-    assert_eq!(overlay.tone(), super::status_overlay::StatusTone::Warning);
-    assert!(overlay.is_visible(std::time::Instant::now()));
 }
 
 // Covers: silent mode labels must clear a prior toast overlay

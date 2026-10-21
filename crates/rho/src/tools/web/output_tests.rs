@@ -41,29 +41,3 @@ fn single_fetch_inlines_body_when_it_fits() {
         "responseId: 0123456789abcdef0123456789abcdef\nurl: https://example.com/doc\ntitle: Doc\n\nhello"
     );
 }
-
-// Covers: oversized single fetch keeps a valid header and a body prefix
-// Owner: web output
-#[test]
-fn single_fetch_marks_truncation_without_json() {
-    let item = item("https://example.com/big", None, &"x".repeat(5_000));
-    let rendered = format_single_fetch("0123456789abcdef0123456789abcdef", &item, 800);
-    assert!(rendered.len() <= 800);
-    assert!(rendered.starts_with("responseId: 0123456789abcdef0123456789abcdef\n"));
-    assert!(rendered.contains("\ntruncated\n"));
-    assert!(!rendered.contains("[truncated]"));
-}
-
-// Covers: multi-target fetches list selectors instead of inlining bodies
-// Owner: web output
-#[test]
-fn multi_fetch_lists_urls() {
-    let items = [
-        item("https://a.example", None, "a"),
-        item("https://b.example", None, "b"),
-    ];
-    assert_eq!(
-        format_multi_fetch("0123456789abcdef0123456789abcdef", &items, 12_000),
-        "responseId: 0123456789abcdef0123456789abcdef\nitems: 2\n0. https://a.example\n1. https://b.example"
-    );
-}

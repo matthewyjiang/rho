@@ -360,103 +360,69 @@ async fn serve_one_responses_sse(listener: tokio::net::TcpListener) -> Vec<u8> {
     raw
 }
 
-// Covers: custom host with api=responses and a key must hit Responses, not chat
+// Covers: a custom host with api=responses must hit Responses, not chat, and
+// send Bearer auth only when it has a key
 // Owner: provider builder
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
-async fn custom_responses_api_key_posts_responses_with_bearer() {
+async fn custom_responses_posts_responses_with_bearer_only_when_keyed() {
     use rho_sdk::model::{Message, ModelIdentity, ModelRequest};
     use tokio::net::TcpListener;
 
     let _lock = crate::provider::custom_provider_registry_test_lock();
     let _restore = install_custom_composer_responses();
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_base = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(serve_one_responses_sse(listener));
+    for (auth, credential, expected_authorization) in [
+        (
+            Some("composer-api-key"),
+            CompatibleAuth::ApiKey("secret".into()),
+            Some("authorization: bearer secret"),
+        ),
+        (None, CompatibleAuth::None, None),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(serve_one_responses_sse(listener));
 
-    let provider = ProviderBuilder::new(
-        ProviderBuildOptions::new("composer", "local-model", ReasoningLevel::Off)
-            .unwrap()
-            .with_auth("composer-api-key")
-            .unwrap()
-            .endpoint(Url::parse(&api_base).unwrap())
-            .unwrap(),
-        ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("secret".into())),
-    )
-    .build()
-    .unwrap();
-    assert_eq!(
-        provider.identity(),
-        ModelIdentity::new("composer", "openai-responses", "local-model")
-    );
-
-    let messages = [Message::user_text("hello")];
-    provider
-        .send_turn(ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
-            prompt_cache_key: None,
-        })
-        .await
+        let mut options =
+            ProviderBuildOptions::new("composer", "local-model", ReasoningLevel::Off).unwrap();
+        if let Some(auth) = auth {
+            options = options.with_auth(auth).unwrap();
+        }
+        let provider = ProviderBuilder::new(
+            options.endpoint(Url::parse(&api_base).unwrap()).unwrap(),
+            ProviderCredential::OpenAiCompatible(credential),
+        )
+        .build()
         .unwrap();
-    let raw = server.await.unwrap();
-    let (headers, _) = http_request_headers_and_json(&raw);
-    assert!(
-        headers.starts_with("POST /responses HTTP/1.1"),
-        "expected POST /responses, got {headers}"
-    );
-    assert!(headers
-        .to_ascii_lowercase()
-        .contains("authorization: bearer secret"));
-    assert!(!headers.contains("/chat/completions"));
-}
+        assert_eq!(
+            provider.identity(),
+            ModelIdentity::new("composer", "openai-responses", "local-model")
+        );
 
-// Covers: custom host with api=responses and no key must hit Responses without Authorization
-// Owner: provider builder
-#[allow(clippy::await_holding_lock)]
-#[tokio::test]
-async fn custom_responses_keyless_posts_responses_without_authorization() {
-    use rho_sdk::model::{Message, ModelRequest};
-    use tokio::net::TcpListener;
-
-    let _lock = crate::provider::custom_provider_registry_test_lock();
-    let _restore = install_custom_composer_responses();
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_base = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(serve_one_responses_sse(listener));
-
-    let provider = ProviderBuilder::new(
-        ProviderBuildOptions::new("composer", "local-model", ReasoningLevel::Off)
-            .unwrap()
-            .endpoint(Url::parse(&api_base).unwrap())
-            .unwrap(),
-        ProviderCredential::OpenAiCompatible(CompatibleAuth::None),
-    )
-    .build()
-    .unwrap();
-
-    let messages = [Message::user_text("hello")];
-    provider
-        .send_turn(ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
-            prompt_cache_key: None,
-        })
-        .await
-        .unwrap();
-    let raw = server.await.unwrap();
-    let (headers, _) = http_request_headers_and_json(&raw);
-    assert!(
-        headers.starts_with("POST /responses HTTP/1.1"),
-        "expected POST /responses, got {headers}"
-    );
-    assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+        let messages = [Message::user_text("hello")];
+        provider
+            .send_turn(ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
+                prompt_cache_key: None,
+            })
+            .await
+            .unwrap();
+        let raw = server.await.unwrap();
+        let (headers, _) = http_request_headers_and_json(&raw);
+        assert!(
+            headers.starts_with("POST /responses HTTP/1.1"),
+            "expected POST /responses, got {headers}"
+        );
+        let authorization = headers
+            .lines()
+            .map(str::to_ascii_lowercase)
+            .find(|line| line.starts_with("authorization:"));
+        assert_eq!(authorization.as_deref(), expected_authorization);
+    }
 }
 
 // Covers: a web_search ToolSpec must serialize as type=function, not type=web_search

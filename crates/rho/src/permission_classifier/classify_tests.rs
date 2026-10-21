@@ -676,24 +676,20 @@ async fn over_budget_transcript_denies_visibly_without_a_model_call() {
     assert!(requests.is_empty());
 }
 
-// Covers: an unset classifier model cannot fall back to the executor model
+// Covers: an unset classifier model cannot fall back to the executor model,
+// and the classifier never delegates to the Claude runtime
 // Owner: permission classifier model resolution
 #[tokio::test]
-async fn missing_classifier_model_fails_closed() {
-    assert_eq!(verdict_for_config(Config::default()).await, unavailable());
-}
-
-// Covers: the classifier never delegates to Claude runtime
-// Owner: permission classifier model resolution
-#[tokio::test]
-async fn claude_runtime_selection_fails_closed() {
-    let mut config = Config::default();
-    config.set_internal_agent_model_config(
+async fn missing_or_claude_classifier_model_fails_closed() {
+    let mut claude = Config::default();
+    claude.set_internal_agent_model_config(
         PERMISSION_CLASSIFIER_AGENT_ID,
         InternalAgentModelConfig::claude_cli(None),
     );
 
-    assert_eq!(verdict_for_config(config).await, unavailable());
+    for (case, config) in [("unset", Config::default()), ("claude runtime", claude)] {
+        assert_eq!(verdict_for_config(config).await, unavailable(), "{case}");
+    }
 }
 
 async fn verdict_for_config(config: Config) -> ClassifierVerdict {

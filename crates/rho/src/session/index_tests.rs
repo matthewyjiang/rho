@@ -109,28 +109,6 @@ fn failed_index_migration_rolls_back_every_schema_change() {
 }
 
 #[test]
-fn open_index_creates_schema() {
-    let root = TempDir::new().unwrap();
-    let connection = open_index(root.path()).unwrap();
-    let connection = connection.lock().unwrap();
-
-    let table_count: i64 = connection
-        .query_row(
-            "select count(*) from sqlite_master where type = 'table' and name = 'sessions'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-
-    assert_eq!(table_count, 1);
-    let version: u32 = connection
-        .query_row("pragma user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, INDEX_SCHEMA_VERSION);
-    assert!(root.path().join("index.sqlite3").exists());
-}
-
-#[test]
 fn matching_sessions_any_workspace_dedupes_same_path_across_cwds() {
     let root = TempDir::new().unwrap();
     let session_path = root.path().join("session.jsonl");

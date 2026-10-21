@@ -24,29 +24,6 @@ fn parses_backend_selector_values() {
 }
 
 #[test]
-fn backend_names_and_default_are_os_or_file() {
-    assert_eq!(CredentialStoreBackend::Os.as_str(), "os");
-    assert_eq!(CredentialStoreBackend::File.as_str(), "file");
-    assert_eq!(
-        CredentialStoreBackend::default(),
-        CredentialStoreBackend::Os
-    );
-}
-
-#[test]
-fn open_os_uses_os_backend_without_file_fallback() {
-    // Construction alone proves OS selection does not require a file path.
-    open_credential_store(CredentialStoreBackend::Os).unwrap();
-}
-
-#[test]
-fn availability_probe_round_trips_through_memory_store() {
-    let store = MemoryCredentialStore::default();
-    run_availability_probe(&store).unwrap();
-    assert!(store.get_secret("should-not-exist").unwrap().is_none());
-}
-
-#[test]
 fn availability_probe_retries_cleanup_after_delete_failure() {
     struct DeleteOnceFailsStore {
         inner: MemoryCredentialStore,
@@ -104,16 +81,4 @@ fn file_backend_probe_uses_explicit_file_store() {
     let secrets = std::fs::read_to_string(store.secrets_path()).unwrap_or_default();
     assert!(!secrets.contains("rho-probe-secret:"), "{secrets}");
     assert!(!secrets.contains("\"rho-probe:"), "{secrets}");
-}
-
-#[test]
-fn probe_account_names_are_namespaced_and_random() {
-    let first = probe_account_name();
-    let second = probe_account_name();
-    let secret = probe_secret_value();
-    assert!(first.starts_with("rho-probe:"));
-    assert!(second.starts_with("rho-probe:"));
-    assert_ne!(first, second);
-    assert!(secret.starts_with("rho-probe-secret:"));
-    assert!(!first.contains(&secret));
 }

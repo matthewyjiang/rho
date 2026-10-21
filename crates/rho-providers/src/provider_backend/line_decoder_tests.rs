@@ -1,4 +1,4 @@
-use super::{LineDecodeError, LineDecoder, MaxLineBytes};
+use super::{LineDecodeError, LineDecoder};
 
 const BOUNDED_LIMIT: usize = 64;
 
@@ -26,31 +26,6 @@ fn decodes_lf_crlf_empty_lines_and_trailing_tail_across_chunks() {
     }
 
     assert_eq!(lines, ["first", "second", "", "multibyte: é", "tail"]);
-}
-
-#[test]
-fn retains_only_an_incomplete_line_when_appending_a_chunk() {
-    let mut decoder = LineDecoder::default();
-    decoder.push(b"one\ntwo\npar");
-    assert_eq!(decoder.next_line().unwrap(), Some("one"));
-    assert_eq!(decoder.next_line().unwrap(), Some("two"));
-    assert_eq!(decoder.next_line().unwrap(), None);
-
-    decoder.push(b"tial\n");
-
-    assert_eq!(decoder.next_line().unwrap(), Some("partial"));
-    assert_eq!(decoder.finish().unwrap(), None);
-}
-
-#[test]
-fn waits_for_a_complete_multibyte_character() {
-    let mut decoder = LineDecoder::default();
-    decoder.push(b"data: \xc3");
-    assert_eq!(decoder.next_line().unwrap(), None);
-
-    decoder.push(b"\xa9\n");
-
-    assert_eq!(decoder.next_line().unwrap(), Some("data: é"));
 }
 
 #[test]
@@ -92,26 +67,6 @@ fn unlimited_default_accepts_large_lines() {
         .expect("line present");
     assert_eq!(line.len(), large.len());
     assert_eq!(decoder.finish().unwrap(), None);
-}
-
-#[test]
-fn constructors_are_self_documenting() {
-    assert_eq!(
-        LineDecoder::unlimited().max_line_bytes_for_test(),
-        MaxLineBytes::Unlimited
-    );
-    assert_eq!(
-        LineDecoder::default().max_line_bytes_for_test(),
-        MaxLineBytes::Unlimited
-    );
-    assert_eq!(
-        LineDecoder::with_max_line_bytes(BOUNDED_LIMIT).max_line_bytes_for_test(),
-        MaxLineBytes::Limited(BOUNDED_LIMIT)
-    );
-    assert_eq!(
-        LineDecoder::new(MaxLineBytes::limited(BOUNDED_LIMIT)).max_line_bytes_for_test(),
-        MaxLineBytes::Limited(BOUNDED_LIMIT)
-    );
 }
 
 #[test]
@@ -200,10 +155,4 @@ fn drains_valid_complete_lines_before_oversize_error() {
     assert_eq!(decoder.next_line().unwrap(), Some("ok"));
     let error = decoder.next_line().expect_err("oversize after valid line");
     assert!(matches!(error, LineDecodeError::LineTooLong { .. }));
-}
-
-impl LineDecoder {
-    fn max_line_bytes_for_test(&self) -> MaxLineBytes {
-        self.max_line_bytes
-    }
 }

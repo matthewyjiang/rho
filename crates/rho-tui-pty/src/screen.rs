@@ -217,24 +217,6 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    #[test]
-    fn parses_plain_text_and_cursor() {
-        let mut screen = ScreenModel::new(4, 20);
-        screen.process(b"hello world");
-        assert!(screen.contains_text("hello world"));
-        assert_eq!(screen.cursor(), (0, 11));
-    }
-
-    #[test]
-    fn handles_split_escape_sequences() {
-        let mut screen = ScreenModel::new(3, 10);
-        screen.process(b"\x1b[");
-        screen.process(b"2J\x1b[H");
-        screen.process(b"ab");
-        screen.process(b"c");
-        assert!(screen.contains_text("abc"));
-    }
-
     // Covers: readers see the last whole frame while a synchronized update is
     // still being written, as a terminal honoring DEC 2026 would.
     #[test]

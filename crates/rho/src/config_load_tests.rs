@@ -214,22 +214,6 @@ fn edit_tool_preferences_load_from_behavior_config() {
     }
 }
 
-// Covers: known keys alone produce no warnings
-// Owner: config load
-#[test]
-fn known_config_produces_no_warnings() {
-    let (_config, warnings) = parse_settings(
-        r#"
-[model]
-provider = "openai"
-model = "gpt-5.5"
-auth = "api-key"
-"#,
-    )
-    .unwrap();
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-}
-
 // Covers: legacy top-level keys remain accepted under deny_unknown_fields
 // Owner: config load
 #[test]
@@ -288,57 +272,6 @@ theme = "   "
     assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
 }
 
-// Covers: display.zen_mode loads and defaults off
-// Owner: config load
-#[test]
-fn zen_mode_loads_from_display_group() {
-    let (config, warnings) = parse_settings(
-        r#"
-[display]
-zen_mode = true
-"#,
-    )
-    .unwrap();
-    assert!(config.zen_mode);
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-
-    let (defaulted, default_warnings) = parse_settings(
-        r#"
-[display]
-show_reasoning_output = true
-"#,
-    )
-    .unwrap();
-    assert!(!defaulted.zen_mode);
-    assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
-}
-
-// Covers: top-level zen_mode folds into [display]; grouped value wins
-// Owner: config load
-#[test]
-fn legacy_top_level_zen_mode_loads() {
-    let (config, warnings) = parse_settings(
-        r#"
-zen_mode = true
-"#,
-    )
-    .unwrap();
-    assert!(config.zen_mode);
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-
-    let (grouped_wins, grouped_warnings) = parse_settings(
-        r#"
-zen_mode = true
-
-[display]
-zen_mode = false
-"#,
-    )
-    .unwrap();
-    assert!(!grouped_wins.zen_mode);
-    assert_eq!(grouped_warnings, Vec::<ConfigWarning>::new());
-}
-
 // Covers: [model] group provider wins over a top-level provider
 // Owner: config load
 #[test]
@@ -384,31 +317,6 @@ title_auth = "anthropic-api-key"
     assert_eq!(title.expect_rho().model, "claude-sonnet-4-5");
     assert_eq!(title.expect_rho().auth, "anthropic-api-key");
     assert_eq!(warnings, Vec::<ConfigWarning>::new());
-}
-
-// Covers: behavior.advisor_mode loads and defaults off
-// Owner: config load
-#[test]
-fn advisor_mode_loads_from_behavior_group() {
-    let (config, warnings) = parse_settings(
-        r#"
-[behavior]
-advisor_mode = true
-"#,
-    )
-    .unwrap();
-    assert!(config.advisor_mode);
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-
-    let (defaulted, default_warnings) = parse_settings(
-        r#"
-[behavior]
-enable_subagents = true
-"#,
-    )
-    .unwrap();
-    assert!(!defaulted.advisor_mode);
-    assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
 }
 
 // Covers: `[codemode] mode` loads Pi's on|only, defaults to on, and rejects

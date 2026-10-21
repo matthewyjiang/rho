@@ -4,8 +4,11 @@ use crate::provider::{
     OPENAI_API_KEY_ACCOUNT,
 };
 
+// Covers: keyring account names stay stable so stored credentials remain
+// readable after upgrades
+// Owner: os credential store
 #[test]
-fn credential_account_names_are_stable() {
+fn persisted_keyring_account_names_are_stable() {
     assert_eq!(SERVICE, "rho");
     assert_eq!(OPENAI_API_KEY_ACCOUNT, "provider:openai:api-key");
     assert_eq!(ANTHROPIC_API_KEY_ACCOUNT, "provider:anthropic:api-key");
@@ -14,18 +17,6 @@ fn credential_account_names_are_stable() {
         GITHUB_COPILOT_TOKENS_ACCOUNT,
         "provider:github-copilot:tokens"
     );
-}
-
-#[test]
-fn chunk_secret_preserves_unicode_boundaries() {
-    let chunks = chunk_secret_with_max("ab🙂cd", 2);
-
-    assert_eq!(chunks, vec!["ab", "🙂", "cd"]);
-    assert_eq!(chunks.concat(), "ab🙂cd");
-}
-
-#[test]
-fn chunk_account_names_are_derived_from_stable_base_account() {
     assert_eq!(
         OsCredentialStore::chunk_manifest_account(CODEX_TOKENS_ACCOUNT),
         "provider:openai-codex:tokens:chunks"
@@ -38,6 +29,14 @@ fn chunk_account_names_are_derived_from_stable_base_account() {
         OsCredentialStore::chunk_batch_account(CODEX_TOKENS_ACCOUNT, "abc", 3),
         "provider:openai-codex:tokens:chunk:abc:3"
     );
+}
+
+#[test]
+fn chunk_secret_preserves_unicode_boundaries() {
+    let chunks = chunk_secret_with_max("ab🙂cd", 2);
+
+    assert_eq!(chunks, vec!["ab", "🙂", "cd"]);
+    assert_eq!(chunks.concat(), "ab🙂cd");
 }
 
 #[test]

@@ -230,20 +230,6 @@ fn provider_context_replay_follows_effective_thinking_mode() {
 }
 
 #[test]
-fn reasoning_off_disables_adaptive_thinking_when_supported() {
-    let mut capabilities = adaptive_capabilities();
-    capabilities["thinking"]["types"]["disabled"] = json!({"supported": true});
-    let provider = test_provider_with_capabilities("claude-opus-5", &capabilities);
-
-    let body = request_body(&provider, ReasoningLevel::Off).unwrap();
-    let value = serde_json::to_value(&body).unwrap();
-
-    assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Disabled));
-    assert_eq!(body.output_config, None);
-    assert_eq!(value["thinking"], json!({"type": "disabled"}));
-}
-
-#[test]
 fn unknown_model_rejects_requested_reasoning_instead_of_omitting_thinking() {
     let provider = test_provider("claude-opus-5");
 
@@ -447,88 +433,46 @@ fn cold_catalog_max_tokens_depends_on_provider_construction() {
     );
 }
 
-// Covers: the prior user write and the new tail are both marked; a trailing
-// per-request text suffix stays unmarked.
+// Covers: the prior user write and the newest tool result are both marked and
+// a trailing per-request text suffix stays unmarked; 20 new tool-result blocks
+// must not leave the prior write outside every lookback window.
 // Owner: anthropic request body cache breakpoints
 #[test]
-fn two_user_breakpoints_cover_a_multi_result_turn() {
-    let body = tool_result_request_body(2);
+fn tool_result_turn_marks_prior_write_and_newest_result() {
     let marker = Some(AnthropicCacheControl::ephemeral());
-
-    assert_eq!(body.messages.len(), 3);
-    assert_eq!(
-        body.messages[0].content,
-        [AnthropicContentBlock::Text {
-            text: "first turn".into(),
-            cache_control: marker.clone(),
-        }]
-    );
-    assert_eq!(
-        body.messages[2].content,
-        [
-            AnthropicContentBlock::ToolResult {
-                tool_use_id: "toolu_1".into(),
-                content: "1".into(),
+    for new_blocks in [2, 20] {
+        let body = tool_result_request_body(new_blocks);
+        let mut expected_tail = (1..=new_blocks)
+            .map(|index| AnthropicContentBlock::ToolResult {
+                tool_use_id: format!("toolu_{index}"),
+                content: index.to_string(),
                 is_error: false,
-                cache_control: None,
-            },
-            AnthropicContentBlock::ToolResult {
-                tool_use_id: "toolu_2".into(),
-                content: "2".into(),
-                is_error: false,
-                cache_control: marker,
-            },
-            AnthropicContentBlock::Text {
-                text: "suffix".into(),
-                cache_control: None,
-            },
-        ]
-    );
-}
-
-// Covers: 20 new tool-result blocks must not leave the prior write outside
-// every lookback window.
-// Owner: anthropic request body cache breakpoints
-#[test]
-fn prior_write_stays_in_lookback_after_twenty_new_blocks() {
-    const NEW_BLOCKS: usize = 20;
-    let body = tool_result_request_body(NEW_BLOCKS);
-    let marker = Some(AnthropicCacheControl::ephemeral());
-    let last = body.messages.last().expect("tool-result user turn");
-
-    assert_eq!(
-        body.messages[0].content,
-        [AnthropicContentBlock::Text {
-            text: "first turn".into(),
-            cache_control: marker.clone(),
-        }]
-    );
-    assert_eq!(last.content.len(), NEW_BLOCKS + 1);
-    assert_eq!(
-        last.content[0],
-        AnthropicContentBlock::ToolResult {
-            tool_use_id: "toolu_1".into(),
-            content: "1".into(),
-            is_error: false,
-            cache_control: None,
-        }
-    );
-    assert_eq!(
-        last.content[NEW_BLOCKS - 1],
-        AnthropicContentBlock::ToolResult {
-            tool_use_id: format!("toolu_{NEW_BLOCKS}"),
-            content: NEW_BLOCKS.to_string(),
-            is_error: false,
-            cache_control: marker,
-        }
-    );
-    assert_eq!(
-        last.content[NEW_BLOCKS],
-        AnthropicContentBlock::Text {
+                cache_control: if index == new_blocks {
+                    marker.clone()
+                } else {
+                    None
+                },
+            })
+            .collect::<Vec<_>>();
+        expected_tail.push(AnthropicContentBlock::Text {
             text: "suffix".into(),
             cache_control: None,
-        }
-    );
+        });
+
+        assert_eq!(
+            body.messages[0].content,
+            [AnthropicContentBlock::Text {
+                text: "first turn".into(),
+                cache_control: marker.clone(),
+            }],
+            "{new_blocks} new blocks"
+        );
+        assert_eq!(
+            body.messages.last().expect("tool-result user turn").content,
+            expected_tail,
+            "{new_blocks} new blocks"
+        );
+    }
 }
 
 fn tool_result_request_body(tool_results: usize) -> AnthropicRequest {
@@ -575,127 +519,72 @@ fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheCo
     }
 }
 
+// Covers: Anthropic rejects top-level schema composition and untyped roots, so
+// tool schemas drop top-level oneOf/anyOf/allOf (nested ones stay) and the root
+// is always typed object
+// Owner: anthropic request body tool schemas
 #[test]
-fn request_body_removes_top_level_schema_composition_from_tools() {
-    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
-    let body = provider
-        .request_body(
-            ModelRequest {
-                messages: &[Message::user_text("hello")],
-                tools: &[ToolSpec {
-                    name: "edit".into(),
-                    description: "edit files".into(),
-                    input_schema: json!({
+fn request_body_sanitizes_tool_schemas_for_anthropic() {
+    let provider = test_provider_with_capabilities("claude-sonnet-5", &json!({}));
+    let nullable_value = json!({"anyOf": [{"type": "string"}, {"type": "null"}]});
+    let cases = [
+        (
+            "top-level composition stripped",
+            json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "value": nullable_value},
+                "anyOf": [{"required": ["path"]}, {"required": ["value"]}],
+                "oneOf": [{"type": "object"}],
+                "allOf": [{"type": "object"}]
+            }),
+            json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "value": nullable_value}
+            }),
+        ),
+        (
+            "pure composition gets typed",
+            json!({
+                "oneOf": [
+                    {
                         "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                            "value": {
-                                "anyOf": [
-                                    {"type": "string"},
-                                    {"type": "null"}
-                                ]
-                            }
-                        },
-                        "anyOf": [
-                            {"required": ["path"]},
-                            {"required": ["value"]}
-                        ],
-                        "oneOf": [{"type": "object"}],
-                        "allOf": [{"type": "object"}]
-                    }),
-                }],
-                cancellation: Default::default(),
-                reasoning_level: ReasoningLevel::Off,
-                prompt_cache_key: None,
-            },
-            false,
-        )
-        .unwrap();
+                        "properties": {"action": {"const": "validate"}, "file": {"type": "string"}},
+                        "required": ["action", "file"]
+                    },
+                    {
+                        "type": "object",
+                        "properties": {"action": {"const": "run"}, "plan_id": {"type": "string"}},
+                        "required": ["action", "plan_id"]
+                    }
+                ]
+            }),
+            json!({"type": "object"}),
+        ),
+        (
+            "non-object root forced to object",
+            json!({"type": "string", "properties": {"path": {"type": "string"}}}),
+            json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        ),
+    ];
 
-    let value = serde_json::to_value(body).unwrap();
-    let schema = &value["tools"][0]["input_schema"];
-    assert!(schema.get("anyOf").is_none());
-    assert!(schema.get("oneOf").is_none());
-    assert!(schema.get("allOf").is_none());
-    assert_eq!(schema["type"], "object");
-    assert!(schema["properties"]["value"].get("anyOf").is_some());
-    assert_eq!(schema["properties"]["path"]["type"], "string");
-}
-
-#[test]
-fn request_body_types_pure_composition_tool_schemas_for_anthropic() {
-    let provider = test_provider_with_capabilities("claude-sonnet-5", &json!({}));
-    let body = provider
-        .request_body(
-            ModelRequest {
-                messages: &[Message::user_text("hello")],
-                tools: &[ToolSpec {
-                    name: "workflow".into(),
-                    description: "run workflows".into(),
-                    input_schema: json!({
-                        "oneOf": [
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "action": {"const": "validate"},
-                                    "file": {"type": "string"}
-                                },
-                                "required": ["action", "file"]
-                            },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "action": {"const": "run"},
-                                    "plan_id": {"type": "string"}
-                                },
-                                "required": ["action", "plan_id"]
-                            }
-                        ]
-                    }),
-                }],
-                cancellation: Default::default(),
-                reasoning_level: ReasoningLevel::Off,
-                prompt_cache_key: None,
-            },
-            false,
-        )
-        .unwrap();
-
-    let value = serde_json::to_value(body).unwrap();
-    let schema = &value["tools"][0]["input_schema"];
-    assert!(schema.get("oneOf").is_none());
-    assert!(schema.get("anyOf").is_none());
-    assert!(schema.get("allOf").is_none());
-    assert_eq!(schema["type"], "object");
-}
-
-#[test]
-fn request_body_forces_non_object_root_schema_type_to_object() {
-    let provider = test_provider_with_capabilities("claude-sonnet-5", &json!({}));
-    let body = provider
-        .request_body(
-            ModelRequest {
-                messages: &[Message::user_text("hello")],
-                tools: &[ToolSpec {
-                    name: "odd".into(),
-                    description: "odd root type".into(),
-                    input_schema: json!({
-                        "type": "string",
-                        "properties": {
-                            "path": {"type": "string"}
-                        }
-                    }),
-                }],
-                cancellation: Default::default(),
-                reasoning_level: ReasoningLevel::Off,
-                prompt_cache_key: None,
-            },
-            false,
-        )
-        .unwrap();
-
-    let value = serde_json::to_value(body).unwrap();
-    let schema = &value["tools"][0]["input_schema"];
-    assert_eq!(schema["type"], "object");
-    assert_eq!(schema["properties"]["path"]["type"], "string");
+    for (case, input_schema, expected) in cases {
+        let body = provider
+            .request_body(
+                ModelRequest {
+                    messages: &[Message::user_text("hello")],
+                    tools: &[ToolSpec {
+                        name: "tool".into(),
+                        description: "tool".into(),
+                        input_schema,
+                    }],
+                    cancellation: Default::default(),
+                    reasoning_level: ReasoningLevel::Off,
+                    prompt_cache_key: None,
+                },
+                false,
+            )
+            .unwrap();
+        let value = serde_json::to_value(body).unwrap();
+        assert_eq!(value["tools"][0]["input_schema"], expected, "{case}");
+    }
 }

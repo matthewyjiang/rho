@@ -61,92 +61,56 @@ fn git_workspace_with_tracked_file() -> (TempDir, std::path::PathBuf) {
 
 #[test]
 fn config_value_parsing_trims_and_rejects_unknown_values() {
-    assert_eq!(
-        "  Plan  ".parse::<PermissionMode>().unwrap(),
-        PermissionMode::Plan
-    );
-    assert_eq!(
-        "SUPERVISED".parse::<PermissionMode>().unwrap(),
-        PermissionMode::Supervised
-    );
-    assert_eq!(
-        "allow_edits".parse::<PermissionMode>().unwrap(),
-        PermissionMode::AllowEdits
-    );
-    assert_eq!(
-        "allow-edits".parse::<PermissionMode>().unwrap(),
-        PermissionMode::AllowEdits
-    );
+    for (value, expected) in [
+        ("  Plan  ", PermissionMode::Plan),
+        ("SUPERVISED", PermissionMode::Supervised),
+        ("allow_edits", PermissionMode::AllowEdits),
+        ("allow-edits", PermissionMode::AllowEdits),
+        ("auto", PermissionMode::Auto),
+        ("bypass", PermissionMode::Bypass),
+    ] {
+        assert_eq!(
+            value.parse::<PermissionMode>().unwrap(),
+            expected,
+            "{value}"
+        );
+    }
     assert_eq!(PermissionMode::AllowEdits.as_str(), "allow_edits");
-
-    let error = "paranoid".parse::<PermissionMode>().unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "unknown permission mode \"paranoid\"; expected bypass, auto, allow_edits, plan, or supervised"
-    );
-    assert!("".parse::<PermissionMode>().is_err());
-}
-
-#[test]
-fn decision_for_bypass_allows_everything() {
-    for kind in all_capability_kinds() {
-        assert_eq!(
-            PermissionMode::Bypass.decision_for(kind),
-            PolicyDecision::Allow
-        );
+    for invalid in ["paranoid", ""] {
+        assert!(invalid.parse::<PermissionMode>().is_err(), "{invalid:?}");
     }
 }
 
+// Covers: the per-mode capability table: bypass allows everything, plan
+// denies and supervised/allow-edits/auto ask only for write and process.
+// Owner: application permission policy
 #[test]
-fn decision_for_auto_matches_allow_edits_and_supervised() {
+fn decision_for_follows_the_mode_table() {
+    let ask = PolicyDecision::RequireApproval {
+        // Boilerplate reasons stay empty; the approval surface is the signal.
+        reason: String::new(),
+    };
+    let plan_deny = PolicyDecision::Deny {
+        reason: "capability is not allowed in plan mode".into(),
+    };
     for kind in all_capability_kinds() {
-        assert_eq!(
-            PermissionMode::Auto.decision_for(kind),
-            PermissionMode::AllowEdits.decision_for(kind)
-        );
-        assert_eq!(
-            PermissionMode::AllowEdits.decision_for(kind),
-            PermissionMode::Supervised.decision_for(kind)
-        );
-    }
-}
-
-#[test]
-fn parse_auto_is_classifier_mode_and_bypass_is_no_checks() {
-    assert_eq!(
-        "auto".parse::<PermissionMode>().unwrap(),
-        PermissionMode::Auto
-    );
-    assert_eq!(
-        "bypass".parse::<PermissionMode>().unwrap(),
-        PermissionMode::Bypass
-    );
-}
-
-#[test]
-fn decision_for_plan_denies_only_write_and_process() {
-    for kind in all_capability_kinds() {
-        let expected = match kind {
-            CapabilityKind::Write | CapabilityKind::Process => PolicyDecision::Deny {
-                reason: "capability is not allowed in plan mode".into(),
-            },
-            _ => PolicyDecision::Allow,
+        let gated = matches!(kind, CapabilityKind::Write | CapabilityKind::Process);
+        let gate = |decision: &PolicyDecision| {
+            if gated {
+                decision.clone()
+            } else {
+                PolicyDecision::Allow
+            }
         };
-        assert_eq!(PermissionMode::Plan.decision_for(kind), expected);
-    }
-}
-
-#[test]
-fn decision_for_supervised_requires_approval_only_for_write_and_process() {
-    for kind in all_capability_kinds() {
-        let expected = match kind {
-            // Boilerplate reasons stay empty; the approval surface is the signal.
-            CapabilityKind::Write | CapabilityKind::Process => PolicyDecision::RequireApproval {
-                reason: String::new(),
-            },
-            _ => PolicyDecision::Allow,
-        };
-        assert_eq!(PermissionMode::Supervised.decision_for(kind), expected);
+        for (mode, expected) in [
+            (PermissionMode::Bypass, PolicyDecision::Allow),
+            (PermissionMode::Plan, gate(&plan_deny)),
+            (PermissionMode::Supervised, gate(&ask)),
+            (PermissionMode::AllowEdits, gate(&ask)),
+            (PermissionMode::Auto, gate(&ask)),
+        ] {
+            assert_eq!(mode.decision_for(kind), expected, "{mode:?} {kind:?}");
+        }
     }
 }
 

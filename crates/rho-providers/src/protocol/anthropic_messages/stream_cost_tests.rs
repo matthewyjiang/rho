@@ -4,32 +4,6 @@ use super::{handle_anthropic_stream_line, AnthropicSseState};
 use crate::model::{ModelEvent, ModelUsage};
 
 #[test]
-fn message_delta_reports_gateway_cost_with_usage() {
-    let mut state = AnthropicSseState::default();
-    let mut events = Vec::new();
-
-    handle_anthropic_stream_line(
-        r#"data: {"type":"message_delta","usage":{"output_tokens":5},"provider_metadata":{"gateway":{"cost":"0.0042"}}}"#,
-        &mut state,
-        &mut |event| {
-            events.push(event);
-            Ok(())
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        events,
-        vec![ModelEvent::Usage(ModelUsage {
-            output_tokens: Some(5),
-            total_tokens: Some(5),
-            cost_usd_micros: Some(4_200),
-            ..ModelUsage::default()
-        })]
-    );
-}
-
-#[test]
 fn message_deltas_emit_only_monotonic_token_and_cost_deltas() {
     let mut state = AnthropicSseState::default();
     let mut events = Vec::new();

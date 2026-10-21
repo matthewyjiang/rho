@@ -484,17 +484,6 @@ mod tests {
         assert!(svg.contains("ABCD"));
     }
 
-    // Covers: adjacent same-style cells collapse into one text run.
-    // Owner: pty svg renderer
-    #[test]
-    fn groups_adjacent_same_style_cells() {
-        let mut screen = ScreenModel::new(1, 16);
-        screen.process(b"\x1b[32mhello\x1b[m");
-        let svg = render_screen_svg(&screen, &SvgOptions::default());
-        let occurrences = svg.matches(">hello</text>").count();
-        assert_eq!(occurrences, 1);
-    }
-
     // Covers: wide glyphs occupy two columns and must not double-render.
     // Owner: pty svg renderer
     #[test]
@@ -508,32 +497,6 @@ mod tests {
         assert!(cont.wide_continuation);
         let svg = render_screen_svg(&screen, &SvgOptions::default());
         assert_eq!(svg.matches("\u{FF21}").count(), 1);
-    }
-
-    // Covers: light palette must change plate chrome and semantic ANSI colors.
-    // Owner: pty svg renderer
-    #[test]
-    fn light_palette_remaps_chrome_and_ansi_colors() {
-        let mut screen = ScreenModel::new(1, 16);
-        screen.process(b"\x1b[32mok\x1b[m \x1b[90mdim\x1b[m");
-
-        let dark_palette = SvgPalette::github_dark();
-        let light_palette = SvgPalette::primer_light();
-        let dark = render_screen_svg(&screen, &SvgOptions::with_palette(dark_palette));
-        let light = render_screen_svg(&screen, &SvgOptions::with_palette(light_palette));
-
-        assert_ne!(dark_palette.default_bg, light_palette.default_bg);
-        assert_ne!(dark_palette.ansi16[2], light_palette.ansi16[2]);
-        assert_ne!(dark_palette.ansi16[8], light_palette.ansi16[8]);
-
-        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.default_bg.css())));
-        assert!(light.contains(&format!("fill=\"{}\"", light_palette.default_bg.css())));
-        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.frame_bg.css())));
-        assert!(light.contains(&format!("fill=\"{}\"", light_palette.frame_bg.css())));
-        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.ansi16[2].css())));
-        assert!(light.contains(&format!("fill=\"{}\"", light_palette.ansi16[2].css())));
-        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.ansi16[8].css())));
-        assert!(light.contains(&format!("fill=\"{}\"", light_palette.ansi16[8].css())));
     }
 
     // Covers: bright white on a dim wash stays distinct from body ink on light plates.

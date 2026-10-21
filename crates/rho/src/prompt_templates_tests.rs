@@ -3,32 +3,19 @@ use pretty_assertions::assert_eq;
 
 #[test]
 fn validates_names_and_builtin_conflicts() {
-    let mut templates = PromptTemplates::new();
-    templates.insert("code review".into(), "Review this code.".into());
-    assert!(validate(&templates)
-        .unwrap_err()
-        .to_string()
-        .contains("invalid"));
-
-    templates.clear();
-    templates.insert("model".into(), "Choose a model.".into());
-    assert!(validate(&templates)
-        .unwrap_err()
-        .to_string()
-        .contains("conflicts"));
-}
-
-#[test]
-fn rejects_case_insensitive_duplicate_names() {
-    let templates = PromptTemplates::from([
-        ("Review".into(), "upper".into()),
-        ("review".into(), "lower".into()),
-    ]);
-
-    assert!(validate(&templates)
-        .unwrap_err()
-        .to_string()
-        .contains("case-insensitive"));
+    for (case, names) in [
+        ("invalid name", &["code review"][..]),
+        ("builtin command conflict", &["model"][..]),
+        ("case-insensitive duplicate", &["Review", "review"][..]),
+    ] {
+        let templates: PromptTemplates = names
+            .iter()
+            .map(|name| ((*name).into(), "body".into()))
+            .collect();
+        assert!(validate(&templates).is_err(), "{case}");
+    }
+    let valid = PromptTemplates::from([("review".into(), "body".into())]);
+    assert!(validate(&valid).is_ok());
 }
 
 #[test]

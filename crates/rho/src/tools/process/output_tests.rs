@@ -31,42 +31,36 @@ fn snapshot() -> Snapshot {
     }
 }
 
-// Covers: process results include command, empty-stream labels, and success exit
+// Covers: process results keep id, command, state, cursor, and non-empty
+// streams; a successful exit omits `exit: 0`, a failed one keeps its code
 // Owner: process output
 #[test]
 fn snapshot_text_keeps_id_command_state_cursor_and_streams() {
-    assert_eq!(
-        format_snapshot(&snapshot()),
-        "process_id: proc-1\ncommand: sleep 300\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr"
-    );
-}
-
-// Covers: successful exits do not repeat exit 0
-// Owner: process output
-#[test]
-fn successful_exit_omits_exit_line() {
-    let mut snapshot = snapshot();
-    snapshot.state = State::Exited;
-    snapshot.exit_code = Some(0);
-    snapshot.chunks.clear();
-    assert_eq!(
-        format_snapshot(&snapshot),
-        "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2"
-    );
-}
-
-// Covers: failed exits keep the code and drop empty streams
-// Owner: process output
-#[test]
-fn failed_exit_includes_code() {
-    let mut snapshot = snapshot();
-    snapshot.state = State::Exited;
-    snapshot.exit_code = Some(2);
-    snapshot.chunks.clear();
-    assert_eq!(
-        format_snapshot(&snapshot),
-        "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2\nexit: 2"
-    );
+    let exited = |code| Snapshot {
+        state: State::Exited,
+        exit_code: Some(code),
+        chunks: Vec::new(),
+        ..snapshot()
+    };
+    for (case, input, expected) in [
+        (
+            "running with streams",
+            snapshot(),
+            "process_id: proc-1\ncommand: sleep 300\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr",
+        ),
+        (
+            "successful exit",
+            exited(0),
+            "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2",
+        ),
+        (
+            "failed exit",
+            exited(2),
+            "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2\nexit: 2",
+        ),
+    ] {
+        assert_eq!(format_snapshot(&input), expected, "{case}");
+    }
 }
 
 // Covers: every terminal failure reaches callers as a failed tool output;
@@ -237,13 +231,6 @@ fn process_data_budget_matches_serialized_page_sizes() {
             "budget={max_output_bytes}"
         );
     }
-}
-
-// Covers: stop is a two-line receipt, not JSON
-// Owner: process output
-#[test]
-fn stop_receipt_is_plain_text() {
-    assert_eq!(format_stop("proc-1"), "process_id: proc-1\nstop requested");
 }
 
 // Covers: command newlines stay in one header line and cannot spoof exit

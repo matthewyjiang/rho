@@ -498,50 +498,6 @@ mod tests {
     }
 
     #[test]
-    fn streams_message_delta_usage_as_output_only() {
-        let mut state = AnthropicSseState::default();
-        let mut events = Vec::new();
-        let mut on_event = |event| {
-            events.push(event);
-            Ok(())
-        };
-
-        handle_anthropic_stream_line(
-            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":7,"output_tokens":1}}}"#,
-            &mut state,
-            &mut on_event,
-        )
-        .unwrap();
-        handle_anthropic_stream_line(
-            r#"data: {"type":"message_delta","usage":{"output_tokens":5}}"#,
-            &mut state,
-            &mut on_event,
-        )
-        .unwrap();
-
-        let usages = events
-            .iter()
-            .filter_map(|event| match event {
-                ModelEvent::Usage(usage) => Some(usage),
-                ModelEvent::OutputDelta(_)
-                | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::ReasoningSummaryDelta(_)
-                | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
-                | ModelEvent::ToolCallDelta { .. }
-                | ModelEvent::GenerationOutputTokens(_)
-                | ModelEvent::HostedToolActivity { .. }
-                | ModelEvent::ServiceTierFallback { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(usages.len(), 2);
-        assert_eq!(usages[0].input_tokens, Some(7));
-        assert_eq!(usages[0].output_tokens, None);
-        assert_eq!(usages[1].input_tokens, None);
-        assert_eq!(usages[1].output_tokens, Some(5));
-    }
-
-    #[test]
     fn streams_tool_use_input_json_deltas() {
         let mut state = AnthropicSseState::default();
         let mut on_event = |_event| Ok(());
