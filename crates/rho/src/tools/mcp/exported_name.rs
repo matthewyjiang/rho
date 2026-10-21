@@ -145,9 +145,13 @@ pub(crate) fn resolve_foreign_spelling<'a>(
     registered: impl IntoIterator<Item = &'a str>,
 ) -> Option<&'a str> {
     let registered: Vec<&'a str> = registered.into_iter().collect();
+    // The full Rho spelling of a capped tool names it exactly. Anything else
+    // long, such as a legacy hex spelling of an uncapped tool, still folds.
     let capped = cap_tool_name(requested.to_owned());
     if capped != requested {
-        return registered.into_iter().find(|name| *name == capped);
+        if let Some(found) = registered.iter().copied().find(|name| *name == capped) {
+            return Some(found);
+        }
     }
     let key = spelling_key(requested)?;
     let mut matches = registered

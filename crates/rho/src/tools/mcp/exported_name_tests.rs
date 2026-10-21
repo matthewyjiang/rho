@@ -104,6 +104,7 @@ fn foreign_spellings_resolve_only_to_a_unique_tool() {
         namespaced_tool_name("a__b", "c"),
         namespaced_tool_name("foo-", "tool"),
         namespaced_tool_name("chrome-devtools", LONG_TOOL),
+        namespaced_tool_name("chrome-devtools-performance-tracing", "search"),
         "read_file".to_string(),
     ];
     let resolve = |requested: &str| {
@@ -121,6 +122,12 @@ fn foreign_spellings_resolve_only_to_a_unique_tool() {
             "mcp__t3_code__missing",
             format!("mcp__chrome-devtools__{LONG_TOOL}").as_str(),
             format!("mcp__chrome-devtools__{LONG_TOOL}_v2").as_str(),
+            // A legacy hex spelling longer than the cap, of an uncapped tool.
+            format!(
+                "mcp___rho_{}__search",
+                hex::encode("chrome-devtools-performance-tracing")
+            )
+            .as_str(),
             "read_file",
         ]
         .map(resolve),
@@ -135,6 +142,7 @@ fn foreign_spellings_resolve_only_to_a_unique_tool() {
             None,
             Some(registered[7].as_str()),
             None,
+            Some(registered[8].as_str()),
             None,
         ]
     );
