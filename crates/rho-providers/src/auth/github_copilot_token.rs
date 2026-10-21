@@ -9,8 +9,7 @@ use serde::Deserialize;
 use crate::{
     auth::github_copilot_device,
     credentials::{
-        load_github_copilot_tokens, save_github_copilot_tokens, CredentialStore,
-        GitHubCopilotTokens,
+        load_github_copilot_tokens, save_refreshed_tokens, CredentialStore, GitHubCopilotTokens,
     },
     model::ModelError,
     provider::{self, ProviderId},
@@ -245,7 +244,7 @@ async fn refresh_copilot_token_with_store(
     if let Some(endpoints) = response.endpoints {
         apply_token_endpoints(tokens, endpoints);
     }
-    save_github_copilot_tokens(store, tokens)?;
+    save_refreshed_tokens(store, provider::GITHUB_COPILOT_TOKENS_ACCOUNT, tokens)?;
     Ok(material_from_stored_token(response.token, tokens))
 }
 
@@ -293,7 +292,7 @@ async fn refresh_github_token(
         tokens.github_refresh_token = refreshed.refresh_token;
     }
     tokens.github_expires_at_unix = refreshed.expires_at_unix;
-    save_github_copilot_tokens(store, tokens)?;
+    save_refreshed_tokens(store, provider::GITHUB_COPILOT_TOKENS_ACCOUNT, tokens)?;
     Ok(true)
 }
 
@@ -469,6 +468,7 @@ mod tests {
         let store = MemoryCredentialStore::default();
         let mut tokens = tokens(None, None, None);
         tokens.copilot_token_endpoint = Some(url.clone());
+        crate::credentials::save_github_copilot_tokens(&store, &tokens).unwrap();
 
         let material =
             refresh_copilot_token_with_store(&crate::reqwest_client(), &store, &mut tokens)
@@ -506,7 +506,7 @@ mod tests {
         let store = Arc::new(MemoryCredentialStore::default());
         let mut tokens = tokens(Some("stale"), Some(2_000), None);
         tokens.copilot_token_endpoint = Some(url);
-        save_github_copilot_tokens(store.as_ref(), &tokens).unwrap();
+        crate::credentials::save_github_copilot_tokens(store.as_ref(), &tokens).unwrap();
 
         let auth =
             GitHubCopilotAuthManager::new_with_env_token(store, Some(String::new())).unwrap();

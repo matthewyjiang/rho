@@ -21,7 +21,6 @@ use super::{
     agent::RhoAcpAgent,
     auth::{self, CredentialFailure, CredentialStoreChoice, OAuthSignIn},
     auth_login::LoginFlight,
-    auth_logout,
     host_features::NegotiatedFeatures,
     AcpClientPort,
 };
@@ -32,10 +31,11 @@ use crate::{
 };
 
 /// Builds the agent, or answers the error every waiting request gets.
-type StartupRun = BoxFuture<'static, Result<Arc<RhoAcpAgent>, StartupFailure>>;
+type StartupRun = BoxFuture<'static, Result<Arc<RhoAcpAgent>, Box<StartupFailure>>>;
 
 /// A failed startup run: the error waiting requests get, and the credential
 /// failure behind it, which `logout` needs and the error no longer says.
+/// Boxed where returned, since it outgrows Clippy's `Result` error budget.
 #[derive(Clone, Debug)]
 struct StartupFailure {
     error: AcpError,
@@ -43,20 +43,26 @@ struct StartupFailure {
 }
 
 impl StartupFailure {
-    fn new(error: &anyhow::Error) -> Self {
-        Self {
+    fn new(error: &anyhow::Error) -> Box<Self> {
+        Box::new(Self {
             error: auth::request_error(error, || format!("{error:#}")),
             credentials: CredentialFailure::find(error),
-        }
+        })
+    }
+
+    /// Whether startup failed because nothing is stored for the selected
+    /// auth, which leaves nothing to sign out of.
+    fn found_no_credentials(&self) -> bool {
+        matches!(self.credentials, Some(CredentialFailure::Missing(_)))
     }
 }
 
-impl From<AcpError> for StartupFailure {
+impl From<AcpError> for Box<StartupFailure> {
     fn from(error: AcpError) -> Self {
-        Self {
+        Box::new(StartupFailure {
             error,
             credentials: None,
-        }
+        })
     }
 }
 
@@ -174,15 +180,8 @@ impl LazyAgent {
         self.flight
             .run(async {
                 match self.started_or_failure().await {
-                    Ok(agent) => {
-                        agent
-                            .logout(|auth| auth_logout::sign_out(auth, self.login.config.clone()))
-                            .await?
-                    }
-                    Err(StartupFailure {
-                        credentials: Some(CredentialFailure::Missing(_)),
-                        ..
-                    }) => {}
+                    Ok(agent) => agent.logout(self.login.config.clone()).await?,
+                    Err(failure) if failure.found_no_credentials() => {}
                     Err(failure) => return Err(failure.error),
                 }
                 Ok(LogoutResponse::new())
@@ -201,7 +200,7 @@ impl LazyAgent {
             .map_err(|failure| failure.error)
     }
 
-    async fn started_or_failure(&self) -> Result<Arc<RhoAcpAgent>, StartupFailure> {
+    async fn started_or_failure(&self) -> Result<Arc<RhoAcpAgent>, Box<StartupFailure>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(AcpError::invalid_request()
                 .data("ACP connection is closed")

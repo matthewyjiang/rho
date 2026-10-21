@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
 use crate::{
-    credentials::{load_codex_tokens, save_codex_tokens, CodexTokens, CredentialStore},
+    credentials::{load_codex_tokens, save_refreshed_tokens, CodexTokens, CredentialStore},
     model::ModelError,
+    provider::CODEX_TOKENS_ACCOUNT,
 };
 
 pub enum Auth {
@@ -142,7 +143,7 @@ pub(crate) async fn refresh_codex_token_at(
     };
 
     if source == CodexAuthSource::Store {
-        save_codex_tokens(store, &refreshed)?;
+        save_refreshed_tokens(store, CODEX_TOKENS_ACCOUNT, &refreshed)?;
     }
 
     Ok(refreshed)

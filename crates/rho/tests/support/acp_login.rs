@@ -233,10 +233,7 @@ fn authenticate_shows_the_login_url_and_abandons_it_when_the_host_does() {
             "jsonrpc": "2.0", "id": id, "method": "authenticate",
             "params": {"methodId": "openrouter-oauth"},
         }));
-        let shown = server
-            .messages
-            .recv_timeout(REPLY_TIMEOUT)
-            .expect("the login URL is shown");
+        let shown = server.recv("login URL elicitation");
         assert_eq!(
             (
                 shown["method"].clone(),
@@ -282,10 +279,7 @@ fn authenticate_shows_the_login_url_and_abandons_it_when_the_host_does() {
         }
         let mut reply = None;
         while reply.is_none() || !logged_out {
-            let message = server
-                .messages
-                .recv_timeout(REPLY_TIMEOUT)
-                .expect("authenticate answers");
+            let message = server.recv("authenticate or logout reply");
             if message.get("method").is_some() {
                 // A cancelled authenticate withdraws its pending elicitation.
                 assert_eq!(message["method"], "$/cancel_request", "{message}");

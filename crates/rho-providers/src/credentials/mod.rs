@@ -307,6 +307,7 @@ fn delete_auth_kind_credentials(
     store: &dyn CredentialStore,
     auth_kind: ProviderAuthKind,
 ) -> CredentialResult<bool> {
+    let _fence = refresh_fence();
     if matches!(auth_kind, ProviderAuthKind::OllamaDeviceKey { .. }) {
         return store.delete_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT);
     }
@@ -329,6 +330,34 @@ fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool
 
 pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialResult<()> {
     store.set_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT, "1")
+}
+
+/// Serializes refreshed-token saves with credential deletes in this process,
+/// so a refresh that loaded tokens before a logout cannot save them after it.
+/// Another process's logout is fenced only by the check in
+/// [`save_refreshed_tokens`].
+fn refresh_fence() -> std::sync::MutexGuard<'static, ()> {
+    static FENCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    FENCE.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Saves OAuth `tokens` a refresh produced over `account`, unless `account`
+/// no longer holds credentials. A logout deleted them while the refresh ran,
+/// and saving would sign the user back in; the refreshed tokens then live
+/// only as long as the provider holding them. Logins save with the
+/// `save_*_tokens` functions, which always write.
+pub(crate) fn save_refreshed_tokens(
+    store: &dyn CredentialStore,
+    account: &str,
+    tokens: &impl Serialize,
+) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    let _fence = refresh_fence();
+    if store.get_secret(account)?.is_none() {
+        return Ok(());
+    }
+    store.set_secret(account, &secret)
 }
 
 pub fn load_codex_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CodexTokens>> {

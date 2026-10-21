@@ -177,3 +177,32 @@ fn auth_env_override_requires_a_nonblank_value_for_that_mode() {
         panic!("unknown auth must not look up an environment credential")
     }));
 }
+
+// Covers: an OAuth refresh that finishes after a logout deleted its tokens
+// must not save them back and sign the user in again, while a refresh of
+// tokens still stored replaces them.
+// Owner: credential store refresh write-back.
+#[test]
+fn refreshed_tokens_are_saved_only_while_still_signed_in() {
+    let tokens = |access: &str| CodexTokens {
+        access_token: access.into(),
+        refresh_token: Some("refresh".into()),
+        id_token: None,
+        account_id: None,
+    };
+    for (signed_in, expected) in [(true, Some("refreshed")), (false, None)] {
+        let store = MemoryCredentialStore::default();
+        save_codex_tokens(&store, &tokens("first")).unwrap();
+        if !signed_in {
+            delete_auth_credentials(&store, "codex").unwrap();
+        }
+        save_refreshed_tokens(&store, CODEX_TOKENS_ACCOUNT, &tokens("refreshed")).unwrap();
+        assert_eq!(
+            load_codex_tokens(&store)
+                .unwrap()
+                .map(|stored| stored.access_token),
+            expected.map(String::from),
+            "signed in: {signed_in}"
+        );
+    }
+}

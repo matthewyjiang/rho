@@ -3,10 +3,13 @@
 //! deterministically calls one tool and replies with its result.
 
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -52,6 +55,8 @@ struct AcpServer {
     child: Child,
     stdin: ChildStdin,
     messages: Receiver<Value>,
+    /// Everything the agent wrote to stderr, shown when it stops answering.
+    stderr: Arc<Mutex<String>>,
     next_id: u64,
 }
 
@@ -85,13 +90,29 @@ impl AcpServer {
 
     fn from_command(command: &mut Command) -> Self {
         let mut child = command
+            // A crash then says where in the agent's stderr.
+            .env("RUST_BACKTRACE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("spawn rho acp");
         let stdin = child.stdin.take().expect("acp stdin");
         let stdout = child.stdout.take().expect("acp stdout");
+        let stderr = Arc::new(Mutex::new(String::new()));
+        let mut agent_stderr = child.stderr.take().expect("acp stderr");
+        std::thread::spawn({
+            let stderr = Arc::clone(&stderr);
+            move || {
+                let mut chunk = [0; 4096];
+                while let Ok(read @ 1..) = agent_stderr.read(&mut chunk) {
+                    stderr
+                        .lock()
+                        .unwrap()
+                        .push_str(&String::from_utf8_lossy(&chunk[..read]));
+                }
+            }
+        });
         let (sender, messages) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
@@ -106,8 +127,22 @@ impl AcpServer {
             child,
             stdin,
             messages,
+            stderr,
             next_id: 0,
         }
+    }
+
+    /// The next message from the agent; panics naming `what` with the
+    /// agent's stderr if none arrives.
+    fn recv(&self, what: &str) -> Value {
+        self.messages
+            .recv_timeout(REPLY_TIMEOUT)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "no {what}: {error}\nagent stderr:\n{}",
+                    self.stderr.lock().unwrap()
+                )
+            })
     }
 
     fn send(&mut self, message: &Value) {
@@ -137,10 +172,7 @@ impl AcpServer {
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
         let mut updates = Vec::new();
         loop {
-            let message = self
-                .messages
-                .recv_timeout(REPLY_TIMEOUT)
-                .unwrap_or_else(|error| panic!("no reply to {method}: {error}"));
+            let message = self.recv(&format!("reply to {method}"));
             if message["id"] == id && message.get("method").is_none() {
                 let reply = match message.get("error") {
                     Some(error) => Err(error.clone()),
@@ -173,10 +205,7 @@ impl AcpServer {
     /// The next `session/update` the agent sends without a pending request,
     /// such as a title that lands after the turn it names.
     fn next_notification(&mut self) -> Value {
-        let message = self
-            .messages
-            .recv_timeout(REPLY_TIMEOUT)
-            .unwrap_or_else(|error| panic!("no session/update: {error}"));
+        let message = self.recv("session/update");
         assert_eq!(message["method"], "session/update", "{message}");
         message["params"].clone()
     }
