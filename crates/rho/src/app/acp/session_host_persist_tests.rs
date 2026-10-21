@@ -389,6 +389,66 @@ fn only_a_prompt_answered_by_replies_alone_rolls_back() {
     }
 }
 
+// Covers: a refusal rollback whose durable leaf commit fails must leave the
+// live session on the refusal branch the file still selects, so the next turn
+// saves model history and replay that agree.
+// Owner: ACP session host turn persistence
+#[tokio::test]
+async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
+    let home = tempfile::tempdir().unwrap();
+    let startup = AcpStartup::for_tests(Config::default(), home.path());
+    let reply = |text: &str| ModelResponse::Assistant(vec![ContentBlock::Text(text.into())]);
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "model"),
+        vec![
+            ScriptedTurn::streaming(
+                vec![rho_sdk::model::ModelEvent::stop_reason(
+                    rho_sdk::model::ModelStopReason::Refusal,
+                )],
+                reply("refused"),
+            ),
+            ScriptedTurn::completed(reply("answered")),
+        ],
+    ));
+    let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let id = stored.id().to_owned();
+    stored.fail_next_leaf_commit_for_tests();
+    let mut host = host(
+        home.path(),
+        &id,
+        HostStorage::saved(stored),
+        provider,
+        AppToolSet::disabled(),
+        &startup,
+    )
+    .await;
+
+    send(&mut host, &id, "refused ask", &startup)
+        .await
+        .expect_err("the rollback's leaf commit fails");
+    send(&mut host, &id, "follow-up", &startup).await.unwrap();
+    let live = host.built.session.history();
+    host.shutdown().await;
+
+    let (_, histories) =
+        StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id).unwrap();
+    assert_eq!(histories.model, live);
+    assert_eq!(histories.display, from_first_user(&histories.model));
+    let prompts = histories
+        .display
+        .iter()
+        .filter(|message| matches!(message, Message::User(_)))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        prompts,
+        [
+            Message::user_text("refused ask"),
+            Message::user_text("follow-up")
+        ]
+    );
+}
+
 // Covers: a background result reaches history before the pump records the
 // row shown for it, so a step save must wait for that row rather than write
 // the model's copy; once recorded, the shown row takes its place in order.

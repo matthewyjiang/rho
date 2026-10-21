@@ -193,15 +193,26 @@ impl SessionHost {
         let Some(start) = checkpoint.0.lock_display().prompt_only_start(&history) else {
             return Ok(());
         };
-        self.built
-            .session
-            .replace_history(history[..start].to_vec())?;
-        // A new node on the base keeps host state that changed since the base
-        // was saved, such as the selected model, without the refused rows.
-        let snapshot = self.durable_snapshot();
-        let stored = self.stored()?;
+        // Durable first, as tree selection does: if the leaf commit fails, the
+        // live session still matches the refusal branch the file selects.
+        let stored = self.stored()?.clone();
+        let refused_leaf = stored.with_session_tree(|tree| Ok(tree.active_leaf_id().cloned()))?;
         stored.set_leaf(&checkpoint.0.base)?;
-        stored.save_snapshot(&snapshot, &[])
+        if let Err(error) = self
+            .built
+            .session
+            .replace_history(history[..start].to_vec())
+        {
+            if let Some(leaf) = refused_leaf {
+                stored.set_leaf(&leaf)?;
+            }
+            return Err(error.into());
+        }
+        // A new node on the base keeps host state that changed since the base
+        // was saved, such as the selected model, without the refused rows. If
+        // it fails, the file still selects the base, which matches the live
+        // history; only that host state waits for the next save.
+        stored.save_snapshot(&self.durable_snapshot(), &[])
     }
 
     /// Saves what a failed turn already showed, such as background results
