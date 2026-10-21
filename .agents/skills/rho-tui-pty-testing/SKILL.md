@@ -33,16 +33,15 @@ cargo build -p rho-coding-agent >"$BUILD_LOG" 2>&1
 
 On failure, inspect focused excerpts and stop.
 
-## Run the smoke suite
+## Run the CI scenario suite
 
 ```bash
-TEST_LOG=$(mktemp /tmp/rho-pty-smoke.XXXXXX.log)
-cargo test -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
+TEST_LOG=$(mktemp /tmp/rho-pty-suite.XXXXXX.log)
+cargo nextest run -p rho-coding-agent --test tui_pty >"$TEST_LOG" 2>&1
 ```
 
-Smoke scenarios:
+CI runs exactly the `assert_pass` tests in `crates/rho/tests/tui_pty.rs`. Key scenarios:
 
-- see `Scenario.smoke` / `rho-pty-scenario --list` for the live set
 - core lifecycle: `startup_stream_exit`, `cancel_and_resubmit`, `type_during_stream`, `resize_during_stream`, `scroll_during_stream`, `terminal_restoration`
 - fragility champions: `streaming_markdown_stability`, `spinner_activity_anchor`
 
@@ -58,7 +57,7 @@ cargo run -p rho-tui-pty --bin rho-pty-scenario -- \
 
 Useful flags:
 
-- `--smoke` runs a quick local subset (`smoke: true`); CI runs the `tui_pty` tests instead
+- `--smoke` runs the `smoke: true` scenarios locally; it does not decide CI coverage
 - `--timing` prints wait latency samples and p50/p95/p99
 - `--artifacts <dir>` writes failure bundles
 - `--bin <path>` selects the Rho binary

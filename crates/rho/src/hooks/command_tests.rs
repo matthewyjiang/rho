@@ -108,7 +108,7 @@ async fn a_timed_out_handler_takes_its_descendants_with_it() {
     let pid = wait_for_pid(&marker).await;
     // The group kill is asynchronous; bound the wait instead of guessing it.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while process_is_alive(pid) {
+    while crate::process_tree::process_is_running(pid) {
         assert!(
             std::time::Instant::now() < deadline,
             "descendant {pid} outlived its hook timeout"
@@ -226,8 +226,4 @@ async fn wait_for_pid(path: &Path) -> i32 {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-}
-
-fn process_is_alive(pid: i32) -> bool {
-    unsafe { libc::kill(pid, 0) == 0 }
 }

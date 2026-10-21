@@ -28,7 +28,10 @@ fn job_descendant_fixture() {
     };
     let port: u16 = std::env::var(FIXTURE_PORT).unwrap().parse().unwrap();
     if role == "parent" {
-        let _ = fixture_command("descendant", port).status();
+        // Panic on spawn failure so the test sees the parent exit early.
+        let _ = fixture_command("descendant", port)
+            .status()
+            .expect("spawn descendant fixture");
         return;
     }
     let mut connection = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -49,10 +52,16 @@ async fn dropping_job_terminates_descendants() {
     // Match the inline shell's existing 60-second execution deadline. This only
     // bounds failures; accepting the connection synchronizes descendant startup.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
-    let (mut connection, _) = tokio::time::timeout_at(deadline, listener.accept())
-        .await
-        .expect("descendant did not connect")
-        .unwrap();
+    // An early parent exit (spawn failure, or a stale `FIXTURE_TEST` filter
+    // matching no test) fails here instead of waiting out the deadline.
+    let (mut connection, _) = tokio::select! {
+        accepted = tokio::time::timeout_at(deadline, listener.accept()) => {
+            accepted.expect("descendant did not connect").unwrap()
+        }
+        status = child.wait() => {
+            panic!("fixture parent exited before its descendant connected: {status:?}")
+        }
+    };
     drop(job);
     let mut byte = [0];
     let closed = tokio::time::timeout_at(deadline, connection.read(&mut byte)).await;

@@ -1111,6 +1111,8 @@ fn reasoning_output_toggles_retroactively() {
 
 // Covers: workflow tools run without a second form and keep live progress.
 // Owner: interactive TUI
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[test]
 fn workflow_tools_run_in_the_background() {
     assert_pass("workflow_background");
