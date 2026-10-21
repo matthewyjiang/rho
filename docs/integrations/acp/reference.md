@@ -17,6 +17,7 @@ Rho advertises:
 | `loadSession` | `session/load`. See [Load and replay](#load-and-replay). |
 | `promptCapabilities.image`, `.embeddedContext` | Prompts may carry images and embedded resources. `audio` is `false`. |
 | `sessionCapabilities.list`, `.delete` | Saved sessions as host history. See [List and delete](#list-and-delete). |
+| `sessionCapabilities.resume` | `session/resume`. See [Resume](#resume). |
 | `sessionCapabilities.close` | Close a live session. See [Close](#close). |
 | `sessionCapabilities.additionalDirectories` | Extra workspace roots. See [Workspace roots](#workspace-roots). |
 | `mcpCapabilities.http` | Host MCP servers over Streamable HTTP. `sse` is not advertised. See [MCP servers](#mcp-servers). |
@@ -91,6 +92,12 @@ Listing and deleting saved history do not start model discovery or require provi
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A checklist restored by the load, and a model-prompt change notice found at load, go out when the next prompt starts.
 
 The load starts from the process default mode, model, reasoning, and fast mode, except that `/agent:` sessions rebind to their agent's prompt, tools, and model, and [per-call model](#per-call-model) children restore their saved selection. History restored on load may still mention a prior switch.
+
+### Resume
+
+`session/resume` opens a saved session the way `session/load` does, for hosts that keep their own transcript. It takes the same `cwd`, `additionalDirectories`, and `mcpServers`, follows the same restore rules, answers with the same modes and config options, and sends the command list after its response. It replays nothing: no `session/update` reaches the host before the response. As with `session/load`, an ID with nothing saved resumes as an empty session, so a session from `session/new` that was never prompted survives an agent restart.
+
+A checklist restored by the resume, and a model-prompt change notice found during it, go out when the next prompt starts, as after a load. The checklist is sent whole, so a host that already shows it just sees it again.
 
 ### Close
 
@@ -251,13 +258,13 @@ T3 Code (`clientInfo.name` `t3-code`) reads only a top-level `enum`, accepts fre
 
 ## Workspace roots
 
-Hosts with several workspace roots, such as a Zed multi-root workspace, send the extra roots with `session/new` and `session/load` as `additionalDirectories`. `cwd` stays the primary workspace. Each extra root joins the session as an [added directory](/tools-workspace#additional-workspace-directories), the same as `--add-dir`: reads there count as workspace reads in every permission mode, and its `AGENTS.md` chain loads. Directories passed to `rho acp --add-dir` apply to every session on top of the host's roots.
+Hosts with several workspace roots, such as a Zed multi-root workspace, send the extra roots with `session/new`, `session/load`, and `session/resume` as `additionalDirectories`. `cwd` stays the primary workspace. Each extra root joins the session as an [added directory](/tools-workspace#additional-workspace-directories), the same as `--add-dir`: reads there count as workspace reads in every permission mode, and its `AGENTS.md` chain loads. Directories passed to `rho acp --add-dir` apply to every session on top of the host's roots.
 
 - Each entry must be an absolute path to an existing directory. A request with an empty, relative, missing, or non-directory entry fails with invalid params and no session starts.
 - As with `--add-dir`, a root inside `cwd` or inside another root adds nothing, since it is already in scope.
 - A `null` list counts as empty, but an entry that is not a string, such as `null`, fails the request with invalid params, following the ACP schema.
 
-The roots are saved with the session, so `rho -R` restores them, and `session/list` reports them as `additionalDirectories`. `session/load` does not restore them: per ACP, the roots a load sends are the session's complete list, and a load that sends none drops roots the session had before. A host opening a session from history keeps its roots by sending back the listed `additionalDirectories`.
+The roots are saved with the session, so `rho -R` restores them, and `session/list` reports them as `additionalDirectories`. `session/load` and `session/resume` do not restore them: per ACP, the roots a request sends are the session's complete list, and a request that sends none drops roots the session had before. A host opening a session from history keeps its roots by sending back the listed `additionalDirectories`, which include directories passed to `rho acp --add-dir` when the session ran.
 
 ## Background results
 

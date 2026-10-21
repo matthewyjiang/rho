@@ -127,3 +127,60 @@ fn listed_roots_round_trip_through_load() {
     let reply = server.prompt(&session_id, "read the shared notes");
     assert!(read_the_extra_file(&reply), "{reply}");
 }
+
+// Covers: session/resume (advertised as sessionCapabilities.resume) must
+// restore a saved session with the roots it names, answer with modes and
+// config options, and send nothing before its response: no history replay,
+// with the command list following the response as on session/load. The
+// resumed session must continue the saved conversation, not start over.
+// Owner: ACP session lifecycle, over the real stdio server
+#[test]
+fn resume_restores_the_saved_session_without_replay() {
+    let workspace = Workspace::new();
+    let (mut server, _) = initialized(&workspace);
+    let session_id = new_session(&mut server, &workspace, json!([workspace.extra]));
+    server.prompt(&session_id, "read the shared notes");
+    drop(server);
+
+    let (mut server, initialized) = initialized(&workspace);
+    assert_eq!(
+        initialized["agentCapabilities"]["sessionCapabilities"]["resume"],
+        json!({})
+    );
+    let (resumed, before_response) = server.request(
+        "session/resume",
+        json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": [], "additionalDirectories": [workspace.extra]}),
+    );
+    let resumed = resumed.unwrap();
+    assert_eq!(
+        (
+            before_response,
+            &resumed["modes"]["currentModeId"],
+            resumed["configOptions"].is_array(),
+        ),
+        (vec![], &json!("plan"), true)
+    );
+    let (prompted, updates) = server.request(
+        "session/prompt",
+        json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "read the shared notes"}]}),
+    );
+    prompted.unwrap();
+    assert_eq!(updates[0]["sessionUpdate"], "available_commands_update");
+    let reply: String = updates
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "agent_message_chunk")
+        .filter_map(|update| update["content"]["text"].as_str())
+        .collect();
+    assert!(read_the_extra_file(&reply), "{reply}");
+
+    let (loaded, replay) = server.request(
+        "session/load",
+        json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": []}),
+    );
+    loaded.unwrap();
+    let replayed_prompts = replay
+        .iter()
+        .filter(|update| update["sessionUpdate"] == "user_message_chunk")
+        .count();
+    assert_eq!(replayed_prompts, 2, "{replay:#?}");
+}

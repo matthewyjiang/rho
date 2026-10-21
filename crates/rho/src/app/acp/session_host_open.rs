@@ -1,13 +1,14 @@
 //! Opening ACP sessions: `session/new` builds a host whose file waits for
-//! its first save, and `session/load` restores a saved one and replays its
-//! display history to the client. Both take the host's
-//! `additionalDirectories` as the session's added directories.
+//! its first save, and `session/load` and `session/resume` restore a saved
+//! one, `session/load` also replaying its display history to the client.
+//! All take the host's `additionalDirectories` as the session's added
+//! directories.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
-    SessionId,
+    ResumeSessionRequest, ResumeSessionResponse, SessionConfigOption, SessionId, SessionModeState,
 };
 use rho_sdk::{model::Message, SessionOptions};
 
@@ -86,16 +87,17 @@ impl SessionHost {
         ))
     }
 
-    /// Loads a saved session and replays its display history to `client`.
+    /// Restores a saved session for `session/load` or `session/resume`,
+    /// sending its display history as `history` says.
     ///
     /// A session created by `session/new` has no file until its first
-    /// prompt, so an id with no saved session anywhere is loaded as that
+    /// prompt, so an id with no saved session anywhere is restored as that
     /// empty session, as it was when `session/new` wrote the file eagerly.
-    pub(in crate::app::acp) async fn load(
+    pub(in crate::app::acp) async fn reopen(
         startup: &AcpStartup,
-        request: LoadSessionRequest,
-        client: &dyn AcpClientPort,
-    ) -> anyhow::Result<(Self, LoadSessionResponse)> {
+        request: ReopenRequest,
+        history: History<'_>,
+    ) -> anyhow::Result<Self> {
         let cwd = workspace_cwd(&request.cwd, &startup.cwd);
         if !request.cwd.as_os_str().is_empty() {
             validate_session_cwd(cwd)?;
@@ -112,7 +114,7 @@ impl SessionHost {
                     else {
                         return Err(error);
                     };
-                    let host = Self::unsaved(
+                    return Self::unsaved(
                         startup,
                         &config,
                         cwd,
@@ -120,11 +122,7 @@ impl SessionHost {
                         sdk_id,
                         request.mcp_servers,
                     )
-                    .await?;
-                    let response = LoadSessionResponse::new()
-                        .modes(mode_state(host.permission.mode))
-                        .config_options(host.config_options(&startup.config));
-                    return Ok((host, response));
+                    .await;
                 }
                 Err(error) => return Err(error),
             };
@@ -138,17 +136,19 @@ impl SessionHost {
         })
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
-        let replay_result = replay_display_history(
-            &request.session_id,
-            &histories.display,
-            cwd,
-            &built.tools.mcp_report().tool_names(),
-            client,
-        )
-        .await;
-        if let Err(error) = replay_result {
-            built.teardown().await;
-            return Err(error);
+        if let History::Replay(client) = history {
+            let replay_result = replay_display_history(
+                &request.session_id,
+                &histories.display,
+                cwd,
+                &built.tools.mcp_report().tool_names(),
+                client,
+            )
+            .await;
+            if let Err(error) = replay_result {
+                built.teardown().await;
+                return Err(error);
+            }
         }
         let load_notice = built
             .prompt_template
@@ -173,10 +173,80 @@ impl SessionHost {
         // The restored child may use a different auth family than the process.
         host.auth = config.auth;
         host.agent = agent;
-        let response = LoadSessionResponse::new()
-            .modes(mode_state(host.permission.mode))
-            .config_options(host.config_options(&startup.config));
-        Ok((host, response))
+        Ok(host)
+    }
+}
+
+/// The parameters `session/load` and `session/resume` share.
+pub(in crate::app::acp) struct ReopenRequest {
+    pub(in crate::app::acp) session_id: SessionId,
+    cwd: PathBuf,
+    additional_directories: Vec<PathBuf>,
+    mcp_servers: Vec<McpServer>,
+}
+
+impl From<LoadSessionRequest> for ReopenRequest {
+    fn from(request: LoadSessionRequest) -> Self {
+        Self {
+            session_id: request.session_id,
+            cwd: request.cwd,
+            additional_directories: request.additional_directories,
+            mcp_servers: request.mcp_servers,
+        }
+    }
+}
+
+impl From<ResumeSessionRequest> for ReopenRequest {
+    fn from(request: ResumeSessionRequest) -> Self {
+        Self {
+            session_id: request.session_id,
+            cwd: request.cwd,
+            additional_directories: request.additional_directories,
+            mcp_servers: request.mcp_servers,
+        }
+    }
+}
+
+/// Whether reopening sends the saved conversation to the client.
+#[derive(Clone, Copy)]
+pub(in crate::app::acp) enum History<'a> {
+    /// `session/load`: replay it before the response.
+    Replay(&'a dyn AcpClientPort),
+    /// `session/resume`: the client already has it.
+    Skip,
+}
+
+/// The state a reopened session answers `session/load` or `session/resume`
+/// with.
+pub(in crate::app::acp) struct Reopened {
+    modes: SessionModeState,
+    config_options: Vec<SessionConfigOption>,
+}
+
+impl SessionHost {
+    /// What a reopened session answers `session/load` or `session/resume`
+    /// with.
+    pub(in crate::app::acp) fn reopened(&self, process_config: &Config) -> Reopened {
+        Reopened {
+            modes: mode_state(self.permission.mode),
+            config_options: self.config_options(process_config),
+        }
+    }
+}
+
+impl From<Reopened> for LoadSessionResponse {
+    fn from(reopened: Reopened) -> Self {
+        Self::new()
+            .modes(reopened.modes)
+            .config_options(reopened.config_options)
+    }
+}
+
+impl From<Reopened> for ResumeSessionResponse {
+    fn from(reopened: Reopened) -> Self {
+        Self::new()
+            .modes(reopened.modes)
+            .config_options(reopened.config_options)
     }
 }
 
