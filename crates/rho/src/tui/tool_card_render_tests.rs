@@ -210,7 +210,6 @@ fn file_diff_body_highlights_rust_from_header_path() {
     crate::tui::syntax::warm_syntax_set();
     // Theme is process-global; hold the lock so a parallel scheme test cannot
     // inject row-wash backgrounds into exact style comparisons.
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     let card = ToolCard::new(
         ToolStatus::Ok,
@@ -271,7 +270,6 @@ fn file_diff_body_highlights_rust_from_header_path() {
 // Owner: pure TUI (tool card diff layout). Chrome mapping lives in theme_tests.
 #[test]
 fn file_diff_rows_apply_soft_wash_with_fg_signs() {
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
 
@@ -382,7 +380,6 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
 #[test]
 fn file_diff_syntax_tokens_keep_row_wash() {
     crate::tui::syntax::warm_syntax_set();
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
 
@@ -527,7 +524,6 @@ fn grep_body_highlights_language_and_match() {
     crate::tui::syntax::warm_syntax_set();
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
-    let _guard = crate::tui::theme::theme_test_lock();
     let card = ToolCard::new(
         ToolStatus::Ok,
         ToolFamily::FileCommand,
@@ -576,7 +572,6 @@ fn grep_body_highlights_language_and_match() {
 #[test]
 fn shell_headers_highlight_commands_by_prompt_dialect() {
     crate::tui::syntax::warm_syntax_set();
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
 
     for (prompt, command, token, role) in [

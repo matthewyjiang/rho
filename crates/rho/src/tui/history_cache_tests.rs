@@ -56,7 +56,6 @@ fn caches_code_block_copy_target_and_raw_contents() {
 fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let entries = vec![Entry::Assistant("你好你好你好\n```text\nλ🙂\n```".into())];
     let expected_lines = entry_lines(
@@ -94,7 +93,6 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
 fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("intro\n\nheader | value\n".into())];
     let mut cached_lines = Vec::new();
@@ -230,7 +228,6 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
 fn incrementally_extends_reasoning_text_without_rendering_drift() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     let full_slice = HistoryLineSlice {
         start: 0,
         count: usize::MAX,
@@ -307,7 +304,6 @@ fn incrementally_extends_reasoning_text_without_rendering_drift() {
 // Owner: history line cache (incremental append)
 #[test]
 fn incrementally_extends_open_fence_without_rehighlighting_committed_lines() {
-    let _guard = crate::tui::theme::theme_test_lock();
     warm_syntax_set();
     let mut cache = HistoryLineCache::default();
     let mut body = String::from("```rust\n");
@@ -395,7 +391,6 @@ fn expected_entry_lines(entry: &Entry, width: usize) -> Vec<ratatui::text::Line<
 // Owner: history line cache (incremental append)
 #[test]
 fn incrementally_keeps_prose_after_a_closed_fence() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("```rust\nlet value = 1;\n".into())];
     let _ = paint_cached(&mut cache, &entries, settings(80));
@@ -421,7 +416,6 @@ mod reasoning;
 // Owner: history line cache (incremental append)
 #[test]
 fn incrementally_extends_table_rows_without_rendering_drift() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant(
         "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
@@ -446,7 +440,6 @@ fn incrementally_extends_table_rows_without_rendering_drift() {
 // Owner: history line cache (incremental append)
 #[test]
 fn incrementally_reflows_a_table_when_a_later_cell_is_wider() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant(
         "| A | B |\n| --- | --- |\n| x | y |\n".into(),
@@ -468,7 +461,6 @@ fn incrementally_reflows_a_table_when_a_later_cell_is_wider() {
 // Owner: history line cache (incremental append)
 #[test]
 fn incrementally_keeps_prose_after_a_table() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant(
         "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
@@ -490,7 +482,6 @@ fn incrementally_keeps_prose_after_a_table() {
 fn streams_mermaid_then_caches_the_closed_diagram_by_width() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant(
         "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n".into(),
@@ -577,7 +568,6 @@ fn streams_mermaid_then_caches_the_closed_diagram_by_width() {
 // Owner: history line cache (incremental append)
 #[test]
 fn incrementally_repaints_open_mermaid_from_the_header() {
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("```mermaid\nflowchart LR\n".into())];
     let _ = paint_cached(&mut cache, &entries, settings(80));
@@ -637,7 +627,6 @@ fn mermaid_incomplete_append_refreshes_copy_without_rerender() {
 fn resizing_keeps_mermaid_code_block_source_stable() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
     let entries = vec![Entry::Assistant(
         format!("```mermaid\n{source}\n```").into(),
@@ -722,7 +711,6 @@ fn invalidating_an_assistant_entry_refreshes_code_block_contents() {
 fn open_stream_tail_omits_trailing_blank_until_closed() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::render::{render_entry_with_options, TrailingBlank};
 
     let mut cache = HistoryLineCache::default();
@@ -786,7 +774,6 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
 // Owner: history line cache spacing.
 #[test]
 fn entry_appended_under_open_tail_restores_previous_tail_blank() {
-    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::ToolEntry;
 
     let mut entries = vec![Entry::Assistant("I'll inspect the middleware.\n".into())];
@@ -852,7 +839,6 @@ fn zen_test_tool() -> Entry {
 fn zen_mode_collapses_tool_and_reasoning_lines_and_restores_them() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::ReasoningEntry;
 
     let entries = vec![
@@ -888,7 +874,6 @@ fn zen_mode_collapses_tool_and_reasoning_lines_and_restores_them() {
 // Owner: history line cache display policy.
 #[test]
 fn zen_run_summary_tracks_appended_and_removed_tools() {
-    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::ReasoningEntry;
 
     let zen = settings_with(40, 10, true);
@@ -918,7 +903,6 @@ fn zen_run_summary_tracks_appended_and_removed_tools() {
 fn resplice_tool_expand_preserves_later_assistant_lines() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
-    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::ToolEntry;
     use rho_tools::tool_card::{
         DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus,

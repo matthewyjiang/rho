@@ -131,10 +131,10 @@ const RTK_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 async fn probe_rtk() -> bool {
     let mut command = tokio::process::Command::new("rtk");
     command.arg("--version");
-    probe_rtk_command(command).await
+    probe_rtk_command(command, RTK_PROBE_TIMEOUT).await
 }
 
-async fn probe_rtk_command(mut command: tokio::process::Command) -> bool {
+async fn probe_rtk_command(mut command: tokio::process::Command, budget: Duration) -> bool {
     use tokio::io::AsyncReadExt;
 
     command
@@ -154,7 +154,7 @@ async fn probe_rtk_command(mut command: tokio::process::Command) -> bool {
         let status = child.wait().await.ok()?;
         Some((status.success(), buf))
     };
-    match tokio::time::timeout(RTK_PROBE_TIMEOUT, collect).await {
+    match tokio::time::timeout(budget, collect).await {
         Ok(Some((true, buf))) => rtk_version_supports_rewrite(&String::from_utf8_lossy(&buf)),
         Ok(_) => false,
         Err(_) => {

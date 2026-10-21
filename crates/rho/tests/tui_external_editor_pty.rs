@@ -263,8 +263,10 @@ fn editor_job_control_signals_do_not_interrupt_rho() {
         r#"#!/bin/sh
 trap 'exit 130' INT
 trap 'printf "INTERRUPTIBLE_EDITOR_CONTINUED\\n"' CONT
+trap 'printf "INTERRUPTIBLE_EDITOR_SUSPEND_REQUESTED\\n"' TSTP
 printf 'INTERRUPTIBLE_EDITOR_READY\n'
-while :; do sleep 1; done
+# `wait` returns for a trapped signal; a foreground `sleep` would delay traps.
+while :; do sleep 1 & wait $!; done
 "#,
     )
     .unwrap();
@@ -295,7 +297,15 @@ while :; do sleep 1; done
         .unwrap();
 
     harness.inject_key(&Key::Ctrl('z')).unwrap();
-    std::thread::sleep(Duration::from_millis(200));
+    // The harness session's process group is orphaned, so the kernel drops a
+    // default-action SIGTSTP and the editor never really stops here. Wait for
+    // the trap instead, so SIGCONT below cannot race the Ctrl+Z delivery.
+    harness
+        .wait_for_text(
+            "INTERRUPTIBLE_EDITOR_SUSPEND_REQUESTED",
+            WaitTimeout::secs(10, "editor saw ctrl-z"),
+        )
+        .unwrap();
     let process_group = i32::try_from(harness.child_pid().unwrap()).unwrap();
     assert_eq!(unsafe { libc::kill(-process_group, libc::SIGCONT) }, 0);
     harness

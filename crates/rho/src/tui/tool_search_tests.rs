@@ -52,7 +52,6 @@ fn paints_rust_from_path_header() {
     crate::tui::syntax::warm_syntax_set();
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut syntax = SearchSyntax::new(query("answer"));
     let mut lines = Vec::new();
     syntax.paint_line("src/main.rs", 80, &mut lines);
@@ -87,7 +86,6 @@ fn paints_rust_from_path_header() {
 fn match_overlay_without_language() {
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut syntax = SearchSyntax::new(query("needle"));
     let mut lines = Vec::new();
     syntax.paint_line("notes.txt", 80, &mut lines);
@@ -112,7 +110,6 @@ fn match_overlay_without_language() {
 fn literal_dot_does_not_match_every_character() {
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut syntax = SearchSyntax::new(MatchQuery::new(
         ".", /*literal*/ true, /*case_sensitive*/ true,
     ));
@@ -140,7 +137,6 @@ fn literal_dot_does_not_match_every_character() {
 fn case_sensitive_pattern_skips_different_case() {
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
-    let _guard = crate::tui::theme::theme_test_lock();
     let mut syntax = SearchSyntax::new(MatchQuery::new(
         "foo", /*literal*/ false, /*case_sensitive*/ true,
     ));

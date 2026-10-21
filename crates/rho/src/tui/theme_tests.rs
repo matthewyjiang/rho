@@ -108,7 +108,6 @@ fn resolves_windows_console_palette_in_attribute_bit_order() {
 
 #[test]
 fn chooses_dark_block_foreground_for_light_resolved_backgrounds() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     assert_eq!(
         block_foreground(Some(Rgb::new(240, 240, 240))),
@@ -128,7 +127,6 @@ fn blends_toward_terminal_ansi_color() {
 
 #[test]
 fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     let palette = TerminalPalette {
         background: Rgb::new(255, 255, 255),
@@ -147,7 +145,6 @@ fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
 // Owner: tui theme palette mapping
 #[test]
 fn reasoning_output_uses_one_dimming_mechanism() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     let styled = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
     let mut lines = vec![Line::styled("reasoning", styled).style(styled)];
@@ -166,7 +163,6 @@ fn reasoning_output_uses_one_dimming_mechanism() {
 // Owner: tui theme palette mapping
 #[test]
 fn fixed_light_scheme_uses_rgb_dim_and_surface() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("monochrome-light");
     let palette = Palette::current();
@@ -196,7 +192,6 @@ fn fixed_light_scheme_uses_rgb_dim_and_surface() {
 // Owner: tui theme palette mapping
 #[test]
 fn activity_rail_dim_stays_readable_on_terminal_wash() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     let rail = Theme::activity_rail();
     let dim = Theme::activity_rail_dim();
@@ -277,7 +272,6 @@ fn panel_dim_keeps_muted_ink_instead_of_body_fallback() {
 // Owner: tui theme palette mapping
 #[test]
 fn hover_lift_blends_rgb_ink_toward_surface_opposite() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
     // Dark surface: mid gray lifts toward white, staying in band.
@@ -317,7 +311,6 @@ fn hover_lift_blends_rgb_ink_toward_surface_opposite() {
 // Owner: tui theme palette mapping
 #[test]
 fn scheme_diff_chrome_washes_row_with_fg_signs() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
     let palette = Palette::current();
@@ -353,7 +346,6 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
 // Owner: tui theme palette mapping
 #[test]
 fn sampled_diff_wash_beats_github_overlay_on_light_and_dark() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     const GITHUB_ALPHA: f32 = 0x26 as f32 / 255.0;
     let schemes = [
@@ -520,7 +512,6 @@ fn role_ink_darkens_bright_yellow_on_light_surface() {
 // Owner: tui theme state
 #[test]
 fn preview_then_cancel_restores_committed() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
     assert_eq!(Theme::committed_id(), "one-half-dark");
@@ -541,7 +532,6 @@ fn preview_then_cancel_restores_committed() {
 // Owner: tui theme state
 #[test]
 fn apply_committed_updates_active_and_committed() {
-    let _guard = theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("terminal");
     let gen = Theme::generation();

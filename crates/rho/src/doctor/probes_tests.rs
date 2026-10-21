@@ -189,11 +189,14 @@ fn outcomes_map_to_rows() {
 async fn hung_rtk_probe_is_killed_within_budget() {
     let mut command = tokio::process::Command::new("sh");
     command.args(["-c", "sleep 30"]);
+    // The budget is injected so the test need not wait out the real 2 s one.
+    // Without the kill the probe would wait out the 30 s child.
+    let budget = std::time::Duration::from_millis(50);
     let started = std::time::Instant::now();
-    assert!(!super::probe_rtk_command(command).await);
+    assert!(!super::probe_rtk_command(command, budget).await);
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(4),
-        "hung probe must not exceed the 2s budget by much, elapsed {:?}",
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "hung probe must not outlive its {budget:?} budget by much, elapsed {:?}",
         started.elapsed()
     );
 }

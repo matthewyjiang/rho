@@ -7,10 +7,7 @@ use super::{SubagentPanel, SubagentPointerTarget};
 use crate::{
     subagent::{RunState, RunStatus},
     tools::agent::SubagentSnapshot,
-    tui::{
-        activity,
-        theme::{self, Theme},
-    },
+    tui::{activity, theme::Theme},
 };
 
 fn snapshot(id: &str, agent_id: &str, state: RunState, elapsed_seconds: u64) -> SubagentSnapshot {
@@ -116,7 +113,6 @@ fn hover_trailing_keeps_elapsed() {
 // Owner: pure layout
 #[test]
 fn subagent_verdict_styles_paint_on_wide_rows() {
-    let _guard = theme::theme_test_lock();
     Theme::apply_committed("one-half-dark");
     let mut panel = SubagentPanel::default();
     panel.ingest(vec![snapshot("aa0001", "worker", RunState::Running, 4)]);

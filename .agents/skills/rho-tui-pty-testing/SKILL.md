@@ -58,7 +58,7 @@ cargo run -p rho-tui-pty --bin rho-pty-scenario -- \
 
 Useful flags:
 
-- `--smoke` runs the CI subset
+- `--smoke` runs a quick local subset (`smoke: true`); CI runs the `tui_pty` tests instead
 - `--timing` prints wait latency samples and p50/p95/p99
 - `--artifacts <dir>` writes failure bundles
 - `--bin <path>` selects the Rho binary
@@ -102,7 +102,7 @@ Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:
 5. Keep scenarios independent of the developer HOME, credentials, and host terminal markers.
    Matrix launches are offline: every proxy points at a refusing loopback port and only loopback
    bypasses it, so mock servers must listen on `127.0.0.1`/`localhost`.
-6. Mark stable CI cases with `smoke: true`.
+6. Run a scenario in CI by adding an `assert_pass` test to `crates/rho/tests/tui_pty.rs`. `smoke: true` only adds it to the local `--smoke` subset.
 7. Keep scenario sync deterministic under load. Wait only on conditions that stay true until the scenario advances. Intermediate or timer-driven states race on slow CI - wait on the durable outcome instead, and unit-test short-lived rendering next to the pure function. Fix the wait target before you raise the timeout.
 
 ## Failure artifacts

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+#[cfg(not(test))]
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -45,19 +47,34 @@ const ROLE_INK_MARGIN: f32 = 0.22;
 static TERMINAL_SAMPLE: OnceLock<TerminalPalette> = OnceLock::new();
 
 /// Active theme selection (terminal-matched or a fixed scheme).
+///
+/// The running app shares one selection across the process. Tests get one per
+/// thread instead, so a test that switches themes cannot rewrite the styles a
+/// concurrently running test is comparing against.
+#[cfg(not(test))]
 static THEME_STATE: Mutex<ThemeState> = Mutex::new(ThemeState::new());
 
-/// Serializes tests that change or read the process-wide active theme.
-///
-/// The selection is global, so a test that switches themes rewrites the styles
-/// another test is comparing against. Tests on either side of that hazard hold
-/// this: the ones that call `Theme::apply_committed` or `Theme::preview`, and
-/// the ones that build styled lines and later re-derive a style from the theme
-/// to match them.
 #[cfg(test)]
-pub(super) fn theme_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|error| error.into_inner())
+thread_local! {
+    static THEME_STATE: std::cell::RefCell<ThemeState> =
+        const { std::cell::RefCell::new(ThemeState::new()) };
+}
+
+/// Run `update` with exclusive access to the active theme selection. Callers
+/// must not re-enter: the production lock is not reentrant.
+fn with_theme_state<R>(update: impl FnOnce(&mut ThemeState) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        update(
+            &mut THEME_STATE
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        )
+    }
+    #[cfg(test)]
+    {
+        THEME_STATE.with_borrow_mut(update)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -223,18 +240,17 @@ struct Palette {
 
 impl Palette {
     fn current() -> Self {
-        let mut state = THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if let Some(palette) = state.palette {
-            return palette;
-        }
-        let palette = match state.active_scheme.as_ref() {
-            Some(scheme) => Self::from_scheme(scheme),
-            None => Self::from_terminal(TERMINAL_SAMPLE.get()),
-        };
-        state.palette = Some(palette);
-        palette
+        with_theme_state(|state| {
+            if let Some(palette) = state.palette {
+                return palette;
+            }
+            let palette = match state.active_scheme.as_ref() {
+                Some(scheme) => Self::from_scheme(scheme),
+                None => Self::from_terminal(TERMINAL_SAMPLE.get()),
+            };
+            state.palette = Some(palette);
+            palette
+        })
     }
 
     fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
@@ -379,13 +395,10 @@ fn pull_ink_until(start: Rgb, target: Rgb, acceptable: impl Fn(Rgb) -> bool) -> 
 
 /// Color for an ANSI role under the active theme.
 fn active_ansi_color(color: AnsiColor) -> Color {
-    let state = THEME_STATE
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if let Some(scheme) = state.active_scheme.as_ref() {
-        return scheme_ansi(scheme, color).color();
-    }
-    sampled_or_named(TERMINAL_SAMPLE.get(), color)
+    with_theme_state(|state| match state.active_scheme.as_ref() {
+        Some(scheme) => scheme_ansi(scheme, color).color(),
+        None => sampled_or_named(TERMINAL_SAMPLE.get(), color),
+    })
 }
 
 /// Syntax-highlighting roles for code fences and diff bodies. The highlighter
@@ -423,10 +436,7 @@ impl Theme {
             let _ = TERMINAL_SAMPLE.set(palette);
             // The sample feeds the terminal-mode palette; drop any derived
             // palette computed before the sample landed.
-            THEME_STATE
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .palette = None;
+            with_theme_state(|state| state.palette = None);
         }
     }
 
@@ -439,17 +449,11 @@ impl Theme {
                 catalog.insert(scheme.id.clone(), scheme.clone());
             }
         }
-        THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .picker_catalog = Some(catalog);
+        with_theme_state(|state| state.picker_catalog = Some(catalog));
     }
 
     pub(super) fn clear_picker_catalog() {
-        THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .picker_catalog = None;
+        with_theme_state(|state| state.picker_catalog = None);
     }
 
     /// Apply the committed config theme (startup and after successful apply).
@@ -465,42 +469,25 @@ impl Theme {
 
     /// Abandon a live preview and restore the last committed theme.
     pub(super) fn cancel_preview() {
-        let id = {
-            let state = THEME_STATE
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if state.active_id == state.committed_id {
-                return;
-            }
-            normalize_theme_id(&state.committed_id)
-        };
-        apply_theme_id(&id, /*commit*/ false);
+        let previewing = with_theme_state(|state| {
+            (state.active_id != state.committed_id).then(|| normalize_theme_id(&state.committed_id))
+        });
+        if let Some(id) = previewing {
+            apply_theme_id(&id, /*commit*/ false);
+        }
     }
 
     pub(super) fn committed_id() -> String {
-        let id = THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .committed_id
-            .clone();
-        normalize_theme_id(&id)
+        with_theme_state(|state| normalize_theme_id(&state.committed_id))
     }
 
     pub(super) fn active_id() -> String {
-        let id = THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .active_id
-            .clone();
-        normalize_theme_id(&id)
+        with_theme_state(|state| normalize_theme_id(&state.active_id))
     }
 
     /// Cache key: changes when the active palette changes.
     pub(super) fn generation() -> u64 {
-        THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .generation
+        with_theme_state(|state| state.generation)
     }
 
     /// Full-frame / popup base style. Fixed schemes set fg+bg; terminal leaves host defaults.
@@ -882,27 +869,19 @@ impl Theme {
 
 fn apply_theme_id(id: &str, commit: bool) {
     let id = normalize_theme_id(id);
-    let mut state = THEME_STATE
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let scheme = if is_terminal_theme_id(&id) {
         None
-    } else if let Some(scheme) = state
-        .picker_catalog
-        .as_ref()
-        .and_then(|catalog| catalog.get(&id).cloned())
-    {
-        // Prefer the scheme already loaded into the open picker catalog.
-        Some(scheme)
     } else {
-        // Unknown id falls back to terminal so a bad config never blanks the UI.
-        // Drop the lock while resolving from disk.
-        drop(state);
-        let scheme = resolve_fixed_scheme(&id);
-        state = THEME_STATE
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        scheme
+        // Prefer the scheme already loaded into the open picker catalog.
+        let cached = with_theme_state(|state| {
+            state
+                .picker_catalog
+                .as_ref()
+                .and_then(|catalog| catalog.get(&id).cloned())
+        });
+        // Unknown id falls back to terminal so a bad config never blanks the
+        // UI. Resolve from disk without holding the state lock.
+        cached.or_else(|| resolve_fixed_scheme(&id))
     };
     let resolved_id = if scheme.is_none() {
         TERMINAL_THEME_ID.to_string()
@@ -910,18 +889,20 @@ fn apply_theme_id(id: &str, commit: bool) {
         id
     };
 
-    let changed = state.active_id != resolved_id
-        || state.active_scheme.as_ref().map(|s| s.id.as_str())
-            != scheme.as_ref().map(|s| s.id.as_str());
-    if commit {
-        state.committed_id = resolved_id.clone();
-    }
-    if changed {
-        state.active_id = resolved_id;
-        state.active_scheme = scheme;
-        state.generation = state.generation.saturating_add(1);
-        state.palette = None;
-    }
+    with_theme_state(|state| {
+        let changed = state.active_id != resolved_id
+            || state.active_scheme.as_ref().map(|s| s.id.as_str())
+                != scheme.as_ref().map(|s| s.id.as_str());
+        if commit {
+            state.committed_id = resolved_id.clone();
+        }
+        if changed {
+            state.active_id = resolved_id;
+            state.active_scheme = scheme;
+            state.generation = state.generation.saturating_add(1);
+            state.palette = None;
+        }
+    });
 }
 
 // Re-export catalog helpers used by the picker and config layers.
@@ -931,12 +912,13 @@ pub(super) use theme_scheme::{
 
 fn block_foreground(background: Option<Rgb>) -> Color {
     let on_light = background.is_some_and(|rgb| is_light_background(rgb.luminance()));
-    let state = THEME_STATE
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if let Some(scheme) = state.active_scheme.as_ref() {
-        let fg = scheme.foreground;
-        let bg = scheme.background;
+    let scheme_inks = with_theme_state(|state| {
+        state
+            .active_scheme
+            .as_ref()
+            .map(|scheme| (scheme.foreground, scheme.background))
+    });
+    if let Some((fg, bg)) = scheme_inks {
         // Prefer the scheme ink that actually contrasts with the panel wash.
         return if on_light {
             if fg.luminance() <= bg.luminance() {

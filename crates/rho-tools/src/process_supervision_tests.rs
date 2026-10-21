@@ -1,32 +1,48 @@
 use super::WindowsJob;
 use tokio::{io::AsyncReadExt, process::Command};
 
+const FIXTURE_TEST: &str = "process_supervision::tests::job_descendant_fixture";
+const FIXTURE_ROLE: &str = "RHO_JOB_FIXTURE_ROLE";
+const FIXTURE_PORT: &str = "RHO_JOB_FIXTURE_PORT";
+
+/// Re-runs this test binary as `job_descendant_fixture` in `role`. The test
+/// binary starts in milliseconds; two cold PowerShell starts took 26 s on
+/// Windows CI and sometimes outlived the 60 s connect deadline.
+fn fixture_command(role: &str, port: u16) -> std::process::Command {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", FIXTURE_TEST, "--nocapture"])
+        .env(FIXTURE_ROLE, role)
+        .env(FIXTURE_PORT, port.to_string());
+    command
+}
+
+// Re-exec target for `dropping_job_terminates_descendants`, and a no-op when
+// run as a normal test. The "parent" role spawns the "descendant" role and
+// waits for it; the descendant connects to the test's listener and blocks on
+// a read until something kills it.
+#[test]
+fn job_descendant_fixture() {
+    let Some(role) = std::env::var_os(FIXTURE_ROLE) else {
+        return;
+    };
+    let port: u16 = std::env::var(FIXTURE_PORT).unwrap().parse().unwrap();
+    if role == "parent" {
+        let _ = fixture_command("descendant", port).status();
+        return;
+    }
+    let mut connection = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let _ = std::io::Read::read(&mut connection, &mut [0]);
+}
+
 // Covers: dropping a Windows job owner must terminate descendants, not just
 // the immediate child. Owner: Windows process layer.
 #[tokio::test]
 async fn dropping_job_terminates_descendants() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let dir = tempfile::tempdir().unwrap();
-    let descendant = dir.path().join("descendant.ps1");
-    std::fs::write(
-        &descendant,
-        format!(
-            "$client = [System.Net.Sockets.TcpClient]::new('127.0.0.1', {port}); \
-             $null = $client.GetStream().ReadByte()"
-        ),
-    )
-    .unwrap();
-    let mut command = Command::new("powershell.exe");
-    command
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "$p = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('\"' + $env:RHO_DESCENDANT_SCRIPT + '\"')) -PassThru; $p.WaitForExit()",
-        ])
-        .env("RHO_DESCENDANT_SCRIPT", &descendant)
-        .kill_on_drop(true);
+    let mut command = Command::from(fixture_command("parent", port));
+    command.kill_on_drop(true);
     WindowsJob::prepare(&mut command);
     let mut child = command.spawn().unwrap();
     let job = WindowsJob::attach(&child).unwrap();

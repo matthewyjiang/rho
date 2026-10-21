@@ -56,7 +56,6 @@ fn running_shell(started_at: Instant) -> ToolEntry {
 // Owner: tui live card render cache
 #[test]
 fn live_card_cache_hits_skip_syntax_highlight() {
-    let _guard = crate::tui::theme::theme_test_lock();
     warm_syntax_set();
     let mut entry = rust_diff_entry(40, true);
     reset_highlight_line_calls();
@@ -85,7 +84,6 @@ fn live_card_cache_hits_skip_syntax_highlight() {
 // Owner: pure unit (live card layout cache); no interactive behavior is asserted.
 #[test]
 fn cached_toggleability_tracks_layout_and_survives_expansion() {
-    let _guard = crate::tui::theme::theme_test_lock();
     for (body, width, budget, expected) in [
         (vec![], 14, 1, false),
         (vec![""], 14, 1, false),
@@ -136,7 +134,6 @@ fn cached_toggleability_tracks_layout_and_survives_expansion() {
 // Owner: tui live card render cache
 #[test]
 fn live_card_cache_misses_after_theme_generation_change() {
-    let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     let mut entry = rust_diff_entry(8, false);
     let first = entry
@@ -162,7 +159,6 @@ fn live_card_cache_misses_after_theme_generation_change() {
 // Owner: tui live card render cache
 #[test]
 fn live_card_cache_invalidates_on_expand_and_patches_elapsed() {
-    let _guard = crate::tui::theme::theme_test_lock();
     warm_syntax_set();
     let mut entry = rust_diff_entry(40, false);
     entry.rendered_lines(80, 8, 4);
