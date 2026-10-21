@@ -2,10 +2,11 @@
 
 use std::io::{self, Write};
 
-use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste},
-    execute,
-};
+// Written directly rather than through crossterm's `execute!`, which skips
+// ANSI on Windows consoles it deems unsupported even when the host (ConPTY,
+// WezTerm) understands paste sequences.
+const ENABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004h";
+const DISABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004l";
 
 /// Bracketed paste enabled on `output` until released or dropped.
 ///
@@ -26,7 +27,7 @@ impl<W: Write> PasteMode<W> {
         // A failed enable drops `vt_input`, which restores the console bit.
         #[cfg(windows)]
         let vt_input = super::terminal_events::VtInput::acquire()?;
-        execute!(output, EnableBracketedPaste)?;
+        write_flushed(&mut output, ENABLE_BRACKETED_PASTE)?;
         Ok(Self {
             output,
             enabled: true,
@@ -43,7 +44,7 @@ impl<W: Write> PasteMode<W> {
         // Disable the protocol before restoring its transport. Even if the
         // output has failed, cleanup must still restore the console bit.
         let output_result = if std::mem::take(&mut self.enabled) {
-            execute!(self.output, DisableBracketedPaste)
+            write_flushed(&mut self.output, DISABLE_BRACKETED_PASTE)
         } else {
             Ok(())
         };
@@ -51,6 +52,11 @@ impl<W: Write> PasteMode<W> {
         self.vt_input.restore()?;
         output_result
     }
+}
+
+fn write_flushed(output: &mut impl Write, sequence: &[u8]) -> io::Result<()> {
+    output.write_all(sequence)?;
+    output.flush()
 }
 
 impl<W: Write> Drop for PasteMode<W> {
