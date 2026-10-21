@@ -434,7 +434,14 @@ impl RhoAcpAgent {
         if self.closed.load(Ordering::Acquire) {
             return Err(agent_stopped());
         }
-        super::auth_logout::sign_out(&self.startup.config.auth, config)?;
+        // Loading config and deleting from the keyring or credential file
+        // block, so they run off the connection's thread.
+        let auth = self.startup.config.auth.clone();
+        tokio::task::spawn_blocking(move || super::auth_logout::sign_out(&auth, config))
+            .await
+            .map_err(|error| {
+                AcpError::internal_error().data(format!("logout stopped: {error}"))
+            })??;
         self.startup.logouts.record();
         Ok(())
     }

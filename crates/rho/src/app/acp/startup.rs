@@ -177,15 +177,18 @@ impl LazyAgent {
     /// startup that found no credentials is signed out already; refused or
     /// unreadable ones are still stored, so that failure is returned.
     pub(super) async fn logout(&self) -> Result<LogoutResponse, AcpError> {
+        // Boxed so the startup wait and the logout are not held inline in
+        // the flight's future: request handlers run on the main thread,
+        // whose 1 MiB Windows stack this future overflowed unboxed.
         self.flight
-            .run(async {
+            .run(Box::pin(async {
                 match self.started_or_failure().await {
                     Ok(agent) => agent.logout(self.login.config.clone()).await?,
                     Err(failure) if failure.found_no_credentials() => {}
                     Err(failure) => return Err(failure.error),
                 }
                 Ok(LogoutResponse::new())
-            })
+            }))
             .await
     }
 
