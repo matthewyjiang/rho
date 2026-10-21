@@ -56,6 +56,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
     /// Directories added to the workspace scope beyond `cwd`.
     pub added_dirs: &'a crate::added_dirs::AddedDirs,
+    /// What the host does in place of local disk, such as serving files.
+    pub host_io: crate::tools::host_io::HostIo,
     /// Adds caller-owned tools after shared assembly.
     pub extend_tools: ExtendTools,
     /// Host instructions retained across model-specific behavioral replacement.
@@ -156,6 +158,7 @@ where
         usage_parent_session_id,
         hook_host_labels,
         added_dirs,
+        host_io,
         extend_tools,
         system_prompt_suffix,
         approval,
@@ -200,6 +203,7 @@ where
         added_dirs,
         // Automation, ACP, side chats, and subagents run no cache warmer.
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
+        host_io,
     })
     .await?;
     let tool_set = extend_tools(tool_set);

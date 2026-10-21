@@ -78,7 +78,7 @@ async fn host(
         diagnostics: RuntimeDiagnostics::new(config),
     };
     SessionHost::from_built(
-        SessionId::new(id),
+        crate::app::acp::client_io::ClientIo::local(SessionId::new(id)),
         built,
         storage,
         Default::default(),

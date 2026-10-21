@@ -166,7 +166,7 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let acp_session_id = SessionId::new(stored.id());
     let mut host = SessionHost::from_built(
-        acp_session_id.clone(),
+        crate::app::acp::client_io::ClientIo::local(acp_session_id.clone()),
         built,
         HostStorage::saved(stored),
         Default::default(),

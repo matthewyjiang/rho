@@ -86,6 +86,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
         added_dirs: Default::default(),
         host_features: Default::default(),
         logouts: Default::default(),
+        client: None,
     }))
 }
 

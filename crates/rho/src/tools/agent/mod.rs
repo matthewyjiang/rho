@@ -501,6 +501,8 @@ pub(super) struct DelegationBundleOptions {
     pub config_path: PathBuf,
     /// Catalog already discovered for `cwd`; rediscovered when absent.
     pub catalog: Option<Arc<AgentCatalog>>,
+    /// The parent's host I/O, which delegated Rho agents share.
+    pub host_io: crate::tools::host_io::HostIo,
 }
 
 pub(super) struct SdkDelegationBundle {
@@ -535,7 +537,8 @@ pub(super) fn sdk_bundle(
     options: DelegationBundleOptions,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> SdkDelegationBundle {
-    let manager = SubagentManager::new(config.clone(), options.config_path, options.cwd.clone());
+    let manager = SubagentManager::new(config.clone(), options.config_path, options.cwd.clone())
+        .with_host_io(options.host_io);
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     let mut advertised = None;
     if options.tools.launches() {

@@ -267,7 +267,7 @@ async fn host(
         PermissionMode::Plan
     };
     let mut host = SessionHost::from_built(
-        SessionId::new(stored.id()),
+        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
         built,
         super::persist::HostStorage::saved(stored),
         Default::default(),

@@ -114,6 +114,7 @@ pub(super) async fn initialize(
         } else {
             crate::tools::process::KeepWarmOffer::Hidden
         },
+        host_io: Default::default(),
     })
     .await?;
     // Desktop authority belongs to this interactive host, not agent definitions

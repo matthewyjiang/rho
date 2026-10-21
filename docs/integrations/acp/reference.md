@@ -33,6 +33,7 @@ Rho reads these host capabilities:
 | `clientCapabilities.session.configOptions.boolean` | `fast_mode` as a boolean switch. See [Fast mode](#fast-mode). |
 | `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation. See [Questions](#questions). |
 | `clientCapabilities.elicitation.url` | OAuth sign-in through `authenticate`. See [Authentication](#authentication). |
+| `clientCapabilities.fs.readTextFile` and `.writeTextFile` | File text through `fs/*`, when both are advertised. See [Host files](#host-files). |
 | `clientInfo.name` `t3-code` | T3 Code's [question form shape](#t3-code-forms). |
 
 ## Authentication
@@ -278,6 +279,21 @@ Hosts with several workspace roots, such as a Zed multi-root workspace, send the
 - A `null` list counts as empty, but an entry that is not a string, such as `null`, fails the request with invalid params, following the ACP schema.
 
 The roots are saved with the session, so `rho -R` restores them, and `session/list` reports them as `additionalDirectories`. `session/load` and `session/resume` do not restore them: per ACP, the roots a request sends are the session's complete list, and a request that sends none drops roots the session had before. A host opening a session from history keeps its roots by sending back the listed `additionalDirectories`, which include directories passed to `rho acp --add-dir` when the session ran.
+
+## Host files
+
+A host that advertises both `clientCapabilities.fs.readTextFile` and `.writeTextFile`, such as Zed, serves the text of files under the session's `cwd` and its `additionalDirectories`. Rho then reads them with `fs/read_text_file`, so the model sees unsaved edits, and writes them with `fs/write_text_file`, so changes land in the host's buffers and undo history. A host that advertises only one of the two gets neither request: writing without reading would overwrite edits Rho never saw.
+
+- Request paths are spelled under the `cwd` or directory as the host sent it, even when that path goes through a symlink; Rho resolves symlinks only to decide which paths the host serves.
+- `read_file` of a UTF-8 text file asks for the whole file, without `line` or `limit`, and selects the requested rows itself, so the hashline tag covers what the host holds. Rho still opens the file on disk first to check that it exists, its kind, and its size, with or without a range; images, PDFs, office documents, and files that are not UTF-8 are read from disk. A file the host holds but has not saved to disk cannot be read, so hosts should save what they write, as Zed does. Text the host returns is held to the same 25 MiB input limit as a file on disk.
+- `str_replace` and the hashline `edit` read the current text from the host, apply the change, read the text again, and write the result only if it is unchanged. `write` reads the old text from the host for its diff, then writes; a file missing on disk is still asked for, so a file the host holds unsaved is replaced rather than created again. After each write Rho reads the file again, since a host such as Zed may format it as it saves; the model's result, the diff, and any rollback use that text. A missing file is created with `fs/write_text_file`, which ACP requires hosts to accept; Rho creates missing parent directories on disk first. An existing file that is not UTF-8 text is rewritten on disk.
+- `apply_patch` reads and writes on disk.
+- Other paths are read and written on disk without asking the host. That includes directories added at launch with `--add-dir`, which are not part of the host's project, even when the host sends them back in `additionalDirectories`, and files elsewhere, such as in the home directory.
+- Tools that list or search files, such as `grep`, `glob`, and `list_dir`, and shell commands use the files on disk. Hosts such as Zed save each write, so they see Rho's edits, but not the user's unsaved ones.
+- Permission modes apply as they do on disk: Rho resolves and authorizes each path before sending a request.
+- A failed `fs/*` request fails the tool call with the host's error. Rho does not retry on disk, which could clobber the host's copy.
+- A multi-file `edit` that is cancelled after its writes began still finishes them, rolling back if a later file fails, so cancelling never leaves only some files changed. Rho's later writes to the same path wait for it, then find the file changed instead of being overwritten.
+- Delegated Rho agents read and write through the same host, with their parent session's `sessionId`.
 
 ## Background results
 

@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use agent_client_protocol::schema::v1::SessionModeState;
 use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
 
-use super::super::{host_features::Forms, permission, AcpHost, AcpStartup};
+use super::super::{client_io::ClientIo, host_features::Forms, permission, AcpHost, AcpStartup};
 use crate::{
     added_dirs::AddedDirs,
     app::{
@@ -26,9 +26,11 @@ use crate::{
 
 /// `config` is the session's config: the process config plus host-supplied
 /// MCP servers. `added_dirs` is the session's set: launch `--add-dir` values,
-/// plus the host's `additionalDirectories`.
+/// plus the host's `additionalDirectories`. `io` is what the session's host
+/// does for its tools.
 pub(super) async fn build_session(
     startup: &AcpStartup,
+    io: &ClientIo,
     agent: &BoundAgent,
     config: &Config,
     workspace: &Path,
@@ -68,6 +70,7 @@ pub(super) async fn build_session(
         usage_parent_session_id: None,
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         added_dirs,
+        host_io: io.host_io(),
         // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
         extend_tools: |mut tools| {
             match startup.host {

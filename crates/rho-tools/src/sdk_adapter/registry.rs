@@ -18,6 +18,7 @@ pub struct CodingToolOptions {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     file_view: FileViewPolicy,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 impl Default for CodingToolOptions {
@@ -26,6 +27,7 @@ impl Default for CodingToolOptions {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             mutation_observer: None,
             file_view: FileViewPolicy::default(),
+            host_files: None,
         }
     }
 }
@@ -58,6 +60,13 @@ impl CodingToolOptions {
         self
     }
 
+    /// Text files the host serves in place of local disk. Reads, writes, and
+    /// edits of a served path go to the host; see [`crate::HostTextFiles`].
+    pub fn host_files(mut self, files: Arc<dyn crate::HostTextFiles>) -> Self {
+        self.host_files = Some(files);
+        self
+    }
+
     #[cfg(test)]
     pub fn output_budget(&self) -> usize {
         self.max_output_bytes
@@ -84,16 +93,19 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
         CodingToolKind::ReadFile => Arc::new(ReadFileTool {
             max_output_bytes: options.max_output_bytes,
             file_view: options.file_view.clone(),
+            host_files: options.host_files.clone(),
         }),
         CodingToolKind::WriteFile => Arc::new(WriteFileTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
             file_view: options.file_view.clone(),
+            host_files: options.host_files.clone(),
         }),
         CodingToolKind::Edit => super::build_edit_sdk_tool(
             options.file_view.current(),
             options.max_output_bytes,
             options.mutation_observer.clone(),
+            options.host_files.clone(),
         ),
         CodingToolKind::Grep => Arc::new(GrepTool::grep(
             options.max_output_bytes,

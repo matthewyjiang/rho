@@ -1,17 +1,16 @@
-//! Exact string matching and locked file replacement for `str_replace`.
+//! Exact string matching and file replacement for `str_replace`.
 
-use std::{io::Read, ops::Range, path::Path};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use crate::{
     diff::unified_diff,
-    file_mutation::{
-        lock_for_rewrite, locked_path_identity_matches, normalize_newlines, preferred_line_ending,
-        rewrite_locked_file, FileMutationOutcome,
-    },
+    file_mutation::{normalize_newlines, preferred_line_ending, FileMutationOutcome},
+    host_files::{CommitError, HostTextFiles, TextRoute},
     tool::*,
 };
 
-/// Apply one string replacement to an existing file under an exclusive lock.
+/// Apply one string replacement to an existing file. The rewrite commits only
+/// if the file still holds the text the match ran against.
 pub(crate) async fn str_replace_content(
     path: &Path,
     display_path: &str,
@@ -19,69 +18,29 @@ pub(crate) async fn str_replace_content(
     new_string: &str,
     replace_all: bool,
     max_output_bytes: usize,
+    host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<FileMutationOutcome, ToolError> {
     validate_edit_args(old_string, new_string)?;
 
-    let path = path.to_path_buf();
-    let display_path = display_path.to_string();
-    let old_string = old_string.to_string();
-    let new_string = new_string.to_string();
-    tokio::task::spawn_blocking(move || {
-        str_replace_content_locked(
-            &path,
-            &display_path,
-            &old_string,
-            &new_string,
-            replace_all,
-            max_output_bytes,
-        )
-    })
-    .await
-    .map_err(|error| ToolError::Message(format!("edit task failed: {error}")))?
-}
-
-pub(super) fn validate_edit_args(old_string: &str, new_string: &str) -> Result<(), ToolError> {
-    if old_string.is_empty() {
-        return Err(ToolError::Message("old_string must not be empty".into()));
-    }
-    if normalize_newlines(old_string) == normalize_newlines(new_string) {
-        return Err(ToolError::Message(
-            "old_string and new_string are identical after newline normalization; nothing to change".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn str_replace_content_locked(
-    path: &Path,
-    display_path: &str,
-    old_string: &str,
-    new_string: &str,
-    replace_all: bool,
-    max_output_bytes: usize,
-) -> Result<FileMutationOutcome, ToolError> {
-    let mut file = lock_for_rewrite(path, display_path, "")?;
-    if !locked_path_identity_matches(&file, path, display_path)? {
-        return Err(ToolError::Message(format!(
-            "edit {display_path} failed: path changed after validation"
-        )));
-    }
-
-    let mut original = String::new();
-    file.read_to_string(&mut original)
-        .map_err(|error| ToolError::Message(format!("could not read {display_path}: {error}")))?;
-
+    let route = TextRoute::for_path(host_files, path);
+    let original = route.read(path, display_path).await?;
     let spans = replacement_spans(&original, old_string);
     validate_match_count(display_path, spans.len(), replace_all)?;
     let replacement = match_file_eol(&original, new_string);
     let updated = replace_spans(&original, &spans, &replacement);
 
-    rewrite_locked_file(
-        &mut file,
-        display_path,
-        /*original*/ &original,
-        /*updated*/ &updated,
-    )?;
+    let updated = route
+        .commit(path, display_path, &original, &updated)
+        .await
+        .map_err(|error| match error {
+            CommitError::PathChanged => ToolError::Message(format!(
+                "edit {display_path} failed: path changed after validation"
+            )),
+            CommitError::Changed { .. } => ToolError::Message(format!(
+                "edit {display_path} failed: file changed during edit"
+            )),
+            CommitError::Failed(error) => error,
+        })?;
 
     let diff = unified_diff(&original, &updated, display_path, /*created*/ false);
     let replaced = spans.len();
@@ -97,6 +56,18 @@ fn str_replace_content_locked(
             path, original, updated,
         )],
     })
+}
+
+pub(super) fn validate_edit_args(old_string: &str, new_string: &str) -> Result<(), ToolError> {
+    if old_string.is_empty() {
+        return Err(ToolError::Message("old_string must not be empty".into()));
+    }
+    if normalize_newlines(old_string) == normalize_newlines(new_string) {
+        return Err(ToolError::Message(
+            "old_string and new_string are identical after newline normalization; nothing to change".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_match_count(

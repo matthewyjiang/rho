@@ -10,11 +10,15 @@
 //! agent message, automatic compaction shows only in `usage_update`, notices
 //! are agent messages, on/off options are two-value selects, Rho offers no
 //! questionnaire tool and declines MCP elicitation, and OAuth sign-in runs in
-//! a terminal.
+//! a terminal. A host advertising both `clientCapabilities.fs.readTextFile`
+//! and `.writeTextFile` serves file text through `fs/*` requests; others keep
+//! Rho reading and writing files on disk.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use agent_client_protocol::schema::v1::InitializeRequest;
+
+use super::AcpClientPort;
 
 /// Features beyond the ACP baseline that the connected host accepts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -30,6 +34,9 @@ pub(in crate::app) struct HostFeatures {
     /// URL-mode `elicitation/create`: links the user opens, such as an OAuth
     /// sign-in page.
     pub(super) urls: bool,
+    /// `fs/read_text_file` and `fs/write_text_file`. Rho needs both: writing
+    /// without reading would overwrite unsaved edits it never saw.
+    pub(super) files: bool,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -88,23 +95,31 @@ impl HostFeatures {
             toggles,
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
+            files: capabilities.fs.read_text_file && capabilities.fs.write_text_file,
         }
     }
 }
 
-/// The host's choice, recorded by `initialize` and read when the first
-/// session starts. A host that skips `initialize` gets the baseline.
+/// The host's choice and connection, recorded by `initialize` and read when
+/// the first session starts. A host that skips `initialize` gets the baseline.
 #[derive(Default)]
-pub(super) struct NegotiatedFeatures(OnceLock<HostFeatures>);
+pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPort>)>);
 
 impl NegotiatedFeatures {
     /// Keeps the first `initialize`; ACP negotiates capabilities once per
     /// connection.
-    pub(super) fn record(&self, request: &InitializeRequest) {
-        let _ = self.0.set(HostFeatures::from_initialize(request));
+    pub(super) fn record(&self, request: &InitializeRequest, client: Arc<dyn AcpClientPort>) {
+        let _ = self.0.set((HostFeatures::from_initialize(request), client));
     }
 
     pub(super) fn get(&self) -> HostFeatures {
-        self.0.get().copied().unwrap_or_default()
+        self.0
+            .get()
+            .map(|(features, _)| *features)
+            .unwrap_or_default()
+    }
+
+    pub(super) fn client(&self) -> Option<Arc<dyn AcpClientPort>> {
+        self.0.get().map(|(_, client)| Arc::clone(client))
     }
 }

@@ -118,7 +118,7 @@ impl LazyAgent {
             async move {
                 // A retry follows a terminal login, which another process saved.
                 AppCredentialStore::reread_external_logins();
-                bootstrap::prepare_acp(cli, negotiated.get())
+                bootstrap::prepare_acp(cli, negotiated.get(), negotiated.client())
                     .await
                     .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
                     .map_err(|error| StartupFailure::new(&error))
@@ -192,9 +192,14 @@ impl LazyAgent {
             .await
     }
 
-    /// Records the optional features the host advertised at `initialize`.
-    pub(super) fn record_client(&self, request: &InitializeRequest) {
-        self.host_features.record(request);
+    /// Records the optional features the host advertised at `initialize`
+    /// and the connection it arrived on.
+    pub(super) fn record_client(
+        &self,
+        request: &InitializeRequest,
+        client: Arc<dyn AcpClientPort>,
+    ) {
+        self.host_features.record(request, client);
     }
 
     pub(super) async fn ready(&self) -> Result<Arc<RhoAcpAgent>, AcpError> {

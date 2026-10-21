@@ -79,6 +79,7 @@ impl Tool for StrReplace {
                 &args.new_string,
                 /*replace_all*/ args.replace_all,
                 ctx.max_output_bytes,
+                /*host_files*/ None,
             )
             .await?;
             Ok(ToolResult {

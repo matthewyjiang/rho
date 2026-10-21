@@ -125,7 +125,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     };
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = SessionHost::from_built(
-        SessionId::new(id.as_str()),
+        crate::app::acp::client_io::ClientIo::local(SessionId::new(id.as_str())),
         built,
         HostStorage::saved(stored),
         Default::default(),

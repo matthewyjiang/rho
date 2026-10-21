@@ -39,6 +39,7 @@ use super::{mutation_output, path_start_metadata, run_observed_mutation, write_a
 struct HashlineEditTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 struct ApplyPatchTool {
@@ -49,17 +50,20 @@ struct ApplyPatchTool {
 struct StrReplaceTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 pub(super) fn build_sdk_tool(
     format: crate::EditFormat,
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
 ) -> Arc<dyn Tool> {
     match format {
         crate::EditFormat::Hashline => Arc::new(HashlineEditTool {
             max_output_bytes,
             mutation_observer,
+            host_files,
         }),
         crate::EditFormat::ApplyPatch => Arc::new(ApplyPatchTool {
             max_output_bytes,
@@ -68,6 +72,7 @@ pub(super) fn build_sdk_tool(
         crate::EditFormat::StrReplace => Arc::new(StrReplaceTool {
             max_output_bytes,
             mutation_observer,
+            host_files,
         }),
     }
 }
@@ -137,6 +142,7 @@ impl Tool for HashlineEditTool {
                     execute_prepared_edit(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
+                        self.host_files.clone(),
                         workspace,
                         resolved,
                         prepared,
@@ -191,6 +197,7 @@ impl Tool for StrReplaceTool {
                     execute_prepared_string_edit(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
+                        self.host_files.clone(),
                         workspace,
                         resolved,
                         args,
@@ -395,6 +402,7 @@ impl EditTargetSet {
 fn execute_prepared_edit(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
     workspace: Workspace,
     resolved: BTreeMap<PathBuf, ResolvedWorkspacePath>,
     sections: Vec<PreparedSection>,
@@ -418,7 +426,7 @@ fn execute_prepared_edit(
         let outcome = run_observed_mutation(
             mutation_observer.as_ref(),
             &mutation_paths,
-            apply_prepared_sections(sections, max_output_bytes),
+            apply_prepared_sections(sections, max_output_bytes, host_files.as_ref()),
         )
         .await?;
         Ok(mutation_output(outcome))
@@ -428,6 +436,7 @@ fn execute_prepared_edit(
 fn execute_prepared_string_edit(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_files: Option<Arc<dyn crate::HostTextFiles>>,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
     args: StrReplaceArgs,
@@ -454,6 +463,7 @@ fn execute_prepared_string_edit(
                 &args.new_string,
                 /*replace_all*/ args.replace_all,
                 max_output_bytes,
+                host_files.as_ref(),
             ),
         )
         .await?;
