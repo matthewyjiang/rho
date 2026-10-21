@@ -341,22 +341,60 @@ fn refresh_fence() -> std::sync::MutexGuard<'static, ()> {
     FENCE.lock().unwrap_or_else(|error| error.into_inner())
 }
 
+/// Stored OAuth tokens a refresh may replace.
+pub(crate) trait RefreshableTokens: Serialize + serde::de::DeserializeOwned {
+    /// The long-lived credential a refresh presents, which identifies the
+    /// sign-in: a logout or a new login changes it, while caches refreshed
+    /// alongside it (access tokens, Copilot API tokens) do not.
+    fn sign_in(&self) -> &str;
+}
+
+impl RefreshableTokens for CodexTokens {
+    fn sign_in(&self) -> &str {
+        self.refresh_token.as_deref().unwrap_or(&self.access_token)
+    }
+}
+
+impl RefreshableTokens for GitHubCopilotTokens {
+    fn sign_in(&self) -> &str {
+        self.github_refresh_token
+            .as_deref()
+            .unwrap_or(&self.github_access_token)
+    }
+}
+
+impl RefreshableTokens for KimiTokens {
+    fn sign_in(&self) -> &str {
+        self.refresh_token.as_deref().unwrap_or(&self.access_token)
+    }
+}
+
+impl RefreshableTokens for MetaTokens {
+    fn sign_in(&self) -> &str {
+        &self.identity_token
+    }
+}
+
+impl RefreshableTokens for XaiTokens {
+    fn sign_in(&self) -> &str {
+        self.refresh_token.as_deref().unwrap_or(&self.access_token)
+    }
+}
+
 /// Saves the `refreshed` tokens a refresh of `replacing` produced over
-/// `account`, only while `account` still holds `replacing`. Otherwise the
-/// sign-in changed while the refresh ran: a logout deleted it, and saving
-/// would sign the user back in, or a new login replaced it, and saving would
-/// restore the old session. The refreshed tokens then live only as long as
-/// the provider holding them. Logins save with the `save_*_tokens` functions,
-/// which always write.
-pub(crate) fn save_refreshed_tokens<T>(
+/// `account`, only while `account` still holds `replacing`'s sign-in.
+/// Otherwise the sign-in changed while the refresh ran: a logout deleted it,
+/// and saving would sign the user back in, or a new login replaced it, and
+/// saving would restore the old session. The refreshed tokens then live only
+/// as long as the provider holding them. Another session refreshing a cache
+/// of the same sign-in does not block the save. Logins save with the
+/// `save_*_tokens` functions, which always write.
+pub(crate) fn save_refreshed_tokens<T: RefreshableTokens>(
     store: &dyn CredentialStore,
     account: &str,
     replacing: &T,
     refreshed: &T,
-) -> CredentialResult<()>
-where
-    T: Serialize + serde::de::DeserializeOwned + PartialEq,
-{
+) -> CredentialResult<()> {
     let secret = serde_json::to_string(refreshed)
         .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
     let _fence = refresh_fence();
@@ -365,7 +403,7 @@ where
     let stored = store
         .get_secret(account)?
         .and_then(|stored| serde_json::from_str::<T>(&stored).ok());
-    if stored.as_ref() != Some(replacing) {
+    if stored.as_ref().map(RefreshableTokens::sign_in) != Some(replacing.sign_in()) {
         return Ok(());
     }
     store.set_secret(account, &secret)

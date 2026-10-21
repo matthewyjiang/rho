@@ -221,3 +221,48 @@ fn refreshed_tokens_replace_only_the_sign_in_they_refreshed() {
         );
     }
 }
+
+// Covers: two sessions share one Copilot sign-in. One saves a fresh Copilot
+// API token; the other then rotates the GitHub OAuth pair, which GitHub
+// invalidates on use, so that rotation must still be saved or every later
+// session needs a new sign-in.
+// Owner: credential store refresh write-back.
+#[test]
+fn a_refresh_saves_over_another_sessions_cache_of_the_same_sign_in() {
+    let signed_in = GitHubCopilotTokens {
+        github_access_token: "github-access".into(),
+        github_refresh_token: Some("github-refresh".into()),
+        github_expires_at_unix: Some(100),
+        copilot_token: None,
+        copilot_expires_at_unix: None,
+        copilot_refresh_after_unix: None,
+        copilot_token_endpoint: None,
+        copilot_chat_endpoint: None,
+        copilot_models_endpoint: None,
+    };
+    let store = MemoryCredentialStore::default();
+    save_github_copilot_tokens(&store, &signed_in).unwrap();
+    let first_session = GitHubCopilotTokens {
+        copilot_token: Some("copilot".into()),
+        ..signed_in.clone()
+    };
+    save_refreshed_tokens(
+        &store,
+        GITHUB_COPILOT_TOKENS_ACCOUNT,
+        &signed_in,
+        &first_session,
+    )
+    .unwrap();
+    let rotated = GitHubCopilotTokens {
+        github_access_token: "github-access-2".into(),
+        github_refresh_token: Some("github-refresh-2".into()),
+        ..signed_in.clone()
+    };
+    save_refreshed_tokens(&store, GITHUB_COPILOT_TOKENS_ACCOUNT, &signed_in, &rotated).unwrap();
+    assert_eq!(
+        load_github_copilot_tokens(&store)
+            .unwrap()
+            .and_then(|stored| stored.github_refresh_token),
+        Some("github-refresh-2".into())
+    );
+}
