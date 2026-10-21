@@ -46,7 +46,7 @@ pub(super) async fn authenticate(
             "'{auth}' is not an authenticate method this connection advertised"
         )));
     }
-    open_credential_store(config)
+    open_credential_store(config, UnchosenStore::Refuse)
         .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
     // The host opens the URL, so nothing is launched here; availability
     // only picks the grant, as it does for `rho login`.
@@ -87,11 +87,12 @@ pub(super) async fn authenticate(
     Ok(AuthenticateResponse::new())
 }
 
-/// One login at a time per connection. A new `authenticate` supersedes every
-/// earlier one, running or still queued, and starts only after the running
-/// login is dropped, so its callback port is free before the new login binds
-/// one. Hosts may leave a sign-in without sending `$/cancel_request`, which
-/// would otherwise hold the port until the provider times out.
+/// One login or logout at a time per connection. A new `authenticate` or
+/// `logout` supersedes every earlier one, running or still queued, and starts
+/// only after the running one is dropped, so a login's callback port is free
+/// before the next login binds one and no login saves after a later logout.
+/// Hosts may leave a sign-in without sending `$/cancel_request`, which would
+/// otherwise hold the port until the provider times out.
 pub(super) struct LoginFlight {
     running: tokio::sync::Mutex<()>,
     /// The generation of the newest `run`; older runs end when it moves.
@@ -138,16 +139,33 @@ impl LoginFlight {
     }
 }
 
-/// Activates the configured credential store so the login can save to it.
-/// [`super::auth::methods`] advertises no `authenticate` method while the
-/// store is unchosen; this refuses if that changed since.
-fn open_credential_store(config: Option<PathBuf>) -> anyhow::Result<()> {
+/// What [`open_credential_store`] does when no credential store is chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UnchosenStore {
+    /// A login must not pick where credentials are saved. Neither does
+    /// [`super::auth::methods`], which advertises no `authenticate` method
+    /// while the store is unchosen; this refuses if that changed since.
+    Refuse,
+    /// Logout saves nothing; it clears the OS store sessions read by default.
+    UseDefault,
+}
+
+/// Activates the credential store as configured now, from the `--config`
+/// override `config`, so the store a terminal login chose after launch is
+/// the one used.
+pub(super) fn open_credential_store(
+    config: Option<PathBuf>,
+    unchosen: UnchosenStore,
+) -> anyhow::Result<()> {
     let repository = ConfigRepository::new(config);
     let config = repository.load()?;
-    if credential_store::needs_explicit_choice(&config) {
-        anyhow::bail!(
-            "credential store is unset; choose one with `rho credential-store set os|file`"
-        );
+    match unchosen {
+        UnchosenStore::Refuse if credential_store::needs_explicit_choice(&config) => {
+            anyhow::bail!(
+                "credential store is unset; choose one with `rho credential-store set os|file`"
+            );
+        }
+        UnchosenStore::Refuse | UnchosenStore::UseDefault => {}
     }
     credential_store::activate_for_login(&config, &bootstrap::absolute_config_path(&repository)?)
 }

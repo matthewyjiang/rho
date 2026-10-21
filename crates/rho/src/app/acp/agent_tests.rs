@@ -85,6 +85,7 @@ fn test_agent() -> Arc<RhoAcpAgent> {
         herdr: HerdrReporter::default(),
         added_dirs: Default::default(),
         host_features: Default::default(),
+        logouts: Default::default(),
     }))
 }
 
@@ -120,7 +121,7 @@ fn initialize_response_wire_shape() {
                     "list": {},
                     "delete": {},
                 },
-                "auth": {},
+                "auth": { "logout": {} },
             },
             "authMethods": [],
             "agentInfo": {
@@ -875,4 +876,52 @@ async fn prompt_starting_as_close_lands_runs_no_turn() {
         StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), id.as_str())
             .expect_err("no turn ran, so nothing was saved");
     assert!(unsaved.is::<NoSessionFound>(), "{unsaved:#}");
+}
+
+// Covers: logout must cancel a running turn and let it end before deleting
+// credentials, because the turn could otherwise refresh OAuth tokens and save
+// them back, and must count the logout so later prompts reload credentials.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn logout_ends_running_turns_before_deleting_credentials() {
+    let home = tempfile::tempdir().unwrap();
+    let agent = test_agent();
+    let (id, started) = install_held_session(&agent, home.path()).await;
+    let session_id = SessionId::new(id.as_str());
+    let prompt_agent = Arc::clone(&agent);
+    let request = text_prompt(&session_id, "a long turn");
+    let prompt =
+        tokio::spawn(async move { prompt_agent.prompt(request, Arc::new(NullPort)).await });
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the turn should reach the model");
+    let before = agent.startup.logouts.count();
+
+    let mut signed_out = None;
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        agent.logout(|auth| {
+            // The cancelled turn saves before releasing its host.
+            let ended = StoredSession::open_by_id_with_histories_in_root(
+                home.path(),
+                home.path(),
+                id.as_str(),
+            )
+            .is_ok();
+            signed_out = Some((auth.to_owned(), ended));
+            Ok(())
+        }),
+    )
+    .await
+    .expect("logout should cancel the turn instead of waiting it out")
+    .expect("logout");
+
+    assert_eq!(
+        signed_out,
+        Some((agent.startup.config.auth.clone(), true)),
+        "the selected auth is signed out after the turn ended"
+    );
+    let response = prompt.await.unwrap().expect("cancelled prompt");
+    assert_eq!(response.stop_reason, StopReason::Cancelled);
+    assert!(agent.startup.logouts.since(before));
 }

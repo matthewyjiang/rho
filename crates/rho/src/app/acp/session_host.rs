@@ -455,11 +455,12 @@ impl SessionHost {
             config.reasoning = reasoning;
             self.validate_model_override_switch(&config)
                 .map_err(host_apply_error)?;
+            let read = self.credentials.before_read();
             let provider =
                 build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                     .await
                     .map_err(host_apply_error)?;
-            self.switch_provider(provider, &config)?;
+            self.switch_provider(provider, &config, read)?;
         }
         self.persist_model_override().map_err(|error| {
             host_apply_error(anyhow::anyhow!(
@@ -472,11 +473,13 @@ impl SessionHost {
     /// Installs an already-resolved provider while the ACP host slot is held,
     /// for a model switch or renewed credentials. Kept separate from credential
     /// discovery so the session transaction can be exercised with a scripted
-    /// provider.
+    /// provider. `read` is [`SessionCredentials::before_read`] from before
+    /// `provider` was built.
     fn switch_provider(
         &mut self,
         provider: Arc<dyn rho_sdk::provider::ModelProvider>,
         config: &Config,
+        read: crate::app::acp::auth_logout::LogoutCount,
     ) -> Result<(), AcpError> {
         let current = self.current_model();
         let previous_context_window = model_context_window(&current.provider, &current.model);
@@ -517,7 +520,7 @@ impl SessionHost {
         )
         .map_err(host_apply_error)?;
         self.built.provider = provider;
-        self.credentials = SessionCredentials::Current;
+        self.credentials.mark_read(read);
         if let Some(prompt) = prepared_prompt {
             self.built.prompt.adopt(
                 crate::app::active_prompt::ActivePrompt::from_prepared(prompt),
@@ -570,7 +573,7 @@ impl SessionHost {
             added_dirs,
             permission,
             auth: startup.config.auth.clone(),
-            credentials: SessionCredentials::Current,
+            credentials: SessionCredentials::just_read(&startup.logouts),
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             title_requested: false,

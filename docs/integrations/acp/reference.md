@@ -20,6 +20,7 @@ Rho advertises:
 | `sessionCapabilities.close` | Close a live session. See [Close](#close). |
 | `sessionCapabilities.additionalDirectories` | Extra workspace roots. See [Workspace roots](#workspace-roots). |
 | `mcpCapabilities.http` | Host MCP servers over Streamable HTTP. `sse` is not advertised. See [MCP servers](#mcp-servers). |
+| `auth.logout` | `logout`. See [Logout](#logout). |
 
 Rho reads these host capabilities:
 
@@ -65,6 +66,18 @@ Model discovery and agent binding wait until the host requests a session, so a c
 Credential failures are the exception. When the selected provider has no credentials, the credential store cannot read them, or the provider refuses them, the request fails with ACP `auth_required` (`-32000`) instead of an internal error. A refusal covers a revoked API key and an OAuth session whose refresh token expired or was revoked. This applies to `session/new` and `session/load`, and to a `session/prompt` turn or `/compact` that the provider rejects mid-session. The error message comes from Rho, such as the provider's missing-credential hint; it never contains the credential or the provider's raw response.
 
 After a successful login, no reconnect is needed, whichever credential store holds it. The next session request runs startup again, and the next prompt in a session whose credentials were refused reloads them for turns and compaction.
+
+### Logout
+
+`logout` signs out of the auth profile new sessions use: the one the config and launch flags select, which is the one whose missing credentials make `session/new` fail. It deletes that profile's credentials from Rho's credential store, as `/logout <provider>` does in the TUI. The store is the one `authenticate` would save to as configured when `logout` runs; with no store chosen, that is the OS store sessions read by default. Credentials for other auth profiles are kept. The credentials are deleted, not just forgotten by this connection, so the terminal and other Rho processes that share the store must sign in again the next time they load credentials. A process already running keeps the credentials it loaded until then. The result is empty.
+
+After `logout`, `session/new` and `session/load` fail with `auth_required` until the host signs in again. A profile that needs no credentials, such as a local Ollama, has nothing to delete: `logout` succeeds and sessions keep working.
+
+Live sessions stay open. `logout` cancels every running `session/prompt`, which ends with `stopReason` `cancelled`, and waits for those turns to finish before deleting anything, because a running turn can refresh OAuth tokens and save them back. Each session's next `session/prompt`, including `/compact`, reloads credentials and fails with `auth_required` when its model uses the signed-out profile. A session that switched to another provider's model keeps working on its next prompt. Signing in again applies in place, as after any [credential failure](#startup-and-credential-failures).
+
+`logout` and agent-method `authenticate` run one at a time. A `logout` cancels an `authenticate` still waiting, which fails with `request_cancelled` (`-32800`), so that login cannot save after the logout. A later `authenticate` likewise cancels a `logout` that has not deleted anything yet. A terminal login runs in its own process and is not affected.
+
+`logout` waits for deferred startup, since startup resolves the selected auth profile, and for any `session/new`, `session/load`, or `session/close` in progress. If startup found no credentials, nothing is signed in and `logout` succeeds without deleting anything. If startup failed because the stored credentials were refused or unreadable, they are still stored, so `logout` returns that `auth_required` failure; signing in replaces them. Any other startup failure is returned too. A profile whose credential comes from its environment variable, such as `OPENAI_API_KEY`, cannot be signed out from ACP: `logout` fails with `invalid_request` (`-32600`) naming the variable, and deletes nothing. A store that cannot be opened or written fails with `internal_error`.
 
 ## Sessions
 

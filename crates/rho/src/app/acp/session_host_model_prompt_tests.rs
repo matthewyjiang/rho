@@ -114,7 +114,8 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         .unwrap()
         .build(&PromptModel::from_sdk_identity(&next.identity()))
         .unwrap();
-    host.switch_provider(next, &config).unwrap();
+    let read = host.credentials.before_read();
+    host.switch_provider(next, &config, read).unwrap();
     assert_eq!(advisor.system_prompt(), Some(expected.text.clone()));
     assert_eq!(
         &host.built.session.history()[..2],

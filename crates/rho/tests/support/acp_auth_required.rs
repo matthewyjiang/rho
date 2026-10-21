@@ -3,6 +3,7 @@
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -94,26 +95,24 @@ fn answer(stream: TcpStream, valid: &Mutex<String>) {
     let _ = reader.get_mut().write_all(reply.as_bytes());
 }
 
-// Covers: a missing key and a key the provider revokes mid-session must both
-// answer ACP auth_required (not internal_error), for turns and compaction,
-// without echoing the key or the provider's diagnostic, and each sign-in must
-// apply without reconnecting: startup runs again, and the next prompt reloads
-// the refused credentials for turns and compaction alike, because providers
-// capture them when built.
-// Owner: ACP request error mapping and session provider lifecycle, over real
-// stdio and HTTP; no fixture provider stands in for the credential path.
-#[test]
-fn credential_failures_require_auth_and_each_sign_in_applies_in_place() {
-    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
-    let address = spawn_provider(Arc::clone(&valid));
-    let home = TempDir::new().unwrap();
-    let project = home.path().join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let config = home.path().join("config.toml");
-    std::fs::write(
-        &config,
-        format!(
-            r#"provider = "mock"
+/// A home whose config selects the custom `mock` provider at an
+/// [`spawn_provider`] host, with an empty file credential store.
+struct MockProviderHome {
+    home: TempDir,
+    project: PathBuf,
+    store: FileCredentialStore,
+}
+
+impl MockProviderHome {
+    fn new(valid: &Arc<Mutex<String>>) -> Self {
+        let address = spawn_provider(Arc::clone(valid));
+        let home = TempDir::new().unwrap();
+        let project = home.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            home.path().join("config.toml"),
+            format!(
+                r#"provider = "mock"
 model = "mock-model"
 auth = "mock-api-key"
 
@@ -128,72 +127,147 @@ check_for_updates = false
 hosted = false
 provider = "disabled"
 "#
-        ),
-    )
-    .unwrap();
-    let store = FileCredentialStore::with_rho_home(home.path().join(".rho")).unwrap();
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
-    command
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", home.path())
-        .env("RHO_HOME", home.path().join(".rho"))
-        .env("XDG_CACHE_HOME", home.path().join(".cache"))
-        .env("RHO_CREDENTIAL_STORE", "file")
-        .current_dir(&project)
-        .arg("--config")
-        .arg(&config)
-        // An explicit provider makes startup discover its models, so the
-        // missing key fails startup itself rather than the session build.
-        .args(["--provider", "mock", "acp"]);
-    // Winsock cannot initialize without SystemRoot, so a cleared Windows
-    // environment fails every HTTP request before it reaches the fixture.
-    if let Some(root) = std::env::var_os("SystemRoot") {
-        command.env("SystemRoot", root);
-    }
-    let mut server = AcpServer::from_command(&mut command);
-    server
-        .request("initialize", json!({"protocolVersion": 1}))
-        .0
+            ),
+        )
         .unwrap();
-    let auth_required = |reply: Result<Value, Value>, what: &str| {
-        let error = reply.expect_err(what);
-        assert_eq!(
-            (error["code"].clone(), error.get("data")),
-            (json!(-32000), None),
-            "{what}: {error}"
-        );
-        assert!(!error.to_string().contains(FIRST_KEY), "{error}");
-    };
-    let new_session = json!({"cwd": project, "mcpServers": []});
-    auth_required(
-        server.request("session/new", new_session.clone()).0,
+        let store = FileCredentialStore::with_rho_home(home.path().join(".rho")).unwrap();
+        Self {
+            home,
+            project,
+            store,
+        }
+    }
+
+    /// Starts and initializes `rho acp`, returning the `initialize` result.
+    fn server(&self) -> (AcpServer, Value) {
+        let home = self.home.path();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
+        command
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", home)
+            .env("RHO_HOME", home.join(".rho"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .env("RHO_CREDENTIAL_STORE", "file")
+            .current_dir(&self.project)
+            .arg("--config")
+            .arg(home.join("config.toml"))
+            // An explicit provider makes startup discover its models, so the
+            // missing key fails startup itself rather than the session build.
+            .args(["--provider", "mock", "acp"]);
+        // Winsock cannot initialize without SystemRoot, so a cleared Windows
+        // environment fails every HTTP request before it reaches the fixture.
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", root);
+        }
+        let mut server = AcpServer::from_command(&mut command);
+        let initialized = server
+            .request("initialize", json!({"protocolVersion": 1}))
+            .0
+            .unwrap();
+        (server, initialized)
+    }
+
+    fn new_session(&self) -> Value {
+        json!({"cwd": self.project, "mcpServers": []})
+    }
+}
+
+/// Asserts `reply` is ACP `auth_required` with no data and no key in it.
+fn assert_auth_required(reply: Result<Value, Value>, what: &str) {
+    let error = reply.expect_err(what);
+    assert_eq!(
+        (error["code"].clone(), error.get("data")),
+        (json!(-32000), None),
+        "{what}: {error}"
+    );
+    assert!(!error.to_string().contains(FIRST_KEY), "{error}");
+}
+
+fn prompt(session_id: &str, text: &str) -> Value {
+    json!({"sessionId": session_id, "prompt": [{"type": "text", "text": text}]})
+}
+
+// Covers: a missing key and a key the provider revokes mid-session must both
+// answer ACP auth_required (not internal_error), for turns and compaction,
+// without echoing the key or the provider's diagnostic, and each sign-in must
+// apply without reconnecting: startup runs again, and the next prompt reloads
+// the refused credentials for turns and compaction alike, because providers
+// capture them when built.
+// Owner: ACP request error mapping and session provider lifecycle, over real
+// stdio and HTTP; no fixture provider stands in for the credential path.
+#[test]
+fn credential_failures_require_auth_and_each_sign_in_applies_in_place() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    let fixture = MockProviderHome::new(&valid);
+    let (mut server, _) = fixture.server();
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
         "no key is saved yet",
     );
 
     // A sign-in saves the key; the same connection starts without reconnecting.
-    store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
-    let (session, _) = server.request("session/new", new_session);
+    fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
+    let (session, _) = server.request("session/new", fixture.new_session());
     let session_id = session.unwrap()["sessionId"].as_str().unwrap().to_owned();
-    let prompt =
-        |text: &str| json!({"sessionId": session_id, "prompt": [{"type": "text", "text": text}]});
     assert_eq!(server.prompt(&session_id, "hi"), "answered");
 
     *valid.lock().unwrap() = SECOND_KEY.to_owned();
-    auth_required(
-        server.request("session/prompt", prompt("hi again")).0,
+    assert_auth_required(
+        server
+            .request("session/prompt", prompt(&session_id, "hi again"))
+            .0,
         "the provider revoked the key",
     );
-    auth_required(
-        server.request("session/prompt", prompt("/compact")).0,
+    assert_auth_required(
+        server
+            .request("session/prompt", prompt(&session_id, "/compact"))
+            .0,
         "compaction is refused too",
     );
 
-    store.set_secret(KEY_ACCOUNT, SECOND_KEY).unwrap();
+    fixture.store.set_secret(KEY_ACCOUNT, SECOND_KEY).unwrap();
     assert_eq!(server.prompt(&session_id, "signed in"), "answered");
     // Compaction summarizes with its own handle on the provider.
     server
-        .request("session/prompt", prompt("/compact"))
+        .request("session/prompt", prompt(&session_id, "/compact"))
         .0
         .expect("compaction uses the renewed key");
+}
+
+// Covers: `logout` must be advertised and delete the selected auth profile's
+// stored key, after which new sessions and a live session's next turn fail
+// auth_required even though the provider still accepts the key that session
+// holds, and a sign-in afterwards applies in place again.
+// Owner: ACP logout and session provider lifecycle, over real stdio and HTTP.
+#[test]
+fn logout_requires_a_new_sign_in_for_new_and_live_sessions() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    let fixture = MockProviderHome::new(&valid);
+    fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
+    let (mut server, initialized) = fixture.server();
+    assert_eq!(
+        initialized["agentCapabilities"]["auth"],
+        json!({"logout": {}})
+    );
+    let (session, _) = server.request("session/new", fixture.new_session());
+    let session_id = session.unwrap()["sessionId"].as_str().unwrap().to_owned();
+    assert_eq!(server.prompt(&session_id, "hi"), "answered");
+
+    let (logged_out, _) = server.request("logout", json!({}));
+    assert_eq!(logged_out.unwrap(), json!({}));
+    assert_eq!(fixture.store.get_secret(KEY_ACCOUNT).unwrap(), None);
+    assert_auth_required(
+        server
+            .request("session/prompt", prompt(&session_id, "still there?"))
+            .0,
+        "the live session no longer holds a sign-in",
+    );
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "new sessions need a sign-in",
+    );
+
+    fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
+    assert_eq!(server.prompt(&session_id, "signed in again"), "answered");
 }

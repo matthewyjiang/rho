@@ -8,7 +8,7 @@ use std::sync::{
 use agent_client_protocol::{
     schema::v1::{
         AuthenticateRequest, AuthenticateResponse, DeleteSessionRequest, DeleteSessionResponse,
-        InitializeRequest, RequestId,
+        InitializeRequest, LogoutResponse, RequestId,
     },
     Error as AcpError, ErrorCode,
 };
@@ -19,8 +19,9 @@ use futures_util::{
 
 use super::{
     agent::RhoAcpAgent,
-    auth::{self, CredentialStoreChoice, OAuthSignIn},
+    auth::{self, CredentialFailure, CredentialStoreChoice, OAuthSignIn},
     auth_login::LoginFlight,
+    auth_logout,
     host_features::NegotiatedFeatures,
     AcpClientPort,
 };
@@ -31,7 +32,33 @@ use crate::{
 };
 
 /// Builds the agent, or answers the error every waiting request gets.
-type StartupRun = BoxFuture<'static, Result<Arc<RhoAcpAgent>, AcpError>>;
+type StartupRun = BoxFuture<'static, Result<Arc<RhoAcpAgent>, StartupFailure>>;
+
+/// A failed startup run: the error waiting requests get, and the credential
+/// failure behind it, which `logout` needs and the error no longer says.
+#[derive(Clone, Debug)]
+struct StartupFailure {
+    error: AcpError,
+    credentials: Option<CredentialFailure>,
+}
+
+impl StartupFailure {
+    fn new(error: &anyhow::Error) -> Self {
+        Self {
+            error: auth::request_error(error, || format!("{error:#}")),
+            credentials: CredentialFailure::find(error),
+        }
+    }
+}
+
+impl From<AcpError> for StartupFailure {
+    fn from(error: AcpError) -> Self {
+        Self {
+            error,
+            credentials: None,
+        }
+    }
+}
 
 /// One run of deferred startup. Shared owns the suspended initializer even if
 /// one waiting request is cancelled.
@@ -53,10 +80,11 @@ pub(super) struct LazyAgent {
     flight: LoginFlight,
 }
 
-/// What `authenticate` needs from launch.
+/// What `authenticate` and `logout` need from launch.
 #[derive(Clone, Debug)]
 struct LoginSetup {
-    /// The `--config` override, where `authenticate` finds the store.
+    /// The `--config` override, where `authenticate` and `logout` find the
+    /// store.
     config: Option<std::path::PathBuf>,
     /// Read once at launch, before `initialize` advertises sign-in.
     store: CredentialStoreChoice,
@@ -87,7 +115,7 @@ impl LazyAgent {
                 bootstrap::prepare_acp(cli, negotiated.get())
                     .await
                     .map(|startup| Arc::new(RhoAcpAgent::new(startup)))
-                    .map_err(|error| auth::request_error(&error, || format!("{error:#}")))
+                    .map_err(|error| StartupFailure::new(&error))
             }
             .boxed()
         };
@@ -136,20 +164,54 @@ impl LazyAgent {
             .await
     }
 
+    /// Runs `logout` in the login flight, so it supersedes an `authenticate`
+    /// still waiting, as a newer `authenticate` would, and a login cannot
+    /// save credentials after the logout deleted them. The signed-out auth
+    /// profile is the one new sessions use, so this waits for startup. A
+    /// startup that found no credentials is signed out already; refused or
+    /// unreadable ones are still stored, so that failure is returned.
+    pub(super) async fn logout(&self) -> Result<LogoutResponse, AcpError> {
+        self.flight
+            .run(async {
+                match self.started_or_failure().await {
+                    Ok(agent) => {
+                        agent
+                            .logout(|auth| auth_logout::sign_out(auth, self.login.config.clone()))
+                            .await?
+                    }
+                    Err(StartupFailure {
+                        credentials: Some(CredentialFailure::Missing(_)),
+                        ..
+                    }) => {}
+                    Err(failure) => return Err(failure.error),
+                }
+                Ok(LogoutResponse::new())
+            })
+            .await
+    }
+
     /// Records the optional features the host advertised at `initialize`.
     pub(super) fn record_client(&self, request: &InitializeRequest) {
         self.host_features.record(request);
     }
 
     pub(super) async fn ready(&self) -> Result<Arc<RhoAcpAgent>, AcpError> {
+        self.started_or_failure()
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    async fn started_or_failure(&self) -> Result<Arc<RhoAcpAgent>, StartupFailure> {
         if self.closed.load(Ordering::Acquire) {
-            return Err(AcpError::invalid_request().data("ACP connection is closed"));
+            return Err(AcpError::invalid_request()
+                .data("ACP connection is closed")
+                .into());
         }
         let startup = self.current();
         let agent = match startup.clone().await {
             Ok(agent) => agent,
-            Err(error) => {
-                if error.code == ErrorCode::AuthRequired {
+            Err(failure) => {
+                if failure.error.code == ErrorCode::AuthRequired {
                     // Concurrent waiters saw the same failure; only the first
                     // replaces it, so one sign-in starts one new run.
                     let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
@@ -157,7 +219,7 @@ impl LazyAgent {
                         *pending = (self.start)().shared();
                     }
                 }
-                return Err(error);
+                return Err(failure);
             }
         };
         let _publication = self.publication.lock().await;
@@ -165,7 +227,9 @@ impl LazyAgent {
         // in flight must not publish a live session after the connection closes.
         if self.closed.load(Ordering::Acquire) {
             agent.shutdown_all().await;
-            return Err(AcpError::invalid_request().data("ACP connection is closed"));
+            return Err(AcpError::invalid_request()
+                .data("ACP connection is closed")
+                .into());
         }
         Ok(agent)
     }

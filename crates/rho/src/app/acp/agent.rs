@@ -11,6 +11,7 @@ use super::{
     session_host::{PromptGate, SessionHost},
     AcpClientPort, AcpStartup,
 };
+use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
 use agent_client_protocol::schema::v1::{
     DeleteSessionRequest, DeleteSessionResponse, SessionDeleteCapabilities, SessionListCapabilities,
 };
@@ -102,8 +103,9 @@ pub(super) struct RhoAcpAgent {
     /// Readers are `session/new` and `session/load` for their full
     /// build-and-publish lifecycle, and `session/close` until its host is torn
     /// down. `shutdown_all` takes the write lock so it waits for those
-    /// requests, then sets `closed`. Prompt, cancel, and `publish` never take
-    /// this lock.
+    /// requests, then sets `closed`; `logout` takes it so no session reads
+    /// credentials while they are deleted. Prompt, cancel, and `publish`
+    /// never take this lock.
     install_gate: tokio::sync::RwLock<()>,
     /// One lock per session ID. Replacements of the same ID stay ordered;
     /// different IDs publish and tear down independently. Generated titles
@@ -152,7 +154,9 @@ impl RhoAcpAgent {
                             .close(SessionCloseCapabilities::new())
                             .list(SessionListCapabilities::new())
                             .delete(SessionDeleteCapabilities::new()),
-                    ),
+                    )
+                    // `logout`; see `super::auth_logout`.
+                    .auth(AgentAuthCapabilities::new().logout(LogoutCapabilities::new())),
             )
             .auth_methods(super::auth::methods(request, sign_in))
             // Hosts display `version` as the agent version; it matches `rho --version`.
@@ -417,6 +421,34 @@ impl RhoAcpAgent {
             .ok_or_else(|| missing_session(&session_id))?;
         shutdown_live(live).await;
         Ok(CloseSessionResponse::new())
+    }
+
+    /// `logout` for the auth profile new sessions use; `sign_out` deletes
+    /// its credentials (see `super::auth_logout`). Holding the install gate
+    /// keeps every session build out meanwhile, so each live session's count
+    /// reflects what it read. A running turn could refresh OAuth tokens and
+    /// save them back, undoing the logout, so every running prompt is
+    /// cancelled, and every host is held until the logout is counted.
+    pub(super) async fn logout(
+        &self,
+        sign_out: impl FnOnce(&str) -> Result<(), AcpError>,
+    ) -> Result<(), AcpError> {
+        let _gate = self.install_gate.write().await;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(agent_stopped());
+        }
+        let lives: Vec<Arc<LiveSession>> = self.sessions.lock().await.values().cloned().collect();
+        for live in &lives {
+            live.cancel.cancel();
+        }
+        let mut held = Vec::with_capacity(lives.len());
+        for live in &lives {
+            held.push(live.host.lock().await);
+        }
+        sign_out(&self.startup.config.auth)?;
+        self.startup.logouts.record();
+        drop(held);
+        Ok(())
     }
 
     pub(super) async fn shutdown_all(&self) {

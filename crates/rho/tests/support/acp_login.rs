@@ -185,9 +185,10 @@ fn advertised_terminal_login_saves_or_cancels_without_echoing_keys() {
 
 // Covers: a host that draws URL elicitations signs in to OAuth without a
 // terminal: `authenticate` shows the login URL through a URL elicitation tied
-// to that request, and a declined elicitation or a cancelled `authenticate`
-// fails as cancelled and releases the login's callback listener, so the next
-// attempt is not left fighting a stale one.
+// to that request, and a declined elicitation, a cancelled `authenticate`, or a
+// `logout` (which must not let the login save afterwards) fails it as
+// cancelled and releases the login's callback listener, so the next attempt is
+// not left fighting a stale one.
 // Owner: ACP authenticate over real stdio. OpenRouter's browser login is
 // local until its callback, so no provider is contacted.
 #[test]
@@ -218,7 +219,14 @@ fn authenticate_shows_the_login_url_and_abandons_it_when_the_host_does() {
         (None, None, &json!("terminal"))
     );
 
-    for abandon in ["decline", "cancel"] {
+    /// How the host leaves the sign-in.
+    #[derive(Clone, Copy, Debug)]
+    enum Abandon {
+        Decline,
+        Cancel,
+        Logout,
+    }
+    for abandon in [Abandon::Decline, Abandon::Cancel, Abandon::Logout] {
         server.next_id += 1;
         let id = server.next_id;
         server.send(&json!({
@@ -255,29 +263,52 @@ fn authenticate_shows_the_login_url_and_abandons_it_when_the_host_does() {
             "listening while shown"
         );
 
+        let logout_id = id + 1;
+        let mut logged_out = true;
         match abandon {
-            "decline" => server.send(&json!({
+            Abandon::Decline => server.send(&json!({
                 "jsonrpc": "2.0", "id": shown["id"], "result": {"action": "decline"},
             })),
-            _ => server.send(&json!({
+            Abandon::Cancel => server.send(&json!({
                 "jsonrpc": "2.0", "method": "$/cancel_request", "params": {"requestId": id},
             })),
+            Abandon::Logout => {
+                server.next_id = logout_id;
+                server.send(&json!({
+                    "jsonrpc": "2.0", "id": logout_id, "method": "logout", "params": {},
+                }));
+                logged_out = false;
+            }
         }
-        let reply = loop {
+        let mut reply = None;
+        while reply.is_none() || !logged_out {
             let message = server
                 .messages
                 .recv_timeout(REPLY_TIMEOUT)
                 .expect("authenticate answers");
-            if message["id"] == id && message.get("method").is_none() {
-                break message;
+            if message.get("method").is_some() {
+                // A cancelled authenticate withdraws its pending elicitation.
+                assert_eq!(message["method"], "$/cancel_request", "{message}");
+            } else if message["id"] == id {
+                reply = Some(message);
+            } else {
+                assert_eq!(
+                    (&message["id"], &message["result"]),
+                    (&json!(logout_id), &json!({})),
+                    "{message}"
+                );
+                logged_out = true;
             }
-            // A cancelled authenticate withdraws its pending elicitation.
-            assert_eq!(message["method"], "$/cancel_request", "{message}");
-        };
-        assert_eq!(reply["error"]["code"], json!(-32800), "{abandon}: {reply}");
+        }
+        let reply = reply.unwrap();
+        assert_eq!(
+            reply["error"]["code"],
+            json!(-32800),
+            "{abandon:?}: {reply}"
+        );
         assert!(
             std::net::TcpStream::connect(&listener).is_err(),
-            "{abandon} releases the callback listener"
+            "{abandon:?} releases the callback listener"
         );
     }
 }

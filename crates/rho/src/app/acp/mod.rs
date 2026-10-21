@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod auth_login;
+mod auth_logout;
 mod commands;
 mod compaction_card;
 mod config_options;
@@ -25,7 +26,7 @@ use agent_client_protocol::{
     schema::v1::{
         AuthenticateRequest, CancelNotification, CloseSessionRequest,
         CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
-        InitializeRequest, LoadSessionRequest, NewSessionRequest, PromptRequest,
+        InitializeRequest, LoadSessionRequest, LogoutRequest, NewSessionRequest, PromptRequest,
         RequestPermissionRequest, RequestPermissionResponse, SessionNotification,
         SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
@@ -74,6 +75,8 @@ pub(super) struct AcpStartup {
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
     /// Optional features the host advertised at `initialize`.
     pub(super) host_features: HostFeatures,
+    /// `logout`s so far, which mark sessions' credentials stale.
+    pub(super) logouts: auth_logout::Logouts,
 }
 
 #[cfg(test)]
@@ -119,6 +122,7 @@ impl AcpStartup {
             herdr: HerdrReporter::default(),
             added_dirs: Default::default(),
             host_features: HostFeatures::default(),
+            logouts: Default::default(),
         }
     }
 }
@@ -331,6 +335,16 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                             .run_until_cancelled(agent.authenticate(request, request_id, &port))
                             .await
                     })
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
+                async move |_request: LogoutRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(&cx, responder, async move { agent.logout().await })
                 }
             },
             agent_client_protocol::on_receive_request!(),
