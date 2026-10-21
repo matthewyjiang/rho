@@ -3,13 +3,14 @@
 //! compaction updates, else as an agent message.
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, PromptResponse, SessionNotification, SessionUpdate, StopReason,
+    PromptResponse, SessionNotification, SessionUpdate, StopReason,
 };
 use rho_sdk::{CancellationToken, CompactionOutcome};
 
 use super::{send_notification, SessionHost};
 use crate::app::acp::{
     compaction_card::{outcome_summary, CompactionCard},
+    events::EventMapper,
     AcpClientPort,
 };
 
@@ -31,9 +32,7 @@ impl SessionHost {
             (Some(card), Ok(None)) => Some(card.cancelled()),
             // Same text as the prompt's error reply.
             (Some(card), Err(error)) => Some(card.failed(error.to_string())),
-            (None, Ok(Some(outcome))) => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                ContentBlock::from(outcome_summary(outcome)),
-            ))),
+            (None, Ok(Some(outcome))) => Some(EventMapper::agent_message(outcome_summary(outcome))),
             // The prompt's error reply or cancelled stop says the rest.
             (None, Ok(None) | Err(_)) => None,
         };

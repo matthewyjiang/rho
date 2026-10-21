@@ -141,7 +141,7 @@ Frozen workflow relaunches that narrow a Bypass agent under an Auto or Allow-edi
 
 ## Execution details
 
-A `runtime: cursor` agent runs as `cursor-agent acp` over stdio JSON-RPC. Rho owns the parent tree node; Cursor owns the child loop and credential. Each ACP handshake step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget; measured `session/new` took 2.4–3.4 s. Rho never calls ACP `authenticate` (it fails under API-key auth and would open a browser otherwise).
+A `runtime: cursor` agent runs as `cursor-agent acp` over stdio JSON-RPC. Rho owns the parent tree node; Cursor owns the child loop and credential. Rho's `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP handshake step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget; measured `session/new` took 2.4–3.4 s. Rho never calls ACP `authenticate` (it fails under API-key auth and would open a browser otherwise).
 
 If the binary is missing, the run fails immediately with `cursor: binary not found on PATH`. If the user is signed out, `session/new` fails with Cursor's `Authentication required` error. Rho does not preflight `cursor-agent status`: it can disagree with what the agent accepts (for example, it reports signed out when only `CURSOR_API_KEY` is set).
 

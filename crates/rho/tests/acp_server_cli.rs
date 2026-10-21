@@ -41,6 +41,9 @@ mod questions;
 #[path = "support/acp_session_titles_tests.rs"]
 mod session_titles;
 
+#[path = "support/acp_update_metadata_tests.rs"]
+mod update_metadata;
+
 #[path = "support/acp_usage_cost_tests.rs"]
 mod usage_cost;
 

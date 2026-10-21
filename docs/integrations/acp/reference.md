@@ -82,6 +82,7 @@ Listing and deleting saved history do not start model discovery or require provi
 `session/load` replays the saved conversation as message chunks and tool calls/updates marked with `_meta.isReplay: true`. Hosts that keep their own transcript can skip these notifications; hosts that rebuild the transcript from the replay can ignore the marker.
 
 - Tool cards retain their saved names, arguments, success/failure status, output, and tool-owned images. Background result cards replay too.
+- Replayed `user_message_chunk`, `agent_message_chunk`, and `agent_thought_chunk` updates carry a `messageId` (see [Message IDs](#message-ids)). Replay splits the same way live chunks do, except that text and tool calls from a single model response replay in their saved order, so text after a tool call in that response starts a new message even though it was one message live. Each ID is derived from the session ID and the saved history up to that message, so loading the same session again replays the same IDs, and equal text elsewhere in the history gets a different ID. Replayed IDs never match the IDs the same messages had live.
 - Each replayed call gets a fresh ACP identity, so provider IDs reused across turns do not collapse distinct cards. Stored and provider-facing IDs stay unchanged.
 - A result updates its replayed tool call. An interrupted or superseded call without a saved result is marked failed rather than left running.
 - Execution metadata that is not saved in history, such as tool kind and affected file locations, is not reconstructed.
@@ -112,6 +113,16 @@ During a session, Rho sends:
 | `compaction_update` | Each compaction, automatic or `/compact`, when the host advertises `clientCapabilities.session.compaction`. See [Compaction](#compaction). |
 | `session_info_update` | The session's `title` once Rho names it. See [Titles](#titles). |
 | `notice` | Information outside the conversation, when the host advertises `clientCapabilities.session.notices`. Today that is the model-prompt change notice found at load. |
+
+### Message IDs
+
+Every `agent_message_chunk` and `agent_thought_chunk` carries a `messageId`. Consecutive chunks of one kind share it. A new message, with a new ID, starts at a chunk of the other kind, at each model step, and after a tool call or compaction update between chunks, so text after a tool call is a new message. The provider stream-reset notice is a thought message of its own. Agent messages sent outside a prompt's run, such as `/compact` results and notices at load, get their own IDs. Live IDs are random; see [Load and replay](#load-and-replay) for replayed ones.
+
+### Tool kinds and locations
+
+A `tool_call`'s `kind` follows what the tool does: `read`, `search`, `edit`, `execute`, or `fetch`. An `apply_patch` call whose every file section deletes a file is `delete`, and one whose every section moves a file is `move`; mixed patches are `edit`. `todo` calls are `think` and `exit_plan_mode` calls are `switch_mode`. Other tools are `other`.
+
+`locations` are absolute paths, resolved against the session's `cwd`. ACP does not say how `line` counts, so Rho sends 0-based rows, as Zed reads them and as Zed's own tools send them: line 1 of a file is `0`. A `read_file` call with an `offset` names that line. When a call finishes, its final `tool_call_update` replaces the locations with what the result points at: each file an edit or `write` changed, at its first changed line (no line for new or emptied files), or the first 20 files a `grep` matched, at each one's first shown match. Zed opens every location it gets, and its own grep sends at most 20. Other results keep the started locations.
 
 ### File diffs
 

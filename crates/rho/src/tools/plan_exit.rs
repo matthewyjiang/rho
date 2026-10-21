@@ -273,10 +273,13 @@ async fn ask_permission(
     })
 }
 
+/// The tool's name; ACP hosts see its calls as mode switches.
+pub(crate) const TOOL_NAME: &str = "exit_plan_mode";
+
 impl Tool for PlanExitTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
-            name: "exit_plan_mode".into(),
+            name: TOOL_NAME.into(),
             description: "Present your completed markdown plan for approval. Approval applies only after this turn ends; do not implement or make more tool calls after approval.".into(),
             input_schema: json!({"type":"object","properties":{"plan":{"type":"string","description":"The complete markdown implementation plan"}},"required":["plan"],"additionalProperties":false}),
         }

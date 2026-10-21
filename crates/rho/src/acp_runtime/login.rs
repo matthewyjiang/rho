@@ -1,12 +1,9 @@
 //! One-shot ACP sign-in for login commands: `initialize`, then `authenticate`
 //! with the method the caller names. Delegated runs never authenticate here.
 
-use super::handshake::{bounded, error};
+use super::handshake::{bounded, error, initialize_request};
 use agent_client_protocol::{
-    schema::{
-        v1::{AuthenticateRequest, InitializeRequest},
-        ProtocolVersion,
-    },
+    schema::{v1::AuthenticateRequest, ProtocolVersion},
     Client, ConnectTo,
 };
 use std::time::Duration;
@@ -25,8 +22,7 @@ pub(crate) async fn authenticate(
         .connect_with(transport, async move |cx| {
             let response = bounded(
                 "initialize",
-                cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
-                    .block_task(),
+                cx.send_request(initialize_request()).block_task(),
             )
             .await?;
             if response.protocol_version != ProtocolVersion::V1 {

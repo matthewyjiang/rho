@@ -4,9 +4,9 @@ use super::policy::AcpAgentPolicy;
 use agent_client_protocol::{
     schema::{
         v1::{
-            AuthenticateRequest, InitializeRequest, SessionConfigKind, SessionConfigOption,
-            SessionConfigSelectOptions, SessionConfigValueId, SetSessionConfigOptionRequest,
-            SetSessionModeRequest,
+            AuthenticateRequest, Implementation, InitializeRequest, SessionConfigKind,
+            SessionConfigOption, SessionConfigSelectOptions, SessionConfigValueId,
+            SetSessionConfigOptionRequest, SetSessionModeRequest,
         },
         ProtocolVersion,
     },
@@ -34,16 +34,22 @@ pub(super) async fn bounded<T>(
         .map_err(|source| error(format!("acp: {step}: {source}")))
 }
 
+/// The `initialize` Rho sends as a client: it names Rho, with the version
+/// `rho --version` prints, and keeps the constructor's capability defaults,
+/// which advertise no filesystem, terminal, or subagent support. Do not
+/// enable capabilities we cannot fulfill.
+pub(super) fn initialize_request() -> InitializeRequest {
+    InitializeRequest::new(ProtocolVersion::V1)
+        .client_info(Implementation::new("rho", env!("CARGO_PKG_VERSION")).title("Rho"))
+}
+
 pub(super) async fn initialize<P: AcpAgentPolicy>(
     cx: &ConnectionTo<Agent>,
     policy: &Mutex<P>,
 ) -> Result<(), Error> {
-    // Constructor defaults advertise no filesystem, terminal, or subagent
-    // support. Do not enable capabilities we cannot fulfill.
     let response = bounded(
         "initialize",
-        cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
-            .block_task(),
+        cx.send_request(initialize_request()).block_task(),
     )
     .await?;
     if response.protocol_version != ProtocolVersion::V1 {
