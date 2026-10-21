@@ -4,7 +4,8 @@ use std::io::{self, Write};
 
 // Written directly rather than through crossterm's `execute!`, which skips
 // ANSI on Windows consoles it deems unsupported even when the host (ConPTY,
-// WezTerm) understands paste sequences.
+// WezTerm) understands paste sequences. `acquire` still runs crossterm's
+// output setup so a console with VT output off parses them.
 const ENABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004h";
 const DISABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004l";
 
@@ -26,7 +27,11 @@ impl<W: Write> PasteMode<W> {
         output.flush()?;
         // A failed enable drops `vt_input`, which restores the console bit.
         #[cfg(windows)]
-        let vt_input = super::terminal_events::VtInput::acquire()?;
+        let vt_input = {
+            // Best effort: enables VT output processing; its verdict is not a gate.
+            let _ = crossterm::ansi_support::supports_ansi();
+            super::terminal_events::VtInput::acquire()?
+        };
         write_flushed(&mut output, ENABLE_BRACKETED_PASTE)?;
         Ok(Self {
             output,
