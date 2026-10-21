@@ -195,6 +195,7 @@ fn refreshed_tokens_replace_only_the_sign_in_they_refreshed() {
         ("nothing", Some("refreshed")),
         ("logout", None),
         ("new login", Some("new")),
+        ("logout, then a new login", Some("new")),
     ] {
         let store = MemoryCredentialStore::default();
         let first = tokens("first");
@@ -204,6 +205,10 @@ fn refreshed_tokens_replace_only_the_sign_in_they_refreshed() {
                 delete_auth_credentials(&store, "codex").unwrap();
             }
             "new login" => save_codex_tokens(&store, &tokens("new")).unwrap(),
+            "logout, then a new login" => {
+                delete_auth_credentials(&store, "codex").unwrap();
+                save_codex_tokens(&store, &tokens("new")).unwrap();
+            }
             _ => {}
         }
         save_refreshed_tokens(&store, CODEX_TOKENS_ACCOUNT, &first, &tokens("refreshed")).unwrap();
