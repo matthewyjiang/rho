@@ -186,8 +186,7 @@ impl LazyAgent {
         } else {
             // No session can be live before ready returns, even if discovery
             // is in flight or failed. History needs only the store here.
-            let target = super::session_list::delete_target(request.session_id).await?;
-            super::session_list::delete(target).await
+            super::session_list::delete(request.session_id).await
         }
     }
 

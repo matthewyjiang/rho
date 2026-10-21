@@ -165,19 +165,20 @@ impl RhoAcpAgent {
             )
     }
 
-    /// Deletes a saved session, closing it first if it is open on this
-    /// connection. Hosts such as Zed delete from history without closing the
+    /// Closes the session if it is open on this connection, then deletes it
+    /// if saved. Hosts such as Zed delete from history without closing the
     /// thread, so refusing an open session would make the delete never stick.
+    /// Closing first also lets a cancelled first turn save before the store
+    /// looks, so it is deleted rather than left behind.
     pub(super) async fn delete_session(
         &self,
         request: DeleteSessionRequest,
     ) -> Result<DeleteSessionResponse, AcpError> {
         let _gate = self.begin_install().await?;
-        let target = super::session_list::delete_target(request.session_id.clone()).await?;
         let _install = self.retire(&request.session_id).await;
-        // A refusal past this point leaves the session closed here but still
-        // saved; `session/load` reopens it.
-        super::session_list::delete(target).await
+        // A store refusal leaves the session closed here but still saved;
+        // `session/load` reopens it.
+        super::session_list::delete(request.session_id).await
     }
 
     /// Closes session `session_id` on this connection, if open, the way

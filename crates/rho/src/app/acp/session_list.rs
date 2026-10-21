@@ -42,18 +42,15 @@ pub(super) async fn list(request: ListSessionsRequest) -> Result<ListSessionsRes
     .await
 }
 
-/// The stored session `session/delete` names, resolved before anything open
-/// is closed, so an unknown or ambiguous id leaves the connection untouched.
-pub(super) async fn delete_target(session_id: SessionId) -> Result<SessionTarget, AcpError> {
-    off_runtime(move || Ok(exact_session(session_id.0.as_ref())?.target())).await
-}
-
-/// Deletes saved session `target` the way `rho sessions rm` does. The store
-/// refuses a session another Rho process has open and one whose delegated
-/// runs are still going.
-pub(super) async fn delete(target: SessionTarget) -> Result<DeleteSessionResponse, AcpError> {
+/// Deletes saved session `session_id` the way `rho sessions rm` does. ACP
+/// deletes are idempotent, so an id with nothing saved, never created or
+/// already deleted, succeeds. The store refuses a session another Rho
+/// process has open and one whose delegated runs are still going.
+pub(super) async fn delete(session_id: SessionId) -> Result<DeleteSessionResponse, AcpError> {
     off_runtime(move || {
-        StoredSession::delete_target(&target, DeleteOptions::default()).map_err(store_error)?;
+        if let Some(target) = saved_target(session_id.0.as_ref())? {
+            StoredSession::delete_target(&target, DeleteOptions::default()).map_err(store_error)?;
+        }
         Ok(DeleteSessionResponse::new())
     })
     .await
@@ -62,17 +59,16 @@ pub(super) async fn delete(target: SessionTarget) -> Result<DeleteSessionRespons
 /// The one saved session, in any workspace, whose id is exactly `id`. Hosts
 /// name whole ids, and ids need not be UUIDs, so a store prefix lookup could
 /// match another session or stop at a longer id in one workspace.
-fn exact_session(id: &str) -> Result<SessionSummary, AcpError> {
+fn saved_target(id: &str) -> Result<Option<SessionTarget>, AcpError> {
     let mut matches = StoredSession::list_all()
         .map_err(store_error)?
         .into_iter()
         .filter(|summary| summary.id == id);
     match (matches.next(), matches.next()) {
-        (Some(summary), None) => Ok(summary),
-        (None, _) => Err(AcpError::resource_not_found(Some(id.to_owned()))),
         (Some(_), Some(_)) => Err(AcpError::invalid_request().data(format!(
             "session '{id}' is saved in more than one workspace"
         ))),
+        (first, _) => Ok(first.as_ref().map(SessionSummary::target)),
     }
 }
 
