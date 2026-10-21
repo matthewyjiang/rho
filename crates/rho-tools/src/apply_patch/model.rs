@@ -4,13 +4,18 @@ use std::path::{Path, PathBuf};
 
 use rho_sdk::tool::ToolFileChange;
 
-use crate::diff::unified_diff;
+use crate::{diff::unified_diff, host_files::TextRoute};
 
 #[derive(Debug, Clone)]
 pub(super) struct MoveSource {
     pub(super) path: PathBuf,
     pub(super) display_path: String,
     pub(super) content: String,
+    /// The source's mode, which the moved file keeps.
+    pub(super) permissions: std::fs::Permissions,
+    /// The route serving the destination. The move itself runs on disk, but
+    /// must not land on a file the host holds.
+    pub(super) destination_route: TextRoute,
 }
 
 /// One planned filesystem operation. Impossible states are unrepresentable.
@@ -20,6 +25,8 @@ pub(super) enum FileChange {
         target: PathBuf,
         display_path: String,
         new_content: String,
+        /// Decided once at planning, so every later phase uses the same one.
+        route: TextRoute,
     },
     Delete {
         target: PathBuf,
@@ -32,8 +39,10 @@ pub(super) enum FileChange {
         display_path: String,
         old_content: String,
         new_content: String,
-        permissions: std::fs::Permissions,
         move_from: Option<MoveSource>,
+        /// Decided once at planning. Always `Disk` when `move_from` is set:
+        /// ACP-style hosts cannot rename or delete files.
+        route: TextRoute,
     },
 }
 
@@ -138,6 +147,17 @@ impl FileChange {
                 &[],
             )),
             Self::Delete { .. } => None,
+        }
+    }
+
+    /// Records the text the host holds after writing this change, which it
+    /// may have formatted, so the result and rollback use it.
+    pub(super) fn record_saved(&mut self, saved: String) {
+        match self {
+            Self::Add { new_content, .. } | Self::Update { new_content, .. } => {
+                *new_content = saved;
+            }
+            Self::Delete { .. } => {}
         }
     }
 

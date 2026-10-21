@@ -103,6 +103,7 @@ impl Tool for ApplyPatch {
                 |path| Ok(resolve_path(&cwd, path)),
                 |path| compact_display_path(&cwd, path),
                 ctx.max_output_bytes,
+                /*host_files*/ None,
             )
             .await?;
             Ok(ToolResult {

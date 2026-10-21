@@ -3,24 +3,30 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use crate::tool::ToolError;
+use crate::{
+    host_files::{HostTextFiles, TextRoute},
+    tool::ToolError,
+};
 
 use super::{
     content::derive_new_contents,
     model::{FileChange, MoveSource},
     parser::Hunk,
+    transaction::{add_exists_error, host_holds, move_exists_error},
 };
 
 pub(super) async fn plan_hunks(
     hunks: &[Hunk],
     resolve_path: &impl Fn(&str) -> Result<PathBuf, ToolError>,
     display_path: &impl Fn(&str) -> String,
+    host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<Vec<FileChange>, ToolError> {
     let mut planned = Vec::with_capacity(hunks.len());
     for hunk in hunks {
-        planned.push(plan_hunk(hunk, resolve_path, display_path).await?);
+        planned.push(plan_hunk(hunk, resolve_path, display_path, host_files).await?);
     }
     check_path_conflicts(&planned)?;
     Ok(planned)
@@ -61,6 +67,7 @@ async fn plan_hunk(
     hunk: &Hunk,
     resolve_path: &impl Fn(&str) -> Result<PathBuf, ToolError>,
     display_path: &impl Fn(&str) -> String,
+    host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<FileChange, ToolError> {
     match hunk {
         Hunk::Add { path, contents } => {
@@ -71,16 +78,16 @@ async fn plan_hunk(
                 .map(|metadata| metadata.file_type().is_symlink())
                 .unwrap_or(false)
             {
-                return Err(ToolError::Message(format!(
-                    "Refusing to add '{display}': file already exists"
-                )));
+                return Err(add_exists_error(&display));
             }
-            if read_optional(&target, &display).await?.is_some() {
-                return Err(ToolError::Message(format!(
-                    "Refusing to add '{display}': file already exists"
-                )));
+            let route = TextRoute::for_path(host_files, &target);
+            if read_optional(&target, &display).await?.is_some()
+                || host_holds(&route, &target, &display).await
+            {
+                return Err(add_exists_error(&display));
             }
             Ok(FileChange::Add {
+                route,
                 target,
                 display_path: display,
                 new_content: contents.clone(),
@@ -109,28 +116,42 @@ async fn plan_hunk(
             if move_path.is_some() {
                 reject_symlink_entry(&source, &source_display)?;
             }
-            let permissions = read_permissions(&source, &source_display).await?;
-            let old_content = read_required(&source, &source_display, RequiredRead::Update).await?;
+            // An in-place update of a host-served file patches the host's text,
+            // even one the host holds with no file on disk; moves stay on disk,
+            // since ACP hosts cannot rename or delete.
+            let route = match move_path {
+                Some(_) => TextRoute::Disk,
+                None => TextRoute::for_path(host_files, &source),
+            };
+            let old_content = if route.is_host() {
+                route.read(&source, &source_display).await?
+            } else {
+                read_required(&source, &source_display, RequiredRead::Update).await?
+            };
             let new_content = derive_new_contents(&old_content, &source_display, chunks)?;
             if let Some(dest) = move_path {
+                let permissions = read_permissions(&source, &source_display).await?;
                 let target = resolve_path(dest)?;
                 let dest_display = display_path(dest);
-                if read_optional(&target, &dest_display).await?.is_some() {
-                    return Err(ToolError::Message(format!(
-                        "Refusing to move to '{dest_display}': destination already exists"
-                    )));
+                let destination_route = TextRoute::for_path(host_files, &target);
+                if read_optional(&target, &dest_display).await?.is_some()
+                    || host_holds(&destination_route, &target, &dest_display).await
+                {
+                    return Err(move_exists_error(&dest_display));
                 }
                 Ok(FileChange::Update {
                     target,
                     display_path: dest_display,
                     old_content: old_content.clone(),
                     new_content,
-                    permissions: permissions.clone(),
                     move_from: Some(MoveSource {
                         path: source,
                         display_path: source_display,
                         content: old_content,
+                        permissions,
+                        destination_route,
                     }),
+                    route,
                 })
             } else {
                 Ok(FileChange::Update {
@@ -138,8 +159,8 @@ async fn plan_hunk(
                     display_path: source_display,
                     old_content,
                     new_content,
-                    permissions,
                     move_from: None,
+                    route,
                 })
             }
         }

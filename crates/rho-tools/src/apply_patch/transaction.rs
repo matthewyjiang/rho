@@ -1,4 +1,8 @@
 //! Transaction commit, filesystem mutation, and rollback.
+//!
+//! Additions and in-place updates whose planned [`TextRoute`] is the host go
+//! through it (see [`crate::host_files`]); everything else, including every
+//! deletion and move, runs on disk.
 
 use std::{
     io::Read,
@@ -8,10 +12,11 @@ use std::{
 
 use crate::{
     file_mutation::{
-        atomic_create_file, lock_for_rewrite, locked_path_identity_matches,
+        atomic_create_file, create_missing_parents, lock_for_rewrite, locked_path_identity_matches,
         rewrite_locked_file_tracked, AtomicCreateEffects, AtomicCreateFailure,
         AtomicCreateFaultInjector, AtomicCreateTargetEffect, RewriteFailure, RewriteFaultInjector,
     },
+    host_files::{CommitError, TextRoute},
     tool::ToolError,
 };
 
@@ -30,6 +35,9 @@ struct TransactionEffects<'a> {
     target: RollbackTarget<'a>,
     created_directories: Vec<PathBuf>,
     residual_files: Vec<PathBuf>,
+    /// The text the host holds after writing the change, which it may have
+    /// formatted; `None` for changes on disk.
+    saved: Option<String>,
 }
 
 impl<'a> TransactionEffects<'a> {
@@ -38,11 +46,17 @@ impl<'a> TransactionEffects<'a> {
             target: RollbackTarget::Change(change),
             created_directories: effects.created_directories,
             residual_files: effects.residual_files,
+            saved: None,
         }
     }
 
     fn change_only(change: &'a FileChange) -> Self {
         Self::for_change(change, AtomicCreateEffects::default())
+    }
+
+    fn saved(mut self, saved: String) -> Self {
+        self.saved = Some(saved);
+        self
     }
 
     fn creation_failure(change: &'a FileChange, effects: AtomicCreateEffects) -> Self {
@@ -54,6 +68,7 @@ impl<'a> TransactionEffects<'a> {
             target,
             created_directories: effects.created_directories,
             residual_files: effects.residual_files,
+            saved: None,
         }
     }
 
@@ -62,6 +77,7 @@ impl<'a> TransactionEffects<'a> {
             target: RollbackTarget::NoChange,
             created_directories: effects.created_directories,
             residual_files: effects.residual_files,
+            saved: None,
         }
     }
 }
@@ -131,11 +147,14 @@ impl<'a> ApplyFailure<'a> {
     }
 }
 
+/// Applies `planned` in order, rolling applied changes back when one fails.
+/// Returns, for each change, the text the host holds after writing it, or
+/// `None` for a change on disk.
 pub(super) async fn commit_changes(
     planned: &[FileChange],
     rewrite_fault: RewriteFault,
     create_fault: CreateFault,
-) -> Result<(), ToolError> {
+) -> Result<Vec<Option<String>>, ToolError> {
     for change in planned {
         revalidate_change(change).await?;
     }
@@ -182,7 +201,26 @@ pub(super) async fn commit_changes(
             }
         }
     }
-    Ok(())
+    Ok(applied.into_iter().map(|effects| effects.saved).collect())
+}
+
+/// Whether the host holds a file at `target` that a new file would replace,
+/// such as an unsaved buffer with no file on disk, including one past the
+/// input limit.
+pub(super) async fn host_holds(route: &TextRoute, target: &Path, display_path: &str) -> bool {
+    !matches!(route.read_if_held(target, display_path).await, Ok(None))
+}
+
+pub(super) fn add_exists_error(display_path: &str) -> ToolError {
+    ToolError::Message(format!(
+        "Refusing to add '{display_path}': file already exists"
+    ))
+}
+
+pub(super) fn move_exists_error(display_path: &str) -> ToolError {
+    ToolError::Message(format!(
+        "Refusing to move to '{display_path}': destination already exists"
+    ))
 }
 
 async fn revalidate_change(change: &FileChange) -> Result<(), ToolError> {
@@ -190,8 +228,15 @@ async fn revalidate_change(change: &FileChange) -> Result<(), ToolError> {
         FileChange::Add {
             target,
             display_path,
+            route,
             ..
-        } => expect_live(target, display_path, None).await,
+        } => {
+            expect_live(target, display_path, None).await?;
+            if host_holds(route, target, display_path).await {
+                return Err(add_exists_error(display_path));
+            }
+            Ok(())
+        }
         FileChange::Delete {
             target,
             display_path,
@@ -203,13 +248,27 @@ async fn revalidate_change(change: &FileChange) -> Result<(), ToolError> {
             display_path,
             old_content,
             move_from,
+            route,
             ..
         } => {
             if let Some(source) = move_from {
                 expect_live(&source.path, &source.display_path, Some(&source.content)).await?;
-                expect_live(target, display_path, None).await
+                expect_live(target, display_path, None).await?;
+                if host_holds(&source.destination_route, target, display_path).await {
+                    return Err(move_exists_error(display_path));
+                }
+                Ok(())
             } else {
-                expect_live(target, display_path, Some(old_content)).await
+                match route {
+                    TextRoute::Disk => expect_live(target, display_path, Some(old_content)).await,
+                    route @ TextRoute::Host(_) => {
+                        if route.read(target, display_path).await? == *old_content {
+                            Ok(())
+                        } else {
+                            Err(changed_error(display_path))
+                        }
+                    }
+                }
             }
         }
     }
@@ -318,16 +377,22 @@ async fn apply_one<'a>(
             target,
             display_path,
             new_content,
-        } => atomic_create_file(
-            target,
-            display_path,
-            new_content,
-            None,
-            create_fault.as_deref(),
-        )
-        .await
-        .map(|success| TransactionEffects::for_change(change, success.effects))
-        .map_err(|error| ApplyFailure::from_create(error, change)),
+            route,
+        } => match route {
+            TextRoute::Host(_) => {
+                create_through_host(change, route, target, display_path, new_content).await
+            }
+            TextRoute::Disk => atomic_create_file(
+                target,
+                display_path,
+                new_content,
+                None,
+                create_fault.as_deref(),
+            )
+            .await
+            .map(|success| TransactionEffects::for_change(change, success.effects))
+            .map_err(|error| ApplyFailure::from_create(error, change)),
+        },
         FileChange::Delete {
             target,
             display_path,
@@ -342,8 +407,8 @@ async fn apply_one<'a>(
             display_path,
             old_content,
             new_content,
-            permissions,
             move_from,
+            route,
             ..
         } => {
             if let Some(source) = move_from {
@@ -351,7 +416,7 @@ async fn apply_one<'a>(
                     target,
                     display_path,
                     new_content,
-                    Some(permissions.clone()),
+                    Some(source.permissions.clone()),
                     create_fault.as_deref(),
                 )
                 .await
@@ -369,18 +434,67 @@ async fn apply_one<'a>(
                 }
                 Ok(TransactionEffects::for_change(change, creation.effects))
             } else {
-                rewrite_current(
-                    target,
-                    display_path,
-                    /*expected*/ old_content,
-                    /*updated*/ new_content,
-                    /*rewrite_fault*/ rewrite_fault,
-                )
-                .await
-                .map(|()| TransactionEffects::change_only(change))
-                .map_err(|error| ApplyFailure::from_rewrite(error, display_path))
+                match route {
+                    TextRoute::Disk => rewrite_current(
+                        target,
+                        display_path,
+                        /*expected*/ old_content,
+                        /*updated*/ new_content,
+                        /*rewrite_fault*/ rewrite_fault,
+                    )
+                    .await
+                    .map(|()| TransactionEffects::change_only(change))
+                    .map_err(|error| ApplyFailure::from_rewrite(error, display_path)),
+                    route @ TextRoute::Host(_) => route
+                        .commit(target, display_path, old_content, new_content)
+                        .await
+                        .map(|saved| TransactionEffects::change_only(change).saved(saved))
+                        .map_err(|error| ApplyFailure::clean(commit_error(error, display_path))),
+                }
             }
         }
+    }
+}
+
+/// Creates a new host-served file through the host, after creating its
+/// missing parent directories on disk. A failed write is treated as not
+/// having created the file; ACP has no way to delete one.
+async fn create_through_host<'a>(
+    change: &'a FileChange,
+    route: &TextRoute,
+    target: &Path,
+    display_path: &str,
+    content: &str,
+) -> Result<TransactionEffects<'a>, ApplyFailure<'a>> {
+    let created_directories = create_missing_parents(target, display_path)
+        .await
+        .map_err(|error| ApplyFailure::from_create(error, change))?;
+    match route.write(target, display_path, content).await {
+        Ok(saved) => Ok(TransactionEffects::for_change(
+            change,
+            AtomicCreateEffects {
+                target: AtomicCreateTargetEffect::Installed,
+                created_directories,
+                residual_files: Vec::new(),
+            },
+        )
+        .saved(saved)),
+        Err(error) => Err(ApplyFailure {
+            error,
+            mutation: FailedMutation::Effects(TransactionEffects::cleanup_only(
+                AtomicCreateEffects {
+                    created_directories,
+                    ..AtomicCreateEffects::default()
+                },
+            )),
+        }),
+    }
+}
+
+fn commit_error(error: CommitError, display_path: &str) -> ToolError {
+    match error {
+        CommitError::PathChanged | CommitError::Changed { .. } => changed_error(display_path),
+        CommitError::Failed(error) => error,
     }
 }
 
@@ -399,18 +513,30 @@ async fn rollback_effects(effects: &[TransactionEffects<'_>]) -> RollbackReport 
 }
 
 async fn rollback_effect(effect: &TransactionEffects<'_>, report: &mut RollbackReport) {
+    let mut left_in_place = false;
     if let RollbackTarget::Change(change) = effect.target {
-        if let Err(error) = rollback_one(change).await {
+        if let Err(error) = rollback_one(change, effect.saved.as_deref()).await {
             report.errors.push(error.to_string());
             report
                 .unrecovered_paths
                 .extend(change.affected_display_paths().map(str::to_string));
+            left_in_place = true;
         }
     }
-    cleanup_created_entries(effect, report).await;
+    remove_residual_files(effect, report).await;
+    // A file rollback left in place, such as one the host added, keeps the
+    // directories created for it.
+    if !left_in_place {
+        remove_created_directories(effect, report).await;
+    }
 }
 
 async fn cleanup_created_entries(effect: &TransactionEffects<'_>, report: &mut RollbackReport) {
+    remove_residual_files(effect, report).await;
+    remove_created_directories(effect, report).await;
+}
+
+async fn remove_residual_files(effect: &TransactionEffects<'_>, report: &mut RollbackReport) {
     for path in effect.residual_files.iter().rev() {
         if let Err(error) = tokio::fs::remove_file(path).await {
             if error.kind() != std::io::ErrorKind::NotFound {
@@ -422,6 +548,9 @@ async fn cleanup_created_entries(effect: &TransactionEffects<'_>, report: &mut R
             }
         }
     }
+}
+
+async fn remove_created_directories(effect: &TransactionEffects<'_>, report: &mut RollbackReport) {
     for path in effect.created_directories.iter().rev() {
         if let Err(error) = tokio::fs::remove_dir(path).await {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -444,16 +573,37 @@ async fn cleanup_created_entries(effect: &TransactionEffects<'_>, report: &mut R
     }
 }
 
-pub(super) async fn rollback_one(change: &FileChange) -> Result<(), ToolError> {
+/// Undoes one applied change unless another writer changed it since.
+/// `saved` is the text the host holds after writing the change, when it went
+/// through the host; it is what the file must still hold. A file the host
+/// created cannot be removed through it, so it stays and is reported.
+pub(super) async fn rollback_one(
+    change: &FileChange,
+    saved: Option<&str>,
+) -> Result<(), ToolError> {
     match change {
+        FileChange::Add {
+            display_path,
+            route,
+            ..
+        } if route.is_host() => {
+            // ACP cannot remove a file, and a host such as Zed keeps serving
+            // a buffer whose file was deleted under it. Removing only the
+            // disk copy would leave a file the host holds but `apply_patch`
+            // can neither add nor update, so the added file stays, reported.
+            Err(ToolError::Message(format!(
+                "{display_path}: the host holds the added file, and it cannot be removed through the host; it was left in place"
+            )))
+        }
         FileChange::Add {
             target,
             display_path,
             new_content,
+            ..
         } => match read_live(target, display_path).await? {
             LiveText::Missing => Ok(()),
-            LiveText::Content(live) if live == *new_content => {
-                remove_current(target, display_path, new_content).await
+            LiveText::Content(live) if live == saved.unwrap_or(new_content) => {
+                remove_current(target, display_path, &live).await
             }
             LiveText::Content(_) => Err(concurrent_rollback_error(display_path)),
         },
@@ -480,18 +630,28 @@ pub(super) async fn rollback_one(change: &FileChange) -> Result<(), ToolError> {
             display_path,
             old_content,
             new_content,
-            permissions,
             move_from,
+            route,
         } => {
             if let Some(source) = move_from {
-                rollback_move(
-                    source,
-                    target,
-                    display_path,
-                    new_content,
-                    permissions.clone(),
-                )
-                .await
+                rollback_move(source, target, display_path, new_content).await
+            } else if let route @ TextRoute::Host(_) = route {
+                match route
+                    .commit(
+                        target,
+                        display_path,
+                        saved.unwrap_or(new_content),
+                        old_content,
+                    )
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(CommitError::Changed { live }) if live == *old_content => Ok(()),
+                    Err(CommitError::Failed(error)) => Err(error),
+                    Err(CommitError::PathChanged | CommitError::Changed { .. }) => {
+                        Err(concurrent_rollback_error(display_path))
+                    }
+                }
             } else {
                 match read_live(target, display_path).await? {
                     LiveText::Content(live) if live == *new_content => {
@@ -520,7 +680,6 @@ async fn rollback_move(
     target: &Path,
     target_display: &str,
     new_content: &str,
-    permissions: std::fs::Permissions,
 ) -> Result<(), ToolError> {
     let source_live = read_live(&source.path, &source.display_path).await?;
     let target_live = read_live(target, target_display).await?;
@@ -544,7 +703,7 @@ async fn rollback_move(
             &source.path,
             &source.display_path,
             &source.content,
-            Some(permissions),
+            Some(source.permissions.clone()),
         )
         .await?;
     }
