@@ -3,6 +3,14 @@
 //! Rho owns a private component codec for native exported tools. Other MCP
 //! producers may use the same `mcp__server__tool` shape without that codec, so
 //! callers must state which wire dialect they are parsing.
+//!
+//! Exported names are capped at the provider limit, and a capped name no longer
+//! encodes its identity. [`McpToolNames`] maps the names a session registered to
+//! their identities; consumers that present a tool resolve it there.
+
+use std::{collections::HashMap, sync::Arc};
+
+use crate::tools::tool_name::{cap_tool_name, is_capped_tool_name};
 
 /// The producer of an exported MCP tool name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,13 +28,51 @@ pub(crate) struct McpToolIdentity {
     pub(crate) tool: String,
 }
 
-/// Build Rho's unambiguous exported name for one MCP server tool.
+/// The exported names a session registered and the MCP tool each one names.
+///
+/// Cheap to clone. Built from the session's MCP inventory
+/// ([`super::McpSessionReport::tool_names`]); a name it does not hold, such as
+/// one in history from a server no longer configured, falls back to parsing.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct McpToolNames {
+    registered: Arc<HashMap<String, McpToolIdentity>>,
+}
+
+impl McpToolNames {
+    /// The MCP tool `name` calls: its registered identity, else what an
+    /// uncapped Rho name decodes to. `None` for non-MCP names and for capped
+    /// names this session did not register.
+    pub(crate) fn identify(&self, name: &str) -> Option<McpToolIdentity> {
+        match self.registered.get(name) {
+            Some(identity) => Some(identity.clone()),
+            None => parse_exported_name(name, ExportedNameDialect::Rho),
+        }
+    }
+}
+
+impl FromIterator<(String, McpToolIdentity)> for McpToolNames {
+    fn from_iter<I: IntoIterator<Item = (String, McpToolIdentity)>>(entries: I) -> Self {
+        Self {
+            registered: Arc::new(entries.into_iter().collect()),
+        }
+    }
+}
+
+/// Build Rho's exported name for one MCP server tool, capped at the provider
+/// limit. Uncapped names are unambiguous and decode with
+/// [`parse_exported_name`]; capped names must be resolved through
+/// [`McpToolNames`].
 pub(crate) fn namespaced_tool_name(server: &str, tool: &str) -> String {
-    format!("{}{}", exported_name_prefix(server), encode_component(tool))
+    cap_tool_name(format!(
+        "{}{}",
+        exported_name_prefix(server),
+        encode_component(tool)
+    ))
 }
 
 /// The `mcp__<server>__` prefix every exported tool of `server` shares, so the
 /// prompt can name it exactly instead of leaving the model to guess the codec.
+/// A capped name keeps only as much of it as fits.
 pub(crate) fn exported_name_prefix(server: &str) -> String {
     format!("mcp__{}__", encode_component(server))
 }
@@ -41,7 +87,8 @@ fn encode_component(value: &str) -> String {
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
     // `__` joins the components. A component containing it or beginning or ending
     // with `_` could merge with that separator. The leading rule also reserves the
-    // escape prefix for this codec.
+    // escape prefix for this codec, and keeps `___` followed by a hex digit free
+    // to mark a capped name.
     if already_safe && !value.contains("__") && !value.starts_with('_') && !value.ends_with('_') {
         return value.to_string();
     }
@@ -57,6 +104,8 @@ fn encode_component(value: &str) -> String {
 }
 
 /// Parse `mcp__<server>__<tool>` according to its producer's wire dialect.
+///
+/// A capped Rho name is refused rather than decoded into a truncated identity.
 pub(crate) fn parse_exported_name(
     name: &str,
     dialect: ExportedNameDialect,
@@ -66,9 +115,10 @@ pub(crate) fn parse_exported_name(
     if server.is_empty() || tool.is_empty() {
         return None;
     }
-    let component = |value: &str| match dialect {
-        ExportedNameDialect::Rho => decode_rho_component(value),
-        ExportedNameDialect::Conventional => value.to_string(),
+    let component = match dialect {
+        ExportedNameDialect::Rho if is_capped_tool_name(name) => return None,
+        ExportedNameDialect::Rho => decode_rho_component,
+        ExportedNameDialect::Conventional => str::to_string,
     };
     Some(McpToolIdentity {
         server: component(server),
@@ -88,6 +138,7 @@ pub(crate) fn parse_exported_name(
 /// `a__b`, as it is in the dialects that produce it. Only a unique match
 /// resolves. A registered name always matches itself, so it resolves to itself
 /// unless a sibling folds to the same key; callers then keep the exact name.
+/// Capped names do not decode, so only their exact spelling reaches them.
 pub(crate) fn resolve_foreign_spelling<'a>(
     requested: &str,
     registered: impl IntoIterator<Item = &'a str>,
@@ -130,88 +181,5 @@ fn decode_rho_component(component: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rho_codec_round_trips_unsafe_and_reserved_components() {
-        for (server, tool) in [
-            ("git-hub", "issues/list"),
-            ("devtools__validator", "lint"),
-            ("_rho_6162", "tool"),
-            ("a_", "tool"),
-            ("a", "_tool"),
-            ("_a", "lint"),
-            ("srv", "tool_"),
-            ("-t3-code-", "get-issue"),
-        ] {
-            let name = namespaced_tool_name(server, tool);
-            assert_eq!(
-                parse_exported_name(&name, ExportedNameDialect::Rho),
-                Some(McpToolIdentity {
-                    server: server.into(),
-                    tool: tool.into(),
-                })
-            );
-        }
-    }
-
-    #[test]
-    fn conventional_names_never_decode_rho_escape_shaped_components() {
-        assert_eq!(
-            parse_exported_name(
-                "mcp___rho_6162___rho_746f6f6c",
-                ExportedNameDialect::Conventional,
-            ),
-            Some(McpToolIdentity {
-                server: "_rho_6162".into(),
-                tool: "_rho_746f6f6c".into(),
-            })
-        );
-    }
-
-    // Covers: other harnesses' spellings and legacy hex names find the one
-    // registered tool they mean; spellings two tools share, including across
-    // the `__` separator, and non-MCP spellings resolve to nothing.
-    #[test]
-    fn foreign_spellings_resolve_only_to_a_unique_tool() {
-        let registered = [
-            namespaced_tool_name("t3-code", "task_status"),
-            namespaced_tool_name("acme/docs", "search"),
-            namespaced_tool_name("srv", "get-issue"),
-            namespaced_tool_name("srv", "get.issue"),
-            namespaced_tool_name("a", "b__c"),
-            namespaced_tool_name("a__b", "c"),
-            namespaced_tool_name("foo-", "tool"),
-            "read_file".to_string(),
-        ];
-        let resolve = |requested: &str| {
-            resolve_foreign_spelling(requested, registered.iter().map(String::as_str))
-        };
-        assert_eq!(
-            [
-                "mcp__t3_code__task_status",
-                "mcp___rho_74332d636f6465__task_status",
-                "mcp__acme_docs__search",
-                "mcp__foo___tool",
-                "mcp__srv__get_issue",
-                "mcp__srv__get-issue",
-                "mcp__a__b__c",
-                "mcp__t3_code__missing",
-                "read_file",
-            ]
-            .map(resolve),
-            [
-                Some("mcp__t3-code__task_status"),
-                Some("mcp__t3-code__task_status"),
-                Some(registered[1].as_str()),
-                Some("mcp__foo-__tool"),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ]
-        );
-    }
-}
+#[path = "exported_name_tests.rs"]
+mod tests;

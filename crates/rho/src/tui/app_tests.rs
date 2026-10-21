@@ -397,6 +397,7 @@ fn recovered_session_messages_become_transcript_entries() {
             }),
         ],
         std::path::Path::new(""),
+        Default::default(),
     );
 
     assert!(matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]"));
@@ -426,6 +427,7 @@ fn recovered_assistant_images_become_summary_cards() {
     let entries = transcript_entries_from_messages(
         &[Message::Assistant(vec![ContentBlock::Image(image.clone())])],
         std::path::Path::new(""),
+        Default::default(),
     );
     let Entry::Tool(tool) = &entries[0] else {
         panic!("expected generated image card");

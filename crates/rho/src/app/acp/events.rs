@@ -23,7 +23,7 @@ use crate::{
     app::interactive_presenter::call_header,
     display_transcript::{DisplayRow, DisplayTranscript},
     presentation::NotificationTone,
-    tools::mcp::exported_name::{parse_exported_name, ExportedNameDialect},
+    tools::mcp::exported_name::McpToolNames,
 };
 
 const PROVIDER_STREAM_RESET_NOTICE: &str = "[provider response discarded; retrying]";
@@ -51,6 +51,8 @@ pub(super) struct EventMapper {
     features: HostFeatures,
     /// Session working directory; titles show paths relative to it.
     cwd: PathBuf,
+    /// Identifies MCP calls, whose capped names cannot be decoded.
+    mcp_tools: McpToolNames,
     proposed: HashMap<String, rho_sdk::model::ToolCall>,
     announced: BTreeMap<String, CallState>,
     compaction: Option<CompactionCard>,
@@ -73,10 +75,11 @@ pub(super) enum RunEnding<'a> {
 }
 
 impl EventMapper {
-    pub(super) fn new(features: HostFeatures, cwd: PathBuf) -> Self {
+    pub(super) fn new(features: HostFeatures, cwd: PathBuf, mcp_tools: McpToolNames) -> Self {
         Self {
             features,
             cwd,
+            mcp_tools,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
             compaction: None,
@@ -116,7 +119,12 @@ impl EventMapper {
                 self.announced
                     .insert(call_id.as_str().to_owned(), CallState::Open);
                 Some(SessionUpdate::ToolCall(started_tool_call(
-                    call_id, name, metadata, proposed, &self.cwd,
+                    call_id,
+                    name,
+                    metadata,
+                    proposed,
+                    &self.cwd,
+                    &self.mcp_tools,
                 )))
             }
             RunEvent::ToolUpdated { call_id, progress } => self.tool_update(
@@ -251,6 +259,7 @@ impl EventMapper {
             Some(&call.arguments),
             &ToolMetadata::default(),
             &self.cwd,
+            &self.mcp_tools,
         );
         let tool = ToolCall::new(ToolCallId::new(id), title)
             .kind(ToolKind::Other)
@@ -269,8 +278,9 @@ impl EventMapper {
         session_id: &SessionId,
         messages: &[rho_sdk::model::Message],
         cwd: &Path,
+        mcp_tools: &McpToolNames,
     ) -> Vec<SessionNotification> {
-        replay::history(session_id, messages, cwd)
+        replay::history(session_id, messages, cwd, mcp_tools)
     }
 
     /// A live agent message outside any run, such as a notice at load.
@@ -336,8 +346,9 @@ fn started_tool_call(
     metadata: &ToolMetadata,
     proposed: Option<Value>,
     cwd: &Path,
+    mcp_tools: &McpToolNames,
 ) -> ToolCall {
-    let title = tool_title(name, proposed.as_ref(), metadata, cwd);
+    let title = tool_title(name, proposed.as_ref(), metadata, cwd, mcp_tools);
     let tool = ToolCall::new(ToolCallId::new(call_id.as_str()), title)
         .name(name.to_owned())
         .kind(tool_kind(metadata))
@@ -365,11 +376,12 @@ fn tool_title(
     arguments: Option<&Value>,
     metadata: &ToolMetadata,
     cwd: &Path,
+    mcp_tools: &McpToolNames,
 ) -> String {
     if let Some(command) = metadata.command_line_text().filter(|c| !c.is_empty()) {
         return command.to_owned();
     }
-    let title = match call_header(name, arguments, metadata, cwd) {
+    let title = match call_header(name, arguments, metadata, cwd, mcp_tools) {
         ToolHeader::Shell {
             command: Some(command),
             ..
@@ -383,7 +395,7 @@ fn tool_title(
         } if !primary.is_empty() => format!("{verb}({primary})"),
         ToolHeader::Call { verb, .. } => verb,
     };
-    match parse_exported_name(name, ExportedNameDialect::Rho) {
+    match mcp_tools.identify(name) {
         Some(identity) => format!("{}/{title}", identity.server),
         None => title,
     }

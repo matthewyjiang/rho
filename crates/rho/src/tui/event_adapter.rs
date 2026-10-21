@@ -136,9 +136,13 @@ pub(crate) struct SdkEventAdapter {
 }
 
 impl SdkEventAdapter {
-    pub(crate) fn new(cwd: std::path::PathBuf) -> Self {
+    /// `mcp_tools` identifies the session's MCP calls on their cards.
+    pub(crate) fn new(
+        cwd: std::path::PathBuf,
+        mcp_tools: crate::tools::mcp::exported_name::McpToolNames,
+    ) -> Self {
         Self {
-            presenter: Some(InteractiveToolPresenter::new(cwd)),
+            presenter: Some(InteractiveToolPresenter::new(cwd, mcp_tools)),
             compaction_open: false,
             bound_stream_call_ids: std::collections::BTreeMap::new(),
             attachment_preview_keys: std::collections::BTreeMap::new(),
@@ -147,8 +151,17 @@ impl SdkEventAdapter {
     }
 
     fn presenter(&mut self) -> &mut InteractiveToolPresenter {
-        self.presenter
-            .get_or_insert_with(|| InteractiveToolPresenter::new(std::path::PathBuf::new()))
+        self.presenter.get_or_insert_with(|| {
+            InteractiveToolPresenter::new(std::path::PathBuf::new(), Default::default())
+        })
+    }
+
+    /// Adopt MCP tools that connected after this adapter was built.
+    pub(crate) fn set_mcp_tools(
+        &mut self,
+        mcp_tools: crate::tools::mcp::exported_name::McpToolNames,
+    ) {
+        self.presenter().set_mcp_tools(mcp_tools);
     }
 
     fn close_compaction(&mut self, outcome: CompactionUiOutcome) -> Option<ViewEvent> {

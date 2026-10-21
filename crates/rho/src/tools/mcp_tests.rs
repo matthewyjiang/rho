@@ -559,7 +559,8 @@ open(sys.argv[1], "w").close()
             .map(|tool| tool.spec().name)
             .collect::<Vec<_>>(),
         vec![
-            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho_6563686f2f76616c7565",
+            // Escaped in full, this plugin server's name would be 73 characters.
+            "mcp___rho_646576746f6f6c732f76616c696461746f72___rho___33f40cc0",
             "mcp__devtools_validator___rho_6563686f2f76616c7565",
         ]
     );

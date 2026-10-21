@@ -37,7 +37,8 @@ fn notification_display_preserves_ownership() {
         panic!("expected display envelope")
     };
     let messages = [Message::user_text(encoded), display.clone()];
-    let entries = transcript_entries_from_messages(&messages, std::path::Path::new("."));
+    let entries =
+        transcript_entries_from_messages(&messages, std::path::Path::new("."), Default::default());
     let [Entry::User(user), Entry::Tool(tool)] = entries.as_slice() else {
         panic!("expected separate human input and incoming card");
     };
@@ -61,7 +62,8 @@ fn tool_image_supplement_preserves_tool_ownership() {
         }],
     )
     .unwrap();
-    let entries = transcript_entries_from_messages(&[message], std::path::Path::new("."));
+    let entries =
+        transcript_entries_from_messages(&[message], std::path::Path::new("."), Default::default());
     assert!(matches!(entries.as_slice(), [Entry::Tool(_)]));
     assert_eq!(tool_names(&entries), vec!["computer"]);
 }
@@ -147,7 +149,7 @@ fn transcript_pairs_tool_results_by_id() {
         },
     ];
     for case in cases {
-        let entries = transcript_entries_from_messages(&case.messages, cwd);
+        let entries = transcript_entries_from_messages(&case.messages, cwd, Default::default());
         assert_eq!(tool_names(&entries), case.expected_verbs, "{}", case.name);
     }
 }
@@ -191,7 +193,11 @@ fn transcript_restores_message_receipts() {
                 content,
             }),
         ];
-        let entries = transcript_entries_from_messages(&messages, std::path::Path::new("."));
+        let entries = transcript_entries_from_messages(
+            &messages,
+            std::path::Path::new("."),
+            Default::default(),
+        );
         let [Entry::Tool(tool)] = entries.as_slice() else {
             panic!("expected one historical tool entry");
         };

@@ -28,7 +28,7 @@ fn only_update(mapper: &mut EventMapper, event: RunEvent) -> SessionUpdate {
 
 /// A mapper that has already sent the host a `tool_call` for `call-1`.
 fn mapper_with_started_call() -> EventMapper {
-    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default());
     only_update(
         &mut mapper,
         RunEvent::ToolStarted {
@@ -52,7 +52,7 @@ fn text_of(block: &ContentBlock) -> &str {
 #[test]
 fn assistant_delta_maps_to_agent_message_chunk() {
     let update = only_update(
-        &mut EventMapper::new(HostFeatures::default(), PathBuf::new()),
+        &mut EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
         RunEvent::AssistantTextDelta { text: "hi".into() },
     );
     match update {
@@ -74,7 +74,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
         },
     ] {
         let update = only_update(
-            &mut EventMapper::new(HostFeatures::default(), PathBuf::new()),
+            &mut EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
             event,
         );
         match update {
@@ -88,7 +88,7 @@ fn reasoning_deltas_map_to_thought_chunks() {
 // Owner: acp event mapper
 #[test]
 fn proposed_started_finished_map_kind_and_status() {
-    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default());
     let call_id = ToolCallId::from_string("call-1").unwrap();
     let proposed = mapper.map_event(
         &session_id(),
@@ -217,7 +217,11 @@ fn started_call_titles_describe_the_call() {
         ),
     ];
     for (name, arguments, metadata, expected) in cases {
-        let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::from("/work"));
+        let mut mapper = EventMapper::new(
+            HostFeatures::default(),
+            PathBuf::from("/work"),
+            Default::default(),
+        );
         if let Some(arguments) = arguments {
             mapper.map_event(
                 &session_id(),
@@ -250,7 +254,7 @@ fn started_call_titles_describe_the_call() {
 #[test]
 fn provider_stream_reset_emits_discard_thought() {
     let update = only_update(
-        &mut EventMapper::new(HostFeatures::default(), PathBuf::new()),
+        &mut EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
         RunEvent::ProviderStreamReset {
             reason: ProviderStreamResetReason::InvalidResponse,
             detail: "retry".into(),
@@ -269,7 +273,7 @@ fn provider_stream_reset_emits_discard_thought() {
 // Owner: acp event mapper
 #[test]
 fn ignored_events_emit_nothing() {
-    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default());
     let ignored = [
         RunEvent::Started {
             run_id: RunId::from_string("run-1").unwrap(),
@@ -358,7 +362,7 @@ fn compaction_open_at_run_end_closes_with_the_ending() {
             Some("compaction ended without a result"),
         ),
     ] {
-        let mut mapper = EventMapper::new(compaction_host, PathBuf::new());
+        let mut mapper = EventMapper::new(compaction_host, PathBuf::new(), Default::default());
         let SessionUpdate::CompactionUpdate(opened) = only_update(
             &mut mapper,
             RunEvent::CompactionStarted {
@@ -521,6 +525,7 @@ fn replayed_display_rows_become_finished_tool_cards() {
         &session_id(),
         &[transcript.display_message()],
         Path::new(""),
+        &Default::default(),
     )
     .into_iter()
     .map(|notification| match notification.update {

@@ -384,7 +384,8 @@ impl App {
 
         let interrupt_requested = AtomicBool::new(false);
         let tool_call_active = AtomicBool::new(false);
-        let mut adapter = SdkEventAdapter::new(self.info.runtime.cwd.clone());
+        let mut adapter =
+            SdkEventAdapter::new(self.info.runtime.cwd.clone(), self.mcp_report.tool_names());
         let mut frame_scheduler = FrameScheduler::new(Instant::now());
         let mut pending_questionnaire: Option<(
             rho_sdk::ToolCallId,

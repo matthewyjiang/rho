@@ -75,7 +75,7 @@ fn attachment_stream_round_trips_view_events() {
 
 #[test]
 fn compaction_run_events_project_to_tool_attachment_blocks() {
-    let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"));
+    let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"), Default::default());
 
     let started = translate_run_event(
         &mut adapter,
@@ -122,7 +122,7 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
 
 #[test]
 fn open_compaction_failure_emits_tool_finish_then_failed() {
-    let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"));
+    let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"), Default::default());
     let _ = translate_run_event(
         &mut adapter,
         &rho_sdk::RunEvent::CompactionStarted {

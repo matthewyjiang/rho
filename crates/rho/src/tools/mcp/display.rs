@@ -1,14 +1,15 @@
 //! Human-readable identity and argument display for MCP tool cards.
 //!
-//! Exported MCP tool names are wire identifiers (`mcp__server__tool`). Cards
-//! show the parsed tool name as the verb, the server as a provenance fact, and
-//! a best-guess primary argument instead of a raw JSON blob. The caller selects
-//! whether Rho's private component encoding applies.
+//! Exported MCP tool names are wire identifiers (`mcp__server__tool`), and Rho
+//! caps long ones, so callers resolve the [`McpToolIdentity`] a name calls and
+//! hand it here. Cards show the remote tool name as the verb, the server as a
+//! provenance fact, and a best-guess primary argument instead of a raw JSON
+//! blob.
 
 use rho_tools::tool_card::{ToolFact, ToolHeader};
 use serde_json::Value;
 
-use super::exported_name::{parse_exported_name, ExportedNameDialect};
+use super::exported_name::McpToolIdentity;
 
 /// Header primary budget; matches the 80-char truncation web/fetch cards use.
 const MAX_PRIMARY_CHARS: usize = 80;
@@ -116,18 +117,13 @@ pub(crate) fn server_fact_text(server: &str) -> String {
     format!("mcp · {server}")
 }
 
-/// The shared MCP card grammar both producers render: parsed tool verb with
-/// a promoted primary argument, then a `mcp · server` provenance fact, then a
+/// The shared MCP card grammar both producers render: tool verb with a
+/// promoted primary argument, then a `mcp · server` provenance fact, then a
 /// one-line summary of the remaining arguments.
-///
-/// `None` when `name` is not an exported MCP name; callers keep their own
-/// generic fallback.
 pub(crate) fn mcp_header_and_facts(
-    name: &str,
+    identity: &McpToolIdentity,
     arguments: Option<&Value>,
-    dialect: ExportedNameDialect,
-) -> Option<(ToolHeader, Vec<ToolFact>)> {
-    let identity = parse_exported_name(name, dialect)?;
+) -> (ToolHeader, Vec<ToolFact>) {
     let primary = arguments.and_then(primary_argument);
     let header = ToolHeader::call(
         one_line(&identity.tool),
@@ -141,7 +137,7 @@ pub(crate) fn mcp_header_and_facts(
     {
         facts.push(ToolFact::Text { text });
     }
-    Some((header, facts))
+    (header, facts)
 }
 
 /// Flatten control characters so untrusted MCP keys and values cannot split a

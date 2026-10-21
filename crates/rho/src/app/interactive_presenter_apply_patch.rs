@@ -20,7 +20,7 @@ pub(super) fn apply_patch_card(
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
         return kind_card(
             status,
-            ToolKind::Edit(rho_tools::EditFormat::ApplyPatch),
+            &ToolKind::Edit(rho_tools::EditFormat::ApplyPatch),
             ToolHeader::call("apply_patch", None),
         );
     };

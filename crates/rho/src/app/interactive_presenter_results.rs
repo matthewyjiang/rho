@@ -14,6 +14,7 @@ use super::{
     display_path, draft_card, edit_paths, first_url, metadata_paths, quoted, search_terms,
     start_card, string_arg, truncate,
 };
+use crate::tools::mcp::exported_name::McpToolIdentity;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EmptyDiffState {
@@ -707,19 +708,13 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
     card
 }
 
-/// Running MCP card: decoded tool verb, `mcp · server` provenance, remaining args.
+/// Running MCP card: remote tool verb, `mcp · server` provenance, remaining args.
 pub(super) fn mcp_preview_card(
-    name: &str,
+    identity: &McpToolIdentity,
     arguments: Option<&serde_json::Value>,
     status: ToolStatus,
 ) -> ToolCard {
-    let Some((header, facts)) = crate::tools::mcp::display::mcp_header_and_facts(
-        name,
-        arguments,
-        crate::tools::mcp::exported_name::ExportedNameDialect::Rho,
-    ) else {
-        return draft_card(status, ToolFamily::Default, ToolHeader::call(name, None));
-    };
+    let (header, facts) = crate::tools::mcp::display::mcp_header_and_facts(identity, arguments);
     let mut card = draft_card(status, ToolFamily::Default, header);
     for fact in facts {
         card.push_fact(fact);
@@ -728,8 +723,13 @@ pub(super) fn mcp_preview_card(
 }
 
 /// Finished MCP card: same header/facts as the running card, then result or error.
-pub(super) fn mcp_result_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
-    let mut card = mcp_preview_card(&view.name, Some(&view.arguments), status);
+pub(super) fn mcp_result_card(
+    identity: &McpToolIdentity,
+    view: &ToolView,
+    content: &str,
+    status: ToolStatus,
+) -> ToolCard {
+    let mut card = mcp_preview_card(identity, Some(&view.arguments), status);
     if status == ToolStatus::Error {
         push_error_output(&mut card, content);
         return card;

@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
-use super::config::{McpConfig, McpServerConfig, McpTransport};
+use super::{
+    config::{McpConfig, McpServerConfig, McpTransport},
+    exported_name::{McpToolIdentity, McpToolNames},
+};
 
 /// Facts about a connected server that only exist after startup.
 ///
@@ -604,6 +607,23 @@ impl McpSessionReport {
             .collect::<Vec<_>>();
         servers.sort_by(|left, right| left.identity.cmp(&right.identity));
         Self { mode, servers }
+    }
+
+    /// Every exported name a connected server registered, mapped to the
+    /// server and remote tool it calls.
+    pub(crate) fn tool_names(&self) -> McpToolNames {
+        self.servers
+            .iter()
+            .flat_map(|server| {
+                server.tools().iter().map(|tool| {
+                    let identity = McpToolIdentity {
+                        server: server.identity.clone(),
+                        tool: tool.remote_name.clone(),
+                    };
+                    (tool.exported_name.clone(), identity)
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn find(&self, identity: &str) -> Option<&McpServerReport> {

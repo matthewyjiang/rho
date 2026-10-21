@@ -105,9 +105,10 @@ pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
 pub(super) fn transcript_entries_from_messages(
     messages: &[Message],
     cwd: &std::path::Path,
+    mcp_tools: crate::tools::mcp::exported_name::McpToolNames,
 ) -> Vec<Entry> {
     use rho_sdk::model::SemanticMessage;
-    let presenter = InteractiveToolPresenter::new(cwd.to_path_buf());
+    let presenter = InteractiveToolPresenter::new(cwd.to_path_buf(), mcp_tools);
     let mut entries = Vec::new();
     let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
@@ -212,7 +213,11 @@ fn push_generated_image_entries(entries: &mut Vec<Entry>, blocks: &[ContentBlock
 
 impl super::App {
     pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {
-        transcript_entries_from_messages(messages, &self.info.runtime.cwd)
+        transcript_entries_from_messages(
+            messages,
+            &self.info.runtime.cwd,
+            self.mcp_report.tool_names(),
+        )
     }
 
     pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {

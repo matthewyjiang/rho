@@ -118,15 +118,20 @@ fn argument_summary_joins_scalars_and_skips_primary() {
     );
 }
 
-// Covers: the shared grammar constructor both producers consume — decoded
-// verb + promoted primary in the header, provenance fact first, summary fact
-// second, and rejection of non-MCP names.
+fn identity(server: &str, tool: &str) -> McpToolIdentity {
+    McpToolIdentity {
+        server: server.into(),
+        tool: tool.into(),
+    }
+}
+
+// Covers: the shared grammar constructor both producers consume — tool verb +
+// promoted primary in the header, provenance fact first, summary fact second.
 // Owner: mcp display helper
 #[test]
 fn mcp_header_and_facts_assembles_shared_grammar() {
     let args = json!({"path": "crates", "max_results": 50});
-    let (header, facts) =
-        mcp_header_and_facts("mcp__olive__grep", Some(&args), ExportedNameDialect::Rho).unwrap();
+    let (header, facts) = mcp_header_and_facts(&identity("olive", "grep"), Some(&args));
     assert_eq!(header, ToolHeader::call("grep", Some("crates".into())));
     assert_eq!(
         facts,
@@ -141,19 +146,13 @@ fn mcp_header_and_facts_assembles_shared_grammar() {
     );
 
     // No arguments: header stays bare, provenance still present.
-    let (header, facts) =
-        mcp_header_and_facts("mcp__olive__grep", None, ExportedNameDialect::Rho).unwrap();
+    let (header, facts) = mcp_header_and_facts(&identity("olive", "grep"), None);
     assert_eq!(header, ToolHeader::call("grep", None));
     assert_eq!(
         facts,
         vec![ToolFact::Meta {
             text: "mcp · olive".into()
         }]
-    );
-
-    assert_eq!(
-        mcp_header_and_facts("bash", None, ExportedNameDialect::Rho),
-        None
     );
 }
 
@@ -195,12 +194,7 @@ fn display_text_flattens_control_characters() {
         Some("x injected ok · note a b c")
     );
 
-    let (header, facts) = mcp_header_and_facts(
-        "mcp__olive\rsrv__grep\ttool",
-        Some(&args),
-        ExportedNameDialect::Rho,
-    )
-    .unwrap();
+    let (header, facts) = mcp_header_and_facts(&identity("olive\rsrv", "grep\ttool"), Some(&args));
     assert_eq!(
         header,
         ToolHeader::call("grep tool", Some("crates/rho payload".into()))

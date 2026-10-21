@@ -29,7 +29,7 @@ impl SdkAttachmentWriter {
         writer.write_event(&AttachmentEvent::Prompt(prompt.to_string()))?;
         Ok(Self {
             writer,
-            adapter: SdkEventAdapter::new(cwd),
+            adapter: SdkEventAdapter::new(cwd, Default::default()),
         })
     }
 
