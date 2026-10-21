@@ -4,7 +4,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
-use super::{AcpServer, Workspace};
+use super::{read_the_extra_file, AcpServer, Workspace};
 
 /// Starts a server and completes `initialize`, returning its result.
 fn initialized(workspace: &Workspace) -> (AcpServer, Value) {
@@ -91,4 +91,39 @@ fn delete_converges_whatever_the_session_state() {
             "{target:?}"
         );
     }
+}
+
+// Covers: session/list must report each session's saved roots as
+// additionalDirectories, leaving out roots deleted since, because
+// session/load restores only the roots its request names: a host loading
+// from history sends back what it listed, and a gone root would fail the load.
+// Owner: ACP session/list, over the real stdio server
+#[test]
+fn listed_roots_round_trip_through_load() {
+    let workspace = Workspace::new();
+    let gone = workspace.home.path().canonicalize().unwrap().join("gone");
+    std::fs::create_dir_all(&gone).unwrap();
+    let (mut server, _) = initialized(&workspace);
+    let session_id = new_session(&mut server, &workspace, json!([workspace.extra, gone]));
+    server.prompt(&session_id, "read the shared notes");
+    drop(server);
+    std::fs::remove_dir(&gone).unwrap();
+
+    let (mut server, _) = initialized(&workspace);
+    let listed = server
+        .request("session/list", json!({"cwd": workspace.project}))
+        .0
+        .unwrap();
+    let roots = listed["sessions"][0]["additionalDirectories"].clone();
+    assert_eq!(
+        (&listed["sessions"][0]["sessionId"], &roots),
+        (&json!(session_id), &json!([workspace.extra]))
+    );
+    let (loaded, _) = server.request(
+        "session/load",
+        json!({"sessionId": session_id, "cwd": workspace.project, "mcpServers": [], "additionalDirectories": roots}),
+    );
+    loaded.unwrap();
+    let reply = server.prompt(&session_id, "read the shared notes");
+    assert!(read_the_extra_file(&reply), "{reply}");
 }

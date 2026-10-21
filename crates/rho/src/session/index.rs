@@ -33,7 +33,7 @@ pub(super) fn list_workspace_sessions(
     let workspace_key = workspace_key(cwd);
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message
+                title, first_user_message, last_user_message, added_dirs
          from sessions
          where workspace_key = ?1
          order by updated_at desc, created_at desc, id asc",
@@ -402,6 +402,7 @@ pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Resu
             title: None,
             first_user_message: None,
             last_user_message: None,
+            added_dirs: Vec::new(),
         },
         file_size,
         file_mtime,
@@ -540,6 +541,7 @@ fn migrate_index_with_hook(
             title text,
             first_user_message text,
             last_user_message text,
+            added_dirs text,
             file_size integer,
             file_mtime integer,
             node_count integer not null default 0,
@@ -552,6 +554,10 @@ fn migrate_index_with_hook(
         ensure_column(&transaction, "title text")?;
         ensure_column(&transaction, "first_user_message text")?;
     }
+    // Added without a version bump: older Rho validates only the columns it
+    // reads, so it keeps using an index that has this one. Rows without it,
+    // or with a stale one, re-summarize; see `StampedDirs`.
+    ensure_column(&transaction, "added_dirs text")?;
     ensure_column(&transaction, "node_count integer not null default 0")?;
     ensure_column(&transaction, "branch_count integer not null default 0")?;
     ensure_column(&transaction, "active_leaf_id text")?;
@@ -605,6 +611,7 @@ fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
         "title",
         "first_user_message",
         "last_user_message",
+        "added_dirs",
         "file_size",
         "file_mtime",
         "node_count",
@@ -661,6 +668,8 @@ struct IndexedFile {
     file_mtime: Option<i64>,
     message_count: i64,
     first_user_message: Option<String>,
+    /// The transcript stamp `added_dirs` was read at, if it was.
+    added_dirs_read_at: Option<FileStamp>,
 }
 
 impl IndexedFile {
@@ -669,6 +678,41 @@ impl IndexedFile {
             && self.file_size == file_size
             && self.file_mtime == file_mtime
             && (self.message_count == 0 || self.first_user_message.is_some())
+            && self.added_dirs_read_at == Some(FileStamp(file_size, file_mtime))
+    }
+}
+
+/// A transcript's `(file_size, file_mtime)`, as the index records it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FileStamp(Option<i64>, Option<i64>);
+
+/// The `added_dirs` column: a session's saved roots and the transcript stamp
+/// they were read at. Older Rho writes rows without touching this column, so
+/// a row is current only while these roots were read at the row's own stamp;
+/// otherwise the next sync re-summarizes it.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StampedDirs {
+    read_at: FileStamp,
+    dirs: Vec<PathBuf>,
+}
+
+impl StampedDirs {
+    fn of(record: &SessionIndexRecord) -> Self {
+        Self {
+            read_at: FileStamp(record.file_size, record.file_mtime),
+            dirs: record.summary.added_dirs.clone(),
+        }
+    }
+
+    fn encode(&self) -> String {
+        // `AddedDirs` only admits UTF-8 paths, so encoding cannot fail.
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    /// The column's value; `None` when unset or unreadable, which only
+    /// forces a re-summary.
+    fn decode(column: Option<String>) -> Option<Self> {
+        serde_json::from_str(&column?).ok()
     }
 }
 
@@ -680,7 +724,7 @@ fn indexed_files_for_scope(
         ReconcileScope::Workspace { workspace_key, .. } => {
             let mut statement = connection.prepare(
                 "select workspace_key, id, cwd, path, file_size, file_mtime,
-                        message_count, first_user_message
+                        message_count, first_user_message, added_dirs
                  from sessions where workspace_key = ?1",
             )?;
             let rows = statement.query_map(params![workspace_key], indexed_file_from_row)?;
@@ -689,7 +733,7 @@ fn indexed_files_for_scope(
         ReconcileScope::All => {
             let mut statement = connection.prepare(
                 "select workspace_key, id, cwd, path, file_size, file_mtime,
-                        message_count, first_user_message
+                        message_count, first_user_message, added_dirs
                  from sessions",
             )?;
             let rows = statement.query_map([], indexed_file_from_row)?;
@@ -708,6 +752,7 @@ fn indexed_file_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(IndexKey,
             file_mtime: row.get(5)?,
             message_count: row.get(6)?,
             first_user_message: row.get(7)?,
+            added_dirs_read_at: StampedDirs::decode(row.get(8)?).map(|dirs| dirs.read_at),
         },
     ))
 }
@@ -723,7 +768,8 @@ fn indexed_file_is_current(
 ) -> rusqlite::Result<bool> {
     let current = connection
         .query_row(
-            "select cwd, path, file_size, file_mtime, message_count, first_user_message
+            "select cwd, path, file_size, file_mtime, message_count, first_user_message,
+                    added_dirs
              from sessions where workspace_key = ?1 and id = ?2",
             params![workspace_key, id],
             |row| {
@@ -734,6 +780,7 @@ fn indexed_file_is_current(
                     file_mtime: row.get(3)?,
                     message_count: row.get(4)?,
                     first_user_message: row.get(5)?,
+                    added_dirs_read_at: StampedDirs::decode(row.get(6)?).map(|dirs| dirs.read_at),
                 })
             },
         )
@@ -762,13 +809,14 @@ fn upsert_record(
             title,
             first_user_message,
             last_user_message,
+            added_dirs,
             file_size,
             file_mtime,
             node_count,
             branch_count,
             active_leaf_id,
             effective_format_version
-         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -778,6 +826,7 @@ fn upsert_record(
             title = coalesce(sessions.title, excluded.title),
             first_user_message = excluded.first_user_message,
             last_user_message = excluded.last_user_message,
+            added_dirs = excluded.added_dirs,
             file_size = excluded.file_size,
             file_mtime = excluded.file_mtime,
             node_count = excluded.node_count,
@@ -795,6 +844,7 @@ fn upsert_record(
             record.summary.title.as_deref(),
             record.summary.first_user_message.as_deref(),
             record.summary.last_user_message.as_deref(),
+            StampedDirs::of(record).encode(),
             record.file_size,
             record.file_mtime,
             clamp_u64_to_i64(record.node_count),
@@ -907,6 +957,9 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
         title: row.get(6)?,
         first_user_message: row.get(7)?,
         last_user_message: row.get(8)?,
+        added_dirs: StampedDirs::decode(row.get(9)?)
+            .map(|stamped| stamped.dirs)
+            .unwrap_or_default(),
     })
 }
 

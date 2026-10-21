@@ -21,6 +21,7 @@ fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> Session
         title: Some(format!("title {id}")),
         first_user_message: None,
         last_user_message: None,
+        added_dirs: Vec::new(),
     }
 }
 

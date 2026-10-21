@@ -74,7 +74,7 @@ ACP sessions persist under `~/.rho/sessions` and appear in `rho sessions list` a
 
 Listing and deleting saved history do not start model discovery or require provider credentials, even after a session startup failure.
 
-- `session/list` returns saved sessions newest first: those of `cwd` when the request names one, else those of every workspace. It lists the same sessions `/resume` offers, so sessions with nothing saved yet are left out, and so are sessions whose workspace directory no longer exists, which `session/load` cannot open. Each entry has the session's `cwd`, its title (or, when untitled, its first message on one line), and `updatedAt`. Pages hold 100 sessions; pass `nextCursor` back as `cursor` for the next page. Every listed `sessionId` opens with `session/load`.
+- `session/list` returns saved sessions newest first: those of `cwd` when the request names one, else those of every workspace. It lists the same sessions `/resume` offers, so sessions with nothing saved yet are left out, and so are sessions whose workspace directory no longer exists, which `session/load` cannot open. Each entry has the session's `cwd`, its saved [workspace roots](#workspace-roots) as `additionalDirectories` (leaving out roots that no longer exist), its title (or, when untitled, its first message on one line), and `updatedAt`. Pages hold 100 sessions; pass `nextCursor` back as `cursor` for the next page. Every listed `sessionId` opens with `session/load`.
 - `session/delete` deletes a saved session the same way `rho sessions rm` does, including its delegated-agent runs. A session open on the same connection is closed first, as `session/close` would close it, since hosts such as Zed may delete a thread from history without closing it. Deleting is idempotent: an ID with nothing saved, whether never created, already deleted, or open with no prompt yet, succeeds once any open session is closed. It refuses a session another Rho process has open, one whose delegated runs are still running, and an ID saved in more than one workspace; such a refusal can come after the session was closed, and `session/load` reopens it.
 
 ### Load and replay
@@ -257,7 +257,7 @@ Hosts with several workspace roots, such as a Zed multi-root workspace, send the
 - As with `--add-dir`, a root inside `cwd` or inside another root adds nothing, since it is already in scope.
 - A `null` list counts as empty, but an entry that is not a string, such as `null`, fails the request with invalid params, following the ACP schema.
 
-The roots are saved with the session, so `rho -R` restores them. `session/load` does not: per ACP, the roots it sends are the session's complete list, and a load that sends none drops roots the session had before.
+The roots are saved with the session, so `rho -R` restores them, and `session/list` reports them as `additionalDirectories`. `session/load` does not restore them: per ACP, the roots a load sends are the session's complete list, and a load that sends none drops roots the session had before. A host opening a session from history keeps its roots by sending back the listed `additionalDirectories`.
 
 ## Background results
 

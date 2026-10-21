@@ -158,7 +158,16 @@ fn session_info(summary: SessionSummary) -> SessionInfo {
         .ok()
         .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
         .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Secs, /*use_z*/ true));
+    // `session/load` takes roots only from its request and refuses one that
+    // is gone, so a host that sends back what is listed must not get a
+    // deleted directory.
+    let additional_directories = summary
+        .added_dirs
+        .into_iter()
+        .filter(|dir| dir.is_dir())
+        .collect();
     SessionInfo::new(SessionId::new(summary.id), summary.cwd)
+        .additional_directories(additional_directories)
         .title(title)
         .updated_at(updated_at)
 }

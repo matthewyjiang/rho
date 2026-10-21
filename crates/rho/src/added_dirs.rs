@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use rho_sdk::{SessionSnapshot, Workspace, WorkspacePathError};
 
 /// Session snapshot metadata key holding the JSON array of added directories.
-const METADATA_KEY: &str = "rho.added_dirs";
+pub(crate) const METADATA_KEY: &str = "rho.added_dirs";
 
 /// Canonical directories outside the primary workspace, sorted and deduplicated.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -89,18 +89,8 @@ impl AddedDirs {
     }
 
     fn from_metadata(encoded: Option<&str>, workspace_root: &Path) -> RestoredDirs {
-        let Some(encoded) = encoded else {
-            return RestoredDirs::default();
-        };
-        let saved: Vec<PathBuf> = match serde_json::from_str(encoded) {
-            Ok(saved) => saved,
-            Err(error) => {
-                tracing::warn!(%error, "ignoring unreadable saved added directories");
-                return RestoredDirs::default();
-            }
-        };
         let mut restored = RestoredDirs::default();
-        for dir in saved {
+        for dir in saved_dirs(encoded) {
             match std::fs::canonicalize(&dir) {
                 Ok(canonical) if canonical.is_dir() => {
                     restored.dirs.insert(workspace_root, canonical);
@@ -120,6 +110,18 @@ impl AddedDirs {
         let encoded = serde_json::to_string(&self.0).unwrap_or_else(|_| "[]".into());
         snapshot.with_metadata(METADATA_KEY, encoded)
     }
+}
+
+/// The directories a [`METADATA_KEY`] value names, as saved: possibly gone
+/// since. Unreadable metadata names none.
+pub(crate) fn saved_dirs(encoded: Option<&str>) -> Vec<PathBuf> {
+    let Some(encoded) = encoded else {
+        return Vec::new();
+    };
+    serde_json::from_str(encoded).unwrap_or_else(|error| {
+        tracing::warn!(%error, "ignoring unreadable saved added directories");
+        Vec::new()
+    })
 }
 
 /// Resolves a user-supplied directory: `~` expands to `home`, relative paths

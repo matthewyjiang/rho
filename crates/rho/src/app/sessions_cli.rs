@@ -431,6 +431,7 @@ mod tests {
             title: Some("Fix login".into()),
             first_user_message: Some("please fix auth".into()),
             last_user_message: Some("retry".into()),
+            added_dirs: Vec::new(),
         };
         assert!(session_matches(&session, "aaaa"));
         assert!(session_matches(&session, "LOGIN"));
