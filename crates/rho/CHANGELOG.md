@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.29.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.28.0...rho-coding-agent-v2.29.0) (2026-10-21)
+
+
+### Features
+
+* **acp:** show grep and glob as searches, not file reads ([#1583](https://github.com/matthewyjiang/rho/issues/1583)) ([20b23ed](https://github.com/matthewyjiang/rho/commit/20b23ede2c94e11c45344611aa4a795c09fbba66))
+* **codemode:** rank tool search with weighted BM25 ([#1587](https://github.com/matthewyjiang/rho/issues/1587)) ([71561ec](https://github.com/matthewyjiang/rho/commit/71561ec09599cdae01312644122813d2799d4ff7))
+* **openapi:** expose read-only REST operations as hidden tools ([#1585](https://github.com/matthewyjiang/rho/issues/1585)) ([e6f7645](https://github.com/matthewyjiang/rho/commit/e6f76458aa94652ca63fe90d4b7ae873760381ca))
+* **tui:** add "Send for this session" so unchanged native-context warnings stop repeating ([#1586](https://github.com/matthewyjiang/rho/issues/1586)) ([eb083c1](https://github.com/matthewyjiang/rho/commit/eb083c191d1cc3680a0f3c565b25d0108f396aaa))
+
+
+### Bug Fixes
+
+* **login:** accept pasted API keys in the windows terminal login prompt ([#1590](https://github.com/matthewyjiang/rho/issues/1590)) ([5142424](https://github.com/matthewyjiang/rho/commit/5142424c2045abc78c12dd5378bbb85e9974d4fd)), closes [#1578](https://github.com/matthewyjiang/rho/issues/1578)
+* **mcp:** call MCP tools by the names T3 Code uses and keep hyphenated names readable ([#1588](https://github.com/matthewyjiang/rho/issues/1588)) ([ef2da50](https://github.com/matthewyjiang/rho/commit/ef2da5000177dbd7292a1ba41a63e740b0063bf1))
+* **mcp:** keep MCP tool names within the 64-character provider limit ([#1591](https://github.com/matthewyjiang/rho/issues/1591)) ([aadba0e](https://github.com/matthewyjiang/rho/commit/aadba0eeb017fefae51359f61ad3cdefd0a38713)), closes [#1570](https://github.com/matthewyjiang/rho/issues/1570)
+* **tui:** show mermaid skip-edge labels and stop painting invalid diagrams ([#1589](https://github.com/matthewyjiang/rho/issues/1589)) ([32e77f2](https://github.com/matthewyjiang/rho/commit/32e77f21cd953bae4cfa465ac31091d90759c0a7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.22.0 to 2.23.0
+
 ## [2.28.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.27.0...rho-coding-agent-v2.28.0) (2026-10-20)
 
 

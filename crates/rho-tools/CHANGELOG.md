@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.13.0...rho-agent-tools-v1.14.0) (2026-10-21)
+
+
+### Features
+
+* **acp:** show grep and glob as searches, not file reads ([#1583](https://github.com/matthewyjiang/rho/issues/1583)) ([20b23ed](https://github.com/matthewyjiang/rho/commit/20b23ede2c94e11c45344611aa4a795c09fbba66))
+
 ## [1.13.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.12.1...rho-agent-tools-v1.13.0) (2026-10-20)
 
 

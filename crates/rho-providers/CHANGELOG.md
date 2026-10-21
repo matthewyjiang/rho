@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.23.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.22.0...rho-providers-v2.23.0) (2026-10-21)
+
+
+### Features
+
+* **acp:** show grep and glob as searches, not file reads ([#1583](https://github.com/matthewyjiang/rho/issues/1583)) ([20b23ed](https://github.com/matthewyjiang/rho/commit/20b23ede2c94e11c45344611aa4a795c09fbba66))
+
 ## [2.22.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.21.0...rho-providers-v2.22.0) (2026-10-20)
 
 
