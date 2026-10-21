@@ -59,7 +59,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
             (r#"ing"}]}"#, Some(3)),
         ],
     ] {
-        let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."));
+        let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."), Default::default());
         for (fragment, changed_count) in fragments {
             let preview = presenter.preview(0, Some("todo".into()), fragment);
             let expected_update = changed_count.map(|count| {
@@ -95,7 +95,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
             rejected,
         ),
     ] {
-        let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."));
+        let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."), Default::default());
         let _ = presenter.proposed(call.clone());
         let (_, live) = presenter.finished(&ToolCallId::from_string("todo-1").unwrap(), completion);
         let replay = presenter.historical(&call, ok, content);
@@ -110,15 +110,15 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
 #[test]
 fn selected_edit_tool_names_share_the_edit_presentation_kind() {
     assert_eq!(
-        ToolKind::from_name("apply_patch"),
+        ToolKind::from_name("apply_patch", &McpToolNames::default()),
         ToolKind::Edit(rho_tools::EditFormat::ApplyPatch)
     );
     assert_eq!(
-        ToolKind::from_name("edit"),
+        ToolKind::from_name("edit", &McpToolNames::default()),
         ToolKind::Edit(rho_tools::EditFormat::Hashline)
     );
     assert_eq!(
-        ToolKind::from_name("str_replace"),
+        ToolKind::from_name("str_replace", &McpToolNames::default()),
         ToolKind::Edit(rho_tools::EditFormat::StrReplace)
     );
 }
@@ -127,7 +127,8 @@ fn selected_edit_tool_names_share_the_edit_presentation_kind() {
 // Owner: interactive presenter
 #[test]
 fn started_keeps_str_replace_kind_from_tool_name() {
-    let mut presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let mut presenter =
+        InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
     let call = ToolCall {
         id: "call-1".into(),
         name: "str_replace".into(),
@@ -354,7 +355,8 @@ fn generic_tool_summary_metadata_fills_the_header() {
 
     let header = || ToolHeader::call("desk", Some("click · x 4".into()));
     let metadata = ToolMetadata::new().command_summary("click · x 4");
-    let mut presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let mut presenter =
+        InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
     let start = |presenter: &mut InteractiveToolPresenter, id: &str| {
         presenter.proposed(ToolCall {
             id: id.into(),
@@ -413,7 +415,8 @@ fn failed_skill_load_keeps_reason_visible() {
     use pretty_assertions::assert_eq;
     use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
-    let presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let presenter =
+        InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
     let call = ToolCall {
         id: "call-skill".into(),
         name: "skill".into(),
@@ -467,50 +470,69 @@ fn shell_start_card_includes_timeout_fact() {
     assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: None }]);
 }
 
-// Covers: MCP start cards decode the tool verb and show server + remaining
-// args, not the raw exported name or JSON blob
+// Covers: MCP start cards show the remote tool verb, server, and remaining
+// args, not the raw exported name or JSON blob, including for a name capped
+// at the provider limit, which only the session's registered names identify.
 // Owner: interactive presenter
 #[test]
-fn mcp_proposed_and_started_cards_use_decoded_verb_and_argument_facts() {
+fn mcp_proposed_and_started_cards_use_remote_verb_and_argument_facts() {
+    use crate::tools::{mcp::exported_name::namespaced_tool_name, tool_name::is_capped_tool_name};
     use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
-    let mut presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
-    let call = ToolCall {
-        id: "call-mcp".into(),
-        name: "mcp__olive_salmon__increase_grep".into(),
-        arguments: serde_json::json!({
-            "path": "crates",
-            "output_mode": "files_with_matches",
-            "max_results": 50
-        }),
-    };
-    let expected = ToolCard::new(
-        ToolStatus::Running,
-        ToolFamily::Default,
-        ToolHeader::call("increase_grep", Some("crates".into())),
-    )
-    .with_facts(vec![
-        ToolFact::Meta {
-            text: "mcp · olive_salmon".into(),
-        },
-        ToolFact::Text {
-            text: "output_mode files_with_matches · max_results 50".into(),
-        },
-    ]);
+    let long_tool = "increase_grep_across_every_workspace_with_extended_context";
+    let capped = namespaced_tool_name("olive_salmon", long_tool);
+    assert!(is_capped_tool_name(&capped), "{capped}");
+    let mcp_tools = [(capped.clone(), mcp_identity("olive_salmon", long_tool))]
+        .into_iter()
+        .collect::<McpToolNames>();
+    for (name, tool) in [
+        ("mcp__olive_salmon__increase_grep", "increase_grep"),
+        (capped.as_str(), long_tool),
+    ] {
+        let mut presenter =
+            InteractiveToolPresenter::new(std::path::PathBuf::from("."), mcp_tools.clone());
+        let call = ToolCall {
+            id: "call-mcp".into(),
+            name: name.into(),
+            arguments: serde_json::json!({
+                "path": "crates",
+                "output_mode": "files_with_matches",
+                "max_results": 50
+            }),
+        };
+        let expected = ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::Default,
+            ToolHeader::call(tool, Some("crates".into())),
+        )
+        .with_facts(vec![
+            ToolFact::Meta {
+                text: "mcp · olive_salmon".into(),
+            },
+            ToolFact::Text {
+                text: "output_mode files_with_matches · max_results 50".into(),
+            },
+        ]);
 
-    let proposed = presenter.proposed(call);
-    assert_eq!(proposed.card.card, expected);
-    assert_eq!(
-        ToolKind::from_name("mcp__olive_salmon__increase_grep"),
-        ToolKind::Mcp
-    );
+        let proposed = presenter.proposed(call);
+        let started = presenter.started(
+            ToolCallId::from_string("call-mcp").unwrap(),
+            name.into(),
+            ToolMetadata::default(),
+        );
+        assert_eq!(
+            (proposed.card.card, started.card.card),
+            (expected.clone(), expected),
+            "{name}"
+        );
+    }
+}
 
-    let started = presenter.started(
-        ToolCallId::from_string("call-mcp").unwrap(),
-        "mcp__olive_salmon__increase_grep".into(),
-        ToolMetadata::default(),
-    );
-    assert_eq!(started.card.card, expected);
+fn mcp_identity(server: &str, tool: &str) -> McpToolIdentity {
+    McpToolIdentity {
+        server: server.into(),
+        tool: tool.into(),
+    }
 }
 
 // Covers: successful MCP results keep provenance/args and add a line count
@@ -522,7 +544,7 @@ fn mcp_finished_ok_card_counts_lines_and_keeps_body() {
 
     let dir = tempfile::TempDir::new().unwrap();
     let view = ToolView {
-        kind: ToolKind::Mcp,
+        kind: ToolKind::Mcp(mcp_identity("olive_salmon", "increase_grep")),
         name: "mcp__olive_salmon__increase_grep".into(),
         arguments: serde_json::json!({
             "path": "crates",
@@ -568,7 +590,7 @@ fn mcp_finished_error_card_keeps_server_fact_and_error_summary() {
 
     let dir = tempfile::TempDir::new().unwrap();
     let view = ToolView {
-        kind: ToolKind::Mcp,
+        kind: ToolKind::Mcp(mcp_identity("olive_salmon", "increase_grep")),
         name: "mcp__olive_salmon__increase_grep".into(),
         arguments: serde_json::json!({ "path": "crates" }),
         metadata: Default::default(),
@@ -607,13 +629,12 @@ fn mcp_escaped_exported_name_renders_decoded_server_and_tool() {
     let dir = tempfile::TempDir::new().unwrap();
     let name = "mcp___rho_6769742d687562___rho_6973737565732f6c697374";
     let view = ToolView {
-        kind: ToolKind::from_name(name),
+        kind: ToolKind::from_name(name, &McpToolNames::default()),
         name: name.into(),
         arguments: serde_json::json!({ "path": "crates" }),
         metadata: Default::default(),
     };
     let card = start_card(&view, dir.path());
-    assert_eq!(view.kind, ToolKind::Mcp);
     assert_eq!(
         card,
         ToolCard::new(

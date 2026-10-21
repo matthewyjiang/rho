@@ -163,14 +163,12 @@ impl StartedClaudeTool {
                     .unwrap_or_default();
                 ToolHeader::status_first(identity, detail)
             }
-            ClaudeTool::Mcp => match mcp_header_and_facts(
-                self.name(),
-                self.input.as_ref(),
-                ExportedNameDialect::Conventional,
-            ) {
-                Some((header, _)) => header,
-                None => ToolHeader::call(self.name(), self.primary(cwd)),
-            },
+            ClaudeTool::Mcp => {
+                match parse_exported_name(self.name(), ExportedNameDialect::Conventional) {
+                    Some(identity) => mcp_header_and_facts(&identity, self.input.as_ref()).0,
+                    None => ToolHeader::call(self.name(), self.primary(cwd)),
+                }
+            }
             _ => ToolHeader::call(self.name(), self.primary(cwd)),
         }
     }
@@ -341,10 +339,10 @@ fn build_card(
 }
 
 fn push_mcp_facts(card: &mut ToolCard, name: &str, input: Option<&Value>) {
-    let Some((_, facts)) = mcp_header_and_facts(name, input, ExportedNameDialect::Conventional)
-    else {
+    let Some(identity) = parse_exported_name(name, ExportedNameDialect::Conventional) else {
         return;
     };
+    let (_, facts) = mcp_header_and_facts(&identity, input);
     for fact in facts {
         card.push_fact(fact);
     }

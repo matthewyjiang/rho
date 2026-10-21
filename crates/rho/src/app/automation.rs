@@ -435,7 +435,7 @@ async fn run_session_with_output(
     prompt_text: String,
     startup: &Startup<'_>,
     shutdown: &mut ShutdownSignals,
-    reporter: Option<&mut RunReporter>,
+    mut reporter: Option<&mut RunReporter>,
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
     mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
@@ -525,6 +525,9 @@ async fn run_session_with_output(
     )?;
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
+    }
+    if let Some(reporter) = reporter.as_deref_mut() {
+        reporter.set_mcp_tools(built.tools.mcp_report().tool_names());
     }
     let _ = startup
         .herdr
@@ -694,7 +697,11 @@ impl RunReporter {
         let sink = crate::run_artifacts::RunArtifactSink::open(path, &identity, prompt, status_tx)?;
         Ok(Self {
             sink,
-            adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
+            // MCP tools connect with the session, after this reporter exists.
+            adapter: crate::tui::event_adapter::SdkEventAdapter::new(
+                cwd,
+                crate::tools::mcp::exported_name::McpToolNames::default(),
+            ),
             stream_output,
             steering_slot: None,
         })
@@ -719,10 +726,18 @@ impl RunReporter {
         )?;
         Ok(Self {
             sink,
-            adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
+            adapter: crate::tui::event_adapter::SdkEventAdapter::new(
+                cwd,
+                crate::tools::mcp::exported_name::McpToolNames::default(),
+            ),
             stream_output: false,
             steering_slot,
         })
+    }
+
+    /// Identify the session's MCP calls on progress cards once they connect.
+    fn set_mcp_tools(&mut self, mcp_tools: crate::tools::mcp::exported_name::McpToolNames) {
+        self.adapter.set_mcp_tools(mcp_tools);
     }
 
     pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {

@@ -16,6 +16,7 @@ use rho_sdk::{
 use rmcp::model::{Tool as RemoteTool, ToolAnnotations};
 
 use super::{config::McpTransport, exported_name::namespaced_tool_name, result::ResultExpectation};
+use crate::tools::tool_name::is_capped_tool_name;
 
 /// Everything one exported MCP tool derives from its current declaration.
 #[derive(Clone, Debug, PartialEq)]
@@ -54,16 +55,24 @@ impl McpToolDefinition {
         let title = annotations
             .and_then(|annotations| annotations.title.as_deref())
             .or(remote.title.as_deref());
+        let name = namespaced_tool_name(identity, remote_name);
+        // A capped name may have lost the remote name, which `tool_search`
+        // ranks first, so the description carries it instead.
+        let source = if is_capped_tool_name(&name) {
+            format!("MCP server `{identity}` tool `{remote_name}`")
+        } else {
+            format!("MCP server `{identity}`")
+        };
         let mut description = match title {
-            Some(title) => format!("MCP server `{identity}`, {title}: {description}"),
-            None => format!("MCP server `{identity}`: {description}"),
+            Some(title) => format!("{source}, {title}: {description}"),
+            None => format!("{source}: {description}"),
         };
         for hint in behavior_hints(annotations) {
             description.push_str(&format!("\nServer hint: {hint}."));
         }
         Ok(Self {
             spec: ToolSpec {
-                name: namespaced_tool_name(identity, remote_name),
+                name,
                 description,
                 input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
             },

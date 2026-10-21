@@ -1,10 +1,15 @@
 use pretty_assertions::assert_eq;
 
-use super::{cap_tool_name, sanitize_segment, HASH_SUFFIX_LEN, MAX_TOOL_NAME_LEN};
+use super::{
+    cap_tool_name, is_capped_tool_name, sanitize_segment, CAP_MARKER, HASH_SUFFIX_LEN,
+    MAX_TOOL_NAME_LEN,
+};
 
 /// Returns the readable prefix of a capped name after checking its suffix.
 fn capped_prefix(name: &str) -> String {
-    let (prefix, hash) = name.rsplit_once('-').expect("capped name has a suffix");
+    let (prefix, hash) = name
+        .rsplit_once(CAP_MARKER)
+        .expect("capped name has a suffix");
     assert_eq!(
         (
             hash.len(),
@@ -75,7 +80,7 @@ fn cap_tool_name_fits_the_provider_limit() {
     assert_eq!(cap_tool_name(long_a.0.clone()), long_a.1);
 
     // A cut landing on `_` must not leave an empty trailing segment.
-    let cut = MAX_TOOL_NAME_LEN - HASH_SUFFIX_LEN - 1;
+    let cut = MAX_TOOL_NAME_LEN - HASH_SUFFIX_LEN - CAP_MARKER.len();
     let at_separator = format!("{}__{}", "c".repeat(cut - 1), "d".repeat(20));
     assert_eq!(
         capped_prefix(&cap_tool_name(at_separator)),
@@ -87,5 +92,25 @@ fn cap_tool_name_fits_the_provider_limit() {
     assert_eq!(
         capped_prefix(&cap_tool_name(multibyte)),
         "e".repeat(cut - 1)
+    );
+}
+
+// Covers: the cap marker identifies capped names without mistaking a name
+// either producer emits uncapped, such as an OpenAPI hash segment or an MCP
+// `_rho_` escape after the `__` separator, for one.
+// Owner: shared generated tool-name sanitizer.
+#[test]
+fn is_capped_tool_name_recognizes_only_capped_names() {
+    let capped = cap_tool_name(format!("mcp__srv__{}", "a".repeat(MAX_TOOL_NAME_LEN)));
+    let names = [
+        capped.as_str(),
+        "openapi__src__1a2b3c4d",
+        "mcp__srv___rho_61626364",
+        "mcp___rho_6162___rho_63646566",
+        "mcp__t3-code__task_status",
+    ];
+    assert_eq!(
+        names.map(is_capped_tool_name),
+        [true, false, false, false, false]
     );
 }

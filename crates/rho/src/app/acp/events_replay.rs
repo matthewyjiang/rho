@@ -14,7 +14,7 @@ use rho_sdk::{
 use serde_json::Value;
 
 use super::{notify, text_chunk, tool_title, EventMapper, UNNAMED_TOOL_TITLE};
-use crate::display_transcript::DisplayTranscript;
+use crate::{display_transcript::DisplayTranscript, tools::mcp::exported_name::McpToolNames};
 
 /// Hosts with their own transcript use this marker to avoid duplicating it.
 const REPLAY_META_KEY: &str = "isReplay";
@@ -23,9 +23,11 @@ pub(super) fn history(
     session_id: &SessionId,
     messages: &[Message],
     cwd: &Path,
+    mcp_tools: &McpToolNames,
 ) -> Vec<SessionNotification> {
     let mut replay = Replay {
         cwd,
+        mcp_tools,
         tools: BTreeMap::new(),
     };
     let mut updates = Vec::new();
@@ -51,6 +53,8 @@ pub(super) fn history(
 struct Replay<'a> {
     /// Session working directory; titles show paths relative to it.
     cwd: &'a Path,
+    /// Identifies MCP calls, whose capped names cannot be decoded.
+    mcp_tools: &'a McpToolNames,
     /// Latest occurrence by stored/provider ID; ACP identities are session-unique.
     tools: BTreeMap<String, ToolCall>,
 }
@@ -160,6 +164,7 @@ impl Replay<'_> {
                         Some(&call.arguments),
                         &ToolMetadata::default(),
                         self.cwd,
+                        self.mcp_tools,
                     );
                     let tool = ToolCall::new(fresh_tool_call_id(), title)
                         .name(call.name.clone())

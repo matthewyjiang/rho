@@ -8,6 +8,8 @@ use rho_sdk::{
 
 use rho_tools::tool_card::ToolCard;
 
+use crate::tools::mcp::exported_name::{McpToolIdentity, McpToolNames};
+
 #[path = "interactive_presenter_tool_card.rs"]
 mod tool_card;
 pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax, ToolBodyWindow};
@@ -51,7 +53,7 @@ struct ToolView {
     metadata: ToolMetadata,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ToolKind {
     Advisor,
     Agent,
@@ -76,26 +78,19 @@ enum ToolKind {
     Codemode,
     ToolSearch,
     Workflow,
-    Mcp,
+    /// A tool on an MCP server. The identity comes from the session's
+    /// registered names, since a capped exported name cannot be decoded.
+    Mcp(McpToolIdentity),
     Other,
 }
 
 impl ToolKind {
-    fn from_name(name: &str) -> Self {
-        Self::from_name_and_args(name, None)
-    }
-
-    fn from_name_and_args(name: &str, _arguments: Option<&serde_json::Value>) -> Self {
+    fn from_name(name: &str, mcp_tools: &McpToolNames) -> Self {
         if let Some(format) = rho_tools::EditFormat::from_tool_name(name) {
             return Self::Edit(format);
         }
-        if crate::tools::mcp::exported_name::parse_exported_name(
-            name,
-            crate::tools::mcp::exported_name::ExportedNameDialect::Rho,
-        )
-        .is_some()
-        {
-            return Self::Mcp;
+        if let Some(identity) = mcp_tools.identify(name) {
+            return Self::Mcp(identity);
         }
         match name {
             "advisor" => Self::Advisor,
@@ -133,7 +128,7 @@ impl ToolKind {
     /// Codemode source uses its incremental decoder instead of this path.
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
-    fn preview_parse_stride(self, arguments_len: usize) -> usize {
+    fn preview_parse_stride(&self, arguments_len: usize) -> usize {
         if matches!(self, Self::Edit(_)) && arguments_len >= EDIT_STREAM_PREVIEW_LIMIT {
             // Grow with buffer size so total parse work stays linear for long
             // streams instead of rescanning on a fixed byte interval.
@@ -163,7 +158,7 @@ impl ToolKind {
             | Self::Workflow
             | Self::Codemode
             | Self::ToolSearch
-            | Self::Mcp
+            | Self::Mcp(_)
             | Self::Other => {
                 if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
                     0
@@ -206,17 +201,25 @@ struct StreamedPreview {
 
 pub(crate) struct InteractiveToolPresenter {
     cwd: PathBuf,
+    /// Identifies MCP calls, whose capped names cannot be decoded.
+    mcp_tools: McpToolNames,
     calls: BTreeMap<String, ToolView>,
     streamed: BTreeMap<usize, StreamedPreview>,
 }
 
 impl InteractiveToolPresenter {
-    pub(crate) fn new(cwd: PathBuf) -> Self {
+    pub(crate) fn new(cwd: PathBuf, mcp_tools: McpToolNames) -> Self {
         Self {
             cwd,
+            mcp_tools,
             calls: BTreeMap::new(),
             streamed: BTreeMap::new(),
         }
+    }
+
+    /// Adopt the session's MCP tools once they connect after construction.
+    pub(crate) fn set_mcp_tools(&mut self, mcp_tools: McpToolNames) {
+        self.mcp_tools = mcp_tools;
     }
 
     /// Discards streamed previews from the previous model step. Provider
@@ -254,7 +257,7 @@ impl InteractiveToolPresenter {
             return None;
         }
         let name = preview.name.as_deref()?;
-        if ToolKind::from_name(name) == ToolKind::Codemode {
+        if ToolKind::from_name(name, &self.mcp_tools) == ToolKind::Codemode {
             let changed = preview.script.update(&preview.arguments);
             if !changed && preview.last_card.is_some() {
                 return None;
@@ -278,11 +281,11 @@ impl InteractiveToolPresenter {
         if let Some(args) = parse_incomplete_json(&preview.arguments) {
             preview.last_args = Some(args);
         }
-        let kind = ToolKind::from_name_and_args(name, preview.last_args.as_ref());
+        let kind = ToolKind::from_name(name, &self.mcp_tools);
         // Keep the last successful parse so a mid-stream incomplete fragment
         // does not wipe a useful card back to a bare header.
         let card = streaming_preview_card(
-            kind,
+            &kind,
             name,
             preview.last_args.as_ref(),
             &self.cwd,
@@ -301,7 +304,7 @@ impl InteractiveToolPresenter {
         Some(ToolPresentation {
             card: PresentedToolCard {
                 card,
-                body_syntax: body_syntax(kind),
+                body_syntax: body_syntax(&kind),
             },
             image_asset: None,
         })
@@ -313,7 +316,7 @@ impl InteractiveToolPresenter {
         partial_arguments: &str,
     ) -> ToolPresentation {
         let name = name.unwrap_or("tool call");
-        let arguments = if ToolKind::from_name(name) == ToolKind::Codemode {
+        let arguments = if ToolKind::from_name(name, &self.mcp_tools) == ToolKind::Codemode {
             let mut script = script_stream::ScriptStream::default();
             script.update(partial_arguments);
             serde_json::json!({"script": script.lines().join("\n")})
@@ -322,7 +325,7 @@ impl InteractiveToolPresenter {
                 .unwrap_or_else(|| serde_json::Value::Object(Default::default()))
         };
         let view = ToolView {
-            kind: ToolKind::from_name_and_args(name, Some(&arguments)),
+            kind: ToolKind::from_name(name, &self.mcp_tools),
             name: name.into(),
             arguments,
             metadata: ToolMetadata::default(),
@@ -337,7 +340,7 @@ impl InteractiveToolPresenter {
         content: &str,
     ) -> FinishedToolPresentation {
         let view = ToolView {
-            kind: ToolKind::from_name_and_args(&call.name, Some(&call.arguments)),
+            kind: ToolKind::from_name(&call.name, &self.mcp_tools),
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
@@ -348,7 +351,7 @@ impl InteractiveToolPresenter {
     pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
         let id = call.id.clone();
         let view = ToolView {
-            kind: ToolKind::from_name_and_args(&call.name, Some(&call.arguments)),
+            kind: ToolKind::from_name(&call.name, &self.mcp_tools),
             name: call.name,
             arguments: call.arguments,
             metadata: ToolMetadata::default(),
@@ -365,15 +368,14 @@ impl InteractiveToolPresenter {
         metadata: ToolMetadata,
     ) -> ToolPresentation {
         let id = call_id.to_string();
+        // A call proposed earlier keeps its arguments; the start sets the rest.
         let view = self.calls.entry(id).or_insert_with(|| ToolView {
-            kind: ToolKind::from_name(&name),
-            name: name.clone(),
+            kind: ToolKind::Other,
+            name: String::new(),
             arguments: serde_json::Value::Object(Default::default()),
-            metadata: metadata.clone(),
+            metadata: ToolMetadata::default(),
         });
-        // Keep any format already classified from proposed args; recompute from
-        // name + stored args so a late start does not clobber str_replace etc.
-        view.kind = ToolKind::from_name_and_args(&name, Some(&view.arguments));
+        view.kind = ToolKind::from_name(&name, &self.mcp_tools);
         view.name = name;
         view.metadata = metadata;
         presentation(view, start_card(view, &self.cwd))

@@ -286,6 +286,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
     assert_eq!(
         crate::app::interactive_presenter::InteractiveToolPresenter::new(
             std::path::PathBuf::new(),
+            Default::default()
         )
         .interrupted(Some("edit"), partial_arguments)
         .card,

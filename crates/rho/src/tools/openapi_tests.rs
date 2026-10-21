@@ -76,7 +76,7 @@ fn sloppy_spec_skips_only_unusable_operations() {
             // A path item behind a `$ref`, with a text-only response.
             ("openapi__sloppy__aliased", Get, "/aliased"),
             (
-                "openapi__sloppy__aVeryLongOperationIdentifierThatKeepsG-dcffd71c",
+                "openapi__sloppy__aVeryLongOperationIdentifierThatKeep___dcffd71c",
                 Get,
                 "/long"
             ),

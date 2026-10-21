@@ -105,9 +105,10 @@ pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
 pub(super) fn transcript_entries_from_messages(
     messages: &[Message],
     cwd: &std::path::Path,
+    mcp_tools: crate::tools::mcp::exported_name::McpToolNames,
 ) -> Vec<Entry> {
     use rho_sdk::model::SemanticMessage;
-    let presenter = InteractiveToolPresenter::new(cwd.to_path_buf());
+    let presenter = InteractiveToolPresenter::new(cwd.to_path_buf(), mcp_tools);
     let mut entries = Vec::new();
     let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
@@ -210,12 +211,51 @@ fn push_generated_image_entries(entries: &mut Vec<Entry>, blocks: &[ContentBlock
     }
 }
 
+/// Recovered history rendered while deferred MCP servers were still
+/// connecting. A capped MCP name only resolves through the session's MCP
+/// inventory, so those cards are rebuilt once it lands.
+pub(super) struct ProvisionalHistory {
+    messages: Vec<Message>,
+    /// Entries the messages rendered to, which lead the transcript.
+    rendered: usize,
+}
+
+impl ProvisionalHistory {
+    pub(super) fn new(messages: Vec<Message>, rendered: usize) -> Self {
+        Self { messages, rendered }
+    }
+}
+
 impl super::App {
+    /// Rebuild provisional recovered history with the MCP inventory that just
+    /// connected, keeping any entries added after it.
+    pub(super) fn refresh_provisional_history(&mut self) {
+        let Some(provisional) = self.provisional_history.take() else {
+            return;
+        };
+        let mut entries = self.transcript_entries(&provisional.messages);
+        if entries.len() != provisional.rendered || self.history.len() < entries.len() {
+            return;
+        }
+        // Keep cards the user expanded or collapsed while servers connected.
+        for (entry, shown) in entries.iter_mut().zip(self.history.entries()) {
+            if let (Entry::Tool(entry), Entry::Tool(shown)) = (entry, shown) {
+                entry.expanded = shown.expanded;
+            }
+        }
+        self.history.replace_prefix(entries);
+    }
+
     pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {
-        transcript_entries_from_messages(messages, &self.info.runtime.cwd)
+        transcript_entries_from_messages(
+            messages,
+            &self.info.runtime.cwd,
+            self.mcp_report.tool_names(),
+        )
     }
 
     pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {
+        self.provisional_history = None;
         self.history.set_entries(entries);
         self.history.images_mut().clear();
     }

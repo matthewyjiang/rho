@@ -37,7 +37,8 @@ fn notification_display_preserves_ownership() {
         panic!("expected display envelope")
     };
     let messages = [Message::user_text(encoded), display.clone()];
-    let entries = transcript_entries_from_messages(&messages, std::path::Path::new("."));
+    let entries =
+        transcript_entries_from_messages(&messages, std::path::Path::new("."), Default::default());
     let [Entry::User(user), Entry::Tool(tool)] = entries.as_slice() else {
         panic!("expected separate human input and incoming card");
     };
@@ -61,7 +62,8 @@ fn tool_image_supplement_preserves_tool_ownership() {
         }],
     )
     .unwrap();
-    let entries = transcript_entries_from_messages(&[message], std::path::Path::new("."));
+    let entries =
+        transcript_entries_from_messages(&[message], std::path::Path::new("."), Default::default());
     assert!(matches!(entries.as_slice(), [Entry::Tool(_)]));
     assert_eq!(tool_names(&entries), vec!["computer"]);
 }
@@ -147,7 +149,7 @@ fn transcript_pairs_tool_results_by_id() {
         },
     ];
     for case in cases {
-        let entries = transcript_entries_from_messages(&case.messages, cwd);
+        let entries = transcript_entries_from_messages(&case.messages, cwd, Default::default());
         assert_eq!(tool_names(&entries), case.expected_verbs, "{}", case.name);
     }
 }
@@ -191,7 +193,11 @@ fn transcript_restores_message_receipts() {
                 content,
             }),
         ];
-        let entries = transcript_entries_from_messages(&messages, std::path::Path::new("."));
+        let entries = transcript_entries_from_messages(
+            &messages,
+            std::path::Path::new("."),
+            Default::default(),
+        );
         let [Entry::Tool(tool)] = entries.as_slice() else {
             panic!("expected one historical tool entry");
         };
@@ -213,4 +219,78 @@ fn transcript_restores_message_receipts() {
             }))
         );
     }
+}
+
+// Covers: TUI resume renders history before deferred MCP servers connect. Once
+// they do, a capped MCP card gains its remote tool and server, cards keep the
+// expansion the user chose meanwhile, and entries added since stay put.
+// Owner: tui recovered-history refresh
+#[test]
+fn recovered_history_rerenders_capped_mcp_cards_once_servers_connect() {
+    use crate::tools::mcp::{
+        config::McpServerConfig,
+        exported_name::namespaced_tool_name,
+        report::{ConnectedServerReport, McpLiveServerState},
+        McpServerReport, McpSessionReport, McpToolReport, McpTransportSummary,
+    };
+    let server = "chrome-devtools";
+    let remote = "performance_analyze_insight_for_extended_trace_sessions";
+    let capped = namespaced_tool_name(server, remote);
+    let config: McpServerConfig =
+        toml::from_str("transport = \"stdio\"\ncommand = \"fixture\"").unwrap();
+    let expanded = |entries: &[Entry]| -> Vec<bool> {
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Tool(tool) => Some(tool.expanded),
+                _ => None,
+            })
+            .collect()
+    };
+
+    let mut app = super::super::tests::test_app();
+    app.mcp_report = McpSessionReport {
+        servers: vec![McpServerReport::connecting(server, &config)],
+        ..Default::default()
+    };
+    app.info.session.recovered_messages = vec![
+        calls(&[("a", capped.as_str()), ("b", "agent")]),
+        result("a"),
+        result("b"),
+    ];
+    app.insert_recovered_history().unwrap();
+    assert_eq!(
+        tool_names(app.history.entries()),
+        vec![capped.as_str(), "agent"]
+    );
+    let Some(Entry::Tool(agent)) = app.history.entries_mut().iter_mut().next_back() else {
+        panic!("expected the agent card last");
+    };
+    agent.expanded = true;
+    app.history.push(Entry::Notice("later".into()));
+
+    app.mcp_report = McpSessionReport {
+        servers: vec![McpServerReport::connected(ConnectedServerReport {
+            identity: server.into(),
+            transport: McpTransportSummary::Stdio {
+                command: "fixture".into(),
+                args: Vec::new(),
+            },
+            tools: vec![McpToolReport {
+                remote_name: remote.into(),
+                exported_name: capped.clone(),
+            }],
+            instructions: None,
+            live: McpLiveServerState::default(),
+            filtered_out_count: 0,
+            collision_skipped_count: 0,
+        })],
+        ..Default::default()
+    };
+    app.refresh_provisional_history();
+
+    let entries = app.history.entries();
+    assert_eq!(tool_names(entries), vec![remote, "agent"]);
+    assert_eq!(expanded(entries), vec![false, true]);
+    assert!(matches!(entries.last(), Some(Entry::Notice(text)) if text == "later"));
 }

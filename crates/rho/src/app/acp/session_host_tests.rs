@@ -266,7 +266,8 @@ async fn permission_request_does_not_block_event_drain() {
     let pump = tokio::spawn(async move {
         let session_id = SessionId::new("session-1");
         let cancel = CancellationToken::new();
-        let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new());
+        let mut mapper =
+            EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default());
         let placeholders = AtomicU64::new(0);
         pump_sources(super::PumpSources {
             session_id: &session_id,

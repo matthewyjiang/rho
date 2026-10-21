@@ -49,7 +49,7 @@ fn finished_card_is_the_script() {
         arguments: json!({"script": "a = 1\nresult = a"}),
     };
     let script = ["a = 1", "result = a"];
-    let mut presenter = InteractiveToolPresenter::new(".".into());
+    let mut presenter = InteractiveToolPresenter::new(".".into(), Default::default());
     presenter.proposed(call.clone());
     let output = ToolOutput::text("printed line").with_structured_content(json!({"calls": 3}));
     let (ok, live) = presenter.finished(

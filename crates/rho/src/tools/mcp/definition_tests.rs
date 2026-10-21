@@ -73,6 +73,30 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
     assert_eq!(hint_lines(&destructive.spec.description), 1);
 }
 
+// Covers: every exported name fits the provider limit, and `tool_search`,
+// which matches query terms against names and descriptions, still finds a
+// tool by its remote name after capping cut that name short.
+// Owner: MCP tool declaration mapping.
+#[test]
+fn exported_tools_fit_the_limit_and_stay_findable_by_remote_name() {
+    let long_remote = "performance_analyze_insight_for_extended_trace_sessions";
+    for remote_name in ["search", long_remote] {
+        let spec =
+            McpToolDefinition::from_remote("chrome-devtools", remote_name, &remote(None, false))
+                .unwrap()
+                .spec;
+        assert_eq!(
+            (
+                spec.name.len() <= 64,
+                spec.name.contains(remote_name) || spec.description.contains(remote_name),
+            ),
+            (true, true),
+            "{} for {remote_name}",
+            spec.name
+        );
+    }
+}
+
 // Covers: a read-only hint must change only how a call is presented. It must
 // never change what the call is permitted to do, because the hint comes from a
 // server Rho does not control.
