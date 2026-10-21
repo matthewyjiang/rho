@@ -85,7 +85,8 @@ async fn exercise(
 }
 
 // Covers: ACP success must preserve session metadata and final text, and write
-// exactly one terminal event regardless of connection shutdown.
+// exactly one terminal event regardless of connection shutdown. `initialize`
+// sends clientInfo and no filesystem or terminal capabilities.
 // Owner: runtime artifact boundary (not renderer layout/chrome).
 #[tokio::test]
 async fn successful_turn_has_one_terminal_write() {
@@ -114,11 +115,21 @@ async fn successful_turn_has_one_terminal_write() {
         )
     );
     // The method sequence is asserted end to end by the Cursor PTY scenario;
-    // here only the exact session/new and prompt payloads.
+    // here only the exact payloads. Rho names itself and claims no client
+    // filesystem or terminal support.
     let record = record.lock().unwrap();
     assert_eq!(
-        record.requests[1..],
+        record.requests,
         [
+            json!({"method":"initialize", "params":{
+                "protocolVersion": 1,
+                "clientCapabilities": {
+                    "fs": {"readTextFile": false, "writeTextFile": false},
+                    "terminal": false,
+                    "auth": {"terminal": false},
+                },
+                "clientInfo": {"name": "rho", "title": "Rho", "version": env!("CARGO_PKG_VERSION")},
+            }}),
             json!({"method":"session/new", "params":{"cwd":dir.path(),"mcpServers":[]}}),
             json!({"method":"session/prompt", "params":{"sessionId":"scripted-session", "prompt":[{"type":"text", "text":"task"}]}}),
         ]
