@@ -215,6 +215,9 @@ impl SessionHost {
         };
         // After the plan handoff, so the implementation turn's failure counts.
         let result = self.finish_plan_exit(result, &startup.config, client).await;
+        // Every card update of the prompt went out, so terminals of finished
+        // calls can go.
+        self.client_io.release_finished_terminals().await;
         self.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
         self.wake_prompt_ended(
@@ -413,8 +416,14 @@ impl SessionHost {
 
     pub(super) async fn shutdown(self) {
         self.prompt_gate.cancel();
-        let Self { built, herdr, .. } = self;
+        let Self {
+            built,
+            herdr,
+            client_io,
+            ..
+        } = self;
         built.teardown().await;
+        client_io.release_all_terminals().await;
         let _ = herdr.release().await;
     }
 

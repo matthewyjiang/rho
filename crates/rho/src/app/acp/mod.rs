@@ -4,6 +4,7 @@ mod auth_login;
 mod auth_logout;
 mod client_files;
 mod client_io;
+mod client_terminals;
 mod commands;
 mod compaction_card;
 mod config_options;
@@ -42,6 +43,7 @@ use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporte
 
 use super::agent_binding::BoundAgent;
 use agent::RhoAcpAgent;
+use client_terminals::{TerminalRequest, TerminalResponse};
 pub(super) use host_features::HostFeatures;
 
 /// The ACP client Rho integrates with, chosen at launch rather than inferred
@@ -82,8 +84,8 @@ pub(super) struct AcpStartup {
     pub(super) host_features: HostFeatures,
     /// `logout`s so far, which mark sessions' credentials stale.
     pub(super) logouts: auth_logout::Logouts,
-    /// The connection `initialize` arrived on, for host-served files. `None`
-    /// when the host skipped `initialize`.
+    /// The connection `initialize` arrived on, for host-served files and
+    /// terminals. `None` when the host skipped `initialize`.
     pub(super) client: Option<Arc<dyn AcpClientPort>>,
 }
 
@@ -189,6 +191,15 @@ pub(super) trait AcpClientPort: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<WriteTextFileResponse, AcpError>> + Send + '_>> {
         Box::pin(async { Err(AcpError::method_not_found()) })
     }
+
+    /// One `terminal/*` request. Sent only to hosts that advertised
+    /// `terminal`; see `client_terminals`.
+    fn terminal(
+        &self,
+        _request: TerminalRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<TerminalResponse, AcpError>> + Send + '_>> {
+        Box::pin(async { Err(AcpError::method_not_found()) })
+    }
 }
 
 /// ACP connection adapter. Session hosts talk to this instead of the crate
@@ -246,6 +257,13 @@ impl AcpClientPort for ConnectionPort {
         request: WriteTextFileRequest,
     ) -> Pin<Box<dyn Future<Output = Result<WriteTextFileResponse, AcpError>> + Send + '_>> {
         Box::pin(async move { self.cx.send_request(request).block_task().await })
+    }
+
+    fn terminal(
+        &self,
+        request: TerminalRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<TerminalResponse, AcpError>> + Send + '_>> {
+        Box::pin(async move { client_terminals::send(&self.cx, request).await })
     }
 }
 

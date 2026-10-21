@@ -50,6 +50,7 @@ struct MetadataExtras {
     file_changes: Vec<ToolFileChange>,
     presentation_notices: Vec<String>,
     command_line: Option<String>,
+    host_terminal: Option<String>,
 }
 
 impl ToolMetadata {
@@ -105,6 +106,14 @@ impl ToolMetadata {
         self
     }
 
+    /// The id of a host-owned terminal that shows this call's live output,
+    /// for tools that run commands in a terminal the host provides. Hosts that
+    /// know the id show that terminal instead of the call's text progress.
+    pub fn host_terminal(mut self, terminal_id: impl Into<String>) -> Self {
+        self.extras_mut().host_terminal = Some(terminal_id.into());
+        self
+    }
+
     /// Adds a host-facing notice that is not included in model-visible output.
     pub fn presentation_notice(mut self, notice: impl Into<String>) -> Self {
         self.extras_mut().presentation_notices.push(notice.into());
@@ -125,6 +134,10 @@ impl ToolMetadata {
 
     pub fn command_line_text(&self) -> Option<&str> {
         self.extras.as_ref()?.command_line.as_deref()
+    }
+
+    pub fn host_terminal_id(&self) -> Option<&str> {
+        self.extras.as_ref()?.host_terminal.as_deref()
     }
 
     pub fn urls(&self) -> &[String] {

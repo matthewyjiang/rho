@@ -450,20 +450,31 @@ fn finished_result(
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_else(|| "signal".into());
-    truncate(
-        format_shell_output(
-            &String::from_utf8_lossy(stdout),
-            &String::from_utf8_lossy(stderr),
-            ShellFooter::Finished {
-                elapsed,
-                exit: (!status.success()).then_some(exit_code.as_str()),
-            },
-        ),
+    finished_content(
+        (!status.success()).then_some(exit_code.as_str()),
+        &String::from_utf8_lossy(stdout),
+        &String::from_utf8_lossy(stderr),
+        elapsed,
         max_output_bytes,
     )
 }
 
-fn timeout_error(
+/// The model-facing text of a finished command. `exit` is the exit code or
+/// signal of a command that did not succeed.
+pub(crate) fn finished_content(
+    exit: Option<&str>,
+    stdout: &str,
+    stderr: &str,
+    elapsed: Duration,
+    max_output_bytes: usize,
+) -> String {
+    truncate(
+        format_shell_output(stdout, stderr, ShellFooter::Finished { elapsed, exit }),
+        max_output_bytes,
+    )
+}
+
+pub(crate) fn timeout_error(
     stdout: &[u8],
     stderr: &[u8],
     timeout: Duration,

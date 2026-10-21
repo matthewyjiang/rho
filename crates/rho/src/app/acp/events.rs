@@ -5,8 +5,8 @@ use std::{
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, Diff, MessageId, Notice, NoticeSeverity, SessionId,
-    SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallId,
-    ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    SessionNotification, SessionUpdate, StopReason, Terminal, ToolCall, ToolCallContent,
+    ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use rho_sdk::{
     tool::{ToolMetadata, ToolOutput},
@@ -61,6 +61,9 @@ pub(super) struct EventMapper {
     mcp_tools: McpToolNames,
     proposed: HashMap<String, rho_sdk::model::ToolCall>,
     announced: BTreeMap<String, CallState>,
+    /// Host terminals calls run in, by call id. Every later update of such a
+    /// call shows its terminal, since ACP content replaces the card's.
+    terminals: HashMap<String, String>,
     compaction: Option<CompactionCard>,
     /// The message the latest chunk belongs to, while later chunks of its
     /// kind still continue it.
@@ -103,6 +106,7 @@ impl EventMapper {
             mcp_tools,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
+            terminals: HashMap::new(),
             compaction: None,
             message: None,
         }
@@ -151,15 +155,36 @@ impl EventMapper {
                     &self.mcp_tools,
                 )))
             }
-            RunEvent::ToolUpdated { call_id, progress } => self.tool_update(
-                call_id,
-                CallState::Open,
-                ToolCallStatus::InProgress,
-                vec![ToolCallContent::from(progress.text())],
-                /*locations*/ None,
-            ),
+            RunEvent::ToolUpdated { call_id, progress } => {
+                if let Some(terminal) = progress.presentation().host_terminal_id() {
+                    self.terminals
+                        .insert(call_id.as_str().to_owned(), terminal.to_owned());
+                }
+                let content = match self.terminals.get(call_id.as_str()) {
+                    Some(terminal) => vec![terminal_content(terminal)],
+                    None => vec![ToolCallContent::from(progress.text())],
+                };
+                self.tool_update(
+                    call_id,
+                    CallState::Open,
+                    ToolCallStatus::InProgress,
+                    content,
+                    /*locations*/ None,
+                )
+            }
             RunEvent::ToolFinished { call_id, result } => {
-                let (status, content) = finished_content(result);
+                // Progress names the terminal as soon as it exists; the
+                // output's metadata covers a call whose progress was dropped.
+                let terminal = self.terminals.remove(call_id.as_str()).or_else(|| {
+                    result
+                        .output()
+                        .and_then(|output| output.presentation().host_terminal_id())
+                        .map(str::to_owned)
+                });
+                let (status, content) = match terminal {
+                    Some(terminal) => terminal_finished_content(result, &terminal),
+                    None => finished_content(result),
+                };
                 let locations = result
                     .output()
                     .and_then(|output| tools::finished_locations(output, &self.cwd));
@@ -511,6 +536,30 @@ fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallCon
         // ToolCompletion is non_exhaustive; unknown results cannot be shown as success.
         _ => (ToolCallStatus::Failed, Vec::new()),
     }
+}
+
+/// A finished call that ran in a host terminal: the terminal shows its
+/// output, so the card keeps the terminal and adds only the headline of an
+/// error, such as a timeout; the rest of the error repeats the output.
+fn terminal_finished_content(
+    result: &ToolCompletion,
+    terminal: &str,
+) -> (ToolCallStatus, Vec<ToolCallContent>) {
+    let status = if result.is_failure() {
+        ToolCallStatus::Failed
+    } else {
+        ToolCallStatus::Completed
+    };
+    let mut content = vec![terminal_content(terminal)];
+    if let ToolCompletion::Failure(failure) = result {
+        let headline = failure.message().lines().next().unwrap_or_default();
+        content.push(ToolCallContent::from(headline));
+    }
+    (status, content)
+}
+
+fn terminal_content(terminal: &str) -> ToolCallContent {
+    ToolCallContent::Terminal(Terminal::new(terminal.to_owned()))
 }
 
 fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {

@@ -62,10 +62,12 @@ pub(super) fn sdk_bundle(
         // RTK stays disabled here. Authorization and execution must use the same
         // immutable process description.
         tools.push(rho_tools::shell_tool(
-            rho_tools::ShellToolOptions::new()
-                .max_output_bytes(max_output_bytes)
-                .environment(process_environment)
-                .mutation_observer(mutation_observer),
+            host_io.shell_options(
+                rho_tools::ShellToolOptions::new()
+                    .max_output_bytes(max_output_bytes)
+                    .environment(process_environment)
+                    .mutation_observer(mutation_observer),
+            ),
         ));
     }
     super::sdk_registry::StaticToolBundle::new(tools)

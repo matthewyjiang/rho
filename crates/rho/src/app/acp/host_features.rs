@@ -11,8 +11,9 @@
 //! are agent messages, on/off options are two-value selects, Rho offers no
 //! questionnaire tool and declines MCP elicitation, and OAuth sign-in runs in
 //! a terminal. A host advertising both `clientCapabilities.fs.readTextFile`
-//! and `.writeTextFile` serves file text through `fs/*` requests; others keep
-//! Rho reading and writing files on disk.
+//! and `.writeTextFile` serves file text through `fs/*` requests, and one
+//! advertising `clientCapabilities.terminal` runs shell commands through
+//! `terminal/*`; others keep Rho on disk and local processes.
 
 use std::sync::{Arc, OnceLock};
 
@@ -37,6 +38,8 @@ pub(in crate::app) struct HostFeatures {
     /// `fs/read_text_file` and `fs/write_text_file`. Rho needs both: writing
     /// without reading would overwrite unsaved edits it never saw.
     pub(super) files: bool,
+    /// `terminal/*`: the host runs shell commands in terminals it shows.
+    pub(super) terminals: bool,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -96,6 +99,7 @@ impl HostFeatures {
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
             files: capabilities.fs.read_text_file && capabilities.fs.write_text_file,
+            terminals: capabilities.terminal,
         }
     }
 }

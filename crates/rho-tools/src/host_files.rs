@@ -12,21 +12,16 @@
 
 use std::{
     collections::HashMap,
-    fmt,
-    future::Future,
     path::{Path, PathBuf},
-    pin::Pin,
     sync::{Arc, Weak},
 };
 
 use crate::{
     document::MAX_DOCUMENT_INPUT_BYTES,
     file_mutation::{lock_for_rewrite, locked_path_identity_matches, rewrite_locked_file},
+    host::HostFuture,
     tool::ToolError,
 };
-
-/// Future returned by host operations, such as [`HostTextFiles`] reads.
-pub type HostFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, HostError>> + Send + 'a>>;
 
 /// UTF-8 text files served by the embedding host, such as an editor.
 ///
@@ -46,24 +41,6 @@ pub trait HostTextFiles: Send + Sync {
     /// formatting it; Rho reads the file back afterwards.
     fn write_text<'a>(&'a self, path: &'a Path, text: &'a str) -> HostFuture<'a, ()>;
 }
-
-/// Why a host operation failed, in the host's words.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostError(String);
-
-impl HostError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl fmt::Display for HostError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for HostError {}
 
 /// Where one path's text lives. Owned, so a multi-file commit can outlive
 /// the tool call that started it.
@@ -304,7 +281,8 @@ pub(crate) mod test_support {
 
     use tokio::sync::{watch, Notify};
 
-    use super::{HostError, HostFuture, HostTextFiles};
+    use super::HostTextFiles;
+    use crate::host::{HostError, HostFuture};
 
     /// Serves every path under `root` from memory and records each write.
     /// Like an editor that formats on save, it stores `format(text)` for a
