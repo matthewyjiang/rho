@@ -539,3 +539,74 @@ fn replayed_display_rows_become_finished_tool_cards() {
         ]
     );
 }
+
+// Covers: live chunks carry a message ID that continues across chunks of one
+// kind and changes at each boundary: thought to text, a tool call between
+// texts, a new model step, and the stream-reset notice and the retry after
+// it. Updates that send nothing, such as usage, do not split a message.
+// Owner: acp event mapper
+#[test]
+fn chunks_share_a_message_id_until_a_boundary() {
+    let text = |text: &str| RunEvent::AssistantTextDelta { text: text.into() };
+    let step = |step| RunEvent::StepStarted {
+        step,
+        estimated_context_tokens: 0,
+    };
+    let events = [
+        RunEvent::ReasoningDelta {
+            text: "plan".into(),
+        },
+        RunEvent::ReasoningSummaryDelta {
+            text: " more".into(),
+        },
+        text("look"),
+        text(" now"),
+        RunEvent::ToolStarted {
+            call_id: ToolCallId::from_string("call-1").unwrap(),
+            name: "read_file".into(),
+            metadata: ToolMetadata::new(),
+        },
+        text("found"),
+        step(2),
+        text("again"),
+        RunEvent::UsageUpdated {
+            usage: rho_sdk::model::ModelUsage::default(),
+        },
+        text(" still"),
+        RunEvent::ProviderStreamReset {
+            reason: ProviderStreamResetReason::InvalidResponse,
+            detail: "retry".into(),
+        },
+        text("retried"),
+    ];
+    let mut mapper = EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default());
+    let mut labels = std::collections::HashMap::new();
+    let chunks = events
+        .iter()
+        .flat_map(|event| mapper.map_event(&session_id(), event))
+        .filter_map(|notification| match notification.update {
+            SessionUpdate::AgentMessageChunk(chunk) | SessionUpdate::AgentThoughtChunk(chunk) => {
+                let id = chunk.message_id.expect("live chunk has a message ID");
+                let next = labels.len();
+                let label = *labels.entry(id).or_insert(next);
+                Some((text_of(&chunk.content).to_owned(), label))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        chunks,
+        [
+            ("plan", 0),
+            (" more", 0),
+            ("look", 1),
+            (" now", 1),
+            ("found", 2),
+            ("again", 3),
+            (" still", 3),
+            (PROVIDER_STREAM_RESET_NOTICE, 4),
+            ("retried", 5),
+        ]
+        .map(|(text, label)| (text.to_owned(), label))
+    );
+}

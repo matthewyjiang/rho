@@ -1,6 +1,7 @@
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ContentBlock, ContentChunk, ImageContent, MessageId, SessionId, SessionNotification,
+    SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields,
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::model::{self, AbortedAssistant, AssistantMessage, Message, ToolResult};
@@ -16,16 +17,22 @@ fn call_block(id: &str) -> model::ContentBlock {
     })
 }
 
-fn replay(messages: &[Message]) -> Vec<SessionNotification> {
-    let mut notifications = history(
+fn raw_replay(messages: &[Message]) -> Vec<SessionNotification> {
+    history(
         &SessionId::new("s1"),
         messages,
         std::path::Path::new(""),
         &Default::default(),
-    );
-    // Canonicalize fresh ACP identities by announcement order, retaining
-    // pairing and rejecting duplicate announcements or updates to unknown IDs.
+    )
+}
+
+/// Replay with ACP identities canonicalized by first appearance: tool calls
+/// as `0`, `1`, ... and messages as `m0`, `m1`, ... Pairing is retained, and
+/// duplicate announcements or updates to unknown calls are rejected.
+fn replay(messages: &[Message]) -> Vec<SessionNotification> {
+    let mut notifications = raw_replay(messages);
     let mut ids = std::collections::HashMap::new();
+    let mut message_ids = std::collections::HashMap::new();
     for notification in &mut notifications {
         let id = match &mut notification.update {
             SessionUpdate::ToolCall(call) => {
@@ -34,11 +41,26 @@ fn replay(messages: &[Message]) -> Vec<SessionNotification> {
                 &mut call.tool_call_id
             }
             SessionUpdate::ToolCallUpdate(update) => &mut update.tool_call_id,
+            SessionUpdate::UserMessageChunk(chunk)
+            | SessionUpdate::AgentMessageChunk(chunk)
+            | SessionUpdate::AgentThoughtChunk(chunk) => {
+                let id = chunk
+                    .message_id
+                    .take()
+                    .expect("replayed chunk has a message ID");
+                let next = format!("m{}", message_ids.len());
+                chunk.message_id = Some(message_ids.entry(id).or_insert(next).clone().into());
+                continue;
+            }
             _ => continue,
         };
         *id = ToolCallId::new(ids.get(id).expect("previously announced call").clone());
     }
     notifications
+}
+
+fn chunk(text: &str, message_id: &'static str) -> ContentChunk {
+    ContentChunk::new(ContentBlock::from(text)).message_id(MessageId::from(message_id))
 }
 
 fn expected(updates: Vec<SessionUpdate>) -> Vec<SessionNotification> {
@@ -99,11 +121,9 @@ fn replay_pairs_out_of_order_results_and_accumulates_images() {
         assert_eq!(
             replay(&messages),
             expected(vec![
-                SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::from(
-                    "read images"
-                ))),
+                SessionUpdate::UserMessageChunk(chunk("read images", "m0")),
                 SessionUpdate::ToolCall(tool("0")),
-                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from("between"))),
+                SessionUpdate::AgentMessageChunk(chunk("between", "m1")),
                 SessionUpdate::ToolCall(tool("1")),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                     ToolCallId::new("1"),
@@ -234,4 +254,54 @@ fn replay_closes_superseded_occurrences_without_retargeting_their_images() {
             )),
         ])
     );
+}
+
+// Covers: replayed chunks carry message IDs that split where live ones do
+// (text after a tool call, a reasoning summary), give equal text saved twice
+// two IDs, and come out the same when the same history replays again.
+// Owner: ACP replay mapping; the stdio test covers reloading a saved session.
+#[test]
+fn replay_message_ids_split_at_boundaries_and_repeat_across_replays() {
+    let assistant = AssistantMessage {
+        reasoning_summary: Some("why".into()),
+        ..AssistantMessage::from_content(vec![
+            model::ContentBlock::Text("before".into()),
+            call_block("a"),
+            model::ContentBlock::Text("after".into()),
+            model::ContentBlock::Text(" more".into()),
+        ])
+    };
+    let messages = vec![
+        Message::user_text("continue"),
+        Message::assistant(assistant),
+        Message::ToolResult(ToolResult {
+            id: "a".into(),
+            ok: true,
+            content: String::new(),
+        }),
+        Message::user_text("continue"),
+    ];
+    let chunks = |notifications: Vec<SessionNotification>| {
+        notifications
+            .into_iter()
+            .filter_map(|notification| match notification.update {
+                SessionUpdate::UserMessageChunk(chunk)
+                | SessionUpdate::AgentMessageChunk(chunk)
+                | SessionUpdate::AgentThoughtChunk(chunk) => Some(chunk),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        chunks(replay(&messages)),
+        vec![
+            chunk("continue", "m0"),
+            chunk("before", "m1"),
+            chunk("after", "m2"),
+            chunk(" more", "m2"),
+            chunk("why", "m3"),
+            chunk("continue", "m4"),
+        ]
+    );
+    assert_eq!(chunks(raw_replay(&messages)), chunks(raw_replay(&messages)));
 }

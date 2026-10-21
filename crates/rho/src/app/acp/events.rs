@@ -4,9 +4,9 @@ use std::{
 };
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, Diff, Notice, NoticeSeverity, SessionId, SessionNotification,
-    SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    ContentBlock, ContentChunk, Diff, MessageId, Notice, NoticeSeverity, SessionId,
+    SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallId,
+    ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use rho_sdk::{
     tool::{OperationKind, ToolMetadata, ToolOutput},
@@ -47,6 +47,10 @@ mod replay;
 ///
 /// Hosts that advertise compaction see each compaction the run performs as
 /// a card; one still open when the run ends is closed the same way.
+///
+/// Message and thought chunks carry a `messageId`. Consecutive chunks of one
+/// kind share it; a chunk of the other kind, a new model step, or any update
+/// this mapper sends in between, such as a tool call, starts a new message.
 pub(super) struct EventMapper {
     features: HostFeatures,
     /// Session working directory; titles show paths relative to it.
@@ -56,6 +60,21 @@ pub(super) struct EventMapper {
     proposed: HashMap<String, rho_sdk::model::ToolCall>,
     announced: BTreeMap<String, CallState>,
     compaction: Option<CompactionCard>,
+    /// The message the latest chunk belongs to, while later chunks of its
+    /// kind still continue it.
+    message: Option<OpenMessage>,
+}
+
+/// Which ACP message stream a chunk belongs to.
+#[derive(Clone, Copy, PartialEq)]
+enum ChunkKind {
+    Message,
+    Thought,
+}
+
+struct OpenMessage {
+    kind: ChunkKind,
+    id: MessageId,
 }
 
 /// Whether the host may still be waiting for a call's final status.
@@ -83,6 +102,7 @@ impl EventMapper {
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
             compaction: None,
+            message: None,
         }
     }
 
@@ -95,11 +115,13 @@ impl EventMapper {
         event: &rho_sdk::RunEvent,
     ) -> Vec<SessionNotification> {
         let update = match event {
-            RunEvent::AssistantTextDelta { text } => {
-                Some(SessionUpdate::AgentMessageChunk(text_chunk(text)))
-            }
+            RunEvent::AssistantTextDelta { text } => Some(self.chunk(ChunkKind::Message, text)),
             RunEvent::ReasoningDelta { text } | RunEvent::ReasoningSummaryDelta { text } => {
-                Some(SessionUpdate::AgentThoughtChunk(text_chunk(text)))
+                Some(self.chunk(ChunkKind::Thought, text))
+            }
+            RunEvent::StepStarted { .. } => {
+                self.message = None;
+                None
             }
             RunEvent::ToolProposed { call } => {
                 if !call.id.is_empty() {
@@ -139,8 +161,12 @@ impl EventMapper {
             }
             RunEvent::ProviderStreamReset { .. } => {
                 self.proposed.clear();
+                // The notice is a message of its own, and the retried
+                // response starts another.
+                self.message = None;
                 Some(SessionUpdate::AgentThoughtChunk(text_chunk(
                     PROVIDER_STREAM_RESET_NOTICE,
+                    fresh_message_id(),
                 )))
             }
             RunEvent::CompactionStarted { .. } if self.features.compaction => {
@@ -164,7 +190,6 @@ impl EventMapper {
                 return self.close_unfinished(session_id, RunEnding::WithoutResult);
             }
             RunEvent::Started { .. }
-            | RunEvent::StepStarted { .. }
             | RunEvent::ToolCallUpdated { .. }
             | RunEvent::UsageUpdated { .. }
             | RunEvent::ProviderContextUpdated { .. }
@@ -183,10 +208,39 @@ impl EventMapper {
             // RunEvent is non_exhaustive; unknown future variants have no ACP update.
             _ => None,
         };
+        if update.as_ref().is_some_and(|update| {
+            !matches!(
+                update,
+                SessionUpdate::AgentMessageChunk(_) | SessionUpdate::AgentThoughtChunk(_)
+            )
+        }) {
+            self.message = None;
+        }
         update
             .map(|update| notify(session_id, update))
             .into_iter()
             .collect()
+    }
+
+    /// A chunk of the open message of `kind`, or of a new message when the
+    /// previous update was anything else.
+    fn chunk(&mut self, kind: ChunkKind, text: &str) -> SessionUpdate {
+        let id = match &self.message {
+            Some(open) if open.kind == kind => open.id.clone(),
+            _ => {
+                let id = fresh_message_id();
+                self.message = Some(OpenMessage {
+                    kind,
+                    id: id.clone(),
+                });
+                id
+            }
+        };
+        let chunk = text_chunk(text, id);
+        match kind {
+            ChunkKind::Message => SessionUpdate::AgentMessageChunk(chunk),
+            ChunkKind::Thought => SessionUpdate::AgentThoughtChunk(chunk),
+        }
     }
 
     /// Final updates for the compaction and calls the host saw start but
@@ -199,6 +253,7 @@ impl EventMapper {
         ending: RunEnding<'_>,
     ) -> Vec<SessionNotification> {
         self.proposed.clear();
+        self.message = None;
         let compaction = self.compaction.take().map(|card| {
             let update = match ending {
                 RunEnding::Cancelled => card.cancelled(),
@@ -285,10 +340,12 @@ impl EventMapper {
 
     /// A live agent message outside any run, such as a notice at load.
     pub(super) fn agent_notice(session_id: &SessionId, text: &str) -> SessionNotification {
-        notify(
-            session_id,
-            SessionUpdate::AgentMessageChunk(text_chunk(text)),
-        )
+        notify(session_id, Self::agent_message(text))
+    }
+
+    /// A whole agent message sent as one chunk, outside any run.
+    pub(super) fn agent_message(text: impl Into<String>) -> SessionUpdate {
+        SessionUpdate::AgentMessageChunk(text_chunk(text, fresh_message_id()))
     }
 
     /// Information for the user that is not part of the conversation: an ACP
@@ -336,8 +393,14 @@ fn notify(session_id: &SessionId, update: SessionUpdate) -> SessionNotification 
     SessionNotification::new(session_id.clone(), update)
 }
 
-fn text_chunk(text: impl Into<String>) -> ContentChunk {
-    ContentChunk::new(ContentBlock::from(text.into()))
+/// A text chunk of the message `id`; every chunk Rho sends names its message.
+fn text_chunk(text: impl Into<String>, id: MessageId) -> ContentChunk {
+    ContentChunk::new(ContentBlock::from(text.into())).message_id(id)
+}
+
+/// A live message's ID. Replayed messages derive theirs from saved history.
+fn fresh_message_id() -> MessageId {
+    MessageId::new(format!("rho-msg-{}", uuid::Uuid::new_v4()))
 }
 
 fn started_tool_call(
