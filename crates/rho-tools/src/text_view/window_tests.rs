@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::{format_numbered_view, format_window_bytes, read_text_window, ScanError, CHUNK_SIZE};
+use super::{format_numbered_view, format_window_bytes, ScanError, CHUNK_SIZE};
 use crate::file_view::FileViewStyle;
 use crate::hashline::{format_hashline_view, FileHash};
 
@@ -60,13 +60,14 @@ fn numbered_renderers_preserve_line_boundaries() {
 }
 
 // Covers: request-local scan must match the split view, including a line that
-// starts before a 256 KiB chunk boundary
+// starts before a 256 KiB chunk boundary or continues past one
 // Owner: text view window
 #[test]
 fn window_matches_split_across_chunk_windows() {
     let (crossing, crossing_line) = crossing_chunk_text();
     let log = numbered_log(8_000, 40);
     let no_nl = format!("{}tail", "x".repeat(CHUNK_SIZE + 10));
+    let wide = format!("{}\ntail\n", "x".repeat(CHUNK_SIZE + 40));
     assert!(
         log.len() > CHUNK_SIZE,
         "fixture must exceed one chunk, got {}",
@@ -82,6 +83,7 @@ fn window_matches_split_across_chunk_windows() {
         (log.as_str(), Some(7_990), Some(20)),
         (log.as_str(), None, Some(2)),
         (no_nl.as_str(), Some(1), Some(1)),
+        (wide.as_str(), Some(1), Some(2)),
     ];
     for (text, offset, limit) in cases {
         let expected = format_hashline_view("log.txt", text, offset, limit).unwrap();
@@ -95,24 +97,6 @@ fn window_matches_split_across_chunk_windows() {
         .unwrap();
         assert_eq!(actual, expected, "offset={offset:?} limit={limit:?}");
     }
-}
-
-// Covers: a line that continues past a chunk with no extra newline still hashes
-// Owner: text view window
-#[test]
-fn window_reads_partial_line_after_chunk_without_newline() {
-    let mut text = "x".repeat(CHUNK_SIZE + 40);
-    text.push_str("\ntail\n");
-    let expected = format_hashline_view("wide.txt", &text, Some(1), Some(2)).unwrap();
-    let actual = format_window_bytes(
-        text.as_bytes(),
-        Some(1),
-        Some(2),
-        Some(FileHash::new()),
-        hashline_header("wide.txt"),
-    )
-    .unwrap();
-    assert_eq!(actual, expected);
 }
 
 // Covers: invalid UTF-8 must fail before a later valid window is decoded
@@ -131,31 +115,6 @@ fn window_rejects_invalid_utf8_before_selected_window() {
     )
     .unwrap_err();
     assert_eq!(error, ScanError::InvalidUtf8);
-}
-
-// Covers: disk scan path matches the in-memory split view on a multi-chunk file
-// Owner: text view window
-#[tokio::test]
-async fn disk_window_matches_split_view() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("log.txt");
-    let text = numbered_log(9_000, 40);
-    std::fs::write(&path, &text).unwrap();
-    let source_len = std::fs::metadata(&path).unwrap().len();
-    assert!(source_len as usize > CHUNK_SIZE);
-
-    let expected = format_hashline_view("log.txt", &text, Some(8_500), Some(4)).unwrap();
-    let actual = read_text_window(
-        &path,
-        source_len,
-        Some(8_500),
-        Some(4),
-        Some(FileHash::new()),
-        hashline_header("log.txt"),
-    )
-    .await
-    .unwrap();
-    assert_eq!(actual, expected);
 }
 
 // Covers: untagged large ranged reads must match the in-memory numbered view

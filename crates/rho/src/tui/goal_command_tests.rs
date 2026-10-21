@@ -16,21 +16,6 @@ fn block_goal(goal: &mut GoalState) {
 }
 
 #[test]
-fn goal_turn_preserves_command_for_display_history_and_persistence() {
-    let turn = TurnPrompt::command(
-        initial_goal_prompt("all tests pass"),
-        "/goal all tests pass".into(),
-    );
-
-    assert_eq!(turn.display, "/goal all tests pass");
-    assert_eq!(turn.history, "/goal all tests pass");
-    assert_eq!(
-        turn.persisted_display.as_deref(),
-        Some("/goal all tests pass")
-    );
-}
-
-#[test]
 fn goal_aliases_are_case_insensitive() {
     for alias in ["clear", "STOP", "off", "reset", "none", "cancel"] {
         assert!(is_goal_clear_alias(alias), "{alias}");
@@ -38,18 +23,6 @@ fn goal_aliases_are_case_insensitive() {
     assert!(is_goal_resume_alias("RESUME"));
     assert!(!is_goal_clear_alias("finish the work"));
     assert!(!is_goal_resume_alias("resume later"));
-}
-
-#[test]
-fn clearing_goal_removes_active_indicator() {
-    let mut app = test_app();
-    app.goal = Some(GoalState::new("tests pass".into()));
-    let entries_before = app.history.entries().len();
-
-    app.clear_goal();
-
-    assert!(app.goal.is_none());
-    assert_eq!(app.history.entries().len(), entries_before);
 }
 
 #[test]

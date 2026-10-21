@@ -382,36 +382,31 @@ mod tests {
         );
     }
 
+    // Covers: paths shown to the model use forward slashes on Windows
+    // Owner: path display
     #[cfg(windows)]
     #[test]
-    fn prompt_data_normalizes_windows_separators_before_json_encode() {
+    fn prompt_encoders_normalize_windows_separators() {
         assert_eq!(prompt_data(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn prompt_attr_normalizes_windows_separators_before_entity_encode() {
         assert_eq!(prompt_attr(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
     }
 
+    // Covers: home resolution falls back to the Windows profile variables when
+    // HOME is unset
+    // Owner: path resolution
     #[cfg(windows)]
     #[test]
-    fn falls_back_to_userprofile_on_windows() {
-        assert_eq!(
-            home_dir_from_env(|name| env(&[("USERPROFILE", r"C:\Users\rho")], name)),
-            Some(PathBuf::from(r"C:\Users\rho"))
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn falls_back_to_homedrive_and_homepath_on_windows() {
-        assert_eq!(
-            home_dir_from_env(|name| {
-                env(&[("HOMEDRIVE", "C:"), ("HOMEPATH", r"\Users\rho")], name)
-            }),
-            Some(PathBuf::from(r"C:\Users\rho"))
-        );
+    fn falls_back_to_windows_profile_variables() {
+        for vars in [
+            &[("USERPROFILE", r"C:\Users\rho")][..],
+            &[("HOMEDRIVE", "C:"), ("HOMEPATH", r"\Users\rho")][..],
+        ] {
+            assert_eq!(
+                home_dir_from_env(|name| env(vars, name)),
+                Some(PathBuf::from(r"C:\Users\rho")),
+                "{vars:?}"
+            );
+        }
     }
 
     #[cfg(not(windows))]

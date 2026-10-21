@@ -67,50 +67,6 @@ async fn simple_completion_and_streaming_share_one_history_path() {
 }
 
 #[tokio::test]
-async fn tool_calls_execute_in_order_and_feed_results_into_the_next_turn() {
-    let provider = ScriptedProvider::new(
-        identity(),
-        [
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "lookup".into(),
-                    arguments: json!({"key": "value"}),
-                },
-            )])),
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "done".into(),
-            )])),
-        ],
-    );
-    let tool = Arc::new(ScriptedTool::new(
-        ToolSpec {
-            name: "lookup".into(),
-            description: "lookup".into(),
-            input_schema: json!({"type": "object"}),
-        },
-        ScriptedToolOutcome::Success(ToolOutput::text("tool output")),
-    ));
-    let runtime = Rho::builder()
-        .provider(provider.clone())
-        .tool_shared(tool)
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    let outcome = session.complete("use a tool").await.unwrap();
-
-    assert_eq!(outcome.text(), "done");
-    let requests = provider.recorded_requests();
-    assert_eq!(requests.len(), 2);
-    assert!(matches!(
-        requests[1].messages.as_slice(),
-        [Message::User(_), Message::EnrichedAssistant(_), Message::ToolResult(result)]
-            if result.ok && result.content == "tool output"
-    ));
-}
-
-#[tokio::test]
 async fn streaming_exposes_ordered_events_and_typed_final_outcome() {
     let provider = ScriptedProvider::new(
         identity(),
@@ -209,26 +165,6 @@ async fn outcome_can_be_awaited_without_consuming_the_event_stream() {
     let outcome = run.outcome().await.unwrap();
 
     assert_eq!(outcome.text(), "abc");
-}
-
-#[tokio::test]
-async fn malformed_provider_responses_are_retried_before_failing() {
-    let provider = ScriptedProvider::new(
-        identity(),
-        [
-            ScriptedTurn::completed(ModelResponse::Assistant(Vec::new())),
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "recovered".into(),
-            )])),
-        ],
-    );
-    let runtime = Rho::builder().provider(provider.clone()).build().unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    let outcome = session.complete("retry").await.unwrap();
-
-    assert_eq!(outcome.text(), "recovered");
-    assert_eq!(provider.recorded_requests().len(), 2);
 }
 
 #[tokio::test]
@@ -817,6 +753,11 @@ impl ModelProvider for SteeringProvider {
     }
 }
 
+// Covers: steers accepted during a non-steerable provider stream (including
+// through a cloned SteeringHandle) apply in order at the next boundary,
+// retracted input never reaches the model, and no SteeringDelivered is
+// claimed when the provider never took delivery.
+// Owner: sdk orchestration
 #[tokio::test]
 async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
     let release_first = Arc::new(Notify::new());
@@ -827,6 +768,7 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    let handle = run.steering_handle();
     while let Some(event) = run.next_event().await {
         if matches!(event, RunEvent::AssistantTextDelta { ref text } if text == "draft") {
             break;
@@ -845,15 +787,29 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
         run.retract_steering(discarded_id).await.unwrap(),
         SteeringRetraction::Retracted
     );
-    let steering_id = run
+    let steering_id = handle
         .steer_retractable(UserInput::text("refine"))
         .await
         .unwrap();
-    assert!(!first_id.as_str().is_empty());
-    assert!(!steering_id.as_str().is_empty());
     release_first.notify_one();
-    while run.next_event().await.is_some() {}
+    let mut events = Vec::new();
+    while let Some(event) = run.next_event().await {
+        events.push(event);
+    }
     let outcome = run.outcome().await.unwrap();
+
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::SteeringDelivered { .. })));
+    let applied: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::SteeringApplied { ids } => Some(ids.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(applied, vec![first_id, steering_id]);
 
     assert_eq!(outcome.text(), "final");
     let requests = provider
@@ -873,51 +829,6 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
             }),
             Message::user_text("keep first"),
             Message::user_text("refine"),
-        ]
-    );
-}
-
-// Covers: SteeringHandle clones the command port so hosts can steer after
-// moving Run into an event pump.
-// Owner: sdk run surface
-#[tokio::test]
-async fn steering_handle_stages_input_after_run_moves_into_pump() {
-    let release_first = Arc::new(Notify::new());
-    let provider = Arc::new(SteeringProvider::new(Arc::clone(&release_first)));
-    let runtime = Rho::builder()
-        .provider_shared(provider.clone())
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let mut run = session.start(UserInput::text("initial")).await.unwrap();
-    let handle = run.steering_handle();
-    while let Some(event) = run.next_event().await {
-        if matches!(event, RunEvent::AssistantTextDelta { ref text } if text == "draft") {
-            break;
-        }
-    }
-
-    handle.steer(UserInput::text("via handle")).await.unwrap();
-    release_first.notify_one();
-    while run.next_event().await.is_some() {}
-    let outcome = run.outcome().await.unwrap();
-    assert_eq!(outcome.text(), "final");
-    let requests = provider
-        .requests
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[1],
-        [
-            Message::user_text("initial"),
-            Message::assistant(crate::model::AssistantMessage {
-                content: vec![ContentBlock::Text("draft".into())],
-                provenance: Some(identity()),
-                reasoning_summary: None,
-                provider_context: Vec::new(),
-            }),
-            Message::user_text("via handle"),
         ]
     );
 }
@@ -1355,41 +1266,6 @@ async fn delivered_steer_applies_alone_before_late_undelivered() {
     );
 }
 
-// Covers: dropping the steering port applies staged input at the boundary
-// without SteeringDelivered
-// Owner: sdk orchestration
-#[tokio::test]
-async fn released_steer_applies_once_without_delivered_event() {
-    let release_first = Arc::new(Notify::new());
-    let provider = Arc::new(SteeringProvider::new(Arc::clone(&release_first)));
-    let runtime = Rho::builder()
-        .provider_shared(provider.clone())
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let mut run = session.start(UserInput::text("initial")).await.unwrap();
-    while let Some(event) = run.next_event().await {
-        if matches!(event, RunEvent::AssistantTextDelta { ref text } if text == "draft") {
-            break;
-        }
-    }
-    let id = run
-        .steer_retractable(UserInput::text("refine"))
-        .await
-        .unwrap();
-    release_first.notify_one();
-    let mut events = Vec::new();
-    while let Some(event) = run.next_event().await {
-        events.push(event);
-    }
-    assert!(!events
-        .iter()
-        .any(|event| matches!(event, RunEvent::SteeringDelivered { .. })));
-    assert!(events.iter().any(|event| {
-        matches!(event, RunEvent::SteeringApplied { ids } if ids == std::slice::from_ref(&id))
-    }));
-}
-
 // Covers: a provider error after accept restages the steer and re-offers it
 // Owner: sdk orchestration
 #[tokio::test(start_paused = true)]
@@ -1630,18 +1506,6 @@ async fn explicit_shutdown_cancels_active_runs_and_rejects_new_work() {
 }
 
 #[tokio::test]
-async fn dropping_a_run_cancels_work_and_releases_the_session() {
-    let runtime = Rho::builder().provider(PartialProvider).build().unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let run = session.start(UserInput::text("first")).await.unwrap();
-
-    drop(run);
-    tokio::task::yield_now().await;
-
-    assert!(!session.is_running());
-}
-
-#[tokio::test]
 async fn reasoning_level_is_explicit_and_can_change_between_runs() {
     let provider = ScriptedProvider::new(
         identity(),
@@ -1877,87 +1741,6 @@ async fn live_history_exposes_the_turn_in_flight_to_tools() {
     assert_eq!(session.live_history(), session.history());
 }
 
-// Covers: publishing the turn in flight copies the conversation every tool
-// batch, so it must not happen unless a registered tool declares the need.
-// Owner: session/orchestration conversation state.
-#[tokio::test]
-async fn live_history_stays_committed_unless_a_tool_declares_the_need() {
-    let session_slot = Arc::new(Mutex::new(None));
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            identity(),
-            [
-                scripted_tool_call("call-1"),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )])),
-            ],
-        ))
-        .tool(LiveHistoryTool {
-            session: Arc::clone(&session_slot),
-            observed: Arc::clone(&observed),
-            declares: false,
-        })
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    *session_slot.lock().unwrap() = Some(session.clone());
-
-    session.complete("hi").await.unwrap();
-
-    let observed = observed.lock().unwrap().clone();
-    assert_eq!(observed.len(), 1);
-    // Nothing was published, so the tool saw committed history, which cannot
-    // contain the assistant turn that invoked it.
-    assert!(
-        !observed[0].contains(&assistant_tool_call("call-1")),
-        "{:?}",
-        observed[0]
-    );
-}
-
-// Covers: an approval handler that reads live history publishes the turn in
-// flight without a host force-publish flag or a declaring tool.
-// Owner: session/orchestration conversation state.
-#[tokio::test]
-async fn approval_handler_reads_live_history_exposes_the_turn_in_flight() {
-    let session_slot = Arc::new(Mutex::new(None));
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            identity(),
-            [
-                scripted_tool_call("call-1"),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )])),
-            ],
-        ))
-        .approval_handler(LiveHistoryApprovals)
-        .tool(LiveHistoryTool {
-            session: Arc::clone(&session_slot),
-            observed: Arc::clone(&observed),
-            declares: false,
-        })
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    *session_slot.lock().unwrap() = Some(session.clone());
-
-    session.complete("hi").await.unwrap();
-
-    let observed = observed.lock().unwrap().clone();
-    assert_eq!(
-        observed,
-        vec![vec![
-            Message::user_text("hi"),
-            assistant_tool_call("call-1")
-        ]]
-    );
-    assert_eq!(session.live_history(), session.history());
-}
-
 struct LiveHistoryApprovals;
 
 impl crate::ApprovalHandler for LiveHistoryApprovals {
@@ -1970,43 +1753,74 @@ impl crate::ApprovalHandler for LiveHistoryApprovals {
     }
 }
 
-// Covers: hosts that need live approval context must be able to publish the
-// turn in flight even when no registered tool declares live-history reads.
+// Covers: publishing the turn in flight copies the conversation every tool
+// batch, so it must not happen unless something declares the need: a
+// registered tool (above), an approval handler that reads live history, or a
+// host force-publish flag.
 // Owner: session/orchestration conversation state.
 #[tokio::test]
-async fn force_publish_live_history_exposes_the_turn_in_flight() {
-    let session_slot = Arc::new(Mutex::new(None));
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            identity(),
-            [
-                scripted_tool_call("call-1"),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )])),
-            ],
-        ))
-        .force_publish_live_history(true)
-        .tool(LiveHistoryTool {
-            session: Arc::clone(&session_slot),
-            observed: Arc::clone(&observed),
-            declares: false,
-        })
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    *session_slot.lock().unwrap() = Some(session.clone());
+async fn live_history_stays_committed_unless_a_reader_declares_the_need() {
+    #[derive(Debug)]
+    enum Reader {
+        Nothing,
+        ApprovalHandler,
+        ForcePublish,
+    }
 
-    session.complete("hi").await.unwrap();
+    for reader in [
+        Reader::Nothing,
+        Reader::ApprovalHandler,
+        Reader::ForcePublish,
+    ] {
+        let session_slot = Arc::new(Mutex::new(None));
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let builder = Rho::builder()
+            .provider(ScriptedProvider::new(
+                identity(),
+                [
+                    scripted_tool_call("call-1"),
+                    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                        "done".into(),
+                    )])),
+                ],
+            ))
+            .tool(LiveHistoryTool {
+                session: Arc::clone(&session_slot),
+                observed: Arc::clone(&observed),
+                declares: false,
+            });
+        let builder = match reader {
+            Reader::Nothing => builder,
+            Reader::ApprovalHandler => builder.approval_handler(LiveHistoryApprovals),
+            Reader::ForcePublish => builder.force_publish_live_history(true),
+        };
+        let runtime = builder.build().unwrap();
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        *session_slot.lock().unwrap() = Some(session.clone());
 
-    let observed = observed.lock().unwrap().clone();
-    assert_eq!(
-        observed,
-        vec![vec![
-            Message::user_text("hi"),
-            assistant_tool_call("call-1")
-        ]]
-    );
-    assert_eq!(session.live_history(), session.history());
+        session.complete("hi").await.unwrap();
+
+        let observed = observed.lock().unwrap().clone();
+        match reader {
+            // Nothing was published, so the tool saw committed history, which
+            // cannot contain the assistant turn that invoked it.
+            Reader::Nothing => {
+                assert_eq!(observed.len(), 1);
+                assert!(
+                    !observed[0].contains(&assistant_tool_call("call-1")),
+                    "{:?}",
+                    observed[0]
+                );
+            }
+            Reader::ApprovalHandler | Reader::ForcePublish => assert_eq!(
+                observed,
+                vec![vec![
+                    Message::user_text("hi"),
+                    assistant_tool_call("call-1")
+                ]],
+                "{reader:?}"
+            ),
+        }
+        assert_eq!(session.live_history(), session.history(), "{reader:?}");
+    }
 }

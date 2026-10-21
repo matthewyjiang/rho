@@ -12,33 +12,29 @@ fn image(alt: &str, path: &str) -> MarkdownImageSource {
     }
 }
 
+// Covers: only standalone image lines outside code fences become inline images
+// Owner: tui markdown images
 #[test]
-fn collects_standalone_images_and_skips_inline_images() {
-    let text = "before\n\n![diagram](docs/arch.png)\n\nsee ![icon](i.png) inline\n";
-
-    assert_eq!(
-        collect_markdown_image_sources(text),
-        vec![image("diagram", "docs/arch.png")]
-    );
-}
-
-#[test]
-fn skips_images_inside_code_fences() {
-    let text = "```\n![fake](nope.png)\n```\n\n![real](yes.png)\n";
-
-    assert_eq!(
-        collect_markdown_image_sources(text),
-        vec![image("real", "yes.png")]
-    );
-}
-
-#[test]
-fn ignores_non_images_and_empty_targets() {
-    for (case, text) in [
-        ("plain link", "[docs](https://example.com) and plain text"),
-        ("empty target", "![alt]()"),
+fn collects_only_standalone_images_outside_code_fences() {
+    for (case, text, expected) in [
+        (
+            "standalone kept, inline skipped",
+            "before\n\n![diagram](docs/arch.png)\n\nsee ![icon](i.png) inline\n",
+            vec![image("diagram", "docs/arch.png")],
+        ),
+        (
+            "code fence skipped",
+            "```\n![fake](nope.png)\n```\n\n![real](yes.png)\n",
+            vec![image("real", "yes.png")],
+        ),
+        (
+            "plain link",
+            "[docs](https://example.com) and plain text",
+            vec![],
+        ),
+        ("empty target", "![alt]()", vec![]),
     ] {
-        assert!(collect_markdown_image_sources(text).is_empty(), "{case}");
+        assert_eq!(collect_markdown_image_sources(text), expected, "{case}");
     }
 }
 

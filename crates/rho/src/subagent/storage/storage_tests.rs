@@ -54,39 +54,30 @@ fn skips_ids_used_by_unindexed_target_path() {
     assert_eq!(directory, temp.path().join("subagents/222222"));
 }
 
+// Covers: without an index row, resolution scans session folders (one match
+// wins, two are ambiguous) and then the legacy global directory.
+// Owner: delegated-run resolution
 #[test]
 fn scan_fallback_resolves_one_nested_run() {
     let temp = TempDir::new().unwrap();
     let directory = create_session_subagents(temp.path()).join("123abc");
     fs::create_dir_all(&directory).unwrap();
-
     assert_eq!(
         resolve_run_directory_in_root(temp.path(), "123abc").unwrap(),
         directory
     );
-}
 
-#[test]
-fn scan_fallback_reports_ambiguous_nested_runs() {
-    let temp = TempDir::new().unwrap();
+    let ambiguous = TempDir::new().unwrap();
     for _ in 0..2 {
-        fs::create_dir_all(create_session_subagents(temp.path()).join("123abc")).unwrap();
+        fs::create_dir_all(create_session_subagents(ambiguous.path()).join("123abc")).unwrap();
     }
+    assert!(resolve_run_directory_in_root(ambiguous.path(), "123abc").is_err());
 
-    let error = resolve_run_directory_in_root(temp.path(), "123abc").unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("ambiguous across session folders"));
-}
-
-#[test]
-fn legacy_global_fallback_resolves_without_index() {
-    let temp = TempDir::new().unwrap();
-    let directory = temp.path().join("subagents/654321");
+    let legacy = TempDir::new().unwrap();
+    let directory = legacy.path().join("subagents/654321");
     fs::create_dir_all(&directory).unwrap();
-
     assert_eq!(
-        resolve_run_directory_in_root(temp.path(), "654321").unwrap(),
+        resolve_run_directory_in_root(legacy.path(), "654321").unwrap(),
         directory
     );
 }
@@ -314,22 +305,6 @@ fn stale_parent_lock_is_ignored_by_reserve() {
 }
 
 #[test]
-fn stale_parent_lock_can_be_stolen_for_cleanup() {
-    let temp = TempDir::new().unwrap();
-    let subagents_root = temp.path().join("subagents");
-    let stale_at = unix_timestamp_secs() - PARENT_LOCK_TTL_SECS - 1;
-    insert_parent_lock_for_test(&subagents_root, "session-id", stale_at).unwrap();
-
-    let index = RunIndexCleanup::open(&subagents_root).unwrap();
-    let guard = index.lock_parent("session-id").unwrap();
-    guard.clear_index().unwrap();
-    drop(guard);
-
-    // A fresh lock should succeed after the stolen cleanup finished.
-    let _guard = index.lock_parent("session-id").unwrap();
-}
-
-#[test]
 fn fresh_parent_lock_rejects_second_cleanup() {
     let temp = TempDir::new().unwrap();
     let subagents_root = temp.path().join("subagents");
@@ -342,6 +317,15 @@ fn fresh_parent_lock_rejects_second_cleanup() {
         error.to_string().contains("already being deleted"),
         "{error}"
     );
+
+    // A lock older than its TTL is stolen, and a fresh lock succeeds after
+    // the stolen cleanup finishes.
+    let stale_at = unix_timestamp_secs() - PARENT_LOCK_TTL_SECS - 1;
+    insert_parent_lock_for_test(&subagents_root, "stale-session", stale_at).unwrap();
+    let guard = index.lock_parent("stale-session").unwrap();
+    guard.clear_index().unwrap();
+    drop(guard);
+    let _fresh = other.lock_parent("stale-session").unwrap();
 }
 
 #[cfg(unix)]

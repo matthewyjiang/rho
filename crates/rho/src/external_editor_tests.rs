@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, path::PathBuf};
+use std::ffi::OsStr;
 
 use super::*;
 
@@ -63,30 +63,23 @@ fn editor_command_rejects_whitespace_only_values() {
     assert_eq!(error.to_string(), "editor command is empty");
 }
 
+// Covers: VISUAL wins over EDITOR, an empty VISUAL falls back to EDITOR, and
+// empty or missing values mean no editor is configured.
+// Owner: external editor resolution
 #[test]
-fn resolve_editor_prefers_visual_over_editor() {
-    let editor = resolve_editor(
-        Some(OsString::from("visual-editor")),
-        Some(OsString::from("fallback-editor")),
-    );
-
-    assert_eq!(editor, Some(OsString::from("visual-editor")));
-}
-
-#[test]
-fn resolve_editor_requires_a_configured_editor() {
-    assert_eq!(resolve_editor(None, None), None);
-    assert_eq!(resolve_editor(Some(OsString::new()), None), None);
-    assert_eq!(resolve_editor(None, Some(OsString::new())), None);
-}
-
-#[test]
-fn editor_parts_preserves_nonexistent_direct_path_shape() {
-    let parts = editor_parts(OsStr::new("/missing/editor --wait")).unwrap();
-
-    assert_eq!(
-        parts,
-        [OsString::from("/missing/editor"), OsString::from("--wait")]
-    );
-    assert_eq!(PathBuf::from(&parts[0]), PathBuf::from("/missing/editor"));
+fn resolve_editor_prefers_visual_then_editor() {
+    let os = |value: &str| Some(OsString::from(value));
+    for (visual, editor, expected) in [
+        (os("visual"), os("fallback"), os("visual")),
+        (os(""), os("fallback"), os("fallback")),
+        (None, None, None),
+        (os(""), None, None),
+        (None, os(""), None),
+    ] {
+        assert_eq!(
+            resolve_editor(visual.clone(), editor.clone()),
+            expected,
+            "{visual:?} {editor:?}"
+        );
+    }
 }

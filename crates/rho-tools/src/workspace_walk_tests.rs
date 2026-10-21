@@ -107,39 +107,30 @@ fn never_yields_symlink_or_descends_symlink_directory() {
     assert_eq!(files, vec!["real.txt".to_string()]);
 }
 
+// Covers: the entry cap and an expired deadline each stop the walk with their own reason
+// Owner: pure unit (workspace walk limits)
 #[test]
-fn max_entries_returns_entry_limit() {
+fn limits_stop_the_walk_with_their_reason() {
     let dir = TempDir::new().unwrap();
     std::fs::write(dir.path().join("a.txt"), "a").unwrap();
     std::fs::write(dir.path().join("b.txt"), "b").unwrap();
     std::fs::write(dir.path().join("c.txt"), "c").unwrap();
 
-    let (stop, _) = collect(
-        dir.path(),
-        &options(
-            HiddenFiles::Skip,
-            1,
-            Instant::now() + Duration::from_secs(5),
-        ),
-    );
-    assert_eq!(stop, WalkStop::EntryLimit);
-}
-
-#[test]
-fn past_deadline_returns_deadline() {
-    let dir = TempDir::new().unwrap();
-    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
-
-    let (stop, files) = collect(
-        dir.path(),
-        &options(
-            HiddenFiles::Skip,
+    for (case, max_entries, deadline, expected) in [
+        ("entry limit", 1, far_deadline(), WalkStop::EntryLimit),
+        (
+            "past deadline",
             10_000,
             Instant::now() - Duration::from_secs(1),
+            WalkStop::Deadline,
         ),
-    );
-    assert_eq!(stop, WalkStop::Deadline);
-    assert!(files.is_empty());
+    ] {
+        let (stop, _) = collect(
+            dir.path(),
+            &options(HiddenFiles::Skip, max_entries, deadline),
+        );
+        assert_eq!(stop, expected, "{case}");
+    }
 }
 
 #[test]

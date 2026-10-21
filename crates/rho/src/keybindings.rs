@@ -526,6 +526,9 @@ mod tests {
             let binding: KeyBinding = value.parse().unwrap();
             assert_eq!(binding.to_string(), value);
         }
+        for invalid in ["ctrl", "ctrl+r+g"] {
+            assert!(invalid.parse::<KeyBinding>().is_err(), "{invalid}");
+        }
     }
 
     #[test]
@@ -538,12 +541,6 @@ mod tests {
 
         assert!(binding.matches(event));
         assert_eq!(binding.to_string(), "ctrl+shift+g");
-    }
-
-    #[test]
-    fn key_binding_rejects_missing_or_multiple_keys() {
-        assert!("ctrl".parse::<KeyBinding>().is_err());
-        assert!("ctrl+r+g".parse::<KeyBinding>().is_err());
     }
 
     // Covers: configs saved before history search keep their persisted

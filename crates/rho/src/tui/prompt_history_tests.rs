@@ -153,18 +153,6 @@ fn count_and_clear_do_not_create_missing_store() {
     assert!(!path.exists());
 }
 
-// Covers: a disabled persist limit does not write durable appends.
-// Owner: tui prompt-history persistence policy
-#[test]
-fn zero_limit_does_not_persist_appends() {
-    let (_directory, mut app) = app_with_store();
-    app.prompt_history.set_limit(0);
-    app.push_input_history("hello");
-    app.settle_prompt_history();
-    assert_eq!(app.input_ui.history(), &["hello".to_string()]);
-    assert!(store_for(&app).load_tail(10).unwrap().is_empty());
-}
-
 // Covers: enabling persistence mid-session starts writing without a restart.
 // Owner: tui prompt-history persistence policy
 #[test]

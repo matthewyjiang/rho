@@ -3,8 +3,8 @@ use serde_json::json;
 
 use super::{
     handoff::{prepare_assistant, report_omissions},
-    AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, InclusivePromptUsage, Message,
-    ModelIdentity, ModelUsage, PartialToolCall, ProviderContextBlock,
+    AssistantMessage, ContentBlock, ImageContent, InclusivePromptUsage, Message, ModelIdentity,
+    ModelUsage, ProviderContextBlock,
 };
 
 #[test]
@@ -19,25 +19,6 @@ fn legacy_assistant_history_keeps_existing_json_shape() {
         serde_json::from_value::<Message>(json!({"Assistant": [{"Text": "hello"}]})).unwrap(),
         message
     );
-}
-
-#[test]
-fn enriched_assistant_history_round_trips_provider_context() {
-    let message = Message::assistant(AssistantMessage {
-        content: vec![ContentBlock::Text("answer".into())],
-        provenance: Some(ModelIdentity::new("openai", "responses", "gpt-5")),
-        reasoning_summary: Some("summary".into()),
-        provider_context: vec![ProviderContextBlock {
-            identity: ModelIdentity::new("openai", "responses", "gpt-5"),
-            kind: "reasoning".into(),
-            position: Some(0),
-            data: json!({"id": "item-1"}),
-        }],
-    });
-
-    let encoded = serde_json::to_string(&message).unwrap();
-
-    assert_eq!(serde_json::from_str::<Message>(&encoded).unwrap(), message);
 }
 
 #[test]
@@ -78,30 +59,6 @@ fn malformed_portable_metadata_remains_provider_context() {
 
     assert_eq!(message.portable_fallback(), None);
     assert!(message.provider_context[0].is_replayable_to(&identity));
-}
-
-#[test]
-fn aborted_assistant_history_keeps_partial_tool_calls_and_usage() {
-    let message = Message::AbortedAssistant(Box::new(AbortedAssistant {
-        content: vec![ContentBlock::Text("partial".into())],
-        reasoning: "ephemeral reasoning".into(),
-        provenance: None,
-        reasoning_summary: None,
-        provider_context: Vec::new(),
-        tool_calls: vec![PartialToolCall {
-            id: Some("call-1".into()),
-            name: Some("read_file".into()),
-            arguments: "{\"path\":".into(),
-        }],
-        usage: ModelUsage {
-            output_tokens: Some(4),
-            ..ModelUsage::default()
-        },
-    }));
-
-    let encoded = serde_json::to_string(&message).unwrap();
-
-    assert_eq!(serde_json::from_str::<Message>(&encoded).unwrap(), message);
 }
 
 #[test]

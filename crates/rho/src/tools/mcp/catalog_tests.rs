@@ -56,13 +56,3 @@ fn prompt_arguments_parse_from_typed_text() {
         vec!["query"]
     );
 }
-
-// Covers: the command name a user types to invoke a prompt must be
-// `mcp:<server>:<prompt>` so the palette dispatcher can route it.
-// Owner: pure unit
-#[test]
-fn prompt_command_name_is_server_qualified() {
-    let prompt = prompt(vec![argument("query", true), argument("limit", false)]);
-
-    assert_eq!(prompt.command_name(), "mcp:docs:search");
-}

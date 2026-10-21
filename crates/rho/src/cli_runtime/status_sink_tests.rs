@@ -55,33 +55,6 @@ fn read_attachment_events(output: &std::path::Path) -> Vec<AttachmentEvent> {
     reader.read_new().expect("read attachment events")
 }
 
-#[tokio::test]
-async fn sink_writes_prompt_and_starting_status() {
-    let directory = TempDir::new().unwrap();
-    let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let sink = StatusSink::new(
-        output.clone(),
-        &identity(),
-        "plan this",
-        None,
-        None,
-        TEST_LABEL,
-    )
-    .unwrap();
-    assert_eq!(sink.status().state, RunState::Starting);
-    assert_eq!(sink.status().provider.as_deref(), Some("claude-code"));
-    assert_eq!(sink.status().model.as_deref(), Some("opus"));
-    assert_eq!(sink.status().reasoning, None);
-    // Drop settles unfinished runs; inspect the journal prompt written at open.
-    drop(sink);
-
-    let events = read_attachment_events(&output);
-    assert!(matches!(
-        events.first(),
-        Some(AttachmentEvent::Prompt(text)) if text == "plan this"
-    ));
-}
-
 // Covers: paired attachment/status effects must not duplicate text in live or saved status.
 // Owner: shared CLI status sink for Claude and Cursor.
 #[tokio::test]

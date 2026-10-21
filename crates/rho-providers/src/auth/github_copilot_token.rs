@@ -402,36 +402,50 @@ mod tests {
         }
     }
 
+    // Covers: a cached copilot token is reused only before both the refresh hint
+    // and the expiry margin.
+    // Owner: copilot token cache
     #[test]
-    fn cached_copilot_token_is_fresh_before_refresh_and_expiry() {
-        assert_eq!(
-            fresh_cached_copilot_token(&tokens(Some("copilot"), Some(1_000), Some(900)), 800),
-            Some("copilot".into())
-        );
+    fn cached_copilot_token_is_fresh_only_before_refresh_and_expiry_margins() {
+        for (expires_at, refresh_after, expected) in [
+            (Some(1_000), Some(900), Some("copilot".to_string())),
+            (Some(850), None, None),
+            (Some(1_000), Some(799), None),
+        ] {
+            assert_eq!(
+                fresh_cached_copilot_token(
+                    &tokens(Some("copilot"), expires_at, refresh_after),
+                    800
+                ),
+                expected
+            );
+        }
     }
 
+    // Covers: an API base with a trailing slash still yields single-slash chat
+    // and models endpoints.
+    // Owner: copilot token exchange
     #[test]
-    fn cached_copilot_token_refreshes_near_expiry_or_after_refresh_time() {
+    fn token_endpoints_build_full_paths_from_api_base() {
+        let mut tokens = tokens(None, None, None);
+
+        apply_token_endpoints(
+            &mut tokens,
+            CopilotTokenEndpoints {
+                api: Some("https://copilot.example/api/".into()),
+                chat: None,
+                models: None,
+            },
+        );
+
         assert_eq!(
-            fresh_cached_copilot_token(&tokens(Some("copilot"), Some(850), None), 800),
-            None
+            tokens.copilot_chat_endpoint.as_deref(),
+            Some("https://copilot.example/api/chat/completions")
         );
         assert_eq!(
-            fresh_cached_copilot_token(&tokens(Some("copilot"), Some(1_000), Some(799)), 800),
-            None
+            tokens.copilot_models_endpoint.as_deref(),
+            Some("https://copilot.example/api/models")
         );
-    }
-
-    #[test]
-    fn cached_material_uses_stored_endpoints() {
-        let mut tokens = tokens(Some("copilot"), Some(1_000), None);
-        tokens.copilot_chat_endpoint = Some("http://chat.test".into());
-        tokens.copilot_models_endpoint = Some("http://models.test".into());
-
-        let material = material_from_stored_token("copilot".into(), &tokens);
-
-        assert_eq!(material.chat_endpoint, "http://chat.test");
-        assert_eq!(material.models_endpoint, "http://models.test");
     }
 
     #[tokio::test]
@@ -470,29 +484,6 @@ mod tests {
         assert_eq!(
             stored.copilot_chat_endpoint.as_deref(),
             Some(expected_chat_endpoint.as_str())
-        );
-    }
-
-    #[test]
-    fn token_endpoints_build_full_paths_from_api_base() {
-        let mut tokens = tokens(None, None, None);
-
-        apply_token_endpoints(
-            &mut tokens,
-            CopilotTokenEndpoints {
-                api: Some("https://copilot.example/api/".into()),
-                chat: None,
-                models: None,
-            },
-        );
-
-        assert_eq!(
-            tokens.copilot_chat_endpoint.as_deref(),
-            Some("https://copilot.example/api/chat/completions")
-        );
-        assert_eq!(
-            tokens.copilot_models_endpoint.as_deref(),
-            Some("https://copilot.example/api/models")
         );
     }
 

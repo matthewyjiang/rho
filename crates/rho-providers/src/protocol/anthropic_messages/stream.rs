@@ -435,14 +435,33 @@ mod tests {
             &mut on_event,
         )
         .unwrap();
+        // The delta's output count is cumulative and already includes the
+        // start seed, so it must be forwarded whole rather than diffed.
+        handle_anthropic_stream_line(
+            r#"data: {"type":"message_delta","usage":{"output_tokens":5}}"#,
+            &mut state,
+            &mut on_event,
+        )
+        .unwrap();
 
-        assert!(events.iter().any(|event| {
-            matches!(
-                event,
-                ModelEvent::Usage(usage)
-                    if usage.input_tokens == Some(7) && usage.output_tokens.is_none()
-            )
-        }));
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    ModelEvent::Usage(usage) => Some((usage.input_tokens, usage.output_tokens)),
+                    ModelEvent::OutputDelta(_)
+                    | ModelEvent::ReasoningDelta(_)
+                    | ModelEvent::ReasoningSummaryDelta(_)
+                    | ModelEvent::ProviderContext { .. }
+                    | ModelEvent::WebSearch(_)
+                    | ModelEvent::ToolCallDelta { .. }
+                    | ModelEvent::GenerationOutputTokens(_)
+                    | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ServiceTierFallback { .. } => None,
+                })
+                .collect::<Vec<_>>(),
+            [(Some(7), None), (None, Some(5))]
+        );
         assert_eq!(
             events
                 .iter()
@@ -495,50 +514,6 @@ mod tests {
         )));
         let ModelResponse::Assistant(blocks) = state.into_response().unwrap();
         assert!(matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "answer"));
-    }
-
-    #[test]
-    fn streams_message_delta_usage_as_output_only() {
-        let mut state = AnthropicSseState::default();
-        let mut events = Vec::new();
-        let mut on_event = |event| {
-            events.push(event);
-            Ok(())
-        };
-
-        handle_anthropic_stream_line(
-            r#"data: {"type":"message_start","message":{"usage":{"input_tokens":7,"output_tokens":1}}}"#,
-            &mut state,
-            &mut on_event,
-        )
-        .unwrap();
-        handle_anthropic_stream_line(
-            r#"data: {"type":"message_delta","usage":{"output_tokens":5}}"#,
-            &mut state,
-            &mut on_event,
-        )
-        .unwrap();
-
-        let usages = events
-            .iter()
-            .filter_map(|event| match event {
-                ModelEvent::Usage(usage) => Some(usage),
-                ModelEvent::OutputDelta(_)
-                | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::ReasoningSummaryDelta(_)
-                | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
-                | ModelEvent::ToolCallDelta { .. }
-                | ModelEvent::GenerationOutputTokens(_)
-                | ModelEvent::HostedToolActivity { .. }
-                | ModelEvent::ServiceTierFallback { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(usages.len(), 2);
-        assert_eq!(usages[0].input_tokens, Some(7));
-        assert_eq!(usages[0].output_tokens, None);
-        assert_eq!(usages[1].input_tokens, None);
-        assert_eq!(usages[1].output_tokens, Some(5));
     }
 
     #[test]

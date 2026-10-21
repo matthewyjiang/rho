@@ -247,46 +247,6 @@ fn multi_chunk_object_arguments_materialize_on_aborted_capture() {
     );
 }
 
-#[test]
-fn hosted_tool_activity_maps_to_named_run_event() {
-    let mut capture = StreamCapture::default();
-    let event = capture_provider_event(
-        ModelEvent::HostedToolActivity {
-            name: "x_search".into(),
-            detail: "xAI".into(),
-        },
-        &identity(),
-        &ModelUsage::default(),
-        &mut capture,
-    )
-    .expect("hosted tool activity is host-visible");
-    assert_eq!(
-        event,
-        RunEvent::HostedToolActivity {
-            name: "x_search".into(),
-            detail: "xAI".into(),
-        }
-    );
-}
-
-#[test]
-fn web_search_activity_keeps_stable_run_event_shape() {
-    let mut capture = StreamCapture::default();
-    let event = capture_provider_event(
-        ModelEvent::WebSearch("rho".into()),
-        &identity(),
-        &ModelUsage::default(),
-        &mut capture,
-    )
-    .expect("web search is host-visible");
-    assert_eq!(
-        event,
-        RunEvent::WebSearch {
-            detail: "rho".into(),
-        }
-    );
-}
-
 // Covers: turn metadata must not split aborted text, while positioned context remains a boundary.
 // Owner: SDK stream capture
 #[test]
@@ -364,27 +324,49 @@ fn provider_context_only_splits_text_at_positioned_boundaries() {
     }
 }
 
-// Covers: service-tier fallback must lower to a typed run event without replay state.
+// Covers: host-visible provider activity lowers to typed run events without
+// leaving replay state behind.
 // Owner: SDK stream capture
 #[test]
-fn service_tier_fallback_maps_to_typed_run_event() {
-    let mut capture = StreamCapture::default();
-    let event = capture_provider_event(
-        ModelEvent::ServiceTierFallback {
-            requested: crate::model::ServiceTier::Priority,
-            used: "default".into(),
-        },
-        &identity(),
-        &ModelUsage::default(),
-        &mut capture,
-    )
-    .expect("service-tier fallback is host-visible");
-    assert_eq!(
-        event,
-        RunEvent::ProviderServiceTierFallback {
-            requested: crate::model::ServiceTier::Priority,
-            used: "default".into(),
-        }
-    );
-    assert!(capture.provider_context.is_empty());
+fn provider_activity_maps_to_typed_run_events() {
+    let cases = [
+        (
+            ModelEvent::HostedToolActivity {
+                name: "x_search".into(),
+                detail: "xAI".into(),
+            },
+            RunEvent::HostedToolActivity {
+                name: "x_search".into(),
+                detail: "xAI".into(),
+            },
+        ),
+        (
+            ModelEvent::WebSearch("rho".into()),
+            RunEvent::WebSearch {
+                detail: "rho".into(),
+            },
+        ),
+        (
+            ModelEvent::ServiceTierFallback {
+                requested: crate::model::ServiceTier::Priority,
+                used: "default".into(),
+            },
+            RunEvent::ProviderServiceTierFallback {
+                requested: crate::model::ServiceTier::Priority,
+                used: "default".into(),
+            },
+        ),
+    ];
+
+    for (provider_event, expected) in cases {
+        let mut capture = StreamCapture::default();
+        let event = capture_provider_event(
+            provider_event,
+            &identity(),
+            &ModelUsage::default(),
+            &mut capture,
+        );
+        assert_eq!(event, Some(expected));
+        assert!(capture.provider_context.is_empty());
+    }
 }

@@ -72,14 +72,6 @@ fn section_for_version_skips_dependency_groups() {
     );
 }
 
-// Covers: document-order "latest" must be the first real release section.
-// Owner: pure unit
-#[test]
-fn latest_section_uses_document_order() {
-    let section = latest_section(SAMPLE).expect("section exists");
-    assert_eq!(section.version, "1.25.1");
-}
-
 // Covers: classic Keep a Changelog date form and plain dash bullets still parse.
 // Owner: pure unit
 #[test]

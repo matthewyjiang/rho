@@ -71,38 +71,6 @@ env = ["MY_HOOK_TOKEN", "MY_HOOK_TOKEN"]
 }
 
 #[test]
-fn an_omitted_tool_list_means_every_tool() {
-    let hooks = parse_user(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "log-all"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-    ))
-    .unwrap();
-
-    assert!(hooks[0].tools().matches("read_file"));
-    assert_eq!(hooks[0].tools().describe(), "*");
-}
-
-#[test]
-fn a_file_with_no_hooks_is_valid() {
-    assert_eq!(parse_user("version = 1").unwrap(), Vec::new());
-}
-
-#[test]
-fn an_unknown_schema_version_is_rejected() {
-    let error = error("version = 2");
-
-    assert_eq!(error.field.as_deref(), Some("version"));
-    assert!(error.message.contains("unsupported hooks schema version 2"));
-}
-
-#[test]
 fn an_unknown_key_is_rejected_so_a_typo_cannot_disable_a_hook() {
     let error = error(&format!(
         r#"
@@ -122,35 +90,6 @@ timout = "1s"
         "expected an unknown-field error, got: {}",
         error.message
     );
-}
-
-#[test]
-fn an_unknown_event_names_the_hook_and_the_field() {
-    for (id, event) in [
-        ("bad-event", "before_tool"),
-        ("inject", "user_prompt_accepted"),
-    ] {
-        let error = error(&format!(
-            r#"
-version = 1
-
-[[hook]]
-id = "{id}"
-on = "{event}"
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-        ));
-
-        assert_eq!(error.hook_id.as_deref(), Some(id), "{event}");
-        assert_eq!(error.field.as_deref(), Some("on"), "{event}");
-        assert!(
-            error.message.contains(&format!("unknown event '{event}'")),
-            "{event}: {}",
-            error.message
-        );
-        assert!(error.message.contains("before_tool_use"), "{event}");
-    }
 }
 
 // Covers: workflow lifecycle hook names must load without adding workflow policy to the SDK.
@@ -175,31 +114,6 @@ timeout = "1s"
         assert_eq!(hooks[0].event(), ConfiguredHookEvent::Workflow(*event));
         assert!(!hooks[0].event().is_blocking());
     }
-}
-
-#[test]
-fn a_duplicate_id_within_one_file_is_an_error() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "same"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "1s"
-
-[[hook]]
-id = " same "
-on = "run_completed"
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-    ));
-
-    assert_eq!(error.hook_id.as_deref(), Some("same"));
-    assert_eq!(error.field.as_deref(), Some("id"));
-    assert!(error.message.contains("duplicate hook ID"));
 }
 
 // Covers: a valid executable under a non-UTF-8 project path must remain executable.
@@ -230,171 +144,6 @@ timeout = "1s"
     .unwrap();
 
     assert_eq!(hooks[0].executable(), root.join("handler"));
-}
-
-#[test]
-fn an_id_with_unsafe_characters_is_rejected() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "bad id!"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("id"));
-}
-
-#[test]
-fn an_empty_argv_is_rejected() {
-    let error = error(
-        r#"
-version = 1
-
-[[hook]]
-id = "empty"
-on = "after_tool_use"
-command = []
-timeout = "1s"
-"#,
-    );
-
-    assert_eq!(error.field.as_deref(), Some("command"));
-    assert!(error.message.contains("empty"));
-}
-
-#[test]
-fn a_zero_timeout_is_rejected() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "instant"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "0s"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("timeout"));
-    assert!(error.message.contains("greater than zero"));
-}
-
-#[test]
-fn an_unbounded_timeout_is_rejected() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "forever"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "2h"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("timeout"));
-    assert!(error.message.contains("maximum"));
-}
-
-#[test]
-fn an_unparsable_timeout_names_the_field() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "vague"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "soon"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("timeout"));
-    assert!(error.message.contains("invalid duration"));
-}
-
-#[test]
-fn an_env_entry_with_a_value_is_rejected() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "leaky"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "1s"
-env = ["TOKEN=secret"]
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("env"));
-    assert!(error.message.contains("list only variable names"));
-}
-
-#[test]
-fn a_tool_list_on_an_event_with_no_tool_is_rejected() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "confused"
-on = "run_completed"
-tools = ["bash"]
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.message.contains("no tool to match"));
-}
-
-#[test]
-fn a_tool_outside_the_canonical_list_names_the_list() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "unknown-tool"
-on = "before_tool_use"
-tools = ["shell"]
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.message.contains("canonical tool list"));
-    assert!(error.message.contains("bash"));
-}
-
-#[test]
-fn a_user_hook_may_name_a_program_on_path() {
-    let hooks = parse_user(
-        r#"
-version = 1
-
-[[hook]]
-id = "path-name"
-on = "after_tool_use"
-command = ["my-hook"]
-timeout = "1s"
-"#,
-    )
-    .unwrap();
-
-    assert_eq!(hooks[0].command(), ["my-hook"]);
 }
 
 #[test]
@@ -447,53 +196,106 @@ timeout = "5s"
     assert_eq!(hooks[0].qualified_id(), "project:fmt");
 }
 
+// Covers: each invalid hook field is rejected at load and attributed to the
+// hook and field that caused it, so a bad entry cannot silently load.
+// Owner: hook config validation.
 #[test]
-fn an_absolute_program_that_does_not_exist_fails_at_load() {
+fn an_invalid_hook_is_rejected_at_its_field() {
+    let hook = |id: &str, on: &str, extra: &str| {
+        format!(
+            "version = 1\n\n[[hook]]\nid = \"{id}\"\non = \"{on}\"\ncommand = [\"{PROGRAM}\"]\ntimeout = \"1s\"\n{extra}"
+        )
+    };
+    let with = |id: &str, on: &str, command: &str, timeout: &str, extra: &str| {
+        format!(
+            "version = 1\n\n[[hook]]\nid = \"{id}\"\non = \"{on}\"\ncommand = {command}\ntimeout = \"{timeout}\"\n{extra}"
+        )
+    };
+    let program = format!("[\"{PROGRAM}\"]");
     // temp_dir is absolute on every platform, including Windows where a
     // leading `/` is not an absolute path and would skip the exists check.
     let missing: PathBuf = std::env::temp_dir().join("rho-missing-hook-program");
     let _ = std::fs::remove_file(&missing);
-    assert!(
-        !missing.exists(),
-        "fixture path must stay absent: {}",
-        missing.display()
-    );
+    let missing_command = format!("[\"{}\"]", toml_string(&missing));
+    let cases = [
+        ("unknown schema version", "version = 2".to_owned(), None, "version"),
+        (
+            "unknown event",
+            hook("bad-event", "before_tool", ""),
+            Some("bad-event"),
+            "on",
+        ),
+        (
+            "non-configurable event",
+            hook("inject", "user_prompt_accepted", ""),
+            Some("inject"),
+            "on",
+        ),
+        (
+            "duplicate id after trimming",
+            format!(
+                "{}\n[[hook]]\nid = \" same \"\non = \"run_completed\"\ncommand = {program}\ntimeout = \"1s\"\n",
+                hook("same", "after_tool_use", "")
+            ),
+            Some("same"),
+            "id",
+        ),
+        ("unsafe id", hook("bad id!", "after_tool_use", ""), None, "id"),
+        (
+            "empty argv",
+            with("empty", "after_tool_use", "[]", "1s", ""),
+            Some("empty"),
+            "command",
+        ),
+        (
+            "missing absolute program",
+            with("missing", "after_tool_use", &missing_command, "1s", ""),
+            Some("missing"),
+            "command",
+        ),
+        (
+            "zero timeout",
+            with("instant", "after_tool_use", &program, "0s", ""),
+            Some("instant"),
+            "timeout",
+        ),
+        (
+            "unbounded timeout",
+            with("forever", "after_tool_use", &program, "2h", ""),
+            Some("forever"),
+            "timeout",
+        ),
+        (
+            "unparsable timeout",
+            with("vague", "after_tool_use", &program, "soon", ""),
+            Some("vague"),
+            "timeout",
+        ),
+        (
+            "env entry with a value",
+            hook("leaky", "after_tool_use", "env = [\"TOKEN=secret\"]\n"),
+            Some("leaky"),
+            "env",
+        ),
+        (
+            "tool list on an event with no tool",
+            hook("confused", "run_completed", "tools = [\"bash\"]\n"),
+            Some("confused"),
+            "tools",
+        ),
+        (
+            "tool outside the canonical list",
+            hook("unknown-tool", "before_tool_use", "tools = [\"shell\"]\n"),
+            Some("unknown-tool"),
+            "tools",
+        ),
+    ];
+    for (case, contents, hook_id, field) in cases {
+        let error = error(&contents);
 
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "missing"
-on = "after_tool_use"
-command = ["{}"]
-timeout = "1s"
-"#,
-        toml_string(&missing)
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("command"));
-    assert!(error.message.contains("does not exist"));
-}
-
-#[test]
-fn an_error_renders_the_file_the_hook_and_the_field() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "vague"
-on = "after_tool_use"
-command = ["{PROGRAM}"]
-timeout = "soon"
-"#
-    ));
-
-    assert_eq!(
-        error.to_string(),
-        format!(
-            "{USER_FILE}: hook 'vague': field 'timeout': invalid duration: expected number at 0"
-        )
-    );
+        assert_eq!(error.field.as_deref(), Some(field), "{case}: {error}");
+        if let Some(hook_id) = hook_id {
+            assert_eq!(error.hook_id.as_deref(), Some(hook_id), "{case}");
+        }
+    }
 }

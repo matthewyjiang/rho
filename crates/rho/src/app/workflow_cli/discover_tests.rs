@@ -11,11 +11,13 @@ fn workspace(files: &[&str]) -> tempfile::TempDir {
     root
 }
 
-// Covers: discovery must surface folder and flat workflow sources with stable paths.
+// Covers: discovery must surface folder and flat workflow sources with stable
+// paths; a missing workflows directory is an empty inventory, not an error.
 // Owner: workflow source discovery.
 #[test]
 fn discover_finds_folder_and_flat_entries() {
     let root = tempfile::tempdir().unwrap();
+    assert!(discover_workflow_sources(root.path()).is_empty());
     let workflows = root.path().join(".rho").join("workflows");
     std::fs::create_dir_all(workflows.join("review")).unwrap();
     std::fs::write(workflows.join("review").join("workflow.star"), "x").unwrap();
@@ -35,14 +37,6 @@ fn discover_finds_folder_and_flat_entries() {
             ".rho/workflows/solo.star",
         ]
     );
-}
-
-// Covers: missing workflows directory is a valid empty inventory, not an error path.
-// Owner: workflow source discovery.
-#[test]
-fn missing_workflows_dir_is_empty() {
-    let root = tempfile::tempdir().unwrap();
-    assert!(discover_workflow_sources(root.path()).is_empty());
 }
 
 // Covers: discovery must not offer a nested entry that source loading rejects.

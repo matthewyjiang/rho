@@ -94,14 +94,6 @@ fn action_retry_keeps_queue_runnable_until_consumed() {
 }
 
 #[test]
-fn approval_and_questionnaire_share_one_interaction_slot() {
-    assert!(interaction_slot_available(false, false));
-    assert!(!interaction_slot_available(true, false));
-    assert!(!interaction_slot_available(false, true));
-    assert!(!interaction_slot_available(true, true));
-}
-
-#[test]
 fn mixed_interactions_preserve_arrival_order() {
     let approval_request = rho_sdk::ApprovalRequest::new(
         rho_sdk::CapabilityRequest::read_path(

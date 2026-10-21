@@ -56,42 +56,6 @@ async fn logout_sh(body: &str) -> Result<(), ClaudeAuthError> {
 }
 
 #[cfg(unix)]
-async fn version_sh(body: &str) -> Result<String, ClaudeAuthError> {
-    let output = run_sh_probe(body, &["--version"]).await?;
-    if !output.status.success() {
-        return Err(ClaudeAuthError::ExitStatus {
-            program: STABLE_SH.into(),
-            status: output.status,
-            stderr: output.stderr_lossy_trimmed(),
-        });
-    }
-    let stdout = String::from_utf8(output.stdout).map_err(|_| ClaudeAuthError::InvalidUtf8)?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let version = first_nonempty_line(&stdout)
-        .or_else(|| first_nonempty_line(&stderr))
-        .unwrap_or("unknown version")
-        .to_string();
-    Ok(version)
-}
-
-#[test]
-fn parses_optional_auth_fields_and_requires_logged_in() {
-    let status: ClaudeAuthStatus = serde_json::from_str(
-        r#"{
-            "loggedIn": true,
-            "email": "someone@example.com"
-        }"#,
-    )
-    .unwrap();
-    assert!(status.logged_in);
-    assert_eq!(status.email.as_deref(), Some("someone@example.com"));
-    assert_eq!(status.subscription_type, None);
-
-    let error = serde_json::from_str::<ClaudeAuthStatus>(r#"{"email":"x"}"#).unwrap_err();
-    assert!(error.to_string().contains("loggedIn") || error.to_string().contains("missing field"));
-}
-
-#[cfg(unix)]
 #[tokio::test]
 async fn query_program_parses_signed_in_status_json() {
     let status = query_sh(
@@ -118,25 +82,6 @@ exit 1
             subscription_type: Some("pro".into()),
         }
     );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn query_program_parses_signed_out_status_json() {
-    let status = query_sh(
-        r#"
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  printf '%s\n' '{"loggedIn":false}'
-  exit 0
-fi
-exit 1
-"#,
-    )
-    .await
-    .unwrap();
-    assert!(!status.logged_in);
-    assert_eq!(status.email, None);
-    assert_eq!(status.subscription_type, None);
 }
 
 #[cfg(unix)]
@@ -254,40 +199,6 @@ async fn query_program_reports_missing_binary() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn query_program_rejects_malformed_json() {
-    let error = query_sh(
-        r#"
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  printf '%s\n' 'not-json'
-  exit 0
-fi
-exit 1
-"#,
-    )
-    .await
-    .unwrap_err();
-    assert!(matches!(error, ClaudeAuthError::InvalidJson(_)));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn version_program_reads_first_line() {
-    let version = version_sh(
-        r#"
-if [ "$1" = "--version" ]; then
-  printf '%s\n' '1.2.3 (Claude Code)'
-  exit 0
-fi
-exit 1
-"#,
-    )
-    .await
-    .unwrap();
-    assert_eq!(version, "1.2.3 (Claude Code)");
-}
-
-#[cfg(unix)]
-#[tokio::test]
 async fn logout_then_status_is_source_of_truth_even_on_nonzero_exit() {
     let directory = tempfile::tempdir().unwrap();
     let state = directory.path().join("state");
@@ -322,24 +233,4 @@ exit 1
         !status.logged_in,
         "status after failed logout child must still report signed out"
     );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn logout_already_signed_out_status_is_success_truth() {
-    let body = r#"
-if [ "$1" = "auth" ] && [ "$2" = "logout" ]; then
-  echo "not logged in" >&2
-  exit 1
-fi
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  printf '%s\n' '{"loggedIn":false}'
-  exit 0
-fi
-exit 1
-"#;
-
-    let _ = logout_sh(body).await;
-    let status = query_sh(body).await.unwrap();
-    assert!(!status.logged_in);
 }

@@ -100,58 +100,38 @@ fn prompt_content_maps_text_image_and_embedded_context() {
             ContentBlock::Text("```resource file:///workspace/notes.md\nnotes\n```".into()),
         ]
     );
-}
-
-// Covers: a resource body that contains its own fence must not close ours early
-// Owner: acp session host
-#[test]
-fn fenced_context_outgrows_backticks_in_the_body() {
-    let prompt = vec![AcpContentBlock::Resource(EmbeddedResource::new(
-        EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
-            "```rust\nfn main() {}\n```",
-            "file:///workspace/readme.md",
-        )),
-    ))];
-
-    let input = user_input_from_prompt(&prompt).unwrap();
-    assert_eq!(
-        input.blocks(),
-        [ContentBlock::Text(
-            "````resource file:///workspace/readme.md\n```rust\nfn main() {}\n```\n````".into()
-        )]
+    assert!(
+        user_input_from_prompt(&[]).is_err(),
+        "an empty prompt must not start a run"
     );
 }
 
-// Covers: a resource URI that contains a fence must not close the generated fence
+// Covers: a resource body or URI that contains its own fence must not close
+// the generated fence early
 // Owner: acp session host
 #[test]
-fn fenced_context_outgrows_backticks_in_the_header() {
-    let prompt = vec![AcpContentBlock::ResourceLink(ResourceLink::new(
-        "notes",
-        "file:///workspace/notes.md\n```\ninjected",
-    ))];
-
-    let input = user_input_from_prompt(&prompt).unwrap();
-    assert_eq!(
-        input.blocks(),
-        [ContentBlock::Text(
-            "````resource file:///workspace/notes.md\n```\ninjected\nnotes\n````".into()
-        )]
-    );
-}
-
-// Covers: an empty prompt must not start a run
-// Owner: acp session host
-#[test]
-fn empty_prompt_is_rejected() {
-    assert!(user_input_from_prompt(&[]).is_err());
-}
-
-// Covers: session/cancel must be safe when no prompt is running
-// Owner: acp session host
-#[test]
-fn cancel_is_idle_safe() {
-    PromptGate::new().cancel();
+fn fenced_context_outgrows_backticks_in_the_body_and_header() {
+    for (block, expected) in [
+        (
+            AcpContentBlock::Resource(EmbeddedResource::new(
+                EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
+                    "```rust\nfn main() {}\n```",
+                    "file:///workspace/readme.md",
+                )),
+            )),
+            "````resource file:///workspace/readme.md\n```rust\nfn main() {}\n```\n````",
+        ),
+        (
+            AcpContentBlock::ResourceLink(ResourceLink::new(
+                "notes",
+                "file:///workspace/notes.md\n```\ninjected",
+            )),
+            "````resource file:///workspace/notes.md\n```\ninjected\nnotes\n````",
+        ),
+    ] {
+        let input = user_input_from_prompt(&[block]).unwrap();
+        assert_eq!(input.blocks(), [ContentBlock::Text(expected.into())]);
+    }
 }
 
 // Covers: session/cancel during prompt start must still cancel the run

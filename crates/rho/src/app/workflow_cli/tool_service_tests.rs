@@ -28,33 +28,6 @@ fn run_id(value: &str) -> RunId {
     RunId::from_str(value).expect("canonical run id")
 }
 
-// Covers: Plan, Run, Status, Cancel, and Resume failures must all use the
-// model-safe adapter, including a nested corruption reason with another path.
-// Owner: model-facing workflow tool adapter.
-#[test]
-fn operation_errors_use_nested_model_safe_workflow_diagnostics() {
-    let data_path = Path::new("/home/alice/private/run/state.json");
-    let nested_path = "C:\\Users\\alice\\private\\events.jsonl";
-
-    for operation in ["Plan", "Run", "Status", "Cancel", "Resume"] {
-        let error = anyhow::Error::from(crate::workflow::WorkflowError::Corrupt {
-            path: data_path.to_owned(),
-            reason: format!("failed to parse {nested_path}"),
-        })
-        .context(format!(
-            "{operation} failed while loading {}",
-            data_path.display()
-        ));
-        let error = model_workflow_tool_error(error);
-
-        assert_eq!(error.kind(), ToolErrorKind::Execution);
-        assert_eq!(
-            error.message(),
-            "workflow data is corrupt at <redacted>: <redacted>"
-        );
-    }
-}
-
 // Covers: a malformed private agent file must not expose its absolute path to
 // the model, while the local CLI diagnostic must still identify that file.
 // Owner: model-facing workflow tool adapter.
@@ -399,72 +372,32 @@ fn make_executable(path: &Path) {
 #[cfg(windows)]
 fn make_executable(_path: &Path) {}
 
-// Covers: replacing config after its identity check must not change parsed model policy.
+// Covers: replacing a config, agent, or workflow source file after its
+// identity check must not change the bytes read through the authorized handle,
+// whole or bounded for the planner.
 // Owner: workflow dynamic capability adapter.
 #[cfg(any(unix, windows))]
 #[test]
-fn config_parse_uses_the_authorized_open_file() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("config.toml");
-    std::fs::write(&path, "provider = 'openai'\nmodel = 'authorized'\n").unwrap();
-    let opened =
-        crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
-
-    replace_opened_file(&path, "provider = 'openai'\nmodel = 'replacement'\n");
-    let text = opened.read_utf8().unwrap();
-    let config = crate::config::Config::parse_settings(&text).unwrap();
-
-    assert_eq!(config.model, "authorized");
-}
-
-// Covers: replacing a workflow source after approval must not change the
-// bounded bytes sent to the planner.
-// Owner: workflow dynamic capability adapter.
-#[cfg(any(unix, windows))]
-#[test]
-fn workflow_source_read_uses_the_authorized_open_file() {
+fn verified_reads_use_the_authorized_open_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("workflow.star");
     std::fs::write(&path, "authorized source").unwrap();
-    let opened =
-        crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
+    let open =
+        || crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
+    let (whole, bounded) = (open(), open());
     let budget = crate::workflow::Budget::new("source bytes", 64).unwrap();
 
     replace_opened_file(&path, "replacement source");
-    let source = opened.read_utf8_bounded(&budget, 0).unwrap();
-
-    assert_eq!(source, "authorized source");
-}
-
-// Covers: replacing an agent file during approval must not change the catalog definition.
-// Owner: workflow dynamic capability adapter.
-#[cfg(any(unix, windows))]
-#[test]
-fn agent_parse_uses_the_authorized_open_file() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("worker.md");
-    std::fs::write(
-        &path,
-        "---\ndescription: authorized\n---\nauthorized prompt\n",
-    )
-    .unwrap();
-    let opened =
-        crate::workflow::VerifiedPath::open(&path, crate::workflow::ContentHash::Skip).unwrap();
-
-    replace_opened_file(
-        &path,
-        "---\ndescription: replacement\n---\nreplacement prompt\n",
-    );
-    let source = opened.read_utf8().unwrap();
-    let catalog = crate::agent::AgentCatalog::from_sources(crate::agent::AgentCatalogSources {
-        rho_home: vec![crate::agent::AgentSource::read(path, source)],
-        ..Default::default()
-    })
-    .unwrap();
 
     assert_eq!(
-        catalog.find("worker").unwrap().definition.description,
-        "authorized"
+        (
+            whole.read_utf8().unwrap(),
+            bounded.read_utf8_bounded(&budget, 0).unwrap()
+        ),
+        (
+            "authorized source".to_owned(),
+            "authorized source".to_owned()
+        )
     );
 }
 

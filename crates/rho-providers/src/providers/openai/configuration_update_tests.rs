@@ -287,8 +287,6 @@ fn compact_body_omits_configuration_update_even_when_create_would_emit() {
     );
 }
 
-// Covers: API-key Responses identity also records and freezes prefix effort
-// Owner: openai configuration_update lowering
 // Covers: a cancelled partial turn retains its in-force effort without adding
 // context to a request that produced no persistable assistant state.
 // Owner: OpenAI stream event lowering
@@ -342,6 +340,8 @@ fn effort_context_precedes_first_retainable_stream_event() {
     );
 }
 
+// Covers: API-key Responses identity also records and freezes prefix effort
+// Owner: openai configuration_update lowering
 #[test]
 fn api_key_astra_create_body_emits_configuration_update() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-6-astra");

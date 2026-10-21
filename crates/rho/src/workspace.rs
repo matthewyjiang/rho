@@ -68,8 +68,11 @@ mod tests {
 
     use super::*;
 
+    // Covers: project ancestor dirs run from the git root down to cwd, and are
+    // just cwd outside a repository.
+    // Owner: workspace root detection
     #[test]
-    fn returns_git_root_through_cwd() {
+    fn ancestor_dirs_start_at_the_git_root_or_only_cwd_outside_a_repo() {
         let repo = TempDir::new().unwrap();
         std::fs::create_dir(repo.path().join(".git")).unwrap();
         let child = repo.path().join("src/nested");
@@ -81,17 +84,15 @@ mod tests {
             dirs,
             vec![repo.path().to_path_buf(), repo.path().join("src"), child]
         );
-    }
 
-    #[test]
-    fn returns_only_cwd_outside_git_worktree() {
-        let dir = TempDir::new().unwrap();
-        let child = dir.path().join("src");
+        let outside = TempDir::new().unwrap();
+        let child = outside.path().join("src");
         std::fs::create_dir_all(&child).unwrap();
-
-        let dirs = project_ancestor_dirs(&child);
-
-        assert_eq!(dirs, vec![child]);
+        assert_eq!(
+            project_ancestor_dirs(&child),
+            vec![child],
+            "outside a git worktree only cwd is returned"
+        );
     }
 
     // Covers: only the exact value `1` grants trust, matching the

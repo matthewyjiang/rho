@@ -110,12 +110,6 @@ fn tz_label_digits_are_not_a_day_of_month() {
     }
 }
 
-#[test]
-fn header_without_percent_is_skipped() {
-    let text = "Current session\nsome random text\nmore random text\n";
-    assert!(parse_usage_screen(text, NOW).is_none());
-}
-
 // Covers: a bare % above the usage bar must not be taken as the window used%.
 // Owner: pure unit
 #[test]

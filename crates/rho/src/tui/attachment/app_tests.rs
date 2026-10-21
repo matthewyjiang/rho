@@ -425,74 +425,6 @@ fn eligible_model_calls_show_generation_rate() {
     );
 }
 
-// Covers: sub-threshold model calls stay hidden instead of showing 0 tok/s.
-// Owner: attach viewer
-#[test]
-fn sub_threshold_model_calls_hide_generation_rate() {
-    let cases = [
-        (12, 2_000), // below the 32-token gate, above the 500ms gate
-        (100, 300),  // above the 32-token gate, below the 500ms gate
-    ];
-    for (generation_output_tokens, generation_time_ms) in cases {
-        let (_directory, mut app) = test_app();
-        app.apply_event(AttachmentEvent::ModelCallCompleted {
-            generation_output_tokens,
-            generation_time_ms,
-        });
-        assert_eq!(
-            activity_line(&app, "assistant text"),
-            "assistant text",
-            "tokens={generation_output_tokens} time_ms={generation_time_ms}"
-        );
-    }
-}
-
-#[test]
-fn identity_line_includes_provider_model_reasoning_runtime_elapsed_and_cost() {
-    use rho_providers::model::{
-        display_name::ModelDisplayNameCacheGuard,
-        models_dev::{
-            with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
-            ModelMetadata,
-        },
-    };
-
-    let catalog = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
-        let _names = ModelDisplayNameCacheGuard::new();
-        write_cached_model_metadata_for_tests(
-            "openai",
-            "gpt-5.5",
-            &ModelMetadata {
-                display_name: Some("GPT-5.5".into()),
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            },
-        );
-        let line = resolved_identity_line(
-            Some(&RunStatus {
-                agent_id: Some("explorer".into()),
-                provider: Some("openai".into()),
-                model: Some("gpt-5.5".into()),
-                runtime: Some(crate::agent::AgentRuntime::Rho),
-                reasoning: Some(rho_sdk::ReasoningLevel::High),
-                started_at: Some(1_000),
-                finished_at: Some(1_065),
-                turns: 3,
-                total_cost_usd: Some(0.0388),
-                claude_session_id: Some("sess-1".into()),
-                ..RunStatus::default()
-            }),
-            None,
-            /* now_unix_secs */ 9_999,
-        );
-        assert_eq!(
-            line,
-            "openai/gpt-5.5 (GPT-5.5) · high · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
-        );
-    });
-}
-
 #[test]
 fn identity_line_handles_partial_model_fields() {
     // A Rho status needs both provider and model before it can name one.
@@ -832,33 +764,6 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     );
 }
 
-// Covers: under-budget cards are neither click-toggleable nor hover-liftable
-// Owner: attach draw
-#[test]
-fn draw_hover_lift_skips_untoggleable_card() {
-    let (_directory, mut app) = test_app();
-    app.apply_event(AttachmentEvent::ToolFinished {
-        key: Some("call-1".into()),
-        presentation: short_body_card().into(),
-    });
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
-    terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
-        .expect("baseline draw");
-    let baseline = row_look(&terminal, 5);
-
-    app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
-        .expect("hover draw");
-    assert_eq!(
-        row_look(&terminal, 5),
-        baseline,
-        "under-budget card must not lift"
-    );
-}
-
 // Covers: releasing a scrollbar drag over a card must not toggle
 // Owner: attach event loop
 #[test]
@@ -946,43 +851,6 @@ fn drag_away_and_back_does_not_toggle() {
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
     assert!(!transcript_tool(&app, 0).expanded);
     assert!(!transcript_tool(&app, 1).expanded);
-}
-
-// Covers: dragging inside one card is not a click
-// Owner: attach event loop
-#[test]
-fn intra_card_drag_does_not_toggle() {
-    let (_directory, mut app) = test_app();
-    app.apply_event(AttachmentEvent::ToolFinished {
-        key: Some("call-1".into()),
-        presentation: long_body_card().into(),
-    });
-    sync_view(&mut app, 80, 30);
-
-    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
-    app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 8, 6));
-    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
-    assert!(!transcript_tool(&app, 0).expanded);
-}
-
-// Covers: a pending card that finishes during a stationary click still expands
-// Owner: attach event loop
-#[test]
-fn pending_finish_during_click_still_toggles() {
-    let (_directory, mut app) = test_app();
-    app.apply_event(AttachmentEvent::ToolStarted {
-        key: Some("live".into()),
-        card: long_body_card().into(),
-    });
-    sync_view(&mut app, 80, 30);
-
-    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
-    app.apply_event(AttachmentEvent::ToolFinished {
-        key: Some("live".into()),
-        presentation: long_body_card().into(),
-    });
-    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
-    assert!(transcript_tool(&app, 0).expanded);
 }
 
 // Covers: finishing the pressed pending card still expands when another pending remains

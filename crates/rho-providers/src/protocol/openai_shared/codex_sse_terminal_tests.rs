@@ -3,120 +3,66 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::model::ProviderReportedErrorKind;
 
-// Covers: an HTTP Responses SSE stream that starts normally and then fails must
-// surface the provider's own error instead of the empty-content diagnostic.
+// Covers: terminal error events surface the provider's own code and message
+// (nested `response.error` or event-level fields), and a bare `error` event
+// falls back to the transport's defaults instead of the event discriminator;
+// the websocket fallback classifies as retryable Unavailable
 // Owner: providers stream parse
 #[test]
-fn response_failed_event_surfaces_provider_error() {
-    let mut state = CodexSseState::default();
-    let error = handle_codex_sse_line(
-        r#"data: {"type":"response.failed","response":{"id":"resp_failed","status":"failed","error":{"code":"server_error","message":"upstream request failed"}}}"#,
-        &mut state,
-        &mut None,
-    )
-    .unwrap_err();
+fn error_events_map_provider_fields_or_transport_fallbacks() {
+    let cases = [
+        (
+            "response.failed nested error",
+            r#"{"type":"response.failed","response":{"id":"resp_failed","status":"failed","error":{"code":"server_error","message":"upstream request failed"}}}"#,
+            CodexTransport::HttpSse,
+            ProviderReportedErrorKind::Unavailable,
+            "server_error",
+            "upstream request failed",
+        ),
+        (
+            "event-level code and message",
+            r#"{"type":"error","code":"server_error","message":"upstream unavailable"}"#,
+            CodexTransport::HttpSse,
+            ProviderReportedErrorKind::Unavailable,
+            "server_error",
+            "upstream unavailable",
+        ),
+        (
+            "bare error over http",
+            r#"{"type":"error"}"#,
+            CodexTransport::HttpSse,
+            ProviderReportedErrorKind::InvalidResponse,
+            "response_error",
+            "error event received",
+        ),
+        (
+            "bare error over websocket",
+            r#"{"type":"error"}"#,
+            CodexTransport::WebSocket,
+            ProviderReportedErrorKind::Unavailable,
+            "websocket_error",
+            "websocket error event received",
+        ),
+    ];
 
-    assert_eq!(
-        error.to_string(),
-        "provider reported server_error: upstream request failed"
-    );
-    assert!(matches!(
-        error,
-        ModelError::ProviderReported {
-            kind: ProviderReportedErrorKind::Unavailable,
-            ..
-        }
-    ));
-}
-
-// Covers: a bare `error` event with no nested payload falls back to the HTTP
-// transport defaults instead of reporting the event discriminator as the type.
-// Owner: providers stream parse
-#[test]
-fn bare_error_event_uses_http_fallbacks() {
-    let mut state = CodexSseState::default();
-    let error =
-        handle_codex_sse_line(r#"data: {"type":"error"}"#, &mut state, &mut None).unwrap_err();
-
-    assert!(matches!(
-        error,
-        ModelError::ProviderReported {
-            kind: ProviderReportedErrorKind::InvalidResponse,
+    for (case, event, transport, expected_kind, expected_type, expected_message) in cases {
+        let value = serde_json::from_str(event).unwrap();
+        let mut state = CodexSseState::default();
+        let error = handle_codex_sse_value(&value, &mut state, &mut None, transport).unwrap_err();
+        let ModelError::ProviderReported {
+            kind,
             error_type,
             message,
-        } if error_type == "response_error" && message == "error event received"
-    ));
-}
-
-// Covers: an `error` event carrying `code`/`message` at the event level (no
-// nested `error` object) keeps the provider's own code and retryability.
-// Owner: providers stream parse
-#[test]
-fn top_level_error_fields_are_used() {
-    let mut state = CodexSseState::default();
-    let error = handle_codex_sse_line(
-        r#"data: {"type":"error","code":"server_error","message":"upstream unavailable"}"#,
-        &mut state,
-        &mut None,
-    )
-    .unwrap_err();
-
-    assert!(matches!(
-        error,
-        ModelError::ProviderReported {
-            kind: ProviderReportedErrorKind::Unavailable,
-            error_type,
-            message,
-        } if error_type == "server_error" && message == "upstream unavailable"
-    ));
-}
-
-// Covers: a bare `error` event on the websocket transport falls back to
-// `websocket_error`, which classifies as a retryable Unavailable kind.
-// Owner: providers stream parse
-#[test]
-fn bare_error_event_uses_websocket_fallbacks() {
-    let mut state = CodexSseState::default();
-    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
-    let error = handle_codex_sse_value(
-        &serde_json::json!({"type":"error"}),
-        &mut state,
-        &mut on_event,
-        CodexTransport::WebSocket,
-    )
-    .unwrap_err();
-
-    assert!(matches!(
-        error,
-        ModelError::ProviderReported {
-            kind: ProviderReportedErrorKind::Unavailable,
-            error_type,
-            message,
-        } if error_type == "websocket_error" && message == "websocket error event received"
-    ));
-}
-
-// Covers: `response.incomplete` is terminal on the HTTP SSE path, mirroring the
-// websocket transport.
-// Owner: providers stream parse
-#[test]
-fn response_incomplete_event_surfaces_reason() {
-    let mut state = CodexSseState::default();
-    let error = handle_codex_sse_line(
-        r#"data: {"type":"response.incomplete","response":{"id":"resp_incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
-        &mut state,
-        &mut None,
-    )
-    .unwrap_err();
-
-    assert!(matches!(
-        error,
-        ModelError::ProviderReported {
-            kind: ProviderReportedErrorKind::InvalidResponse,
-            error_type,
-            message,
-        } if error_type == "response_incomplete" && message.contains("max_output_tokens")
-    ));
+        } = error
+        else {
+            panic!("{case}: expected ProviderReported, got {error:?}");
+        };
+        assert_eq!(
+            (kind, error_type.as_str(), message.as_str()),
+            (expected_kind, expected_type, expected_message),
+            "{case}"
+        );
+    }
 }
 
 // Covers: an incomplete response after streamed output still fails with the

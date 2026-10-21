@@ -72,14 +72,18 @@ fn codex_model_switch_preserves_native_context_on_repeated_sends() {
     }
 }
 
+// Covers: fast mode sends the priority service tier only to codex models that
+// support it
+// Owner: codex request body
 #[tokio::test]
-async fn priority_service_tier_is_sent_as_fast_mode() {
-    for model in [
-        "gpt-5.5",
-        "gpt-6-astra",
-        "gpt-6.1-sol",
-        "gpt-6-sol",
-        "gpt-6-luna",
+async fn priority_service_tier_is_sent_only_for_fast_capable_codex_models() {
+    for (model, expected) in [
+        ("gpt-5.5", Some("priority")),
+        ("gpt-6-astra", Some("priority")),
+        ("gpt-6.1-sol", Some("priority")),
+        ("gpt-6-sol", Some("priority")),
+        ("gpt-6-luna", Some("priority")),
+        ("gpt-5.3-codex-spark", None),
     ] {
         let body = build_codex_responses_body_with_tier(
             model,
@@ -95,27 +99,12 @@ async fn priority_service_tier_is_sent_as_fast_mode() {
         )
         .unwrap();
 
-        assert_eq!(body["service_tier"], "priority", "{model}");
+        assert_eq!(
+            body.get("service_tier").and_then(Value::as_str),
+            expected,
+            "{model}"
+        );
     }
-}
-
-#[tokio::test]
-async fn priority_service_tier_is_omitted_for_unsupported_codex_models() {
-    let body = build_codex_responses_body_with_tier(
-        "gpt-5.3-codex-spark",
-        ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-        Some(ServiceTier::Priority),
-        /*hosted_web_search*/ true,
-    )
-    .unwrap();
-
-    assert!(body.get("service_tier").is_none());
 }
 
 #[tokio::test]
@@ -355,6 +344,11 @@ async fn compact_body_omits_stream_tools_and_tool_policy_fields() {
     )
     .unwrap();
     assert_compact_body_omits_tool_fields(&standard_body);
+    assert!(standard_body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item.get("type").and_then(Value::as_str) != Some("compaction_trigger")));
     assert_eq!(standard_body["prompt_cache_key"], "session-1");
     assert_eq!(standard_body["store"], false);
     assert!(standard_body.get("include").is_none());
@@ -377,41 +371,6 @@ fn assert_compact_body_omits_tool_fields(body: &Value) {
     assert!(body.get("additional_tools").is_none());
     assert!(body.get("tool_choice").is_none());
     assert!(body.get("parallel_tool_calls").is_none());
-}
-
-#[test]
-fn create_and_compact_body_builders_diverge_on_tools() {
-    let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
-    let request = ModelRequest {
-        messages: &[Message::user_text("hello")],
-        tools: &[crate::model::ToolSpec {
-            name: "bash".into(),
-            description: "run".into(),
-            input_schema: json!({"type":"object"}),
-        }],
-        cancellation: Default::default(),
-        reasoning_level: Default::default(),
-        prompt_cache_key: None,
-    };
-    let create = build_responses_create_body(
-        &profile,
-        &OpenAiReasoningProfile::unknown(),
-        request.clone(),
-        &ModelRequestOptions::default(),
-        /*hosted_web_search*/ true,
-        &BTreeSet::new(),
-    )
-    .unwrap()
-    .body;
-    let compact =
-        build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
-            .unwrap();
-    assert_eq!(create["stream"], true);
-    assert!(create.get("tools").is_some());
-    assert!(compact.get("stream").is_none());
-    assert!(compact.get("tools").is_none());
-    assert!(compact.get("tool_choice").is_none());
-    assert!(compact.get("parallel_tool_calls").is_none());
 }
 
 // Covers: `"async": true` is advertised only for Astra plus a declared function

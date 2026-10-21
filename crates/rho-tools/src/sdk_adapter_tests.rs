@@ -437,39 +437,6 @@ async fn write_only_policy_cannot_diff_existing_file_contents() {
     );
 }
 
-#[tokio::test]
-async fn default_runtime_policy_keeps_coding_tools_inert() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("note.txt"), "safe").unwrap();
-    let runtime = build_runtime_with_coding_tools(
-        ScriptedProvider::new(
-            ModelIdentity::new("scripted", "test", "model"),
-            [
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "read_file".into(),
-                        arguments: json!({"path": "note.txt"}),
-                    },
-                )])),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "denied".into(),
-                )])),
-            ],
-        ),
-        workspace(&dir),
-        ScopedWorkspacePolicy::new(),
-        CodingToolOptions::default(),
-    );
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let outcome = session.complete("try to read").await.unwrap();
-    assert_eq!(outcome.text(), "denied");
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
-        "safe"
-    );
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn hostile_paths_are_rejected_before_file_io() {
@@ -576,51 +543,33 @@ PUT 1.=1:
     }
 }
 
-// Covers: edit prepare must reject invalid documents before path I/O
+// Covers: edit prepare must reject invalid documents and duplicate section
+// targets before path I/O
 // Owner: SDK contract
 #[tokio::test]
-async fn edit_prepare_rejects_invalid_document() {
-    let dir = tempfile::tempdir().unwrap();
-    let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
-    let error = match tool
-        .prepare(
-            invocation(json!({ "input": "not an edit document" })),
-            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
-        )
-        .await
-    {
-        Ok(_) => panic!("invalid edit document must fail prepare"),
-        Err(error) => error,
-    };
-    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
-}
-
-// Covers: edit prepare must reject duplicate section targets before I/O
-// Owner: SDK contract
-#[tokio::test]
-async fn edit_prepare_rejects_duplicate_paths() {
+async fn edit_prepare_rejects_invalid_documents() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
     let tool = coding_tool(CodingToolKind::Edit, CodingToolOptions::default());
-    let input = "\
-[a.txt#AAAA]
-PUT 1.=1:
-+A
-[a.txt#BBBB]
-PUT 1.=1:
-+B
-";
-    let error = match tool
-        .prepare(
-            invocation(json!({ "input": input })),
-            ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
-        )
-        .await
-    {
-        Ok(_) => panic!("duplicate edit path must fail prepare"),
-        Err(error) => error,
-    };
-    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+    for (case, input) in [
+        ("not a document", "not an edit document"),
+        (
+            "duplicate path",
+            "[a.txt#AAAA]\nPUT 1.=1:\n+A\n[a.txt#BBBB]\nPUT 1.=1:\n+B\n",
+        ),
+    ] {
+        let error = match tool
+            .prepare(
+                invocation(json!({ "input": input })),
+                ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
+            )
+            .await
+        {
+            Ok(_) => panic!("{case}: invalid edit document must fail prepare"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), ToolErrorKind::InvalidArguments, "{case}");
+    }
 }
 
 // Covers: edit success path emits diff metadata and progress

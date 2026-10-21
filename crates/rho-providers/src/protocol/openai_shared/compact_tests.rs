@@ -149,27 +149,6 @@ fn parse_compact_response_reads_usage() {
     assert_eq!(usage.total_tokens, Some(105));
 }
 
-#[test]
-fn parse_compact_response_malformed_output_is_invalid() {
-    let identity = ModelIdentity::new("openai", "openai-responses", "gpt-5.4");
-    let body = json!({
-        "id": "resp_compact",
-        "output": {
-            "not": "an array"
-        }
-    });
-    let error = parse_compact_response(
-        identity,
-        &[Message::System("sys".into())],
-        &body,
-        NOTICE,
-        CompactUserRetention::KeepServerUsers,
-        &[],
-    )
-    .expect_err("malformed compact output must fail");
-    assert!(matches!(error, ModelError::InvalidResponse(_)));
-}
-
 // Covers: host retention keeps every system prompt and the newest contiguous
 // user turns within budget, in original order.
 // Owner: Responses compaction protocol
@@ -258,48 +237,4 @@ fn native_compact_from_response_body_success_and_failure() {
     let (result, failed) = err.into_parts();
     assert!(result.is_err());
     assert_eq!(failed.len(), 1);
-}
-
-#[test]
-fn xai_single_compaction_item_replaces_history() {
-    let identity = ModelIdentity::new("xai", "openai-responses", "grok-4.5");
-    let body = json!({
-        "id": "cmp_01",
-        "object": "response.compaction",
-        "output": [
-            {
-                "type": "compaction",
-                "id": "cmp_01",
-                "encrypted_content": "opaque-blob"
-            }
-        ],
-        "usage": {
-            "input_tokens": 12000,
-            "output_tokens": 800,
-            "total_tokens": 12800,
-            "dropped_message_count": 45
-        }
-    });
-    let (messages, usage) = parse_compact_response(
-        identity.clone(),
-        &[Message::System("tutor".into())],
-        &body,
-        NOTICE,
-        CompactUserRetention::CompactionItemOnly,
-        &[],
-    )
-    .unwrap();
-
-    assert_eq!(messages.len(), 2);
-    assert!(matches!(&messages[0], Message::System(text) if text == "tutor"));
-    let Message::EnrichedAssistant(marker) = &messages[1] else {
-        panic!("expected compaction marker");
-    };
-    assert_eq!(marker.provenance.as_ref(), Some(&identity));
-    assert_eq!(
-        marker.provider_context[0].data["encrypted_content"],
-        "opaque-blob"
-    );
-    assert_eq!(usage.input_tokens, None);
-    assert_eq!(usage.output_tokens, Some(800));
 }

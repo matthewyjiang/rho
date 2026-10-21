@@ -157,42 +157,25 @@ async fn isolate_resets_deny_streak_without_sharing_counters() {
     assert_eq!(classifier.call_count(), 4);
 }
 
-// Covers: workflow Auto agent classifiers need the child session history from ApprovalContext.
+// Covers: workflow Auto agent classifiers need the child session history and
+// must share the run cancellation token from ApprovalContext.
 // Owner: permission classifier approval handler.
 #[tokio::test]
-async fn approval_context_history_reaches_classifier_input() {
+async fn approval_context_reaches_classifier_input() {
     let classifier = ScriptedClassifier::new([ClassifierVerdict::Allow]);
     let handler = ClassifierApprovalHandler::for_tests(classifier.classify(), None);
     let history = vec![rho_sdk::model::Message::user_text("prior workflow context")];
-
-    assert_eq!(
-        handler
-            .request(
-                request().with_context(context_with(history.clone(), CancellationToken::new(),))
-            )
-            .await,
-        ApprovalDecision::AllowOnce
-    );
-
-    assert_eq!(*classifier.histories.lock().unwrap(), vec![history]);
-}
-
-// Covers: in-flight classifier calls must share the run cancellation token from ApprovalContext.
-// Owner: permission classifier approval handler.
-#[tokio::test]
-async fn approval_context_cancellation_reaches_classifier_input() {
-    let classifier = ScriptedClassifier::new([ClassifierVerdict::Allow]);
-    let handler = ClassifierApprovalHandler::for_tests(classifier.classify(), None);
     let cancellation = CancellationToken::new();
     cancellation.cancel();
 
     assert_eq!(
         handler
-            .request(request().with_context(context_with(Vec::new(), cancellation)))
+            .request(request().with_context(context_with(history.clone(), cancellation)))
             .await,
         ApprovalDecision::AllowOnce
     );
 
+    assert_eq!(*classifier.histories.lock().unwrap(), vec![history]);
     assert_eq!(*classifier.cancelled.lock().unwrap(), vec![true]);
 }
 

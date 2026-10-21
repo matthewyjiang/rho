@@ -25,125 +25,107 @@ fn diff_body() -> ToolBody {
     ])
 }
 
-// Covers: collapsed/expanded display budgets share one row budget
+// Covers: collapsed/expanded display budgets share one row budget across facts
+// and bodies, and diffs collapse like any other body
 // Owner: pure unit (tool card layout)
 #[test]
-fn display_plan_short_diff_collapsed_shows_body() {
-    let card = base_card().with_body(diff_body());
-    let plan = card.display_plan(10, /*expanded*/ false);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 0,
-            visible_body_lines: 2,
-            hidden_rows: 0,
-            expandable: false,
-            show_collapse_prompt: false,
-        }
-    );
-}
-
-#[test]
-fn display_plan_diff_past_budget_collapses_like_any_body() {
-    let card = base_card().with_body(diff_body());
-    let plan = card.display_plan(1, /*expanded*/ false);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 0,
-            visible_body_lines: 1,
-            hidden_rows: 1,
-            expandable: true,
-            show_collapse_prompt: false,
-        }
-    );
-}
-
-#[test]
-fn display_plan_expanded_diff_shows_collapse_prompt_past_budget() {
-    let card = base_card().with_body(diff_body());
-    let plan = card.display_plan(1, /*expanded*/ true);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 0,
-            visible_body_lines: 2,
-            hidden_rows: 0,
-            expandable: true,
-            show_collapse_prompt: true,
-        }
-    );
-}
-
-#[test]
-fn display_plan_long_non_diff_body_truncated_when_collapsed() {
-    let body = (0..8).map(|i| format!("line-{i}")).collect();
-    let card = base_card().with_body(ToolBody::Lines(body));
-    let plan = card.display_plan(3, /*expanded*/ false);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 0,
-            visible_body_lines: 3,
-            hidden_rows: 5,
-            expandable: true,
-            show_collapse_prompt: false,
-        }
-    );
-}
-
-#[test]
-fn display_plan_many_facts_exceed_budget_when_collapsed() {
-    let card = base_card().with_facts(meta_facts(5));
-    let plan = card.display_plan(2, /*expanded*/ false);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 2,
-            visible_body_lines: 0,
-            hidden_rows: 3,
-            expandable: true,
-            show_collapse_prompt: false,
-        }
-    );
-}
-
-#[test]
-fn display_plan_facts_and_body_share_one_budget() {
-    let body = (0..5).map(|i| format!("line-{i}")).collect();
-    let card = base_card()
-        .with_facts(meta_facts(2))
-        .with_body(ToolBody::Lines(body));
-    let plan = card.display_plan(3, /*expanded*/ false);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 2,
-            visible_body_lines: 1,
-            hidden_rows: 4,
-            expandable: true,
-            show_collapse_prompt: false,
-        }
-    );
-}
-
-#[test]
-fn display_plan_expanded_long_body_shows_collapse_prompt() {
-    let body = (0..8).map(|i| format!("line-{i}")).collect();
-    let card = base_card()
-        .with_facts(meta_facts(1))
-        .with_body(ToolBody::Lines(body));
-    let plan = card.display_plan(3, /*expanded*/ true);
-    assert_eq!(
-        plan,
-        ToolCardDisplayPlan {
-            visible_facts: 1,
-            visible_body_lines: 8,
-            hidden_rows: 0,
-            expandable: true,
-            show_collapse_prompt: true,
-        }
-    );
+fn display_plan_shares_one_row_budget() {
+    let lines = |count: usize| ToolBody::Lines((0..count).map(|i| format!("line-{i}")).collect());
+    for (case, card, budget, expanded, expected) in [
+        (
+            "short diff collapsed shows body",
+            base_card().with_body(diff_body()),
+            10,
+            false,
+            ToolCardDisplayPlan {
+                visible_facts: 0,
+                visible_body_lines: 2,
+                hidden_rows: 0,
+                expandable: false,
+                show_collapse_prompt: false,
+            },
+        ),
+        (
+            "diff past budget collapses like any body",
+            base_card().with_body(diff_body()),
+            1,
+            false,
+            ToolCardDisplayPlan {
+                visible_facts: 0,
+                visible_body_lines: 1,
+                hidden_rows: 1,
+                expandable: true,
+                show_collapse_prompt: false,
+            },
+        ),
+        (
+            "expanded diff past budget shows collapse prompt",
+            base_card().with_body(diff_body()),
+            1,
+            true,
+            ToolCardDisplayPlan {
+                visible_facts: 0,
+                visible_body_lines: 2,
+                hidden_rows: 0,
+                expandable: true,
+                show_collapse_prompt: true,
+            },
+        ),
+        (
+            "long body truncated when collapsed",
+            base_card().with_body(lines(8)),
+            3,
+            false,
+            ToolCardDisplayPlan {
+                visible_facts: 0,
+                visible_body_lines: 3,
+                hidden_rows: 5,
+                expandable: true,
+                show_collapse_prompt: false,
+            },
+        ),
+        (
+            "many facts exceed budget when collapsed",
+            base_card().with_facts(meta_facts(5)),
+            2,
+            false,
+            ToolCardDisplayPlan {
+                visible_facts: 2,
+                visible_body_lines: 0,
+                hidden_rows: 3,
+                expandable: true,
+                show_collapse_prompt: false,
+            },
+        ),
+        (
+            "facts and body share one budget",
+            base_card().with_facts(meta_facts(2)).with_body(lines(5)),
+            3,
+            false,
+            ToolCardDisplayPlan {
+                visible_facts: 2,
+                visible_body_lines: 1,
+                hidden_rows: 4,
+                expandable: true,
+                show_collapse_prompt: false,
+            },
+        ),
+        (
+            "expanded long body shows collapse prompt",
+            base_card().with_facts(meta_facts(1)).with_body(lines(8)),
+            3,
+            true,
+            ToolCardDisplayPlan {
+                visible_facts: 1,
+                visible_body_lines: 8,
+                hidden_rows: 0,
+                expandable: true,
+                show_collapse_prompt: true,
+            },
+        ),
+    ] {
+        assert_eq!(card.display_plan(budget, expanded), expected, "{case}");
+    }
 }
 
 // Covers: multi-file unified diffs must not invent blank separators as content
@@ -300,6 +282,7 @@ fn diff_stats_multi_file_without_blank_separator() {
         ]
     );
 }
+
 // Covers: ToolFact serde roundtrip keeps the timeout budget structured so
 // hosts can decorate it live without parsing display text.
 // Owner: pure unit (tool card)

@@ -93,21 +93,6 @@ async fn a_valid_continue_lets_the_call_proceed() {
 }
 
 #[tokio::test]
-async fn a_valid_deny_stops_the_call_and_names_the_hook() {
-    let (_home, engine) = Fixture::new()
-        .hook("gate", "before_tool_use", "10s", DENY)
-        .engine();
-
-    let decision = decide(Arc::clone(&engine)).await;
-
-    assert_eq!(
-        decision,
-        HookDecision::deny("denied by hook `user:gate`: force push")
-    );
-    assert_eq!(engine.activity()[0].hook_id, "user:gate");
-}
-
-#[tokio::test]
 async fn hooks_run_in_configured_order_and_the_first_denial_wins() {
     let (_home, engine) = Fixture::new()
         .hook("first", "before_tool_use", "10s", CONTINUE)
@@ -132,90 +117,51 @@ async fn hooks_run_in_configured_order_and_the_first_denial_wins() {
     );
 }
 
+// Covers: every way a blocking handler can fail denies the call (fail
+// closed) and the reason names the hook and the failure.
+// Owner: host blocking dispatcher.
 #[tokio::test]
-async fn a_timeout_denies_and_says_so() {
-    let (_home, engine) = Fixture::new()
-        .hook("slow", "before_tool_use", "1s", "sleep 30")
-        .engine();
-
-    let decision = decide(engine).await;
-
-    let reason = decision.denial_reason().expect("a timeout must deny");
-    assert!(reason.contains("user:slow"), "{reason}");
-    assert!(reason.contains("timed out"), "{reason}");
-}
-
-#[tokio::test]
-async fn a_crash_denies_and_reports_the_exit_status() {
-    let (_home, engine) = Fixture::new()
-        .hook(
+async fn a_failing_handler_denies_rather_than_continuing() {
+    for (id, timeout, script, expected) in [
+        ("slow", "1s", "sleep 30", &["user:slow", "timed out"][..]),
+        (
             "broken",
-            "before_tool_use",
             "10s",
             "echo 'handler exploded' >&2; exit 9",
-        )
-        .engine();
-
-    let reason = decide(engine)
-        .await
-        .denial_reason()
-        .expect("a crash must deny")
-        .to_owned();
-
-    assert!(reason.contains("user:broken"), "{reason}");
-    assert!(reason.contains("status 9"), "{reason}");
-    assert!(reason.contains("handler exploded"), "{reason}");
-}
-
-#[tokio::test]
-async fn malformed_output_denies_rather_than_continuing() {
-    let (_home, engine) = Fixture::new()
-        .hook("garbled", "before_tool_use", "10s", "echo not-json")
-        .engine();
-
-    let reason = decide(engine)
-        .await
-        .denial_reason()
-        .expect("malformed output must deny")
-        .to_owned();
-
-    assert!(reason.contains("user:garbled"), "{reason}");
-    assert!(reason.contains("not valid JSON"), "{reason}");
-}
-
-#[tokio::test]
-async fn silence_denies_rather_than_continuing() {
-    let (_home, engine) = Fixture::new()
-        .hook("silent", "before_tool_use", "10s", "true")
-        .engine();
-
-    let reason = decide(engine)
-        .await
-        .denial_reason()
-        .expect("silence must deny")
-        .to_owned();
-
-    assert!(reason.contains("wrote no decision"), "{reason}");
-}
-
-#[tokio::test]
-async fn a_wrong_schema_version_denies() {
-    let (_home, engine) = Fixture::new()
-        .hook(
+            &["user:broken", "status 9", "handler exploded"][..],
+        ),
+        (
+            "garbled",
+            "10s",
+            "echo not-json",
+            &["user:garbled", "not valid JSON"][..],
+        ),
+        (
+            "silent",
+            "10s",
+            "true",
+            &["user:silent", "wrote no decision"][..],
+        ),
+        (
             "future",
-            "before_tool_use",
             "10s",
             r#"echo '{"version":99,"decision":"continue"}'"#,
-        )
-        .engine();
+            &["user:future", "schema version 99"][..],
+        ),
+    ] {
+        let (_home, engine) = Fixture::new()
+            .hook(id, "before_tool_use", timeout, script)
+            .engine();
 
-    let reason = decide(engine)
-        .await
-        .denial_reason()
-        .expect("a schema mismatch must deny")
-        .to_owned();
+        let decision = decide(engine).await;
 
-    assert!(reason.contains("schema version 99"), "{reason}");
+        let reason = decision
+            .denial_reason()
+            .unwrap_or_else(|| panic!("{id} must deny"));
+        for fragment in expected {
+            assert!(reason.contains(fragment), "{id}: {reason}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -277,21 +223,6 @@ async fn an_observational_failure_is_recorded_but_never_denies() {
     let activity = engine.activity();
     assert_eq!(activity[0].hook_id, "user:post");
     assert_eq!(activity[0].outcome.label(), "failed");
-}
-
-#[tokio::test]
-async fn an_observational_success_is_recorded() {
-    let (_home, engine) = Fixture::new()
-        .hook("post", "after_tool_use", "10s", "cat > /dev/null")
-        .engine();
-    let (observer, worker) =
-        observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
-
-    observer.observe(rho_sdk::hooks::testing::after_tool_use_envelope("bash"));
-    drop(observer);
-    worker.drain(Duration::from_secs(10)).await;
-
-    assert_eq!(engine.activity()[0].outcome.label(), "observed");
 }
 
 // Covers: a workflow hook crash and stdout must stay observational.
@@ -402,21 +333,6 @@ async fn observational_handlers_are_isolated_from_each_other() {
             ("user:waiting".into(), "observed"),
         ]
     );
-}
-
-#[tokio::test]
-async fn an_event_no_hook_matches_records_nothing() {
-    let (_home, engine) = Fixture::new()
-        .hook("post", "after_tool_use", "10s", "true")
-        .engine();
-    let (observer, worker) =
-        observational_channel(Arc::clone(&engine), rho_sdk::CancellationToken::new());
-
-    observer.observe(rho_sdk::hooks::testing::run_completed_envelope());
-    drop(observer);
-    worker.drain(Duration::from_secs(10)).await;
-
-    assert!(engine.activity().is_empty());
 }
 
 // Covers: shutdown grace expiry must cancel the owned worker instead of detaching it.

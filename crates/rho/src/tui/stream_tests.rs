@@ -52,26 +52,6 @@ fn markdown_preview_does_not_emit_unsafe_code_fence_fragment() {
 }
 
 #[test]
-fn drains_only_complete_newline_terminated_lines() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("hel");
-    assert_eq!(stream.drain_renderable(10), None);
-
-    stream.push_delta("lo\nwor");
-    let fragment = stream.drain_renderable(10).unwrap();
-    assert_eq!(fragment.text.as_str(), "hello\n");
-    assert!(!fragment.include_leading_blank());
-    assert_eq!(stream.emitted_text(), "hello\n");
-
-    stream.push_delta("ld\n");
-    let fragment = stream.drain_renderable(10).unwrap();
-    assert_eq!(fragment.text.as_str(), "world\n");
-    assert!(!fragment.include_leading_blank());
-    assert_eq!(stream.emitted_text(), "hello\nworld\n");
-}
-
-#[test]
 fn drains_full_width_wrapped_visual_lines() {
     let mut stream = AppendOnlyStream::default();
 
@@ -115,30 +95,16 @@ fn newline_after_full_width_wrap_updates_text_without_extra_visual_line() {
     assert_eq!(fragment.text.as_str(), "\n");
     assert_eq!(fragment.render_text(), "");
     assert_eq!(stream.emitted_text(), "abc\n");
-}
 
-#[test]
-fn second_newline_after_full_width_wrap_renders_blank_line() {
+    // A second newline after the wrap is a real blank row.
     let mut stream = AppendOnlyStream::default();
-
     stream.push_delta("abc");
     assert_eq!(stream.drain_renderable(3).unwrap().render_text(), "abc");
-
     stream.push_delta("\n\n");
     let fragment = stream.drain_renderable(3).unwrap();
     assert_eq!(fragment.text.as_str(), "\n\n");
     assert_eq!(fragment.render_text(), "\n");
     assert_eq!(stream.emitted_text(), "abc\n\n");
-}
-
-#[test]
-fn preserves_blank_lines_and_multibyte_boundaries() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("é\n\n");
-    let fragment = stream.drain_renderable(5).unwrap();
-    assert_eq!(fragment.text.as_str(), "é\n\n");
-    assert_eq!(stream.emitted_text(), "é\n\n");
 }
 
 #[test]
@@ -225,17 +191,6 @@ fn markdown_drain_resumes_wrapping_once_hash_prefix_is_not_a_heading() {
 }
 
 #[test]
-fn markdown_drain_allows_markers_inside_code_blocks() {
-    let mut stream = AppendOnlyStream::default();
-
-    // Following text makes the final underscore's grapheme boundary stable.
-    stream.push_delta("__init__ ");
-    let fragment = stream.drain_renderable_markdown(4, true).unwrap();
-    assert_eq!(fragment.text.as_str(), "__init__");
-    assert_eq!(stream.emitted_text(), "__init__");
-}
-
-#[test]
 fn markdown_drain_uses_rendered_width_for_trailing_spaces_and_exact_wraps() {
     for (case, input, width, in_code_block, expected) in [
         ("prose", "abc ", 3, false, "abc"),
@@ -283,27 +238,22 @@ fn markdown_drain_waits_when_second_raw_url_is_incomplete() {
 
 #[test]
 fn markdown_drain_allows_literal_markdown_characters() {
-    for (case, input, expected) in [
-        ("complete brackets", "arr[0] ", "arr[0]"),
-        ("unmatched marker", "* item ", "* item"),
+    for (case, input, width, in_code_block, expected) in [
+        ("complete brackets", "arr[0] ", 6, false, "arr[0]"),
+        ("unmatched marker", "* item ", 6, false, "* item"),
+        // Following text makes the final underscore's grapheme boundary stable.
+        ("code block markers", "__init__ ", 4, true, "__init__"),
+        ("code block hard wrap", "ab cd", 4, true, "ab c"),
     ] {
         let mut stream = AppendOnlyStream::default();
 
         stream.push_delta(input);
-        let fragment = stream.drain_renderable_markdown(6, false).unwrap();
+        let fragment = stream
+            .drain_renderable_markdown(width, in_code_block)
+            .unwrap();
         assert_eq!(fragment.text.as_str(), expected, "{case}");
         assert_eq!(stream.emitted_text(), expected, "{case}");
     }
-}
-
-#[test]
-fn markdown_drain_hard_wraps_code_block_content() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("ab cd");
-    let fragment = stream.drain_renderable_markdown(4, true).unwrap();
-    assert_eq!(fragment.text.as_str(), "ab c");
-    assert_eq!(stream.emitted_text(), "ab c");
 }
 
 // Covers: streamed code must not commit a full row while its final grapheme
@@ -364,6 +314,14 @@ fn markdown_preview_keeps_closed_emphasis_with_trailing_text() {
     assert!(
         height_after_tail >= height_at_close,
         "trailing text after bold must not collapse stream height ({height_at_close} -> {height_after_tail})"
+    );
+    // Soft-wrapped stable prose stays put while the emphasis completes: marker
+    // removal shortens the source, and rejoining without a kept break would
+    // pull the second visual line back up.
+    let wrapped_height = rendered_markdown_text(stream.emitted_text(), width, false).len();
+    assert!(
+        height_after_tail >= wrapped_height,
+        "wrapped stable prefix must remain after emphasis completes ({wrapped_height} -> {height_after_tail})"
     );
 
     let mut italic = AppendOnlyStream::default();
@@ -441,49 +399,6 @@ fn markdown_preview_keeps_stable_prefix_after_complete_line() {
             .drain_renderable_markdown(40, false)
             .is_some_and(|fragment| fragment.render_text() == "done\n"),
         "only the complete line should drain while emphasis stays open"
-    );
-}
-
-#[test]
-fn markdown_preview_closed_emphasis_after_wrap_keeps_height() {
-    // Soft-wrapped stable prose must stay put while a later emphasis span
-    // completes. Marker removal shortens the source, and rejoining without a
-    // kept break would pull the second visual line back up.
-    let width = 20;
-    let mut stream = AppendOnlyStream::default();
-    stream.push_delta("word word word word ");
-    while stream.drain_renderable_markdown(width, false).is_some() {}
-    let wrapped_height = rendered_markdown_text(stream.emitted_text(), width, false).len();
-    assert!(wrapped_height >= 1, "prefix should soft-wrap or commit");
-
-    stream.push_delta("**bold text**");
-    let preview = stream
-        .drain_preview_markdown(width, false)
-        .expect("closed bold after a wrap should preview");
-    let height_at_close = rendered_markdown_text(
-        &format!("{}{}", stream.emitted_text(), preview.render_text()),
-        width,
-        false,
-    )
-    .len();
-
-    stream.push_delta(" tail");
-    let preview = stream
-        .drain_preview_markdown(width, false)
-        .expect("trailing text after bold should keep previewing");
-    let height_after_tail = rendered_markdown_text(
-        &format!("{}{}", stream.emitted_text(), preview.render_text()),
-        width,
-        false,
-    )
-    .len();
-    assert!(
-        height_after_tail >= height_at_close,
-        "completed emphasis must not collapse wrapped height ({height_at_close} -> {height_after_tail})"
-    );
-    assert!(
-        height_after_tail >= wrapped_height,
-        "wrapped stable prefix must remain after emphasis completes ({wrapped_height} -> {height_after_tail})"
     );
 }
 

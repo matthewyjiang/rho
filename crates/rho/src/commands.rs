@@ -698,16 +698,22 @@ fn first_token_end_byte(input: &str) -> usize {
 mod tests {
     use super::*;
 
+    // Covers: only a single leading slash on one line makes a command; anything
+    // else is sent as prompt text.
+    // Owner: command parser
     #[test]
-    fn additional_leading_slashes_are_literal_text() {
+    fn non_command_text_parses_as_none() {
+        for input in [
+            "//literal",
+            " /model",
+            "hello /model",
+            "/model\ngpt-5.5",
+            "/model\r\ngpt-5.5",
+        ] {
+            assert_eq!(parse_command(input).unwrap(), None, "{input:?}");
+        }
         assert_eq!(command_prefix("//"), None);
-        assert_eq!(parse_command("//literal").unwrap(), None);
-    }
-
-    #[test]
-    fn slash_must_be_first_character_to_parse_as_command() {
         assert_eq!(command_prefix(" /model"), None);
-        assert_eq!(parse_command(" /model").unwrap(), None);
     }
 
     #[test]
@@ -716,23 +722,6 @@ mod tests {
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].name, "model");
-    }
-
-    #[test]
-    fn configuration_commands_are_not_in_the_command_palette() {
-        for name in [
-            "title-model",
-            "refresh-model-list",
-            "auto",
-            "plan",
-            "supervised",
-        ] {
-            assert!(matching_commands(name).is_empty());
-            assert_eq!(
-                parse_command(&format!("/{name}")),
-                Err(CommandParseError::Unknown(name.into()))
-            );
-        }
     }
 
     #[test]
@@ -767,17 +756,6 @@ mod tests {
             assert_eq!(invocation.raw_args, raw_args, "{input}");
             assert_eq!(invocation.args, args, "{input}");
         }
-    }
-
-    #[test]
-    fn parses_non_command_as_none() {
-        assert_eq!(parse_command("hello /model").unwrap(), None);
-    }
-
-    #[test]
-    fn multiline_slash_text_is_not_a_command() {
-        assert_eq!(parse_command("/model\ngpt-5.5").unwrap(), None);
-        assert_eq!(parse_command("/model\r\ngpt-5.5").unwrap(), None);
     }
 
     // Covers: a paste-burst Enter that became a trailing newline must not

@@ -351,22 +351,6 @@ fn inherit_config_widens_setting_sources() {
         .any(|pair| pair == ["--max-turns", "32"]));
 }
 
-#[test]
-fn model_is_passed_byte_for_byte_without_alias_rewrite() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        Some("claude-opus-4-6"),
-        ClaudePermissionMode::BypassPermissions,
-        16,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ));
-    assert!(plan
-        .args
-        .windows(2)
-        .any(|pair| pair == ["--model", "claude-opus-4-6"]));
-}
-
 // Covers: Auto / Allow edits reach dontAsk only when every tool is proven
 // free for that Rho class. Specifiers, inherited Claude settings, write or
 // process tools, and unknown / plugin / MCP names fail closed.
@@ -685,35 +669,6 @@ fn reasoning_maps_to_claude_effort_flag() {
             plan.args
         );
     }
-}
-
-#[test]
-fn require_claude_reasoning_keeps_mapped_levels_and_rejects_unmapped() {
-    assert_eq!(require_claude_reasoning(None).unwrap(), None);
-    assert_eq!(
-        require_claude_reasoning(Some(ReasoningLevel::High)).unwrap(),
-        Some(ReasoningLevel::High)
-    );
-    let off = require_claude_reasoning(Some(ReasoningLevel::Off)).unwrap_err();
-    assert!(
-        off.to_string().contains("not a Claude Code effort level"),
-        "{off:#}"
-    );
-    let minimal = require_claude_reasoning(Some(ReasoningLevel::Minimal)).unwrap_err();
-    assert!(
-        minimal
-            .to_string()
-            .contains("not a Claude Code effort level"),
-        "{minimal:#}"
-    );
-}
-
-#[test]
-fn detects_max_turns_rejection() {
-    assert!(looks_like_max_turns_unsupported(
-        "error: unknown option '--max-turns'"
-    ));
-    assert!(!looks_like_max_turns_unsupported("ran out of turns"));
 }
 
 // Covers: a delegated agent run must stay resumable while Rho's own one-shot

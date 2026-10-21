@@ -20,7 +20,10 @@ fn the_child_gets_the_base_set_plus_its_allowlist_and_nothing_else() {
         ("UNRELATED", "value"),
     ];
 
-    let environment = child_environment(&["MY_HOOK_TOKEN".to_owned()], reader(&ambient));
+    let environment = child_environment(
+        &["MY_HOOK_TOKEN".to_owned(), "NOT_SET".to_owned()],
+        reader(&ambient),
+    );
 
     assert_eq!(
         environment.get("PATH").map(String::as_str),
@@ -32,14 +35,11 @@ fn the_child_gets_the_base_set_plus_its_allowlist_and_nothing_else() {
     );
     assert_eq!(environment.get("ANTHROPIC_API_KEY"), None);
     assert_eq!(environment.get("UNRELATED"), None);
-}
-
-#[test]
-fn a_variable_missing_from_the_parent_is_simply_absent() {
-    let environment = child_environment(&["NOT_SET".to_owned()], reader(&[("PATH", "/usr/bin")]));
-
-    assert_eq!(environment.get("NOT_SET"), None);
-    assert!(environment.contains_key("PATH"));
+    assert_eq!(
+        environment.get("NOT_SET"),
+        None,
+        "missing parent vars stay absent"
+    );
 }
 
 #[test]

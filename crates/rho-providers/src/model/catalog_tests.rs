@@ -195,54 +195,63 @@ fn resolves_poolside_references_to_internal_model_id() {
     );
 }
 
+// Covers: ollama-cloud auth preference: a credential-backed mode beats the
+// default, the current auth wins only when it has credentials for this
+// provider, and the descriptor default is the last resort
+// Owner: model catalog
 #[test]
-fn provider_selection_prefers_credential_backed_auth_over_default() {
+fn provider_selection_prefers_current_then_credential_backed_auth() {
     with_cached_provider_models(
         "ollama-cloud",
         vec![provider_model("ollama-cloud", "glm-5.2")],
         || {
-            let selection = resolve_model_selection_for_provider(
-                "ollama-cloud",
-                "glm-5.2",
-                SelectionAuthContext {
-                    current: None,
-                    available: &["ollama-cloud-device".into()],
-                },
-            )
-            .unwrap();
+            let device = "ollama-cloud-device";
+            let api_key = "ollama-cloud-api-key";
+            for (case, current, available, expected) in [
+                ("credential over default", None, vec![device], device),
+                (
+                    "current among several",
+                    Some(device),
+                    vec![api_key, device],
+                    device,
+                ),
+                (
+                    "current from another provider",
+                    Some("kimi-api-key"),
+                    vec![device],
+                    device,
+                ),
+                ("no credentials", None, vec![], api_key),
+            ] {
+                let available = available.into_iter().map(String::from).collect::<Vec<_>>();
+                let selection = resolve_model_selection_for_provider(
+                    "ollama-cloud",
+                    "glm-5.2",
+                    SelectionAuthContext {
+                        current,
+                        available: &available,
+                    },
+                )
+                .unwrap();
+                assert_eq!(selection.auth, expected, "{case}");
+            }
 
+            let bare =
+                resolve_model_selection_for_auths("glm-5.2", "openai", "api-key", &[device.into()])
+                    .unwrap();
             assert_eq!(
-                selection,
-                ModelSelection {
-                    provider: "ollama-cloud".into(),
-                    model: "glm-5.2".into(),
-                    auth: "ollama-cloud-device".into(),
-                    from_catalog: true,
-                }
+                (bare.provider.as_str(), bare.auth.as_str()),
+                ("ollama-cloud", device)
             );
-        },
-    );
-}
 
-#[test]
-fn provider_selection_keeps_current_auth_when_multiple_credentials_exist() {
-    with_cached_provider_models(
-        "ollama-cloud",
-        vec![provider_model("ollama-cloud", "glm-5.2")],
-        || {
-            // Both auth modes have credentials; the current device auth must
-            // win over the earlier-registered api-key mode.
-            let selection = resolve_model_selection_for_provider(
+            let qualified = resolve_model_selection_for_auths(
+                "ollama-cloud/glm-5.2",
                 "ollama-cloud",
-                "glm-5.2",
-                SelectionAuthContext {
-                    current: Some("ollama-cloud-device"),
-                    available: &["ollama-cloud-api-key".into(), "ollama-cloud-device".into()],
-                },
+                api_key,
+                &[device.into(), api_key.into()],
             )
             .unwrap();
-
-            assert_eq!(selection.auth, "ollama-cloud-device");
+            assert_eq!(qualified.auth, api_key);
         },
     );
 }
@@ -264,86 +273,6 @@ fn provider_selection_prefers_stored_key_over_keyless_default() {
 
         assert_eq!(selection.auth, "ollama-api-key");
     });
-}
-
-#[test]
-fn provider_selection_ignores_current_auth_from_another_provider() {
-    with_cached_provider_models(
-        "ollama-cloud",
-        vec![provider_model("ollama-cloud", "glm-5.2")],
-        || {
-            let selection = resolve_model_selection_for_provider(
-                "ollama-cloud",
-                "glm-5.2",
-                SelectionAuthContext {
-                    current: Some("kimi-api-key"),
-                    available: &["ollama-cloud-device".into()],
-                },
-            )
-            .unwrap();
-
-            assert_eq!(selection.auth, "ollama-cloud-device");
-        },
-    );
-}
-
-#[test]
-fn provider_selection_uses_default_auth_when_no_credentials_available() {
-    with_cached_provider_models(
-        "ollama-cloud",
-        vec![provider_model("ollama-cloud", "glm-5.2")],
-        || {
-            let selection = resolve_model_selection_for_provider(
-                "ollama-cloud",
-                "glm-5.2",
-                SelectionAuthContext::none(),
-            )
-            .unwrap();
-
-            assert_eq!(selection.auth, "ollama-cloud-api-key");
-        },
-    );
-}
-
-#[test]
-fn bare_model_selection_prefers_credential_backed_auth_mode() {
-    with_cached_provider_models(
-        "ollama-cloud",
-        vec![provider_model("ollama-cloud", "glm-5.2")],
-        || {
-            let selection = resolve_model_selection_for_auths(
-                "glm-5.2",
-                "openai",
-                "api-key",
-                &["ollama-cloud-device".into()],
-            )
-            .unwrap();
-
-            assert_eq!(selection.provider, "ollama-cloud");
-            assert_eq!(selection.auth, "ollama-cloud-device");
-        },
-    );
-}
-
-#[test]
-fn current_auth_wins_when_it_is_available_for_provider_selection() {
-    with_cached_provider_models(
-        "ollama-cloud",
-        vec![provider_model("ollama-cloud", "glm-5.2")],
-        || {
-            let available = vec!["ollama-cloud-device".into(), "ollama-cloud-api-key".into()];
-            // Qualified reference carries the current auth as preference.
-            let selection = resolve_model_selection_for_auths(
-                "ollama-cloud/glm-5.2",
-                "ollama-cloud",
-                "ollama-cloud-api-key",
-                &available,
-            )
-            .unwrap();
-
-            assert_eq!(selection.auth, "ollama-cloud-api-key");
-        },
-    );
 }
 
 #[test]
@@ -392,22 +321,6 @@ fn resolves_bare_model_across_all_available_auths() {
 }
 
 #[test]
-fn bare_uncached_current_provider_model_is_rejected() {
-    let err =
-        resolve_model_selection_for_auths("brand-new-model", "openai", "codex", &["codex".into()])
-            .unwrap_err();
-
-    assert_eq!(
-        err,
-        ModelSelectionError::UnavailableModel {
-            provider: "openai".into(),
-            model: "brand-new-model".into(),
-            hint: "Open /config and choose Refresh model lists to update available models.",
-        }
-    );
-}
-
-#[test]
 fn bare_ambiguous_model_returns_error() {
     with_cached_provider_models(
         "openai",
@@ -438,59 +351,62 @@ fn bare_ambiguous_model_returns_error() {
     );
 }
 
-#[test]
-fn non_allowlisted_codex_model_is_rejected() {
-    let err = resolve_model_selection_for_auths(
-        "openai-codex/custom-model",
-        "openai-codex",
-        "codex",
-        &["codex".into()],
-    )
-    .unwrap_err();
-
-    assert_eq!(
-        err,
-        ModelSelectionError::UnavailableModel {
-            provider: "openai-codex".into(),
-            model: "custom-model".into(),
-            hint: "Choose a model from the provider allowlist.",
-        }
-    );
-}
-
-#[test]
-fn unknown_provider_is_rejected() {
-    let err =
-        resolve_model_selection_for_auths("missing/gpt-5.5", "openai", "codex", &["codex".into()])
-            .unwrap_err();
-
-    assert_eq!(
-        err,
-        ModelSelectionError::UnknownProvider {
-            provider: "missing".into()
-        }
-    );
-}
-
-// Covers: a decision-model host chosen as the chat model is refused by name,
-// not reported as a missing model or an unknown provider.
+// Covers: each selection rejection names its rule: uncached model on the
+// current provider, codex allowlist, unknown provider, and decision-only hosts
+// that are not chat models
 // Owner: model catalog
 #[test]
-fn decision_only_provider_is_not_a_chat_model() {
-    let err = resolve_model_selection_for_auths(
-        "typesafe/jev-latest",
-        "openai",
-        "codex",
-        &["typesafe-api-key".into()],
-    )
-    .unwrap_err();
-
-    assert_eq!(
-        err,
-        ModelSelectionError::DecisionOnly {
-            provider: "typesafe".into()
-        }
-    );
+fn selection_rejections_report_the_failing_rule() {
+    let refresh_hint = "Open /config and choose Refresh model lists to update available models.";
+    for (input, current_provider, auth, available, expected) in [
+        (
+            "brand-new-model",
+            "openai",
+            "codex",
+            "codex",
+            ModelSelectionError::UnavailableModel {
+                provider: "openai".into(),
+                model: "brand-new-model".into(),
+                hint: refresh_hint,
+            },
+        ),
+        (
+            "openai-codex/custom-model",
+            "openai-codex",
+            "codex",
+            "codex",
+            ModelSelectionError::UnavailableModel {
+                provider: "openai-codex".into(),
+                model: "custom-model".into(),
+                hint: "Choose a model from the provider allowlist.",
+            },
+        ),
+        (
+            "missing/gpt-5.5",
+            "openai",
+            "codex",
+            "codex",
+            ModelSelectionError::UnknownProvider {
+                provider: "missing".into(),
+            },
+        ),
+        (
+            "typesafe/jev-latest",
+            "openai",
+            "codex",
+            "typesafe-api-key",
+            ModelSelectionError::DecisionOnly {
+                provider: "typesafe".into(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            resolve_model_selection_for_auths(input, current_provider, auth, &[available.into()])
+                .unwrap_err(),
+            expected,
+            "{input}"
+        );
+    }
 }
 
 // Covers: descriptor default wins over lexicographic first cached model when present
@@ -527,6 +443,8 @@ fn preferred_cached_default_prefers_descriptor_default_when_present() {
             default_model_for_provider("anthropic").as_deref(),
             Some("claude-sonnet-4-5")
         );
+        // OpenCode Go has no baked default to fall back to.
+        assert_eq!(default_model_for_provider("opencode-go"), None);
     });
 }
 
@@ -580,15 +498,6 @@ fn baked_provider_defaults_survive_empty_and_cached_models() {
             },
         );
     }
-}
-
-// Covers: OpenCode Go has no baked default when the live /models cache is empty
-// Owner: model catalog
-#[test]
-fn opencode_go_has_no_default_model_when_cache_is_empty() {
-    with_empty_provider_models_cache("opencode-go-default-empty", || {
-        assert_eq!(default_model_for_provider("opencode-go"), None);
-    });
 }
 
 // Covers: login groups derive single-provider rows and keep cross-provider merges

@@ -51,14 +51,6 @@ fn table_parser_preserves_escaped_pipes_and_code_spans() {
 }
 
 #[test]
-fn table_parser_preserves_an_escaped_trailing_pipe_without_a_border() {
-    assert_eq!(
-        markdown_table_cells("A | B\\|"),
-        vec!["A".to_string(), "B|".to_string()]
-    );
-}
-
-#[test]
 fn table_parser_stops_before_lines_with_only_protected_pipes() {
     let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
@@ -80,25 +72,21 @@ fn table_parser_stops_before_lines_with_only_protected_pipes() {
     );
 }
 
+// Covers: markdown table cells split on pipes, except escaped pipes and pipes
+// inside code spans
+// Owner: tui markdown tables
 #[test]
-fn table_parser_preserves_pipes_in_multi_backtick_code_spans() {
-    assert_eq!(
-        markdown_table_cells("| Example | Result |\n"),
-        vec!["Example".to_string(), "Result".to_string()]
-    );
-    assert_eq!(
-        markdown_table_cells("| ``x|y`` | ok |"),
-        vec!["``x|y``".to_string(), "ok".to_string()]
-    );
-    assert_eq!(
-        markdown_table_cells("| `x | y |"),
-        vec!["`x".to_string(), "y".to_string()]
-    );
-}
-
-#[test]
-fn lone_pipe_line_parses_as_a_single_empty_cell() {
-    assert_eq!(markdown_table_cells("|"), vec![String::new()]);
+fn table_cells_split_only_on_unprotected_pipes() {
+    for (row, expected) in [
+        ("| Example | Result |\n", &["Example", "Result"][..]),
+        ("| ``x|y`` | ok |", &["``x|y``", "ok"]),
+        ("| `x | y |", &["`x", "y"]),
+        ("A | B\\|", &["A", "B|"]),
+        // A lone pipe once panicked the parser.
+        ("|", &[""]),
+    ] {
+        assert_eq!(markdown_table_cells(row), expected, "{row:?}");
+    }
 }
 
 #[test]

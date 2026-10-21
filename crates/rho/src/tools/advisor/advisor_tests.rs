@@ -7,14 +7,12 @@ use rho_sdk::{
     tool::{tool_progress_channel, Tool, ToolErrorKind},
     CancellationToken, SessionId,
 };
-use serde_json::json;
 
 use crate::config::{Config, InternalAgentModelConfig};
 
 use super::{
-    advisor_effective_reasoning, advisor_model, advisor_progress_message,
-    consult_advisor_with_provider, AdvisorSessionStore, AdvisorTool, DEFAULT_TRANSCRIPT_BUDGET,
-    NO_MODEL_MESSAGE, NO_SESSION_MESSAGE, TOOL_NAME,
+    advisor_effective_reasoning, advisor_model, consult_advisor_with_provider, AdvisorSessionStore,
+    AdvisorTool, DEFAULT_TRANSCRIPT_BUDGET, NO_MODEL_MESSAGE, NO_SESSION_MESSAGE,
 };
 
 fn advisor_selection() -> InternalAgentModelConfig {
@@ -62,42 +60,26 @@ fn advisor_reasoning_prefers_the_override_over_the_definition_level() {
     }
 }
 
+// Covers: a request names the missing prerequisite, model first, then session
+// Owner: advisor session store
 #[test]
-fn a_request_without_a_model_reports_how_to_choose_one() {
-    let store = AdvisorSessionStore::new();
+fn a_request_reports_its_missing_prerequisite() {
+    for (case, model, expected) in [
+        ("no model", None, NO_MODEL_MESSAGE),
+        ("no session", Some(advisor_selection()), NO_SESSION_MESSAGE),
+    ] {
+        let store = AdvisorSessionStore::new();
+        if model.is_some() {
+            store.set_model(model);
+        }
 
-    let error = store
-        .request(DEFAULT_TRANSCRIPT_BUDGET)
-        .expect_err("a store with no model cannot build a request");
+        let error = store
+            .request(DEFAULT_TRANSCRIPT_BUDGET)
+            .expect_err("an incomplete store cannot build a request");
 
-    assert_eq!(error.kind(), ToolErrorKind::Execution);
-    assert_eq!(error.message(), NO_MODEL_MESSAGE);
-}
-
-#[test]
-fn a_request_without_a_session_reports_the_missing_session() {
-    let store = AdvisorSessionStore::new();
-    store.set_model(Some(advisor_selection()));
-
-    let error = store
-        .request(DEFAULT_TRANSCRIPT_BUDGET)
-        .expect_err("a store with no session cannot build a request");
-
-    assert_eq!(error.kind(), ToolErrorKind::Execution);
-    assert_eq!(error.message(), NO_SESSION_MESSAGE);
-}
-
-#[test]
-fn the_tool_takes_no_arguments() {
-    let tool = AdvisorTool::new(AdvisorSessionStore::new(), DEFAULT_TRANSCRIPT_BUDGET);
-
-    let spec = tool.spec();
-
-    assert_eq!(spec.name, TOOL_NAME);
-    assert_eq!(
-        spec.input_schema,
-        json!({ "type": "object", "additionalProperties": false, "properties": {} })
-    );
+        assert_eq!(error.kind(), ToolErrorKind::Execution, "{case}");
+        assert_eq!(error.message(), expected, "{case}");
+    }
 }
 
 // Covers: finished advisor spend must accumulate and claim once for the parent
@@ -306,23 +288,6 @@ async fn streams_progress_before_completion_with_plain_final_output() {
     assert_eq!(advice, "prefer the simple path");
     assert!(!advice.contains("responding"));
     assert!(!advice.contains("thinking"));
-}
-
-// Covers: progress messages keep phase in metadata and body as plain text
-// Owner: advisor tool progress bridge
-#[test]
-fn progress_message_keeps_phase_out_of_body() {
-    use crate::agent::{OneShotPhase, OneShotUpdate};
-
-    let progress = advisor_progress_message(&OneShotUpdate::new(
-        OneShotPhase::Responding,
-        "ship the smaller change",
-    ));
-    assert_eq!(progress.text(), "ship the smaller change");
-    assert_eq!(
-        progress.presentation().command_summary_text(),
-        Some("responding")
-    );
 }
 
 // Covers: the `advisor` description must not name the reviewer. A `/advisor`

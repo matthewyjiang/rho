@@ -3,34 +3,6 @@ use crate::tui::composer_buffer::ComposerEditKey;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn completing_goal_command_reveals_lifecycle_actions() {
-    let mut app = test_app();
-    app.input_ui.set_text("/goal".to_string());
-    app.input_ui.set_cursor(app.input_ui.text().chars().count());
-    app.clamp_command_selection();
-
-    let goal = app.selected_command().unwrap();
-    app.complete_command_choice(&goal);
-
-    assert_eq!(app.input_ui.text(), "/goal ");
-    assert!(app.command_palette_visible());
-    let matches = app.command_matches();
-    assert_eq!(
-        matches
-            .iter()
-            .map(|choice| choice.usage.as_str())
-            .collect::<Vec<_>>(),
-        vec!["/goal resume", "/goal clear"]
-    );
-
-    app.input_ui
-        .set_text("/goal release is published".to_string());
-    app.input_ui.set_cursor(app.input_ui.text().chars().count());
-    app.input_changed();
-    assert!(!app.command_palette_visible());
-}
-
-#[test]
 fn goal_lifecycle_action_completion_replaces_placeholder() {
     let mut app = test_app();
     app.input_ui.set_text("/goal ".to_string());
@@ -208,36 +180,23 @@ fn recalling_a_command_keeps_the_palette_closed_until_edit() {
     assert!(app.command_palette_visible());
 }
 
-// Covers: Esc on a bare slash must not leave a trap for blind retyping into //cmd.
+// Covers: Esc on a bare slash must not leave a trap for blind retyping into
+// //cmd, while a partial slash command keeps its typed content.
 // Owner: command palette dismiss policy (idle and during-turn Esc arms)
 #[test]
-fn dismiss_on_esc_clears_bare_slash_composer() {
-    let mut app = test_app();
-    app.input_ui.set_text("/".to_string());
-    app.input_ui.set_cursor(1);
-    assert!(app.command_palette_visible());
+fn dismiss_on_esc_clears_only_a_bare_slash() {
+    for (typed, expected) in [("/", ""), ("/mo", "/mo")] {
+        let mut app = test_app();
+        app.input_ui.set_text(typed.to_string());
+        app.input_ui.set_cursor(typed.chars().count());
+        assert!(app.command_palette_visible(), "{typed}");
 
-    app.dismiss_command_palette_on_esc();
+        app.dismiss_command_palette_on_esc();
 
-    assert_eq!(app.input_ui.text(), "");
-    assert_eq!(app.input_ui.cursor(), 0);
-    assert!(app.input_ui.command_palette_dismissed());
-}
-
-// Covers: Esc on a partial slash command keeps typed content in the composer.
-// Owner: command palette dismiss policy (idle and during-turn Esc arms)
-#[test]
-fn dismiss_on_esc_preserves_partial_slash_command() {
-    let mut app = test_app();
-    app.input_ui.set_text("/mo".to_string());
-    app.input_ui.set_cursor(3);
-    assert!(app.command_palette_visible());
-
-    app.dismiss_command_palette_on_esc();
-
-    assert_eq!(app.input_ui.text(), "/mo");
-    assert_eq!(app.input_ui.cursor(), 3);
-    assert!(app.input_ui.command_palette_dismissed());
+        assert_eq!(app.input_ui.text(), expected, "{typed}");
+        assert_eq!(app.input_ui.cursor(), expected.chars().count(), "{typed}");
+        assert!(app.input_ui.command_palette_dismissed(), "{typed}");
+    }
 }
 
 // Covers: with argument rows open, Enter must not spend the default

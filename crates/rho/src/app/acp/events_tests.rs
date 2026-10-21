@@ -47,39 +47,51 @@ fn text_of(block: &ContentBlock) -> &str {
     }
 }
 
-// Covers: streamed assistant tokens must surface as ACP agent message chunks
+// Covers: streamed text surfaces as agent message chunks; reasoning, reasoning
+// summaries, and the stream-reset discard notice (ACP cannot retract streamed
+// text) share the thought channel
 // Owner: acp event mapper
 #[test]
-fn assistant_delta_maps_to_agent_message_chunk() {
-    let update = only_update(
-        &mut EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
-        RunEvent::AssistantTextDelta { text: "hi".into() },
-    );
-    match update {
-        SessionUpdate::AgentMessageChunk(chunk) => assert_eq!(text_of(&chunk.content), "hi"),
-        other => panic!("expected AgentMessageChunk, got {other:?}"),
-    }
-}
-
-// Covers: reasoning and reasoning-summary deltas share the thought channel
-// Owner: acp event mapper
-#[test]
-fn reasoning_deltas_map_to_thought_chunks() {
-    for event in [
-        RunEvent::ReasoningDelta {
-            text: "think".into(),
-        },
-        RunEvent::ReasoningSummaryDelta {
-            text: "think".into(),
-        },
+fn stream_events_map_to_message_and_thought_chunks() {
+    for (event, thought, text) in [
+        (
+            RunEvent::AssistantTextDelta { text: "hi".into() },
+            false,
+            "hi",
+        ),
+        (
+            RunEvent::ReasoningDelta {
+                text: "think".into(),
+            },
+            true,
+            "think",
+        ),
+        (
+            RunEvent::ReasoningSummaryDelta {
+                text: "think".into(),
+            },
+            true,
+            "think",
+        ),
+        (
+            RunEvent::ProviderStreamReset {
+                reason: ProviderStreamResetReason::InvalidResponse,
+                detail: "retry".into(),
+            },
+            true,
+            PROVIDER_STREAM_RESET_NOTICE,
+        ),
     ] {
         let update = only_update(
             &mut EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
             event,
         );
-        match update {
-            SessionUpdate::AgentThoughtChunk(chunk) => assert_eq!(text_of(&chunk.content), "think"),
-            other => panic!("expected AgentThoughtChunk, got {other:?}"),
+        match (thought, update) {
+            (false, SessionUpdate::AgentMessageChunk(chunk))
+            | (true, SessionUpdate::AgentThoughtChunk(chunk)) => {
+                assert_eq!(text_of(&chunk.content), text);
+            }
+            (_, other) => panic!("unexpected update {other:?} for {text:?}"),
         }
     }
 }
@@ -143,7 +155,15 @@ fn proposed_started_finished_map_kind_and_status() {
     match finished {
         SessionUpdate::ToolCallUpdate(update) => {
             assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
-            assert_eq!(update.fields.content.as_ref().map(Vec::len), Some(2));
+            // A unified diff is patch text, never ACP Diff.new_text (file contents).
+            let content = update.fields.content.expect("finished content");
+            assert_eq!(content.len(), 2);
+            match &content[1] {
+                agent_client_protocol::schema::v1::ToolCallContent::Content(block) => {
+                    assert_eq!(text_of(&block.content), "diff --git a/a.rs");
+                }
+                other => panic!("expected patch text, got {other:?}"),
+            }
         }
         other => panic!("expected ToolCallUpdate, got {other:?}"),
     }
@@ -246,25 +266,6 @@ fn started_call_titles_describe_the_call() {
             SessionUpdate::ToolCall(tool) => assert_eq!(tool.title, expected, "{name}"),
             other => panic!("expected ToolCall, got {other:?}"),
         }
-    }
-}
-
-// Covers: ACP cannot retract streamed text, so a reset must emit the discard notice
-// Owner: acp event mapper
-#[test]
-fn provider_stream_reset_emits_discard_thought() {
-    let update = only_update(
-        &mut EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
-        RunEvent::ProviderStreamReset {
-            reason: ProviderStreamResetReason::InvalidResponse,
-            detail: "retry".into(),
-        },
-    );
-    match update {
-        SessionUpdate::AgentThoughtChunk(chunk) => {
-            assert_eq!(text_of(&chunk.content), PROVIDER_STREAM_RESET_NOTICE);
-        }
-        other => panic!("expected AgentThoughtChunk, got {other:?}"),
     }
 }
 
@@ -408,38 +409,6 @@ fn map_stop_maps_sdk_stop_reasons() {
     ];
     for (sdk, expected) in cases {
         assert_eq!(map_sdk_stop_reason(sdk), expected);
-    }
-}
-
-// Covers: a unified diff must not be sent as ACP Diff.new_text (file contents)
-// Owner: acp event mapper
-#[test]
-fn finished_unified_diff_is_patch_text() {
-    let finished = only_update(
-        &mut mapper_with_started_call(),
-        RunEvent::ToolFinished {
-            call_id: ToolCallId::from_string("call-1").unwrap(),
-            result: ToolCompletion::Success(
-                ToolOutput::text("ok").metadata(
-                    ToolMetadata::new()
-                        .affected_path("a.rs")
-                        .diff("diff --git a/a.rs"),
-                ),
-            ),
-        },
-    );
-    match finished {
-        SessionUpdate::ToolCallUpdate(update) => {
-            let content = update.fields.content.expect("finished content");
-            assert_eq!(content.len(), 2);
-            match &content[1] {
-                agent_client_protocol::schema::v1::ToolCallContent::Content(block) => {
-                    assert_eq!(text_of(&block.content), "diff --git a/a.rs");
-                }
-                other => panic!("expected patch text, got {other:?}"),
-            }
-        }
-        other => panic!("expected ToolCallUpdate, got {other:?}"),
     }
 }
 

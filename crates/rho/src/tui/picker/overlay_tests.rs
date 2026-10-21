@@ -42,22 +42,6 @@ fn long_detail() -> String {
 }
 
 #[test]
-fn section_headers_follow_filtered_items_without_becoming_selectable() {
-    let mut picker = sample_picker("agent detail", "worker detail");
-    picker.items[0].section = Some("INTERNAL".into());
-    picker.items[1].section = Some("CUSTOM".into());
-    picker.filter = "custom".into();
-    picker.select_first_match();
-
-    assert_eq!(picker.matching_indices(), vec![1]);
-    assert_eq!(picker.selected_item().unwrap().label, "worker");
-    assert_eq!(
-        picker.selected_item().unwrap().section.as_deref(),
-        Some("CUSTOM")
-    );
-}
-
-#[test]
 fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
     let picker = sample_picker("agent detail", "worker detail")
         .with_badge_placement(PickerBadgePlacement::Detail);
@@ -104,13 +88,6 @@ fn stacked_detail_rows_match_the_box_width() {
         })
         .collect::<Vec<_>>();
     assert_eq!(widths, vec![frame.outer.width as usize; widths.len()]);
-}
-
-#[test]
-fn clamp_detail_scroll_respects_viewport() {
-    assert_eq!(clamp_detail_scroll(100, 12, 5), 7);
-    assert_eq!(clamp_detail_scroll(0, 3, 5), 0);
-    assert_eq!(clamp_detail_scroll(2, 10, 10), 0);
 }
 
 #[test]

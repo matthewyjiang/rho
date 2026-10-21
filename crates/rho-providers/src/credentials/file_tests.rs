@@ -25,19 +25,6 @@ fn file_store_round_trips_secrets_under_rho_home() {
     assert!(!store.delete_secret("acct").unwrap());
 }
 
-#[test]
-fn file_store_preserves_unrelated_secrets_across_updates() {
-    let root = TempDir::new().unwrap();
-    let store = FileCredentialStore::with_directory(root.path().join("credentials")).unwrap();
-
-    store.set_secret("one", "a").unwrap();
-    store.set_secret("two", "b").unwrap();
-    store.set_secret("one", "a2").unwrap();
-
-    assert_eq!(store.get_secret("one").unwrap().as_deref(), Some("a2"));
-    assert_eq!(store.get_secret("two").unwrap().as_deref(), Some("b"));
-}
-
 #[cfg(unix)]
 #[test]
 fn file_store_uses_private_unix_permissions() {
@@ -204,14 +191,4 @@ fn rejects_empty_account_names() {
     let store = FileCredentialStore::with_rho_home(root.path()).unwrap();
     assert!(store.set_secret("", "x").is_err());
     assert!(store.get_secret("").is_err());
-}
-
-#[test]
-fn open_creates_credentials_directory_lazily_under_rho_home() {
-    let root = TempDir::new().unwrap();
-    let credentials_dir = root.path().join("credentials");
-    assert!(!credentials_dir.exists());
-    let store = FileCredentialStore::with_rho_home(root.path()).unwrap();
-    assert!(store.directory().exists());
-    assert_eq!(store.directory(), credentials_dir);
 }

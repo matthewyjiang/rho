@@ -41,41 +41,36 @@ fn bound_agent(definition: crate::agent::AgentDefinition) -> crate::app::agent_b
     .unwrap()
 }
 
+// Covers: resume accepts the stored agent's current or legacy v1 fingerprint
+// and refuses a changed definition or a session with no stored identity.
+// Owner: interactive resume validation
 #[test]
-fn resume_accepts_unchanged_agent_definition() {
+fn resume_validates_the_stored_agent_definition() {
     let definition = sample_definition("reviewer");
-    let fingerprint = definition.fingerprint().to_string();
-    let (_root, _cwd, session) = stored_session(Some("reviewer"), &fingerprint);
-    validate_resume_agent(&session, &bound_agent(definition)).unwrap();
-}
-
-#[test]
-fn resume_accepts_legacy_v1_fingerprint_for_compatible_rho_definition() {
-    let definition = sample_definition("reviewer");
+    let current = definition.fingerprint().to_string();
     let legacy = definition
         .legacy_v1_fingerprint()
         .expect("rho default tools encode legacy v1")
         .to_string();
-    let current = definition.fingerprint().to_string();
     assert_ne!(legacy, current);
-    let (_root, _cwd, session) = stored_session(Some("reviewer"), &legacy);
-    validate_resume_agent(&session, &bound_agent(definition)).unwrap();
-}
-
-#[test]
-fn resume_reports_changed_agent_definition() {
-    let definition = sample_definition("reviewer");
-    let (_root, _cwd, session) = stored_session(Some("reviewer"), "fingerprint-b");
-    let error = validate_resume_agent(&session, &bound_agent(definition)).unwrap_err();
-    assert!(error.to_string().contains("definition changed"));
-}
-
-#[test]
-fn resume_reports_missing_agent_identity() {
-    let definition = sample_definition("default");
-    let (_root, _cwd, session) = stored_session(None, "unused");
-    let error = validate_resume_agent(&session, &bound_agent(definition)).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("no stored agent definition identity"));
+    for (stored_id, fingerprint, expected_error) in [
+        (Some("reviewer"), current.as_str(), None),
+        (Some("reviewer"), legacy.as_str(), None),
+        (
+            Some("reviewer"),
+            "fingerprint-b",
+            Some("definition changed"),
+        ),
+        (None, "unused", Some("no stored agent definition identity")),
+    ] {
+        let (_root, _cwd, session) = stored_session(stored_id, fingerprint);
+        let result = validate_resume_agent(&session, &bound_agent(definition.clone()));
+        match expected_error {
+            None => result.unwrap(),
+            Some(expected) => {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains(expected), "{error}");
+            }
+        }
+    }
 }

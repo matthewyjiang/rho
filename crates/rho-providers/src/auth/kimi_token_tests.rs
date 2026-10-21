@@ -22,9 +22,8 @@ fn refresh_threshold_is_half_lifetime_with_five_minute_minimum() {
         let tokens = tokens(Some(expires_in), Some(expires_at));
         assert_eq!(token_is_expiring(&tokens), expected, "{case}");
     }
-}
-
-#[test]
-fn token_without_expiration_does_not_refresh() {
-    assert!(!token_is_expiring(&tokens(None, None)));
+    assert!(
+        !token_is_expiring(&tokens(None, None)),
+        "no expiration never refreshes"
+    );
 }

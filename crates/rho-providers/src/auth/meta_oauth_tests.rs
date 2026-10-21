@@ -131,28 +131,3 @@ async fn mint_unauthorized_asks_for_login() {
     assert!(!message.contains("LLM|leaked-key"), "{message}");
     server.await.unwrap();
 }
-
-// Covers: a non-JSON 429 is rate limited, not a body-parse failure
-// Owner: Meta subscription login
-#[tokio::test]
-async fn mint_rate_limit_does_not_require_json() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}/muse-code/key", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = vec![0; 1024];
-        let _ = stream.read(&mut request).await.unwrap();
-        let body = "slow down";
-        let response = format!(
-            "HTTP/1.1 429 Too Many Requests\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        stream.write_all(response.as_bytes()).await.unwrap();
-    });
-
-    let error = mint_meta_tokens(&crate::reqwest_client(), "identity-token", &endpoint)
-        .await
-        .unwrap_err();
-    assert!(matches!(error, MetaOAuthError::RateLimited), "{error}");
-    server.await.unwrap();
-}

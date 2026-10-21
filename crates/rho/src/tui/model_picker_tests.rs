@@ -38,40 +38,6 @@ fn selected_label(picker: &UiPicker) -> &str {
     picker.items[picker.selected].label.as_str()
 }
 
-// Covers: choosing a Claude Code row is the only way a user selects the
-// delegated runtime, so the rows must appear when offered, stay out when the
-// agent cannot delegate, and never depend on the Rho model catalog.
-// Owner: internal agent model picker
-#[test]
-fn claude_code_rows_appear_only_when_the_agent_can_delegate() {
-    let offered = internal_agent_model_picker(inputs(
-        InternalAgentSelection::Unset,
-        FallbackModelRow::Omitted,
-        ClaudeCodeRows::Offered,
-    ));
-    let expected_labels = std::iter::once("claude-code/default".to_string())
-        .chain(
-            crate::claude_runtime::models::CLAUDE_MODEL_ALIASES
-                .iter()
-                .map(|alias| format!("claude-code/{}", alias.name)),
-        )
-        .collect::<Vec<_>>();
-    assert_eq!(
-        labels(&offered),
-        expected_labels
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-    );
-
-    let omitted = internal_agent_model_picker(inputs(
-        InternalAgentSelection::Unset,
-        FallbackModelRow::Omitted,
-        ClaudeCodeRows::Omitted,
-    ));
-    assert_eq!(labels(&omitted), Vec::<&str>::new());
-}
-
 // Covers: the picker must open on the row that is actually configured, so a
 // user does not overwrite a delegating advisor by pressing Enter. A selection
 // with no row at all - a Rho model the catalog cannot offer - must fall back to
@@ -135,7 +101,9 @@ fn the_picker_opens_on_the_configured_row() {
 }
 
 // Covers: a selected row has to route to the right runtime; a Claude row must
-// never be resolved against the Rho catalog and the reverse.
+// never be resolved against the Rho catalog and the reverse. Claude Code rows
+// are the only way to select the delegated runtime, so they must stay out when
+// the agent cannot delegate.
 // Owner: internal agent model picker
 #[test]
 fn each_row_value_routes_to_its_runtime() {
@@ -167,6 +135,13 @@ fn each_row_value_routes_to_its_runtime() {
         parse_internal_agent_model_row("anthropic/claude-fable-5"),
         InternalAgentModelRow::RhoModel("anthropic/claude-fable-5".into())
     );
+
+    let omitted = internal_agent_model_picker(inputs(
+        InternalAgentSelection::Unset,
+        FallbackModelRow::Omitted,
+        ClaudeCodeRows::Omitted,
+    ));
+    assert_eq!(labels(&omitted), Vec::<&str>::new());
 }
 
 // Covers: the pinned scope is only usable when a pin has auth, and asking for

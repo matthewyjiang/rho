@@ -93,8 +93,15 @@ fn preferred_mode_uses_device_only_when_headless_and_capable() {
     }
 }
 
+// Covers: login method lookup refuses an ambiguous or unknown provider instead
+// of guessing
+// Owner: provider login dispatch
 #[test]
-fn multi_auth_provider_name_is_ambiguous_for_login() {
+fn login_method_rejects_ambiguous_and_unknown_providers() {
+    assert!(matches!(
+        ProviderAuthentication::method("missing"),
+        Err(AuthenticationError::UnsupportedProvider(provider)) if provider == "missing"
+    ));
     let error = ProviderAuthentication::method("ollama-cloud").unwrap_err();
     match error {
         AuthenticationError::AmbiguousProvider { provider, auth_ids } => {
@@ -153,14 +160,6 @@ fn ollama_device_key_needs_rho_login_and_logout_undoes_it() {
         );
         assert!(!signed_in());
     });
-}
-
-#[test]
-fn rejects_unknown_provider_before_starting_authentication() {
-    assert!(matches!(
-        ProviderAuthentication::method("missing"),
-        Err(AuthenticationError::UnsupportedProvider(provider)) if provider == "missing"
-    ));
 }
 
 // Covers: LoginPrompt maps onto the deprecated InteractiveUserAction shim without drift

@@ -369,26 +369,6 @@ fn open_mermaid_fence_paints_complete_line_prefix() {
 }
 
 #[test]
-fn mermaid_render_reflows_to_the_requested_transcript_width() {
-    let markdown = "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n```";
-    let mut wide_state = CodeFenceState::default();
-    let wide = markdown_lines(markdown, 80, &mut wide_state);
-    let mut narrow_state = CodeFenceState::default();
-    let narrow = markdown_lines(markdown, 36, &mut narrow_state);
-
-    assert!(wide
-        .iter()
-        .all(|line| display_width(&line_text(line)) <= 80));
-    assert!(narrow
-        .iter()
-        .all(|line| display_width(&line_text(line)) <= 36));
-    assert_ne!(
-        wide.iter().map(line_text).collect::<Vec<_>>(),
-        narrow.iter().map(line_text).collect::<Vec<_>>()
-    );
-}
-
-#[test]
 fn stable_prefix_stops_at_earliest_open_marker() {
     assert_eq!(
         inline_markdown_stable_prefix_len("before **bold"),

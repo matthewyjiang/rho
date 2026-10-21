@@ -161,6 +161,11 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
             crate::reasoning::ReasoningLevel::Low,
             json!({"type": "enabled", "effort": "low"}),
         ),
+        // Unknown capabilities serialize an unnormalized effort as-is.
+        (
+            crate::reasoning::ReasoningLevel::Medium,
+            json!({"type": "enabled", "effort": "medium"}),
+        ),
         (
             crate::reasoning::ReasoningLevel::High,
             json!({"type": "enabled", "effort": "high"}),
@@ -196,48 +201,6 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
             })
         );
     }
-}
-
-#[test]
-fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
-    let mut provider = OpenAiCompatibleProvider::new(
-        crate::reqwest_client(),
-        "kimi-code",
-        "k3".into(),
-        OpenAiCompatibleDialect::KimiCode,
-        CompatibleAuth::ApiKey("secret".into()),
-        "https://example.com".into(),
-    );
-    provider.reasoning = reasoning::DialectReasoning::KimiCode(
-        reasoning::KimiReasoningProfile::new(ReasoningCapabilities::Unknown),
-    );
-    let messages = [Message::user_text("hello")];
-    let request = provider
-        .request_body(
-            ModelRequest {
-                messages: &messages,
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: crate::reasoning::ReasoningLevel::Medium,
-                prompt_cache_key: None,
-            },
-            /*stream*/ false,
-        )
-        .unwrap()
-        .body;
-
-    assert_eq!(
-        serde_json::to_value(request).unwrap(),
-        json!({
-            "model": "k3",
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": "hello"}]
-            }],
-            "stream": false,
-            "thinking": {"type": "enabled", "effort": "medium"}
-        })
-    );
 }
 
 // Covers: Chat Completions must send prompt_cache_key when the session has one
@@ -461,39 +424,11 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
     assert_eq!(off["reasoning_effort"], "none");
 }
 
-#[test]
-fn off_as_none_standard_hosts_send_reasoning_effort_when_catalog_is_unknown() {
-    let _lock = crate::provider::custom_provider_registry_test_lock();
-    crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    struct RestoreCustomProviders;
-    impl Drop for RestoreCustomProviders {
-        fn drop(&mut self) {
-            crate::provider::reset_custom_openai_compatible_providers_for_tests();
-        }
-    }
-    let _restore = RestoreCustomProviders;
-    crate::provider::install_custom_openai_compatible_providers(["composer"]).unwrap();
-
-    for provider in ["ollama", "ollama-cloud", "composer"] {
-        assert_eq!(
-            standard_request_reasoning_effort(provider, crate::reasoning::ReasoningLevel::Off)
-                .as_deref(),
-            Some("none"),
-            "{provider}"
-        );
-        assert_eq!(
-            standard_request_reasoning_effort(provider, crate::reasoning::ReasoningLevel::High)
-                .as_deref(),
-            Some("high"),
-            "{provider}"
-        );
-    }
-}
-
-// Covers: unknown Ollama models must not send effort values the server rejects
+// Covers: off-as-none Standard hosts send effort for unlisted models, and
+// unknown Ollama models never send effort values the server rejects
 // Owner: openai-compatible wire encoding
 #[test]
-fn unknown_ollama_models_send_only_accepted_reasoning_effort() {
+fn unlisted_standard_host_models_send_accepted_reasoning_effort() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
     struct RestoreCustomProviders;
@@ -515,8 +450,18 @@ fn unknown_ollama_models_send_only_accepted_reasoning_effort() {
         ("ollama", crate::reasoning::ReasoningLevel::Max, "max"),
         (
             "ollama-cloud",
+            crate::reasoning::ReasoningLevel::Off,
+            "none",
+        ),
+        (
+            "ollama-cloud",
             crate::reasoning::ReasoningLevel::Minimal,
             "low",
+        ),
+        (
+            "ollama-cloud",
+            crate::reasoning::ReasoningLevel::High,
+            "high",
         ),
         (
             "ollama-cloud",
@@ -528,6 +473,8 @@ fn unknown_ollama_models_send_only_accepted_reasoning_effort() {
             crate::reasoning::ReasoningLevel::Minimal,
             "minimal",
         ),
+        ("composer", crate::reasoning::ReasoningLevel::Off, "none"),
+        ("composer", crate::reasoning::ReasoningLevel::High, "high"),
         ("composer", crate::reasoning::ReasoningLevel::Xhigh, "xhigh"),
     ] {
         assert_eq!(

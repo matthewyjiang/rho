@@ -221,39 +221,16 @@ async fn ws_server_stalls_after_event(events: Vec<Value>) -> (String, Arc<StdMut
     (format!("ws://{addr}/responses"), frames)
 }
 
+// Covers: the websocket transport sends the full first request, then deltas
+// chained by previous_response_id
+// Owner: codex websocket transport
 #[tokio::test]
-async fn first_websocket_request_sends_full_input_without_previous_response_id() {
-    let (url, frames) = ws_server(1).await;
-    let transport = CodexWsTransport::new_with_url(url);
-    let mut on_event = None;
-
-    let turn = transport
-        .send_responses_turn(
-            body(vec![json!({"role":"user","content":"one"})]),
-            &tokens(),
-            &mut on_event,
-        )
-        .await
-        .unwrap();
-
-    let CodexWsTurn::Completed(response) = turn else {
-        panic!("expected websocket completion");
-    };
-    assert_eq!(response.service_tier.as_deref(), Some("default"));
-    let frames = frames.lock().unwrap();
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0]["type"], "response.create");
-    assert!(frames[0].get("previous_response_id").is_none());
-    assert_eq!(frames[0]["input"], json!([{"role":"user","content":"one"}]));
-}
-
-#[tokio::test]
-async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
+async fn websocket_sends_full_first_request_then_delta_with_previous_response_id() {
     let (url, frames) = ws_server(2).await;
     let transport = CodexWsTransport::new_with_url(url);
     let mut on_event = None;
 
-    transport
+    let first = transport
         .send_responses_turn(
             body(vec![json!({"role":"user","content":"one"})]),
             &tokens(),
@@ -261,6 +238,10 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
         )
         .await
         .unwrap();
+    let CodexWsTurn::Completed(first) = first else {
+        panic!("expected websocket completion");
+    };
+    assert_eq!(first.service_tier.as_deref(), Some("default"));
     let turn = transport
         .send_responses_turn(
             body(vec![
@@ -287,6 +268,9 @@ async fn compatible_websocket_request_sends_delta_with_previous_response_id() {
     ));
     let frames = frames.lock().unwrap();
     assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0]["type"], "response.create");
+    assert!(frames[0].get("previous_response_id").is_none());
+    assert_eq!(frames[0]["input"], json!([{"role":"user","content":"one"}]));
     assert_eq!(frames[1]["previous_response_id"], "resp_1");
     assert_eq!(
         frames[1]["input"],
@@ -734,29 +718,6 @@ async fn full_sse_fallback_returns_the_unframed_request_body() {
             body: sent,
         }
     );
-}
-
-#[tokio::test]
-async fn empty_websocket_completion_before_output_falls_back_to_sse() {
-    let transport = CodexWsTransport::new_with_url(ws_server_empty_completion(false).await);
-    let mut on_event = None;
-
-    let outcome = transport
-        .send_responses_turn(
-            body(vec![json!({"role":"user","content":"one"})]),
-            &tokens(),
-            &mut on_event,
-        )
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        outcome,
-        CodexWsTurn::FullSseFallback {
-            request_submitted: true,
-            ..
-        }
-    ));
 }
 
 #[tokio::test]

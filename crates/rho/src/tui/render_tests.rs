@@ -127,6 +127,13 @@ fn complete_visual_prefix_stops_at_last_complete_visual_row() {
         ("one past exact width", "abcd", 3, 3),
         ("two exact rows", "abcdef", 3, 6),
         ("whitespace boundary", "hello wide", 8, "hello ".len()),
+        (
+            "repeated whitespace boundary",
+            "hello   wide",
+            8,
+            "hello   ".len(),
+        ),
+        ("exact width trailing space", "abc ", 3, "abc".len()),
         ("fits in one row", "hello wide", 10, "hello wide".len()),
     ];
     for (case, text, width, expected) in cases {
@@ -138,7 +145,8 @@ fn complete_visual_prefix_stops_at_last_complete_visual_row() {
     }
 }
 
-// Covers: soft wrap must not put the break space at the start of the next line.
+// Covers: soft wrap must not put the break space at the start of the next
+// line, preserves in-line whitespace, and hard-wraps tokens with no break.
 // Owner: pure unit (wrap layout math)
 #[test]
 fn wrapped_text_prefers_whitespace_boundaries() {
@@ -148,6 +156,18 @@ fn wrapped_text_prefers_whitespace_boundaries() {
         ("models.dev mapping.", 10, vec!["models.dev", "mapping."]),
         // Extra spaces after a width-split must not indent the continuation.
         ("hello  world", 6, vec!["hello ", "world"]),
+        ("hello   wide", 8, vec!["hello   ", "wide"]),
+        // A trailing wrap-boundary space is not its own continuation line.
+        ("abc ", 3, vec!["abc"]),
+        (
+            "  indented\na  b\ntrail  ",
+            20,
+            vec!["  indented", "a  b", "trail  "],
+        ),
+        ("\tindented\n   ", 20, vec!["\tindented", "   "]),
+        ("a\n\n", 10, vec!["a", ""]),
+        ("你a", 1, vec!["你", "a"]),
+        ("abcdefghijk", 5, vec!["abcde", "fghij", "k"]),
     ];
 
     for (text, width, expected) in cases {
@@ -166,95 +186,6 @@ fn wrapped_text_prefers_whitespace_boundaries() {
 }
 
 #[test]
-fn wrapped_text_preserves_leading_repeated_and_trailing_whitespace() {
-    let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        "  indented\na  b\ntrail  ",
-        20,
-        Style::default(),
-        LineFill::Natural,
-    );
-
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(
-        rendered,
-        vec![
-            "  indented".to_string(),
-            "a  b".to_string(),
-            "trail  ".to_string()
-        ]
-    );
-}
-
-#[test]
-fn wrapped_text_preserves_tabs_and_whitespace_only_lines() {
-    let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        "\tindented\n   ",
-        20,
-        Style::default(),
-        LineFill::Natural,
-    );
-
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(rendered, vec!["\tindented".to_string(), "   ".to_string()]);
-}
-
-#[test]
-fn wrapped_text_preserves_whitespace_when_breaking_at_boundary() {
-    let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        "hello   wide",
-        8,
-        Style::default(),
-        LineFill::Natural,
-    );
-
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(rendered, vec!["hello   ".to_string(), "wide".to_string()]);
-}
-
-#[test]
-fn complete_visual_prefix_and_rendering_agree_on_whitespace_boundary() {
-    let text = "hello   wide";
-    let split = complete_visual_prefix_byte_index(text, 8);
-    let mut lines = Vec::new();
-    push_wrapped_text(&mut lines, text, 8, Style::default(), LineFill::Natural);
-
-    assert_eq!(&text[..split], "hello   ");
-    assert_eq!(line_text(&lines[0]), "hello   ");
-}
-
-// Covers: a trailing wrap-boundary space is drained for streaming but not shown
-// as its own indented continuation line.
-// Owner: pure unit (wrap layout math)
-#[test]
-fn complete_visual_prefix_and_rendering_agree_on_exact_width_trailing_space() {
-    let text = "abc ";
-    let split = complete_visual_prefix_byte_index(text, 3);
-    let mut lines = Vec::new();
-    push_wrapped_text(&mut lines, text, 3, Style::default(), LineFill::Natural);
-
-    assert_eq!(&text[..split], "abc");
-    assert_eq!(
-        lines.iter().map(line_text).collect::<Vec<_>>(),
-        vec!["abc".to_string()]
-    );
-}
-
-#[test]
-fn wrapped_text_handles_wide_chars_in_narrow_width() {
-    let mut lines = Vec::new();
-    push_wrapped_text(&mut lines, "你a", 1, Style::default(), LineFill::Natural);
-
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(rendered, vec!["你".to_string(), "a".to_string()]);
-}
-
-#[test]
 fn wrapped_text_keeps_list_syntax_out_of_generic_wrapping() {
     assert_eq!(
         wrap_line_at_whitespace(
@@ -267,33 +198,6 @@ fn wrapped_text_keeps_list_syntax_out_of_generic_wrapping() {
             "/Cargo.toml: package 0.0.0",
         ]
     );
-}
-
-#[test]
-fn long_words_still_hard_wrap() {
-    let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        "abcdefghijk",
-        5,
-        Style::default(),
-        LineFill::Natural,
-    );
-
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(
-        rendered,
-        vec!["abcde".to_string(), "fghij".to_string(), "k".to_string()]
-    );
-}
-
-#[test]
-fn stream_fragment_rendering_preserves_blank_lines() {
-    let mut lines = Vec::new();
-    push_wrapped_text(&mut lines, "a\n\n", 10, Style::default(), LineFill::Natural);
-
-    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
-    assert_eq!(rendered, vec!["a".to_string(), String::new()]);
 }
 
 // Covers: up/down arrow must land on the character under the target column,
@@ -490,7 +394,8 @@ fn picker_reserves_wrapped_footer_rows() {
     assert!(footer.iter().all(|line| !line.contains('…')));
 }
 
-// Covers: side gutters must not extend link underlines past the URL text.
+// Covers: side gutters must not extend link underlines past the URL text, and
+// keep the body background band (user messages).
 // Owner: pure TUI layout policy.
 #[test]
 fn pad_display_line_strips_underline_from_edge_spaces() {
@@ -524,12 +429,7 @@ fn pad_display_line_strips_underline_from_edge_spaces() {
         .style
         .add_modifier
         .contains(Modifier::UNDERLINED));
-}
 
-// Covers: user-message side gutters still carry the message background band.
-// Owner: pure TUI layout policy.
-#[test]
-fn pad_display_line_keeps_user_message_background() {
     let style = Theme::user_message();
     let padded = pad_display_line(Line::from(Span::styled("hi", style)));
     assert_eq!(padded.spans[0].style.bg, style.bg);

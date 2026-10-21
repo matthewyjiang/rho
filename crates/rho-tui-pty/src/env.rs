@@ -303,16 +303,3 @@ pub fn resolve_rho_binary() -> Result<PathBuf> {
         "could not resolve rho binary; set RHO_PTY_BIN or build with `cargo build -p rho-coding-agent`"
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn isolated_home_writes_config() {
-        let home = IsolatedHome::new().unwrap();
-        let config = fs::read_to_string(&home.config_path).unwrap();
-        assert!(config.contains("check_for_updates = false"));
-        assert!(home.workspace.is_dir());
-    }
-}

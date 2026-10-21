@@ -17,40 +17,37 @@ fn outcomes() -> OutcomePort {
     mpsc::unbounded_channel()
 }
 
-// Covers: delivered entries apply alone when mixed with later undelivered steers
+// Covers: delivered entries apply alone when mixed with later undelivered
+// steers; with none delivered, every staged steer applies
 // Owner: sdk steering queue
 #[test]
 fn apply_prefers_delivered_entries_when_any_exist() {
-    let mut queue = SteeringQueue::new();
-    let delivered = queue.accept(UserInput::text("s1"));
-    let late = queue.accept(UserInput::text("s2"));
-    queue.mark_delivered(&delivered);
+    for deliver_first in [true, false] {
+        let mut queue = SteeringQueue::new();
+        let first = queue.accept(UserInput::text("s1"));
+        let second = queue.accept(UserInput::text("s2"));
+        if deliver_first {
+            queue.mark_delivered(&first);
+        }
 
-    let mut history = Vec::new();
-    let applied = queue.apply(&mut history);
+        let mut history = Vec::new();
+        let applied = queue.apply(&mut history);
 
-    assert_eq!(applied, vec![delivered.clone()]);
-    assert_eq!(history, vec![Message::user_text("s1")]);
-    assert_eq!(queue.staged_ids(), vec![late]);
-}
-
-// Covers: with no delivered entries, every staged steer is applied
-// Owner: sdk steering queue
-#[test]
-fn apply_all_staged_when_none_were_delivered() {
-    let mut queue = SteeringQueue::new();
-    let first = queue.accept(UserInput::text("s1"));
-    let second = queue.accept(UserInput::text("s2"));
-
-    let mut history = Vec::new();
-    let applied = queue.apply(&mut history);
-
-    assert_eq!(applied, vec![first, second]);
-    assert_eq!(
-        history,
-        vec![Message::user_text("s1"), Message::user_text("s2")]
-    );
-    assert!(queue.staged_ids().is_empty());
+        let (expected_applied, expected_history, expected_staged) = if deliver_first {
+            (vec![first], vec![Message::user_text("s1")], vec![second])
+        } else {
+            (
+                vec![first, second],
+                vec![Message::user_text("s1"), Message::user_text("s2")],
+                vec![],
+            )
+        };
+        assert_eq!(
+            (applied, history, queue.staged_ids()),
+            (expected_applied, expected_history, expected_staged),
+            "deliver_first={deliver_first}"
+        );
+    }
 }
 
 // Covers: retraction is atomic against claim; delivered input is too late
@@ -82,6 +79,7 @@ fn retraction_table_offered_claimed_and_delivered() {
                 let id = queue.accept(UserInput::text("s"));
                 let mut requests = queue.offer_unoffered(outcomes);
                 assert!(requests[0].claim());
+                assert!(!requests[0].claim(), "a request is claimed at most once");
                 let retraction = queue.retract(&id);
                 requests.pop().unwrap().release();
                 (retraction, SteeringRetraction::AlreadyApplied)
@@ -99,22 +97,6 @@ fn retraction_table_offered_claimed_and_delivered() {
         };
         assert_eq!(result.0, result.1, "{case}");
     }
-}
-
-// Covers: claim and retract race on one mutex; only one side wins
-// Owner: sdk steering queue
-#[test]
-fn claim_and_retract_are_atomic() {
-    let mut queue = SteeringQueue::new();
-    let id = queue.accept(UserInput::text("s"));
-    let (outcomes, _rx) = outcomes();
-    let mut requests = queue.offer_unoffered(outcomes);
-    let request = requests.pop().unwrap();
-
-    assert!(request.claim());
-    assert!(!request.claim());
-    assert_eq!(queue.retract(&id), SteeringRetraction::AlreadyApplied);
-    request.release();
 }
 
 // Covers: a failed provider turn restages delivered input so it can be re-offered

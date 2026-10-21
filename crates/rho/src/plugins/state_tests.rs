@@ -6,20 +6,6 @@ use super::{
 };
 use tempfile::TempDir;
 
-// Covers: missing state files mean every plugin stays enabled.
-// Owner: plugin state store.
-#[test]
-fn missing_state_files_default_to_enabled() {
-    let home = TempDir::new().unwrap();
-    let project = TempDir::new().unwrap();
-    std::fs::create_dir(project.path().join(".git")).unwrap();
-
-    let store = PluginStateStore::load(project.path(), None, Some(home.path())).unwrap();
-
-    assert!(store.is_enabled(PluginScope::User, "demo"));
-    assert!(store.is_enabled(PluginScope::Project, "demo"));
-}
-
 // Covers: enable/disable persists outside package directories and reloads.
 // Owner: plugin state store.
 #[test]

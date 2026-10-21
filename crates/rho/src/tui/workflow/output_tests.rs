@@ -70,36 +70,9 @@ fn prefers_agent_answer_over_stdout() {
     assert_eq!(primary.kind, ArtifactKind::AgentAnswer);
 }
 
-// Covers: selecting a finished node loads and formats its durable answer.
-// Owner: workflow TUI output projection.
-#[test]
-fn loads_and_renders_markdown_answer() {
-    let dir = tempdir().unwrap();
-    let relative = "artifacts/review/answer.txt";
-    let bytes = b"## Findings\n\n- risk low\n";
-    write_private(dir.path(), relative, bytes);
-
-    let node = terminal_agent(vec![artifact(ArtifactKind::AgentAnswer, relative, bytes)]);
-    let body = load_finished_output(dir.path(), &node).expect("body");
-    assert!(body_matches_node(&body, &node));
-    assert!(body.notice.is_none());
-    let lines = render_body_lines(&body, 40);
-    let text = lines
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(text.contains("Findings"));
-    assert!(text.contains("risk low"));
-}
-
-// Covers: schema agent JSON answers render as an outline instead of one
-// wrapped blob, while process streams that happen to be JSON stay verbatim.
+// Covers: selecting a finished node loads its durable artifact for that node;
+// schema agent JSON answers render as an outline instead of one wrapped blob,
+// while process streams that happen to be JSON stay verbatim.
 // Owner: workflow TUI output projection.
 #[test]
 fn json_outlines_only_for_node_results() {
@@ -120,6 +93,8 @@ fn json_outlines_only_for_node_results() {
         write_private(dir.path(), &relative, bytes);
         let node = terminal_agent(vec![artifact(kind, &relative, bytes)]);
         let body = load_finished_output(dir.path(), &node).expect("body");
+        assert!(body_matches_node(&body, &node), "{kind:?}");
+        assert!(body.notice.is_none(), "{kind:?}");
         let text = render_body_lines(&body, 60)
             .iter()
             .map(|line| line.to_string().trim_end().to_owned())

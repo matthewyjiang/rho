@@ -680,19 +680,14 @@ mod tests {
                 "plan: {plan}"
             );
         }
-    }
 
-    #[test]
-    fn unknown_plan_is_returned_for_invalid_or_missing_id_token_claims() {
         assert_eq!(
             chatgpt_plan_from_id_token("not-a-jwt"),
             ChatGptPlan::Unknown
         );
-
         let claims = serde_json::json!({"sub": "user-123"});
         let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
         let id_token = format!("header.{payload}.signature");
-
         assert_eq!(chatgpt_plan_from_id_token(&id_token), ChatGptPlan::Unknown);
     }
 
@@ -712,28 +707,16 @@ mod tests {
         );
     }
 
+    // Covers: the OAuth callback parser accepts only a matching state and
+    // reports code, error or mismatch
+    // Owner: codex oauth login
     #[test]
-    fn callback_parser_accepts_matching_state_and_code() {
+    fn callback_parser_checks_state_and_reports_outcome() {
         assert_eq!(
             parse_callback_request_line("GET /auth/callback?code=abc&state=ok HTTP/1.1", "ok")
                 .unwrap(),
             CallbackOutcome::Code("abc".into())
         );
-    }
-
-    #[test]
-    fn callback_parser_rejects_state_mismatch() {
-        let err = parse_callback_request_line(
-            "GET /auth/callback?code=abc&state=bad HTTP/1.1",
-            "expected",
-        )
-        .unwrap_err();
-
-        assert!(err.to_string().contains("state did not match"));
-    }
-
-    #[test]
-    fn callback_parser_reports_oauth_error() {
         assert_eq!(
             parse_callback_request_line(
                 "GET /auth/callback?error=access_denied&state=ok HTTP/1.1",
@@ -742,6 +725,12 @@ mod tests {
             .unwrap(),
             CallbackOutcome::Error("access_denied".into())
         );
+        let err = parse_callback_request_line(
+            "GET /auth/callback?code=abc&state=bad HTTP/1.1",
+            "expected",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("state did not match"));
     }
 
     #[tokio::test]

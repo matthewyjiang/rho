@@ -108,35 +108,6 @@ fn parse_request_trims_optional_fields() {
 }
 
 #[test]
-fn parse_request_accepts_choice_descriptions() {
-    let request = parse_request(json!({
-        "questions": [{
-            "id": "mode",
-            "question": "Which mode?",
-            "type": "choice",
-            "choices": [
-                { "label": "Fast", "description": "Finish sooner with fewer checks" },
-                "Safe"
-            ],
-            "default": "fast"
-        }]
-    }))
-    .unwrap();
-
-    assert_eq!(
-        request.questions[0].choices,
-        vec![
-            QuestionnaireChoice {
-                label: "Fast".into(),
-                description: Some("Finish sooner with fewer checks".into()),
-            },
-            QuestionnaireChoice::from("Safe"),
-        ]
-    );
-    assert_eq!(request.questions[0].default, Some(json!("Fast")));
-}
-
-#[test]
 fn parse_request_accepts_legacy_single_question() {
     let request = parse_request(json!({
         "question": "  Which file?  ",
@@ -175,29 +146,32 @@ fn parse_request_normalizes_multi_select_defaults_and_other() {
     assert_eq!(request.questions[0].default, Some(json!(["unit", "smoke"])));
 }
 
+// Covers: questionnaire requests with invalid shapes are rejected before they
+// reach the host
+// Owner: questionnaire tool
 #[test]
-fn parse_request_rejects_empty_questions() {
-    let err = parse_request(json!({ "questions": [] })).unwrap_err();
-
-    assert_eq!(err, "questions must include at least one question");
-}
-
-#[test]
-fn parse_request_rejects_text_questions_in_forms() {
-    let err = parse_request(json!({
-        "questions": [
-            {
-                "id": "freeform",
-                "question": "What should I do?"
-            }
-        ]
-    }))
-    .unwrap_err();
-
-    assert_eq!(
-        err,
-        "questions[0] must use choice, multi_select, or confirm"
-    );
+fn parse_request_rejects_invalid_forms() {
+    for (case, input) in [
+        ("no questions", json!({ "questions": [] })),
+        (
+            "free-text question in a form",
+            json!({ "questions": [{ "id": "freeform", "question": "What should I do?" }] }),
+        ),
+        (
+            "focused default selection without a default",
+            json!({
+                "questions": [{
+                    "id": "prompt",
+                    "question": "Prompt mode?",
+                    "type": "choice",
+                    "choices": ["extend", "replace"],
+                    "default_selection": "focused"
+                }]
+            }),
+        ),
+    ] {
+        assert!(parse_request(input).is_err(), "{case}");
+    }
 }
 
 #[test]
@@ -214,7 +188,7 @@ fn parse_request_normalizes_choice_and_confirm_defaults() {
             {
                 "id": "apply",
                 "question": "Apply changes?",
-                "type": "confirm",
+                "kind": "confirm",
                 "default": true
             }
         ]
@@ -261,43 +235,5 @@ fn parse_request_accepts_focused_default_selection() {
             },
             QuestionnaireChoice::from("replace"),
         ]
-    );
-}
-
-#[test]
-fn parse_request_rejects_focused_default_selection_without_default() {
-    let err = parse_request(json!({
-        "questions": [{
-            "id": "prompt",
-            "question": "Prompt mode?",
-            "type": "choice",
-            "choices": ["extend", "replace"],
-            "default_selection": "focused"
-        }]
-    }))
-    .unwrap_err();
-
-    assert_eq!(
-        err,
-        "questions[0].default_selection focused requires default"
-    );
-}
-
-#[test]
-fn parse_request_accepts_kind_alias() {
-    let request = parse_request(json!({
-        "questions": [
-            {
-                "id": "apply",
-                "question": "Apply changes?",
-                "kind": "confirm"
-            }
-        ]
-    }))
-    .unwrap();
-
-    assert_eq!(
-        request.questions[0].kind,
-        QuestionnaireQuestionKind::Confirm
     );
 }

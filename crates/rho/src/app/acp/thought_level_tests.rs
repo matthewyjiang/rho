@@ -89,7 +89,9 @@ async fn built_session(
 
 // Covers: session/new and session/load must advertise thought_level as the
 // current reasoning select, not omit it or encode it as a boolean, with
-// lowercase config ids hosts send back and capitalized labels hosts display.
+// lowercase config ids hosts send back and capitalized labels hosts display; a
+// model with no configurable reasoning omits it so hosts do not render a
+// one-entry select that can never change.
 // Owner: acp session config mapper
 #[test]
 fn advertises_thought_level_select_for_the_current_reasoning() {
@@ -118,19 +120,13 @@ fn advertises_thought_level_select_for_the_current_reasoning() {
             ("max", "Max"),
         ]
     );
-}
 
-// Covers: a model with no configurable reasoning must omit thought_level so
-// hosts do not render a one-entry select that can never change.
-// Owner: acp session config mapper
-#[test]
-fn omits_thought_level_when_reasoning_is_not_configurable() {
-    let config = Config {
+    let fixed = Config {
         provider: "github-copilot".into(),
         model: "gpt-4.1".into(),
         ..Config::default()
     };
-    assert!(config_options(&config, ReasoningLevel::High).is_empty());
+    assert!(config_options(&fixed, ReasoningLevel::High).is_empty());
 }
 
 // Covers: hosts must get InvalidParams for a non-select thought_level value

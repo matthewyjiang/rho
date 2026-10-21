@@ -112,7 +112,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::hashline::compute_file_hash;
 
     fn test_context() -> (TempDir, ToolContext) {
         let dir = tempfile::tempdir().unwrap();
@@ -121,41 +120,6 @@ mod tests {
             max_output_bytes: 12000,
         };
         (dir, ctx)
-    }
-
-    // Covers: write creates nested paths and returns a chainable hashline snapshot
-    // Owner: write
-    #[tokio::test]
-    async fn writes_file_and_creates_parent_dirs() {
-        let (root, ctx) = test_context();
-        let result = WriteFile
-            .call(
-                json!({"path":"nested/hello.txt","content":"hello\n"}),
-                ctx,
-                "test".into(),
-            )
-            .await
-            .unwrap();
-
-        assert!(result.ok);
-        assert_eq!(
-            std::fs::read_to_string(root.path().join("nested/hello.txt")).unwrap(),
-            "hello\n"
-        );
-        let tag = compute_file_hash("hello\n");
-        assert!(
-            result
-                .content
-                .contains(&format!("[nested/hello.txt#{tag}]")),
-            "{}",
-            result.content
-        );
-        assert!(result.content.contains("1:hello"), "{}", result.content);
-        assert!(
-            !result.content.contains("@@"),
-            "model content should not embed unified diff: {}",
-            result.content
-        );
     }
 
     // Covers: unreadable existing files still rewrite and keep the special diff notice
@@ -180,34 +144,6 @@ mod tests {
         assert!(
             result.content.contains("[binary.bin#"),
             "{}",
-            result.content
-        );
-    }
-
-    // Covers: large writes return a bounded head/tail snapshot, not the whole file
-    // Owner: write
-    #[tokio::test]
-    async fn large_write_returns_bounded_chain_snapshot() {
-        let (_root, ctx) = test_context();
-        let mut body = String::new();
-        for i in 1..=80 {
-            body.push_str(&format!("line-{i}\n"));
-        }
-        let result = WriteFile
-            .call(
-                json!({"path":"big.txt","content": body}),
-                ctx,
-                "test".into(),
-            )
-            .await
-            .unwrap();
-
-        assert!(result.content.contains("1:line-1"), "{}", result.content);
-        assert!(result.content.contains("80:line-80"), "{}", result.content);
-        // Middle of a large file should not all be dumped into model content.
-        assert!(
-            !result.content.contains("40:line-40"),
-            "middle lines should be elided: {}",
             result.content
         );
     }

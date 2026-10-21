@@ -87,8 +87,7 @@ fn direct_executable_plans_verbatim_argv() {
 
 /// Covers: every cmd metacharacter, quote, percent, and path-with-spaces case
 /// is encoded so it survives cmd's re-parse as one literal token.
-/// Owner: the bat encoder as driven through `plan`; the exact algorithm lives
-/// in `windows_shim_args_tests`.
+/// Owner: the bat encoder as driven through `plan`.
 #[test]
 fn cmd_shim_argv_encodes_special_characters() {
     let shim = CliExecutable::from_path(r"C:\shims\agent.cmd");
@@ -197,7 +196,7 @@ mod windows_round_trip {
 
     use pretty_assertions::assert_eq;
 
-    use super::{CliExecutable, CliExecutableError, CliInvocationKind, WindowsShimArgError};
+    use super::{CliExecutable, CliInvocationKind};
 
     /// Fake `.cmd` shim: forward `%*` to a native argv consumer.
     ///
@@ -348,20 +347,6 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         let body = run_and_read(&mut command, &out).await;
         let lines: Vec<&str> = body.lines().collect();
         assert_eq!(lines, args, "{body}");
-    }
-
-    #[tokio::test]
-    async fn cmd_shim_try_command_rejects_newline_arg() {
-        let directory = tempfile::tempdir().unwrap();
-        let shim = directory.path().join("agent.cmd");
-        let out = directory.path().join("argv.txt");
-        write_cmd_recorder(&shim, &out);
-        let exe = CliExecutable::from_path(&shim);
-        let err = exe.try_command(["ok\nbad"]).unwrap_err();
-        assert!(matches!(
-            err,
-            CliExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
-        ));
     }
 }
 

@@ -9,7 +9,6 @@ use crate::agent::{
     ToolCapabilitySet, ToolPolicy,
 };
 use crate::model_aliases::ModelAliases;
-use crate::tui::line_editor::LineEditor;
 use crate::tui::text_input::{AgentField, TextInput};
 
 fn rho_draft() -> AgentDefinition {
@@ -96,60 +95,90 @@ fn rho_draft_with(model: ModelPolicy, reasoning: Option<ReasoningLevel>) -> Agen
 // Covers: the field editor lists only fields the runtime accepts
 // Owner: tui agent editor
 #[test]
-fn rho_field_picker_lists_runtime_specific_fields() {
-    let picker = agent_field_picker(&rho_draft());
-    let values = field_values(&picker);
-
-    assert!(values.contains(&AGENT_FIELD_MODEL_POLICY));
-    assert!(values.contains(&AGENT_FIELD_REASONING));
-    assert!(values.contains(&AGENT_FIELD_TOOLS));
-    assert!(values.contains(&AGENT_FIELD_SAVE));
-    assert!(values.contains(&AGENT_FIELD_CANCEL));
-    assert!(!values.contains(&AGENT_FIELD_MODEL));
-    assert!(!values.contains(&AGENT_FIELD_PROVIDER));
-
-    let mut explicit = rho_draft();
-    if let AgentRuntimeSpec::Rho { model, .. } = &mut explicit.runtime {
-        *model = ModelPolicy::Select(ModelSelection {
-            provider: None,
-            model: "gpt-5.5".into(),
-            auth: None,
+fn field_picker_lists_runtime_specific_fields() {
+    let pinned = rho_draft_with(
+        ModelPolicy::Select(ModelSelection {
+            provider: Some("xai".into()),
+            model: "grok-4.5".into(),
+            auth: Some("xai-oauth".into()),
             fast: false,
-        });
+        }),
+        None,
+    );
+    let cases = [
+        (
+            "rho inherit",
+            rho_draft(),
+            vec![
+                AGENT_FIELD_MODEL_POLICY,
+                AGENT_FIELD_REASONING,
+                AGENT_FIELD_TOOLS,
+                AGENT_FIELD_SAVE,
+                AGENT_FIELD_CANCEL,
+            ],
+            vec![
+                AGENT_FIELD_MODEL,
+                AGENT_FIELD_PROVIDER,
+                AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
+            ],
+        ),
+        (
+            "rho model without a provider",
+            rho_draft_with(
+                ModelPolicy::Select(ModelSelection {
+                    provider: None,
+                    model: "gpt-5.5".into(),
+                    auth: None,
+                    fast: false,
+                }),
+                None,
+            ),
+            vec![AGENT_FIELD_MODEL, AGENT_FIELD_PROVIDER],
+            vec![AGENT_FIELD_INHERIT_CLAUDE_CONFIG],
+        ),
+        (
+            "rho pinned model",
+            pinned,
+            vec![AGENT_FIELD_MODEL, AGENT_FIELD_PROVIDER, AGENT_FIELD_AUTH],
+            vec![AGENT_FIELD_INHERIT_CLAUDE_CONFIG],
+        ),
+        (
+            "claude-cli",
+            claude_draft(),
+            vec![
+                AGENT_FIELD_MODEL,
+                AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
+                AGENT_FIELD_TOOLS,
+            ],
+            vec![AGENT_FIELD_MODEL_POLICY, AGENT_FIELD_PROVIDER],
+        ),
+        (
+            "cursor",
+            cursor_draft(),
+            vec![AGENT_FIELD_MODEL, AGENT_FIELD_TOOLS],
+            vec![
+                AGENT_FIELD_REASONING,
+                AGENT_FIELD_MODEL_POLICY,
+                AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
+            ],
+        ),
+    ];
+    for (name, draft, present, absent) in cases {
+        let picker = agent_field_picker(&draft);
+        let values = field_values(&picker);
+        for field in present {
+            assert!(values.contains(&field), "{name}: missing {field}");
+        }
+        for field in absent {
+            assert!(!values.contains(&field), "{name}: unexpected {field}");
+        }
     }
-    let explicit_picker = agent_field_picker(&explicit);
-    let explicit_values = field_values(&explicit_picker);
-    assert!(explicit_values.contains(&AGENT_FIELD_MODEL));
-    assert!(explicit_values.contains(&AGENT_FIELD_PROVIDER));
-    assert!(!values.contains(&AGENT_FIELD_INHERIT_CLAUDE_CONFIG));
 }
 
-// Covers: claude-cli field picker hides rho-only fields
+// Covers: cursor editor offers only extend and rejects unknown tools
 // Owner: tui agent editor
 #[test]
-fn claude_field_picker_hides_rho_only_fields() {
-    let picker = agent_field_picker(&claude_draft());
-    let values = field_values(&picker);
-
-    assert!(values.contains(&AGENT_FIELD_MODEL));
-    assert!(values.contains(&AGENT_FIELD_INHERIT_CLAUDE_CONFIG));
-    assert!(values.contains(&AGENT_FIELD_TOOLS));
-    assert!(!values.contains(&AGENT_FIELD_MODEL_POLICY));
-    assert!(!values.contains(&AGENT_FIELD_PROVIDER));
-}
-
-// Covers: cursor editor hides reasoning, offers only extend, and rejects unknown tools
-// Owner: tui agent editor
-#[test]
-fn cursor_runtime_hides_reasoning_and_validates_tools() {
-    let picker = agent_field_picker(&cursor_draft());
-    let values = field_values(&picker);
-    assert!(!values.contains(&AGENT_FIELD_REASONING));
-    assert!(values.contains(&AGENT_FIELD_MODEL));
-    assert!(values.contains(&AGENT_FIELD_TOOLS));
-    assert!(!values.contains(&AGENT_FIELD_MODEL_POLICY));
-    assert!(!values.contains(&AGENT_FIELD_INHERIT_CLAUDE_CONFIG));
-
+fn cursor_runtime_offers_extend_and_validates_tools() {
     let aliases = ModelAliases::default();
     let prompt_picker = agent_choice_picker(
         AgentChoiceField::PromptPolicy,
@@ -482,15 +511,6 @@ fn agent_text_input_edits_at_character_cursor() {
     assert_eq!(input.editor.value, "heabllo");
 }
 
-// Covers: shared line editor strips line breaks from pasted text
-// Owner: tui agent editor
-#[test]
-fn agent_text_input_strips_line_breaks_from_paste() {
-    let mut editor = LineEditor::new("[read_file");
-    editor.insert_text(", shell]\nextra");
-    assert_eq!(editor.value, "[read_file, shell]extra");
-}
-
 // Covers: authorize_editable_path accepts a rho-home agent file under the home root
 // Owner: tui agent editor
 #[test]
@@ -529,28 +549,6 @@ fn auth_choice_lists_only_available_modes_for_provider() {
     assert!(values.contains(&"agent_choice:auth:"));
     assert!(values.contains(&"agent_choice:auth:xai-oauth"));
     assert!(!values.iter().any(|value| value.contains("anthropic")));
-}
-
-// Covers: auth field appears when model is pinned
-// Owner: pure unit (agent editor field list)
-#[test]
-fn rho_field_picker_includes_auth_when_model_is_pinned() {
-    let mut draft = rho_draft();
-    if let AgentRuntimeSpec::Rho { model, .. } = &mut draft.runtime {
-        *model = ModelPolicy::Select(ModelSelection {
-            provider: Some("xai".into()),
-            model: "grok-4.5".into(),
-            auth: Some("xai-oauth".into()),
-            fast: false,
-        });
-    }
-    let picker = agent_field_picker(&draft);
-    let values: Vec<&str> = picker
-        .items
-        .iter()
-        .map(|item| item.value.as_str())
-        .collect();
-    assert!(values.contains(&AGENT_FIELD_AUTH));
 }
 
 // Covers: Claude models are chosen from the offered aliases, and a definition

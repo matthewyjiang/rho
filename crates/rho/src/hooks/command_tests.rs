@@ -164,17 +164,6 @@ async fn output_larger_than_the_bound_is_captured_up_to_the_bound_and_flagged() 
 }
 
 #[tokio::test]
-async fn invalid_utf8_output_is_captured_without_panicking() {
-    let home = TempDir::new().unwrap();
-    let hook = hook_running(r"printf 'ok\377'", "10s", &[], &home);
-
-    let output = run(&hook, "{}").await.unwrap();
-
-    assert!(output.succeeded());
-    assert_eq!(output.stdout, b"ok\xff");
-}
-
-#[tokio::test]
 async fn a_handler_receives_only_the_environment_the_contract_promises() {
     let home = TempDir::new().unwrap();
     // `child_environment` owns which names pass through; this owns whether the

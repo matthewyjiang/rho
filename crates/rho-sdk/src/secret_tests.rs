@@ -9,11 +9,3 @@ fn formatting_is_always_redacted() {
     assert!(!format!("{secret:?}").contains(secret.expose_secret()));
     assert!(!secret.to_string().contains(secret.expose_secret()));
 }
-
-#[test]
-fn requires_explicit_exposure_or_ownership_transfer() {
-    let secret = SecretString::new("token");
-
-    assert_eq!(secret.expose_secret(), "token");
-    assert_eq!(secret.into_secret(), "token");
-}

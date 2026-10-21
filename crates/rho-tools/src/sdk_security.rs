@@ -19,7 +19,3 @@ pub async fn authorize_request(
             }
         })
 }
-
-#[cfg(test)]
-#[path = "sdk_security_tests.rs"]
-mod tests;

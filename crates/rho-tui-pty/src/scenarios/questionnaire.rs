@@ -4,7 +4,7 @@
 use anyhow::Result;
 use unicode_width::UnicodeWidthStr;
 
-use super::{DEFAULT_SIZE, STARTUP, STREAM};
+use super::{hover_clicks::wait_for_span_bold, DEFAULT_SIZE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
     harness::WaitTimeout,
@@ -72,11 +72,25 @@ fn double_click(harness: &mut PtyHarness, cell: (u16, u16)) -> Result<()> {
     click(harness, cell)
 }
 
-// Covers: one click moves the questionnaire selection without submitting, and
-// a double click confirms like Enter.
+// Covers: hovering an unfocused questionnaire choice lifts its label and
+// leaving drops the lift; one click moves the selection without submitting,
+// and a double click confirms like Enter.
 // Owner: interactive UX (PTY).
 fn click_then_double_click_questionnaire_choice(harness: &mut PtyHarness) -> Result<()> {
+    // `red` is the focused default; `blue` renders as a plain row.
     let blue = click_cell(harness, "blue")?;
+    let len = "blue".len() as u16;
+    wait_for_span_bold(harness, blue, len, false, "blue starts unlifted")?;
+    harness.mouse_move(blue.0, blue.1)?;
+    wait_for_span_bold(harness, blue, len, true, "hover did not lift blue")?;
+    harness.mouse_move(1, 1)?;
+    wait_for_span_bold(
+        harness,
+        blue,
+        len,
+        false,
+        "the lift stayed after the pointer left",
+    )?;
     click(harness, blue)?;
     harness.wait_for_text("→ ● blue", CLICK)?;
     if harness

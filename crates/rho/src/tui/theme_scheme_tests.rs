@@ -86,22 +86,16 @@ fn ignores_invalid_optional_cursor_and_selection() {
     assert_eq!(scheme.name, "Tolerant");
 }
 
-// Covers: built-in ids resolve; terminal id stays unfixed
-// Owner: tui theme scheme catalog
-#[test]
-fn resolves_builtin_and_terminal_ids() {
-    assert!(resolve_fixed_scheme(TERMINAL_THEME_ID).is_none());
-    assert!(resolve_fixed_scheme("").is_none());
-    let classic = resolve_fixed_scheme("one-half-dark").expect("one-half-dark");
-    assert_eq!(classic.id, "one-half-dark");
-    assert_eq!(classic.source, ThemeSourceKind::Builtin);
-    assert!(resolve_fixed_scheme("missing-theme-xyz").is_none());
-}
-
-// Covers: duplicate built-in ids would silently hide a scheme and reserve the stem
+// Covers: duplicate built-in ids would silently hide a scheme and reserve the
+// stem; every built-in resolves while terminal, empty, and unknown ids stay
+// unfixed
 // Owner: tui theme scheme catalog
 #[test]
 fn builtin_catalog_ids_are_unique_and_reserved() {
+    assert!(resolve_fixed_scheme(TERMINAL_THEME_ID).is_none());
+    assert!(resolve_fixed_scheme("").is_none());
+    assert!(resolve_fixed_scheme("missing-theme-xyz").is_none());
+
     let mut ids: Vec<_> = BUILTIN_SCHEMES.iter().map(|spec| spec.id).collect();
     ids.sort_unstable();
     let mut unique = ids.clone();

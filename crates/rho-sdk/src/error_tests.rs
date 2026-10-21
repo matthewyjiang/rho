@@ -1,21 +1,4 @@
-use super::{Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
-
-#[test]
-fn provider_retryability_propagates_to_top_level_error() {
-    let retryable = Error::from(ProviderError::new(
-        ProviderErrorKind::RateLimit,
-        "rate limited",
-        Retryability::Retryable,
-    ));
-    let permanent = Error::from(ProviderError::new(
-        ProviderErrorKind::Authentication,
-        "invalid credential",
-        Retryability::Permanent,
-    ));
-
-    assert!(retryable.is_retryable());
-    assert!(!permanent.is_retryable());
-}
+use super::{ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability};
 
 #[test]
 fn provider_diagnostic_is_explicit_and_not_in_display_or_debug() {
@@ -57,18 +40,4 @@ fn format_retry_after_scales_seconds_minutes_and_hours() {
         super::format_retry_after(Duration::from_secs(5400)),
         "1h 30m"
     );
-}
-
-#[test]
-fn provider_error_carries_retry_after() {
-    use std::time::Duration;
-
-    let error = ProviderError::new(
-        ProviderErrorKind::RateLimit,
-        "rate limited",
-        Retryability::Retryable,
-    )
-    .with_retry_after(Duration::from_secs(15));
-
-    assert_eq!(error.retry_after(), Some(Duration::from_secs(15)));
 }

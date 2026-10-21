@@ -63,45 +63,51 @@ fn request() -> HostInputRequest {
     .unwrap()
 }
 
-#[test]
-fn questionnaire_validates_complete_typed_answers() {
-    let request = request();
-    let response = HostInputResponse::new()
-        .answer("mode", ["safe"])
-        .answer("features", ["a", "b"]);
-
-    request.validate(&response).unwrap();
-    assert_eq!(response.answers()["mode"], ["safe"]);
-}
-
+// Covers: answers must cover every required question with known choices,
+// one per single-select question and no duplicates.
+// Owner: SDK host-input contract.
 #[test]
 fn questionnaire_rejects_missing_unknown_duplicate_and_excess_answers() {
     let request = request();
-
-    assert!(request
-        .validate(&HostInputResponse::new().answer("mode", ["fast"]))
-        .is_err());
-    assert!(request
-        .validate(
-            &HostInputResponse::new()
+    let cases = [
+        (
+            "complete typed answers",
+            HostInputResponse::new()
+                .answer("mode", ["safe"])
+                .answer("features", ["a", "b"]),
+            true,
+        ),
+        (
+            "missing answer",
+            HostInputResponse::new().answer("mode", ["fast"]),
+            false,
+        ),
+        (
+            "unknown choice",
+            HostInputResponse::new()
                 .answer("mode", ["unknown"])
                 .answer("features", ["a"]),
-        )
-        .is_err());
-    assert!(request
-        .validate(
-            &HostInputResponse::new()
+            false,
+        ),
+        (
+            "excess single-select answers",
+            HostInputResponse::new()
                 .answer("mode", ["fast", "safe"])
                 .answer("features", ["a"]),
-        )
-        .is_err());
-    assert!(request
-        .validate(
-            &HostInputResponse::new()
+            false,
+        ),
+        (
+            "duplicate choice",
+            HostInputResponse::new()
                 .answer("mode", ["fast"])
                 .answer("features", ["a", "a"]),
-        )
-        .is_err());
+            false,
+        ),
+    ];
+
+    for (case, response, valid) in cases {
+        assert_eq!(request.validate(&response).is_ok(), valid, "{case}");
+    }
 }
 
 #[test]

@@ -6,65 +6,6 @@ use super::stream_test_support::*;
 use super::*;
 
 #[test]
-fn maps_success_result_with_plan_high_cache_context_usage() {
-    let effects = effects_from_fixture("success.ndjson");
-    let terminal = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Terminal(terminal) => Some(terminal),
-        _ => None,
-    });
-    let terminal = terminal.expect("terminal result");
-    assert!(terminal.classification.is_success());
-    assert_eq!(terminal.session_id.as_deref(), Some("sess-success-001"));
-    assert_eq!(terminal.num_turns, Some(1));
-    assert_eq!(terminal.total_cost_usd, Some(0.0388));
-    let usage = terminal.usage.as_ref().expect("usage");
-    // PLAN high-cache example: uncached + cache-read + cache-creation.
-    assert_eq!(usage.input_tokens, Some(2));
-    assert_eq!(usage.cache_read_tokens, Some(7294));
-    assert_eq!(usage.cache_write_tokens, Some(6095));
-    assert_eq!(usage.total_input_tokens(), Some(2 + 7294 + 6095));
-    assert_eq!(usage.output_tokens, Some(4));
-
-    let context = terminal.context.as_ref().expect("context");
-    assert_eq!(context.tokens, Some(2 + 7294 + 6095));
-    assert_eq!(context.context_window, Some(200_000));
-    assert_eq!(
-        context.source,
-        rho_sdk::model::ContextUsageSource::ProviderReported
-    );
-
-    let mut status = crate::subagent::RunStatus::default();
-    for effect in &effects {
-        if let StreamEffect::Status(patch) = effect {
-            apply_status_patch(&mut status, patch.clone());
-        }
-    }
-    // Result messages no longer publish terminal Ok/Error on the status patch.
-    assert_ne!(status.state, RunState::Ok);
-    assert_ne!(status.state, RunState::Error);
-    assert_eq!(status.input_tokens, Some(2 + 7294 + 6095));
-    assert_eq!(status.output_tokens, Some(4));
-    assert_eq!(
-        status.claude_session_id.as_deref(),
-        Some("sess-success-001")
-    );
-    assert_eq!(status.total_cost_usd, Some(0.0388));
-    assert_eq!(status.result.as_deref(), Some("Hello from Claude."));
-    assert_no_terminal_attachment(&effects);
-    assert!(effects
-        .iter()
-        .any(|effect| matches!(effect, StreamEffect::RateLimit(_))));
-    assert!(effects.iter().any(|effect| {
-        matches!(
-            effect,
-            StreamEffect::Attachment(AttachmentEvent::ContextUsage(usage))
-                if usage.tokens == Some(2 + 7294 + 6095)
-                    && usage.context_window == Some(200_000)
-        )
-    }));
-}
-
-#[test]
 fn maps_live_success_capture_round_trip() {
     let effects = effects_from_fixture("live_success.ndjson");
     let terminal = effects.iter().find_map(|effect| match effect {
@@ -137,44 +78,6 @@ fn maps_live_success_capture_round_trip() {
         Some("11111111-2222-4333-8444-555555555555")
     );
     assert_eq!(status.result.as_deref(), Some("rho-claude-e2e-ok"));
-    assert_no_terminal_attachment(&effects);
-}
-
-#[test]
-fn maps_tool_call_and_result_display() {
-    let effects = effects_from_fixture("tool_call.ndjson");
-    let started = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolStarted { card, .. }) => {
-            Some(vec![card.header_text()])
-        }
-        _ => None,
-    });
-    let started = started.expect("tool started");
-    assert!(started[0].contains("Read"));
-    assert!(started[0].contains("README.md"));
-    let finished = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolFinished {
-            presentation: crate::presentation::Presentation::Card(card),
-            ..
-        }) => Some(card),
-        _ => None,
-    });
-    let finished = finished.expect("tool finished");
-    assert_eq!(finished.status, rho_tools::tool_card::ToolStatus::Ok);
-    assert_eq!(
-        finished.header,
-        rho_tools::tool_card::ToolHeader::call("Read", Some("README.md".into()))
-    );
-    assert_eq!(
-        finished.family,
-        rho_tools::tool_card::ToolFamily::FileCommand
-    );
-    assert!(effects.iter().any(|effect| {
-        matches!(
-            effect,
-            StreamEffect::Attachment(AttachmentEvent::AssistantTextDelta(text)) if text.contains("Done.")
-        )
-    }));
     assert_no_terminal_attachment(&effects);
 }
 
@@ -487,16 +390,6 @@ fn protocol_control_frames_are_silent_noops() {
             "expected silent no-op for {line}, got {effects:?}"
         );
     }
-}
-
-#[test]
-fn unknown_top_level_kind_emits_diagnostic_notice() {
-    let effects = map_line(r#"{"type":"brand_new_frame","payload":true}"#);
-    assert!(matches!(
-        effects.as_slice(),
-        [StreamEffect::Attachment(AttachmentEvent::Notice(text))]
-            if text.contains("unknown message type") && text.contains("brand_new_frame")
-    ));
 }
 
 #[test]

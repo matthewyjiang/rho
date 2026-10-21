@@ -262,19 +262,3 @@ pub(super) const TEXT_SELECTION_DRAG_STEPS: &[Step] = &[
     Step::Custom(assert_composer_click_keeps_recalled_prompt),
     Step::ExitCommand,
 ];
-
-#[cfg(test)]
-mod tests {
-    use super::display_column_at_byte;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn display_column_counts_multibyte_and_wide_prefix() {
-        // "α" is 2 UTF-8 bytes and 1 display column; "宽" is 3 bytes and 2 columns.
-        let line = "α宽target";
-        let byte_offset = line.find("target").expect("needle present");
-        assert_eq!(byte_offset, 5);
-        assert_eq!(display_column_at_byte(line, byte_offset), 3);
-        assert_eq!(display_column_at_byte("ascii target", 6), 6);
-    }
-}

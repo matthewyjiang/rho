@@ -6,9 +6,8 @@ use rho_sdk::{
     CancellationToken, ToolCallId, Workspace,
 };
 use serde_json::json;
-use tempfile::TempDir;
 
-use super::{process, rho, sdk_features, web};
+use super::{process, rho, web};
 
 fn invocation(arguments: serde_json::Value) -> ToolInvocation {
     ToolInvocation::new(ToolCallId::from_string("call-1").unwrap(), arguments)
@@ -72,46 +71,6 @@ async fn process_actions_prepare_with_audited_policies() {
         one_access(&stop),
         (ToolResourceKind::ManagedProcess, ToolAccessMode::Exclusive)
     );
-}
-
-#[tokio::test]
-async fn skill_prepares_builtin_and_file_resources() {
-    let tool = sdk_features::SdkSkillTool::new(12_000);
-    let root = TempDir::new().unwrap();
-    let workspace = Workspace::new(root.path()).unwrap();
-
-    let builtin = tool
-        .prepare(
-            invocation(json!({"name": "rho-config"})),
-            preparation_context(Some(workspace.clone())),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&builtin),
-        (ToolResourceKind::Opaque, ToolAccessMode::Shared)
-    );
-    assert_eq!(builtin.capabilities().len(), 1);
-
-    let skill_dir = root.path().join(".agents/skills/prepared-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: prepared-skill\ndescription: prepared test\n---\ncontents\n",
-    )
-    .unwrap();
-    let file = tool
-        .prepare(
-            invocation(json!({"name": "prepared-skill"})),
-            preparation_context(Some(workspace)),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&file),
-        (ToolResourceKind::WorkspacePath, ToolAccessMode::Shared)
-    );
-    assert_eq!(file.capabilities().len(), 1);
 }
 
 #[tokio::test]

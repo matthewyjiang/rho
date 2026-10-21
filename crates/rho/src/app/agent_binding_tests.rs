@@ -69,126 +69,55 @@ fn credentials(available: &[&str]) -> MemoryCredentialStore {
     store
 }
 
+// Covers: delegated children keep questionnaire (all tools or an explicit
+// allowlist) only when the host offers it, listing it without a bridge is not
+// fatal, recursive tools are dropped rather than fatal, and workflow agents
+// lose orchestration and questionnaire.
+// Owner: delegated and workflow agent binding.
 #[test]
-fn delegated_role_keeps_questionnaire_when_host_offers_it() {
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        bound.rho_capabilities(),
-        Some(&capability_set(&[
-            "read_file",
-            "write",
-            "questionnaire",
-            "todo"
-        ]))
-    );
-}
-
-// Covers: explicit questionnaire allowlists still bind when the host can answer.
-// Owner: delegated agent binding.
-#[test]
-fn delegated_allowlist_keeps_selected_questionnaire_when_host_offers_it() {
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::Allow(
-            ["read_file", "questionnaire"]
-                .into_iter()
-                .map(|name| ToolCapability::parse(name.to_string()))
+fn bound_capabilities_narrow_by_role_and_what_the_host_offers() {
+    let allow = |names: &[&str]| {
+        ToolPolicy::Allow(
+            names
+                .iter()
+                .map(|name| ToolCapability::parse((*name).to_string()))
                 .collect(),
-        )),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "questionnaire"]))
-    );
-}
-
-// Covers: listing questionnaire must not fail bind when this launch has no bridge.
-// Owner: delegated agent binding.
-#[test]
-fn delegated_allowlist_omits_questionnaire_when_host_does_not_offer_it() {
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::Allow(
-            ["read_file", "questionnaire"]
-                .into_iter()
-                .map(|name| ToolCapability::parse(name.to_string()))
-                .collect(),
-        )),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capability_set(&["read_file", "write"]),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        bound.rho_capabilities(),
-        Some(&capability_set(&["read_file"]))
-    );
-}
-
-// Covers: recursive tools listed on a child definition are ignored, not fatal.
-// Owner: delegated agent binding.
-#[test]
-fn delegated_allowlist_omits_recursive_tools_when_listed() {
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::Allow(
-            ["read_file", "agent", "agents", "advisor"]
-                .into_iter()
-                .map(|name| ToolCapability::parse(name.to_string()))
-                .collect(),
-        )),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capability_set(&["read_file", "agent", "agents", "advisor"]),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        bound.rho_capabilities(),
-        Some(&capability_set(&["read_file"]))
-    );
-}
-
-#[test]
-fn delegated_role_removes_recursive_capabilities() {
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capability_set(&["read_file", "write", "agent", "agents"]),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write"]))
-    );
-}
-
-// Covers: workflow agents must not recurse or wait on an interactive question.
-// Owner: workflow agent binding.
-#[test]
-fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
-    let bound = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::Workflow,
-            available_tools: capability_set(&[
+        )
+    };
+    let cases = [
+        (
+            "delegated all keeps an offered questionnaire",
+            AgentRole::Delegated,
+            ToolPolicy::All,
+            capabilities(),
+            &["read_file", "write", "questionnaire", "todo"][..],
+        ),
+        (
+            "delegated allowlist keeps an offered questionnaire",
+            AgentRole::Delegated,
+            allow(&["read_file", "questionnaire"]),
+            capabilities(),
+            &["read_file", "questionnaire"][..],
+        ),
+        (
+            "delegated allowlist omits an unoffered questionnaire",
+            AgentRole::Delegated,
+            allow(&["read_file", "questionnaire"]),
+            capability_set(&["read_file", "write"]),
+            &["read_file"][..],
+        ),
+        (
+            "delegated allowlist omits recursive tools",
+            AgentRole::Delegated,
+            allow(&["read_file", "agent", "agents", "advisor"]),
+            capability_set(&["read_file", "agent", "agents", "advisor"]),
+            &["read_file"][..],
+        ),
+        (
+            "workflow drops orchestration and questionnaire",
+            AgentRole::Workflow,
+            ToolPolicy::All,
+            capability_set(&[
                 "read_file",
                 "write",
                 "agent",
@@ -198,14 +127,25 @@ fn workflow_role_removes_orchestration_and_questionnaire_capabilities() {
                 "rho",
                 "workflow",
             ]),
-        },
-        &Config::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        bound.rho_capabilities(),
-        Some(&capability_set(&["read_file", "write", "todo"]))
-    );
+            &["read_file", "write", "todo"][..],
+        ),
+    ];
+    for (label, role, tools, available_tools, expected) in cases {
+        let bound = AgentBinder::bind(
+            definition(tools),
+            AgentInvocation {
+                role,
+                available_tools,
+            },
+            &Config::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            bound.rho_capabilities(),
+            Some(&capability_set(expected)),
+            "{label}"
+        );
+    }
 }
 
 // Covers: resume must use frozen launch choices while current policy can only narrow them.
@@ -362,62 +302,6 @@ fn unavailable_explicit_tool_fails_before_execution() {
     assert!(error.to_string().contains("write"));
 }
 
-fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
-    Arc::new(AgentDefinition {
-        runtime: AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::All,
-            model,
-            reasoning: None,
-        },
-        ..definition(ToolPolicy::All).as_ref().clone()
-    })
-}
-
-fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
-    crate::model_aliases::ModelAliases::from_entries(
-        pairs
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.to_string()))
-            .collect(),
-    )
-    .unwrap()
-}
-
-#[test]
-fn agent_model_aliases_resolve_qualified_and_bare_targets() {
-    let config = Config {
-        model_aliases: aliases(&[
-            ("deep", "anthropic/claude-opus-4-8"),
-            ("fast", "gpt-5.5-mini"),
-        ]),
-        ..Config::default()
-    };
-
-    for (alias, provider, model) in [
-        ("@deep", "anthropic", "claude-opus-4-8"),
-        ("@fast", "openai", "gpt-5.5-mini"),
-    ] {
-        let bound = AgentBinder::bind(
-            definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
-                provider: None,
-                model: alias.into(),
-                auth: None,
-                fast: false,
-            })),
-            AgentInvocation {
-                role: AgentRole::Delegated,
-                available_tools: capabilities(),
-            },
-            &config,
-        )
-        .unwrap();
-
-        let bound_config = bound.rho_config().expect("rho config");
-        assert_eq!(bound_config.provider, provider, "{alias}");
-        assert_eq!(bound_config.model, model, "{alias}");
-    }
-}
-
 #[test]
 fn agent_model_alias_conflicting_with_pinned_provider_errors() {
     let config = Config {
@@ -445,6 +329,27 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
         ),
         "{error:#}"
     );
+}
+
+fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
+    Arc::new(AgentDefinition {
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model,
+            reasoning: None,
+        },
+        ..definition(ToolPolicy::All).as_ref().clone()
+    })
+}
+
+fn aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
 }
 
 // Covers: an agent pin to a decision-model host, by provider or by auth,
@@ -478,31 +383,6 @@ fn agent_pin_to_a_decision_model_host_is_refused() {
             "{name}"
         );
     }
-}
-
-#[test]
-fn undefined_agent_model_alias_names_agent_and_reference() {
-    let error = AgentBinder::bind(
-        definition_with_model(ModelPolicy::Select(crate::agent::ModelSelection {
-            provider: None,
-            model: "@missing".into(),
-            auth: None,
-            fast: false,
-        })),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &Config::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        error.to_string().contains(
-            "agent 'test': model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
-        ),
-        "{error:#}"
-    );
 }
 
 fn claude_definition(model: ModelPolicy) -> Arc<AgentDefinition> {

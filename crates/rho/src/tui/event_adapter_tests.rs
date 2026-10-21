@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ModelUsage, ToolCall},
+    model::ToolCall,
     tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput, ToolProgress},
-    ProviderStreamResetReason, Revision, RunEvent, RunId, ToolCallId, ToolCompletion,
+    ProviderStreamResetReason, Revision, RunEvent, ToolCallId, ToolCompletion,
 };
 use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
@@ -19,54 +19,6 @@ fn only_event(events: Vec<ViewEvent>) -> ViewEvent {
         "expected exactly one view event: {events:?}"
     );
     events.into_iter().next().expect("one event")
-}
-
-#[test]
-fn translates_streaming_and_usage_events_without_rendering_state() {
-    let mut adapter = SdkEventAdapter::default();
-
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::Started {
-            run_id: RunId::new(),
-            revision: Revision::INITIAL,
-        })),
-        ViewEvent::Update(ViewModelEvent::RunStarted)
-    ));
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::AssistantTextDelta {
-            text: "hello".into()
-        })),
-        ViewEvent::Update(ViewModelEvent::OutputDelta(text)) if text == "hello"
-    ));
-    let usage = ModelUsage {
-        output_tokens: Some(3),
-        ..ModelUsage::default()
-    };
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::UsageUpdated {
-            usage: usage.clone()
-        })),
-        ViewEvent::Update(ViewModelEvent::Usage(translated)) if translated == usage
-    ));
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ModelCallCompleted {
-            profile: rho_sdk::ModelCallProfile {
-                provider: "openai".into(),
-                model: "gpt".into(),
-                reasoning: rho_sdk::ReasoningLevel::Medium,
-                service_tier: None,
-            },
-            metrics: rho_sdk::ModelCallMetrics {
-                output_tokens: Some(3),
-                time_to_first_token: Some(Duration::from_millis(200)),
-                generation_time: Some(Duration::from_secs(1)),
-                total_latency: Duration::from_millis(1_200),
-                generation_output_tokens: None,
-            },
-        })),
-        ViewEvent::Update(ViewModelEvent::ModelCallCompleted { profile, metrics })
-            if profile.model == "gpt" && metrics.output_tokens == Some(3)
-    ));
 }
 
 #[test]

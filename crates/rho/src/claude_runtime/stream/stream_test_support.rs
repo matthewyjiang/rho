@@ -6,9 +6,7 @@ use super::*;
 
 pub(super) fn effects_from_fixture(name: &str) -> Vec<StreamEffect> {
     let body = match name {
-        "success.ndjson" => include_str!("../fixtures/success.ndjson"),
         "live_success.ndjson" => include_str!("../fixtures/live_success.ndjson"),
-        "tool_call.ndjson" => include_str!("../fixtures/tool_call.ndjson"),
         "error_result.ndjson" => include_str!("../fixtures/error_result.ndjson"),
         "unknown_and_partial.ndjson" => include_str!("../fixtures/unknown_and_partial.ndjson"),
         "mixed_partial_complete.ndjson" => {

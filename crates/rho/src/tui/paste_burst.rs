@@ -233,47 +233,49 @@ pub(super) fn expand_paste_segments(input: &str, segments: &[super::PasteSegment
 mod tests {
     use super::*;
 
+    // Covers: Enter right after pasted text (even one char) is buffered as part
+    // of the paste, a rapid burst extends that window, and Enter after the idle
+    // gap is typed input.
+    // Owner: tui paste burst detection
     #[test]
-    fn single_char_enter_is_buffered_as_paste() {
+    fn enter_suppression_follows_paste_bursts_and_ends_after_the_idle_gap() {
         let start = Instant::now();
-        let mut burst = PasteBurst::default();
+        let ms = Duration::from_millis;
+        for (case, chars, enter_at, expected, pending) in [
+            (
+                "single char",
+                vec![('y', ms(0))],
+                ms(1),
+                PasteBurstEnter::Buffered,
+                "y\n",
+            ),
+            (
+                "rapid burst",
+                vec![('a', ms(0)), ('b', ms(1))],
+                ms(50),
+                PasteBurstEnter::Buffered,
+                "ab\n",
+            ),
+            (
+                "after idle gap",
+                vec![('a', ms(0))],
+                PASTE_BURST_GAP + ms(1),
+                PasteBurstEnter::NotPaste,
+                "a",
+            ),
+        ] {
+            let mut burst = PasteBurst::default();
+            for (ch, at) in chars {
+                burst.push_plain_char(ch, start + at);
+            }
 
-        burst.push_plain_char('y', start);
-
-        assert_eq!(
-            burst.push_enter_if_paste(start + Duration::from_millis(1)),
-            PasteBurstEnter::Buffered
-        );
-        assert_eq!(burst.take_pending().as_deref(), Some("y\n"));
-    }
-
-    #[test]
-    fn enter_after_idle_gap_is_not_part_of_paste() {
-        let start = Instant::now();
-        let mut burst = PasteBurst::default();
-
-        burst.push_plain_char('a', start);
-
-        assert_eq!(
-            burst.push_enter_if_paste(start + PASTE_BURST_GAP + Duration::from_millis(1)),
-            PasteBurstEnter::NotPaste
-        );
-        assert_eq!(burst.take_pending().as_deref(), Some("a"));
-    }
-
-    #[test]
-    fn rapid_plain_text_burst_extends_enter_suppression() {
-        let start = Instant::now();
-        let mut burst = PasteBurst::default();
-
-        burst.push_plain_char('a', start);
-        burst.push_plain_char('b', start + Duration::from_millis(1));
-
-        assert_eq!(
-            burst.push_enter_if_paste(start + Duration::from_millis(50)),
-            PasteBurstEnter::Buffered
-        );
-        assert_eq!(burst.take_pending().as_deref(), Some("ab\n"));
+            assert_eq!(
+                burst.push_enter_if_paste(start + enter_at),
+                expected,
+                "{case}"
+            );
+            assert_eq!(burst.take_pending().as_deref(), Some(pending), "{case}");
+        }
     }
 
     #[test]

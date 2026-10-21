@@ -8,59 +8,54 @@ fn exact() -> ReasoningCapabilities {
     ]))
 }
 
+// Covers: once model metadata arrives, a level changed during the fetch is
+// rejected and restored, an explicit unsupported level stays rejected, an
+// unchanged persisted level is normalized silently, and fixed models keep the
+// global preference.
+// Owner: tui reasoning metadata resolution
 #[test]
 fn explicit_change_during_fetch_is_rejected_and_restored() {
-    let resolved = resolve_fetched_reasoning(
-        &exact(),
-        ReasoningLevel::Medium,
-        Some((
-            ReasoningLevel::Low,
-            ReasoningRequestSource::PersistedOrDefault,
-        )),
-    );
-
-    assert_eq!(resolved.effective, ReasoningLevel::Low);
-    assert_eq!(resolved.rejected, Some(ReasoningLevel::Medium));
-}
-
-#[test]
-fn initial_explicit_value_remains_explicit_when_metadata_arrives() {
-    let resolved = resolve_fetched_reasoning(
-        &exact(),
-        ReasoningLevel::Medium,
-        Some((ReasoningLevel::Medium, ReasoningRequestSource::Explicit)),
-    );
-
-    assert_eq!(resolved.effective, ReasoningLevel::High);
-    assert_eq!(resolved.rejected, Some(ReasoningLevel::Medium));
-}
-
-#[test]
-fn unchanged_persisted_value_is_normalized_after_fetch() {
-    let resolved = resolve_fetched_reasoning(
-        &exact(),
-        ReasoningLevel::Medium,
-        Some((
+    use ReasoningRequestSource::{Explicit, PersistedOrDefault};
+    let cases = [
+        (
+            "explicit change during fetch",
+            exact(),
             ReasoningLevel::Medium,
-            ReasoningRequestSource::PersistedOrDefault,
-        )),
-    );
-
-    assert_eq!(resolved.effective, ReasoningLevel::High);
-    assert_eq!(resolved.rejected, None);
-}
-
-#[test]
-fn fixed_models_retain_the_global_reasoning_preference() {
-    let resolved = resolve_fetched_reasoning(
-        &ReasoningCapabilities::NotConfigurable,
-        ReasoningLevel::High,
-        Some((
+            (ReasoningLevel::Low, PersistedOrDefault),
+            ReasoningLevel::Low,
+            Some(ReasoningLevel::Medium),
+        ),
+        (
+            "initial explicit value",
+            exact(),
+            ReasoningLevel::Medium,
+            (ReasoningLevel::Medium, Explicit),
             ReasoningLevel::High,
-            ReasoningRequestSource::PersistedOrDefault,
-        )),
-    );
-
-    assert_eq!(resolved.effective, ReasoningLevel::High);
-    assert_eq!(resolved.rejected, None);
+            Some(ReasoningLevel::Medium),
+        ),
+        (
+            "unchanged persisted value",
+            exact(),
+            ReasoningLevel::Medium,
+            (ReasoningLevel::Medium, PersistedOrDefault),
+            ReasoningLevel::High,
+            None,
+        ),
+        (
+            "fixed model",
+            ReasoningCapabilities::NotConfigurable,
+            ReasoningLevel::High,
+            (ReasoningLevel::High, PersistedOrDefault),
+            ReasoningLevel::High,
+            None,
+        ),
+    ];
+    for (case, capabilities, current, requested, effective, rejected) in cases {
+        let resolved = resolve_fetched_reasoning(&capabilities, current, Some(requested));
+        assert_eq!(
+            (resolved.effective, resolved.rejected),
+            (effective, rejected),
+            "{case}"
+        );
+    }
 }

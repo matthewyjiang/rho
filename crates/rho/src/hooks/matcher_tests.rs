@@ -14,56 +14,37 @@ fn matcher(patterns: &[&str]) -> ToolMatcher {
     .expect("pattern list is valid")
 }
 
+// Covers: hook tool patterns match exact names or a trailing-star prefix, and
+// an omitted list matches every tool
+// Owner: hook tool matcher
 #[test]
-fn an_omitted_tool_list_matches_every_tool() {
-    let matcher = ToolMatcher::any();
-
-    assert!(matcher.matches("bash"));
-    assert!(matcher.matches("read_file"));
-    assert_eq!(matcher.describe(), "*");
-}
-
-#[test]
-fn exact_names_match_only_themselves() {
-    let matcher = matcher(&["bash", "powershell"]);
-
-    assert!(matcher.matches("bash"));
-    assert!(matcher.matches("powershell"));
-    assert!(!matcher.matches("read_file"));
-    assert_eq!(matcher.describe(), "bash, powershell");
-}
-
-#[test]
-fn a_trailing_star_matches_by_prefix() {
-    let matcher = matcher(&["web*"]);
-
-    assert!(matcher.matches("web_search"));
-    assert!(!matcher.matches("bash"));
-    assert_eq!(matcher.describe(), "web*");
-}
-
-#[test]
-fn a_bare_star_matches_everything() {
-    let matcher = matcher(&["*"]);
-
-    assert!(matcher.matches("bash"));
-    assert!(matcher.matches("anything"));
-}
-
-#[test]
-fn an_empty_list_is_rejected_rather_than_read_as_all_tools() {
-    assert_eq!(
-        ToolMatcher::new(Vec::new(), canonical_tool_names()),
-        Err(ToolMatcherError::Empty)
-    );
-}
-
-#[test]
-fn a_blank_pattern_is_rejected() {
-    assert_eq!(
-        ToolMatcher::new(vec!["  ".into()], canonical_tool_names()),
-        Err(ToolMatcherError::BlankPattern)
-    );
+fn patterns_match_exact_names_or_a_trailing_star_prefix() {
+    let any = ToolMatcher::any();
+    for (case, tools, tool, expected) in [
+        ("omitted list", &any, "read_file", true),
+        (
+            "exact name",
+            &matcher(&["bash", "powershell"]),
+            "powershell",
+            true,
+        ),
+        (
+            "exact name only",
+            &matcher(&["bash", "powershell"]),
+            "read_file",
+            false,
+        ),
+        ("trailing star", &matcher(&["web*"]), "web_search", true),
+        (
+            "trailing star prefix only",
+            &matcher(&["web*"]),
+            "bash",
+            false,
+        ),
+        ("bare star", &matcher(&["*"]), "anything", true),
+    ] {
+        assert_eq!(tools.matches(tool), expected, "{case}");
+    }
 }
 
 #[test]
@@ -74,28 +55,46 @@ fn an_unsupported_glob_or_unknown_name_fails_at_load() {
     let unknown = |pattern: &str| ToolMatcherError::UnknownTool {
         pattern: pattern.into(),
     };
-    for (case, pattern, expected) in [
-        ("leading star", "*_file", unsupported("*_file")),
-        ("inner star", "re*d*", unsupported("re*d*")),
-        ("wrong case", "Bash", unknown("Bash")),
-        ("non-canonical name", "shell", unknown("shell")),
+    for (case, patterns, expected) in [
+        (
+            "empty list is not all tools",
+            vec![],
+            ToolMatcherError::Empty,
+        ),
+        (
+            "blank pattern",
+            vec!["  ".into()],
+            ToolMatcherError::BlankPattern,
+        ),
+        ("leading star", vec!["*_file".into()], unsupported("*_file")),
+        ("inner star", vec!["re*d*".into()], unsupported("re*d*")),
+        ("wrong case", vec!["Bash".into()], unknown("Bash")),
+        ("non-canonical name", vec!["shell".into()], unknown("shell")),
+        (
+            "prefix selecting nothing",
+            vec!["zzz*".into()],
+            unknown("zzz*"),
+        ),
     ] {
         assert_eq!(
-            ToolMatcher::new(vec![pattern.into()], canonical_tool_names()),
+            ToolMatcher::new(patterns, canonical_tool_names()),
             Err(expected),
             "{case}"
         );
     }
 }
 
+// Covers: the hooks overlay labels a matcher with its patterns as written.
+// Owner: hook tool matcher
 #[test]
-fn a_prefix_that_selects_nothing_fails_at_load() {
-    assert_eq!(
-        ToolMatcher::new(vec!["zzz*".into()], canonical_tool_names()),
-        Err(ToolMatcherError::UnknownTool {
-            pattern: "zzz*".into()
-        })
-    );
+fn the_description_lists_patterns_as_written() {
+    for (tools, expected) in [
+        (ToolMatcher::any(), "*"),
+        (matcher(&["bash", "powershell"]), "bash, powershell"),
+        (matcher(&["web*"]), "web*"),
+    ] {
+        assert_eq!(tools.describe(), expected);
+    }
 }
 
 // Covers: a hook naming only some edit tools reports the ones it misses, since

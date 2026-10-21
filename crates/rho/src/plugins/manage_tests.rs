@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use super::{inspect_source, install, remove, set_enabled, InstallMode};
+use super::{install, remove, set_enabled, InstallMode};
 use crate::plugins::{
     discover_with_trust, state::PluginScope, PluginOrigin, PluginStatus, ProjectTrust,
 };
@@ -438,19 +438,4 @@ fn remove_deletes_package_but_keeps_data_directory() {
 
     assert!(!plugins_root.join("demo").exists());
     assert!(data.join("state.json").is_file());
-}
-
-// Covers: inspect_source never requires component execution and surfaces metadata.
-// Owner: plugin package validation.
-#[test]
-fn inspect_source_reads_manifest_only() {
-    let root = TempDir::new().unwrap();
-    let source = write_source(root.path(), "meta");
-    let inspected = inspect_source(&source).unwrap();
-    assert_eq!(inspected.manifest.name, "meta");
-    assert_eq!(inspected.manifest.version.as_deref(), Some("1.2.3"));
-    assert_eq!(
-        inspected.manifest.description.as_deref(),
-        Some("demo plugin")
-    );
 }

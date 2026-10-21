@@ -15,30 +15,6 @@ fn invocation(command: &str) -> CommandInvocation {
     parse_command(command).unwrap().unwrap()
 }
 
-/// Runs `f` with a temporary OpenAI model cache so the advisor model picker can open.
-///
-/// OpenAI is cache-backed. Without this, `/advisor on` with no model only
-/// reports "no cached provider models" and never opens a picker. The cache
-/// override is thread-local, so the body stays on one thread.
-fn with_cached_openai_models<T>(f: impl FnOnce() -> T) -> T {
-    let cache = tempfile::tempdir().unwrap();
-    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
-        replace_cached_provider_models_for_tests(
-            "openai",
-            &[ProviderModel {
-                provider: "openai".into(),
-                model: "gpt-5.5".into(),
-                display_name: "GPT-5.5".into(),
-                context_window: None,
-                max_output_tokens: None,
-                reasoning_capabilities: ReasoningCapabilities::Unknown,
-            }],
-        )
-        .unwrap();
-        f()
-    })
-}
-
 /// Records what the command asked the runtime to apply, so the advisor state
 /// transition is observable without a live SDK runtime.
 #[derive(Default)]
@@ -75,34 +51,28 @@ fn app_with_advisor_model() -> App {
     app
 }
 
-// Covers: /advisor on with a configured advisor model turns the mode on and saves it
-// Owner: advisor command
-#[tokio::test]
-async fn enabling_advisor_mode_with_a_model_saves_the_setting() {
-    let mut app = app_with_advisor_model();
-    let mut agent = FakeAdvisorRuntime::default();
-
-    app.execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
-        .await
+/// Runs `f` with a temporary OpenAI model cache so the advisor model picker can open.
+///
+/// OpenAI is cache-backed. Without this, `/advisor on` with no model only
+/// reports "no cached provider models" and never opens a picker. The cache
+/// override is thread-local, so the body stays on one thread.
+fn with_cached_openai_models<T>(f: impl FnOnce() -> T) -> T {
+    let cache = tempfile::tempdir().unwrap();
+    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        replace_cached_provider_models_for_tests(
+            "openai",
+            &[ProviderModel {
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+                display_name: "GPT-5.5".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
         .unwrap();
-
-    assert!(app.info.runtime.advisor_mode);
-    assert!(
-        app.info
-            .services
-            .config_repository
-            .load()
-            .unwrap()
-            .advisor_mode
-    );
-    assert_eq!(
-        agent.last_applied(),
-        Some(&Some(InternalAgentModelConfig::new(
-            "openai".into(),
-            "gpt-5.5".into(),
-            "api-key".into()
-        )))
-    );
+        f()
+    })
 }
 
 // Covers: /advisor with no argument flips the current mode

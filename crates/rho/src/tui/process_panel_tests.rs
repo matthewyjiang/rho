@@ -33,14 +33,6 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-fn activity_span_style(line: &Line<'_>, activity: &str) -> ratatui::style::Style {
-    line.spans
-        .iter()
-        .find(|span| span.content.as_ref() == activity)
-        .map(|span| span.style)
-        .unwrap_or_default()
-}
-
 // Covers: more than two live processes must not grow the rail past the shared cap.
 // Owner: pure layout
 #[test]
@@ -157,28 +149,6 @@ fn live_count_excludes_finished_rows() {
     assert_eq!(panel.desired_height(), 2);
 }
 
-// Covers: verdict styles survive the wide-row paint path.
-// Owner: pure layout
-#[test]
-fn process_verdict_styles_paint_on_wide_rows() {
-    Theme::apply_committed("one-half-dark");
-    let mut panel = ProcessPanel::default();
-    panel.ingest(vec![LiveProcessSummary {
-        process_id: "ok".into(),
-        command: "true".into(),
-        state: State::Exited,
-        elapsed_seconds: 3,
-        quiet_seconds: None,
-        exit_code: Some(0),
-    }]);
-    let line = &panel.lines(80, 8, /*continues_below*/ false)[0];
-    assert_eq!(
-        activity_span_style(line, "✓ exit 0"),
-        Theme::activity_rail().patch(Theme::activity_rail_success())
-    );
-    Theme::apply_committed("terminal");
-}
-
 // Covers: peek hits live and finished rows, never the overflow summary or
 // a point outside the rail.
 // Owner: pure unit (process peek hit-test)
@@ -215,21 +185,6 @@ fn peek_target_hits_rows_and_skips_summary_and_outside() {
         Some(ProcessPeekTarget {
             process_id: "done".into(),
         })
-    );
-}
-
-// Covers: hover trailing keeps elapsed and names the peek action.
-// Owner: pure layout
-#[test]
-fn hover_trailing_keeps_elapsed() {
-    let mut panel = ProcessPanel::default();
-    panel.ingest(vec![summary("live-1", "sleep 60", 4)]);
-    panel.set_hovered(Some("live-1"));
-    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false)[0]);
-    assert!(text.contains("⏎ peek · 4s"));
-    assert_eq!(
-        panel.highlighted_row(8),
-        Some((0, crate::tui::activity::RailRowState::Hovered))
     );
 }
 

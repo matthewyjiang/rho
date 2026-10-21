@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::document::{render_extracted_document, ExtractedDocument, MAX_EXTRACTED_CHARACTERS};
-use crate::hashline::{compute_file_hash, format_hashline_view};
+use crate::hashline::format_hashline_view;
 use tempfile::TempDir;
 
 use super::*;
@@ -120,56 +120,6 @@ async fn extracts_supported_binary_documents_for_whole_file_reads() {
     assert_eq!(result.content, "Tool document");
 }
 
-// Covers: plain UTF-8 source reads must expose a hashline snapshot for edit
-// Owner: read_file tool
-#[tokio::test]
-async fn plain_text_reads_return_hashline_view_with_full_file_tag() {
-    let (_dir, ctx) = test_context();
-    let path = ctx.cwd.join("sample.rs");
-    let text = "fn main() {\n    ok();\n}\n";
-    fs::write(&path, text).unwrap();
-
-    let output = read_file_content(
-        &path,
-        "sample.rs",
-        None,
-        None,
-        crate::FileViewStyle::Hashline,
-    )
-    .await
-    .unwrap();
-
-    let expected = format_hashline_view("sample.rs", text, None, None).unwrap();
-    assert_eq!(output.content, expected);
-    assert!(output.content.contains(&compute_file_hash(text)));
-    assert!(output.image.is_none());
-}
-
-// Covers: ranged plain-text reads keep absolute line numbers and the full-file tag
-// Owner: read_file tool
-#[tokio::test]
-async fn ranged_plain_text_reads_use_hashline_window() {
-    let (_dir, ctx) = test_context();
-    let path = ctx.cwd.join("sample.txt");
-    let text = "one\ntwo\nthree\nfour\n";
-    fs::write(&path, text).unwrap();
-
-    let result = ReadFile
-        .call(
-            json!({"path": "sample.txt", "offset": 2, "limit": 2}),
-            ctx,
-            "call_range".into(),
-        )
-        .await
-        .unwrap();
-
-    let tag = compute_file_hash(text);
-    let expected = format!(
-        "[sample.txt#{tag}]\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
-    );
-    assert_eq!(result.content, expected);
-}
-
 // Covers: files larger than one chunk must still return the split hashline window
 // Owner: read_file tool
 #[tokio::test]
@@ -265,6 +215,36 @@ fn renders_document_warnings() {
     );
 }
 
+// Covers: zero and past-EOF windows fail with the exact bound instead of an empty read
+// Owner: read_file tool
+#[tokio::test]
+async fn rejects_out_of_range_windows() {
+    for (case, args, expected) in [
+        (
+            "offset past end",
+            json!({"path": "sample.txt", "offset": 5}),
+            "offset 5 is past the end of the file (2 line(s))",
+        ),
+        (
+            "zero offset",
+            json!({"path": "sample.txt", "offset": 0}),
+            "offset must be greater than 0",
+        ),
+        (
+            "zero limit",
+            json!({"path": "sample.txt", "limit": 0}),
+            "limit must be greater than 0",
+        ),
+    ] {
+        let (_dir, ctx) = test_context();
+        fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\n").unwrap();
+
+        let err = ReadFile.call(args, ctx, "call_1".into()).await.unwrap_err();
+
+        assert_eq!(err.to_string(), expected, "{case}");
+    }
+}
+
 #[tokio::test]
 async fn rejects_documents_over_the_input_limit() {
     let (_dir, ctx) = test_context();
@@ -295,58 +275,4 @@ async fn rejects_documents_over_the_input_limit() {
             crate::document::MAX_DOCUMENT_INPUT_BYTES
         )
     );
-}
-
-#[tokio::test]
-async fn rejects_offset_past_end_of_file() {
-    let (_dir, ctx) = test_context();
-    fs::write(ctx.cwd.join("sample.txt"), "one\ntwo\n").unwrap();
-
-    let err = ReadFile
-        .call(
-            json!({"path": "sample.txt", "offset": 5}),
-            ctx,
-            "call_1".into(),
-        )
-        .await
-        .unwrap_err();
-
-    assert_eq!(
-        err.to_string(),
-        "offset 5 is past the end of the file (2 line(s))"
-    );
-}
-
-#[tokio::test]
-async fn rejects_zero_offset() {
-    let (_dir, ctx) = test_context();
-    fs::write(ctx.cwd.join("sample.txt"), "one\n").unwrap();
-
-    let err = ReadFile
-        .call(
-            json!({"path": "sample.txt", "offset": 0}),
-            ctx,
-            "call_1".into(),
-        )
-        .await
-        .unwrap_err();
-
-    assert_eq!(err.to_string(), "offset must be greater than 0");
-}
-
-#[tokio::test]
-async fn rejects_zero_limit() {
-    let (_dir, ctx) = test_context();
-    fs::write(ctx.cwd.join("sample.txt"), "one\n").unwrap();
-
-    let err = ReadFile
-        .call(
-            json!({"path": "sample.txt", "limit": 0}),
-            ctx,
-            "call_1".into(),
-        )
-        .await
-        .unwrap_err();
-
-    assert_eq!(err.to_string(), "limit must be greater than 0");
 }

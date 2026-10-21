@@ -16,58 +16,49 @@ fn texts(lines: &[Line<'static>]) -> Vec<String> {
 }
 
 // Covers: the collapsed prompt must never spill past its row budget, and a
-// cut must be visible so users know Enter shows more.
+// cut must be visible so users know Enter shows more. End-anchored (streaming)
+// output keeps its newest rows with the cut at the top.
 // Owner: picker detail layout
 #[test]
 fn excerpt_clips_to_row_budget_with_visible_cut() {
-    let cases = [
-        // (text, rows, width, expected)
-        ("one two three", 3, 20, vec!["one two three"]),
+    for (anchor, cases) in [
         (
-            "alpha beta\ngamma delta epsilon zeta",
-            2,
-            12,
-            vec!["alpha beta", "gamma delta…"],
+            ExcerptAnchor::Start,
+            vec![
+                // (text, rows, width, expected)
+                ("one two three", 3, 20, vec!["one two three"]),
+                (
+                    "alpha beta\ngamma delta epsilon zeta",
+                    2,
+                    12,
+                    vec!["alpha beta", "gamma delta…"],
+                ),
+                ("aaaa bbbb cccc dddd", 1, 9, vec!["aaaa bb…"]),
+            ],
         ),
-        ("aaaa bbbb cccc dddd", 1, 9, vec!["aaaa bb…"]),
-    ];
-    for (text, rows, width, expected) in cases {
-        let lines = excerpt_lines(text, rows, ExcerptAnchor::Start, width);
-        assert_eq!(
-            texts(&lines),
-            expected,
-            "{text:?} rows={rows} width={width}"
-        );
-        for line in texts(&lines) {
-            assert!(display_width(&line) <= width, "{line:?} exceeds {width}");
-        }
-    }
-}
-
-// Covers: streaming output keeps its newest rows, and the cut shows at the top
-// without pushing any row past the pane width.
-// Owner: picker detail layout
-#[test]
-fn end_anchored_excerpt_keeps_the_tail() {
-    let cases = [
-        // (text, rows, width, expected)
-        ("one two", 3, 20, vec!["one two"]),
         (
-            "alpha beta gamma delta epsilon",
-            2,
-            12,
-            vec!["…gamma delta", "epsilon"],
+            ExcerptAnchor::End,
+            vec![
+                ("one two", 3, 20, vec!["one two"]),
+                (
+                    "alpha beta gamma delta epsilon",
+                    2,
+                    12,
+                    vec!["…gamma delta", "epsilon"],
+                ),
+            ],
         ),
-    ];
-    for (text, rows, width, expected) in cases {
-        let lines = excerpt_lines(text, rows, ExcerptAnchor::End, width);
-        assert_eq!(
-            texts(&lines),
-            expected,
-            "{text:?} rows={rows} width={width}"
-        );
-        for line in texts(&lines) {
-            assert!(display_width(&line) <= width, "{line:?} exceeds {width}");
+    ] {
+        for (text, rows, width, expected) in cases {
+            let lines = excerpt_lines(text, rows, anchor, width);
+            assert_eq!(
+                texts(&lines),
+                expected,
+                "{anchor:?} {text:?} rows={rows} width={width}"
+            );
+            for line in texts(&lines) {
+                assert!(display_width(&line) <= width, "{line:?} exceeds {width}");
+            }
         }
     }
 }

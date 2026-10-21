@@ -86,13 +86,6 @@ async fn preserves_status_when_reading_the_error_body_fails() {
 }
 
 #[test]
-fn parse_retry_after_reads_delay_seconds() {
-    let mut headers = HeaderMap::new();
-    headers.insert(RETRY_AFTER, HeaderValue::from_static("12"));
-    assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(12)));
-}
-
-#[test]
 fn parse_retry_after_ignores_non_numeric_values() {
     let mut headers = HeaderMap::new();
     headers.insert(

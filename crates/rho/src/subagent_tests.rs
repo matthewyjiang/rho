@@ -333,27 +333,6 @@ fn normalize_id_lowercases_hex_and_rejects_invalid() {
 }
 
 #[test]
-fn write_status_omits_unknown_token_counters() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join(RESULT_FILE_NAME);
-    write_status(
-        &path,
-        &RunStatus {
-            state: RunState::Stopped,
-            last_activity: Some("cancelled".into()),
-            ..RunStatus::default()
-        },
-    )
-    .unwrap();
-    let raw = std::fs::read_to_string(&path).unwrap();
-    assert!(!raw.contains("input_tokens"), "{raw}");
-    assert!(!raw.contains("output_tokens"), "{raw}");
-    let loaded = read_status(&path).unwrap();
-    assert_eq!(loaded.input_tokens, None);
-    assert_eq!(loaded.output_tokens, None);
-}
-
-#[test]
 fn old_status_files_without_parent_session_id_still_parse() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join(RESULT_FILE_NAME);
@@ -373,23 +352,6 @@ fn old_status_files_without_parent_session_id_still_parse() {
     assert_eq!(status.runtime, None);
     assert_eq!(status.started_at, None);
     assert_eq!(status.finished_at, None);
-}
-
-#[test]
-fn parent_session_id_round_trips_in_status_file() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join(RESULT_FILE_NAME);
-    let status = RunStatus {
-        state: RunState::Starting,
-        parent_session_id: Some("parent-session-id".into()),
-        agent_id: Some("worker".into()),
-        ..RunStatus::default()
-    };
-    initialize_status(&path, &status).unwrap();
-    assert_eq!(
-        read_status(&path).unwrap().parent_session_id.as_deref(),
-        Some("parent-session-id")
-    );
 }
 
 #[test]

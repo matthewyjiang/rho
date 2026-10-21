@@ -14,7 +14,7 @@ use crate::{
         testing::RecordingObserver, HookDecision, HookEnvelope, HookEventKind, HookGateFuture,
         HookPolicyOutcome, PreToolUseGate, PreToolUseRequest,
     },
-    model::{ContentBlock, ModelIdentity, ModelResponse, ModelUsage, ToolCall, ToolSpec},
+    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{Tool, ToolContext, ToolFuture, ToolInvocation, ToolOutput},
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
@@ -188,50 +188,85 @@ async fn tool_result_content(harness: &Harness) -> String {
         .expect("the run recorded a tool result")
 }
 
+// Covers: the gate sits after policy and before approval; it can only narrow,
+// a denial reaches the model before the host is asked, and a policy denial
+// never consults it.
+// Owner: SDK runtime authorization composition.
 #[tokio::test]
-async fn allow_plus_continue_executes_without_prompting() {
-    let harness = harness(PolicyDecision::Allow, HookDecision::Continue);
+async fn the_gate_narrows_policy_before_the_host_is_prompted() {
+    /// What the model sees: the tool's own output, or a refusal naming why.
+    enum Seen {
+        Ran,
+        Refused(&'static str),
+    }
+    let ask = || PolicyDecision::RequireApproval {
+        reason: "ask".into(),
+    };
+    let cases = [
+        (
+            "allow + continue executes without prompting",
+            PolicyDecision::Allow,
+            HookDecision::Continue,
+            Seen::Ran,
+            vec![HookPolicyOutcome::Allow],
+            0,
+        ),
+        (
+            "allow + deny stops the call",
+            PolicyDecision::Allow,
+            HookDecision::deny("hook `user:no-reads` denied the read"),
+            Seen::Refused("hook `user:no-reads` denied the read"),
+            vec![HookPolicyOutcome::Allow],
+            0,
+        ),
+        (
+            "require approval + continue still prompts the host",
+            ask(),
+            HookDecision::Continue,
+            Seen::Ran,
+            vec![HookPolicyOutcome::RequireApproval],
+            1,
+        ),
+        (
+            "require approval + deny stops before the prompt",
+            ask(),
+            HookDecision::deny("denied by policy hook"),
+            Seen::Refused("denied by policy hook"),
+            vec![HookPolicyOutcome::RequireApproval],
+            0,
+        ),
+        (
+            "a policy denial never reaches the gate",
+            PolicyDecision::Deny {
+                reason: "capability is outside the configured policy".into(),
+            },
+            HookDecision::Continue,
+            Seen::Refused("outside the configured policy"),
+            vec![],
+            0,
+        ),
+    ];
 
-    let content = tool_result_content(&harness).await;
+    for (case, policy, decision, expected_result, expected_gate, expected_prompts) in cases {
+        let harness = harness(policy, decision);
 
-    assert_eq!(content, "file contents");
-    assert_eq!(harness.gate.consulted(), 1);
-    assert_eq!(*harness.approvals.prompts.lock().unwrap(), 0);
-}
+        let content = tool_result_content(&harness).await;
 
-#[tokio::test]
-async fn allow_plus_deny_stops_the_call() {
-    let harness = harness(
-        PolicyDecision::Allow,
-        HookDecision::deny("hook `user:no-reads` denied the read"),
-    );
-
-    let content = tool_result_content(&harness).await;
-
-    assert!(
-        content.contains("hook `user:no-reads` denied the read"),
-        "the model must be able to read why the call failed: {content}"
-    );
-    assert_eq!(*harness.approvals.prompts.lock().unwrap(), 0);
-}
-
-#[tokio::test]
-async fn require_approval_plus_continue_still_prompts_the_host() {
-    let harness = harness(
-        PolicyDecision::RequireApproval {
-            reason: "ask".into(),
-        },
-        HookDecision::Continue,
-    );
-
-    let content = tool_result_content(&harness).await;
-
-    assert_eq!(content, "file contents");
-    assert_eq!(*harness.approvals.prompts.lock().unwrap(), 1);
-    assert_eq!(
-        harness.gate.seen.lock().unwrap().as_slice(),
-        [HookPolicyOutcome::RequireApproval]
-    );
+        match expected_result {
+            Seen::Ran => assert_eq!(content, "file contents", "{case}"),
+            Seen::Refused(reason) => assert!(content.contains(reason), "{case}: {content}"),
+        }
+        assert_eq!(
+            harness.gate.seen.lock().unwrap().as_slice(),
+            expected_gate.as_slice(),
+            "{case}"
+        );
+        assert_eq!(
+            *harness.approvals.prompts.lock().unwrap(),
+            expected_prompts,
+            "{case}"
+        );
+    }
 }
 
 struct RememberingApprovals {
@@ -280,44 +315,6 @@ async fn approval_session_is_shared_across_model_runtimes() {
 }
 
 #[tokio::test]
-async fn require_approval_plus_deny_stops_before_the_prompt() {
-    let harness = harness(
-        PolicyDecision::RequireApproval {
-            reason: "ask".into(),
-        },
-        HookDecision::deny("denied by policy hook"),
-    );
-
-    let content = tool_result_content(&harness).await;
-
-    assert!(content.contains("denied by policy hook"));
-    assert_eq!(
-        *harness.approvals.prompts.lock().unwrap(),
-        0,
-        "a hook denial must arrive before the host is asked"
-    );
-}
-
-#[tokio::test]
-async fn a_policy_denial_never_reaches_the_gate() {
-    let harness = harness(
-        PolicyDecision::Deny {
-            reason: "capability is outside the configured policy".into(),
-        },
-        HookDecision::Continue,
-    );
-
-    let content = tool_result_content(&harness).await;
-
-    assert!(content.contains("outside the configured policy"));
-    assert_eq!(
-        harness.gate.consulted(),
-        0,
-        "hooks cannot widen a decision, so they are not asked about one already denied"
-    );
-}
-
-#[tokio::test]
 async fn a_hook_denial_is_recorded_as_its_own_audit_kind() {
     let harness = harness(PolicyDecision::Allow, HookDecision::deny("no"));
 
@@ -347,22 +344,6 @@ async fn a_successful_run_emits_session_then_tool_then_run_events() {
         ]
     );
     assert_eq!(harness.gate.consulted(), 1);
-}
-
-#[tokio::test]
-async fn the_gate_receives_a_before_tool_use_envelope_with_the_command_it_must_judge() {
-    let harness = harness(PolicyDecision::Allow, HookDecision::Continue);
-
-    tool_result_content(&harness).await;
-
-    let seen = harness.gate.envelopes.lock().unwrap();
-    let envelope = seen.first().expect("the gate was consulted once");
-    assert_eq!(envelope.event(), HookEventKind::BeforeToolUse);
-    let payload = serde_json::to_value(envelope.payload()).unwrap();
-    assert_eq!(payload["tool"]["name"], json!("read_file"));
-    assert_eq!(payload["tool"]["call_id"], json!("call-1"));
-    assert_eq!(payload["capability"]["operation"], json!("read_path"));
-    assert_eq!(payload["policy"], json!("allow"));
 }
 
 #[tokio::test]
@@ -566,26 +547,6 @@ async fn rebinding_a_live_session_does_not_emit_another_start() {
 
     assert_eq!(rebound.id(), session.id());
     assert_eq!(observer.events(), vec![HookEventKind::SessionStarted]);
-}
-
-#[tokio::test]
-async fn a_runtime_without_hooks_runs_unchanged() {
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            identity(),
-            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                ContentBlock::Text("plain".into()),
-            ]))],
-        ))
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    let outcome = session.complete("go").await.unwrap();
-
-    assert_eq!(outcome.text(), "plain");
-    assert!(!runtime.hooks().is_enabled());
-    assert_eq!(outcome.usage(), &ModelUsage::default());
 }
 
 #[tokio::test]

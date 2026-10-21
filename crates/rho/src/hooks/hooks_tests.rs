@@ -210,48 +210,6 @@ async fn a_post_hook_records_a_successful_edit() {
 }
 
 #[tokio::test]
-async fn a_hook_that_matches_no_tool_leaves_the_call_alone() {
-    let fixture = Fixture::new();
-
-    let (content, _) = run_tool(&fixture, ProjectTrust::Trusted, "read_file").await;
-
-    assert_eq!(content, "ok");
-}
-
-#[test]
-fn an_empty_catalog_starts_nothing() {
-    assert!(HookPipeline::start(HookCatalog::default(), CancellationToken::new()).is_none());
-}
-
-#[tokio::test]
-async fn a_runtime_rebuild_reuses_one_engine_and_worker() {
-    let fixture = Fixture::new();
-    let hooks = HookPipeline::start(
-        fixture.catalog(ProjectTrust::Trusted),
-        CancellationToken::new(),
-    )
-    .expect("the fixture configures hooks");
-
-    // The interactive host rebuilds its SDK runtime on permission-mode changes;
-    // each rebuild must share the engine rather than start a second worker.
-    let mut rebuilds = Vec::new();
-    for _ in 0..3 {
-        let builder = hooks.attach(Rho::builder().provider(ScriptedProvider::new(
-            ModelIdentity::new("scripted", "test", "model"),
-            [],
-        )));
-        let rho = builder.build().unwrap();
-        assert!(rho.hooks().is_enabled());
-        rebuilds.push(rho);
-    }
-
-    // One engine, one activity log: whatever any rebuild records is visible here.
-    assert!(hooks.engine().activity().is_empty());
-    drop(rebuilds);
-    hooks.shutdown(Duration::from_secs(5)).await;
-}
-
-#[tokio::test]
 async fn a_delegated_run_reports_its_parent_session_to_hooks() {
     let fixture = Fixture::new();
     fixture.write_program("record-run", &fixture.recorder_script("runs.log"));

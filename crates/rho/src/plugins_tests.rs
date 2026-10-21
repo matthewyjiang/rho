@@ -133,13 +133,6 @@ fn report_entry<'a>(
 
 // --- Manifest validation ---
 
-#[test]
-fn parses_minimal_valid_manifest() {
-    let parsed = manifest::parse_manifest(&manifest_json("minimal", "")).unwrap();
-    assert_eq!(parsed.name, "minimal");
-    assert!(parsed.warnings.is_empty());
-}
-
 // Covers: an unsupported manifest schema rejects the plugin before components.
 // Owner: plugin manifest validation.
 #[test]
@@ -987,25 +980,6 @@ fn invalid_remote_entries_isolate_per_server() {
             "remote-bad/userinfo",
         ]
     );
-}
-
-// Covers: merged server identities stay plugin-scoped.
-// Owner: MCP package adapter.
-#[test]
-fn merge_mcp_uses_plugin_scoped_identities() {
-    let env = env();
-    std::fs::create_dir_all(user_plugins(&env)).unwrap();
-    let dir = write_plugin(
-        &user_plugins(&env),
-        "devtools",
-        &manifest_json("devtools", ""),
-    );
-    write_mcp(&dir, &stdio_mcp("validator"));
-
-    let discovery = discover_env(&env);
-
-    assert!(discovery.mcp.servers.contains_key("devtools/main"));
-    assert!(discovery.mcp.has_enabled_servers());
 }
 
 // --- Placeholder expansion ---

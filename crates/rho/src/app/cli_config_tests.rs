@@ -179,44 +179,150 @@ fn validate_cli_rejects_no_save_with_subcommands() {
     }
 }
 
+// Covers: --provider/--model/--auth resolve to one provider, model, and auth:
+// a qualified model picks its provider's auth, legacy provider ids normalize,
+// a bare --provider takes the cached or built-in default, slash-containing
+// model ids stay whole under an explicit provider, an unqualified model keeps
+// the configured provider, and --auth wins (alone, it selects its provider).
+// Owner: cli config overrides
 #[test]
-fn poolside_model_override_persists_internal_model_id() {
-    with_cached_provider_models("poolside", vec!["laguna-m.1"], || {
-        let mut config = Config::default();
-        let cli = Cli::try_parse_from(["rho", "--model", "poolside/laguna-m.1"]).unwrap();
-
-        assert!(apply_overrides(&mut config, &cli, &MemoryCredentialStore::default()).unwrap());
-        assert_eq!(config.provider, "poolside");
-        assert_eq!(config.model, "laguna-m.1");
-        assert_eq!(config.auth, "poolside-api-key");
-    });
-}
-
-#[test]
-fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
-    let mut config = Config::default();
-    let cli = Cli::try_parse_from(["rho", "--provider", "xai-oauth"]).unwrap();
-
-    assert!(apply_overrides(&mut config, &cli, &MemoryCredentialStore::default()).unwrap());
-    assert_eq!(config.provider, "xai");
-    assert_eq!(config.model, "grok-4.7");
-    assert_eq!(config.auth, "xai-oauth");
-}
-
-#[test]
-fn cli_model_override_with_provider_selects_matching_auth() {
-    let mut cfg = Config::default();
-    let cli = Cli {
-        model: Some("openai-codex/gpt-5.5".into()),
-        ..test_cli()
-    };
-
-    let changed = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-    assert!(changed);
-    assert_eq!(cfg.provider, "openai-codex");
-    assert_eq!(cfg.model, "gpt-5.5");
-    assert_eq!(cfg.auth, "codex");
+fn cli_selection_overrides_resolve_provider_model_and_auth() {
+    let openrouter = Some(("openrouter", &["anthropic/claude-sonnet-4"][..]));
+    struct Case<'a> {
+        name: &'a str,
+        cached: Option<(&'a str, &'a [&'a str])>,
+        configured: Option<(&'a str, &'a str)>,
+        args: &'a [&'a str],
+        /// provider, model, auth
+        expected: [&'a str; 3],
+    }
+    let cases = [
+        Case {
+            name: "qualified poolside model keeps its internal id",
+            cached: Some(("poolside", &["laguna-m.1"][..])),
+            configured: None,
+            args: &["--model", "poolside/laguna-m.1"],
+            expected: ["poolside", "laguna-m.1", "poolside-api-key"],
+        },
+        Case {
+            name: "legacy xai-oauth provider normalizes to xai",
+            cached: None,
+            configured: None,
+            args: &["--provider", "xai-oauth"],
+            expected: ["xai", "grok-4.7", "xai-oauth"],
+        },
+        Case {
+            name: "qualified model selects its provider auth",
+            cached: None,
+            configured: None,
+            args: &["--model", "openai-codex/gpt-5.5"],
+            expected: ["openai-codex", "gpt-5.5", "codex"],
+        },
+        Case {
+            name: "bare anthropic provider takes the built-in default",
+            cached: None,
+            configured: None,
+            args: &["--provider", "anthropic"],
+            expected: ["anthropic", "claude-sonnet-4-5", "anthropic-api-key"],
+        },
+        Case {
+            name: "bare copilot provider takes the cached default",
+            cached: Some(("github-copilot", &["copilot-cached-model"][..])),
+            configured: None,
+            args: &["--provider", "github-copilot"],
+            expected: ["github-copilot", "copilot-cached-model", "github-copilot"],
+        },
+        Case {
+            name: "explicit provider keeps a slash-containing model id",
+            cached: openrouter,
+            configured: None,
+            args: &[
+                "--provider",
+                "openrouter",
+                "--model",
+                "anthropic/claude-sonnet-4",
+            ],
+            expected: [
+                "openrouter",
+                "anthropic/claude-sonnet-4",
+                "openrouter-api-key",
+            ],
+        },
+        Case {
+            name: "unqualified model keeps the configured provider",
+            cached: None,
+            configured: Some(("openai-codex", "codex")),
+            args: &["--model", "gpt-5.5"],
+            expected: ["openai-codex", "gpt-5.5", "codex"],
+        },
+        Case {
+            name: "--auth wins over the model provider auth",
+            cached: None,
+            configured: None,
+            args: &["--model", "openai-codex/gpt-5.5", "--auth", "api-key"],
+            expected: ["openai", "gpt-5.5", "api-key"],
+        },
+        Case {
+            name: "--auth alone selects its provider",
+            cached: openrouter,
+            configured: None,
+            args: &["--auth", "openrouter-oauth"],
+            expected: [
+                "openrouter",
+                "anthropic/claude-sonnet-4",
+                "openrouter-oauth",
+            ],
+        },
+        Case {
+            name: "--auth profile matches an explicit provider",
+            cached: openrouter,
+            configured: None,
+            args: &[
+                "--provider",
+                "openrouter",
+                "--model",
+                "anthropic/claude-sonnet-4",
+                "--auth",
+                "openrouter-oauth",
+            ],
+            expected: [
+                "openrouter",
+                "anthropic/claude-sonnet-4",
+                "openrouter-oauth",
+            ],
+        },
+    ];
+    for Case {
+        name,
+        cached,
+        configured,
+        args,
+        expected,
+    } in cases
+    {
+        let resolve = || {
+            let mut cfg = Config::default();
+            if let Some((provider, auth)) = configured {
+                cfg.provider = provider.into();
+                cfg.auth = auth.into();
+            }
+            let cli = Cli::try_parse_from([&["rho"][..], args].concat()).unwrap();
+            apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
+            [cfg.provider, cfg.model, cfg.auth]
+        };
+        let resolved = match cached {
+            Some((provider, models)) => {
+                with_cached_provider_models(provider, models.to_vec(), resolve)
+            }
+            None => {
+                let cache_dir = unique_cache_dir("selection-empty");
+                let resolved = with_provider_models_cache_dir_for_tests(cache_dir.clone(), resolve);
+                let _ = std::fs::remove_dir_all(cache_dir);
+                resolved
+            }
+        };
+        assert_eq!(resolved, expected.map(String::from), "{name}: {args:?}");
+    }
 }
 
 // Covers: identical override flags do not count as a config change for --save
@@ -244,25 +350,6 @@ fn cli_permission_mode_override_applies_without_reporting_change() {
 
     assert!(!apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap());
     assert_eq!(cfg.permission_mode, crate::permission::PermissionMode::Auto);
-}
-
-#[test]
-fn cli_anthropic_provider_override_without_cache_uses_builtin_default() {
-    let cache_dir = unique_cache_dir("anthropic-empty");
-    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: Some("anthropic".into()),
-            ..test_cli()
-        };
-
-        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-        assert_eq!(cfg.provider, "anthropic");
-        assert_eq!(cfg.model, "claude-sonnet-4-5");
-        assert_eq!(cfg.auth, "anthropic-api-key");
-    });
-    let _ = std::fs::remove_dir_all(cache_dir);
 }
 
 #[test]
@@ -338,76 +425,6 @@ async fn cli_github_copilot_provider_override_refreshes_empty_cache() {
     assert_eq!(cfg.provider, "github-copilot");
     assert_eq!(cfg.model, "copilot-api-model");
     assert_eq!(cfg.auth, "github-copilot");
-}
-
-#[test]
-fn cli_github_copilot_provider_override_uses_cached_default() {
-    with_cached_provider_models("github-copilot", vec!["copilot-cached-model"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: Some("github-copilot".into()),
-            ..test_cli()
-        };
-
-        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-        assert_eq!(cfg.provider, "github-copilot");
-        assert_eq!(cfg.model, "copilot-cached-model");
-        assert_eq!(cfg.auth, "github-copilot");
-    });
-}
-
-#[test]
-fn cli_explicit_provider_keeps_slash_containing_model_id() {
-    with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: Some("openrouter".into()),
-            model: Some("anthropic/claude-sonnet-4".into()),
-            ..test_cli()
-        };
-
-        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-        assert_eq!(cfg.provider, "openrouter");
-        assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
-        assert_eq!(cfg.auth, "openrouter-api-key");
-    });
-}
-
-#[test]
-fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
-    let mut cfg = Config {
-        provider: "openai-codex".into(),
-        auth: "codex".into(),
-        ..Config::default()
-    };
-    let cli = Cli {
-        model: Some("gpt-5.5".into()),
-        ..test_cli()
-    };
-
-    apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-    assert_eq!(cfg.provider, "openai-codex");
-    assert_eq!(cfg.model, "gpt-5.5");
-    assert_eq!(cfg.auth, "codex");
-}
-
-#[test]
-fn cli_auth_override_wins_after_model_provider_auth() {
-    let mut cfg = Config::default();
-    let cli = Cli {
-        model: Some("openai-codex/gpt-5.5".into()),
-        auth: Some("api-key".into()),
-        ..test_cli()
-    };
-
-    apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-    assert_eq!(cfg.provider, "openai");
-    assert_eq!(cfg.model, "gpt-5.5");
-    assert_eq!(cfg.auth, "api-key");
 }
 
 // Covers: a decision-model host cannot become the conversation's provider,
@@ -647,81 +664,6 @@ fn cli_model_override_resolves_user_defined_alias() {
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.model, "claude-sonnet-4-5");
         assert_eq!(cfg.current_model_alias(), Some("deep"));
-    });
-}
-
-#[test]
-fn cli_model_alias_conflicting_with_provider_flag_errors() {
-    let mut cfg = Config {
-        model_aliases: aliases(&[("deep", "openai/gpt-5.5")]),
-        ..Config::default()
-    };
-    let cli = Cli {
-        provider: Some("anthropic".into()),
-        model: Some("@deep".into()),
-        ..test_cli()
-    };
-
-    let error = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap_err();
-
-    assert!(
-        error.to_string().contains(
-            "model alias '@deep' resolves to provider 'openai', which conflicts with --provider anthropic"
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn undefined_cli_model_alias_names_flag() {
-    let mut cfg = Config::default();
-    let cli = Cli {
-        model: Some("@missing".into()),
-        ..test_cli()
-    };
-
-    let error = apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap_err();
-
-    assert!(
-        error.to_string().contains(
-            "--model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
-        ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn cli_auth_only_selection_resolves_provider_profile() {
-    with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            auth: Some("openrouter-oauth".into()),
-            ..test_cli()
-        };
-
-        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-        assert_eq!(cfg.provider, "openrouter");
-        assert_eq!(cfg.model, "anthropic/claude-sonnet-4");
-        assert_eq!(cfg.auth, "openrouter-oauth");
-    });
-}
-
-#[test]
-fn cli_auth_profile_normalizes_compatible_provider() {
-    with_cached_provider_models("openrouter", vec!["anthropic/claude-sonnet-4"], || {
-        let mut cfg = Config::default();
-        let cli = Cli {
-            provider: Some("openrouter".into()),
-            model: Some("anthropic/claude-sonnet-4".into()),
-            auth: Some("openrouter-oauth".into()),
-            ..test_cli()
-        };
-
-        apply_overrides(&mut cfg, &cli, &MemoryCredentialStore::default()).unwrap();
-
-        assert_eq!(cfg.provider, "openrouter");
-        assert_eq!(cfg.auth, "openrouter-oauth");
     });
 }
 

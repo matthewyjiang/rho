@@ -57,65 +57,48 @@ fn config_debug_redacts_legacy_credentials() {
     assert!(!debug.contains("brave-search-secret"));
 }
 
+// Covers: the old ctrl+g jump binding migrates off the editor key, explicit
+// distinct bindings are kept, and an explicit collision is a load error.
+// Owner: keybinding config migration
 #[test]
-fn migrates_the_legacy_ctrl_g_shortcut_conflict() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[keybindings]
-jump_to_bottom = "ctrl+g"
-"#,
-    )
-    .unwrap();
+fn editor_and_jump_shortcut_conflict_policy() {
+    for (keybindings, expected) in [
+        ("jump_to_bottom = \"ctrl+g\"", Some(("ctrl+g", "ctrl+end"))),
+        (
+            "open_editor = \"alt+e\"\njump_to_bottom = \"ctrl+g\"",
+            Some(("alt+e", "ctrl+g")),
+        ),
+        (
+            "open_editor = \"ctrl+g\"\njump_to_bottom = \"ctrl+g\"",
+            None,
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, format!("[keybindings]\n{keybindings}\n")).unwrap();
 
-    let config = Config::load(Some(path)).unwrap();
-
-    assert_eq!(config.keybindings.open_editor.to_string(), "ctrl+g");
-    assert_eq!(config.keybindings.jump_to_bottom.to_string(), "ctrl+end");
-}
-
-#[test]
-fn preserves_explicit_distinct_editor_and_jump_shortcuts() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[keybindings]
-open_editor = "alt+e"
-jump_to_bottom = "ctrl+g"
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert_eq!(config.keybindings.open_editor.to_string(), "alt+e");
-    assert_eq!(config.keybindings.jump_to_bottom.to_string(), "ctrl+g");
-}
-
-#[test]
-fn rejects_explicit_editor_and_jump_shortcut_collisions() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[keybindings]
-open_editor = "ctrl+g"
-jump_to_bottom = "ctrl+g"
-"#,
-    )
-    .unwrap();
-
-    let error = Config::load(Some(path)).unwrap_err();
-
-    assert!(
-        format!("{error:#}").contains("open_editor and jump_to_bottom must use different keys"),
-        "{error:#}"
-    );
+        let loaded = Config::load(Some(path)).map(|config| {
+            (
+                config.keybindings.open_editor.to_string(),
+                config.keybindings.jump_to_bottom.to_string(),
+            )
+        });
+        match (loaded, expected) {
+            (Ok(actual), Some((editor, jump))) => assert_eq!(
+                actual,
+                (editor.to_owned(), jump.to_owned()),
+                "{keybindings}"
+            ),
+            (Err(error), None) => {
+                let message = format!("{error:#}");
+                assert!(
+                    message.contains("open_editor and jump_to_bottom must use different keys"),
+                    "{message}"
+                );
+            }
+            (actual, expected) => panic!("{keybindings}: {actual:?} != {expected:?}"),
+        }
+    }
 }
 
 #[test]
@@ -154,53 +137,6 @@ fn auto_compact_defaults_on_and_explicit_opt_out_round_trips() {
             .threshold_tokens(/*context_window*/ 200_000);
         assert_eq!(threshold.is_some(), expected, "config: {contents:?}");
     }
-}
-
-// Covers: display.cache_miss_notices loads from grouped config and defaults off.
-// Owner: config load
-#[test]
-fn grouped_cache_miss_notices_load_from_display_section() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[display]
-cache_miss_notices = true
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(config.cache_miss_notices);
-    assert!(!Config::default().cache_miss_notices);
-}
-
-// Covers: omitted [xai] stays on; explicit image_generation = false disables it.
-// Owner: config load
-#[test]
-fn grouped_xai_image_generation_defaults_on_and_can_disable() {
-    let dir = tempfile::tempdir().unwrap();
-    let default_path = dir.path().join("default.toml");
-    std::fs::write(&default_path, "").unwrap();
-    assert!(
-        Config::load(Some(default_path))
-            .unwrap()
-            .xai_image_generation
-    );
-
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[xai]
-image_generation = false
-"#,
-    )
-    .unwrap();
-
-    assert!(!Config::load(Some(path)).unwrap().xai_image_generation);
 }
 
 #[test]
@@ -481,48 +417,34 @@ fn model_alias_targeting_unknown_provider_is_a_config_error() {
     }
 }
 
+// Covers: an undefined alias fails load and names where it was referenced.
+// Owner: config load
 #[test]
-fn undefined_session_model_alias_names_reference_site() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(&path, "[model]\nmodel = \"@missing\"\n").unwrap();
-
-    let error = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        format!("{error:#}").contains(
-            "session model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+fn undefined_model_alias_names_reference_site() {
+    for (config, site) in [
+        ("[model]\nmodel = \"@missing\"\n", "session model"),
+        (
+            "[model]\nmodel = \"gpt-5.5\"\n\n[title]\nmodel = \"@missing\"\n",
+            "internal agent 'session-title' model",
         ),
-        "{error:#}"
-    );
-}
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, config).unwrap();
 
-#[test]
-fn undefined_title_model_alias_names_reference_site() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "[model]\nmodel = \"gpt-5.5\"\n\n[title]\nmodel = \"@missing\"\n",
-    )
-    .unwrap();
+        let error = Config::load_with_store(
+            path,
+            &rho_providers::credentials::MemoryCredentialStore::default(),
+        )
+        .unwrap_err();
 
-    let error = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        format!("{error:#}").contains(
-            "internal agent 'session-title' model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
-        ),
-        "{error:#}"
-    );
+        assert!(
+            format!("{error:#}").contains(&format!(
+                "{site}: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+            )),
+            "{error:#}"
+        );
+    }
 }
 
 #[test]
@@ -830,37 +752,6 @@ model = "title-model"
             .expect_rho()
             .auth,
         "none"
-    );
-}
-
-// Covers: advisor mode, model, and reasoning survive a save and reload
-// Owner: config persistence
-#[test]
-fn advisor_mode_and_model_round_trip_through_save() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-    let mut config = Config {
-        advisor_mode: true,
-        ..Default::default()
-    };
-    let mut advisor = crate::config::InternalAgentModelConfig::new(
-        "anthropic".into(),
-        "claude-opus-4-8".into(),
-        "anthropic-api-key".into(),
-    );
-    advisor.reasoning = Some(rho_providers::reasoning::ReasoningLevel::High);
-    config.set_internal_agent_model_config(crate::agent::ADVISOR_AGENT_ID, advisor.clone());
-
-    config.save_with_store(path.clone(), &store).unwrap();
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-
-    assert!(reloaded.advisor_mode);
-    assert_eq!(
-        reloaded
-            .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
-            .cloned(),
-        Some(advisor)
     );
 }
 

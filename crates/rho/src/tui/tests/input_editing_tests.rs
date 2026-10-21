@@ -48,44 +48,56 @@ fn vertical_cursor_movement_focuses_a_collapsed_paste_item() {
     assert_eq!(app.input_ui.cursor(), segment.start);
 }
 
+// Covers: Backspace after, Backspace from inside, and Delete before a
+// collapsed paste each remove the whole item and its expansion metadata.
+// Owner: pure unit (composer edit ops)
 #[test]
 fn backspace_removes_collapsed_paste_as_one_item() {
-    let mut app = test_app();
-    app.insert_pasted_input_text(&collapsible_paste());
+    // (case, text before the paste, text after it, cursor, key, text, cursor)
+    let cases = [
+        (
+            "backspace after",
+            "",
+            "",
+            None,
+            ComposerEditKey::Backspace,
+            "",
+            0,
+        ),
+        (
+            "backspace inside",
+            "",
+            "",
+            Some(5),
+            ComposerEditKey::Backspace,
+            "",
+            0,
+        ),
+        (
+            "delete before",
+            "before ",
+            " after",
+            Some(7),
+            ComposerEditKey::Delete,
+            "before  after",
+            7,
+        ),
+    ];
+    for (case, before, after, cursor, key, expected_text, expected_cursor) in cases {
+        let mut app = test_app();
+        app.insert_input_text(before);
+        app.insert_pasted_input_text(&collapsible_paste());
+        app.insert_input_text(after);
+        if let Some(cursor) = cursor {
+            app.input_ui.set_cursor(cursor);
+        }
 
-    app.apply_input_edit_key(ComposerEditKey::Backspace);
+        app.apply_input_edit_key(key);
 
-    assert_eq!(app.input_ui.text(), "");
-    assert_eq!(app.input_ui.cursor(), 0);
-    assert!(app.input_ui.paste_segments().is_empty());
-}
-
-#[test]
-fn delete_removes_collapsed_paste_as_one_item() {
-    let mut app = test_app();
-    app.insert_input_text("before ");
-    app.insert_pasted_input_text(&collapsible_paste());
-    app.insert_input_text(" after");
-    app.input_ui.set_cursor("before ".chars().count());
-
-    app.apply_input_edit_key(ComposerEditKey::Delete);
-
-    assert_eq!(app.input_ui.text(), "before  after");
-    assert_eq!(app.input_ui.cursor(), "before ".chars().count());
-    assert!(app.input_ui.paste_segments().is_empty());
-}
-
-#[test]
-fn editing_from_inside_collapsed_paste_removes_the_whole_item() {
-    let mut app = test_app();
-    app.insert_pasted_input_text(&collapsible_paste());
-    app.input_ui.set_cursor(5);
-
-    app.apply_input_edit_key(ComposerEditKey::Backspace);
-
-    assert_eq!(app.input_ui.text(), "");
-    assert_eq!(app.input_ui.cursor(), 0);
-    assert!(app.input_ui.paste_segments().is_empty());
+        assert_eq!(app.input_ui.text(), expected_text, "{case}");
+        assert_eq!(app.input_ui.cursor(), expected_cursor, "{case}");
+        assert!(app.input_ui.paste_segments().is_empty(), "{case}");
+    }
 }
 
 // Covers: typing over a non-empty composer selection replaces the span.

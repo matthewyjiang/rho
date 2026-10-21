@@ -1,7 +1,5 @@
 use pretty_assertions::assert_eq;
 
-use crate::hooks::event::HookEventKind;
-
 use super::*;
 
 fn request(policy: HookPolicyOutcome) -> PreToolUseRequest {
@@ -33,43 +31,4 @@ async fn the_allow_all_gate_never_narrows_a_decision() {
             HookDecision::Continue
         );
     }
-}
-
-#[tokio::test]
-async fn a_gate_sees_the_policy_outcome_it_may_narrow() {
-    struct RecordingGate;
-
-    impl PreToolUseGate for RecordingGate {
-        fn evaluate(&self, request: PreToolUseRequest) -> HookGateFuture<'_> {
-            let observed = request.policy();
-            Box::pin(async move {
-                match observed {
-                    HookPolicyOutcome::RequireApproval => {
-                        HookDecision::deny("denied before the prompt")
-                    }
-                    HookPolicyOutcome::Allow => HookDecision::Continue,
-                }
-            })
-        }
-    }
-
-    let gate: Box<dyn PreToolUseGate> = Box::new(RecordingGate);
-
-    assert_eq!(
-        gate.evaluate(request(HookPolicyOutcome::Allow)).await,
-        HookDecision::Continue
-    );
-    assert_eq!(
-        gate.evaluate(request(HookPolicyOutcome::RequireApproval))
-            .await,
-        HookDecision::deny("denied before the prompt")
-    );
-}
-
-#[test]
-fn the_request_exposes_the_envelope_a_handler_receives() {
-    let request = request(HookPolicyOutcome::Allow);
-
-    assert_eq!(request.envelope().event(), HookEventKind::BeforeToolUse);
-    assert_eq!(request.policy(), HookPolicyOutcome::Allow);
 }

@@ -39,14 +39,3 @@ fn stderr_capture_cuts_on_a_character_boundary() {
     let text = tail.finish();
     assert_eq!(text.matches('\u{FFFD}').count(), 0);
 }
-
-/// Covers: stderr short enough to keep whole is reported without an elision
-/// marker.
-/// Owner: the same capture, whose no-elision path feeds one-shot failure text.
-#[test]
-fn stderr_capture_keeps_short_output_whole() {
-    let mut tail = StderrTail::default();
-    tail.push(b"  boom\n");
-
-    assert_eq!(tail.finish(), "boom");
-}

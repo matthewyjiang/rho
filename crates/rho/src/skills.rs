@@ -374,25 +374,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_disable_model_invocation() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".agents/skills/manual-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: manual-skill\ndescription: manual skill\ndisable-model-invocation: true\n---\nrules\n",
-        )
-        .unwrap();
-
-        let skill = discover_with_home(root.path(), None)
-            .into_iter()
-            .find(|skill| skill.name == "manual-skill")
-            .unwrap();
-
-        assert!(skill.disable_model_invocation);
-    }
-
-    #[test]
     fn discovers_valid_skills_in_order() {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
@@ -432,27 +413,11 @@ mod tests {
         );
     }
 
+    // Covers: project skills are discovered from every ancestor of the working
+    // directory, and the nearest wins when names collide.
+    // Owner: skill discovery
     #[test]
-    fn discovers_project_skills_from_ancestor_directories() {
-        let home = TempDir::new().unwrap();
-        let project = TempDir::new().unwrap();
-        let child = project.path().join("src/nested");
-        std::fs::create_dir_all(&child).unwrap();
-        std::fs::create_dir(project.path().join(".git")).unwrap();
-        write_skill(
-            project.path(),
-            ".agents/skills/project-skill",
-            "project-skill",
-            "project desc",
-        );
-
-        let skills = discover_with_home(&child, Some(home.path()));
-
-        assert!(skills.iter().any(|skill| skill.name == "project-skill"));
-    }
-
-    #[test]
-    fn prefers_nearest_project_skill_when_names_duplicate() {
+    fn discovers_ancestor_skills_and_prefers_the_nearest_duplicate() {
         let home = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
         let child = project.path().join("src/nested");
@@ -465,6 +430,12 @@ mod tests {
             "parent desc",
         );
         write_skill(
+            project.path(),
+            ".agents/skills/project-skill",
+            "project-skill",
+            "project desc",
+        );
+        write_skill(
             &child,
             ".agents/skills/dup-skill",
             "dup-skill",
@@ -472,6 +443,11 @@ mod tests {
         );
 
         let skills = discover_with_home(&child, Some(home.path()));
+
+        assert!(
+            skills.iter().any(|skill| skill.name == "project-skill"),
+            "ancestor project skills are discovered"
+        );
 
         let skill = skills
             .iter()
@@ -621,6 +597,15 @@ description: "a \"quoted\" description"
                     name: "quote-skill",
                     description: "desc",
                     disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "disable-model-invocation bool",
+                frontmatter: "name: quote-skill\ndescription: desc\ndisable-model-invocation: true\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: true,
                 }),
             },
             Case {

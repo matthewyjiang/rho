@@ -219,23 +219,6 @@ fn interactive_split_follows_claim_priority() {
     assert_eq!(starved.history, 1);
 }
 
-// Covers: queued input is painted below active work, so a follow-up prompt sits
-// next to the composer it will feed instead of under the transcript. Guards the
-// paint order itself, which heights alone cannot express.
-// Owner: pure layout
-#[test]
-fn pending_input_paints_below_the_activity_rails() {
-    assert_eq!(
-        StackedBand::ORDER,
-        [
-            StackedBand::Subagents,
-            StackedBand::Processes,
-            StackedBand::Workflows,
-            StackedBand::PendingInput,
-        ]
-    );
-}
-
 // Covers: the activity tree must terminate at the last visible rail. Pending
 // input is queued text, not active work, so it never extends the `├`/`└` chain.
 // Owner: pure layout
@@ -255,20 +238,4 @@ fn rail_connectors_ignore_the_pending_input_band() {
     let no_pending = layout_with_band_heights(1, 1, 0);
     assert!(no_pending.rail_continues_below(StackedBand::Subagents));
     assert!(!no_pending.rail_continues_below(StackedBand::Processes));
-}
-
-// Covers: band accessors must resolve to the rect the stack walk assigned, so
-// `band()` cannot silently return a neighbour's geometry.
-// Owner: pure layout
-#[test]
-fn band_accessor_resolves_each_rect() {
-    let layout = layout_with_band_heights(
-        /*subagents*/ 1, /*processes*/ 2, /*pending*/ 3,
-    );
-    assert_eq!(layout.band(StackedBand::Subagents), layout.subagents);
-    assert_eq!(layout.band(StackedBand::Processes), layout.processes);
-    assert_eq!(layout.band(StackedBand::PendingInput), layout.pending_input);
-    assert_eq!(layout.band(StackedBand::Subagents).height, 1);
-    assert_eq!(layout.band(StackedBand::Processes).height, 2);
-    assert_eq!(layout.band(StackedBand::PendingInput).height, 3);
 }

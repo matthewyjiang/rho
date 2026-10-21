@@ -7,44 +7,8 @@ use tokio::io::AsyncReadExt;
 use super::super::auth::Auth;
 use super::super::codex_request::{codex_test_auth, NativeCompactionWire, ResponsesProfile};
 
-fn api_key_profile(model: &str) -> ResponsesProfile {
-    ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), model)
-}
-
 fn codex_profile(model: &str) -> ResponsesProfile {
     ResponsesProfile::from_auth(&codex_test_auth(), model)
-}
-
-#[tokio::test]
-async fn compact_request_body_is_unary_without_trigger() {
-    let profile = api_key_profile("gpt-5.4");
-    let body = build_responses_compact_body(
-        &profile,
-        &OpenAiReasoningProfile::unknown(),
-        ModelRequest {
-            messages: &[
-                Message::System("be helpful".into()),
-                Message::user_text("hello"),
-            ],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: Some("session-1"),
-        },
-    )
-    .unwrap();
-
-    let input = body["input"].as_array().unwrap();
-    assert!(input
-        .iter()
-        .all(|item| item.get("type").and_then(Value::as_str) != Some("compaction_trigger")));
-    assert!(body.get("stream").is_none());
-    assert_eq!(body["store"], false);
-    assert_eq!(body["prompt_cache_key"], "session-1");
-    assert!(body.get("tools").is_none());
-    assert!(body.get("additional_tools").is_none());
-    assert!(body.get("tool_choice").is_none());
-    assert!(body.get("parallel_tool_calls").is_none());
 }
 
 // Covers: Codex compaction must stream a create body ending in

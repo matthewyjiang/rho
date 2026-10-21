@@ -621,13 +621,17 @@ fn usage_deltas_preserve_omitted_cumulative_fields() {
     assert_eq!(usages[1].total_tokens, Some(3));
 }
 
+// Covers: transient tool-call finish reasons retry; a content-policy stop
+// stays a permanent invalid response
+// Owner: gemini generateContent response conversion
 #[test]
-fn transient_finish_reasons_are_retryable_invalid_responses() {
-    for finish_reason in [
-        "MALFORMED_FUNCTION_CALL",
-        "UNEXPECTED_TOOL_CALL",
-        "TOO_MANY_TOOL_CALLS",
-        "MALFORMED_RESPONSE",
+fn finish_reasons_split_retryable_from_permanent_failures() {
+    for (finish_reason, retryable) in [
+        ("MALFORMED_FUNCTION_CALL", true),
+        ("UNEXPECTED_TOOL_CALL", true),
+        ("TOO_MANY_TOOL_CALLS", true),
+        ("MALFORMED_RESPONSE", true),
+        ("SAFETY", false),
     ] {
         let response: GenerateContentResponse = serde_json::from_value(json!({
             "candidates": [{"finishReason": finish_reason}],
@@ -638,25 +642,13 @@ fn transient_finish_reasons_are_retryable_invalid_responses() {
             .apply(response, None)
             .unwrap_err();
 
-        assert!(
-            matches!(error, ModelError::RetryableInvalidResponse { .. }),
-            "{finish_reason} produced {error:?}"
-        );
+        let classified = if retryable {
+            matches!(error, ModelError::RetryableInvalidResponse { .. })
+        } else {
+            matches!(error, ModelError::InvalidResponse(_))
+        };
+        assert!(classified, "{finish_reason} produced {error:?}");
     }
-}
-
-#[test]
-fn content_policy_finish_reason_stays_a_permanent_invalid_response() {
-    let response: GenerateContentResponse = serde_json::from_value(json!({
-        "candidates": [{"finishReason": "SAFETY"}],
-        "usageMetadata": {"promptTokenCount": 4, "totalTokenCount": 4}
-    }))
-    .unwrap();
-    let error = ResponseCollector::default()
-        .apply(response, None)
-        .unwrap_err();
-
-    assert!(matches!(error, ModelError::InvalidResponse(_)));
 }
 
 // Covers: blank Gemini completions must retry, not kill the run

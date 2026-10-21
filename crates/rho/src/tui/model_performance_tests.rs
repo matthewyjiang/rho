@@ -70,26 +70,57 @@ fn computes_a_token_weighted_generation_average_from_completed_calls() {
     );
 }
 
+// Covers: calls below either eligibility gate (32 generated tokens, 500ms of
+// generation), with an invalid reasoning breakdown, or without a streamed
+// generation interval stay the latest call but never enter the average.
+// Owner: TUI model-performance aggregation
 #[test]
-fn keeps_short_calls_as_latest_without_adding_them_to_the_average() {
-    let mut tracker = ModelPerformanceTracker::default();
-    let profile = profile("openai", "model", ReasoningLevel::Medium, None);
-    let short_call = metrics(
-        12,
-        Duration::from_millis(300),
-        Some(rho_sdk::model::GenerationOutputTokens::Reported(12)),
-    );
+fn ineligible_calls_stay_latest_without_entering_the_average() {
+    let reported = |tokens| Some(rho_sdk::model::GenerationOutputTokens::Reported(tokens));
+    let cases = [
+        (
+            "too few tokens",
+            metrics(12, Duration::from_secs(2), reported(12)),
+        ),
+        (
+            "too short generation",
+            metrics(100, Duration::from_millis(300), reported(100)),
+        ),
+        (
+            "invalid reasoning breakdown",
+            metrics(
+                100,
+                Duration::from_secs(2),
+                Some(rho_sdk::model::GenerationOutputTokens::Unavailable),
+            ),
+        ),
+        (
+            "no generation window",
+            ModelCallMetrics {
+                output_tokens: Some(100),
+                time_to_first_token: None,
+                generation_time: None,
+                total_latency: Duration::from_secs(2),
+                generation_output_tokens: reported(80),
+            },
+        ),
+    ];
+    for (case, call) in cases {
+        let mut tracker = ModelPerformanceTracker::default();
+        let profile = profile("openai", "model", ReasoningLevel::High, None);
 
-    tracker.record(profile.clone(), short_call);
+        tracker.record(profile.clone(), call);
 
-    assert_eq!(
-        tracker.summary(&profile),
-        ModelPerformanceSummary {
-            latest_call: Some(short_call),
-            average_generation_tokens_per_second: None,
-            eligible_calls: 0,
-        }
-    );
+        assert_eq!(
+            tracker.summary(&profile),
+            ModelPerformanceSummary {
+                latest_call: Some(call),
+                average_generation_tokens_per_second: None,
+                eligible_calls: 0,
+            },
+            "{case}"
+        );
+    }
 }
 
 // Covers: aggregate output remains the throughput fallback without a generation count.
@@ -108,57 +139,6 @@ fn falls_back_to_aggregate_output_without_generation_output() {
             latest_call: Some(aggregate_only),
             average_generation_tokens_per_second: Some(50.0),
             eligible_calls: 1,
-        }
-    );
-}
-
-// Covers: an invalid reasoning breakdown must not fall back to aggregate output.
-// Owner: TUI model-performance aggregation
-#[test]
-fn unavailable_generation_output_suppresses_the_average() {
-    let mut tracker = ModelPerformanceTracker::default();
-    let profile = profile("openai", "model", ReasoningLevel::High, None);
-    let invalid_breakdown = metrics(
-        100,
-        Duration::from_secs(2),
-        Some(rho_sdk::model::GenerationOutputTokens::Unavailable),
-    );
-
-    tracker.record(profile.clone(), invalid_breakdown);
-
-    assert_eq!(
-        tracker.summary(&profile),
-        ModelPerformanceSummary {
-            latest_call: Some(invalid_breakdown),
-            average_generation_tokens_per_second: None,
-            eligible_calls: 0,
-        }
-    );
-}
-
-// Covers: generation throughput needs a streamed generation interval, so a
-// call with only hidden pre-stream work cannot enter the average.
-// Owner: TUI model-performance aggregation
-#[test]
-fn ignores_calls_without_generation_time_for_the_average() {
-    let mut tracker = ModelPerformanceTracker::default();
-    let profile = profile("openai", "model", ReasoningLevel::High, None);
-    let no_generation_window = ModelCallMetrics {
-        output_tokens: Some(100),
-        time_to_first_token: None,
-        generation_time: None,
-        total_latency: Duration::from_secs(2),
-        generation_output_tokens: Some(rho_sdk::model::GenerationOutputTokens::Reported(80)),
-    };
-
-    tracker.record(profile.clone(), no_generation_window);
-
-    assert_eq!(
-        tracker.summary(&profile),
-        ModelPerformanceSummary {
-            latest_call: Some(no_generation_window),
-            average_generation_tokens_per_second: None,
-            eligible_calls: 0,
         }
     );
 }

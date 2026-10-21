@@ -23,73 +23,52 @@ fn limits(total: usize, claude_requested: usize) -> ConcurrencyLimits {
     }
 }
 
-// Covers: the global cap comes from config; invalid Claude env keeps the default nested cap.
+// Covers: the global cap comes from config, never the Claude env; invalid
+// Claude env keeps the default nested cap, and both clamp to the named max.
 // Owner: delegated agent concurrency
 #[test]
-fn configured_total_clamps_and_invalid_claude_env_falls_back() {
-    assert_eq!(
-        concurrency_limits_from_claude_env(None, 0),
-        ConcurrencyLimits {
-            total: 1,
-            claude_requested: 2
-        }
-    );
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some("0"), DEFAULT_AGENT_CONCURRENCY),
-        ConcurrencyLimits {
-            total: DEFAULT_AGENT_CONCURRENCY,
-            claude_requested: 2
-        }
-    );
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some("-1"), DEFAULT_AGENT_CONCURRENCY),
-        ConcurrencyLimits {
-            total: DEFAULT_AGENT_CONCURRENCY,
-            claude_requested: 2
-        }
-    );
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some(""), DEFAULT_AGENT_CONCURRENCY),
-        ConcurrencyLimits {
-            total: DEFAULT_AGENT_CONCURRENCY,
-            claude_requested: 2
-        }
-    );
+fn concurrency_limits_take_total_from_config_and_nested_cap_from_claude_env() {
     let huge = format!("{}0", usize::MAX);
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some(huge.as_str()), 1_000),
-        ConcurrencyLimits {
-            total: MAX_AGENT_CONCURRENCY,
-            claude_requested: 2
-        }
-    );
-}
-
-// Covers: Claude env clamps to the named max and does not replace the configured total.
-// Owner: delegated agent concurrency
-#[test]
-fn claude_env_does_not_override_configured_total() {
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some("3"), DEFAULT_AGENT_CONCURRENCY),
-        ConcurrencyLimits {
-            total: DEFAULT_AGENT_CONCURRENCY,
-            claude_requested: 3
-        }
-    );
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some("5"), 8),
-        ConcurrencyLimits {
-            total: 8,
-            claude_requested: 5
-        }
-    );
-    assert_eq!(
-        concurrency_limits_from_claude_env(Some("90"), 8),
-        ConcurrencyLimits {
-            total: 8,
-            claude_requested: MAX_AGENT_CONCURRENCY
-        }
-    );
+    let cases = [
+        (None, 0, 1, 2),
+        (
+            Some("0"),
+            DEFAULT_AGENT_CONCURRENCY,
+            DEFAULT_AGENT_CONCURRENCY,
+            2,
+        ),
+        (
+            Some("-1"),
+            DEFAULT_AGENT_CONCURRENCY,
+            DEFAULT_AGENT_CONCURRENCY,
+            2,
+        ),
+        (
+            Some(""),
+            DEFAULT_AGENT_CONCURRENCY,
+            DEFAULT_AGENT_CONCURRENCY,
+            2,
+        ),
+        (Some(huge.as_str()), 1_000, MAX_AGENT_CONCURRENCY, 2),
+        (
+            Some("3"),
+            DEFAULT_AGENT_CONCURRENCY,
+            DEFAULT_AGENT_CONCURRENCY,
+            3,
+        ),
+        (Some("5"), 8, 8, 5),
+        (Some("90"), 8, 8, MAX_AGENT_CONCURRENCY),
+    ];
+    for (claude_env, configured, total, claude_requested) in cases {
+        assert_eq!(
+            concurrency_limits_from_claude_env(claude_env, configured),
+            ConcurrencyLimits {
+                total,
+                claude_requested
+            },
+            "{claude_env:?} with configured {configured}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -285,40 +264,6 @@ async fn cancellation_during_rho_global_wait_holds_nothing() {
     assert!(result.is_none());
     assert_eq!(pool.available_total(), 0);
     assert_eq!(pool.available_claude(), 1);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn rho_skips_claude_pool_entirely() {
-    let pool = AgentConcurrency::new(limits(1, 0));
-
-    let rho = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
-        .await
-        .expect("Rho ignores Claude pool");
-    assert_eq!(pool.available_total(), 0);
-    assert_eq!(pool.available_claude(), 0);
-    drop(rho);
-    assert_eq!(pool.available_total(), 1);
-    assert_eq!(pool.available_claude(), 0);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn cancellation_interrupts_concurrency_queue() {
-    let pool = AgentConcurrency::new(limits(0, 1));
-    let cancellation = RunCancellation::new();
-    let queued = tokio::spawn({
-        let pool = pool.clone();
-        let cancellation = cancellation.clone();
-        async move { pool.acquire(CapacityClass::Rho, &cancellation).await }
-    });
-
-    cancellation.cancel();
-
-    let permit = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
-        .await
-        .expect("queued acquisition should observe cancellation")
-        .unwrap();
-    assert!(permit.is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -3,18 +3,21 @@ use serde_json::json;
 
 use super::parse_usd_micros;
 
-#[test]
-fn parses_numeric_and_formatted_costs() {
-    assert_eq!(parse_usd_micros(&json!(0.0042)), Some(4_200));
-    assert_eq!(parse_usd_micros(&json!("$1,234.50")), Some(1_234_500_000));
-    assert_eq!(parse_usd_micros(&json!("1234.50")), Some(1_234_500_000));
-}
-
-// Covers: object-shaped usage.cost must count USD totals, not catalog rates
+// Covers: numeric and formatted costs parse to micros, object-shaped
+// usage.cost counts USD totals (not catalog rates), and malformed or
+// out-of-range values are rejected
 // Owner: shared USD cost parser
 #[test]
-fn parses_object_shaped_usage_cost_totals() {
+fn parses_usd_micros_from_numbers_strings_and_usage_objects() {
     let cases = [
+        ("number", json!(0.0042), Some(4_200)),
+        ("formatted dollars", json!("$1,234.50"), Some(1_234_500_000)),
+        ("decimal string", json!("1234.50"), Some(1_234_500_000)),
+        ("negative number", json!(-1), None),
+        ("doubled dollar sign", json!("$$1"), None),
+        ("misplaced separator", json!("1,2"), None),
+        ("out of range", json!("1e308"), None),
+        ("prose", json!("not a cost"), None),
         (
             "composer-api total_usd wins over parts",
             json!({
@@ -69,18 +72,5 @@ fn parses_object_shaped_usage_cost_totals() {
 
     for (name, value, expected) in cases {
         assert_eq!(parse_usd_micros(&value), expected, "{name}");
-    }
-}
-
-#[test]
-fn rejects_invalid_or_out_of_range_costs() {
-    for value in [
-        json!(-1),
-        json!("$$1"),
-        json!("1,2"),
-        json!("1e308"),
-        json!("not a cost"),
-    ] {
-        assert_eq!(parse_usd_micros(&value), None, "value: {value}");
     }
 }

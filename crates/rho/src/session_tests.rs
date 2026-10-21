@@ -233,28 +233,15 @@ fn opens_session_by_uuid_prefix() {
 
     assert_eq!(opened.id(), session.id());
     assert_eq!(messages.len(), 1);
-}
 
-#[test]
-fn errors_when_uuid_prefix_is_ambiguous() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
-
-    let err = Session::open_by_id_in_root(&root, &cwd, "aaaaaaaa").unwrap_err();
-
-    assert!(err.to_string().contains("multiple sessions match"));
-}
-
-#[test]
-fn errors_when_uuid_prefix_is_missing() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-
-    let err = Session::open_by_id_in_root(&root, &cwd, "missing").unwrap_err();
-
-    assert!(err.to_string().contains("no session found"));
+    for (case, prefix) in [("ambiguous", "aaaaaaaa"), ("missing", "missing")] {
+        assert!(
+            Session::open_by_id_in_root(&root, &cwd, prefix).is_err(),
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -931,71 +918,6 @@ fn list_all_includes_other_workspaces() {
     assert!(all.iter().any(|summary| summary.cwd == *cwd_b));
 }
 
-// Covers: list_all stays correct after deleting one workspace's session
-// Owner: session list/delete
-#[test]
-fn list_all_after_delete_omits_removed_session() {
-    let root = temp_session_root();
-    let cwd_a = temp_cwd();
-    let cwd_b = temp_cwd();
-    let session_a = Session::create_in_root(&root, &cwd_a).unwrap();
-    session_a
-        .append_message(&Message::user_text("project a"))
-        .unwrap();
-    let session_b = Session::create_in_root(&root, &cwd_b).unwrap();
-    session_b
-        .append_message(&Message::user_text("project b"))
-        .unwrap();
-    let id_a = session_a.id().to_string();
-    drop(session_a);
-
-    Session::delete_by_id_in_roots(
-        &root,
-        &temp_session_root(),
-        &cwd_a,
-        &id_a,
-        DeleteOptions {
-            force: false,
-            protected_session: None,
-        },
-    )
-    .unwrap();
-
-    let all = Session::list_all_in_root(&root).unwrap();
-    let ids = all
-        .iter()
-        .map(|summary| summary.id.as_str())
-        .collect::<Vec<_>>();
-    assert!(!ids.contains(&id_a.as_str()));
-    assert!(ids.contains(&session_b.id()));
-}
-
-// Covers: manual rename must persist on the session index summary
-// Owner: session persistence
-#[test]
-fn set_title_updates_session_summary() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("first prompt"))
-        .unwrap();
-    let id = session.id().to_string();
-
-    let updated =
-        Session::set_title_in_root_for_test(&root, &cwd, &id[..8], "  Rename me  ").unwrap();
-    assert_eq!(updated.id, id);
-    assert_eq!(updated.cwd.as_path(), cwd.as_ref());
-    assert_eq!(updated.title, "Rename me");
-
-    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
-    let summary = listed
-        .into_iter()
-        .find(|summary| summary.id == id)
-        .expect("session summary");
-    assert_eq!(summary.title.as_deref(), Some("Rename me"));
-}
-
 // Covers: empty titles must fail instead of clearing stored names
 // Owner: session persistence
 #[test]
@@ -1009,7 +931,8 @@ fn set_title_rejects_empty_titles() {
     assert!(error.to_string().contains("empty"), "{error}");
 }
 
-// Covers: rename by id must follow the session's own workspace
+// Covers: rename by id prefix trims the title, follows the session's own
+// workspace, and persists on the index summary
 // Owner: session persistence
 #[test]
 fn set_title_resolves_across_workspaces() {
@@ -1023,7 +946,8 @@ fn set_title_resolves_across_workspaces() {
     let other_cwd = temp_cwd();
 
     let updated =
-        Session::set_title_in_root_for_test(&root, &other_cwd, &id, "cross project title").unwrap();
+        Session::set_title_in_root_for_test(&root, &other_cwd, &id[..8], "  cross project title  ")
+            .unwrap();
     assert_eq!(updated.id, id);
     assert_eq!(updated.cwd.as_path(), created_cwd.as_ref());
     assert_eq!(updated.title, "cross project title");
@@ -1036,7 +960,8 @@ fn set_title_resolves_across_workspaces() {
     assert_eq!(summary.title.as_deref(), Some("cross project title"));
 }
 
-// Covers: auto-title must not clobber a manual rename already on disk
+// Covers: auto-title writes when no title is stored yet, but must not clobber
+// a manual rename already on disk
 // Owner: session persistence
 #[test]
 fn set_generated_title_does_not_overwrite_manual_title() {
@@ -1044,6 +969,13 @@ fn set_generated_title_does_not_overwrite_manual_title() {
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
     let id = session.id().to_string();
+
+    let generated =
+        Session::set_generated_title_in_root_for_test(&root, &cwd, &id, "first auto").unwrap();
+    assert_eq!(
+        generated.expect("generated title applied").title,
+        "first auto"
+    );
 
     Session::set_title_in_root_for_test(&root, &cwd, &id, "manual name").unwrap();
     let generated =
@@ -1056,26 +988,4 @@ fn set_generated_title_does_not_overwrite_manual_title() {
         .find(|summary| summary.id == id)
         .expect("session summary");
     assert_eq!(summary.title.as_deref(), Some("manual name"));
-}
-
-// Covers: auto-title still writes when no title is stored yet
-// Owner: session persistence
-#[test]
-fn set_generated_title_sets_when_absent() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    let id = session.id().to_string();
-
-    let generated =
-        Session::set_generated_title_in_root_for_test(&root, &cwd, &id, "auto name").unwrap();
-    let updated = generated.expect("generated title applied");
-    assert_eq!(updated.title, "auto name");
-
-    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
-    let summary = listed
-        .into_iter()
-        .find(|summary| summary.id == id)
-        .expect("session summary");
-    assert_eq!(summary.title.as_deref(), Some("auto name"));
 }

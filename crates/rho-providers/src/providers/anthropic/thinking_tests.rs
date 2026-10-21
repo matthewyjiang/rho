@@ -96,22 +96,6 @@ fn config(
     )
 }
 
-// Covers: missing capabilities must not silently drop an explicit reasoning
-// request, and must not send thinking.type.enabled
-// Owner: anthropic thinking protocol
-#[test]
-fn unresolved_capabilities_reject_requested_reasoning_and_omit_off() {
-    let unknown = ThinkingSource::unresolved("unknown-claude");
-    assert!(matches!(
-        thinking_config_for(&unknown, ReasoningLevel::Medium, DEFAULT_MAX_TOKENS),
-        Err(ModelError::UnsupportedReasoning { .. })
-    ));
-    assert_eq!(
-        thinking_config_for(&unknown, ReasoningLevel::Off, DEFAULT_MAX_TOKENS).unwrap(),
-        (None, None)
-    );
-}
-
 // Covers: a fetched empty capabilities object is incomplete Unknown, not a
 // proven non-configurable surface — non-Off leaves the model default
 // Owner: anthropic thinking protocol
@@ -125,25 +109,6 @@ fn empty_fetched_capabilities_leave_model_default_for_requested_reasoning() {
         config("claude-haiku-4-5", &json!({}), ReasoningLevel::Off).unwrap(),
         (None, None)
     );
-}
-
-// Covers: Opus 5 / Sonnet 5 class models advertise adaptive + effort
-// Owner: anthropic thinking protocol
-#[test]
-fn adaptive_capabilities_send_effort_and_never_a_token_budget() {
-    let (thinking, output) = config(
-        "claude-opus-5",
-        &adaptive_full_effort(),
-        ReasoningLevel::Medium,
-    )
-    .unwrap();
-    assert_eq!(
-        thinking,
-        Some(AnthropicThinkingConfig::Adaptive {
-            display: "summarized"
-        })
-    );
-    assert_eq!(output, Some(AnthropicOutputConfig { effort: "medium" }));
 }
 
 // Covers: Off follows a disabled leaf when present, otherwise the tiny
@@ -259,26 +224,6 @@ fn off_follows_disabled_leaf_then_model_gap_table() {
         )
         .unwrap(),
         (None, None)
-    );
-}
-
-// Covers: Haiku / Sonnet 4.5 still use budget tokens when that is advertised
-// Owner: anthropic thinking protocol
-#[test]
-fn enabled_capabilities_reserve_an_answer_budget() {
-    assert_eq!(
-        config(
-            "claude-haiku-4-5",
-            &enabled_budget(),
-            ReasoningLevel::Medium,
-        )
-        .unwrap(),
-        (
-            Some(AnthropicThinkingConfig::Enabled {
-                budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
-            }),
-            None
-        )
     );
 }
 

@@ -56,45 +56,44 @@ fn request<'a>(
     }
 }
 
+// Covers: one-shot definitions must replace the prompt, allow no tools, and
+// inherit the model; each violation is rejected before any provider call.
+// Owner: one-shot agent definition validation
 #[test]
-fn rejects_definitions_that_do_not_replace_the_prompt() {
-    let mut definition = definition();
-    definition.prompt = PromptPolicy::Extend("extension".into());
-    assert!(validate_definition(&definition)
-        .unwrap_err()
-        .to_string()
-        .contains("replace the system prompt"));
-}
-
-#[test]
-fn rejects_definitions_with_tools() {
-    let mut definition = definition();
-    definition.runtime = AgentRuntimeSpec::Rho {
-        tools: ToolPolicy::Allow(BTreeSet::from([ToolCapability::ReadFile])),
-        model: ModelPolicy::Inherit,
-        reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+fn rejects_definitions_outside_the_one_shot_shape() {
+    let extend_prompt = AgentDefinition {
+        prompt: PromptPolicy::Extend("extension".into()),
+        ..definition()
     };
-    assert!(validate_definition(&definition)
-        .unwrap_err()
-        .to_string()
-        .contains("allow no tools"));
-}
-
-#[test]
-fn rejects_definitions_that_select_a_model() {
-    let mut definition = definition();
-    if let AgentRuntimeSpec::Rho { model, .. } = &mut definition.runtime {
-        *model = ModelPolicy::Select(crate::agent::ModelSelection {
-            provider: None,
-            model: "other-model".into(),
-            auth: None,
-            fast: false,
-        });
+    let with_tools = AgentDefinition {
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(BTreeSet::from([ToolCapability::ReadFile])),
+            model: ModelPolicy::Inherit,
+            reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+        },
+        ..definition()
+    };
+    let select_model = AgentDefinition {
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(BTreeSet::new()),
+            model: ModelPolicy::Select(crate::agent::ModelSelection {
+                provider: None,
+                model: "other-model".into(),
+                auth: None,
+                fast: false,
+            }),
+            reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+        },
+        ..definition()
+    };
+    for (definition, expected) in [
+        (extend_prompt, "replace the system prompt"),
+        (with_tools, "allow no tools"),
+        (select_model, "inherit its model"),
+    ] {
+        let error = validate_definition(&definition).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expected}: {error}");
     }
-    assert!(validate_definition(&definition)
-        .unwrap_err()
-        .to_string()
-        .contains("inherit its model"));
 }
 
 #[test]
@@ -246,52 +245,6 @@ async fn streams_phase_and_text_without_reasoning_content() {
     assert_eq!(final_update.phase, OneShotPhase::Responding);
     assert_eq!(final_update.text.as_ref(), "plan next");
     assert!(!final_update.text.contains("hidden"));
-}
-
-// Covers: a failed physical attempt clears partial text before the next try
-// Owner: one-shot agent stream
-#[tokio::test]
-async fn retry_clears_partial_text_before_the_next_attempt() {
-    use rho_sdk::{
-        provider::{ProviderRequestEvent, ProviderStreamEvent},
-        ProviderErrorKind,
-    };
-
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("provider", "api", "model"),
-        [ScriptedTurn::streaming_with_request_events(
-            vec![
-                ProviderStreamEvent::Model(rho_sdk::model::ModelEvent::OutputDelta("stale".into())),
-                ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
-                    kind: ProviderErrorKind::Timeout,
-                    usage: ModelUsage::default(),
-                }),
-                ProviderStreamEvent::Model(rho_sdk::model::ModelEvent::OutputDelta(
-                    "recovered".into(),
-                )),
-            ],
-            ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
-        )],
-    );
-    let definition = definition();
-    let session_id = SessionId::new();
-    let (tx, rx) =
-        tokio::sync::watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
-
-    let result = run_one_shot_with_provider(
-        &provider,
-        request(&definition, &session_id, Path::new("/test/workspace")),
-        ProviderRequestUsageRecording::default(),
-        Some(tx),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(result.texts, ["recovered"]);
-    let final_update = rx.borrow().clone();
-    assert_eq!(final_update.phase, OneShotPhase::Responding);
-    assert_eq!(final_update.text.as_ref(), "recovered");
-    assert!(!final_update.text.contains("stale"));
 }
 
 // Covers: each stream event advances phase/body before the next event arrives

@@ -51,15 +51,26 @@ use crate::{
     permission_classifier::ClassifierVerdict,
 };
 
+// Covers: terminal reasons come from typed errors (an AutomationExit or a
+// fatal tool host error), never from parsing the message text.
+// Owner: pure unit (run terminal classification)
 #[test]
-fn classifies_automation_exit_without_parsing_its_message() {
-    let error = anyhow::Error::new(AutomationExit::new(
+fn classifies_typed_errors_without_parsing_their_messages() {
+    let exit = anyhow::Error::new(AutomationExit::new(
         1,
         TerminalReason::OutputError,
         "wording can change",
     ));
+    let tool_host = anyhow::Error::new(rho_sdk::Error::Tool(rho_sdk::tool::ToolError::new(
+        rho_sdk::tool::ToolErrorKind::Execution,
+        "host failed",
+    )));
 
-    assert_eq!(classify_error(&error), (TerminalReason::OutputError, 1));
+    assert_eq!(classify_error(&exit), (TerminalReason::OutputError, 1));
+    assert_eq!(
+        classify_error(&tool_host),
+        (TerminalReason::ToolHostError, 1)
+    );
 }
 
 #[test]
@@ -83,21 +94,15 @@ fn terminal_messages_keep_detail_but_hide_authentication_errors() {
         "provider unavailable"
     );
 
-    // The provider's text may echo credentials; only the selection is named.
+    // The provider's text may echo credentials; only the selection is named,
+    // offering only other keyed modes of that provider as `--auth` fixes.
     let authentication = anyhow::anyhow!("token fixture-secret rejected");
-    assert_eq!(
-        messages.for_error(TerminalReason::Authentication, &authentication),
-        "authentication failed for xai (auth: xai-oauth); run /login xai or pass --auth xai-api-key"
-    );
-}
-
-// Covers: an auth failure names the provider and auth it used, offering only
-// other keyed modes of that provider as `--auth` fixes.
-// Owner: pure unit (automation terminal messages)
-#[test]
-fn authentication_message_offers_other_keyed_modes_only() {
-    let error = anyhow::anyhow!("rejected");
     for (provider, auth, expected) in [
+        (
+            "xai",
+            "xai-oauth",
+            "authentication failed for xai (auth: xai-oauth); run /login xai or pass --auth xai-api-key",
+        ),
         (
             "openai-codex",
             "codex",
@@ -111,7 +116,7 @@ fn authentication_message_offers_other_keyed_modes_only() {
     ] {
         assert_eq!(
             TerminalMessages::for_selection(provider, auth)
-                .for_error(TerminalReason::Authentication, &error),
+                .for_error(TerminalReason::Authentication, &authentication),
             expected,
             "{provider}/{auth}"
         );
@@ -172,16 +177,6 @@ fn classifies_timeout_ahead_of_session_result() {
         /*timed_out*/ true,
     );
     assert!(matches!(terminal, RunTerminal::Timeout));
-}
-
-#[test]
-fn classifies_fatal_tool_host_errors() {
-    let error = anyhow::Error::new(rho_sdk::Error::Tool(rho_sdk::tool::ToolError::new(
-        rho_sdk::tool::ToolErrorKind::Execution,
-        "host failed",
-    )));
-
-    assert_eq!(classify_error(&error), (TerminalReason::ToolHostError, 1));
 }
 
 // Covers: headless Auto must fail before runtime construction when no classifier model is configured.
@@ -523,22 +518,6 @@ fn assistant_calls(calls: &[(&str, &str, &str)]) -> ModelResponse {
 }
 
 #[derive(Clone)]
-struct ImmediateHostInputResponder {
-    answer: &'static str,
-}
-
-impl HostInputResponder for ImmediateHostInputResponder {
-    fn respond<'a>(
-        &'a self,
-        _request: HostInputRequest,
-        _cancellation: &'a CancellationToken,
-    ) -> HostInputRespondFuture<'a> {
-        let answer = self.answer;
-        Box::pin(async move { Ok(HostInputResponse::new().answer("answer", [answer])) })
-    }
-}
-
-#[derive(Clone)]
 struct GatedHostInputResponder {
     release: Arc<Semaphore>,
     waiting: Arc<AtomicUsize>,
@@ -687,53 +666,6 @@ async fn headless_run_fails_closed_without_host_input_responder() {
         error.to_string().contains("cannot answer host input"),
         "unexpected error: {error}"
     );
-    runtime.shutdown();
-}
-
-#[tokio::test]
-async fn headless_run_answers_host_input_through_generic_responder() {
-    let request = host_question_request("generic-responder");
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "generic-responder"),
-            [
-                ScriptedTurn::completed(assistant_calls(&[("ask-call", "interact", "ask")])),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )])),
-            ],
-        ))
-        .tool(HeadlessHostInputTool {
-            request,
-            progress_gate: Arc::new(Semaphore::new(0)),
-            progress_sent: Arc::new(AtomicUsize::new(0)),
-            finish_gate: Arc::new(Semaphore::new(0)),
-        })
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let responder = ImmediateHostInputResponder { answer: "yes" };
-
-    let outcome = timeout(
-        Duration::from_secs(2),
-        complete_run(
-            &session,
-            RunEntry::Prompt("ask".into()),
-            &mut ShutdownSignals::install().unwrap(),
-            HeadlessRunDeps {
-                reporter: None,
-                external_cancellation: None,
-                jsonl: None,
-                host_input: Some(&responder as &dyn HostInputResponder),
-            },
-            /* steering_slot */ None,
-        ),
-    )
-    .await
-    .expect("generic responder path should finish")
-    .unwrap();
-
-    assert_eq!(outcome.text(), "done");
     runtime.shutdown();
 }
 

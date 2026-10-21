@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pretty_assertions::assert_eq;
 
-use super::{AliasTarget, ModelAliasResolutionError, ModelAliases, ResolvedModelReference};
+use super::{ModelAliasResolutionError, ModelAliases, ResolvedModelReference};
 
 fn entries(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
@@ -12,7 +12,7 @@ fn entries(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 }
 
 #[test]
-fn parses_provider_qualified_bare_and_slash_qualified_targets() {
+fn resolves_explicit_aliases_with_provenance() {
     let aliases = ModelAliases::from_entries(entries(&[
         ("deep", "anthropic/claude-opus-4-8"),
         ("fast", "gpt-5.5"),
@@ -20,54 +20,26 @@ fn parses_provider_qualified_bare_and_slash_qualified_targets() {
     ]))
     .unwrap();
 
-    assert_eq!(
-        aliases.get("deep"),
-        Some(&AliasTarget {
-            provider: Some("anthropic".into()),
-            model: "claude-opus-4-8".into(),
-        })
-    );
-    assert_eq!(
-        aliases.get("fast"),
-        Some(&AliasTarget {
-            provider: None,
-            model: "gpt-5.5".into(),
-        })
-    );
-    assert_eq!(
-        aliases.get("open"),
-        Some(&AliasTarget {
-            provider: Some("openrouter".into()),
-            model: "anthropic/claude-sonnet-4".into(),
-        })
-    );
-    assert_eq!(aliases.get("missing"), None);
-}
-
-#[test]
-fn resolves_explicit_aliases_with_provenance() {
-    let aliases = ModelAliases::from_entries(entries(&[
-        ("deep", "anthropic/claude-opus-4-8"),
-        ("fast", "gpt-5.5"),
-    ]))
-    .unwrap();
-
-    assert_eq!(
-        aliases.resolve("@deep"),
-        Ok(ResolvedModelReference {
-            alias: Some("deep".into()),
-            provider: Some("anthropic".into()),
-            model: "claude-opus-4-8".into(),
-        })
-    );
-    assert_eq!(
-        aliases.resolve("@fast"),
-        Ok(ResolvedModelReference {
-            alias: Some("fast".into()),
-            provider: None,
-            model: "gpt-5.5".into(),
-        })
-    );
+    for (reference, alias, provider, model) in [
+        ("@deep", "deep", Some("anthropic"), "claude-opus-4-8"),
+        ("@fast", "fast", None, "gpt-5.5"),
+        (
+            "@open",
+            "open",
+            Some("openrouter"),
+            "anthropic/claude-sonnet-4",
+        ),
+    ] {
+        assert_eq!(
+            aliases.resolve(reference),
+            Ok(ResolvedModelReference {
+                alias: Some(alias.into()),
+                provider: provider.map(Into::into),
+                model: model.into(),
+            }),
+            "{reference}"
+        );
+    }
 }
 
 #[test]
@@ -149,16 +121,4 @@ fn rejects_malformed_names_and_values() {
         let error = ModelAliases::from_entries(entries(&[(name, value)])).unwrap_err();
         assert!(error.contains("model alias"), "{name}={value}: {error}");
     }
-}
-
-#[test]
-fn deserialization_rejects_alias_reference_values() {
-    let error = toml::from_str::<ModelAliases>("deep = \"@other\"\n").unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("invalid model alias value '@other'"),
-        "{error}"
-    );
 }

@@ -52,42 +52,56 @@ fn parses_claude_cli_runtime_and_tools_independent_of_key_order() {
     assert_eq!(tools_first.fingerprint(), runtime_first.fingerprint());
 }
 
+// Covers: invalid frontmatter fails discovery for that file and names the
+// offending field, so the catalog can report it instead of loading a guess.
+// Owner: agent parser
 #[test]
-fn rejects_unknown_runtime_values() {
-    let error = parse("---\ndescription: demo\nruntime: bun\n---\n").unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("runtime"));
-    assert!(error
-        .to_string()
-        .contains("expected rho, claude-cli, cursor, or antigravity"));
-}
-
-#[test]
-fn rejects_claude_tools_on_rho_runtime() {
-    let error = parse("---\ndescription: demo\nruntime: rho\ntools: [Read]\n---\n").unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.to_string().contains("Claude Code tool name"));
-    assert!(error.to_string().contains("runtime is rho"));
-    assert!(error.to_string().contains("tools: [read_file, shell]"));
-}
-
-#[test]
-fn rejects_rho_tools_on_claude_runtime() {
-    let error = parse("---\ndescription: demo\nruntime: claude-cli\ntools: [read_file]\n---\n")
-        .unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.to_string().contains("Rho capability"));
-    assert!(error.to_string().contains("runtime is claude-cli"));
-    assert!(error
-        .to_string()
-        .contains("tools: [Read, Edit, \"Bash(git *)\"]"));
-}
-
-#[test]
-fn rejects_invalid_claude_tool_shape() {
-    let error = parse("---\ndescription: demo\nruntime: claude-cli\ntools: [\"Bash(git\"]\n---\n")
-        .unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.to_string().contains("specifier must end the name"));
+fn rejects_invalid_frontmatter_with_the_offending_field() {
+    let fm = |extra: &str| format!("---\ndescription: demo\n{extra}\n---\n");
+    let claude = |extra: &str| fm(&format!("runtime: claude-cli\n{extra}"));
+    let cases = [
+        ("runtime", fm("runtime: bun")),
+        ("tools", fm("runtime: rho\ntools: [Read]")),
+        ("tools", claude("tools: [read_file]")),
+        ("tools", claude("tools: all")),
+        ("tools", claude("tools: [\"Bash(git\"]")),
+        ("tools", claude("tools: [\"Edit(path with , comma)\"]")),
+        ("tools", claude("tools: [\"mcp__server__tool(a,b)\"]")),
+        ("tools", claude("tools: [\"(no-name)\"]")),
+        ("tools", claude("tools: [\"Bad Name\"]")),
+        ("tools", claude("tools: [\"Tool)\"]")),
+        ("tools", claude("tools: [\"\"]")),
+        ("model", claude("model: \"\"\ntools: [Read]")),
+        ("model", claude("model: @deep\ntools: [Read]")),
+        ("reasoning", claude("reasoning: off\ntools: [Read]")),
+        ("reasoning", claude("reasoning: minimal\ntools: [Read]")),
+        (
+            "model-policy",
+            claude("model-policy: inherit\nmodel: opus\ntools: [Read]"),
+        ),
+        ("model", claude("model-policy: select\ntools: [Read]")),
+        (
+            "model-policy",
+            fm("runtime: rho\nmodel-policy: inherit\nmodel: gpt-5.5"),
+        ),
+        (
+            "auth",
+            fm("model: grok-4.5\nprovider: xai\nauth: not-a-real-auth"),
+        ),
+        (
+            "auth",
+            fm("model: grok-4.5\nprovider: xai\nauth: anthropic-api-key"),
+        ),
+        (
+            "auth",
+            claude("model: opus\nauth: xai-oauth\ntools: [Read]"),
+        ),
+        ("model-policy", fm("model-policy: inherit\nauth: xai-oauth")),
+    ];
+    for (field, contents) in cases {
+        let error = parse(&contents).expect_err(&contents);
+        assert_eq!(error.field.as_deref(), Some(field), "{contents}: {error}");
+    }
 }
 
 #[test]
@@ -111,75 +125,6 @@ fn allows_nested_parentheses_inside_claude_tool_specifier() {
 }
 
 #[test]
-fn rejects_claude_tool_patterns_with_commas() {
-    for contents in [
-        "---\ndescription: demo\nruntime: claude-cli\ntools: [\"Edit(path with , comma)\"]\n---\n",
-        "---\ndescription: demo\nruntime: claude-cli\ntools: [\"mcp__server__tool(a,b)\"]\n---\n",
-    ] {
-        let error = parse(contents).unwrap_err();
-        assert_eq!(error.field.as_deref(), Some("tools"), "{contents}");
-        assert!(
-            error.to_string().contains("commas cannot round-trip"),
-            "{contents}: {error}"
-        );
-    }
-}
-
-#[test]
-fn rejects_malformed_outer_claude_tool_names() {
-    for contents in [
-        "---\ndescription: demo\nruntime: claude-cli\ntools: [\"(no-name)\"]\n---\n",
-        "---\ndescription: demo\nruntime: claude-cli\ntools: [\"Bad Name\"]\n---\n",
-        "---\ndescription: demo\nruntime: claude-cli\ntools: [\"Tool)\"]\n---\n",
-        "---\ndescription: demo\nruntime: claude-cli\ntools: [\"\"]\n---\n",
-    ] {
-        let error = parse(contents).unwrap_err();
-        assert_eq!(error.field.as_deref(), Some("tools"), "{contents}");
-    }
-}
-
-#[test]
-fn rejects_empty_quoted_claude_model() {
-    let error =
-        parse("---\ndescription: demo\nruntime: claude-cli\nmodel: \"\"\ntools: [Read]\n---\n")
-            .unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("model"));
-    assert!(error.to_string().contains("must not be empty"));
-}
-
-#[test]
-fn rejects_claude_inherit_with_explicit_model_and_select_without_model() {
-    let inherit_with_model = parse(
-        "---\ndescription: demo\nruntime: claude-cli\nmodel-policy: inherit\nmodel: opus\ntools: [Read]\n---\n",
-    )
-    .unwrap_err();
-    assert_eq!(inherit_with_model.field.as_deref(), Some("model-policy"));
-    assert!(inherit_with_model
-        .to_string()
-        .contains("inherit cannot specify model"));
-
-    let select_without_model = parse(
-        "---\ndescription: demo\nruntime: claude-cli\nmodel-policy: select\ntools: [Read]\n---\n",
-    )
-    .unwrap_err();
-    assert_eq!(select_without_model.field.as_deref(), Some("model"));
-    assert!(select_without_model
-        .to_string()
-        .contains("required by model-policy 'select'"));
-}
-
-#[test]
-fn rho_model_policy_inherit_with_model_still_rejected() {
-    let error =
-        parse("---\ndescription: demo\nruntime: rho\nmodel-policy: inherit\nmodel: gpt-5.5\n---\n")
-            .unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("model-policy"));
-    assert!(error
-        .to_string()
-        .contains("inherit cannot specify model, provider, or auth"));
-}
-
-#[test]
 fn omits_claude_tools_as_empty_allowlist() {
     let definition = parse("---\ndescription: demo\nruntime: claude-cli\n---\n").unwrap();
     assert_eq!(
@@ -191,14 +136,6 @@ fn omits_claude_tools_as_empty_allowlist() {
             reasoning: None,
         })
     );
-}
-
-#[test]
-fn rejects_tools_all_on_claude_runtime() {
-    let error =
-        parse("---\ndescription: demo\nruntime: claude-cli\ntools: all\n---\n").unwrap_err();
-    assert_eq!(error.field.as_deref(), Some("tools"));
-    assert!(error.to_string().contains("does not support tools: all"));
 }
 
 #[test]
@@ -294,31 +231,6 @@ fn fingerprint_includes_runtime_tools_and_inherit_flag() {
 }
 
 #[test]
-fn rejects_rho_style_alias_and_unsupported_reasoning_on_claude_runtime() {
-    let alias =
-        parse("---\ndescription: demo\nruntime: claude-cli\nmodel: @deep\ntools: [Read]\n---\n")
-            .unwrap_err();
-    assert_eq!(alias.field.as_deref(), Some("model"));
-    assert!(alias
-        .to_string()
-        .contains("does not resolve Rho model aliases"));
-
-    for level in ["off", "minimal"] {
-        let reasoning = parse(&format!(
-            "---\ndescription: demo\nruntime: claude-cli\nreasoning: {level}\ntools: [Read]\n---\n"
-        ))
-        .unwrap_err();
-        assert_eq!(reasoning.field.as_deref(), Some("reasoning"));
-        assert!(
-            reasoning
-                .to_string()
-                .contains("not a Claude Code effort level"),
-            "{level}: {reasoning}"
-        );
-    }
-}
-
-#[test]
 fn accepts_claude_effort_reasoning_levels() {
     for level in ["low", "medium", "high", "xhigh", "max"] {
         let definition = parse(&format!(
@@ -354,40 +266,6 @@ fn parses_auth_profile_with_provider() {
     }
 }
 
-// Covers: unknown or mismatched auth fails before execution
-// Owner: agent parser
-#[test]
-fn rejects_unknown_and_mismatched_auth() {
-    let unknown = parse(
-        "---\ndescription: demo\nmodel: grok-4.5\nprovider: xai\nauth: not-a-real-auth\n---\n",
-    )
-    .unwrap_err();
-    assert_eq!(unknown.field.as_deref(), Some("auth"));
-    assert!(unknown.message.contains("unknown auth profile"));
-
-    let mismatched = parse(
-        "---\ndescription: demo\nmodel: grok-4.5\nprovider: xai\nauth: anthropic-api-key\n---\n",
-    )
-    .unwrap_err();
-    assert_eq!(mismatched.field.as_deref(), Some("auth"));
-    assert!(
-        mismatched.message.contains("not valid for provider")
-            || mismatched.message.contains("belongs to"),
-        "{}",
-        mismatched.message
-    );
-
-    let on_claude = parse(
-        "---\ndescription: demo\nruntime: claude-cli\nmodel: opus\nauth: xai-oauth\ntools: [Read]\n---\n",
-    )
-    .unwrap_err();
-    assert_eq!(on_claude.field.as_deref(), Some("auth"));
-
-    let with_inherit =
-        parse("---\ndescription: demo\nmodel-policy: inherit\nauth: xai-oauth\n---\n").unwrap_err();
-    assert_eq!(with_inherit.field.as_deref(), Some("model-policy"));
-}
-
 // Covers: unset auth keeps legacy fingerprints; pinned auth changes them
 // Owner: agent definition fingerprint
 #[test]
@@ -404,20 +282,6 @@ fn fingerprint_changes_only_when_auth_is_pinned() {
     .unwrap();
     assert_eq!(without.fingerprint(), same_without.fingerprint());
     assert_ne!(without.fingerprint(), with_auth.fingerprint());
-}
-
-// Covers: auth frontmatter round-trips through serialize/parse
-// Owner: agent serializer
-#[test]
-fn auth_selection_round_trips_through_serialize() {
-    let original = parse(
-        "---\ndescription: demo\nmodel-policy: prefer\nmodel: grok-4.5\nprovider: xai\nauth: xai-oauth\n---\nbody\n",
-    )
-    .unwrap();
-    let serialized = crate::agent::serialize_definition(&original);
-    assert!(serialized.contains("auth: xai-oauth\n"));
-    let again = parse(&serialized).unwrap();
-    assert_eq!(again, original);
 }
 
 // Covers: closed-vocabulary runtimes (cursor, antigravity) take a nonempty

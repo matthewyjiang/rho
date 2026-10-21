@@ -257,15 +257,3 @@ fn cursor_prompt_model_describes_requested_and_resolved() {
         assert_eq!(identity.describe(), case.expected, "{}", case.name);
     }
 }
-
-#[test]
-fn from_sdk_identity_uses_provider_and_model() {
-    let identity = rho_sdk::model::ModelIdentity::new("openai", "responses", "gpt-5.6-sol");
-    assert_eq!(
-        PromptModel::from_sdk_identity(&identity),
-        PromptModel::Rho {
-            provider: "openai".into(),
-            model: "gpt-5.6-sol".into(),
-        }
-    );
-}

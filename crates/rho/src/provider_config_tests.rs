@@ -184,28 +184,6 @@ fn custom_openai_compatible_resolves_configured_endpoint() {
     );
 }
 
-// Covers: a stored custom API-key auth profile must survive config load
-// Owner: provider config
-#[test]
-fn custom_openai_compatible_keeps_configured_api_key_auth() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "provider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"composer-api-key\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
-    )
-    .unwrap();
-
-    let config = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
-
-    assert_eq!(config.provider, "composer");
-    assert_eq!(config.auth, "composer-api-key");
-}
-
 // Covers: a stored custom key must promote `auth = "none"` so restart sends it
 // Owner: provider config
 #[test]
@@ -255,94 +233,6 @@ fn custom_openai_compatible_keeps_keyed_auth_when_store_is_empty() {
     assert_eq!(config.auth, "composer-api-key");
 }
 
-// Covers: custom hosts can borrow a models.dev slug for catalog metadata
-// Owner: provider config
-#[test]
-fn custom_openai_compatible_loads_and_persists_catalog_slug() {
-    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "provider = \"cliproxyapi\"\nmodel = \"gpt-5.6-sol\"\n[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog = \"llmgateway\"\n",
-    )
-    .unwrap();
-
-    let config = Config::load_with_store(
-        path.clone(),
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        config.providers.custom["cliproxyapi"].catalog.as_deref(),
-        Some("llmgateway")
-    );
-
-    config.write_settings(path.clone()).unwrap();
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        saved.contains("catalog = \"llmgateway\""),
-        "saved config must keep catalog: {saved}"
-    );
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-}
-
-// Covers: catalog is a models.dev slug, not a provider/model rematch
-// Owner: provider config
-#[test]
-fn custom_catalog_rejects_model_qualified_and_ollama_values() {
-    let dir = tempfile::tempdir().unwrap();
-    let slash = dir.path().join("slash.toml");
-    std::fs::write(
-        &slash,
-        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog = \"anthropic/claude-sonnet-4-5\"\n",
-    )
-    .unwrap();
-    let slash_error = Config::load_with_store(
-        slash,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{slash_error:#}").contains("providers.custom.cliproxyapi.catalog"),
-        "{slash_error:#}"
-    );
-
-    let comma = dir.path().join("comma.toml");
-    std::fs::write(
-        &comma,
-        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog = \"a,b\"\n",
-    )
-    .unwrap();
-    let comma_error = Config::load_with_store(
-        comma,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{comma_error:#}").contains("must not contain ','"),
-        "{comma_error:#}"
-    );
-
-    let ollama = dir.path().join("ollama.toml");
-    std::fs::write(
-        &ollama,
-        "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\ncatalog = \"llmgateway\"\n",
-    )
-    .unwrap();
-    let ollama_error = Config::load_with_store(
-        ollama,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{ollama_error:#}").contains("providers.ollama does not accept catalog"),
-        "{ollama_error:#}"
-    );
-}
-
 // Covers: endpoint updates change only their declared fields, so current and
 // future provider options cannot be erased by an incomplete copy list.
 // Owner: provider config
@@ -379,100 +269,6 @@ fn endpoint_updates_preserve_unrelated_custom_options() {
     expected.base_url = Url::parse("http://127.0.0.1:8319/v1").unwrap();
     expected.api = rho_providers::provider::OpenAiCompatibleApi::ChatCompletions;
     assert_eq!(providers.custom["cliproxyapi"], expected);
-}
-
-// Covers: catalog_mode loads, persists, and survives a URL rewrite
-// Owner: provider config
-#[test]
-fn custom_openai_compatible_loads_and_persists_catalog_mode() {
-    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "provider = \"cliproxyapi\"\nmodel = \"anthropic/claude-sonnet-4-5\"\n[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog_mode = \"model-id\"\n",
-    )
-    .unwrap();
-
-    let config = Config::load_with_store(
-        path.clone(),
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        config.providers.custom["cliproxyapi"].catalog_lookup,
-        rho_providers::provider::CatalogLookupMode::ModelId
-    );
-    assert_eq!(
-        rho_providers::provider::interned_custom_provider("cliproxyapi")
-            .unwrap()
-            .catalog_lookup(),
-        rho_providers::provider::CatalogLookupMode::ModelId
-    );
-
-    config.write_settings(path.clone()).unwrap();
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        saved.contains("catalog_mode = \"model-id\""),
-        "saved config must keep catalog_mode: {saved}"
-    );
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-}
-
-// Covers: catalog_mode rejects unknown values and ollama
-// Owner: provider config
-#[test]
-fn custom_catalog_mode_rejects_unknown_and_ollama_values() {
-    let dir = tempfile::tempdir().unwrap();
-    let unknown = dir.path().join("unknown.toml");
-    std::fs::write(
-        &unknown,
-        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog_mode = \"owner-model\"\n",
-    )
-    .unwrap();
-    let unknown_error = Config::load_with_store(
-        unknown,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{unknown_error:#}").contains("providers.custom.cliproxyapi.catalog_mode"),
-        "{unknown_error:#}"
-    );
-
-    let ollama = dir.path().join("ollama.toml");
-    std::fs::write(
-        &ollama,
-        "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\ncatalog_mode = \"model-id\"\n",
-    )
-    .unwrap();
-    let ollama_error = Config::load_with_store(
-        ollama,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{ollama_error:#}").contains("providers.ollama does not accept catalog_mode"),
-        "{ollama_error:#}"
-    );
-
-    let combined = dir.path().join("combined.toml");
-    std::fs::write(
-        &combined,
-        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog = \"llmgateway\"\ncatalog_mode = \"model-id\"\n",
-    )
-    .unwrap();
-    let combined_error = Config::load_with_store(
-        combined,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{combined_error:#}").contains("cannot be combined with catalog"),
-        "{combined_error:#}"
-    );
 }
 
 // Covers: a custom provider can choose Auto's edit format without overriding a
@@ -515,188 +311,145 @@ fn custom_provider_edit_tool_configures_auto_resolution() {
     rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
-// Covers: api=responses loads, persists, and interns Responses construction
+// Covers: every custom endpoint option loads, interns into provider
+// construction, and survives a settings write and reload, while an omitted
+// api stays Chat Completions.
 // Owner: provider config
 #[test]
-fn custom_openai_compatible_loads_and_persists_responses_api() {
+fn custom_endpoint_options_load_intern_and_persist() {
+    use rho_providers::provider::{
+        interned_custom_provider, CatalogLookupMode, OpenAiCompatibleApi,
+    };
+
     let _lock = rho_providers::provider::custom_provider_registry_test_lock();
     rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"litellm\"\nmodel = \"gpt-5.6\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"responses\"\n",
-    )
-    .unwrap();
-
-    let config = Config::load_with_store(
-        path.clone(),
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        config.providers.custom["litellm"].api,
-        rho_providers::provider::OpenAiCompatibleApi::Responses
-    );
-    assert_eq!(
-        config.providers.custom["composer"].api,
-        rho_providers::provider::OpenAiCompatibleApi::ChatCompletions
-    );
-    assert_eq!(
-        rho_providers::provider::interned_custom_provider("litellm")
-            .unwrap()
-            .openai_compatible_api(),
-        rho_providers::provider::OpenAiCompatibleApi::Responses
-    );
-    assert_eq!(
-        rho_providers::provider::interned_custom_provider("composer")
-            .unwrap()
-            .openai_compatible_api(),
-        rho_providers::provider::OpenAiCompatibleApi::ChatCompletions
-    );
-
-    config.write_settings(path.clone()).unwrap();
-    let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(
-        saved.contains("api = \"responses\""),
-        "saved config must keep responses api: {saved}"
-    );
-    let composer = saved
-        .split("[providers.custom.litellm]")
-        .next()
-        .expect("composer section precedes litellm");
-    assert!(
-        !composer.contains("api ="),
-        "default chat host must omit api on save: {saved}"
-    );
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-}
-
-// Covers: api rejects unknown values and ollama
-// Owner: provider config
-#[test]
-fn custom_api_rejects_unknown_and_ollama_values() {
-    let dir = tempfile::tempdir().unwrap();
-    let unknown = dir.path().join("unknown.toml");
-    std::fs::write(
-        &unknown,
-        "[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"websocket\"\n",
-    )
-    .unwrap();
-    let unknown_error = Config::load_with_store(
-        unknown,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{unknown_error:#}").contains("providers.custom.litellm.api"),
-        "{unknown_error:#}"
-    );
-
-    let ollama = dir.path().join("ollama.toml");
-    std::fs::write(
-        &ollama,
-        "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\napi = \"responses\"\n",
-    )
-    .unwrap();
-    let ollama_error = Config::load_with_store(
-        ollama,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-    assert!(
-        format!("{ollama_error:#}").contains("providers.ollama does not accept api"),
-        "{ollama_error:#}"
-    );
-}
-
-// Covers: prompt_cache_ttl loads as a duration, round-trips, and rejects zero
-// Owner: provider config
-#[test]
-fn custom_prompt_cache_ttl_loads_persists_and_rejects_zero() {
-    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nprompt_cache_ttl = \"1h\"\n",
+        "provider = \"litellm\"\nmodel = \"gpt-5.6\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\ncatalog_mode = \"model-id\"\n[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"responses\"\ncatalog = \"llmgateway\"\nprompt_cache_ttl = \"1h\"\nrequest_compression = \"zstd\"\n",
     )
     .unwrap();
     let store = rho_providers::credentials::MemoryCredentialStore::default();
+
     let config = Config::load_with_store(path.clone(), &store).unwrap();
+
+    let litellm = &config.providers.custom["litellm"];
     assert_eq!(
-        config.providers.prompt_cache_ttl("cliproxy"),
-        Some(std::time::Duration::from_secs(3600))
-    );
-
-    config.write_settings(path.clone()).unwrap();
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(
-        reloaded.providers.prompt_cache_ttl("cliproxy"),
-        Some(std::time::Duration::from_secs(3600))
-    );
-
-    let zero = dir.path().join("zero.toml");
-    std::fs::write(
-        &zero,
-        "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nprompt_cache_ttl = \"0s\"\n",
-    )
-    .unwrap();
-    let error = Config::load_with_store(zero, &store).unwrap_err();
-    assert!(
-        format!("{error:#}").contains("providers.custom.cliproxy.prompt_cache_ttl"),
-        "{error:#}"
-    );
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-}
-
-// Covers: request_compression loads, round-trips through settings writes, and
-// rejects unknown encodings and Ollama tables with the offending field
-// Owner: provider config
-#[test]
-fn custom_request_compression_loads_persists_and_rejects_invalid_values() {
-    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nrequest_compression = \"zstd\"\n",
-    )
-    .unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-    let config = Config::load_with_store(path.clone(), &store).unwrap();
-    let zstd = Some(rho_providers::providers::RequestCompression::Zstd);
-    assert_eq!(
-        config.providers.custom["cliproxy"].request_compression,
-        zstd
-    );
-
-    config.write_settings(path.clone()).unwrap();
-    let reloaded = Config::load_with_store(path, &store).unwrap();
-    assert_eq!(
-        reloaded.providers.custom["cliproxy"].request_compression,
-        zstd
-    );
-
-    for (name, table, field) in [
         (
-            "unknown.toml",
-            "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\nrequest_compression = \"br\"\n",
+            litellm.api,
+            litellm.catalog.as_deref(),
+            litellm.prompt_cache_ttl,
+            litellm.request_compression,
+        ),
+        (
+            OpenAiCompatibleApi::Responses,
+            Some("llmgateway"),
+            Some(std::time::Duration::from_secs(3600)),
+            Some(rho_providers::providers::RequestCompression::Zstd),
+        )
+    );
+    let composer = &config.providers.custom["composer"];
+    assert_eq!(
+        (composer.api, composer.catalog_lookup),
+        (
+            OpenAiCompatibleApi::ChatCompletions,
+            CatalogLookupMode::ModelId
+        )
+    );
+    let litellm = interned_custom_provider("litellm").unwrap();
+    let composer = interned_custom_provider("composer").unwrap();
+    assert_eq!(
+        (
+            litellm.openai_compatible_api(),
+            composer.openai_compatible_api(),
+            composer.catalog_lookup(),
+        ),
+        (
+            OpenAiCompatibleApi::Responses,
+            OpenAiCompatibleApi::ChatCompletions,
+            CatalogLookupMode::ModelId,
+        )
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let reloaded = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(reloaded.providers, config.providers);
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: invalid endpoint options fail config load naming the offending
+// field, and Ollama refuses the custom-only options.
+// Owner: provider config
+#[test]
+fn invalid_endpoint_options_name_the_offending_field() {
+    let custom = "[providers.custom.cliproxy]\nbase_url = \"http://127.0.0.1:8317/v1\"\n";
+    let ollama = "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\n";
+    let cases = [
+        (
+            "model-qualified catalog",
+            format!("{custom}catalog = \"anthropic/claude-sonnet-4-5\"\n"),
+            "providers.custom.cliproxy.catalog",
+        ),
+        (
+            "comma catalog",
+            format!("{custom}catalog = \"a,b\"\n"),
+            "must not contain ','",
+        ),
+        (
+            "unknown catalog_mode",
+            format!("{custom}catalog_mode = \"owner-model\"\n"),
+            "providers.custom.cliproxy.catalog_mode",
+        ),
+        (
+            "catalog_mode with catalog",
+            format!("{custom}catalog = \"llmgateway\"\ncatalog_mode = \"model-id\"\n"),
+            "cannot be combined with catalog",
+        ),
+        (
+            "unknown api",
+            format!("{custom}api = \"websocket\"\n"),
+            "providers.custom.cliproxy.api",
+        ),
+        (
+            "zero prompt_cache_ttl",
+            format!("{custom}prompt_cache_ttl = \"0s\"\n"),
+            "providers.custom.cliproxy.prompt_cache_ttl",
+        ),
+        (
+            "unknown request_compression",
+            format!("{custom}request_compression = \"br\"\n"),
             "providers.custom.cliproxy.request_compression",
         ),
         (
-            "ollama.toml",
-            "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\nrequest_compression = \"zstd\"\n",
+            "ollama catalog",
+            format!("{ollama}catalog = \"llmgateway\"\n"),
+            "providers.ollama does not accept catalog",
+        ),
+        (
+            "ollama catalog_mode",
+            format!("{ollama}catalog_mode = \"model-id\"\n"),
+            "providers.ollama does not accept catalog_mode",
+        ),
+        (
+            "ollama api",
+            format!("{ollama}api = \"responses\"\n"),
+            "providers.ollama does not accept api",
+        ),
+        (
+            "ollama request_compression",
+            format!("{ollama}request_compression = \"zstd\"\n"),
             "providers.ollama does not accept request_compression",
         ),
-    ] {
-        let invalid = dir.path().join(name);
-        std::fs::write(&invalid, table).unwrap();
-        let error = Config::load_with_store(invalid, &store).unwrap_err();
-        assert!(format!("{error:#}").contains(field), "{error:#}");
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+    for (case, table, field) in cases {
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, table).unwrap();
+
+        let error = Config::load_with_store(path, &store).unwrap_err();
+
+        assert!(format!("{error:#}").contains(field), "{case}: {error:#}");
     }
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }

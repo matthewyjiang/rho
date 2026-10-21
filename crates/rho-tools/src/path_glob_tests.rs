@@ -3,16 +3,15 @@ use pretty_assertions::assert_eq;
 use super::PathGlob;
 use crate::tool::ToolError;
 
+// Covers: invalid globs (including a bare `!`) fail and name the bad pattern
+// Owner: pure unit (shared grep/glob path filter)
 #[test]
-fn invalid_pattern_names_the_glob() {
-    let Err(error) = PathGlob::compile("a[") else {
-        panic!("expected invalid glob");
-    };
-    match error {
-        ToolError::Message(message) => {
-            assert!(message.contains("a["), "{message}");
-        }
-        other => panic!("expected Message, got {other:?}"),
+fn invalid_patterns_name_the_glob() {
+    for (pattern, named) in [("a[", "a["), ("!", "'!'")] {
+        let Err(ToolError::Message(message)) = PathGlob::compile(pattern) else {
+            panic!("expected invalid glob for {pattern}");
+        };
+        assert!(message.contains(named), "{pattern}: {message}");
     }
 }
 
@@ -32,12 +31,4 @@ fn leading_bang_inverts_the_match() {
         let glob = PathGlob::compile(pattern).unwrap();
         assert_eq!(glob.matches(path), expected, "{pattern} vs {path}");
     }
-}
-
-#[test]
-fn bare_bang_is_rejected() {
-    let Err(ToolError::Message(message)) = PathGlob::compile("!") else {
-        panic!("expected invalid glob");
-    };
-    assert!(message.contains("'!'"), "{message}");
 }
