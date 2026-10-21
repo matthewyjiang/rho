@@ -23,16 +23,16 @@ impl<W: Write> PasteMode<W> {
     pub(super) fn acquire(mut output: W) -> io::Result<Self> {
         // Flush older terminal commands before switching the input transport.
         output.flush()?;
-        let mut mode = Self {
+        // A failed enable drops `vt_input`, which restores the console bit.
+        #[cfg(windows)]
+        let vt_input = super::terminal_events::VtInput::acquire()?;
+        execute!(output, EnableBracketedPaste)?;
+        Ok(Self {
             output,
-            enabled: false,
+            enabled: true,
             #[cfg(windows)]
-            vt_input: super::terminal_events::VtInput::acquire()?,
-        };
-        // A failed write drops `mode`, which restores the VT input bit.
-        execute!(mode.output, EnableBracketedPaste)?;
-        mode.enabled = true;
-        Ok(mode)
+            vt_input,
+        })
     }
 
     pub(super) fn release(mut self) -> io::Result<()> {

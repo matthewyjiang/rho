@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 
+use super::paste_mode::PasteMode;
 use crossterm::{
     event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
@@ -13,9 +14,10 @@ const DISABLE_MODIFY_OTHER_KEYS: &[u8] = b"\x1b[>4;0m";
 /// Session-scoped keyboard terminal protocols armed for the TUI lifetime.
 ///
 /// Call [`Enabled::release`] during shutdown (before `ratatui::restore`) so
-/// teardown order stays explicit at the call site.
+/// teardown order stays explicit at the call site. Dropping without release
+/// undoes only bracketed paste.
 pub(super) struct Enabled {
-    bracketed_paste: Option<super::paste_mode::PasteMode<io::Stdout>>,
+    bracketed_paste: Option<PasteMode<io::Stdout>>,
     modified_keys: bool,
     keyboard_enhancements: bool,
 }
@@ -24,7 +26,7 @@ impl Enabled {
     pub(super) fn acquire() -> Self {
         let extended = should_request_extended_keyboard_protocols();
         Self {
-            bracketed_paste: super::paste_mode::PasteMode::acquire(io::stdout()).ok(),
+            bracketed_paste: PasteMode::acquire(io::stdout()).ok(),
             // Extended protocols share one Windows/ConPTY policy: see
             // should_request_extended_keyboard_protocols.
             modified_keys: extended && enable_modified_keys().is_ok(),

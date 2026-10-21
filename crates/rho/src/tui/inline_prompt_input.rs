@@ -26,9 +26,11 @@ impl InlinePromptInput {
     pub(crate) fn acquire() -> io::Result<Self> {
         enable_raw_mode()?;
         let raw = RawMode;
+        let paste = PasteMode::acquire(io::stderr()).ok();
         Ok(Self {
-            _paste: PasteMode::acquire(io::stderr()).ok(),
+            // The reader starts on the first `next`, after paste mode is set.
             events: TerminalEvents::new(),
+            _paste: paste,
             _raw: raw,
         })
     }
