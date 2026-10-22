@@ -77,6 +77,7 @@ When credentials are missing, unreadable, or refused by the provider (a revoked 
 | Checklist | The model's `todo` list appears as the host's plan. |
 | File changes | Edits and writes show up as diffs. |
 | Editor buffers | On hosts that serve files, such as Zed, the model reads unsaved edits, and its edits land in the editor's buffers and undo history. |
+| Terminals | On hosts that run terminals, such as Zed, shell commands run in a terminal shown live on the tool card. |
 | Context and cost | The host gets the context fill and the session's cumulative cost, read from the same usage ledger as `/spend`. |
 | Workspace roots | Extra roots of a multi-root workspace join the session like `--add-dir`. |
 | MCP servers | Servers from your Rho config and servers the host sends both connect. A host server replaces a config server with the same name. |

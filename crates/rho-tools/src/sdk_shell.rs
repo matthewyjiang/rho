@@ -26,6 +26,7 @@ pub struct ShellToolOptions {
     max_output_bytes: usize,
     environment: ProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_terminals: Option<Arc<dyn crate::HostTerminals>>,
 }
 
 impl Default for ShellToolOptions {
@@ -34,6 +35,7 @@ impl Default for ShellToolOptions {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             environment: ProcessEnvironment::InheritAll,
             mutation_observer: None,
+            host_terminals: None,
         }
     }
 }
@@ -60,6 +62,13 @@ impl ShellToolOptions {
         self.mutation_observer = Some(observer);
         self
     }
+
+    /// Terminals the host runs `bash` commands in, in place of local child
+    /// processes; see [`crate::HostTerminals`].
+    pub fn host_terminals(mut self, terminals: Arc<dyn crate::HostTerminals>) -> Self {
+        self.host_terminals = Some(terminals);
+        self
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -75,6 +84,7 @@ struct SdkShellTool {
     max_output_bytes: usize,
     environment: ProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    host_terminals: Option<Arc<dyn crate::HostTerminals>>,
 }
 
 impl SdkShellTool {
@@ -85,6 +95,7 @@ impl SdkShellTool {
             max_output_bytes: options.max_output_bytes,
             environment: options.environment,
             mutation_observer: options.mutation_observer,
+            host_terminals: options.host_terminals,
         }
     }
 
@@ -95,6 +106,8 @@ impl SdkShellTool {
             max_output_bytes: options.max_output_bytes,
             environment: options.environment,
             mutation_observer: options.mutation_observer,
+            // Host terminals run `bash` scripts; PowerShell stays local.
+            host_terminals: None,
         }
     }
 }
@@ -143,9 +156,12 @@ impl ShellPlan {
         )
     }
 
+    /// Runs the plan in a host terminal when `host_terminals` can take it,
+    /// else as a local child process.
     async fn execute(
         self,
         kind: ShellKind,
+        host_terminals: Option<&dyn crate::HostTerminals>,
         context: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let workspace = context.workspace().ok_or_else(|| {
@@ -158,12 +174,37 @@ impl ShellPlan {
             .revalidate(&self.resolved_cwd)
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
         let max_output_bytes = self.execution.output_limits().max_output_bytes();
-        let run = execute_with_progress(kind, self.execution, context).await?;
+        let mut metadata = ToolMetadata::new().operation(OperationKind::Execute);
+        // Only `bash` runs in host terminals; there it must, see `host_command`.
+        let hosted = match (kind, host_terminals) {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            (ShellKind::Bash, Some(terminals)) => Some((
+                terminals,
+                crate::host_terminals::host_command(&self.execution).map_err(map_app_error)?,
+            )),
+            _ => None,
+        };
+        let run = match hosted {
+            Some((terminals, command)) => {
+                let (run, terminal) = crate::host_terminals::run(
+                    terminals,
+                    command,
+                    self.execution.output_limits().timeout(),
+                    context.cancellation(),
+                    context.progress(),
+                )
+                .await
+                .map_err(map_app_error)?;
+                metadata = metadata.host_terminal(terminal);
+                run
+            }
+            None => execute_with_progress(kind, self.execution, context).await?,
+        };
         // Taken before `limit_data`, which may drop the structured view.
         let process = run.data().map(|outcome| outcome.process.clone());
         let mut output = run
             .limit_data(max_output_bytes)?
-            .into_tool_output(ToolMetadata::new().operation(OperationKind::Execute))?;
+            .into_tool_output(metadata)?;
         if let Some(process) = process {
             output = output.with_process_result(process);
         }
@@ -276,7 +317,8 @@ impl Tool for SdkShellTool {
                                 self.kind.name(),
                             );
                         }
-                        plan.execute(self.kind, &context).await
+                        plan.execute(self.kind, self.host_terminals.as_deref(), &context)
+                            .await
                     })
                 },
             ))

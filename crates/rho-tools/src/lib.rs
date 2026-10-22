@@ -15,7 +15,9 @@ pub mod cancellation;
 pub mod document;
 mod edit_format;
 mod file_view;
+mod host;
 mod host_files;
+mod host_terminals;
 pub mod image_format;
 mod image_preview;
 mod path_glob;
@@ -66,7 +68,11 @@ pub mod write_file;
 pub use cancellation::RunCancellation;
 pub use edit_format::EditFormat;
 pub use file_view::{FileViewPolicy, FileViewStyle};
-pub use host_files::{HostError, HostFuture, HostTextFiles};
+pub use host::{HostError, HostFuture};
+pub use host_files::HostTextFiles;
+pub use host_terminals::{
+    HostCommand, HostExitStatus, HostTerminal, HostTerminalOutput, HostTerminals,
+};
 pub use image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 pub use image_preview::decode_preview_image;
 pub use process_env::apply_process_environment;

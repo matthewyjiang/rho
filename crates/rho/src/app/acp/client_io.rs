@@ -11,7 +11,7 @@ use std::{
 
 use agent_client_protocol::schema::v1::SessionId;
 
-use super::{client_files::ClientFiles, AcpStartup};
+use super::{client_files::ClientFiles, client_terminals::ClientTerminals, AcpStartup};
 use crate::tools::host_io::HostIo;
 
 /// One session's host I/O. Each part is `None` unless the host advertised it.
@@ -19,6 +19,7 @@ use crate::tools::host_io::HostIo;
 pub(super) struct ClientIo {
     pub(super) session_id: SessionId,
     files: Option<Arc<ClientFiles>>,
+    terminals: Option<Arc<ClientTerminals>>,
 }
 
 impl ClientIo {
@@ -34,6 +35,7 @@ impl ClientIo {
     ) -> Self {
         Self {
             files: ClientFiles::for_session(startup, &session_id, cwd, host_dirs),
+            terminals: ClientTerminals::for_session(startup, &session_id),
             session_id,
         }
     }
@@ -44,6 +46,7 @@ impl ClientIo {
         Self {
             session_id,
             files: None,
+            terminals: None,
         }
     }
 
@@ -54,6 +57,25 @@ impl ClientIo {
                 .files
                 .clone()
                 .map(|files| files as Arc<dyn rho_tools::HostTextFiles>),
+            terminals: self
+                .terminals
+                .clone()
+                .map(|terminals| terminals as Arc<dyn rho_tools::HostTerminals>),
+        }
+    }
+
+    /// Releases host terminals whose calls ended. Call it once the last card
+    /// update of a prompt was sent; see `client_terminals`.
+    pub(super) async fn release_finished_terminals(&self) {
+        if let Some(terminals) = &self.terminals {
+            terminals.release_finished().await;
+        }
+    }
+
+    /// Releases every host terminal, stopping commands still running.
+    pub(super) async fn release_all_terminals(&self) {
+        if let Some(terminals) = &self.terminals {
+            terminals.release_all().await;
         }
     }
 }

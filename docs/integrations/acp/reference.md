@@ -34,6 +34,7 @@ Rho reads these host capabilities:
 | `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation. See [Questions](#questions). |
 | `clientCapabilities.elicitation.url` | OAuth sign-in through `authenticate`. See [Authentication](#authentication). |
 | `clientCapabilities.fs.readTextFile` and `.writeTextFile` | File text through `fs/*`, when both are advertised. See [Host files](#host-files). |
+| `clientCapabilities.terminal` | `bash` calls in host terminals through `terminal/*`. See [Host terminals](#host-terminals). |
 | `clientInfo.name` `t3-code` | T3 Code's [question form shape](#t3-code-forms). |
 
 ## Authentication
@@ -294,6 +295,20 @@ A host that advertises both `clientCapabilities.fs.readTextFile` and `.writeText
 - A failed `fs/*` request fails the tool call with the host's error. Rho does not retry on disk, which could clobber the host's copy.
 - A multi-file `edit` that is cancelled after its writes began still finishes them, rolling back if a later file fails, so cancelling never leaves only some files changed. Rho's later writes to the same path wait for it, then find the file changed instead of being overwritten.
 - Delegated Rho agents read and write through the same host, with their parent session's `sessionId`.
+
+## Host terminals
+
+A host that advertises `clientCapabilities.terminal`, such as Zed, runs each `bash` call in a terminal it shows on the call's card. Approval and permission modes apply first, as for a local command.
+
+- `terminal/create` names `env` with `args` `["-u", NAME, ..., "bash", "-c", script]`, the command's working directory with symlinks resolved, `env` setting `PAGER` and `GIT_PAGER` to `cat`, and `outputByteLimit` set to Rho's tool output budget (`max_output_bytes`, 64,000 bytes by default). The script is a non-login `bash -c`, since hosts such as Zed start commands from the user's shell environment.
+- The command runs as it would locally, though the host gives it a terminal: the script starts with `exec </dev/null`, so a command that prompts for input fails instead of waiting, and pagers print instead of waiting for keys. Locally Rho keeps provider credential variables out of commands; ACP can only add variables, so `env -u` removes them before `bash` starts, where neither its startup files nor the command can see them.
+- From the call's first update after `terminal/create`, its `tool_call_update`s carry `{"type": "terminal", "terminalId": ...}` content instead of text progress, including the final `completed` or `failed` update. A call that fails for a reason the terminal cannot show, such as a timeout, adds that error's first line as text after the terminal.
+- Rho waits with `terminal/wait_for_exit`, then reads `terminal/output`, which becomes the model's result. stdout and stderr arrive interleaved. When the host dropped the oldest output to stay within the limit, the result says so; output that leaves no room for the exit status loses more of its oldest lines, never the newest.
+- When `timeout_seconds` passes, Rho sends `terminal/kill`, reads the output, and fails the call with the timeout and that output. `session/cancel` sends `terminal/kill`, and requests still waiting are withdrawn with `$/cancel_request`. A call that ends before its command exits, for whatever reason, sends `terminal/kill` as it ends.
+- Rho sends `terminal/release` only after the call's final update: when the prompt ends, for every terminal whose call ended. A terminal still running then, such as a delegated agent's, is released when the first prompt after it finishes ends. `session/close` releases every terminal Rho knows of, which stops commands still running. A terminal the host creates after its call was cancelled is released as soon as its `terminal/create` reply arrives.
+- A failed `terminal/create` fails the call with the host's error. A failed `terminal/wait_for_exit` also sends `terminal/kill`. Rho does not run the command itself, which could bypass a sandbox the host applies to its terminals; for the same reason, a `bash` call whose environment policy `env -u` cannot express fails instead of running locally.
+- Delegated Rho agents run their `bash` calls in host terminals too. Their calls are not cards in the session, so the host does not show those terminals.
+- Background commands of the `process` tool and Windows `powershell` calls run locally.
 
 ## Background results
 

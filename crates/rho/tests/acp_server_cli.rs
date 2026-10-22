@@ -31,6 +31,12 @@ mod auth_required;
 #[path = "support/acp_client_files_tests.rs"]
 mod client_files;
 
+// Only `bash` runs in host terminals; Windows has `powershell`, which runs
+// locally.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "support/acp_client_terminals_tests.rs"]
+mod client_terminals;
+
 #[path = "support/acp_compaction_cards_tests.rs"]
 mod compaction_cards;
 

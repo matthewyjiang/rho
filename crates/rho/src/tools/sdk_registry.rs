@@ -108,8 +108,9 @@ impl ToolSetOptions {
         }
     }
 
-    /// What the host does in place of local disk. File tools and delegated
-    /// Rho agents use it.
+    /// What the host does in place of local disk and processes: file tools
+    /// use its files, the shell tool its terminals, and delegated Rho agents
+    /// both.
     pub(crate) fn host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
         self.host_io = host_io;
         self
