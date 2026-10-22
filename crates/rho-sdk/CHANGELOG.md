@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.14.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.13.0...rho-sdk-v5.14.0) (2026-10-22)
+
+
+### Features
+
+* **acp:** report max_tokens and refusal stop reasons from provider finishes ([#1599](https://github.com/matthewyjiang/rho/issues/1599)) ([20c3f91](https://github.com/matthewyjiang/rho/commit/20c3f913f7a739855a3ea344b54c1c2023883c11))
+* **acp:** run shell commands in client terminals ([#1602](https://github.com/matthewyjiang/rho/issues/1602)) ([12f1f2c](https://github.com/matthewyjiang/rho/commit/12f1f2c99dfd01f5863efa8c51c5b4d7f41671fc))
+
 ## [5.13.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.12.2...rho-sdk-v5.13.0) (2026-10-21)
 
 

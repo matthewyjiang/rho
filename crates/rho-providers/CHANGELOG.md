@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.24.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.23.0...rho-providers-v2.24.0) (2026-10-22)
+
+
+### Features
+
+* **acp:** let hosts log out of rho without reconnecting ([#1595](https://github.com/matthewyjiang/rho/issues/1595)) ([e28656f](https://github.com/matthewyjiang/rho/commit/e28656ff888593c4656786a01e217546efabad27))
+* **acp:** report max_tokens and refusal stop reasons from provider finishes ([#1599](https://github.com/matthewyjiang/rho/issues/1599)) ([20c3f91](https://github.com/matthewyjiang/rho/commit/20c3f913f7a739855a3ea344b54c1c2023883c11))
+
 ## [2.23.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.22.0...rho-providers-v2.23.0) (2026-10-21)
 
 

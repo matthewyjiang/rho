@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.30.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.29.0...rho-coding-agent-v2.30.0) (2026-10-22)
+
+
+### Features
+
+* **acp:** add message IDs, precise tool kinds and line locations, and client info ([#1596](https://github.com/matthewyjiang/rho/issues/1596)) ([8461f7d](https://github.com/matthewyjiang/rho/commit/8461f7d59df5c6169ae39334fe9783a7ee28aa33))
+* **acp:** let hosts log out of rho without reconnecting ([#1595](https://github.com/matthewyjiang/rho/issues/1595)) ([e28656f](https://github.com/matthewyjiang/rho/commit/e28656ff888593c4656786a01e217546efabad27))
+* **acp:** read and write text files through client fs ([#1600](https://github.com/matthewyjiang/rho/issues/1600)) ([8a71f5f](https://github.com/matthewyjiang/rho/commit/8a71f5f87c0cc3f3c72a31768d3ce94af7f20e34))
+* **acp:** report max_tokens and refusal stop reasons from provider finishes ([#1599](https://github.com/matthewyjiang/rho/issues/1599)) ([20c3f91](https://github.com/matthewyjiang/rho/commit/20c3f913f7a739855a3ea344b54c1c2023883c11))
+* **acp:** run shell commands in client terminals ([#1602](https://github.com/matthewyjiang/rho/issues/1602)) ([12f1f2c](https://github.com/matthewyjiang/rho/commit/12f1f2c99dfd01f5863efa8c51c5b4d7f41671fc))
+
+
+### Bug Fixes
+
+* **acp:** idempotent session/delete, listed workspace roots, and session/resume ([#1597](https://github.com/matthewyjiang/rho/issues/1597)) ([0f39672](https://github.com/matthewyjiang/rho/commit/0f396726a8ff490778e0c5fe08e143dcb1d1a5af))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.23.0 to 2.24.0
+
 ## [2.29.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.28.0...rho-coding-agent-v2.29.0) (2026-10-21)
 
 
