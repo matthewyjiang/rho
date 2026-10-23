@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.15.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.14.0...rho-agent-tools-v1.15.0) (2026-10-22)
+
+
+### Features
+
+* **acp:** apply patches through client fs ([#1601](https://github.com/matthewyjiang/rho/issues/1601)) ([253c07f](https://github.com/matthewyjiang/rho/commit/253c07f45ef8721af2d7d4a281b497dc5abe2ef7))
+* **acp:** read and write text files through client fs ([#1600](https://github.com/matthewyjiang/rho/issues/1600)) ([8a71f5f](https://github.com/matthewyjiang/rho/commit/8a71f5f87c0cc3f3c72a31768d3ce94af7f20e34))
+* **acp:** report max_tokens and refusal stop reasons from provider finishes ([#1599](https://github.com/matthewyjiang/rho/issues/1599)) ([20c3f91](https://github.com/matthewyjiang/rho/commit/20c3f913f7a739855a3ea344b54c1c2023883c11))
+* **acp:** run shell commands in client terminals ([#1602](https://github.com/matthewyjiang/rho/issues/1602)) ([12f1f2c](https://github.com/matthewyjiang/rho/commit/12f1f2c99dfd01f5863efa8c51c5b4d7f41671fc))
+
 ## [1.14.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.13.0...rho-agent-tools-v1.14.0) (2026-10-21)
 
 
