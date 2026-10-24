@@ -184,13 +184,23 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
         |text: &str| PromptRequest::new(acp_session_id.clone(), vec![AcpContentBlock::from(text)]);
 
     let missing = host
-        .prompt(prompt("call a tool that does not exist"), &port, &startup)
+        .prompt(
+            prompt("call a tool that does not exist"),
+            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            &port,
+            &startup,
+        )
         .await
         .unwrap();
     let missing_cards = port.take_cards();
 
     let (blocked, ()) = tokio::join!(
-        host.prompt(prompt("run the blocker"), &port, &startup),
+        host.prompt(
+            prompt("run the blocker"),
+            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            &port,
+            &startup
+        ),
         async {
             started.notified().await;
             gate.cancel();

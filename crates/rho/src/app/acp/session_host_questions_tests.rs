@@ -370,7 +370,12 @@ async fn tool_questions_follow_the_hosts_answer() {
         let port = AskingPort::new(FormReply::Respond(action));
 
         let response = host
-            .prompt(prompt(&host, "ask"), &port, &startup)
+            .prompt(
+                prompt(&host, "ask"),
+                crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+                &port,
+                &startup,
+            )
             .await
             .unwrap();
 
@@ -398,10 +403,18 @@ async fn cancelling_the_prompt_withdraws_an_open_question() {
     let gate = host.cancel_handle();
     let request = prompt(&host, "ask");
 
-    let (response, ()) = tokio::join!(host.prompt(request, &port, &startup), async {
-        asked.recv().await.expect("the host is asked");
-        gate.cancel();
-    });
+    let (response, ()) = tokio::join!(
+        host.prompt(
+            request,
+            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            &port,
+            &startup
+        ),
+        async {
+            asked.recv().await.expect("the host is asked");
+            gate.cancel();
+        }
+    );
 
     assert_eq!(
         (
@@ -434,7 +447,12 @@ async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
     let port = AskingPort::new(FormReply::Respond(ElicitationAction::Decline));
 
     let response = host
-        .prompt(prompt(&host, "plan it"), &port, &startup)
+        .prompt(
+            prompt(&host, "plan it"),
+            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            &port,
+            &startup,
+        )
         .await
         .unwrap();
 
@@ -475,7 +493,12 @@ async fn a_cancel_before_the_handoff_keeps_plan_mode() {
     port.cancel_at_final_usage = Some(host.cancel_handle());
 
     let response = host
-        .prompt(prompt(&host, "plan it"), &port, &startup)
+        .prompt(
+            prompt(&host, "plan it"),
+            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            &port,
+            &startup,
+        )
         .await
         .unwrap();
 

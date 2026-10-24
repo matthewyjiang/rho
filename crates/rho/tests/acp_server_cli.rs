@@ -49,6 +49,9 @@ mod file_diffs;
 #[path = "support/acp_login.rs"]
 mod login;
 
+#[path = "support/acp_protocol_v2_tests.rs"]
+mod protocol_v2;
+
 #[path = "support/acp_questions_tests.rs"]
 mod questions;
 

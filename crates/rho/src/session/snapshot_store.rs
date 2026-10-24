@@ -249,6 +249,11 @@ impl Session {
         })
     }
 
+    /// The display transcript loading this session now would replay.
+    pub(crate) fn active_display_history(&self) -> anyhow::Result<Vec<Message>> {
+        self.with_session_tree(super::persistence::active_display_from_tree)
+    }
+
     pub(crate) fn snapshot_for_node(
         &self,
         target_id: &NodeId,

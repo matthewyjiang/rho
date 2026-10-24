@@ -626,13 +626,27 @@ pub(super) fn histories_from_tree(
     let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
         model: insert_interrupted_tool_placeholders(state.model.clone()),
-        display: insert_interrupted_tool_placeholders(
-            tree.projected_display(active_leaf_id)?
-                .into_iter()
-                .map(|entry| entry.message)
-                .collect(),
-        ),
+        display: display_at(tree, active_leaf_id)?,
     })
+}
+
+/// The display transcript a load of the active leaf replays.
+pub(super) fn active_display_from_tree(
+    tree: &super::tree::SessionTree,
+) -> anyhow::Result<Vec<Message>> {
+    match tree.active_leaf_id() {
+        Some(leaf) => display_at(tree, leaf),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn display_at(tree: &super::tree::SessionTree, node: &NodeId) -> anyhow::Result<Vec<Message>> {
+    Ok(insert_interrupted_tool_placeholders(
+        tree.projected_display(node)?
+            .into_iter()
+            .map(|entry| entry.message)
+            .collect(),
+    ))
 }
 
 pub(super) fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {

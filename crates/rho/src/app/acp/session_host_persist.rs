@@ -151,6 +151,30 @@ impl SessionHost {
         Ok(checkpoint)
     }
 
+    /// Saves the turn's user message before its run starts and returns the
+    /// ID a load replays it with. ACP v2 answers `session/prompt` with that
+    /// ID and requires replay to reuse it; saving first makes the message
+    /// the transcript's last row, which is what the ID is derived from.
+    pub(super) fn insert_user_message(
+        &mut self,
+        checkpoint: &TurnCheckpoint,
+    ) -> anyhow::Result<agent_client_protocol::schema::v1::MessageId> {
+        if !self.is_replaced() {
+            let snapshot = self.durable_snapshot();
+            let stored = self.stored()?.clone();
+            let mut display = checkpoint.0.lock_display();
+            if let Some(user) = display.unsaved_user.clone() {
+                stored.save_snapshot(&snapshot, std::slice::from_ref(&user))?;
+                display.unsaved_user = None;
+            }
+        }
+        let transcript = self.stored()?.active_display_history()?;
+        Ok(super::EventMapper::replayed_last_message_id(
+            &self.acp_session_id,
+            &transcript,
+        ))
+    }
+
     /// Saves the settled turn with the display rows its step checkpoints
     /// have not written yet. `assistant_text` is the reply to show when the
     /// turn's history rows could not be followed.

@@ -376,6 +376,14 @@ impl EventMapper {
         replay::history(session_id, messages, cwd, mcp_tools)
     }
 
+    /// The ID a load replays the last message of `display` with.
+    pub(super) fn replayed_last_message_id(
+        session_id: &SessionId,
+        display: &[rho_sdk::model::Message],
+    ) -> MessageId {
+        replay::last_message_id(session_id, display)
+    }
+
     /// A live agent message outside any run, such as a notice at load.
     pub(super) fn agent_notice(session_id: &SessionId, text: &str) -> SessionNotification {
         notify(session_id, Self::agent_message(text))
@@ -575,13 +583,24 @@ fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {
         }
     } else {
         content.extend(metadata.file_changes().iter().map(|change| {
-            ToolCallContent::Diff(
-                Diff::new(change.path(), change.new_text())
-                    .old_text(change.old_text().map(str::to_owned)),
-            )
+            let diff = Diff::new(change.path(), change.new_text())
+                .old_text(change.old_text().map(str::to_owned));
+            ToolCallContent::Diff(if change.is_deleted() {
+                diff.meta(deleted_file_meta())
+            } else {
+                diff
+            })
         }));
     }
     content
+}
+
+/// v1 diffs cannot tell a deleted file from an emptied one, so a deletion
+/// says so in `_meta`; ACP v2's structured changes read it.
+pub(super) const DELETED_FILE_META_KEY: &str = "rho/fileDeleted";
+
+fn deleted_file_meta() -> serde_json::Map<String, serde_json::Value> {
+    serde_json::Map::from_iter([(DELETED_FILE_META_KEY.to_owned(), true.into())])
 }
 
 fn display_row_call(row: &DisplayRow) -> ToolCall {

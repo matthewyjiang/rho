@@ -21,6 +21,9 @@ use agent_client_protocol::schema::v1::InitializeRequest;
 
 use super::AcpClientPort;
 
+/// T3 Code's `clientInfo.name`.
+const T3_CODE_CLIENT: &str = "t3-code";
+
 /// Features beyond the ACP baseline that the connected host accepts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::app) struct HostFeatures {
@@ -89,12 +92,16 @@ impl HostFeatures {
         let client = request.client_info.as_ref().map(|info| info.name.as_str());
         let forms = match (advertises_forms, client) {
             (false, _) => Forms::Unavailable,
-            (true, Some("t3-code")) => Forms::Available(FormDialect::T3Code),
+            (true, Some(T3_CODE_CLIENT)) => Forms::Available(FormDialect::T3Code),
             (true, _) => Forms::Available(FormDialect::Standard),
         };
+        // T3 Code drops `notice` updates it receives (its ACP v2 client files
+        // them as unknown), so it keeps notices as agent messages.
+        let notices = session.is_some_and(|session| session.notices.is_some())
+            && client != Some(T3_CODE_CLIENT);
         Self {
             compaction: session.is_some_and(|session| session.compaction.is_some()),
-            notices: session.is_some_and(|session| session.notices.is_some()),
+            notices,
             toggles,
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),

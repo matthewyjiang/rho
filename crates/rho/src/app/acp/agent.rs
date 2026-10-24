@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::{
+    prompt_acceptance::PromptAcceptance,
     session_host::{History, PromptGate, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
@@ -307,10 +308,14 @@ impl RhoAcpAgent {
 
     /// Runs one prompt. A title the prompt asks for is generated in the
     /// background and sent through `port`, which is why it is owned.
+    ///
+    /// `acceptance` reports the user message once the session inserts it;
+    /// a prompt refused as busy or ended by a closing session never does.
     pub(super) async fn prompt(
         self: &Arc<Self>,
         request: PromptRequest,
         port: Arc<dyn AcpClientPort>,
+        acceptance: PromptAcceptance,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
         match self
@@ -318,7 +323,9 @@ impl RhoAcpAgent {
             .await?
         {
             SessionHostLock::Ready(mut host) => {
-                let result = host.prompt(request, &*port, &self.startup).await;
+                let result = host
+                    .prompt(request, acceptance, &*port, &self.startup)
+                    .await;
                 if let Some(title) = host.take_title() {
                     let agent = Arc::clone(self);
                     tokio::spawn(async move { agent.report_title(title, &*port).await });

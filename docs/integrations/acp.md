@@ -47,7 +47,7 @@ Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`.
 
 ### Other hosts
 
-Point the host at `rho acp`. Rho speaks ACP protocol version 1 over stdio. stdout carries only protocol messages and logs go to stderr, so do not wrap the command in anything that prints to stdout.
+Point the host at `rho acp`. Rho speaks ACP protocol version 1, and the version 2 draft for hosts that ask for it, over stdio. stdout carries only protocol messages and logs go to stderr, so do not wrap the command in anything that prints to stdout.
 
 ## Sign in
 

@@ -99,7 +99,14 @@ async fn send(
     startup: &AcpStartup,
 ) -> anyhow::Result<()> {
     let request = PromptRequest::new(SessionId::new(id), vec![AcpContentBlock::from(text)]);
-    host.prompt(request, &SilentPort, startup).await.map(drop)
+    host.prompt(
+        request,
+        crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+        &SilentPort,
+        startup,
+    )
+    .await
+    .map(drop)
 }
 
 fn provider_failure(message: &str) -> ScriptedTurn {

@@ -53,6 +53,17 @@ pub(super) fn history(
         .collect()
 }
 
+/// The ID replay gives the last message of `display`, a session's display
+/// transcript. A live user message saved as that last row gets it too, so a
+/// host matching replayed messages to the ones it was sent finds them.
+pub(super) fn last_message_id(session_id: &SessionId, display: &[Message]) -> MessageId {
+    let mut ids = MessageIds::new(session_id);
+    for message in display {
+        ids.enter(message);
+    }
+    ids.next()
+}
+
 struct Replay<'a> {
     /// Session working directory; titles show paths relative to it.
     cwd: &'a Path,
