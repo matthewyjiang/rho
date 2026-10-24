@@ -369,20 +369,16 @@ impl EventMapper {
 
     pub(super) fn replay_history(
         session_id: &SessionId,
-        messages: &[rho_sdk::model::Message],
+        messages: &[crate::session::tree::ProjectedMessage],
         cwd: &Path,
         mcp_tools: &McpToolNames,
     ) -> Vec<SessionNotification> {
         replay::history(session_id, messages, cwd, mcp_tools)
     }
 
-    /// The ID a load replays `next` with, once it is saved after `display`.
-    pub(super) fn replayed_next_message_id(
-        session_id: &SessionId,
-        display: &[rho_sdk::model::Message],
-        next: &rho_sdk::model::Message,
-    ) -> MessageId {
-        replay::next_message_id(session_id, display, next)
+    /// The ID a load replays the display row saved at `origin` with.
+    pub(super) fn saved_message_id(origin: &crate::session::tree::DisplayRowOrigin) -> MessageId {
+        replay::saved_message_id(origin)
     }
 
     /// A live agent message outside any run, such as a notice at load.

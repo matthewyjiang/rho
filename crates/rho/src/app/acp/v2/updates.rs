@@ -76,6 +76,35 @@ fn session_update(update: v1::SessionUpdate) -> Result<Option<v2::SessionUpdate>
     }))
 }
 
+/// For a message chunk, its message ID and the update that resets that
+/// message to no content. v2 requires one before a replayed message's
+/// chunks, since a host appends chunks to content it already holds.
+pub(super) fn reset(
+    notification: &v2::UpdateSessionNotification,
+) -> Option<(v2::MessageId, v2::UpdateSessionNotification)> {
+    use v2::SessionUpdate as V2;
+    let (message_id, update) = match &notification.update {
+        V2::UserMessageChunk(chunk) => (
+            &chunk.message_id,
+            V2::UserMessage(v2::UserMessage::new(chunk.message_id.clone()).content(Vec::new())),
+        ),
+        V2::AgentMessageChunk(chunk) => (
+            &chunk.message_id,
+            V2::AgentMessage(v2::AgentMessage::new(chunk.message_id.clone()).content(Vec::new())),
+        ),
+        V2::AgentThoughtChunk(chunk) => (
+            &chunk.message_id,
+            V2::AgentThought(v2::AgentThought::new(chunk.message_id.clone()).content(Vec::new())),
+        ),
+        _ => return None,
+    };
+    Some((
+        message_id.clone(),
+        v2::UpdateSessionNotification::new(notification.session_id.clone(), update)
+            .meta(notification.meta.clone()),
+    ))
+}
+
 /// Rho names every message chunk it sends; v2 requires the name.
 fn content_chunk(chunk: v1::ContentChunk) -> Result<v2::ContentChunk, AcpError> {
     let Some(message_id) = chunk.message_id else {

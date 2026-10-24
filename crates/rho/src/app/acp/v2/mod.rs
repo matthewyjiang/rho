@@ -88,7 +88,7 @@ pub(super) fn agent(agent: Arc<LazyAgent>) -> impl ConnectTo<Client> {
                             responder: Responder<v2::ResumeSessionResponse>,
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
-                    let port = V2Port::new(cx.clone());
+                    let port = V2Port::replaying(cx.clone());
                     cx.spawn(async move { resume(&agent, request, responder, &port).await })
                 }
             },

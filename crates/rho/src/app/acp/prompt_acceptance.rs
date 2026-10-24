@@ -4,7 +4,7 @@
 //! ACP v2 answers once the message is inserted, with the message's ID, and
 //! requires a replay to reuse that ID. A prompt whose message is saved (a
 //! model turn, before its run starts, or a workflow start) is accepted as the
-//! save lands, with the ID replay derives from the transcript; see
+//! save lands, with the ID replay derives from the saved row; see
 //! `SessionHost::save_prompt_rows`. A command that saves nothing, such as
 //! `/compact`, is accepted with a fresh ID, since nothing of it is replayed.
 

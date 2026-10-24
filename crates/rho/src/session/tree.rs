@@ -23,6 +23,23 @@ use super::persistence::{
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionSummary};
 
+/// Where a projected display row was saved: row `row` of node `node`, a
+/// compaction node's notice following its saved rows. Unique to one insertion
+/// even when the same text is saved twice, and the same on every load.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DisplayRowOrigin {
+    pub(crate) node: NodeId,
+    pub(crate) row: usize,
+}
+
+/// A display message a load replays, with where it was saved; `None` for
+/// rows the load adds, such as placeholders for interrupted tool calls.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ProjectedMessage {
+    pub(crate) origin: Option<DisplayRowOrigin>,
+    pub(crate) message: rho_providers::model::Message,
+}
+
 /// Stable identity for one durable state in a session tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
@@ -390,9 +407,30 @@ impl SessionTree {
         &self,
         target_id: &NodeId,
     ) -> anyhow::Result<Vec<StoredDisplayMessage>> {
+        Ok(self
+            .projected_display_rows(target_id)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect())
+    }
+
+    /// [`Self::projected_display`] with the place each row was saved.
+    pub(crate) fn projected_display_rows(
+        &self,
+        target_id: &NodeId,
+    ) -> anyhow::Result<Vec<(DisplayRowOrigin, StoredDisplayMessage)>> {
         let mut display = Vec::new();
         for node in self.path_to(target_id)? {
-            display.extend(node.display_messages().iter().cloned());
+            let origin = |row| DisplayRowOrigin {
+                node: node.id().clone(),
+                row,
+            };
+            display.extend(
+                node.display_messages()
+                    .iter()
+                    .enumerate()
+                    .map(|(row, message)| (origin(row), message.clone())),
+            );
             if node.kind() == SessionNodeKind::Compaction {
                 let detail = if let Some(facts) = node.compaction_facts() {
                     let cost = facts.cost_usd_micros.map_or_else(String::new, |micros| {
@@ -416,12 +454,15 @@ impl SessionTree {
                         _ => String::new(),
                     }
                 };
-                display.push(StoredDisplayMessage {
-                    timestamp: node.record.timestamp.clone(),
-                    message: rho_providers::model::Message::assistant_text(format!(
-                        "◆ Compacted context{detail}"
-                    )),
-                });
+                display.push((
+                    origin(node.display_messages().len()),
+                    StoredDisplayMessage {
+                        timestamp: node.record.timestamp.clone(),
+                        message: rho_providers::model::Message::assistant_text(format!(
+                            "◆ Compacted context{detail}"
+                        )),
+                    },
+                ));
             }
         }
         Ok(display)

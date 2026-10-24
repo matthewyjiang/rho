@@ -1,7 +1,7 @@
 //! The [`AcpClientPort`] of an ACP v2 connection: Rho's session hosts speak
 //! v1, and this port rewrites what they send into v2.
 
-use std::{future::Future, pin::Pin};
+use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex};
 
 use agent_client_protocol::schema::{v1, v2};
 use agent_client_protocol::{Client, Error as AcpError, V2ConnectionTo};
@@ -11,11 +11,23 @@ use crate::app::acp::AcpClientPort;
 
 pub(super) struct V2Port {
     cx: V2ConnectionTo<Client>,
+    /// On a port replaying history, the messages it has reset so far.
+    replayed: Option<Mutex<HashSet<v2::MessageId>>>,
 }
 
 impl V2Port {
     pub(super) fn new(cx: V2ConnectionTo<Client>) -> Self {
-        Self { cx }
+        Self { cx, replayed: None }
+    }
+
+    /// A port for a replay. v2 hosts append chunks to a message they already
+    /// hold, so before a replayed message's first chunk this port sends the
+    /// message with no content, which resets it; see [`updates::reset`].
+    pub(super) fn replaying(cx: V2ConnectionTo<Client>) -> Self {
+        Self {
+            cx,
+            replayed: Some(Mutex::default()),
+        }
     }
 
     /// Sends a v2-only update, such as a `state_update`.
@@ -39,7 +51,20 @@ impl AcpClientPort for V2Port {
     ) -> Pin<Box<dyn Future<Output = Result<(), AcpError>> + Send + '_>> {
         Box::pin(async move {
             match updates::notification(notification) {
-                Ok(Some(notification)) => self.cx.send_notification(notification),
+                Ok(Some(notification)) => {
+                    if let Some(replayed) = &self.replayed {
+                        let reset = updates::reset(&notification).filter(|(message, _)| {
+                            replayed
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .insert(message.clone())
+                        });
+                        if let Some((_, reset)) = reset {
+                            self.cx.send_notification(reset)?;
+                        }
+                    }
+                    self.cx.send_notification(notification)
+                }
                 Ok(None) => Ok(()),
                 // A card the host cannot draw must not fail the turn that
                 // produced it, so it is dropped and logged instead.

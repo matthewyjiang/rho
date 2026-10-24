@@ -44,6 +44,17 @@ impl Session {
         Ok(())
     }
 
+    /// [`Self::save_snapshot`], returning the saved node, whose display rows
+    /// are `display_tail` in order.
+    pub(crate) fn save_snapshot_node(
+        &self,
+        snapshot: &SessionSnapshot,
+        display_tail: &[Message],
+    ) -> anyhow::Result<NodeId> {
+        let (node, _) = self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        Ok(node)
+    }
+
     pub(crate) fn save_compaction_snapshot(
         &self,
         snapshot: &SessionSnapshot,
@@ -64,12 +75,14 @@ impl Session {
         Ok(())
     }
 
+    /// Saves `snapshot` as a node after the active leaf; returns the node and,
+    /// when it could be built, its mirrored index record.
     fn save_snapshot_with_compaction_facts(
         &self,
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
         supplied_compaction_facts: Option<StoredCompactionFacts>,
-    ) -> anyhow::Result<Option<super::SessionIndexRecord>> {
+    ) -> anyhow::Result<(NodeId, Option<super::SessionIndexRecord>)> {
         if snapshot.session_id().as_str() != self.id {
             anyhow::bail!(
                 "snapshot session id '{}' does not match store id '{}'",
@@ -136,8 +149,9 @@ impl Session {
             &node_timestamp,
         );
 
+        let id = NodeId::new();
         let node = SessionNode {
-            id: NodeId::new(),
+            id: id.clone(),
             parent_id,
             timestamp: node_timestamp,
             kind,
@@ -149,7 +163,7 @@ impl Session {
         self.commit_tree_entry(&mut cursor, &mut tree, SessionEntry::Node { node })?;
         let record = self.record_mirrored_index(&tree);
         store_cached_tree(&mut cursor, &self.path, tree);
-        Ok(record)
+        Ok((id, record))
     }
 
     fn record_mirrored_index(&self, tree: &SessionTree) -> Option<super::SessionIndexRecord> {
@@ -174,6 +188,7 @@ impl Session {
         display_tail: &[Message],
     ) -> anyhow::Result<super::SessionIndexRecord> {
         self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?
+            .1
             .ok_or_else(|| anyhow::anyhow!("save produced no mirrored index record"))
     }
 
@@ -249,8 +264,11 @@ impl Session {
         })
     }
 
-    /// The display transcript loading this session now would replay.
-    pub(crate) fn active_display_history(&self) -> anyhow::Result<Vec<Message>> {
+    /// The display transcript loading this session now would replay, with
+    /// where each row was saved.
+    pub(crate) fn active_display_history(
+        &self,
+    ) -> anyhow::Result<Vec<super::tree::ProjectedMessage>> {
         self.with_session_tree(super::persistence::active_display_from_tree)
     }
 

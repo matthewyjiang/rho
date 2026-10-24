@@ -40,7 +40,10 @@ use super::{EventMapper, SessionHost};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
-    session::{tree::NodeId, Session as StoredSession},
+    session::{
+        tree::{DisplayRowOrigin, NodeId},
+        Session as StoredSession,
+    },
     tools::todo::TodoState,
 };
 
@@ -172,31 +175,21 @@ impl SessionHost {
     }
 
     /// Saves `rows`, whose first is the prompt's user message, and accepts
-    /// the prompt with the ID a load replays that message with. The ID is
-    /// derived before the save, from the transcript the message follows, so
-    /// a prompt is never refused after its message was saved. A replaced
-    /// host saves nothing and accepts with an unreplayed ID.
+    /// the prompt with the ID a load replays that message with: the first
+    /// row of the node the save adds. A replaced host saves nothing and
+    /// accepts with an unreplayed ID.
     pub(super) fn save_prompt_rows(&mut self, rows: &[Message]) -> anyhow::Result<()> {
-        if self.is_replaced() {
+        if self.is_replaced() || rows.is_empty() {
             self.acceptance.accept_unreplayed();
             return Ok(());
         }
-        let stored = self.stored()?.clone();
-        let id = match rows.first() {
-            Some(user) if self.acceptance.wants_id() => {
-                Some(EventMapper::replayed_next_message_id(
-                    &self.acp_session_id,
-                    &stored.active_display_history()?,
-                    user,
-                ))
-            }
-            _ => None,
-        };
-        stored.save_snapshot(&self.durable_snapshot(), rows)?;
-        match id {
-            Some(id) => self.acceptance.accept(id),
-            None => self.acceptance.accept_unreplayed(),
-        }
+        let snapshot = self.durable_snapshot();
+        let node = self.stored()?.save_snapshot_node(&snapshot, rows)?;
+        self.acceptance
+            .accept(EventMapper::saved_message_id(&DisplayRowOrigin {
+                node,
+                row: 0,
+            }));
         Ok(())
     }
 

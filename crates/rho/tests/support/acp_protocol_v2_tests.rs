@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
@@ -50,6 +52,30 @@ impl AcpServer {
             if let (Some(reply), true) = (&reply, idle) {
                 return (reply.clone(), updates);
             }
+        }
+    }
+}
+
+/// Applies `updates` to message texts as a v2 host holds them by ID: a whole
+/// message replaces its content, and a chunk appends to it.
+fn hold_messages(held: &mut BTreeMap<String, String>, updates: &[Value]) {
+    let text = |block: &Value| block["text"].as_str().unwrap_or_default().to_owned();
+    for update in updates {
+        let Some(id) = update["messageId"].as_str() else {
+            continue;
+        };
+        match update["sessionUpdate"].as_str() {
+            Some("user_message" | "agent_message" | "agent_thought") => {
+                if let Some(content) = update["content"].as_array() {
+                    held.insert(id.to_owned(), content.iter().map(text).collect());
+                }
+            }
+            Some("user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk") => {
+                held.entry(id.to_owned())
+                    .or_default()
+                    .push_str(&text(&update["content"]));
+            }
+            _ => {}
         }
     }
 }
@@ -187,8 +213,9 @@ fn v2_prompt_reports_its_lifecycle_through_state_updates() {
 // Covers: v2 reserves an error answer to `session/prompt` for prompts that
 // were never inserted, so a refused prompt gets no updates; `session/resume`
 // with `replayFrom: start` replays the conversation, keeping each user
-// message's ID, and then reports the current state before answering; an
-// unknown replay cursor is invalid params.
+// message's ID and resetting each message before its chunks, so a host that
+// still holds it does not append the replay to it, and then reports the
+// current state before answering; an unknown replay cursor is invalid params.
 // Owner: ACP v2 boundary, over the real stdio server
 #[test]
 fn v2_resume_replays_and_refused_prompts_send_nothing() {
@@ -208,8 +235,10 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
         .0
         .unwrap();
     let session_id = created["sessionId"].as_str().unwrap().to_owned();
-    let (reply, _) = server.prompt_v2(&session_id, "read the shared notes");
+    let (reply, live) = server.prompt_v2(&session_id, "read the shared notes");
     let message_id = reply.unwrap()["messageId"].clone();
+    let mut held = BTreeMap::new();
+    hold_messages(&mut held, &live);
     server
         .request("session/close", json!({"sessionId": session_id}))
         .0
@@ -227,9 +256,15 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
     );
     resumed.unwrap();
     let kinds = kinds(&replay);
-    assert_eq!(kinds.first(), Some(&"user_message_chunk"), "{replay:#?}");
+    assert_eq!(
+        kinds[..2],
+        ["user_message", "user_message_chunk"],
+        "{replay:#?}"
+    );
     // A replayed user message keeps the ID its prompt was answered with.
     assert_eq!(replay[0]["messageId"], message_id);
+    hold_messages(&mut held, &replay);
+    assert_eq!(held[message_id.as_str().unwrap()], "read the shared notes");
     assert!(kinds.contains(&"tool_call_update"), "{kinds:?}");
     assert_eq!(
         replay.last().unwrap(),

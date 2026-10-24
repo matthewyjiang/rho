@@ -1,7 +1,7 @@
 //! Git `--patch` text for one file change, in ACP v2's `git_patch` format:
 //! Git's layout, but with absolute paths and no `a/`/`b/` prefixes.
 
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use similar::TextDiff;
 
@@ -13,6 +13,9 @@ pub(super) enum FileContents<'a> {
     Deleted(&'a str),
 }
 
+/// How long one file's diff may search for a minimal patch.
+const PATCH_DIFF_DEADLINE: Duration = Duration::from_millis(250);
+
 /// The patch for the change to the file at `path`. `None` when there is
 /// nothing to render or the path needs Git's quoting, which v2 makes
 /// optional: the change list stays authoritative.
@@ -23,7 +26,12 @@ pub(super) fn file_patch(path: &Path, contents: FileContents<'_>) -> Option<Stri
         FileContents::Modified { old, new } => ("", path, path, old, new),
         FileContents::Deleted(old) => ("deleted file mode 100644\n", path, "/dev/null", old, ""),
     };
-    let hunks = TextDiff::from_lines(old, new)
+    // Runs inside the update's send. Repetitive 50,000-line rewrites took
+    // under 100 ms in a release build; past the deadline the diff is still
+    // valid, only less minimal.
+    let hunks = TextDiff::configure()
+        .timeout(PATCH_DIFF_DEADLINE)
+        .diff_lines(old, new)
         .unified_diff()
         .header(from, to)
         .to_string();

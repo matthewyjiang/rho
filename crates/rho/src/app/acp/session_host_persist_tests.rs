@@ -549,7 +549,8 @@ fn recording(ids: &Arc<std::sync::Mutex<Vec<String>>>) -> PromptAcceptance {
 
 // Covers: ACP v2 requires a replayed user message to keep the ID its prompt
 // was answered with: model turns, including one that ran a tool, and a
-// workflow start, which saves its prompt without a turn.
+// workflow start, which saves its prompt without a turn. A prompt retried
+// with the same text after a refusal rolled it back is a new message.
 // Owner: ACP session host prompt insertion
 #[tokio::test]
 async fn accepted_user_message_ids_survive_replay() {
@@ -572,6 +573,13 @@ async fn accepted_user_message_ids_survive_replay() {
             )])),
             reply("first"),
             reply("second"),
+            ScriptedTurn::streaming(
+                vec![rho_sdk::model::ModelEvent::stop_reason(
+                    rho_sdk::model::ModelStopReason::Refusal,
+                )],
+                ModelResponse::Assistant(vec![ContentBlock::Text("refused".into())]),
+            ),
+            reply("answered"),
         ],
     ));
     let id = "replay-ids".to_owned();
@@ -586,7 +594,7 @@ async fn accepted_user_message_ids_survive_replay() {
     .await;
 
     let accepted = Arc::new(std::sync::Mutex::new(Vec::new()));
-    for text in ["call a tool", "and again"] {
+    for text in ["call a tool", "and again", "retry", "retry"] {
         let request = PromptRequest::new(SessionId::new(&*id), vec![AcpContentBlock::from(text)]);
         host.prompt(request, recording(&accepted), &SilentPort, &startup)
             .await
@@ -600,12 +608,12 @@ async fn accepted_user_message_ids_survive_replay() {
     .unwrap();
     host.shutdown().await;
 
-    let (_, histories) =
+    let (stored, _) =
         StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id).unwrap();
     let mut replayed: Vec<String> = Vec::new();
     for notification in super::EventMapper::replay_history(
         &SessionId::new(&*id),
-        &histories.display,
+        &stored.active_display_history().unwrap(),
         home.path(),
         &Default::default(),
     ) {
@@ -622,6 +630,9 @@ async fn accepted_user_message_ids_survive_replay() {
             }
         }
     }
-    assert_eq!(replayed, *accepted.lock().unwrap());
-    assert_eq!(replayed.len(), 3);
+    let mut accepted = accepted.lock().unwrap().clone();
+    let refused = accepted.remove(2);
+    assert_eq!(replayed, accepted);
+    assert_eq!(replayed.len(), 4);
+    assert!(!replayed.contains(&refused));
 }

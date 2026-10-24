@@ -19,7 +19,7 @@ use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 
 use super::agent_identity::SessionAgentRole;
 use super::snapshot_delta::StoredSnapshotDelta;
-use super::tree::{NodeId, SessionNode, SessionTree};
+use super::tree::{NodeId, ProjectedMessage, SessionNode, SessionTree};
 use super::{index, Session, SessionHistories, SessionIndexRecord, SessionSummary};
 
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
@@ -626,27 +626,40 @@ pub(super) fn histories_from_tree(
     let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
         model: insert_interrupted_tool_placeholders(state.model.clone()),
-        display: display_at(tree, active_leaf_id)?,
+        display: insert_interrupted_tool_placeholders(
+            tree.projected_display(active_leaf_id)?
+                .into_iter()
+                .map(|entry| entry.message)
+                .collect(),
+        ),
     })
 }
 
-/// The display transcript a load of the active leaf replays.
+/// The display transcript a load of the active leaf replays, as
+/// [`histories_from_tree`] builds it, with where each row was saved.
 pub(super) fn active_display_from_tree(
     tree: &super::tree::SessionTree,
-) -> anyhow::Result<Vec<Message>> {
-    match tree.active_leaf_id() {
-        Some(leaf) => display_at(tree, leaf),
-        None => Ok(Vec::new()),
-    }
-}
-
-fn display_at(tree: &super::tree::SessionTree, node: &NodeId) -> anyhow::Result<Vec<Message>> {
-    Ok(insert_interrupted_tool_placeholders(
-        tree.projected_display(node)?
-            .into_iter()
-            .map(|entry| entry.message)
-            .collect(),
-    ))
+) -> anyhow::Result<Vec<ProjectedMessage>> {
+    let Some(leaf) = tree.active_leaf_id() else {
+        return Ok(Vec::new());
+    };
+    let mut messages = tree
+        .projected_display_rows(leaf)?
+        .into_iter()
+        .map(|(origin, row)| ProjectedMessage {
+            origin: Some(origin),
+            message: row.message,
+        })
+        .collect();
+    insert_interrupted_placeholders_by(
+        &mut messages,
+        |projected| &projected.message,
+        |_source, result| ProjectedMessage {
+            origin: None,
+            message: Message::ToolResult(result),
+        },
+    );
+    Ok(messages)
 }
 
 pub(super) fn read_session_state(path: &Path) -> anyhow::Result<PersistedSessionState> {
