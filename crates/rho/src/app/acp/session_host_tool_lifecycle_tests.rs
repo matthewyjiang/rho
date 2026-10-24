@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{
     future::Future,
     pin::Pin,
@@ -186,7 +187,7 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let missing = host
         .prompt(
             prompt("call a tool that does not exist"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup,
         )
@@ -197,7 +198,7 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let (blocked, ()) = tokio::join!(
         host.prompt(
             prompt("run the blocker"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup
         ),

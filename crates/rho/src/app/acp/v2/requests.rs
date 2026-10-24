@@ -9,10 +9,14 @@ use agent_client_protocol::Error as AcpError;
 
 use super::bridge;
 
+/// T3 Code's `info.name`.
+const T3_CODE_CLIENT: &str = "t3-code";
+
 /// `initialize` as v1 would have negotiated it. v2 made notices, compaction
 /// cards, and boolean config options baseline, so the v1 markers for them are
 /// set; v2 has no client `fs` or `terminal`, so Rho keeps file access and
-/// shell commands local.
+/// shell commands local. T3 Code's v2 client drops `notice` updates as
+/// unknown, so it keeps notices as agent messages.
 pub(super) fn initialize_request(
     request: &v2::InitializeRequest,
 ) -> Result<v1::InitializeRequest, AcpError> {
@@ -23,9 +27,10 @@ pub(super) fn initialize_request(
             .as_ref()
             .is_some_and(|auth| auth.terminal.is_some()),
     );
+    let notices = (request.info.name != T3_CODE_CLIENT).then(v1::NoticeCapabilities::new);
     let session = v1::ClientSessionCapabilities::new()
         .compaction(v1::CompactionCapabilities::new())
-        .notices(v1::NoticeCapabilities::new())
+        .notices(notices)
         .config_options(
             v1::SessionConfigOptionsCapabilities::new()
                 .boolean(v1::BooleanConfigOptionCapabilities::new()),

@@ -251,27 +251,18 @@ async fn resume(
     let session_id = request.session_id.clone();
     let started = async {
         let agent = agent.ready().await?;
-        let (config_options, start_commands, publication) =
-            match requests::resume_session_request(&request)? {
-                Reattach::Replay(request) => {
-                    let start = agent.load_session(request, port).await?;
-                    (
-                        start.response.config_options,
-                        start.commands,
-                        start.publication,
-                    )
-                }
-                Reattach::Resume(request) => {
-                    let start = agent.resume_session(request).await?;
-                    (
-                        start.response.config_options,
-                        start.commands,
-                        start.publication,
-                    )
-                }
-            };
-        let setup = requests::setup(config_options, start_commands)?;
-        Ok::<_, AcpError>((setup, publication))
+        let start = match requests::resume_session_request(&request)? {
+            Reattach::Replay(request) => agent
+                .load_session(request, port)
+                .await?
+                .map_response(|response| response.config_options),
+            Reattach::Resume(request) => agent
+                .resume_session(request)
+                .await?
+                .map_response(|response| response.config_options),
+        };
+        let setup = requests::setup(start.response, start.commands)?;
+        Ok::<_, AcpError>((setup, start.publication))
     };
     let (setup, publication) = match started.await {
         Ok(started) => started,

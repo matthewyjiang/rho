@@ -47,6 +47,21 @@ pub(super) struct SessionStart<Response> {
     pub(super) publication: PublicationGuard,
 }
 
+impl<Response> SessionStart<Response> {
+    /// The same start with its response mapped, such as to another
+    /// protocol version's form.
+    pub(super) fn map_response<Mapped>(
+        self,
+        map: impl FnOnce(Response) -> Mapped,
+    ) -> SessionStart<Mapped> {
+        SessionStart {
+            response: map(self.response),
+            commands: self.commands,
+            publication: self.publication,
+        }
+    }
+}
+
 /// One ACP session slot. The host stays in this mutex for its whole life, so a
 /// prompt never has to take it out of the map and put it back.
 ///

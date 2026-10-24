@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{
     future::Future,
     pin::Pin,
@@ -317,11 +318,7 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
             let request = prompt("hold");
             async move {
                 agent
-                    .prompt(
-                        request,
-                        port,
-                        crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
-                    )
+                    .prompt(request, port, PromptAcceptance::Implicit)
                     .await
             }
         });
@@ -357,7 +354,7 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
             .prompt(
                 prompt("write"),
                 Arc::clone(&port) as _,
-                crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+                PromptAcceptance::Implicit,
             )
             .await
             .unwrap();
@@ -410,7 +407,7 @@ async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
             .prompt(
                 PromptRequest::new(session_id.clone(), vec!["write".into()]),
                 Arc::clone(&port) as _,
-                crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+                PromptAcceptance::Implicit,
             )
             .await
             .unwrap();
@@ -451,7 +448,7 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
                 host.acp_session_id.clone(),
                 vec![AcpContentBlock::from("write")],
             ),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup,
         )

@@ -36,7 +36,7 @@ use rho_sdk::{
     RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
-use super::SessionHost;
+use super::{EventMapper, SessionHost};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
@@ -151,28 +151,53 @@ impl SessionHost {
         Ok(checkpoint)
     }
 
-    /// Saves the turn's user message before its run starts and returns the
-    /// ID a load replays it with. ACP v2 answers `session/prompt` with that
-    /// ID and requires replay to reuse it; saving first makes the message
-    /// the transcript's last row, which is what the ID is derived from.
+    /// Saves the turn's user message before its run starts, so the prompt
+    /// can be accepted with the ID a load replays it with. Only ACP v2 needs
+    /// that; v1's first step save writes the message instead.
     pub(super) fn insert_user_message(
         &mut self,
         checkpoint: &TurnCheckpoint,
-    ) -> anyhow::Result<agent_client_protocol::schema::v1::MessageId> {
-        if !self.is_replaced() {
-            let snapshot = self.durable_snapshot();
-            let stored = self.stored()?.clone();
-            let mut display = checkpoint.0.lock_display();
-            if let Some(user) = display.unsaved_user.clone() {
-                stored.save_snapshot(&snapshot, std::slice::from_ref(&user))?;
-                display.unsaved_user = None;
-            }
+    ) -> anyhow::Result<()> {
+        if !self.acceptance.wants_id() {
+            return Ok(());
         }
-        let transcript = self.stored()?.active_display_history()?;
-        Ok(super::EventMapper::replayed_last_message_id(
-            &self.acp_session_id,
-            &transcript,
-        ))
+        let mut display = checkpoint.0.lock_display();
+        let Some(user) = display.unsaved_user.clone() else {
+            self.acceptance.accept_unreplayed();
+            return Ok(());
+        };
+        self.save_prompt_rows(&[user])?;
+        display.mark_user_written();
+        Ok(())
+    }
+
+    /// Saves `rows`, whose first is the prompt's user message, and accepts
+    /// the prompt with the ID a load replays that message with. The ID is
+    /// derived before the save, from the transcript the message follows, so
+    /// a prompt is never refused after its message was saved. A replaced
+    /// host saves nothing and accepts with an unreplayed ID.
+    pub(super) fn save_prompt_rows(&mut self, rows: &[Message]) -> anyhow::Result<()> {
+        if self.is_replaced() {
+            self.acceptance.accept_unreplayed();
+            return Ok(());
+        }
+        let stored = self.stored()?.clone();
+        let id = match rows.first() {
+            Some(user) if self.acceptance.wants_id() => {
+                Some(EventMapper::replayed_next_message_id(
+                    &self.acp_session_id,
+                    &stored.active_display_history()?,
+                    user,
+                ))
+            }
+            _ => None,
+        };
+        stored.save_snapshot(&self.durable_snapshot(), rows)?;
+        match id {
+            Some(id) => self.acceptance.accept(id),
+            None => self.acceptance.accept_unreplayed(),
+        }
+        Ok(())
     }
 
     /// Saves the settled turn with the display rows its step checkpoints
@@ -462,6 +487,11 @@ impl TurnDisplay {
                 written: written + taken,
             },
         }
+    }
+
+    /// Records that the user's message was saved ahead of the turn's rows.
+    fn mark_user_written(&mut self) {
+        self.unsaved_user = None;
     }
 
     /// Records that a save wrote `pending`'s rows.

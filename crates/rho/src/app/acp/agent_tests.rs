@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{
     future::Future,
     path::PathBuf,
@@ -178,7 +179,7 @@ async fn missing_session_prompt_and_load_return_errors() {
         .prompt(
             PromptRequest::new(missing.clone(), Vec::new()),
             Arc::new(NullPort),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
         )
         .await
         .expect_err("missing prompt session");
@@ -371,7 +372,7 @@ async fn prompt_queued_during_replacement_moves_to_the_successor() {
     let prompt = agent.prompt(
         PromptRequest::new(session_id.clone(), Vec::new()),
         Arc::new(NullPort),
-        crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+        PromptAcceptance::Implicit,
     );
     tokio::pin!(prompt);
     assert!(futures_util::poll!(&mut prompt).is_pending());
@@ -746,11 +747,7 @@ async fn close_cancels_the_running_prompt_saves_it_and_frees_the_session() {
     let request = text_prompt(&session_id, "the codeword is zebra");
     let prompt = tokio::spawn(async move {
         prompt_agent
-            .prompt(
-                request,
-                Arc::new(NullPort),
-                crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
-            )
+            .prompt(request, Arc::new(NullPort), PromptAcceptance::Implicit)
             .await
     });
     tokio::time::timeout(Duration::from_secs(5), started.notified())
@@ -802,7 +799,7 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
     let prompt = agent.prompt(
         text_prompt(&session_id, "steer"),
         Arc::new(NullPort),
-        crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+        PromptAcceptance::Implicit,
     );
     tokio::pin!(prompt);
     assert!(futures_util::poll!(&mut prompt).is_pending());
@@ -881,7 +878,7 @@ async fn prompt_starting_as_close_lands_runs_no_turn() {
         Duration::from_secs(5),
         host.prompt(
             text_prompt(&session_id, "late"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &NullPort,
             &agent.startup,
         ),

@@ -1,6 +1,7 @@
 //! Questions put to the user over ACP: form elicitation for tools that ask,
 //! and the plan approval prompt that leaves plan mode.
 
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{
     future::Future,
     pin::Pin,
@@ -372,7 +373,7 @@ async fn tool_questions_follow_the_hosts_answer() {
         let response = host
             .prompt(
                 prompt(&host, "ask"),
-                crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+                PromptAcceptance::Implicit,
                 &port,
                 &startup,
             )
@@ -404,12 +405,7 @@ async fn cancelling_the_prompt_withdraws_an_open_question() {
     let request = prompt(&host, "ask");
 
     let (response, ()) = tokio::join!(
-        host.prompt(
-            request,
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
-            &port,
-            &startup
-        ),
+        host.prompt(request, PromptAcceptance::Implicit, &port, &startup),
         async {
             asked.recv().await.expect("the host is asked");
             gate.cancel();
@@ -449,7 +445,7 @@ async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
     let response = host
         .prompt(
             prompt(&host, "plan it"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup,
         )
@@ -495,7 +491,7 @@ async fn a_cancel_before_the_handoff_keeps_plan_mode() {
     let response = host
         .prompt(
             prompt(&host, "plan it"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup,
         )

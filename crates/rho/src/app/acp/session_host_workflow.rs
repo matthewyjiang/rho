@@ -102,9 +102,10 @@ impl SessionHost {
     }
 
     /// Adds the run id to model context and saves the prompt with `notice` as
-    /// its reply. A failed save rolls the context back so the live session
-    /// never holds history its file lacks. No SDK run happens here, so no turn
-    /// checkpoint is involved; a replaced host leaves the file to its successor.
+    /// its reply, which accepts the prompt. A failed save rolls the context
+    /// back so the live session never holds history its file lacks. No SDK
+    /// run happens here, so no turn checkpoint is involved; a replaced host
+    /// leaves the file to its successor.
     fn record_started(
         &mut self,
         display: &UserInput,
@@ -114,18 +115,11 @@ impl SessionHost {
         let session = self.built.session.clone();
         let before = session.history();
         session.append_message(Message::user_text(model))?;
-        if self.is_replaced() {
-            return Ok(());
-        }
         let display_rows = [
             Message::User(display.blocks().to_vec()),
             Message::assistant_text(notice),
         ];
-        let snapshot = self.durable_snapshot();
-        let saved = self
-            .stored()
-            .and_then(|stored| stored.save_snapshot(&snapshot, &display_rows));
-        if let Err(error) = saved {
+        if let Err(error) = self.save_prompt_rows(&display_rows) {
             session.replace_history(before)?;
             // ACP shows only the outermost message, so keep the cause inline.
             anyhow::bail!("workflow started, but could not save its run id: {error:#}");

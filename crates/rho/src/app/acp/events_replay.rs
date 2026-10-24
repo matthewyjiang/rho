@@ -53,12 +53,21 @@ pub(super) fn history(
         .collect()
 }
 
-/// The ID replay gives the last message of `display`, a session's display
-/// transcript. A live user message saved as that last row gets it too, so a
+/// The ID replay gives `next`, saved right after `display`, a session's
+/// display transcript. A live user message saved there gets it too, so a
 /// host matching replayed messages to the ones it was sent finds them.
-pub(super) fn last_message_id(session_id: &SessionId, display: &[Message]) -> MessageId {
+///
+/// Replay hashes the transcript as loaded, with placeholders for interrupted
+/// tool calls. Those are decided over the whole transcript, so a result a
+/// later turn adds under a reused call ID could change the ID; providers
+/// rarely reuse IDs across turns, and only that message's identity is lost.
+pub(super) fn next_message_id(
+    session_id: &SessionId,
+    display: &[Message],
+    next: &Message,
+) -> MessageId {
     let mut ids = MessageIds::new(session_id);
-    for message in display {
+    for message in display.iter().chain(std::iter::once(next)) {
         ids.enter(message);
     }
     ids.next()

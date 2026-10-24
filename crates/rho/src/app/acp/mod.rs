@@ -88,7 +88,7 @@ pub(super) struct AcpStartup {
     /// `logout`s so far, which mark sessions' credentials stale.
     pub(super) logouts: auth_logout::Logouts,
     /// The connection `initialize` arrived on, for host-served files and
-    /// terminals. `None` when the host skipped `initialize`.
+    /// terminals. `None` until `initialize` runs.
     pub(super) client: Option<Arc<dyn AcpClientPort>>,
 }
 

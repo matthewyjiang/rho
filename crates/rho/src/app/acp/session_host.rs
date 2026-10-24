@@ -224,7 +224,6 @@ impl SessionHost {
                 self.compact(instructions, client).await
             }
             Some(Ok(PromptAction::StartWorkflow(start))) => {
-                self.acceptance.accept_unreplayed();
                 self.start_workflow(&input, start, &startup.config, &startup.config_path, client)
                     .await
             }
@@ -558,20 +557,20 @@ impl SessionHost {
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         let checkpoint = self.install_turn_checkpoint(display, &model)?;
-        if self.acceptance.wants_id() {
-            let id = self.insert_user_message(&checkpoint)?;
-            self.acceptance.accept(|| id);
-        }
-        if let Some(notice) = self.load_notice.take() {
-            let notice =
-                EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
-            if let Err(error) = send_notification(client, notice).await {
-                tracing::debug!(%error, "could not send ACP load notice");
+        let result = match self.insert_user_message(&checkpoint) {
+            Ok(()) => {
+                if let Some(notice) = self.load_notice.take() {
+                    let notice =
+                        EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
+                    if let Err(error) = send_notification(client, notice).await {
+                        tracing::debug!(%error, "could not send ACP load notice");
+                    }
+                }
+                self.drive_run(&checkpoint, model, calls, displays, client)
+                    .await
             }
-        }
-        let result = self
-            .drive_run(&checkpoint, model, calls, displays, client)
-            .await;
+            Err(error) => Err(error),
+        };
         // The run is over, so the session is idle again.
         if let Err(error) = self.built.session.set_checkpoint_store(None) {
             tracing::warn!(%error, "could not remove ACP turn checkpoint store");

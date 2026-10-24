@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
@@ -163,7 +164,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     let (first, ()) = tokio::join!(
         host.prompt(
             prompt("run the experiments"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup
         ),
@@ -181,7 +182,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     let (second, ()) = tokio::join!(
         host.prompt(
             prompt("status?"),
-            crate::app::acp::prompt_acceptance::PromptAcceptance::Implicit,
+            PromptAcceptance::Implicit,
             &port,
             &startup
         ),

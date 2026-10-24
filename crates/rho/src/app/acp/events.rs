@@ -376,12 +376,13 @@ impl EventMapper {
         replay::history(session_id, messages, cwd, mcp_tools)
     }
 
-    /// The ID a load replays the last message of `display` with.
-    pub(super) fn replayed_last_message_id(
+    /// The ID a load replays `next` with, once it is saved after `display`.
+    pub(super) fn replayed_next_message_id(
         session_id: &SessionId,
         display: &[rho_sdk::model::Message],
+        next: &rho_sdk::model::Message,
     ) -> MessageId {
-        replay::last_message_id(session_id, display)
+        replay::next_message_id(session_id, display, next)
     }
 
     /// A live agent message outside any run, such as a notice at load.
