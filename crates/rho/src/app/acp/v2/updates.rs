@@ -76,33 +76,42 @@ fn session_update(update: v1::SessionUpdate) -> Result<Option<v2::SessionUpdate>
     }))
 }
 
-/// For a message chunk, its message ID and the update that resets that
-/// message to no content. v2 requires one before a replayed message's
-/// chunks, since a host appends chunks to content it already holds.
+/// The message a chunk belongs to.
+pub(super) fn chunk_message_id(
+    notification: &v2::UpdateSessionNotification,
+) -> Option<&v2::MessageId> {
+    use v2::SessionUpdate as V2;
+    match &notification.update {
+        V2::UserMessageChunk(chunk)
+        | V2::AgentMessageChunk(chunk)
+        | V2::AgentThoughtChunk(chunk) => Some(&chunk.message_id),
+        _ => None,
+    }
+}
+
+/// For a message chunk, the update that resets its message to no content.
+/// v2 requires one before a replayed message's chunks, since a host appends
+/// chunks to content it already holds.
 pub(super) fn reset(
     notification: &v2::UpdateSessionNotification,
-) -> Option<(v2::MessageId, v2::UpdateSessionNotification)> {
+) -> Option<v2::UpdateSessionNotification> {
     use v2::SessionUpdate as V2;
-    let (message_id, update) = match &notification.update {
-        V2::UserMessageChunk(chunk) => (
-            &chunk.message_id,
-            V2::UserMessage(v2::UserMessage::new(chunk.message_id.clone()).content(Vec::new())),
-        ),
-        V2::AgentMessageChunk(chunk) => (
-            &chunk.message_id,
-            V2::AgentMessage(v2::AgentMessage::new(chunk.message_id.clone()).content(Vec::new())),
-        ),
-        V2::AgentThoughtChunk(chunk) => (
-            &chunk.message_id,
-            V2::AgentThought(v2::AgentThought::new(chunk.message_id.clone()).content(Vec::new())),
-        ),
+    let update = match &notification.update {
+        V2::UserMessageChunk(chunk) => {
+            V2::UserMessage(v2::UserMessage::new(chunk.message_id.clone()).content(Vec::new()))
+        }
+        V2::AgentMessageChunk(chunk) => {
+            V2::AgentMessage(v2::AgentMessage::new(chunk.message_id.clone()).content(Vec::new()))
+        }
+        V2::AgentThoughtChunk(chunk) => {
+            V2::AgentThought(v2::AgentThought::new(chunk.message_id.clone()).content(Vec::new()))
+        }
         _ => return None,
     };
-    Some((
-        message_id.clone(),
+    Some(
         v2::UpdateSessionNotification::new(notification.session_id.clone(), update)
             .meta(notification.meta.clone()),
-    ))
+    )
 }
 
 /// Rho names every message chunk it sends; v2 requires the name.

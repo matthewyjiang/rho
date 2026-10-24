@@ -617,26 +617,24 @@ fn recoverable_jsonl_end(path: &Path) -> anyhow::Result<(u64, bool)> {
 pub(super) fn histories_from_tree(
     tree: &super::tree::SessionTree,
 ) -> anyhow::Result<SessionHistories> {
-    let Some(active_leaf_id) = tree.active_leaf_id() else {
+    if tree.active_leaf_id().is_none() {
         return Ok(SessionHistories {
             model: Vec::new(),
             display: Vec::new(),
         });
-    };
+    }
     let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
         model: insert_interrupted_tool_placeholders(state.model.clone()),
-        display: insert_interrupted_tool_placeholders(
-            tree.projected_display(active_leaf_id)?
-                .into_iter()
-                .map(|entry| entry.message)
-                .collect(),
-        ),
+        display: active_display_from_tree(tree)?
+            .into_iter()
+            .map(|projected| projected.message)
+            .collect(),
     })
 }
 
-/// The display transcript a load of the active leaf replays, as
-/// [`histories_from_tree`] builds it, with where each row was saved.
+/// The display transcript a load of the active leaf replays, with where each
+/// row was saved.
 pub(super) fn active_display_from_tree(
     tree: &super::tree::SessionTree,
 ) -> anyhow::Result<Vec<ProjectedMessage>> {

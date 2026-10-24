@@ -187,9 +187,8 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
     ) -> anyhow::Result<super::SessionIndexRecord> {
-        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?
-            .1
-            .ok_or_else(|| anyhow::anyhow!("save produced no mirrored index record"))
+        let (_, record) = self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        record.ok_or_else(|| anyhow::anyhow!("save produced no mirrored index record"))
     }
 
     #[cfg(test)]

@@ -52,15 +52,17 @@ impl AcpClientPort for V2Port {
         Box::pin(async move {
             match updates::notification(notification) {
                 Ok(Some(notification)) => {
-                    if let Some(replayed) = &self.replayed {
-                        let reset = updates::reset(&notification).filter(|(message, _)| {
-                            replayed
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .insert(message.clone())
-                        });
-                        if let Some((_, reset)) = reset {
-                            self.cx.send_notification(reset)?;
+                    if let (Some(replayed), Some(message)) =
+                        (&self.replayed, updates::chunk_message_id(&notification))
+                    {
+                        let first = replayed
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .insert(message.clone());
+                        if first {
+                            if let Some(reset) = updates::reset(&notification) {
+                                self.cx.send_notification(reset)?;
+                            }
                         }
                     }
                     self.cx.send_notification(notification)

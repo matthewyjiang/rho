@@ -169,22 +169,29 @@ impl SessionHost {
             self.acceptance.accept_unreplayed();
             return Ok(());
         };
-        self.save_prompt_rows(&[user])?;
+        self.save_prompt_rows(user, &[])?;
         display.mark_user_written();
         Ok(())
     }
 
-    /// Saves `rows`, whose first is the prompt's user message, and accepts
-    /// the prompt with the ID a load replays that message with: the first
-    /// row of the node the save adds. A replaced host saves nothing and
-    /// accepts with an unreplayed ID.
-    pub(super) fn save_prompt_rows(&mut self, rows: &[Message]) -> anyhow::Result<()> {
-        if self.is_replaced() || rows.is_empty() {
+    /// Saves the prompt's `user` message with the display rows `following`
+    /// it, and accepts the prompt with the ID a load replays that message
+    /// with: the first row of the node the save adds. A replaced host saves
+    /// nothing and accepts with an unreplayed ID.
+    pub(super) fn save_prompt_rows(
+        &mut self,
+        user: Message,
+        following: &[Message],
+    ) -> anyhow::Result<()> {
+        if self.is_replaced() {
             self.acceptance.accept_unreplayed();
             return Ok(());
         }
+        let rows: Vec<Message> = std::iter::once(user)
+            .chain(following.iter().cloned())
+            .collect();
         let snapshot = self.durable_snapshot();
-        let node = self.stored()?.save_snapshot_node(&snapshot, rows)?;
+        let node = self.stored()?.save_snapshot_node(&snapshot, &rows)?;
         self.acceptance
             .accept(EventMapper::saved_message_id(&DisplayRowOrigin {
                 node,

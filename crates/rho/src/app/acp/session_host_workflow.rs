@@ -115,11 +115,10 @@ impl SessionHost {
         let session = self.built.session.clone();
         let before = session.history();
         session.append_message(Message::user_text(model))?;
-        let display_rows = [
+        if let Err(error) = self.save_prompt_rows(
             Message::User(display.blocks().to_vec()),
-            Message::assistant_text(notice),
-        ];
-        if let Err(error) = self.save_prompt_rows(&display_rows) {
+            &[Message::assistant_text(notice)],
+        ) {
             session.replace_history(before)?;
             // ACP shows only the outermost message, so keep the cause inline.
             anyhow::bail!("workflow started, but could not save its run id: {error:#}");

@@ -601,10 +601,10 @@ async fn accepted_user_message_ids_survive_replay() {
             .unwrap();
     }
     host.acceptance = recording(&accepted);
-    host.save_prompt_rows(&[
+    host.save_prompt_rows(
         Message::user_text("/workflow:nightly"),
-        Message::assistant_text("started"),
-    ])
+        &[Message::assistant_text("started")],
+    )
     .unwrap();
     host.shutdown().await;
 
@@ -631,6 +631,7 @@ async fn accepted_user_message_ids_survive_replay() {
         }
     }
     let mut accepted = accepted.lock().unwrap().clone();
+    // The first "retry" was refused and rolled back, so it is not replayed.
     let refused = accepted.remove(2);
     assert_eq!(replayed, accepted);
     assert_eq!(replayed.len(), 4);

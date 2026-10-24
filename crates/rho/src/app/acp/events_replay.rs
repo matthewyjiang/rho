@@ -246,14 +246,10 @@ impl Replay<'_> {
 
 /// IDs for replayed messages that stay the same each time a session loads.
 ///
-/// A saved message's ID hashes the session ID and the saved history up to and
-/// including that message, so equal text elsewhere in the history, or on
-/// another branch of it, gets another ID. One saved message can replay as
-/// several ACP messages (text after a tool call, a reasoning summary), which
-/// are numbered in order.
-/// Names replayed messages after the display row they were saved in, so an
-/// ID is unique to one insertion, even of text saved twice, and the same on
-/// every load.
+/// A message is named after the display row it was saved in, so an ID is
+/// unique to one insertion, even of text saved twice. One saved row can
+/// replay as several ACP messages (text after a tool call, a reasoning
+/// summary), which are numbered in order.
 #[derive(Default)]
 struct MessageIds {
     saved: String,
