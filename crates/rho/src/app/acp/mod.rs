@@ -277,12 +277,17 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
     let agent = Arc::new(startup::LazyAgent::new(cli)?);
     // Each connection speaks the version its `initialize` negotiates; the
     // router picks the highest one both sides support.
-    Agent
+    let server = Agent
         .protocol_router()
         .with_v1(v1_agent(Arc::clone(&agent)))
         .with_v2(v2::agent(agent))
-        .connect_to(Stdio::new())
+        .connect_to(Stdio::new());
+    // Request handlers run inside this future. On the main thread they had
+    // Windows' 1 MiB stack, which deep session setup overflowed; a runtime
+    // worker has tokio's 2 MiB.
+    tokio::spawn(server)
         .await
+        .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))?
         .map_err(acp_error)
 }
 
