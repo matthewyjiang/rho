@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.15.0...rho-agent-tools-v1.16.0) (2026-10-25)
+
+
+### Features
+
+* **acp:** speak ACP v2 with hosts that ask for it, such as T3 Code ([#1608](https://github.com/matthewyjiang/rho/issues/1608)) ([762fe4c](https://github.com/matthewyjiang/rho/commit/762fe4cb666a8bacb84f919ddd498e8c1c3da8a3))
+
 ## [1.15.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.14.0...rho-agent-tools-v1.15.0) (2026-10-22)
 
 

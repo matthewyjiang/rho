@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.15.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.14.0...rho-sdk-v5.15.0) (2026-10-25)
+
+
+### Features
+
+* **acp:** speak ACP v2 with hosts that ask for it, such as T3 Code ([#1608](https://github.com/matthewyjiang/rho/issues/1608)) ([762fe4c](https://github.com/matthewyjiang/rho/commit/762fe4cb666a8bacb84f919ddd498e8c1c3da8a3))
+
 ## [5.14.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.13.0...rho-sdk-v5.14.0) (2026-10-22)
 
 
