@@ -91,7 +91,7 @@ fn kinds(updates: &[Value]) -> Vec<&str> {
 // `session/prompt` answer that only acknowledges the inserted message, the
 // turn's progress and stop reason as `state_update`s, tool calls created by
 // their first `tool_call_update`, and file changes as structured diffs with
-// a Git patch.
+// a Git patch where the path allows one.
 // Owner: ACP v2 boundary, over the real stdio server
 #[test]
 fn v2_prompt_reports_its_lifecycle_through_state_updates() {
@@ -195,19 +195,21 @@ fn v2_prompt_reports_its_lifecycle_through_state_updates() {
         .iter()
         .find(|content| content["type"] == "diff")
         .unwrap_or_else(|| panic!("no diff: {finished:#}"));
-    assert_eq!(
-        diff,
-        &json!({
-            "type": "diff",
-            "changes": [{"operation": "add", "path": path, "fileType": "text"}],
-            "patch": {
-                "format": "git_patch",
-                "text": format!(
-                    "diff --git {path} {path}\nnew file mode 100644\n--- /dev/null\n+++ {path}\n@@ -0,0 +1 @@\n+created\n"
-                ),
-            },
-        })
-    );
+    let mut expected = json!({
+        "type": "diff",
+        "changes": [{"operation": "add", "path": path, "fileType": "text"}],
+    });
+    // Windows paths need Git's quoting, so no patch is offered there; the
+    // change list stays authoritative.
+    if cfg!(unix) {
+        expected["patch"] = json!({
+            "format": "git_patch",
+            "text": format!(
+                "diff --git {path} {path}\nnew file mode 100644\n--- /dev/null\n+++ {path}\n@@ -0,0 +1 @@\n+created\n"
+            ),
+        });
+    }
+    assert_eq!(diff, &expected);
 }
 
 // Covers: v2 reserves an error answer to `session/prompt` for prompts that
