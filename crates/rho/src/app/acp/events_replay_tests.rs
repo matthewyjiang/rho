@@ -8,6 +8,7 @@ use rho_sdk::model::{self, AbortedAssistant, AssistantMessage, Message, ToolResu
 use serde_json::json;
 
 use super::history;
+use crate::session::tree::{DisplayRowOrigin, NodeId, ProjectedMessage};
 
 fn call_block(id: &str) -> model::ContentBlock {
     model::ContentBlock::ToolCall(model::ToolCall {
@@ -17,13 +18,28 @@ fn call_block(id: &str) -> model::ContentBlock {
     })
 }
 
+/// Replays `messages` as if each was saved as its own display row.
 fn raw_replay(messages: &[Message]) -> Vec<SessionNotification> {
     history(
         &SessionId::new("s1"),
-        messages,
+        &saved_rows(messages),
         std::path::Path::new(""),
         &Default::default(),
     )
+}
+
+fn saved_rows(messages: &[Message]) -> Vec<ProjectedMessage> {
+    messages
+        .iter()
+        .enumerate()
+        .map(|(row, message)| ProjectedMessage {
+            origin: Some(DisplayRowOrigin {
+                node: NodeId::from_string("node").unwrap(),
+                row,
+            }),
+            message: message.clone(),
+        })
+        .collect()
 }
 
 /// Replay with ACP identities canonicalized by first appearance: tool calls

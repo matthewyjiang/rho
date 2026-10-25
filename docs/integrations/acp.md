@@ -47,7 +47,7 @@ Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`.
 
 ### Other hosts
 
-Point the host at `rho acp`. Rho speaks ACP protocol version 1 over stdio. stdout carries only protocol messages and logs go to stderr, so do not wrap the command in anything that prints to stdout.
+Point the host at `rho acp`. Rho speaks ACP protocol version 1, and the version 2 draft for hosts that ask for it, over stdio. Version 2 removed host file access and host terminals, so on it Rho reads and writes files on disk and runs commands itself. stdout carries only protocol messages and logs go to stderr, so do not wrap the command in anything that prints to stdout.
 
 ## Sign in
 
@@ -76,8 +76,8 @@ When credentials are missing, unreadable, or refused by the provider (a revoked 
 | Questions | On hosts that support forms, such as Zed and T3 Code, questions from the model or an MCP server appear as a form. |
 | Checklist | The model's `todo` list appears as the host's plan. |
 | File changes | Edits and writes show up as diffs. |
-| Editor buffers | On hosts that serve files, such as Zed, the model reads unsaved edits, and its edits land in the editor's buffers and undo history. |
-| Terminals | On hosts that run terminals, such as Zed, shell commands run in a terminal shown live on the tool card. |
+| Editor buffers | On hosts that serve files over ACP version 1, such as Zed, the model reads unsaved edits, and its edits land in the editor's buffers and undo history. |
+| Terminals | On hosts that run terminals over ACP version 1, such as Zed, shell commands run in a terminal shown live on the tool card. |
 | Context and cost | The host gets the context fill and the session's cumulative cost, read from the same usage ledger as `/spend`. |
 | Workspace roots | Extra roots of a multi-root workspace join the session like `--add-dir`. |
 | MCP servers | Servers from your Rho config and servers the host sends both connect. A host server replaces a config server with the same name. |

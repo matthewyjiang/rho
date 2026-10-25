@@ -105,7 +105,8 @@ impl HostFeatures {
 }
 
 /// The host's choice and connection, recorded by `initialize` and read when
-/// the first session starts. A host that skips `initialize` gets the baseline.
+/// the first session starts. Every connection begins with `initialize`: the
+/// protocol router that picks the version rejects anything else first.
 #[derive(Default)]
 pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPort>)>);
 

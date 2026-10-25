@@ -494,7 +494,13 @@ fn replayed_display_rows_become_finished_tool_cards() {
     ]);
     let cards = EventMapper::replay_history(
         &session_id(),
-        &[transcript.display_message()],
+        &[crate::session::tree::ProjectedMessage {
+            origin: Some(crate::session::tree::DisplayRowOrigin {
+                node: crate::session::tree::NodeId::from_string("node").unwrap(),
+                row: 0,
+            }),
+            message: transcript.display_message(),
+        }],
         Path::new(""),
         &Default::default(),
     )

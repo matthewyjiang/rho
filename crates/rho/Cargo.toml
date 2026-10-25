@@ -22,7 +22,7 @@ name = "rho"
 path = "src/main.rs"
 
 [dependencies]
-rho-sdk = { version = "5.14.0", path = "../rho-sdk" }
+rho-sdk = { version = "5.15.0", path = "../rho-sdk" }
 rho-providers = { version = "2.24.0", path = "../rho-providers", default-features = false }
 rho-tools = { version = "1.15.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
@@ -97,7 +97,7 @@ rmcp = { version = "3.1.1", default-features = false, features = [
 ] }
 http = "1"
 jsonschema = { version = "0.49", default-features = false }
-agent-client-protocol = { version = "=3.4.0", features = ["stdio"] }
+agent-client-protocol = { version = "=3.4.0", features = ["stdio", "unstable_protocol_v2"] }
 
 [target.'cfg(unix)'.dependencies]
 vt100 = "0.16"

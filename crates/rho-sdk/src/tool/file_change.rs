@@ -14,6 +14,7 @@ pub struct ToolFileChange {
     path: PathBuf,
     old_text: Option<Arc<str>>,
     new_text: Arc<str>,
+    deleted: bool,
 }
 
 impl ToolFileChange {
@@ -23,6 +24,7 @@ impl ToolFileChange {
             path: path.into(),
             old_text: None,
             new_text: new_text.into(),
+            deleted: false,
         }
     }
 
@@ -36,12 +38,17 @@ impl ToolFileChange {
             path: path.into(),
             old_text: Some(old_text.into()),
             new_text: new_text.into(),
+            deleted: false,
         }
     }
 
-    /// A deleted file, represented by empty replacement contents.
+    /// A deleted file. Its replacement contents are empty, and
+    /// [`Self::is_deleted`] tells it from a file emptied in place.
     pub fn deleted(path: impl Into<PathBuf>, old_text: impl Into<Arc<str>>) -> Self {
-        Self::modified(path, old_text, "")
+        Self {
+            deleted: true,
+            ..Self::modified(path, old_text, "")
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -55,5 +62,10 @@ impl ToolFileChange {
 
     pub fn new_text(&self) -> &str {
         &self.new_text
+    }
+
+    /// Whether the mutation removed the file rather than rewriting it.
+    pub fn is_deleted(&self) -> bool {
+        self.deleted
     }
 }

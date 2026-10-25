@@ -6,7 +6,9 @@ What `rho acp` sends and accepts over ACP, for people building or debugging a ho
 
 ## Initialize
 
-Rho speaks ACP protocol version 1. The `initialize` response always answers `1`, whatever version the host asked for; a host that cannot speak v1 should disconnect. The response carries `agentInfo` with `name: "rho"`, `title: "Rho"`, and `version` set to what `rho --version` prints.
+Rho speaks ACP protocol versions 1 and 2 (draft) and answers each connection with the highest version at or below the one the host asked for; a request for version 0 gets `1`. The rest of this page describes v1. See [Protocol v2](#protocol-v2) for what changes on a v2 connection. The response carries `agentInfo` (v2: `info`) with `name: "rho"`, `title: "Rho"`, and `version` set to what `rho --version` prints.
+
+Every connection must start with `initialize`; Rho picks the protocol version from it and closes a connection that sends anything else first.
 
 stdout is protocol only and logs go to stderr. Do not write other text to stdout, and do not point a logger at stdout while a host is connected.
 
@@ -36,6 +38,20 @@ Rho reads these host capabilities:
 | `clientCapabilities.fs.readTextFile` and `.writeTextFile` | File text through `fs/*`, when both are advertised. See [Host files](#host-files). |
 | `clientCapabilities.terminal` | `bash` calls in host terminals through `terminal/*`. See [Host terminals](#host-terminals). |
 | `clientInfo.name` `t3-code` | T3 Code's [question form shape](#t3-code-forms). |
+
+## Protocol v2
+
+A host that sends `"protocolVersion": 2` gets the [ACP v2 draft](https://agentclientprotocol.com/protocol/v2/migration). Rho's behavior is the same as on v1 except where v2 changed the protocol:
+
+- **Initialize.** `capabilities.session` advertises the baseline session methods with `prompt.image`, `prompt.embeddedContext`, `mcp.stdio`, `mcp.http`, `delete`, and `additionalDirectories`. Auth methods carry `methodId`. Compaction cards, notices, and boolean config options need no host capability. T3 Code (`info.name` `t3-code`) gets notices as agent messages, since it drops `notice` updates.
+- **Prompt lifecycle.** Once the session inserts the prompt's message, Rho sends a `user_message`, then `state_update` `running`, and answers `session/prompt` with the message's `messageId`. A prompt whose message is saved, a model turn or a `/workflow:` start, is accepted once the message is saved, so a later replay gives it the same `messageId`; a command that saves nothing, such as `/compact`, gets an ID that is not replayed. The turn ends with `state_update` `idle` carrying the stop reason, or `stopReason: "error"` with the error when the turn failed after it started. An error answer to `session/prompt` means the message was never inserted, as when the session is busy, unknown, or closing, the command is rejected, or a cancel arrives first; no updates are sent for it. `session/cancel` ends the turn with `idle` and `cancelled`.
+- **Resume.** `session/load` is gone. `session/resume` with `replayFrom: {"type": "start"}` replays the conversation as [Load and replay](#load-and-replay) describes, sending each message with empty content (`user_message`, `agent_message`, or `agent_thought`) before its chunks, so a host that still holds the message replaces it instead of appending; without `replayFrom` it replays nothing. Both send `state_update` `idle` before answering. Other replay cursors fail with invalid params.
+- **Setup responses.** `session/new` and `session/resume` answer with `configOptions` (`configId`, `groupId`) and `availableCommands` instead of sending the command list afterwards. There is no `modes` field and no `session/set_mode`; use the `mode` config option.
+- **Updates.** Tool calls are created by their first `tool_call_update`. The checklist is a `plan_update` with `planId` `rho-todos`. Command input hints are tagged `type: "text"`. `current_mode_update` is not sent; mode changes arrive as `config_option_update`.
+- **Diffs.** Each file change is a `changes` entry (`add`, `delete`, or `modify`; a move is a `delete` and an `add`) with a `git_patch` using absolute paths. A path Git would quote gets no patch, which includes every Windows path, since Git quotes `\` separators.
+- **Permissions.** The approval's question is the request `title`; the tool call goes in `subject`.
+- **Authentication.** `authenticate` and `logout` are `auth/login` and `auth/logout`.
+- **Host files and terminals.** v2 has no `fs/*` or `terminal/*`, so Rho reads, writes, and runs commands itself.
 
 ## Authentication
 
@@ -98,7 +114,7 @@ Listing and deleting saved history do not start model discovery or require provi
 `session/load` replays the saved conversation as message chunks and tool calls/updates marked with `_meta.isReplay: true`. Hosts that keep their own transcript can skip these notifications; hosts that rebuild the transcript from the replay can ignore the marker.
 
 - Tool cards retain their saved names, arguments, success/failure status, output, and tool-owned images. Background result cards replay too.
-- Replayed `user_message_chunk`, `agent_message_chunk`, and `agent_thought_chunk` updates carry a `messageId` (see [Message IDs](#message-ids)). Replay splits the same way live chunks do, except that text and tool calls from a single model response replay in their saved order, so text after a tool call in that response starts a new message even though it was one message live. Each ID is derived from the session ID and the saved history up to that message, so loading the same session again replays the same IDs, and equal text elsewhere in the history gets a different ID. Replayed IDs never match the IDs the same messages had live.
+- Replayed `user_message_chunk`, `agent_message_chunk`, and `agent_thought_chunk` updates carry a `messageId` (see [Message IDs](#message-ids)). Replay splits the same way live chunks do, except that text and tool calls from a single model response replay in their saved order, so text after a tool call in that response starts a new message even though it was one message live. Each ID is derived from where the message was saved in the session file, so loading the same session again replays the same IDs, and equal text saved twice, such as a prompt retried after a refusal, gets two IDs. Replayed agent messages and thoughts never match the IDs they had live; on ACP v2 a prompt's user message keeps the `messageId` its prompt was answered with.
 - Each replayed call gets a fresh ACP identity, so provider IDs reused across turns do not collapse distinct cards. Stored and provider-facing IDs stay unchanged.
 - A result updates its replayed tool call. An interrupted or superseded call without a saved result is marked failed rather than left running.
 - Execution metadata that is not saved in history, such as tool kind and affected file locations, is not reconstructed.
@@ -148,7 +164,7 @@ A `tool_call`'s `kind` follows what the tool does: `read`, `search`, `edit`, `ex
 
 ### File diffs
 
-Successful `write` and edit-tool calls include ACP `diff` content with an absolute `path` and the complete `oldText` and `newText`. New files omit `oldText`; deletions use empty `newText`. Moves appear as a deletion of the source and a creation of the destination. The normal text result stays alongside the diffs. If a write cannot read the existing file as UTF-8, it keeps the text notice instead of inventing original contents. Tools that supply only a unified patch send that patch as text, not as `newText`.
+Successful `write` and edit-tool calls include ACP `diff` content with an absolute `path` and the complete `oldText` and `newText`. New files omit `oldText`; deletions use empty `newText` and carry `_meta: {"rho/fileDeleted": true}`, which tells them from a file emptied in place. Moves appear as a deletion of the source and a creation of the destination. The normal text result stays alongside the diffs. If a write cannot read the existing file as UTF-8, it keeps the text notice instead of inventing original contents. Tools that supply only a unified patch send that patch as text, not as `newText`.
 
 ### Cost
 

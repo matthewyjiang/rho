@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
@@ -161,7 +162,12 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     // The first prompt answers, then holds natural completion for the child,
     // which posts progress. The user's next message cancels the prompt.
     let (first, ()) = tokio::join!(
-        host.prompt(prompt("run the experiments"), &port, &startup),
+        host.prompt(
+            prompt("run the experiments"),
+            PromptAcceptance::Implicit,
+            &port,
+            &startup
+        ),
         async {
             assert_eq!(next_chunk(&mut chunks).await, "agents started");
             manager.post_notice_for_test(during.clone());
@@ -173,15 +179,23 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
 
     // The follow-up delivers both notices, waits for the surviving child, and
     // continues with its result.
-    let (second, ()) = tokio::join!(host.prompt(prompt("status?"), &port, &startup), async {
-        assert_eq!(next_chunk(&mut chunks).await, "still running");
-        status.send_replace(RunStatus {
-            state: RunState::Ok,
-            result: Some("child finding".into()),
-            ..Default::default()
-        });
-        completion.send_replace(true);
-    },);
+    let (second, ()) = tokio::join!(
+        host.prompt(
+            prompt("status?"),
+            PromptAcceptance::Implicit,
+            &port,
+            &startup
+        ),
+        async {
+            assert_eq!(next_chunk(&mut chunks).await, "still running");
+            status.send_replace(RunStatus {
+                state: RunState::Ok,
+                result: Some("child finding".into()),
+                ..Default::default()
+            });
+            completion.send_replace(true);
+        },
+    );
     assert_eq!(
         (
             second.unwrap().stop_reason,

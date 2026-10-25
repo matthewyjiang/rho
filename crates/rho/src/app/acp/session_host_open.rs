@@ -10,7 +10,7 @@ use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
     ResumeSessionRequest, ResumeSessionResponse, SessionConfigOption, SessionId, SessionModeState,
 };
-use rho_sdk::{model::Message, SessionOptions};
+use rho_sdk::SessionOptions;
 
 use super::{
     super::client_io::ClientIo,
@@ -116,7 +116,7 @@ impl SessionHost {
         let added_dirs =
             session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
         let config = session_config(&startup.config, &request.mcp_servers);
-        let (stored, histories) =
+        let (stored, _) =
             match StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref()) {
                 Ok(opened) => opened,
                 Err(error) if error.is::<crate::session::NoSessionFound>() => {
@@ -164,7 +164,7 @@ impl SessionHost {
         if let History::Replay(client) = history {
             let replay_result = replay_display_history(
                 &request.session_id,
-                &histories.display,
+                &stored,
                 cwd,
                 &built.tools.mcp_report().tool_names(),
                 client,
@@ -277,12 +277,13 @@ impl From<Reopened> for ResumeSessionResponse {
 
 async fn replay_display_history(
     session_id: &SessionId,
-    messages: &[Message],
+    stored: &StoredSession,
     cwd: &Path,
     mcp_tools: &McpToolNames,
     client: &dyn AcpClientPort,
 ) -> anyhow::Result<()> {
-    for notification in EventMapper::replay_history(session_id, messages, cwd, mcp_tools) {
+    let messages = stored.active_display_history()?;
+    for notification in EventMapper::replay_history(session_id, &messages, cwd, mcp_tools) {
         send_notification(client, notification).await?;
     }
     Ok(())

@@ -13,17 +13,20 @@ use rho_sdk::{
     tool::ToolMetadata,
 };
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 
 use super::{notify, text_chunk, tool_title, EventMapper, UNNAMED_TOOL_TITLE};
-use crate::{display_transcript::DisplayTranscript, tools::mcp::exported_name::McpToolNames};
+use crate::{
+    display_transcript::DisplayTranscript,
+    session::tree::{DisplayRowOrigin, ProjectedMessage},
+    tools::mcp::exported_name::McpToolNames,
+};
 
 /// Hosts with their own transcript use this marker to avoid duplicating it.
 const REPLAY_META_KEY: &str = "isReplay";
 
 pub(super) fn history(
     session_id: &SessionId,
-    messages: &[Message],
+    messages: &[ProjectedMessage],
     cwd: &Path,
     mcp_tools: &McpToolNames,
 ) -> Vec<SessionNotification> {
@@ -31,11 +34,12 @@ pub(super) fn history(
         cwd,
         mcp_tools,
         tools: BTreeMap::new(),
-        message_ids: MessageIds::new(session_id),
+        message_ids: MessageIds::default(),
     };
     let mut updates = Vec::new();
-    for message in messages {
-        replay.message(session_id, message, &mut updates);
+    for projected in messages {
+        replay.message_ids.enter(projected.origin.as_ref());
+        replay.message(session_id, &projected.message, &mut updates);
     }
     // A killed process can leave a saved call without a result. History is not
     // running work; ACP has no cancelled status, so do not leave cards spinning.
@@ -51,6 +55,15 @@ pub(super) fn history(
         .into_iter()
         .map(|update| update.meta(meta.clone()))
         .collect()
+}
+
+/// The ID replay gives the first message of the display row saved at
+/// `origin`. A live user message saved there is accepted with it too, so a
+/// host matching replayed messages to the ones it was sent finds them.
+pub(super) fn saved_message_id(origin: &DisplayRowOrigin) -> MessageId {
+    let mut ids = MessageIds::default();
+    ids.enter(Some(origin));
+    ids.next()
 }
 
 struct Replay<'a> {
@@ -70,7 +83,6 @@ impl Replay<'_> {
         message: &Message,
         notifications: &mut Vec<SessionNotification>,
     ) {
-        self.message_ids.enter(message);
         match message.semantic() {
             SemanticMessage::ToolResult(result) => {
                 let mut call =
@@ -234,37 +246,24 @@ impl Replay<'_> {
 
 /// IDs for replayed messages that stay the same each time a session loads.
 ///
-/// A saved message's ID hashes the session ID and the saved history up to and
-/// including that message, so equal text elsewhere in the history, or on
-/// another branch of it, gets another ID. One saved message can replay as
-/// several ACP messages (text after a tool call, a reasoning summary), which
-/// are numbered in order.
+/// A message is named after the display row it was saved in, so an ID is
+/// unique to one insertion, even of text saved twice. One saved row can
+/// replay as several ACP messages (text after a tool call, a reasoning
+/// summary), which are numbered in order.
+#[derive(Default)]
 struct MessageIds {
-    history: Sha256,
     saved: String,
     part: u32,
 }
 
 impl MessageIds {
-    fn new(session_id: &SessionId) -> Self {
-        let mut history = Sha256::new();
-        history.update(session_id.0.as_bytes());
-        Self {
-            history,
-            saved: String::new(),
-            part: 0,
+    /// Moves on to the row saved at `origin`. A row the load added has none
+    /// and names no message of its own, so it continues the previous row.
+    fn enter(&mut self, origin: Option<&DisplayRowOrigin>) {
+        if let Some(DisplayRowOrigin { node, row }) = origin {
+            self.saved = format!("{node}-{row}");
+            self.part = 0;
         }
-    }
-
-    /// Moves on to the next saved message.
-    fn enter(&mut self, message: &Message) {
-        // Messages always serialize; were one not to, the length prefix
-        // still moves the hash, so IDs stay unique.
-        let bytes = serde_json::to_vec(message).unwrap_or_default();
-        self.history.update((bytes.len() as u64).to_le_bytes());
-        self.history.update(&bytes);
-        self.saved = hex::encode(&self.history.clone().finalize()[..16]);
-        self.part = 0;
     }
 
     /// The ID of the next ACP message the current saved message replays as.

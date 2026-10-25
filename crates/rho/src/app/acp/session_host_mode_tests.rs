@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{
     future::Future,
     pin::Pin,
@@ -315,7 +316,11 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
             let agent = Arc::clone(&agent);
             let port = Arc::clone(&port);
             let request = prompt("hold");
-            async move { agent.prompt(request, port).await }
+            async move {
+                agent
+                    .prompt(request, port, PromptAcceptance::Implicit)
+                    .await
+            }
         });
         started.recv().await.expect("the turn reaches its tool");
         if cancel {
@@ -346,7 +351,11 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
 
         port.take();
         agent
-            .prompt(prompt("write"), Arc::clone(&port) as _)
+            .prompt(
+                prompt("write"),
+                Arc::clone(&port) as _,
+                PromptAcceptance::Implicit,
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -398,6 +407,7 @@ async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
             .prompt(
                 PromptRequest::new(session_id.clone(), vec!["write".into()]),
                 Arc::clone(&port) as _,
+                PromptAcceptance::Implicit,
             )
             .await
             .unwrap();
@@ -438,6 +448,7 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
                 host.acp_session_id.clone(),
                 vec![AcpContentBlock::from("write")],
             ),
+            PromptAcceptance::Implicit,
             &port,
             &startup,
         )

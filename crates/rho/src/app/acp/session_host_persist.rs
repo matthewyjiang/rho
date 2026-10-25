@@ -36,11 +36,14 @@ use rho_sdk::{
     RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
-use super::SessionHost;
+use super::{EventMapper, SessionHost};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
-    session::{tree::NodeId, Session as StoredSession},
+    session::{
+        tree::{DisplayRowOrigin, NodeId},
+        Session as StoredSession,
+    },
     tools::todo::TodoState,
 };
 
@@ -149,6 +152,52 @@ impl SessionHost {
             .session
             .set_checkpoint_store(Some(checkpoint.0.clone()))?;
         Ok(checkpoint)
+    }
+
+    /// Saves the turn's user message before its run starts, so the prompt
+    /// can be accepted with the ID a load replays it with. Only ACP v2 needs
+    /// that; v1's first step save writes the message instead.
+    pub(super) fn insert_user_message(
+        &mut self,
+        checkpoint: &TurnCheckpoint,
+    ) -> anyhow::Result<()> {
+        if !self.acceptance.wants_id() {
+            return Ok(());
+        }
+        let mut display = checkpoint.0.lock_display();
+        let Some(user) = display.unsaved_user.clone() else {
+            self.acceptance.accept_unreplayed();
+            return Ok(());
+        };
+        self.save_prompt_rows(user, &[])?;
+        display.mark_user_written();
+        Ok(())
+    }
+
+    /// Saves the prompt's `user` message with the display rows `following`
+    /// it, and accepts the prompt with the ID a load replays that message
+    /// with: the first row of the node the save adds. A replaced host saves
+    /// nothing and accepts with an unreplayed ID.
+    pub(super) fn save_prompt_rows(
+        &mut self,
+        user: Message,
+        following: &[Message],
+    ) -> anyhow::Result<()> {
+        if self.is_replaced() {
+            self.acceptance.accept_unreplayed();
+            return Ok(());
+        }
+        let rows: Vec<Message> = std::iter::once(user)
+            .chain(following.iter().cloned())
+            .collect();
+        let snapshot = self.durable_snapshot();
+        let node = self.stored()?.save_snapshot_node(&snapshot, &rows)?;
+        self.acceptance
+            .accept(EventMapper::saved_message_id(&DisplayRowOrigin {
+                node,
+                row: 0,
+            }));
+        Ok(())
     }
 
     /// Saves the settled turn with the display rows its step checkpoints
@@ -438,6 +487,11 @@ impl TurnDisplay {
                 written: written + taken,
             },
         }
+    }
+
+    /// Records that the user's message was saved ahead of the turn's rows.
+    fn mark_user_written(&mut self) {
+        self.unsaved_user = None;
     }
 
     /// Records that a save wrote `pending`'s rows.

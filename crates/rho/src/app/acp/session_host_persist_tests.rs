@@ -1,3 +1,4 @@
+use crate::app::acp::prompt_acceptance::PromptAcceptance;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
@@ -99,7 +100,9 @@ async fn send(
     startup: &AcpStartup,
 ) -> anyhow::Result<()> {
     let request = PromptRequest::new(SessionId::new(id), vec![AcpContentBlock::from(text)]);
-    host.prompt(request, &SilentPort, startup).await.map(drop)
+    host.prompt(request, PromptAcceptance::Implicit, &SilentPort, startup)
+        .await
+        .map(drop)
 }
 
 fn provider_failure(message: &str) -> ScriptedTurn {
@@ -534,4 +537,103 @@ async fn background_result_survives_a_failed_turn() {
         ),
         "{card}"
     );
+}
+
+/// Acceptance that records each ID a prompt is answered with.
+fn recording(ids: &Arc<std::sync::Mutex<Vec<String>>>) -> PromptAcceptance {
+    let ids = Arc::clone(ids);
+    PromptAcceptance::Report(Box::new(move |id| {
+        ids.lock().unwrap().push(id.0.to_string())
+    }))
+}
+
+// Covers: ACP v2 requires a replayed user message to keep the ID its prompt
+// was answered with: model turns, including one that ran a tool, and a
+// workflow start, which saves its prompt without a turn. A prompt retried
+// with the same text after a refusal rolled it back is a new message.
+// Owner: ACP session host prompt insertion
+#[tokio::test]
+async fn accepted_user_message_ids_survive_replay() {
+    let home = tempfile::tempdir().unwrap();
+    let startup = AcpStartup::for_tests(Config::default(), home.path());
+    let reply = |text: &str| {
+        ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+            text.into(),
+        )]))
+    };
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "model"),
+        vec![
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "call-1".into(),
+                    name: "missing".into(),
+                    arguments: serde_json::json!({}),
+                },
+            )])),
+            reply("first"),
+            reply("second"),
+            ScriptedTurn::streaming(
+                vec![rho_sdk::model::ModelEvent::stop_reason(
+                    rho_sdk::model::ModelStopReason::Refusal,
+                )],
+                ModelResponse::Assistant(vec![ContentBlock::Text("refused".into())]),
+            ),
+            reply("answered"),
+        ],
+    ));
+    let id = "replay-ids".to_owned();
+    let mut host = host(
+        home.path(),
+        &id,
+        unsaved_storage(home.path(), &id),
+        provider,
+        AppToolSet::disabled(),
+        &startup,
+    )
+    .await;
+
+    let accepted = Arc::new(std::sync::Mutex::new(Vec::new()));
+    for text in ["call a tool", "and again", "retry", "retry"] {
+        let request = PromptRequest::new(SessionId::new(&*id), vec![AcpContentBlock::from(text)]);
+        host.prompt(request, recording(&accepted), &SilentPort, &startup)
+            .await
+            .unwrap();
+    }
+    host.acceptance = recording(&accepted);
+    host.save_prompt_rows(
+        Message::user_text("/workflow:nightly"),
+        &[Message::assistant_text("started")],
+    )
+    .unwrap();
+    host.shutdown().await;
+
+    let (stored, _) =
+        StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id).unwrap();
+    let mut replayed: Vec<String> = Vec::new();
+    for notification in super::EventMapper::replay_history(
+        &SessionId::new(&*id),
+        &stored.active_display_history().unwrap(),
+        home.path(),
+        &Default::default(),
+    ) {
+        if let agent_client_protocol::schema::v1::SessionUpdate::UserMessageChunk(chunk) =
+            notification.update
+        {
+            let message = chunk
+                .message_id
+                .expect("replayed chunks are named")
+                .0
+                .to_string();
+            if replayed.last() != Some(&message) {
+                replayed.push(message);
+            }
+        }
+    }
+    let mut accepted = accepted.lock().unwrap().clone();
+    // The first "retry" was refused and rolled back, so it is not replayed.
+    let refused = accepted.remove(2);
+    assert_eq!(replayed, accepted);
+    assert_eq!(replayed.len(), 4);
+    assert!(!replayed.contains(&refused));
 }

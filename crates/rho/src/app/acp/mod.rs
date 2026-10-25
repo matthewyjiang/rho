@@ -14,6 +14,7 @@ mod fast_mode;
 mod host_features;
 mod host_mcp;
 mod permission;
+mod prompt_acceptance;
 mod session_host;
 mod session_list;
 mod signals;
@@ -21,6 +22,7 @@ mod skills;
 mod startup;
 mod t3_wake;
 mod thought_level;
+mod v2;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
@@ -36,7 +38,8 @@ use agent_client_protocol::{
         RequestPermissionResponse, SessionNotification, SetSessionConfigOptionRequest,
         SetSessionModeRequest, WriteTextFileRequest, WriteTextFileResponse,
     },
-    Agent, Client, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role, Stdio,
+    Agent, Client, ConnectTo, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role,
+    Stdio,
 };
 
 use crate::{config::Config, diagnostics::RuntimeDiagnostics, herdr::HerdrReporter};
@@ -85,7 +88,7 @@ pub(super) struct AcpStartup {
     /// `logout`s so far, which mark sessions' credentials stale.
     pub(super) logouts: auth_logout::Logouts,
     /// The connection `initialize` arrived on, for host-served files and
-    /// terminals. `None` when the host skipped `initialize`.
+    /// terminals. `None` until `initialize` runs.
     pub(super) client: Option<Arc<dyn AcpClientPort>>,
 }
 
@@ -272,6 +275,24 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
     // probe would wait behind that read forever. See `stdin_is_terminal`.
     let _ = crate::stdio::stdin_is_terminal();
     let agent = Arc::new(startup::LazyAgent::new(cli)?);
+    // Each connection speaks the version its `initialize` negotiates; the
+    // router picks the highest one both sides support.
+    let server = Agent
+        .protocol_router()
+        .with_v1(v1_agent(Arc::clone(&agent)))
+        .with_v2(v2::agent(agent))
+        .connect_to(Stdio::new());
+    // Request handlers run inside this future. On the main thread they had
+    // Windows' 1 MiB stack, which deep session setup overflowed; a runtime
+    // worker has tokio's 2 MiB.
+    tokio::spawn(server)
+        .await
+        .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))?
+        .map_err(acp_error)
+}
+
+/// The ACP v1 agent for one connection.
+fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
     Agent
         .builder()
         .name("rho")
@@ -329,7 +350,11 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                     let agent = Arc::clone(&agent);
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort::new(cx.clone()));
                     spawn_response(&cx, responder, async move {
-                        agent.ready().await?.prompt(request, port).await
+                        agent
+                            .ready()
+                            .await?
+                            .prompt(request, port, prompt_acceptance::PromptAcceptance::Implicit)
+                            .await
                     })
                 }
             },
@@ -440,9 +465,6 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
                 Ok(())
             }
         })
-        .connect_to(Stdio::new())
-        .await
-        .map_err(acp_error)
 }
 
 fn spawn_response<Resp, Counterpart, Fut>(

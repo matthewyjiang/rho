@@ -178,8 +178,7 @@ impl LazyAgent {
     /// unreadable ones are still stored, so that failure is returned.
     pub(super) async fn logout(&self) -> Result<LogoutResponse, AcpError> {
         // Boxed so the startup wait and the logout are not held inline in
-        // the flight's future: request handlers run on the main thread,
-        // whose 1 MiB Windows stack this future overflowed unboxed.
+        // the flight's future, which overflowed handler stacks unboxed.
         self.flight
             .run(Box::pin(async {
                 match self.started_or_failure().await {

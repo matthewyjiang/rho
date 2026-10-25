@@ -4,7 +4,8 @@ use serde_json::json;
 use super::{AcpServer, Workspace};
 
 // Covers: editors need full before/after file text, not a patch disguised as text,
-// including every file in multi-file edits and the selected edit dialect.
+// including every file in multi-file edits and the selected edit dialect; a
+// deleted file, which v1 shows as emptied, is marked so v2 can say so.
 // Owner: ACP wire contract, through the real server and coding tools.
 #[test]
 fn file_mutations_emit_acp_diffs() {
@@ -56,9 +57,9 @@ fn file_mutations_emit_acp_diffs() {
                 ("changed.txt", b"old\n".as_slice()),
             ],
             vec![
-                json!({"type": "diff", "path": "a.txt", "oldText": "old\n", "newText": ""}),
+                json!({"type": "diff", "path": "a.txt", "oldText": "old\n", "newText": "", "_meta": {"rho/fileDeleted": true}}),
                 json!({"type": "diff", "path": "moved.txt", "newText": "updated\n"}),
-                json!({"type": "diff", "path": "deleted.txt", "oldText": "removed\n", "newText": ""}),
+                json!({"type": "diff", "path": "deleted.txt", "oldText": "removed\n", "newText": "", "_meta": {"rho/fileDeleted": true}}),
                 json!({"type": "diff", "path": "added.txt", "newText": "added\n"}),
                 json!({"type": "diff", "path": "changed.txt", "oldText": "old\n", "newText": "changed\n"}),
             ],

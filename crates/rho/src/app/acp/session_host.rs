@@ -27,6 +27,7 @@ use super::{
     fast_mode,
     host_features::Toggles,
     permission,
+    prompt_acceptance::PromptAcceptance,
     signals::SessionSignals,
     t3_wake::T3Wake,
     thought_level, AcpClientPort, AcpHost, AcpStartup,
@@ -137,6 +138,9 @@ pub(super) struct SessionHost {
     t3_wake: Option<T3Wake>,
     /// Optional features the host advertised at `initialize`.
     host_features: super::HostFeatures,
+    /// How the running prompt reports its inserted user message; see
+    /// [`super::prompt_acceptance`].
+    acceptance: PromptAcceptance,
 }
 
 impl SessionHost {
@@ -144,7 +148,24 @@ impl SessionHost {
     /// command that cannot run fails with [`commands::CommandRejected`].
     /// `startup` supplies process defaults and the available root capabilities
     /// when a fresh session binds an agent definition.
+    ///
+    /// `acceptance` reports the user message once it is inserted: when a
+    /// model turn has saved it, or as a command without a turn starts. A
+    /// prompt that fails or is cancelled first never reports it.
     pub(super) async fn prompt(
+        &mut self,
+        request: PromptRequest,
+        acceptance: PromptAcceptance,
+        client: &dyn AcpClientPort,
+        startup: &AcpStartup,
+    ) -> anyhow::Result<PromptResponse> {
+        self.acceptance = acceptance;
+        let result = self.dispatch_prompt(request, client, startup).await;
+        self.acceptance = PromptAcceptance::Implicit;
+        result
+    }
+
+    async fn dispatch_prompt(
         &mut self,
         request: PromptRequest,
         client: &dyn AcpClientPort,
@@ -199,6 +220,7 @@ impl SessionHost {
                 self.run_turn(&input, model, calls, client).await
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
+                self.acceptance.accept_unreplayed();
                 self.compact(instructions, client).await
             }
             Some(Ok(PromptAction::StartWorkflow(start))) => {
@@ -209,6 +231,7 @@ impl SessionHost {
                 self.run_as_agent(&input, task, startup, client).await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
+                self.acceptance.accept_unreplayed();
                 self.await_wake(signal, &starting, client).await
             }
             Some(Err(rejected)) => Err(rejected.into()),
@@ -475,6 +498,7 @@ impl SessionHost {
             load_notice: None,
             held_notices: None,
             host_features: startup.host_features,
+            acceptance: PromptAcceptance::Implicit,
             t3_wake: match startup.host {
                 AcpHost::Generic => None,
                 AcpHost::T3Code => match super::t3_wake::signal_dir() {
@@ -532,17 +556,21 @@ impl SessionHost {
         displays: OfferedDisplays,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        if let Some(notice) = self.load_notice.take() {
-            let notice =
-                EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
-            if let Err(error) = send_notification(client, notice).await {
-                tracing::debug!(%error, "could not send ACP load notice");
-            }
-        }
         let checkpoint = self.install_turn_checkpoint(display, &model)?;
-        let result = self
-            .drive_run(&checkpoint, model, calls, displays, client)
-            .await;
+        let result = match self.insert_user_message(&checkpoint) {
+            Ok(()) => {
+                if let Some(notice) = self.load_notice.take() {
+                    let notice =
+                        EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
+                    if let Err(error) = send_notification(client, notice).await {
+                        tracing::debug!(%error, "could not send ACP load notice");
+                    }
+                }
+                self.drive_run(&checkpoint, model, calls, displays, client)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
         // The run is over, so the session is idle again.
         if let Err(error) = self.built.session.set_checkpoint_store(None) {
             tracing::warn!(%error, "could not remove ACP turn checkpoint store");
