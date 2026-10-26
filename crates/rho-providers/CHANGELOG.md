@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.25.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.24.0...rho-providers-v2.25.0) (2026-10-25)
+
+
+### Features
+
+* **acp:** speak ACP v2 with hosts that ask for it, such as T3 Code ([#1608](https://github.com/matthewyjiang/rho/issues/1608)) ([762fe4c](https://github.com/matthewyjiang/rho/commit/762fe4cb666a8bacb84f919ddd498e8c1c3da8a3))
+
 ## [2.24.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.23.0...rho-providers-v2.24.0) (2026-10-22)
 
 

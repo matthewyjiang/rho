@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.31.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.30.0...rho-coding-agent-v2.31.0) (2026-10-25)
+
+
+### Features
+
+* **acp:** speak ACP v2 with hosts that ask for it, such as T3 Code ([#1608](https://github.com/matthewyjiang/rho/issues/1608)) ([762fe4c](https://github.com/matthewyjiang/rho/commit/762fe4cb666a8bacb84f919ddd498e8c1c3da8a3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.24.0 to 2.25.0
+
 ## [2.30.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.29.0...rho-coding-agent-v2.30.0) (2026-10-22)
 
 
