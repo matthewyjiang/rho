@@ -88,6 +88,12 @@ jobs:
           # size budget below; --ultra -20 packs the same tarball to 20.1 MB.
           # Appended last so it overrides the stock COMPRESSZST.
           echo "COMPRESSZST=(zstd -c -T0 --ultra -20 -)" >> /etc/makepkg.conf
+          # makepkg's default `debug` option appends `-C debuginfo=2`, which
+          # fat LTO carries through the single-unit link: 2.31.0 was OOM-killed
+          # there on the 16 GB runner. The release profile strips symbols, so
+          # the split -debug package was already empty. Set here, not in the
+          # PKGBUILD, so rebuilding an already-tagged release also gets it.
+          echo "OPTIONS+=(!debug)" >> /etc/makepkg.conf
           # CI already ran the full test suite. Skip makepkg check() so packaging
           # does not recompile the workspace under the test profile.
           runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm --nocheck"
