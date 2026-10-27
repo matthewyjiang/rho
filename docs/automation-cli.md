@@ -168,6 +168,7 @@ API-key providers are usually easier to configure interactively with `/login` in
 `rho update` checks the latest GitHub release and dispatches to the detected installation method:
 
 - Cargo installs run `cargo install rho-coding-agent --locked`, adding `--root <cargo-root>` when the current executable is from a non-default Cargo install root.
+- mise installs run `mise upgrade <tool>` for the tool that installed the current executable, such as `github:matthewyjiang/rho`. mise keeps that tool's configured version request, so a pinned version stays pinned.
 - pacman installs run `sudo pacman -Sy mjiang-extras/rho-coding-agent` so pacman can refresh package databases and sync only `rho-coding-agent` from `mjiang-extras`, without performing a full system upgrade. Pacman may prompt for your password.
 - Scoop installs show `scoop update; scoop update rho`, or `scoop update; scoop update -g rho` for global installs, so Scoop refreshes buckets before updating the package.
 - install-script installs download the official install script to a temporary file and run it with `RHO_INSTALL_DIR` set to the current executable directory.

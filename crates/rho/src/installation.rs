@@ -1,5 +1,9 @@
 //! Installation evidence shared by update and uninstall. Policy stays with callers.
-use std::path::{Path, PathBuf};
+use serde::Deserialize;
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path, PathBuf},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScoopInstallScope {
@@ -9,7 +13,13 @@ pub(crate) enum ScoopInstallScope {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ManagedInstallation {
-    Cargo { root: Option<PathBuf> },
+    Cargo {
+        root: Option<PathBuf>,
+    },
+    /// `install_path` is mise's `<installs>/<tool>/<version>` directory holding the binary.
+    Mise {
+        install_path: PathBuf,
+    },
     Pacman,
     Scoop(ScoopInstallScope),
 }
@@ -56,6 +66,7 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let mut pacman_owned = false;
     let managed = detect_with(
         path,
+        &mise_installs_roots(),
         &ScoopRoots {
             user: std::env::var("SCOOP").ok(),
             global: std::env::var("SCOOP_GLOBAL").ok(),
@@ -76,10 +87,16 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
 
 fn detect_with(
     path: &Path,
+    mise_roots: &[PathBuf],
     scoop_roots: &ScoopRoots,
     cargo_owns: impl FnOnce(&Path) -> bool,
     pacman_owns: impl FnOnce(&Path) -> bool,
 ) -> Option<ManagedInstallation> {
+    // Before Cargo: mise's cargo backend installs into `<version>/bin/rho`
+    // with a Cargo receipt, but mise owns that directory.
+    if let Some(install_path) = mise_install_path(path, mise_roots) {
+        return Some(ManagedInstallation::Mise { install_path });
+    }
     if is_cargo_bin_path(path) {
         return Some(ManagedInstallation::Cargo {
             root: cargo_root_from_bin_path(path),
@@ -149,6 +166,84 @@ fn pacman_owner(path: &Path) -> Option<String> {
 #[cfg(not(target_os = "linux"))]
 fn pacman_owner(_path: &Path) -> Option<String> {
     None
+}
+
+/// Installs directories named by mise's environment overrides. The default
+/// layouts are matched by [`mise_install_path`] without them.
+fn mise_installs_roots() -> Vec<PathBuf> {
+    let installs = std::env::var_os("MISE_INSTALLS_DIR").map(PathBuf::from);
+    let data = std::env::var_os("MISE_DATA_DIR").map(|data| PathBuf::from(data).join("installs"));
+    installs
+        .into_iter()
+        .chain(data)
+        .filter(|root| !root.as_os_str().is_empty())
+        .collect()
+}
+
+/// The `<installs>/<tool>/<version>` directory holding `path`, under a
+/// configured root or the default `…/mise/installs` layout
+/// (`~/.local/share/mise`, `%LOCALAPPDATA%\mise`).
+fn mise_install_path(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    let configured = roots.iter().find_map(|root| {
+        let rest = path.strip_prefix(root).ok()?;
+        Some(root.join(tool_version_dir(rest)?))
+    });
+    if configured.is_some() {
+        return configured;
+    }
+    let components: Vec<_> = path.components().collect();
+    let installs = components
+        .windows(2)
+        .rposition(|pair| pair[0].as_os_str() == "mise" && pair[1].as_os_str() == "installs")?;
+    let root: PathBuf = components[..installs + 2].iter().collect();
+    let rest = path.strip_prefix(&root).ok()?;
+    Some(root.join(tool_version_dir(rest)?))
+}
+
+/// `<tool>/<version>` of a path relative to an installs root. The binary must
+/// sit inside the version directory.
+fn tool_version_dir(rest: &Path) -> Option<PathBuf> {
+    let mut parts = rest.components();
+    let (Some(Component::Normal(tool)), Some(Component::Normal(version)), Some(_)) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    Some(Path::new(tool).join(version))
+}
+
+/// The mise tool (`rho`, `github:matthewyjiang/rho`, …) whose installed version
+/// lives at `install_path`, as `mise ls --installed --json` names it.
+pub(crate) fn mise_tool(install_path: &Path) -> Option<String> {
+    let output = std::process::Command::new("mise")
+        .args(["ls", "--installed", "--json"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    mise_tool_from_ls_json(&output.stdout, install_path)
+}
+
+fn mise_tool_from_ls_json(json: &[u8], install_path: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct InstalledVersion {
+        install_path: PathBuf,
+    }
+    let tools: BTreeMap<String, Vec<InstalledVersion>> = serde_json::from_slice(json).ok()?;
+    tools.into_iter().find_map(|(tool, versions)| {
+        versions
+            .iter()
+            .any(|version| same_path(&version.install_path, install_path))
+            .then_some(tool)
+    })
+}
+
+// mise may report the path through a symlink the running executable resolved.
+fn same_path(left: &Path, right: &Path) -> bool {
+    left == right
+        || matches!(
+            (std::fs::canonicalize(left), std::fs::canonicalize(right)),
+            (Ok(left), Ok(right)) if left == right
+        )
 }
 
 fn scoop_install_scope_for_path(path: &Path, roots: &ScoopRoots) -> Option<ScoopInstallScope> {

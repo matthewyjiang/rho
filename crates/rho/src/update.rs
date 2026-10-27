@@ -2,6 +2,7 @@
 use std::process::Stdio;
 use std::{
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -70,6 +71,7 @@ pub struct UpdateInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallMethod {
     Cargo,
+    Mise,
     Pacman,
     Scoop,
     ScoopGlobal,
@@ -80,6 +82,7 @@ impl InstallMethod {
     pub fn label(self) -> &'static str {
         match self {
             Self::Cargo => "Cargo",
+            Self::Mise => "mise",
             Self::Pacman => "pacman",
             Self::Scoop => "Scoop",
             Self::ScoopGlobal => "Scoop (global)",
@@ -90,6 +93,7 @@ impl InstallMethod {
     pub fn update_command(self, git_ref: &str) -> String {
         match self {
             Self::Cargo => cargo_update_command_display(),
+            Self::Mise => mise_update_command_display(current_mise_tool()),
             Self::Pacman => pacman_update_command_display(),
             Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
             Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
@@ -153,6 +157,11 @@ pub async fn update_notice(current_version: &str) -> Option<String> {
 pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     let method = detect_install_method();
     println!("detected install method: {}", method.label());
+    if method == InstallMethod::Mise && current_mise_tool().is_none() {
+        anyhow::bail!(
+            "rho is installed by mise, but `mise ls --installed` does not list it; update it with `mise upgrade <tool>`"
+        );
+    }
 
     // Pin the install script to the release tag being installed. If the release
     // check fails we cannot know the tag, so fall back to `main` rather than
@@ -233,6 +242,11 @@ fn update_command(method: InstallMethod, git_ref: &str) -> Command {
             }
             command
         }
+        InstallMethod::Mise => {
+            let mut command = Command::new("mise");
+            command.arg("upgrade").args(current_mise_tool());
+            command
+        }
         InstallMethod::Pacman => {
             let mut command = Command::new("sudo");
             command.args(["pacman", "-Sy", PACMAN_PACKAGE_TARGET]);
@@ -254,6 +268,12 @@ fn cargo_update_command_display() -> String {
         command.push_str(&shell_quote_path(&root));
     }
     command
+}
+
+// `mise upgrade` keeps the tool's configured version request, so a pinned
+// version stays pinned and `latest` moves to the newest release.
+fn mise_update_command_display(tool: Option<&str>) -> String {
+    format!("mise upgrade {}", tool.map_or("<tool>".into(), shell_quote))
 }
 
 fn pacman_update_command_display() -> String {
@@ -329,6 +349,7 @@ pub fn detect_install_method() -> InstallMethod {
         .and_then(|path| installation::detect(path).managed)
     {
         Some(ManagedInstallation::Cargo { .. }) => InstallMethod::Cargo,
+        Some(ManagedInstallation::Mise { .. }) => InstallMethod::Mise,
         Some(ManagedInstallation::Pacman) => InstallMethod::Pacman,
         Some(ManagedInstallation::Scoop(ScoopInstallScope::User)) => InstallMethod::Scoop,
         Some(ManagedInstallation::Scoop(ScoopInstallScope::Global)) => InstallMethod::ScoopGlobal,
@@ -340,6 +361,22 @@ fn current_exe_parent() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf))
+}
+
+/// The mise tool that installed the running executable. Looked up once, since
+/// `rho update` both prints and runs the command.
+fn current_mise_tool() -> Option<&'static str> {
+    static TOOL: OnceLock<Option<String>> = OnceLock::new();
+    TOOL.get_or_init(|| {
+        let current_exe = std::env::current_exe().ok()?;
+        let Some(ManagedInstallation::Mise { install_path }) =
+            installation::detect(&current_exe).managed
+        else {
+            return None;
+        };
+        installation::mise_tool(&install_path)
+    })
+    .as_deref()
 }
 
 fn current_cargo_update_root() -> Option<PathBuf> {

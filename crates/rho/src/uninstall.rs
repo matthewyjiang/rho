@@ -48,6 +48,10 @@ fn managed_instruction(managed: &ManagedInstallation) -> String {
             "run cargo uninstall rho-coding-agent --root <install-root>, using install-root {root:?}"
         ),
         ManagedInstallation::Cargo { root: None } => "run cargo uninstall rho-coding-agent".into(),
+        ManagedInstallation::Mise { install_path } => match crate::installation::mise_tool(install_path) {
+            Some(tool) => format!("run mise uninstall {tool}"),
+            None => format!("uninstall it with mise, which installed it at {install_path:?}"),
+        },
         ManagedInstallation::Pacman => "run sudo pacman -R rho-coding-agent".into(),
         ManagedInstallation::Scoop(ScoopInstallScope::User) => "run scoop uninstall rho".into(),
         ManagedInstallation::Scoop(ScoopInstallScope::Global) => "run scoop uninstall rho --global".into(),

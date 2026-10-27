@@ -34,6 +34,7 @@ fn detects_package_evidence() {
         assert_eq!(
             detect_with(
                 Path::new(path),
+                &[],
                 &ScoopRoots::default(),
                 |_| cargo_owns,
                 |_| pacman_owns,
@@ -60,6 +61,77 @@ fn detects_package_evidence() {
         cargo_update_root_for_exe(Path::new("/opt/rho/bin/rho"), |_| true),
         Some("/opt/rho".into())
     );
+}
+
+// Covers: a mise-managed binary must update and uninstall through mise, not the
+// install script or a Cargo receipt inside mise's version directory.
+// Owner: installation evidence used by update and uninstall.
+#[test]
+fn detects_mise_installs() {
+    for (path, roots, expected) in [
+        (
+            "/home/me/.local/share/mise/installs/github-matthewyjiang-rho/2.31.0/rho",
+            &[][..],
+            Some("/home/me/.local/share/mise/installs/github-matthewyjiang-rho/2.31.0"),
+        ),
+        // Cargo backend: a Cargo layout and receipt, but mise owns it.
+        (
+            "/home/me/.local/share/mise/installs/cargo-rho-coding-agent/2.31.0/bin/rho",
+            &[][..],
+            Some("/home/me/.local/share/mise/installs/cargo-rho-coding-agent/2.31.0"),
+        ),
+        (
+            "/data/tools/rho/2.31.0/rho",
+            &["/data/tools".into()][..],
+            Some("/data/tools/rho/2.31.0"),
+        ),
+        ("/home/me/.local/share/mise/installs/rho", &[][..], None),
+        ("/home/me/.local/share/mise/shims/rho", &[][..], None),
+        ("/data/tools/rho/2.31.0/rho", &[][..], None),
+    ] {
+        assert_eq!(
+            detect_with(
+                Path::new(path),
+                roots,
+                &ScoopRoots::default(),
+                |_| true,
+                |_| false,
+            ),
+            expected.map(|install_path| ManagedInstallation::Mise {
+                install_path: install_path.into(),
+            }),
+            "{path}",
+        );
+    }
+}
+
+// Covers: `rho update` must upgrade the tool spec mise installed rho under,
+// such as a `github:` backend, rather than guess one from the directory name.
+// Owner: mise tool lookup.
+#[test]
+fn finds_mise_tool_by_install_path() {
+    let ls = br#"{
+        "jq": [{"install_path": "/mise/installs/jq/1.8.2"}],
+        "github:matthewyjiang/rho": [
+            {"install_path": "/mise/installs/github-matthewyjiang-rho/2.30.0"},
+            {"install_path": "/mise/installs/github-matthewyjiang-rho/2.31.0"}
+        ]
+    }"#;
+    for (json, install_path, expected) in [
+        (
+            &ls[..],
+            "/mise/installs/github-matthewyjiang-rho/2.31.0",
+            Some("github:matthewyjiang/rho"),
+        ),
+        (&ls[..], "/mise/installs/rho/2.31.0", None),
+        (b"not json", "/mise/installs/rho/2.31.0", None),
+    ] {
+        assert_eq!(
+            mise_tool_from_ls_json(json, Path::new(install_path)).as_deref(),
+            expected,
+            "{install_path}",
+        );
+    }
 }
 
 // Covers: custom Scoop roots must retain package-manager updates and global
@@ -186,6 +258,7 @@ fn detects_scoop_scope() {
         assert_eq!(
             detect_with(
                 Path::new(path),
+                &[],
                 &ScoopRoots {
                     user: user.map(str::to_owned),
                     global: global.map(str::to_owned),

@@ -39,6 +39,14 @@ scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rh
 
 `rho update` recognizes custom Scoop roots from `SCOOP` and `SCOOP_GLOBAL`, as well as the default Scoop layout. It prints the Scoop update command, including `-g` for global installs, rather than replacing a Scoop-managed binary with the standalone installer.
 
+You can also install Rho with [mise](https://mise.jdx.dev/) from its GitHub releases:
+
+```bash
+mise use -g 'github:matthewyjiang/rho[version_prefix=rho-coding-agent-v]'
+```
+
+`rho update` recognizes mise installs, including `MISE_DATA_DIR` and `MISE_INSTALLS_DIR` overrides, and runs `mise upgrade` for that tool instead of overwriting mise's copy with the standalone installer. `rho uninstall` prints the matching `mise uninstall` command.
+
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash
