@@ -93,7 +93,7 @@ impl InstallMethod {
     pub fn update_command(self, git_ref: &str) -> String {
         match self {
             Self::Cargo => cargo_update_command_display(),
-            Self::Mise => mise_update_command_display(current_mise_tool()),
+            Self::Mise => mise_update_command_display(current_mise_tool().ok()),
             Self::Pacman => pacman_update_command_display(),
             Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
             Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
@@ -157,11 +157,6 @@ pub async fn update_notice(current_version: &str) -> Option<String> {
 pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     let method = detect_install_method();
     println!("detected install method: {}", method.label());
-    if method == InstallMethod::Mise && current_mise_tool().is_none() {
-        anyhow::bail!(
-            "rho is installed by mise, but `mise ls --installed` does not list it; update it with `mise upgrade <tool>`"
-        );
-    }
 
     // Pin the install script to the release tag being installed. If the release
     // check fails we cannot know the tag, so fall back to `main` rather than
@@ -186,8 +181,15 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
     };
 
     println!("update command: {}", method.update_command(&git_ref));
-    if method == InstallMethod::Pacman {
-        println!("pacman may prompt for your sudo password.");
+    match method {
+        InstallMethod::Pacman => println!("pacman may prompt for your sudo password."),
+        InstallMethod::Mise => {
+            println!("mise upgrades within your configured version request; a pinned version stays pinned.")
+        }
+        InstallMethod::Cargo
+        | InstallMethod::Scoop
+        | InstallMethod::ScoopGlobal
+        | InstallMethod::Script => {}
     }
 
     run_update_command(method, &git_ref).await
@@ -206,7 +208,7 @@ async fn run_update_command(method: InstallMethod, git_ref: &str) -> anyhow::Res
 
     #[cfg(not(windows))]
     {
-        let status = update_command(method, git_ref)
+        let status = update_command(method, git_ref)?
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -232,8 +234,8 @@ fn update_action_label() -> &'static str {
 }
 
 #[cfg(not(windows))]
-fn update_command(method: InstallMethod, git_ref: &str) -> Command {
-    match method {
+fn update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<Command> {
+    Ok(match method {
         InstallMethod::Cargo => {
             let mut command = Command::new("cargo");
             command.args(["install", CRATE_NAME, "--locked"]);
@@ -243,8 +245,10 @@ fn update_command(method: InstallMethod, git_ref: &str) -> Command {
             command
         }
         InstallMethod::Mise => {
+            // Never a bare `mise upgrade`, which would upgrade every tool.
+            let tool = current_mise_tool()?;
             let mut command = Command::new("mise");
-            command.arg("upgrade").args(current_mise_tool());
+            command.args(["upgrade", tool]);
             command
         }
         InstallMethod::Pacman => {
@@ -258,7 +262,7 @@ fn update_command(method: InstallMethod, git_ref: &str) -> Command {
             command
         }
         InstallMethod::Script => script_update_command(git_ref),
-    }
+    })
 }
 
 fn cargo_update_command_display() -> String {
@@ -365,18 +369,21 @@ fn current_exe_parent() -> Option<PathBuf> {
 
 /// The mise tool that installed the running executable. Looked up once, since
 /// `rho update` both prints and runs the command.
-fn current_mise_tool() -> Option<&'static str> {
-    static TOOL: OnceLock<Option<String>> = OnceLock::new();
+fn current_mise_tool() -> anyhow::Result<&'static str> {
+    static TOOL: OnceLock<Result<String, String>> = OnceLock::new();
     TOOL.get_or_init(|| {
-        let current_exe = std::env::current_exe().ok()?;
+        let current_exe = std::env::current_exe().map_err(|err| err.to_string())?;
         let Some(ManagedInstallation::Mise { install_path }) =
             installation::detect(&current_exe).managed
         else {
-            return None;
+            return Err(format!(
+                "{current_exe:?} is not in a mise installs directory"
+            ));
         };
-        installation::mise_tool(&install_path)
+        installation::mise_tool(&install_path).map_err(|err| format!("{err:#}"))
     })
     .as_deref()
+    .map_err(|err| anyhow::anyhow!("could not find the mise tool that installed rho: {err}"))
 }
 
 fn current_cargo_update_root() -> Option<PathBuf> {

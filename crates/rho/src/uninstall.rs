@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use std::{
     fs,
     io::{self, BufRead, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[path = "uninstall_plan.rs"]
@@ -17,6 +17,8 @@ struct Paths {
     executable: PathBuf,
     install_method: Option<String>,
     custom_data: Option<PathBuf>,
+    /// Names the mise tool owning a mise install; injected so tests never run mise.
+    mise_tool: fn(&Path) -> Result<String>,
 }
 
 /// Preview local removal and ask for confirmation. Never runs a package manager.
@@ -32,6 +34,7 @@ pub(crate) fn run(purge: bool, dry_run: bool) -> Result<()> {
         .context("could not resolve running executable")?,
         install_method: std::env::var("RHO_INSTALL_METHOD").ok(),
         custom_data: std::env::var_os("RHO_HOME").map(PathBuf::from),
+        mise_tool: crate::installation::mise_tool,
     };
     run_with_io(
         &paths,
@@ -42,15 +45,17 @@ pub(crate) fn run(purge: bool, dry_run: bool) -> Result<()> {
     )
 }
 
-fn managed_instruction(managed: &ManagedInstallation) -> String {
+fn managed_instruction(managed: &ManagedInstallation, paths: &Paths) -> String {
     match managed {
         ManagedInstallation::Cargo { root: Some(root) } => format!(
             "run cargo uninstall rho-coding-agent --root <install-root>, using install-root {root:?}"
         ),
         ManagedInstallation::Cargo { root: None } => "run cargo uninstall rho-coding-agent".into(),
-        ManagedInstallation::Mise { install_path } => match crate::installation::mise_tool(install_path) {
-            Some(tool) => format!("run mise uninstall {tool}"),
-            None => format!("uninstall it with mise, which installed it at {install_path:?}"),
+        // `unuse` drops the version request so a lazy shim cannot reinstall it,
+        // but may leave installed versions behind.
+        ManagedInstallation::Mise { install_path } => match (paths.mise_tool)(install_path) {
+            Ok(tool) => format!("run mise unuse {tool}, then mise uninstall --all {tool}"),
+            Err(err) => format!("uninstall it with mise, which installed it at {install_path:?} ({err:#})"),
         },
         ManagedInstallation::Pacman => "run sudo pacman -R rho-coding-agent".into(),
         ManagedInstallation::Scoop(ScoopInstallScope::User) => "run scoop uninstall rho".into(),
@@ -91,7 +96,7 @@ fn run_with_io(
     writeln!(output, "running executable: {:?}", paths.executable)?;
     match &plan.installation {
         Installation::Script => {}
-        Installation::Managed(managed) => writeln!(output, "executable will not be removed automatically; {}", managed_instruction(managed))?,
+        Installation::Managed(managed) => writeln!(output, "executable will not be removed automatically; {}", managed_instruction(managed, paths))?,
         Installation::Unknown => writeln!(output, "installation is not recognized; after rho exits, remove the executable shown above manually if it is not package-managed")?,
     }
     if cfg!(windows) {

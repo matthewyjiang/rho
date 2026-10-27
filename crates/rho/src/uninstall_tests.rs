@@ -29,6 +29,7 @@ fn only_default_script_location_authorizes_executable_removal() {
             executable: home.join(relative),
             install_method: hint.map(str::to_owned),
             custom_data: None,
+            mise_tool: no_mise,
         };
         let expected = if !cfg!(unix) && expected == Installation::Script {
             Installation::Unknown
@@ -61,6 +62,7 @@ fn only_default_script_location_authorizes_executable_removal() {
                 home: home.clone(),
                 install_method: hint.map(str::to_owned),
                 custom_data: None,
+                mise_tool: no_mise,
             };
             assert_eq!(
                 installation_with_evidence(
@@ -80,6 +82,7 @@ fn only_default_script_location_authorizes_executable_removal() {
         home,
         install_method: Some("script".into()),
         custom_data: None,
+        mise_tool: no_mise,
     };
     assert_eq!(
         installation_with_evidence(
@@ -135,6 +138,7 @@ fn refuses_linked_purge_root_before_any_deletion() {
         executable: executable.clone(),
         install_method: None,
         custom_data: None,
+        mise_tool: no_mise,
     };
     assert!(run_with_io(
         &paths,
@@ -164,6 +168,7 @@ fn refuses_purge_containing_the_running_executable() {
         executable: fs::canonicalize(&executable).unwrap(),
         install_method: None,
         custom_data: None,
+        mise_tool: no_mise,
     };
     assert!(run_with_io(
         &paths,
@@ -236,6 +241,7 @@ fn changed_target_aborts_before_removing_anything() {
             executable: executable.clone(),
             install_method: None,
             custom_data: None,
+            mise_tool: no_mise,
         };
         assert!(run_with_io(
             &paths,
@@ -277,6 +283,7 @@ fn failed_purge_keeps_binary_and_uses_preview_order() {
         executable: executable.clone(),
         install_method: None,
         custom_data: None,
+        mise_tool: no_mise,
     };
     let plan = plan(&paths, /*purge*/ true).unwrap();
     assert_eq!(
@@ -308,4 +315,8 @@ fn failed_purge_keeps_binary_and_uses_preview_order() {
     assert_eq!(attempted, vec![(data.clone(), TargetKind::DataDirectory)]);
     assert_eq!(fs::read_to_string(executable).unwrap(), "binary");
     assert!(data.exists());
+}
+
+fn no_mise(_: &Path) -> anyhow::Result<String> {
+    anyhow::bail!("mise is not consulted in uninstall tests")
 }
