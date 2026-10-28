@@ -4850,7 +4850,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "2.31.0"
+version = "2.32.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

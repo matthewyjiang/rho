@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.32.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.31.0...rho-coding-agent-v2.32.0) (2026-10-28)
+
+
+### Features
+
+* **update:** update mise installs through mise instead of overwriting them ([#1612](https://github.com/matthewyjiang/rho/issues/1612)) ([5bac63b](https://github.com/matthewyjiang/rho/commit/5bac63b2655c8563206c1af03ff2e88ee3675f5d))
+
+
+### Bug Fixes
+
+* **acp:** keep T3 Code on ACP v1 so prompts no longer show twice ([#1613](https://github.com/matthewyjiang/rho/issues/1613)) ([78de8ff](https://github.com/matthewyjiang/rho/commit/78de8ff7259aa80122d685df35b053d598a574ff))
+
 ## [2.31.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.30.0...rho-coding-agent-v2.31.0) (2026-10-25)
 
 
