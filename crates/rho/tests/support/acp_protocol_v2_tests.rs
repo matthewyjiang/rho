@@ -273,3 +273,31 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
         &json!({"sessionUpdate": "state_update", "state": "idle"})
     );
 }
+
+// Owner: ACP host selection, over the real stdio server. T3 Code renders a v2
+// agent's accepted `user_message` as a duplicate user bubble, so `--t3code`
+// must stay on v1 even when T3 asks for v2.
+#[test]
+fn t3code_answers_a_v2_initialize_with_v1() {
+    let workspace = Workspace::new();
+    let mut server = AcpServer::from_command(
+        AcpServer::command(
+            workspace.home.path(),
+            &workspace.project,
+            "tool-call",
+            &workspace.project,
+        )
+        .arg("--t3code"),
+    );
+    let initialized = server
+        .request("initialize", negotiating_initialize())
+        .0
+        .unwrap();
+    assert_eq!(
+        (
+            &initialized["protocolVersion"],
+            initialized["agentCapabilities"].is_object(),
+        ),
+        (&json!(1), true)
+    );
+}

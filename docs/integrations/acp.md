@@ -43,7 +43,7 @@ Start a Rho thread from the Agent Panel's new-thread menu. Zed lists saved Rho s
 
 ### T3 Code
 
-Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The `--t3code` flag runs Rho subagents as T3 threads and lets background results wake an idle thread. See [T3 Code](/integrations/acp/t3-code).
+Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The `--t3code` flag runs Rho subagents as T3 threads and lets background results wake an idle thread. It also keeps the connection on ACP v1 even though T3 Code asks for v2. See [T3 Code](/integrations/acp/t3-code).
 
 ### Other hosts
 

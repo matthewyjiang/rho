@@ -6,7 +6,7 @@ What `rho acp` sends and accepts over ACP, for people building or debugging a ho
 
 ## Initialize
 
-Rho speaks ACP protocol versions 1 and 2 (draft) and answers each connection with the highest version at or below the one the host asked for; a request for version 0 gets `1`. The rest of this page describes v1. See [Protocol v2](#protocol-v2) for what changes on a v2 connection. The response carries `agentInfo` (v2: `info`) with `name: "rho"`, `title: "Rho"`, and `version` set to what `rho --version` prints.
+Rho speaks ACP protocol versions 1 and 2 (draft) and answers each connection with the highest version at or below the one the host asked for; a request for version 0 gets `1`. `rho acp --t3code` speaks only v1 and answers a v2 request with `1`, because T3 Code shows the `user_message` a v2 agent sends for each prompt as a second copy of that prompt. The rest of this page describes v1. See [Protocol v2](#protocol-v2) for what changes on a v2 connection. The response carries `agentInfo` (v2: `info`) with `name: "rho"`, `title: "Rho"`, and `version` set to what `rho --version` prints.
 
 Every connection must start with `initialize`; Rho picks the protocol version from it and closes a connection that sends anything else first.
 
