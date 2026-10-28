@@ -51,10 +51,10 @@ fn managed_instruction(managed: &ManagedInstallation, paths: &Paths) -> String {
             "run cargo uninstall rho-coding-agent --root <install-root>, using install-root {root:?}"
         ),
         ManagedInstallation::Cargo { root: None } => "run cargo uninstall rho-coding-agent".into(),
-        // `unuse` drops the version request so a lazy shim cannot reinstall it,
-        // but may leave installed versions behind.
+        // `unuse` drops the global request, so a lazy shim cannot reinstall it,
+        // and prunes versions no other config needs.
         ManagedInstallation::Mise { install_path } => match (paths.mise_tool)(install_path) {
-            Ok(tool) => format!("run mise unuse {tool}, then mise uninstall --all {tool}"),
+            Ok(tool) => format!("run mise unuse -g {tool}"),
             Err(err) => format!("uninstall it with mise, which installed it at {install_path:?} ({err:#})"),
         },
         ManagedInstallation::Pacman => "run sudo pacman -R rho-coding-agent".into(),

@@ -3,19 +3,33 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
+    ffi::{OsStr, OsString},
     path::{Component, Path, PathBuf},
 };
 
-/// Installs directories named by mise's environment overrides, plus their
-/// resolved forms, since the running executable's path is already resolved.
-/// The default layouts are matched by [`mise_install_path`] without them.
-pub(super) fn mise_installs_roots() -> Vec<PathBuf> {
-    let installs = std::env::var_os("MISE_INSTALLS_DIR").map(PathBuf::from);
-    let data = std::env::var_os("MISE_DATA_DIR").map(|data| PathBuf::from(data).join("installs"));
+/// Candidate installs directories: mise's environment overrides and its
+/// platform default, each with its resolved form, since the running
+/// executable's path is already resolved and may no longer contain
+/// `mise/installs`. Literal `…/mise/installs` paths match without them.
+pub(super) fn mise_installs_roots(var: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    let set = |name: &str| {
+        var(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    let installs = set("MISE_INSTALLS_DIR");
+    let data = set("MISE_DATA_DIR").map(|data| data.join("installs"));
+    let default_data = if cfg!(windows) {
+        set("LOCALAPPDATA").map(|local| local.join("mise"))
+    } else {
+        set("XDG_DATA_HOME")
+            .map(|data| data.join("mise"))
+            .or_else(|| set("HOME").map(|home| home.join(".local/share/mise")))
+    };
     installs
         .into_iter()
         .chain(data)
-        .filter(|root| !root.as_os_str().is_empty())
+        .chain(default_data.map(|data| data.join("installs")))
         .flat_map(|root| {
             let resolved = std::fs::canonicalize(&root)
                 .ok()
@@ -25,19 +39,40 @@ pub(super) fn mise_installs_roots() -> Vec<PathBuf> {
         .collect()
 }
 
-/// The `<installs>/<tool>/<version>` directory holding `path`, under a
-/// configured root or the default `…/mise/installs` layout
-/// (`~/.local/share/mise`, `%LOCALAPPDATA%\mise`).
+/// The `<installs>/<tool>/<version>` directory holding `path`, under one of
+/// `roots` or a literal `…/mise/installs` directory.
 pub(super) fn mise_install_path(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     let components: Vec<_> = path.components().collect();
     let default_root = components
         .windows(2)
-        .rposition(|pair| pair[0].as_os_str() == "mise" && pair[1].as_os_str() == "installs")
+        .rposition(|pair| same_name(pair[0], "mise") && same_name(pair[1], "installs"))
         .map(|installs| components[..installs + 2].iter().collect::<PathBuf>());
     roots.iter().cloned().chain(default_root).find_map(|root| {
-        let dir = tool_version_dir(path.strip_prefix(&root).ok()?)?;
+        let dir = tool_version_dir(strip_root(path, &root)?)?;
         Some(root.join(dir))
     })
+}
+
+/// `path` below `root`, ignoring case on Windows, where `current_exe` and
+/// environment values often disagree on it.
+fn strip_root<'a>(path: &'a Path, root: &Path) -> Option<&'a Path> {
+    let mut rest = path.components();
+    for part in root.components() {
+        if !same_name(rest.next()?, part.as_os_str()) {
+            return None;
+        }
+    }
+    Some(rest.as_path())
+}
+
+fn same_name(component: Component<'_>, name: impl AsRef<OsStr>) -> bool {
+    let (left, right) = (component.as_os_str(), name.as_ref());
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
 }
 
 /// `<tool>/<version>` of a path relative to an installs root. The binary must

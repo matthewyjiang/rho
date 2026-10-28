@@ -67,7 +67,7 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let mut pacman_owned = false;
     let managed = detect_with(
         path,
-        &mise_installs_roots(),
+        &mise_installs_roots(|name| std::env::var_os(name)),
         &ScoopRoots {
             user: std::env::var("SCOOP").ok(),
             global: std::env::var("SCOOP_GLOBAL").ok(),

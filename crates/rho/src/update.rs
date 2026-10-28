@@ -90,15 +90,17 @@ impl InstallMethod {
         }
     }
 
-    pub fn update_command(self, git_ref: &str) -> String {
-        match self {
+    /// The command shown to the user. Fails when a mise install's tool cannot
+    /// be resolved, rather than showing a command that would not work.
+    pub fn update_command(self, git_ref: &str) -> anyhow::Result<String> {
+        Ok(match self {
             Self::Cargo => cargo_update_command_display(),
-            Self::Mise => mise_update_command_display(current_mise_tool().ok()),
+            Self::Mise => mise_update_command_display(current_mise_tool()?),
             Self::Pacman => pacman_update_command_display(),
             Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
             Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
             Self::Script => script_update_command_display(git_ref),
-        }
+        })
     }
 }
 
@@ -180,7 +182,7 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
         }
     };
 
-    println!("update command: {}", method.update_command(&git_ref));
+    println!("update command: {}", method.update_command(&git_ref)?);
     match method {
         InstallMethod::Pacman => println!("pacman may prompt for your sudo password."),
         InstallMethod::Mise => {
@@ -202,7 +204,7 @@ async fn run_update_command(method: InstallMethod, git_ref: &str) -> anyhow::Res
             "automatic updates are disabled on Windows to avoid launching background shells that can trigger security software."
         );
         println!("copy and run this command yourself to update:");
-        println!("{}", method.update_command(git_ref));
+        println!("{}", method.update_command(git_ref)?);
         return Ok(());
     }
 
@@ -248,7 +250,7 @@ fn update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<Comman
             // Never a bare `mise upgrade`, which would upgrade every tool.
             let tool = current_mise_tool()?;
             let mut command = Command::new("mise");
-            command.args(["upgrade", tool]);
+            command.args(["upgrade", "--global", tool]);
             command
         }
         InstallMethod::Pacman => {
@@ -258,7 +260,7 @@ fn update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<Comman
         }
         InstallMethod::Scoop | InstallMethod::ScoopGlobal => {
             let mut command = Command::new("sh");
-            command.args(["-c", &method.update_command(git_ref)]);
+            command.args(["-c", &method.update_command(git_ref)?]);
             command
         }
         InstallMethod::Script => script_update_command(git_ref),
@@ -275,9 +277,11 @@ fn cargo_update_command_display() -> String {
 }
 
 // `mise upgrade` keeps the tool's configured version request, so a pinned
-// version stays pinned and `latest` moves to the newest release.
-fn mise_update_command_display(tool: Option<&str>) -> String {
-    format!("mise upgrade {}", tool.map_or("<tool>".into(), shell_quote))
+// version stays pinned and `latest` moves to the newest release. `--global`
+// (mise 2026.10.7+) upgrades the global request rather than one a project
+// config in the current directory sets for the same tool.
+fn mise_update_command_display(tool: &str) -> String {
+    format!("mise upgrade --global {}", shell_quote(tool))
 }
 
 fn pacman_update_command_display() -> String {
@@ -548,7 +552,9 @@ mod tests {
 
     #[test]
     fn script_update_command_display_uses_platform_installer() {
-        let command = InstallMethod::Script.update_command("rho-coding-agent-v1.2.3");
+        let command = InstallMethod::Script
+            .update_command("rho-coding-agent-v1.2.3")
+            .unwrap();
 
         // The install script is fetched from the targeted release tag, never
         // from mutable `main`.
@@ -573,7 +579,9 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn script_update_command_display_preserves_curl_failure_status() {
-        let command = InstallMethod::Script.update_command("rho-coding-agent-v1.2.3");
+        let command = InstallMethod::Script
+            .update_command("rho-coding-agent-v1.2.3")
+            .unwrap();
 
         assert!(command.contains("curl"));
         assert!(command.contains("--proto"));
@@ -598,7 +606,7 @@ mod tests {
             ),
         ] {
             assert_eq!(scoop_update_command_display(scope), expected);
-            assert_eq!(method.update_command("main"), expected);
+            assert_eq!(method.update_command("main").unwrap(), expected);
         }
     }
 
