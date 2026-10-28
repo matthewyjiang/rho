@@ -59,6 +59,14 @@ curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_VERSION=v0.9.0 s
 $env:RHO_VERSION = "v0.9.0"; irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
 
+You can also install Rho with [mise](https://mise.jdx.dev/) from its GitHub releases:
+
+```bash
+mise use -g 'github:matthewyjiang/rho[version_prefix=rho-coding-agent-v]'
+```
+
+`rho update` recognizes mise installs, including `MISE_DATA_DIR` and `MISE_INSTALLS_DIR` overrides, and uses `mise upgrade --global` (mise 2026.10.7 or newer) for that tool instead of overwriting mise's copy with the standalone installer. `rho uninstall` prints the matching `mise unuse -g` command, which also removes versions no other config needs.
+
 If your platform has no prebuilt binary, install from crates.io with Cargo:
 
 ```bash

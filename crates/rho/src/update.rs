@@ -2,6 +2,7 @@
 use std::process::Stdio;
 use std::{
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -70,6 +71,7 @@ pub struct UpdateInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallMethod {
     Cargo,
+    Mise,
     Pacman,
     Scoop,
     ScoopGlobal,
@@ -80,6 +82,7 @@ impl InstallMethod {
     pub fn label(self) -> &'static str {
         match self {
             Self::Cargo => "Cargo",
+            Self::Mise => "mise",
             Self::Pacman => "pacman",
             Self::Scoop => "Scoop",
             Self::ScoopGlobal => "Scoop (global)",
@@ -87,14 +90,17 @@ impl InstallMethod {
         }
     }
 
-    pub fn update_command(self, git_ref: &str) -> String {
-        match self {
+    /// The command shown to the user. Fails when a mise install's tool cannot
+    /// be resolved, rather than showing a command that would not work.
+    pub fn update_command(self, git_ref: &str) -> anyhow::Result<String> {
+        Ok(match self {
             Self::Cargo => cargo_update_command_display(),
+            Self::Mise => mise_update_command_display(current_mise_tool()?),
             Self::Pacman => pacman_update_command_display(),
             Self::Scoop => scoop_update_command_display(ScoopInstallScope::User),
             Self::ScoopGlobal => scoop_update_command_display(ScoopInstallScope::Global),
             Self::Script => script_update_command_display(git_ref),
-        }
+        })
     }
 }
 
@@ -176,9 +182,16 @@ pub async fn run_update(current_version: &str) -> anyhow::Result<()> {
         }
     };
 
-    println!("update command: {}", method.update_command(&git_ref));
-    if method == InstallMethod::Pacman {
-        println!("pacman may prompt for your sudo password.");
+    println!("update command: {}", method.update_command(&git_ref)?);
+    match method {
+        InstallMethod::Pacman => println!("pacman may prompt for your sudo password."),
+        InstallMethod::Mise => {
+            println!("mise upgrades within your configured version request; a pinned version stays pinned.")
+        }
+        InstallMethod::Cargo
+        | InstallMethod::Scoop
+        | InstallMethod::ScoopGlobal
+        | InstallMethod::Script => {}
     }
 
     run_update_command(method, &git_ref).await
@@ -191,13 +204,13 @@ async fn run_update_command(method: InstallMethod, git_ref: &str) -> anyhow::Res
             "automatic updates are disabled on Windows to avoid launching background shells that can trigger security software."
         );
         println!("copy and run this command yourself to update:");
-        println!("{}", method.update_command(git_ref));
+        println!("{}", method.update_command(git_ref)?);
         return Ok(());
     }
 
     #[cfg(not(windows))]
     {
-        let status = update_command(method, git_ref)
+        let status = update_command(method, git_ref)?
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -223,14 +236,21 @@ fn update_action_label() -> &'static str {
 }
 
 #[cfg(not(windows))]
-fn update_command(method: InstallMethod, git_ref: &str) -> Command {
-    match method {
+fn update_command(method: InstallMethod, git_ref: &str) -> anyhow::Result<Command> {
+    Ok(match method {
         InstallMethod::Cargo => {
             let mut command = Command::new("cargo");
             command.args(["install", CRATE_NAME, "--locked"]);
             if let Some(root) = current_cargo_update_root() {
                 command.arg("--root").arg(root);
             }
+            command
+        }
+        InstallMethod::Mise => {
+            // Never a bare `mise upgrade`, which would upgrade every tool.
+            let tool = current_mise_tool()?;
+            let mut command = Command::new("mise");
+            command.args(["upgrade", "--global", tool]);
             command
         }
         InstallMethod::Pacman => {
@@ -240,11 +260,11 @@ fn update_command(method: InstallMethod, git_ref: &str) -> Command {
         }
         InstallMethod::Scoop | InstallMethod::ScoopGlobal => {
             let mut command = Command::new("sh");
-            command.args(["-c", &method.update_command(git_ref)]);
+            command.args(["-c", &method.update_command(git_ref)?]);
             command
         }
         InstallMethod::Script => script_update_command(git_ref),
-    }
+    })
 }
 
 fn cargo_update_command_display() -> String {
@@ -254,6 +274,14 @@ fn cargo_update_command_display() -> String {
         command.push_str(&shell_quote_path(&root));
     }
     command
+}
+
+// `mise upgrade` keeps the tool's configured version request, so a pinned
+// version stays pinned and `latest` moves to the newest release. `--global`
+// (mise 2026.10.7+) upgrades the global request rather than one a project
+// config in the current directory sets for the same tool.
+fn mise_update_command_display(tool: &str) -> String {
+    format!("mise upgrade --global {}", shell_quote(tool))
 }
 
 fn pacman_update_command_display() -> String {
@@ -329,6 +357,7 @@ pub fn detect_install_method() -> InstallMethod {
         .and_then(|path| installation::detect(path).managed)
     {
         Some(ManagedInstallation::Cargo { .. }) => InstallMethod::Cargo,
+        Some(ManagedInstallation::Mise { .. }) => InstallMethod::Mise,
         Some(ManagedInstallation::Pacman) => InstallMethod::Pacman,
         Some(ManagedInstallation::Scoop(ScoopInstallScope::User)) => InstallMethod::Scoop,
         Some(ManagedInstallation::Scoop(ScoopInstallScope::Global)) => InstallMethod::ScoopGlobal,
@@ -340,6 +369,25 @@ fn current_exe_parent() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf))
+}
+
+/// The mise tool that installed the running executable. Looked up once, since
+/// `rho update` both prints and runs the command.
+fn current_mise_tool() -> anyhow::Result<&'static str> {
+    static TOOL: OnceLock<Result<String, String>> = OnceLock::new();
+    TOOL.get_or_init(|| {
+        let current_exe = std::env::current_exe().map_err(|err| err.to_string())?;
+        let Some(ManagedInstallation::Mise { install_path }) =
+            installation::detect(&current_exe).managed
+        else {
+            return Err(format!(
+                "{current_exe:?} is not in a mise installs directory"
+            ));
+        };
+        installation::mise_tool(&install_path).map_err(|err| format!("{err:#}"))
+    })
+    .as_deref()
+    .map_err(|err| anyhow::anyhow!("could not find the mise tool that installed rho: {err}"))
 }
 
 fn current_cargo_update_root() -> Option<PathBuf> {
@@ -504,7 +552,9 @@ mod tests {
 
     #[test]
     fn script_update_command_display_uses_platform_installer() {
-        let command = InstallMethod::Script.update_command("rho-coding-agent-v1.2.3");
+        let command = InstallMethod::Script
+            .update_command("rho-coding-agent-v1.2.3")
+            .unwrap();
 
         // The install script is fetched from the targeted release tag, never
         // from mutable `main`.
@@ -529,7 +579,9 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn script_update_command_display_preserves_curl_failure_status() {
-        let command = InstallMethod::Script.update_command("rho-coding-agent-v1.2.3");
+        let command = InstallMethod::Script
+            .update_command("rho-coding-agent-v1.2.3")
+            .unwrap();
 
         assert!(command.contains("curl"));
         assert!(command.contains("--proto"));
@@ -554,7 +606,7 @@ mod tests {
             ),
         ] {
             assert_eq!(scoop_update_command_display(scope), expected);
-            assert_eq!(method.update_command("main"), expected);
+            assert_eq!(method.update_command("main").unwrap(), expected);
         }
     }
 

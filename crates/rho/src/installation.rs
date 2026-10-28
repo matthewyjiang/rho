@@ -1,6 +1,11 @@
 //! Installation evidence shared by update and uninstall. Policy stays with callers.
 use std::path::{Path, PathBuf};
 
+#[path = "installation_mise.rs"]
+mod mise;
+pub(crate) use mise::mise_tool;
+use mise::{mise_install_path, mise_installs_roots};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScoopInstallScope {
     User,
@@ -9,7 +14,13 @@ pub(crate) enum ScoopInstallScope {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ManagedInstallation {
-    Cargo { root: Option<PathBuf> },
+    Cargo {
+        root: Option<PathBuf>,
+    },
+    /// `install_path` is mise's `<installs>/<tool>/<version>` directory holding the binary.
+    Mise {
+        install_path: PathBuf,
+    },
     Pacman,
     Scoop(ScoopInstallScope),
 }
@@ -56,6 +67,7 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let mut pacman_owned = false;
     let managed = detect_with(
         path,
+        &mise_installs_roots(|name| std::env::var_os(name)),
         &ScoopRoots {
             user: std::env::var("SCOOP").ok(),
             global: std::env::var("SCOOP_GLOBAL").ok(),
@@ -76,10 +88,16 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
 
 fn detect_with(
     path: &Path,
+    mise_roots: &[PathBuf],
     scoop_roots: &ScoopRoots,
     cargo_owns: impl FnOnce(&Path) -> bool,
     pacman_owns: impl FnOnce(&Path) -> bool,
 ) -> Option<ManagedInstallation> {
+    // Before Cargo: mise's cargo backend installs into `<version>/bin/rho`
+    // with a Cargo receipt, but mise owns that directory.
+    if let Some(install_path) = mise_install_path(path, mise_roots) {
+        return Some(ManagedInstallation::Mise { install_path });
+    }
     if is_cargo_bin_path(path) {
         return Some(ManagedInstallation::Cargo {
             root: cargo_root_from_bin_path(path),
