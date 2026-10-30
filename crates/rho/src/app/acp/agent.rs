@@ -215,7 +215,18 @@ impl RhoAcpAgent {
         if let Some(live) = live {
             shutdown_live(live, Closing::Retired).await;
         }
+        self.forget_wake(session_id);
         install
+    }
+
+    /// Drops the wake record of a session closed or deleted for good, which
+    /// is how T3 Code's `task_cancel` ends a watcher, so a later load takes
+    /// prompts as turns again. Runs after teardown: a session reloaded in
+    /// place kept its record with no waiter left to drop it.
+    fn forget_wake(&self, session_id: &SessionId) {
+        if matches!(self.startup.host, super::AcpHost::T3Code) {
+            super::t3_wake::WakeSignal::forget(session_id.0.as_ref());
+        }
     }
 
     /// Switches one session's permission mode for later prompts. Like
@@ -465,6 +476,7 @@ impl RhoAcpAgent {
             .remove(&session_id)
             .ok_or_else(|| missing_session(&session_id))?;
         shutdown_live(live, Closing::Retired).await;
+        self.forget_wake(&session_id);
         Ok(CloseSessionResponse::new())
     }
 

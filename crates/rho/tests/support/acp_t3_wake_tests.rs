@@ -222,27 +222,49 @@ fn stopped_watcher_resumes_its_wait_without_a_model_turn() {
     }
 }
 
-// Covers: `session/close` on a waiting watcher, as T3 Code's task_cancel
-// sends, ends its wait for good: a later load and prompt of the session runs
-// as an ordinary turn instead of reviving the cancelled wait.
+/// Where a watcher stands when T3 Code closes it.
+#[derive(Clone, Copy, Debug)]
+enum Closed {
+    Waiting,
+    /// Waiting, then reloaded in place, so no prompt waits anymore.
+    Reloaded,
+    /// Its wait answered.
+    Finished,
+}
+
+// Covers: `session/close`, as T3 Code's task_cancel sends, ends a watcher for
+// good whether it is waiting, was reloaded in place, or already answered: a
+// later load and prompt of the session runs as an ordinary turn instead of
+// reviving the wait or repeating its answer.
 // Owner: ACP T3 wake watcher, over the real stdio server
 #[test]
 fn closed_watcher_drops_its_wait() {
-    let mut watcher = Watcher::start();
-    let session_id = watcher.session_id.clone();
-    let closed = watcher.request_beside_wake("session/close", json!({"sessionId": session_id}));
-    assert!(closed.get("error").is_none(), "{closed}");
-    watcher.load();
+    for closed in [Closed::Waiting, Closed::Reloaded, Closed::Finished] {
+        let mut watcher = Watcher::start();
+        match closed {
+            Closed::Waiting => {}
+            Closed::Reloaded => watcher.load(),
+            Closed::Finished => {
+                drop(watcher.parent_lock.take());
+                while watcher.server.recv("the watcher's answer")["id"] != "wake" {}
+            }
+        }
+        let session_id = watcher.session_id.clone();
+        let reply = watcher.request_beside_wake("session/close", json!({"sessionId": session_id}));
+        assert!(reply.get("error").is_none(), "{reply}");
+        watcher.load();
 
-    let (stop_reason, turn) = watcher.continue_prompt();
+        let (stop_reason, turn) = watcher.continue_prompt();
 
-    assert_eq!(
-        (
-            stop_reason,
-            watcher.record().exists(),
-            turn.iter()
-                .any(|update| update["sessionUpdate"] == "tool_call"),
-        ),
-        (json!("end_turn"), false, true)
-    );
+        assert_eq!(
+            (
+                stop_reason,
+                watcher.record().exists(),
+                turn.iter()
+                    .any(|update| update["sessionUpdate"] == "tool_call"),
+            ),
+            (json!("end_turn"), false, true),
+            "{closed:?}"
+        );
+    }
 }

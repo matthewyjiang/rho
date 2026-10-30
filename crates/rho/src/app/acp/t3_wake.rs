@@ -498,6 +498,14 @@ impl WakeSignal {
         }
     }
 
+    /// Drops what watcher session `session_id` recorded, waiting or
+    /// finished, with the signal it names.
+    pub(super) fn forget(session_id: &str) {
+        if let Some(signal) = Self::recorded(session_id) {
+            signal.abandon(session_id);
+        }
+    }
+
     fn record(&self, session_id: &str) -> Option<WaitRecord> {
         WaitRecord::of(self.path.parent()?, session_id)
     }
