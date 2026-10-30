@@ -453,6 +453,19 @@ impl WakeSignal {
         })
     }
 
+    /// The signal watcher session `session_id` was waiting on when its
+    /// process ended, if any. T3 Code reopens such a session after it
+    /// restarts and sends it a prompt to continue, which resumes the wait
+    /// instead of starting a model turn.
+    pub(super) fn interrupted(session_id: &str) -> Option<Self> {
+        Self::interrupted_in(&signal_dir().ok()?, session_id)
+    }
+
+    fn interrupted_in(dir: &Path, session_id: &str) -> Option<Self> {
+        let token = std::fs::read_to_string(wait_record_path(dir, session_id)?).ok()?;
+        Self::parse_in(dir, &token)
+    }
+
     #[cfg(test)]
     pub(super) fn token(&self) -> &str {
         &self.token
@@ -488,27 +501,61 @@ impl WakeSignal {
         }
     }
 
-    /// Waits for the parent's signal, or for the parent to end, and cleans
-    /// up, returning the watcher's result. `None` when `cancel` trips first.
-    pub(super) async fn wait(&self, cancel: &CancellationToken) -> Option<String> {
-        loop {
-            if let Ok(summary) = std::fs::read_to_string(&self.path) {
-                self.cleanup();
-                return Some(summary);
-            }
-            if self.parent_ended() {
-                self.cleanup();
-                return Some(PARENT_ENDED.into());
-            }
-            tokio::select! {
-                () = cancel.cancelled() => {
-                    self.cleanup();
-                    return None;
-                }
-                () = tokio::time::sleep(SIGNAL_POLL) => {}
+    /// Where watcher session `session_id` records its wait on this signal.
+    fn wait_record(&self, session_id: &str) -> Option<PathBuf> {
+        wait_record_path(self.path.parent()?, session_id)
+    }
+
+    /// Waits, as watcher session `session_id`, for the parent's signal or
+    /// for the parent to end, and cleans up, returning the watcher's result.
+    ///
+    /// Until then the wait stays recorded under the session, so a watcher
+    /// whose process ends mid-wait resumes it from the next prompt (see
+    /// [`Self::interrupted`]). `None` when `cancel` trips first, leaving the
+    /// wait recorded: the caller [abandons](Self::abandon) it unless the
+    /// session is closing with its process.
+    pub(super) async fn wait(
+        &self,
+        session_id: &str,
+        cancel: &CancellationToken,
+    ) -> Option<String> {
+        if let Some(record) = self.wait_record(session_id) {
+            if let Err(error) = std::fs::write(&record, &self.token) {
+                tracing::warn!(%error, "could not record the T3 wake watcher's wait");
             }
         }
+        let summary = loop {
+            if let Ok(summary) = std::fs::read_to_string(&self.path) {
+                break summary;
+            }
+            if self.parent_ended() {
+                break PARENT_ENDED.into();
+            }
+            tokio::select! {
+                () = cancel.cancelled() => return None,
+                () = tokio::time::sleep(SIGNAL_POLL) => {}
+            }
+        };
+        self.abandon(session_id);
+        Some(summary)
     }
+
+    /// Drops the signal, the parent's lock file, and the wait session
+    /// `session_id` recorded on them.
+    pub(super) fn abandon(&self, session_id: &str) {
+        self.cleanup();
+        if let Some(record) = self.wait_record(session_id) {
+            let _ = std::fs::remove_file(record);
+        }
+    }
+}
+
+/// The file recording which signal watcher session `session_id` waits on.
+/// `None` for an id that is not a UUID, which Rho never creates, so a host's
+/// session id cannot name a path outside `dir`.
+fn wait_record_path(dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let session_id = uuid::Uuid::parse_str(session_id).ok()?;
+    Some(dir.join(format!("{session_id}.watcher")))
 }
 
 #[cfg(test)]

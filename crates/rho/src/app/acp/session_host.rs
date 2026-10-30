@@ -194,11 +194,16 @@ impl SessionHost {
             .await;
         let home = crate::paths::home_dir();
         let scope = self.command_scope(home.as_deref(), &startup.config);
-        // Expansion can wait on an MCP server, so a cancel drops it.
-        let action = tokio::select! {
-            biased;
-            () = starting.cancelled() => None,
-            action = commands::resolve(input.clone(), &scope) => Some(action),
+        // A watcher a host restart cut off resumes its wait, whatever the prompt says.
+        let action = if let Some(signal) = self.interrupted_wake() {
+            Some(Ok(PromptAction::AwaitWake(signal)))
+        } else {
+            // Expansion can wait on an MCP server, so a cancel drops it.
+            tokio::select! {
+                biased;
+                () = starting.cancelled() => None,
+                action = commands::resolve(input.clone(), &scope) => Some(action),
+            }
         };
         // The first model turn this host completes names an untitled session.
         let names_session = matches!(

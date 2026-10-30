@@ -20,6 +20,9 @@ const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
 /// Bounds each wait on real process exits and signal polls; a hang fails.
 const TEST_WAIT: Duration = Duration::from_secs(10);
 
+/// The ACP session id of the watcher reading a signal.
+const WATCHER_SESSION: &str = "5a7c9e1b-3d4f-4a6b-8c0d-2e4f6a8b0c1d";
+
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
 /// A `t3-code` task tool that records its calls and returns `result`.
@@ -183,9 +186,12 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
         PromptOrigin::Other
     );
     let signal = WakeSignal::parse_in(fixture.signals.path(), &token).unwrap();
-    let summary = tokio::time::timeout(TEST_WAIT, signal.wait(&CancellationToken::new()))
-        .await
-        .unwrap();
+    let summary = tokio::time::timeout(
+        TEST_WAIT,
+        signal.wait(WATCHER_SESSION, &CancellationToken::new()),
+    )
+    .await
+    .unwrap();
     let summary = summary.expect("the watcher receives the exit");
     assert!(
         summary.starts_with(LONG_RUNNING_COMMAND),
@@ -288,8 +294,11 @@ async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
     let signal = WakeSignal::parse_in(fixture.signals.path(), &second).unwrap();
     let Fixture { wake, .. } = fixture;
     drop(wake);
-    let result = tokio::time::timeout(TEST_WAIT, signal.wait(&CancellationToken::new()))
-        .await
-        .unwrap();
+    let result = tokio::time::timeout(
+        TEST_WAIT,
+        signal.wait(WATCHER_SESSION, &CancellationToken::new()),
+    )
+    .await
+    .unwrap();
     assert_eq!(result.as_deref(), Some(PARENT_ENDED));
 }

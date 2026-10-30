@@ -64,6 +64,9 @@ mod session_titles;
 #[path = "support/acp_stop_reasons_tests.rs"]
 mod stop_reasons;
 
+#[path = "support/acp_t3_wake_tests.rs"]
+mod t3_wake;
+
 #[path = "support/acp_update_metadata_tests.rs"]
 mod update_metadata;
 
@@ -76,7 +79,8 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// One `rho acp` process and the JSON-RPC client end of its stdio.
 struct AcpServer {
     child: Child,
-    stdin: ChildStdin,
+    /// `None` once [`Self::quit`] closed it.
+    stdin: Option<ChildStdin>,
     messages: Receiver<Value>,
     /// Everything the agent wrote to stderr, shown when it stops answering.
     stderr: Arc<Mutex<String>>,
@@ -148,7 +152,7 @@ impl AcpServer {
         });
         Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             messages,
             stderr,
             next_id: 0,
@@ -169,8 +173,16 @@ impl AcpServer {
     }
 
     fn send(&mut self, message: &Value) {
-        writeln!(self.stdin, "{message}").expect("write request");
-        self.stdin.flush().expect("flush request");
+        let stdin = self.stdin.as_mut().expect("agent stdin is open");
+        writeln!(stdin, "{message}").expect("write request");
+        stdin.flush().expect("flush request");
+    }
+
+    /// Closes stdin, as a host that quits does, and waits for the agent to
+    /// shut down.
+    fn quit(mut self) {
+        drop(self.stdin.take());
+        self.child.wait().expect("wait for rho acp");
     }
 
     /// Sends `method` and waits for its reply. Returns the `result` or the
