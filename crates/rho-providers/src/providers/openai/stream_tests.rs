@@ -77,7 +77,7 @@ async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
         .any(|event| matches!(event, ModelEvent::OutputDelta(delta) if delta == "hello")));
 }
 
-// Covers: completed Responses turns must persist the in-force effort for later astra replay
+// Covers: completed Responses turns must persist the in-force effort for later GPT-6 replay
 // Owner: openai Responses stream
 #[tokio::test]
 async fn completed_responses_turn_emits_reasoning_effort_context() {

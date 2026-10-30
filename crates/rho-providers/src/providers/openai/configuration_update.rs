@@ -1,13 +1,13 @@
 //! Mid-conversation reasoning updates for OpenAI Responses.
 //!
-//! `gpt-6-astra` can change `reasoning.effort` between turns without busting
+//! GPT-6 family models can change `reasoning.effort` between turns without busting
 //! the prompt-cache prefix: leave request-level effort at the prefix baseline
 //! and insert `configuration_update` items in `input`. Other models keep
 //! today's request-level effort and never emit those items.
 //!
 //! Recorded effort lives on assistant messages as provider context so resume
 //! and `/responses/compact` replacement history can recompute the same prefix.
-//! Non-astra turns record nothing; later astra turns fall back to the current
+//! Other models record nothing; later GPT-6 turns fall back to the current
 //! request effort when no record exists.
 
 use serde_json::{json, Value};
@@ -28,12 +28,12 @@ pub(super) enum ReasoningUpdatePolicy {
     /// Compact uses this because `POST /responses/compact` rejects those items.
     CurrentLevel,
     /// Freeze request-level effort at the cached-prefix baseline on
-    /// `gpt-6-astra` and emit updates in `input`.
+    /// GPT-6 family models and emit updates in `input`.
     PreservePrefix,
 }
 
 pub(super) fn preserves_prefix_for(model: &str) -> bool {
-    super::is_gpt6_astra(model)
+    super::is_gpt6_family(model)
 }
 
 pub(super) fn reasoning_effort_context(
@@ -95,16 +95,30 @@ fn is_configuration_update(item: &Value) -> bool {
     item.get("type").and_then(Value::as_str) == Some(CONFIGURATION_UPDATE_TYPE)
 }
 
-/// First recorded replayable effort, else the current turn's effort.
+/// Effort GPT-6 models run at when a request omits it. Live Codex responses
+/// report `medium` for requests without `reasoning.effort` on every GPT-6 tier.
+const GPT6_DEFAULT_EFFORT: &str = "medium";
+
+/// Request-level effort that anchors the cached prefix: the first recorded
+/// replayable effort, else the current turn's effort.
+///
+/// A `none` anchor is swapped for [`GPT6_DEFAULT_EFFORT`]: live Codex probes
+/// showed gpt-6-sol and gpt-6-luna ignore updates when request-level effort is
+/// `none`, but honor `configuration_update` to and from `none` on any other
+/// anchor.
 fn baseline_effort<'a>(
     messages: &'a [Message],
     identity: &ModelIdentity,
-    current_effort: Option<&'a str>,
-) -> Option<&'a str> {
-    messages
+    current_effort: &'a str,
+) -> &'a str {
+    match messages
         .iter()
         .find_map(|message| recorded_effort(message, identity))
-        .or(current_effort)
+        .unwrap_or(current_effort)
+    {
+        "none" => GPT6_DEFAULT_EFFORT,
+        effort => effort,
+    }
 }
 
 /// History lowered for a Responses request, plus the two effort values.
@@ -153,13 +167,16 @@ pub(super) fn lower_responses_input(
         });
     }
 
+    // An omitted effort (Off without a `none` mapping) runs at the model
+    // default, so updates can carry it like any other level.
+    let current_effort = current_effort.unwrap_or(GPT6_DEFAULT_EFFORT);
     let baseline = baseline_effort(messages, identity, current_effort);
     let (input, in_force_effort) = interleave_configuration_updates(
         messages,
         instructions,
         identity,
-        baseline,
-        current_effort,
+        Some(baseline),
+        Some(current_effort),
     )?;
     debug_assert!(
         !has_adjacent_configuration_updates(&input),
@@ -167,7 +184,7 @@ pub(super) fn lower_responses_input(
     );
     Ok(LoweredResponsesInput {
         input,
-        request_effort: baseline.map(str::to_owned),
+        request_effort: Some(baseline.to_owned()),
         in_force_effort,
     })
 }

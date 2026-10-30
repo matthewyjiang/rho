@@ -106,10 +106,10 @@ fn assert_no_adjacent_updates(input: &[Value]) {
     );
 }
 
-// Covers: astra create bodies freeze prefix effort and insert configuration_update
+// Covers: GPT-6 create bodies freeze prefix effort and insert configuration_update
 // Owner: openai configuration_update lowering
 #[test]
-fn astra_create_bodies_preserve_prefix_effort() {
+fn gpt6_create_bodies_preserve_prefix_effort() {
     let astra = identity_for("gpt-6-astra");
     struct Case {
         name: &'static str,
@@ -246,10 +246,10 @@ fn astra_create_bodies_preserve_prefix_effort() {
     }
 }
 
-// Covers: non-astra models keep request-level effort on the current turn
+// Covers: pre-GPT-6 models keep request-level effort on the current turn
 // Owner: openai configuration_update lowering
 #[test]
-fn non_astra_create_body_follows_current_level_without_updates() {
+fn pre_gpt6_create_body_follows_current_level_without_updates() {
     let gpt55 = identity_for("gpt-5.5");
     let messages = [
         Message::user_text("one"),
@@ -265,6 +265,55 @@ fn non_astra_create_body_follows_current_level_without_updates() {
         *input,
         vec![user_item("one"), assistant_item("two"), user_item("three")]
     );
+}
+
+// Covers: the prefix anchor is never `none` (gpt-6-sol and gpt-6-luna ignore
+// updates from it live) and an omitted Off effort travels as the model
+// default, so GPT-6 effort changes stay on configuration_update
+// Owner: openai configuration_update lowering
+#[test]
+fn gpt6_anchor_avoids_none_and_carries_omitted_effort_as_default() {
+    let sol = identity_for("gpt-6-sol");
+    let cases = [
+        (
+            "none history then high",
+            "none",
+            ReasoningLevel::High,
+            "medium",
+            vec![
+                update_item("none"),
+                user_item("one"),
+                assistant_item("two"),
+                update_item("high"),
+                user_item("three"),
+            ],
+        ),
+        (
+            "high history then omitted off",
+            "high",
+            ReasoningLevel::Off,
+            "high",
+            vec![
+                user_item("one"),
+                assistant_item("two"),
+                update_item("medium"),
+                user_item("three"),
+            ],
+        ),
+    ];
+    for (name, recorded, level, expected_effort, expected_input) in cases {
+        let messages = [
+            Message::user_text("one"),
+            assistant_text(&sol, "two", Some(recorded)),
+            Message::user_text("three"),
+        ];
+        let created = create_body("gpt-6-sol", &messages, level);
+        assert_eq!(
+            created.body["reasoning"]["effort"], expected_effort,
+            "{name}"
+        );
+        assert_eq!(created.body["input"], json!(expected_input), "{name}");
+    }
 }
 
 // Covers: compact rejects configuration_update, so it never emits those items
@@ -343,7 +392,7 @@ fn effort_context_precedes_first_retainable_stream_event() {
 // Covers: API-key Responses identity also records and freezes prefix effort
 // Owner: openai configuration_update lowering
 #[test]
-fn api_key_astra_create_body_emits_configuration_update() {
+fn api_key_gpt6_create_body_emits_configuration_update() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-6-astra");
     let identity = profile.identity().clone();
     let messages = [

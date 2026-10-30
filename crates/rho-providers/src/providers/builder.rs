@@ -138,7 +138,7 @@ impl ProviderBuildOptions {
         self
     }
 
-    /// Function tools to advertise as async on Responses (`gpt-6-astra` and later).
+    /// Function tools to advertise as async on Responses (GPT-6 family).
     pub fn async_tools(mut self, names: impl IntoIterator<Item = String>) -> Self {
         self.async_tools = names.into_iter().collect();
         self
