@@ -4,23 +4,17 @@ use super::*;
 use crate::model::Message;
 
 // Covers: Codex model switches preserve encrypted native context on repeated
-// sends, while omission reports name only the incompatible effort metadata.
+// sends and report no omissions; the recorded effort is a provider note.
 // Owner: provider request contract, through the same omission gate used by hosts.
 #[test]
 fn codex_model_switch_preserves_native_context_on_repeated_sends() {
     use crate::model::{AssistantMessage, ProviderContextBlock};
     use rho_sdk::model::handoff::{report_message_omissions, HandoffReport};
 
-    for (source_model, target_model, expected_report) in [
-        ("gpt-5.6-sol", "gpt-6-astra", HandoffReport::default()),
-        (
-            "gpt-6-astra",
-            "gpt-5.6-sol",
-            HandoffReport {
-                omitted_provider_context: 1,
-                omitted_kinds: vec!["openai_reasoning_effort".into()],
-            },
-        ),
+    for (source_model, target_model) in [
+        ("gpt-5.6-sol", "gpt-6-astra"),
+        ("gpt-6-astra", "gpt-5.6-sol"),
+        ("gpt-6.1-sol", "gpt-6-astra"),
     ] {
         let source = ModelIdentity::new("openai-codex", "openai-responses", source_model);
         let target = ModelIdentity::new("openai-codex", "openai-responses", target_model);
@@ -51,7 +45,7 @@ fn codex_model_switch_preserves_native_context_on_repeated_sends() {
             for prompt in ["continue", "next message"] {
                 history.push(Message::user_text(prompt));
                 let report = report_message_omissions(&history, &target);
-                pretty_assertions::assert_eq!(report, expected_report);
+                pretty_assertions::assert_eq!(report, HandoffReport::default());
                 let body = build_codex_responses_body(
                     &target.model,
                     ModelRequest {

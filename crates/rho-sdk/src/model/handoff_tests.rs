@@ -107,6 +107,36 @@ fn handoff_report_names_every_omitted_context_kind() {
     assert_eq!(report.omitted_kinds, ["alpha", "zeta"]);
 }
 
+// Covers: a provider note (send-time bookkeeping) never triggers a handoff
+// omission or replays, even to the exact recording model
+// Owner: SDK handoff
+#[test]
+fn provider_notes_are_never_omitted_or_replayed() {
+    let source = identity("openai-codex", "openai-responses", "gpt-test");
+    let other = identity("openai-codex", "openai-responses", "gpt-other");
+    let message = AssistantMessage {
+        content: vec![ContentBlock::Text("answer".into())],
+        provider_context: vec![ProviderContextBlock {
+            identity: source.clone(),
+            kind: ProviderContextBlock::provider_note_kind("effort"),
+            position: None,
+            data: json!("high"),
+        }],
+        ..AssistantMessage::default()
+    };
+
+    assert_eq!(
+        message.provider_context[0].provider_note_name(),
+        Some("effort")
+    );
+    for target in [&source, &other] {
+        assert!(!report_omissions([&message], target).has_omissions());
+        assert!(prepare_assistant(message.clone(), target)
+            .replay_context
+            .is_empty());
+    }
+}
+
 #[test]
 fn portable_fallback_is_sent_only_when_opaque_context_cannot_replay() {
     let source = identity("openai-codex", "openai-responses", "gpt-test");

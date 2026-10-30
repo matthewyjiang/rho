@@ -24,7 +24,7 @@ fn identity_for(model: &str) -> ModelIdentity {
 fn effort_block(identity: &ModelIdentity, effort: &str) -> ProviderContextBlock {
     ProviderContextBlock {
         identity: identity.clone(),
-        kind: OPENAI_REASONING_EFFORT_KIND.into(),
+        kind: reasoning_effort_kind(),
         position: None,
         data: json!(effort),
     }
@@ -126,6 +126,33 @@ fn gpt6_create_bodies_preserve_prefix_effort() {
             messages: vec![
                 Message::user_text("one"),
                 assistant_text(&astra, "two", Some("low")),
+                Message::user_text("three"),
+            ],
+            level: ReasoningLevel::High,
+            expected_effort: "low",
+            expected_in_force: "high",
+            expected_input: vec![
+                user_item("one"),
+                assistant_item("two"),
+                update_item("high"),
+                user_item("three"),
+            ],
+        },
+        Case {
+            name: "legacy effort kind still anchors resumed sessions",
+            messages: vec![
+                Message::user_text("one"),
+                Message::assistant(AssistantMessage {
+                    content: vec![ContentBlock::Text("two".into())],
+                    provenance: Some(astra.clone()),
+                    reasoning_summary: None,
+                    provider_context: vec![ProviderContextBlock {
+                        identity: astra.clone(),
+                        kind: "openai_reasoning_effort".into(),
+                        position: None,
+                        data: json!("low"),
+                    }],
+                }),
                 Message::user_text("three"),
             ],
             level: ReasoningLevel::High,
@@ -379,7 +406,7 @@ fn effort_context_precedes_first_retainable_stream_event() {
         vec![
             ModelEvent::ReasoningDelta("hidden".into()),
             ModelEvent::ProviderContext {
-                kind: OPENAI_REASONING_EFFORT_KIND.into(),
+                kind: reasoning_effort_kind(),
                 position: None,
                 data: json!("high"),
             },

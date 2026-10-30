@@ -17,6 +17,15 @@ const PORTABLE_FALLBACK_CONTEXT_KIND: &str = "rho.sdk.portable_fallback.v1";
 /// `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode }` variant
 /// and an `execution` field on `ToolCall`.
 pub const ASYNC_TOOL_CALL_CONTEXT_KIND: &str = "rho.sdk.async_tool_call.v1";
+/// Kind prefix for provider notes: bookkeeping a provider records on an
+/// assistant turn for its own later requests. Build kinds with
+/// [`ProviderContextBlock::provider_note_kind`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): replace the reserved provider-note kind prefix with the
+/// explicit replay scope on ProviderContextBlock.
+pub const PROVIDER_NOTE_CONTEXT_KIND_PREFIX: &str = "rho.sdk.provider_note.v1:";
 
 use crate::CancellationToken;
 
@@ -200,6 +209,22 @@ impl ProviderContextBlock {
         }
     }
 
+    /// Kind for the provider note `name`.
+    ///
+    /// Notes are SDK metadata: never replayed as provider-native context and
+    /// never counted as a handoff omission. The producing provider reads its
+    /// own notes back with [`Self::provider_note_name`] and an identity check.
+    pub fn provider_note_kind(name: &str) -> String {
+        format!("{PROVIDER_NOTE_CONTEXT_KIND_PREFIX}{name}")
+    }
+
+    /// The note name when this block is a provider note.
+    pub fn provider_note_name(&self) -> Option<&str> {
+        self.kind
+            .strip_prefix(PROVIDER_NOTE_CONTEXT_KIND_PREFIX)
+            .filter(|name| !name.is_empty())
+    }
+
     /// Returns the call id when this block is a well-formed async-call marker.
     pub fn async_tool_call_id(&self) -> Option<&str> {
         (self.kind == ASYNC_TOOL_CALL_CONTEXT_KIND
@@ -215,10 +240,12 @@ impl ProviderContextBlock {
             && self.data.is_string()
     }
 
-    /// Portable fallback or async-call marker: never replayed as provider-native
-    /// context, never counted as a handoff omission.
+    /// Portable fallback, async-call marker, or provider note: never replayed
+    /// as provider-native context, never counted as a handoff omission.
     pub(crate) fn is_sdk_metadata(&self) -> bool {
-        self.is_portable_fallback() || self.async_tool_call_id().is_some()
+        self.is_portable_fallback()
+            || self.async_tool_call_id().is_some()
+            || self.provider_note_name().is_some()
     }
 }
 

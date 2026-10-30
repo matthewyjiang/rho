@@ -15,8 +15,20 @@ use serde_json::{json, Value};
 use crate::model::{Message, ModelError, ModelEvent, ModelIdentity, ProviderContextBlock};
 use crate::protocol::openai_responses::lower_codex_history_message;
 
-/// Provider-context kind for the effort that was in force for an assistant turn.
-pub(super) const OPENAI_REASONING_EFFORT_KIND: &str = "openai_reasoning_effort";
+/// Provider-note name for the effort that was in force for an assistant turn.
+///
+/// The note never reaches the wire and never counts as a handoff omission;
+/// only this provider reads it back, for the exact recording model.
+const REASONING_EFFORT_NOTE: &str = "openai_reasoning_effort";
+
+/// Kind sessions recorded before the effort became a provider note. Still read
+/// so resumed sessions keep their cache anchor.
+const LEGACY_REASONING_EFFORT_KIND: &str = REASONING_EFFORT_NOTE;
+
+/// Provider-context kind for recorded reasoning effort.
+pub(super) fn reasoning_effort_kind() -> String {
+    ProviderContextBlock::provider_note_kind(REASONING_EFFORT_NOTE)
+}
 
 const CONFIGURATION_UPDATE_TYPE: &str = "configuration_update";
 
@@ -42,7 +54,7 @@ pub(super) fn reasoning_effort_context(
 ) -> Option<ProviderContextBlock> {
     (preserves_prefix_for(&identity.model) && !effort.is_empty()).then(|| ProviderContextBlock {
         identity: identity.clone(),
-        kind: OPENAI_REASONING_EFFORT_KIND.into(),
+        kind: reasoning_effort_kind(),
         position: None,
         data: Value::String(effort.to_owned()),
     })
@@ -71,7 +83,9 @@ fn effort_from_block<'a>(
     block: &'a ProviderContextBlock,
     identity: &ModelIdentity,
 ) -> Option<&'a str> {
-    (block.kind == OPENAI_REASONING_EFFORT_KIND && block.is_replayable_to(identity))
+    let is_effort = block.provider_note_name() == Some(REASONING_EFFORT_NOTE)
+        || block.kind == LEGACY_REASONING_EFFORT_KIND;
+    (is_effort && block.identity == *identity)
         .then(|| block.data.as_str())
         .flatten()
         .filter(|effort| !effort.is_empty())
@@ -294,7 +308,7 @@ pub(super) fn emit_reasoning_effort(
         return Ok(());
     };
     on_event(ModelEvent::ProviderContext {
-        kind: OPENAI_REASONING_EFFORT_KIND.into(),
+        kind: reasoning_effort_kind(),
         position: None,
         data: Value::String(effort.to_owned()),
     })

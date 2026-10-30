@@ -85,7 +85,7 @@ Supported GPT-5.5, GPT-5.6, and GPT-6 Codex models can use OpenAI's faster prior
 ## Notes
 
 - Switching between Codex models preserves encrypted compaction items without changing stored history.
-- Handoff warnings can still repeat after compaction: raw reasoning and other native items require the exact model, including the reasoning-effort record saved by GPT-6 compaction.
+- Handoff warnings can still repeat after compaction: raw reasoning and other native items require the exact model. The reasoning-effort note saved by GPT-6 turns is never sent and never reported.
 - On GPT-6 models (`gpt-6-*` and point releases such as `gpt-6.1-*`), `/reasoning` changes are sent as `configuration_update` items so the prompt cache prefix is preserved. That includes changes to and from `off`.
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
