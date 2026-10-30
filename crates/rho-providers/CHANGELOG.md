@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.26.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.25.0...rho-providers-v2.26.0) (2026-10-30)
+
+
+### Features
+
+* **codex:** add gpt-6.1-terra with fast mode ([#1620](https://github.com/matthewyjiang/rho/issues/1620)) ([be86c14](https://github.com/matthewyjiang/rho/commit/be86c142e9845d3c35fbe51ec8bcecc83a995012))
+* **openai:** extend async tools and cache-safe reasoning changes to all gpt-6 models ([#1621](https://github.com/matthewyjiang/rho/issues/1621)) ([7b37c39](https://github.com/matthewyjiang/rho/commit/7b37c3932aef0ddf3fa0e9db9b4d8e02c163b410))
+
+
+### Bug Fixes
+
+* **sdk:** stop reporting recorded reasoning effort as dropped context on model switches ([#1622](https://github.com/matthewyjiang/rho/issues/1622)) ([1190306](https://github.com/matthewyjiang/rho/commit/119030640c78c5d9be490dbccff9cc724745133f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.16.0 to 5.15.1
+
 ## [2.25.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.24.0...rho-providers-v2.25.0) (2026-10-25)
 
 

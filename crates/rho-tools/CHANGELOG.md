@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.16.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.0...rho-agent-tools-v1.16.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **sdk:** stop reporting recorded reasoning effort as dropped context on model switches ([#1622](https://github.com/matthewyjiang/rho/issues/1622)) ([1190306](https://github.com/matthewyjiang/rho/commit/119030640c78c5d9be490dbccff9cc724745133f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.16.0 to 5.15.1
+
 ## [1.16.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.15.0...rho-agent-tools-v1.16.0) (2026-10-25)
 
 
