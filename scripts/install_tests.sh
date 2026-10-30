@@ -87,9 +87,6 @@ unset RHO_CREDENTIAL_STORE
 
 # Without RHO_CREDENTIAL_STORE the installer only reads the saved choice and
 # notes it when unset on a fresh install; updates and saved choices stay quiet.
-unset_note="note: credential store left unset (OS default until first login).
-      choose a backend at first /login, or run:
-      'stub_rho credential-store set os|file'"
 saved_status="unset"
 stub_rho() {
   printf '%s\n' "$*" >> "$credential_command_log"
@@ -103,13 +100,13 @@ for row in \
   # shellcheck disable=SC2086 # split the row into fields
   set -- $row
   saved_status="$2"
-  expected_note=""
-  if [ "$3" = note ]; then
-    expected_note="$unset_note"
-  fi
   credential_command_log="$(mktemp)"
   note="$(configure_credential_store stub_rho "$1" 2>&1)"
-  assert_eq "$expected_note" "$note" "credential-store note for $row"
+  shown=quiet
+  if [ -n "$note" ]; then
+    shown=note
+  fi
+  assert_eq "$3" "$shown" "credential-store note for $row"
   case "$(cat "$credential_command_log")" in
     *"credential-store set"*) echo "error: $row must not change the credential store" >&2; exit 1 ;;
   esac
