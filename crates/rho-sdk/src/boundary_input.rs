@@ -19,7 +19,7 @@ pub enum InputBoundary {
 /// Hosts retain notification policy and queues. The runtime knows neither the
 /// source nor the meaning of these inputs. Install a fresh channel on an idle
 /// session for each run and service requests alongside its event stream.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BoundaryInputSource {
     sender: mpsc::Sender<BoundaryInputRequest>,
 }
@@ -31,6 +31,17 @@ pub struct BoundaryInputRequest {
     run_id: RunId,
     boundary: InputBoundary,
     response: oneshot::Sender<BoundaryReply>,
+}
+
+impl std::fmt::Debug for BoundaryInputRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BoundaryInputRequest")
+            .field("session_id", &self.session_id)
+            .field("run_id", &self.run_id)
+            .field("boundary", &self.boundary)
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) struct BoundaryReply {

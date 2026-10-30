@@ -54,7 +54,40 @@ impl CompactionState {
         }
     }
 
+    /// Restores the cumulative estimated context tokens removed.
+    #[must_use]
+    pub const fn with_removed_tokens(mut self, removed_tokens: u64) -> Self {
+        self.removed_tokens = removed_tokens;
+        self
+    }
+
+    /// Restores the cumulative compactor cost in USD micros.
+    #[must_use]
+    pub const fn with_removed_cost_usd_micros(mut self, removed_cost_usd_micros: u64) -> Self {
+        self.removed_cost_usd_micros = removed_cost_usd_micros;
+        self
+    }
+
+    /// Restores the estimated context tokens immediately before and after the
+    /// latest compaction.
+    #[must_use]
+    pub const fn with_last_compaction_tokens(mut self, previous: u64, current: u64) -> Self {
+        self.last_previous_tokens = Some(previous);
+        self.last_current_tokens = Some(current);
+        self
+    }
+
     /// Reconstructs full compaction accounting, including token and cost totals.
+    ///
+    /// Prefer [`Self::from_parts`] with the `with_*` setters, whose names keep
+    /// the four counters and two token readings from being transposed.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): remove `CompactionState::from_accounting` in favor of
+    /// `from_parts` plus the `with_*` setters.
+    ///
+    /// Removing it now would break existing storage adapters.
     pub const fn from_accounting(
         completed_compactions: u64,
         removed_messages: u64,
@@ -374,11 +407,20 @@ pub struct CompactionOutput {
 }
 
 impl CompactionOutput {
+    /// Creates replacement history with no usage charged to the compactor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if `messages` is empty.
     pub fn new(messages: Vec<Message>) -> Result<Self, Error> {
         Self::with_usage(messages, ModelUsage::default())
     }
 
     /// Creates replacement history and optional usage charged to the compactor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if `messages` is empty.
     pub fn with_usage(messages: Vec<Message>, usage: ModelUsage) -> Result<Self, Error> {
         if messages.is_empty() {
             return Err(Error::InvalidHostResponse {
@@ -422,6 +464,12 @@ pub type CompactionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<CompactionOutput, Error>> + Send + 'a>>;
 
 /// Defines who cancels an in-flight compaction future.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): mark `CompactorCancellationMode` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompactorCancellationMode {
     /// The SDK must drop the future when cancellation is requested.
@@ -437,6 +485,17 @@ pub enum CompactorCancellationMode {
 /// must return complete provider-neutral replacement history and cooperate with
 /// cancellation. Session history mutation remains owned by the SDK.
 pub trait Compactor: Send + Sync {
+    /// Produces replacement history for `request.messages()`.
+    ///
+    /// The replacement must be non-empty (see [`CompactionOutput::new`]) and
+    /// should be shorter than its input; the SDK appends any input accepted
+    /// after the compacted range itself. During a run, under
+    /// [`CompactorCancellationMode::External`] the SDK drops this future when
+    /// the run is cancelled. Under [`CompactorCancellationMode::Cooperative`],
+    /// and always for manual `Session::compact`, the SDK awaits it: return
+    /// [`Error::Cancelled`] after observing `request.cancellation()`, because a
+    /// successful output is committed even if cancellation was requested
+    /// meanwhile.
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a>;
 
     /// Describes whether the compactor resolves its future after request cancellation.

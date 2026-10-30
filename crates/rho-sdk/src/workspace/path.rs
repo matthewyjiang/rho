@@ -9,14 +9,23 @@ use super::PathScope;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WorkspacePathErrorKind {
+    /// A workspace or granted root is a relative path.
     RootNotAbsolute,
+    /// A workspace or granted root does not exist or cannot be resolved.
     RootMissing,
+    /// A workspace or granted root resolves to something other than a directory.
     RootNotDirectory,
+    /// A path contains `..` while file access is restricted.
     ParentTraversal,
+    /// A path resolves outside the workspace and every granted root.
     OutsideGrantedRoots,
+    /// The target, or every parent of a write target, does not exist.
     Missing,
+    /// A path contains NUL or a root/prefix component invalid in a relative path.
     InvalidPlatformPath,
+    /// Revalidation found the path resolving differently than when authorized.
     ChangedAfterAuthorization,
+    /// Another filesystem error; see [`WorkspacePathError::io_kind`].
     Io,
 }
 
@@ -25,6 +34,7 @@ pub enum WorkspacePathErrorKind {
 pub struct WorkspacePathError {
     kind: WorkspacePathErrorKind,
     message: String,
+    io_kind: Option<std::io::ErrorKind>,
 }
 
 impl WorkspacePathError {
@@ -32,15 +42,30 @@ impl WorkspacePathError {
         Self {
             kind,
             message: message.into(),
+            io_kind: None,
         }
     }
 
+    /// Records the filesystem error class behind this failure.
+    fn with_io(mut self, error: &std::io::Error) -> Self {
+        self.io_kind = Some(error.kind());
+        self
+    }
+
+    /// Stable classification of the failure.
     pub fn kind(&self) -> WorkspacePathErrorKind {
         self.kind
     }
 
+    /// Sanitized description suitable for a tool result.
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// The I/O error class when a filesystem call caused this failure, such as
+    /// `PermissionDenied` behind [`WorkspacePathErrorKind::Io`].
+    pub fn io_kind(&self) -> Option<std::io::ErrorKind> {
+        self.io_kind
     }
 }
 
@@ -91,6 +116,16 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Creates a workspace rooted at the canonical form of `root`.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`WorkspacePathErrorKind::InvalidPlatformPath`],
+    /// [`WorkspacePathErrorKind::RootNotAbsolute`],
+    /// [`WorkspacePathErrorKind::ParentTraversal`],
+    /// [`WorkspacePathErrorKind::RootMissing`], or
+    /// [`WorkspacePathErrorKind::RootNotDirectory`] unless the root is an
+    /// existing absolute directory.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self, WorkspacePathError> {
         let root = canonical_directory(root.into(), "workspace root")?;
         Ok(Self {
@@ -105,6 +140,15 @@ impl Workspace {
     /// A granted root is still subject to policy and is labeled
     /// [`PathScope::GrantedRoot`] so policy cannot confuse it with the primary
     /// workspace.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`WorkspacePathErrorKind::InvalidPlatformPath`],
+    /// [`WorkspacePathErrorKind::RootNotAbsolute`],
+    /// [`WorkspacePathErrorKind::ParentTraversal`],
+    /// [`WorkspacePathErrorKind::RootMissing`], or
+    /// [`WorkspacePathErrorKind::RootNotDirectory`] unless the root is an
+    /// existing absolute directory.
     pub fn with_granted_root(
         mut self,
         root: impl Into<PathBuf>,
@@ -152,6 +196,15 @@ impl Workspace {
         self.resolve_for_read(path).map(|resolved| resolved.path)
     }
 
+    /// Resolves an existing target through symlinks for reading, recording its
+    /// scope for authorization and later [`Self::revalidate`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the path is invalid, traverses `..` under restricted access,
+    /// does not exist ([`WorkspacePathErrorKind::Missing`]), cannot be resolved
+    /// ([`WorkspacePathErrorKind::Io`]), or lands outside the workspace and
+    /// granted roots.
     pub fn resolve_for_read(
         &self,
         path: impl AsRef<Path>,
@@ -170,6 +223,7 @@ impl Workspace {
                     lexical.display()
                 ),
             )
+            .with_io(&error)
         })?;
         let scope = self
             .scope_for(&canonical)
@@ -208,6 +262,7 @@ impl Workspace {
                             lexical.display()
                         ),
                     )
+                    .with_io(&error)
                 })?;
                 let scope = self
                     .scope_for(&canonical)
@@ -226,7 +281,8 @@ impl Workspace {
                         "workspace write path '{}' cannot be resolved: {error}",
                         lexical.display()
                     ),
-                ));
+                )
+                .with_io(&error));
             }
         }
 
@@ -243,7 +299,8 @@ impl Workspace {
                             "write parent '{}' cannot be resolved: {error}",
                             ancestor.display()
                         ),
-                    ));
+                    )
+                    .with_io(&error));
                 }
             }
             let name = ancestor.file_name().ok_or_else(|| {
@@ -268,6 +325,7 @@ impl Workspace {
                     ancestor.display()
                 ),
             )
+            .with_io(&error)
         })?;
         let scope = self
             .scope_for(&canonical)
@@ -285,6 +343,11 @@ impl Workspace {
     /// Rechecks a resolved target immediately before I/O and rejects a changed
     /// symlink or parent chain. This narrows, but cannot eliminate, filesystem
     /// races on platforms without descriptor-relative safe-open operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspacePathErrorKind::ChangedAfterAuthorization`] if the
+    /// target now resolves differently, or any error from re-resolving it.
     pub fn revalidate(&self, resolved: &ResolvedWorkspacePath) -> Result<(), WorkspacePathError> {
         let current = match resolved.state {
             WorkspacePathState::Existing => self.resolve_for_read(&resolved.path),
@@ -402,6 +465,7 @@ fn canonical_directory(path: PathBuf, label: &str) -> Result<PathBuf, WorkspaceP
             WorkspacePathErrorKind::RootMissing,
             format!("{label} must be an existing directory: {error}"),
         )
+        .with_io(&error)
     })?;
     if !canonical.is_dir() {
         return Err(WorkspacePathError::new(

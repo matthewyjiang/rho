@@ -39,6 +39,32 @@ async fn provider_await_is_cancelled_and_dropped_without_an_orphan_task() {
     assert!(!session.is_running());
 }
 
+// Covers: dropping a pending `Run::outcome` future, such as the loser of a
+// `select!` timeout, must not consume the run; a later wait still resolves,
+// and only a wait after that reports the run finished.
+// Owner: SDK cancellation reliability
+#[tokio::test]
+async fn abandoned_outcome_wait_keeps_the_run_outcome() {
+    let probe = Probe::default();
+    let session = support::session_with(PendingProvider {
+        probe: probe.clone(),
+    })
+    .await;
+    let mut run = session.start(UserInput::text("wait")).await.unwrap();
+    probe.wait_started().await;
+
+    tokio::select! {
+        biased;
+        result = run.outcome() => panic!("pending run resolved early: {result:?}"),
+        () = std::future::ready(()) => {}
+    }
+
+    run.cancel();
+    cancelled_outcome(&mut run).await;
+    probe.wait_dropped().await;
+    assert!(matches!(run.outcome().await, Err(Error::RunFinished)));
+}
+
 #[tokio::test]
 async fn full_provider_and_host_event_channels_cancel_with_bounded_production() {
     const REQUESTED_EVENTS: usize = 100_000;

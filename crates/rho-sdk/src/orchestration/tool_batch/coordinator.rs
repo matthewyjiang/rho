@@ -149,7 +149,13 @@ pub(in crate::orchestration) async fn execute(
                 .expect("prepared invocation is present")
                 .execution_policy()
                 .clone(),
-            _ => ToolExecutionPolicy::resource_aware([]),
+            CallState::Unavailable
+            | CallState::PreparationFailed(_)
+            | CallState::Authorizing { .. }
+            | CallState::Ready { .. }
+            | CallState::Running(_)
+            | CallState::Finishing(_)
+            | CallState::Resolved => ToolExecutionPolicy::resource_aware([]),
         })
         .collect::<Vec<_>>();
     for planned in plan(&policies) {
@@ -233,7 +239,12 @@ pub(in crate::orchestration) async fn execute(
                             entry.state = CallState::Finishing(Some(result));
                         }
                     }
-                    _ => {}
+                    CallState::Unavailable
+                    | CallState::PreparationFailed(_)
+                    | CallState::Prepared { .. }
+                    | CallState::Ready { .. }
+                    | CallState::Finishing(_)
+                    | CallState::Resolved => {}
                 }
             }
             if commands_open {
@@ -346,7 +357,12 @@ async fn resolve_without_work(
                     error.message().to_owned(),
                 )))
             }
-            _ => None,
+            CallState::Prepared { .. }
+            | CallState::Authorizing { .. }
+            | CallState::Ready { .. }
+            | CallState::Running(_)
+            | CallState::Finishing(_)
+            | CallState::Resolved => None,
         };
         let Some(completion) = completion else {
             continue;
@@ -382,23 +398,21 @@ async fn start_eligible(
     batch: &mut [BatchCall<'_>],
 ) -> Result<(), Error> {
     for index in 0..batch.len() {
-        let eligible = matches!(batch[index].state, CallState::Prepared { .. })
-            && batch[index].dependencies.iter().all(|dependency| {
-                matches!(batch[dependency.predecessor.0].state, CallState::Resolved)
-            });
-        if !eligible {
+        let CallState::Prepared { invocation, .. } = &batch[index].state else {
+            continue;
+        };
+        let dependencies_resolved = batch[index]
+            .dependencies
+            .iter()
+            .all(|dependency| matches!(batch[dependency.predecessor.0].state, CallState::Resolved));
+        if !dependencies_resolved {
             continue;
         }
-        let (metadata, capabilities) = match &batch[index].state {
-            CallState::Prepared { invocation, .. } => {
-                let prepared = invocation.as_ref().expect("prepared invocation is present");
-                (
-                    prepared.start_metadata().clone(),
-                    prepared.capabilities().to_vec(),
-                )
-            }
-            _ => unreachable!(),
-        };
+        let prepared = invocation.as_ref().expect("prepared invocation is present");
+        let (metadata, capabilities) = (
+            prepared.start_metadata().clone(),
+            prepared.capabilities().to_vec(),
+        );
         emit(
             control.events,
             control.cancellation,
@@ -822,7 +836,13 @@ fn interrupt_batch(
                 CallState::Finishing(result) => result
                     .take()
                     .and_then(|result| settled(&entry.call, result)),
-                _ => None,
+                CallState::Unavailable
+                | CallState::PreparationFailed(_)
+                | CallState::Prepared { .. }
+                | CallState::Authorizing { .. }
+                | CallState::Ready { .. }
+                | CallState::Running(_)
+                | CallState::Resolved => None,
             };
             let (result, _) = completed.unwrap_or_else(|| interrupted(&entry.call));
             entry.result = Some(result.into());

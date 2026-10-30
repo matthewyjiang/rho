@@ -7,6 +7,14 @@ use crate::{CancellationToken, Error, HostInputId};
 use serde_json::Value;
 
 /// One selectable answer in a host question.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): rename the `description` setter to `with_description`
+/// and the `description_text` getter to `description`.
+///
+/// The builder setter took the plain name first; swapping them in a minor
+/// would silently change what existing calls do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostChoice {
     value: String,
@@ -51,6 +59,12 @@ pub enum SelectionMode {
 }
 
 /// How a host should apply a question's default value.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): mark `DefaultSelection` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DefaultSelection {
     /// Pre-select the default answer.
@@ -62,6 +76,15 @@ pub enum DefaultSelection {
 }
 
 /// One structured question presented by a host.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): rename the `header`, `help`, `default_value`, and
+/// `default_selection` setters to `with_*` and drop the `_text`, `_ref`, and
+/// `_mode` suffixes from their getters.
+///
+/// The builder setters took the plain names first; swapping them in a minor
+/// would silently change what existing calls do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostQuestion {
     id: String,
@@ -77,6 +100,12 @@ pub struct HostQuestion {
 }
 
 impl HostQuestion {
+    /// Creates a question offering `choices` under `selection`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if `id` is blank, `choices` is
+    /// empty, or two choices share a value.
     pub fn new(
         id: impl Into<String>,
         prompt: impl Into<String>,
@@ -198,6 +227,12 @@ pub struct HostInputRequest {
 }
 
 impl HostInputRequest {
+    /// Creates a questionnaire with a fresh request ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if `questions` is empty or two
+    /// questions share an ID.
     pub fn questionnaire(
         title: impl Into<String>,
         questions: Vec<HostQuestion>,
@@ -224,6 +259,11 @@ impl HostInputRequest {
     /// Offer explicit fallback answers for a safe, reversible decision. Hosts
     /// decide whether and when to use them; defaults never authorize a timeout.
     /// Never use this for permissions or other authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if `response` does not answer
+    /// this questionnaire or `reason` is blank.
     pub fn with_timeout_fallback(
         mut self,
         mut response: HostInputResponse,
@@ -264,6 +304,14 @@ impl HostInputRequest {
         &self.questions
     }
 
+    /// Checks that `response` answers this questionnaire.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if the response names an unknown
+    /// question, misses a required one, has the wrong answer count, repeats an
+    /// answer, picks an unknown choice where "other" is not allowed, or claims
+    /// to be a timeout fallback the request did not offer.
     pub fn validate(&self, response: &HostInputResponse) -> Result<(), Error> {
         if response.source == HostInputSource::TimeoutFallback
             && self.timeout_fallback() != Some(response)
@@ -324,6 +372,12 @@ impl HostInputRequest {
 }
 
 /// Origin of host answers. A timeout fallback is not user authorization.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): mark `HostInputSource` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostInputSource {

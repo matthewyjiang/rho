@@ -20,6 +20,16 @@ pub struct ProviderSteeringRequest {
     outcome: ProviderSteeringOutcome,
 }
 
+impl std::fmt::Debug for ProviderSteeringRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderSteeringRequest")
+            .field("id", &self.id)
+            .field("outcome", &self.outcome)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ProviderSteeringRequest {
     pub(crate) fn new(
         id: SteeringId,
@@ -113,11 +123,14 @@ impl Drop for ProviderSteeringRequest {
 }
 
 /// Receiving end; dropping it releases every outstanding and future request.
+#[derive(Debug)]
 pub struct ProviderSteeringReceiver {
     rx: mpsc::UnboundedReceiver<ProviderSteeringRequest>,
 }
 
 impl ProviderSteeringReceiver {
+    /// Receives the next steering request offered during this turn, or `None`
+    /// once the runtime stops offering.
     pub async fn recv(&mut self) -> Option<ProviderSteeringRequest> {
         self.rx.recv().await
     }
@@ -131,6 +144,11 @@ pub enum ProviderSteeringOutcome {
     Released,
 }
 
+// The request and outcome channels are unbounded but cannot grow without
+// limit. The runtime offers only staged entries that are not already on offer,
+// and an entry returns to staged only after its single outcome is processed.
+// So in-flight requests and outcomes never exceed staged steering, which the
+// host feeds through the run's bounded command channel.
 pub(crate) type ProviderSteeringSender = mpsc::UnboundedSender<ProviderSteeringRequest>;
 pub(crate) type ProviderSteeringOutcomes =
     mpsc::UnboundedSender<(SteeringId, ProviderSteeringOutcome)>;
@@ -138,6 +156,13 @@ pub(crate) type ProviderSteeringOutcomes =
 /// Creates a mid-turn steering port.
 ///
 /// The constructor is public so provider crates can inject requests in tests.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): return an SDK-owned sender newtype instead of
+/// `tokio::sync::mpsc::UnboundedSender`.
+///
+/// Changing the return type breaks provider crates that call this today.
 #[doc(hidden)]
 pub fn provider_steering_channel() -> (
     mpsc::UnboundedSender<ProviderSteeringRequest>,

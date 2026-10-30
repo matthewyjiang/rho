@@ -297,7 +297,7 @@ impl std::fmt::Display for HookEnvelopeTooLarge {
 impl std::error::Error for HookEnvelopeTooLarge {}
 
 /// Assembles one envelope with its identity, clock reading, and bounds report.
-pub struct HookEnvelopeBuilder {
+pub(crate) struct HookEnvelopeBuilder {
     identity: HookIdentity,
     host_labels: HookHostLabels,
     workspace: HookWorkspace,

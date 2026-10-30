@@ -242,4 +242,11 @@ fn answers_that_do_not_fit_the_request_fail_the_check() {
             );
         }
     }
+
+    // An unchecked score question with no levels accepts no whole level.
+    let empty = [Question::score("level", "?", &[])];
+    let unchecked = DecisionRequest::new("", "", &empty);
+    assert!(unchecked
+        .check_answers(&[level(ScoreAnswer::from_level(0))])
+        .is_err());
 }

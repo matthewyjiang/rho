@@ -19,6 +19,14 @@ use crate::{
 pub type ToolHostFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, Error>> + Send + 'a>>;
 
 /// One provider-free call of a registered tool.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): rename the `id` setter to `with_id` and the `call_id`
+/// getter to `id`.
+///
+/// The setter took the getter's natural name; swapping them in a minor would
+/// silently change what existing calls do.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolHostCall {
     id: ToolCallId,
@@ -95,6 +103,12 @@ impl PendingToolHostInput {
 
     /// Sends a validated response. An invalid response leaves the request open
     /// so the host can correct it and try again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if the response does not fit the
+    /// request, the request was already answered, or the tool stopped waiting
+    /// for it.
     pub fn respond(&mut self, response: HostInputResponse) -> Result<(), Error> {
         self.request.validate(&response)?;
         let sender = self
@@ -165,31 +179,33 @@ impl ToolHostRun {
     /// Waits for the tool output while draining any unconsumed progress.
     /// Host-input events are dropped, which makes an unanswered tool request
     /// fail rather than waiting forever.
+    ///
+    /// Cancel-safe: dropping this future before it resolves leaves the call
+    /// intact, so a later call (or dropping the [`ToolHostRun`]) still owns
+    /// the worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the tool's failure, [`Error::Interrupted`] if the worker task
+    /// panicked or was aborted, or [`Error::RunFinished`] if the outcome was
+    /// already consumed.
     pub async fn outcome(&mut self) -> Result<ToolOutput, Error> {
-        let mut worker = self
-            .worker
-            .take()
-            .ok_or_else(|| Error::InvalidHostResponse {
-                message: "tool host outcome was already consumed".into(),
-            })?;
-        let result = loop {
+        let worker = self.worker.as_mut().ok_or(Error::RunFinished)?;
+        let joined = loop {
             tokio::select! {
-                result = &mut worker => {
-                    break result.map_err(|error| Error::Interrupted {
-                        message: format!("tool host task failed: {error}"),
-                    })?;
-                }
+                joined = &mut *worker => break joined,
                 event = self.events.recv() => {
                     if event.is_none() {
-                        break worker.await.map_err(|error| Error::Interrupted {
-                            message: format!("tool host task failed: {error}"),
-                        })?;
+                        break (&mut *worker).await;
                     }
                 }
             }
         };
+        self.worker = None;
         self.finished = true;
-        result
+        joined.map_err(|error| Error::Interrupted {
+            message: format!("tool host task failed: {error}"),
+        })?
     }
 }
 
@@ -317,6 +333,11 @@ impl ToolHostBuilder {
         self
     }
 
+    /// Builds the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfiguration`] if two tools share a name.
     pub fn build(self) -> Result<ToolHost, Error> {
         let approval_session = self.approval_session.unwrap_or_else(|| {
             ApprovalSession::from_shared(
@@ -385,6 +406,11 @@ impl ChildToolHostBuilder {
         self
     }
 
+    /// Builds the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfiguration`] if two tools share a name.
     pub fn build(self) -> Result<ToolHost, Error> {
         ToolHost::assemble(
             self.tools,
@@ -437,9 +463,7 @@ impl ToolHost {
                     Some(limit) => crate::tool::ExecutionArbiter::with_limit(limit),
                     None => crate::tool::ExecutionArbiter::default(),
                 }),
-                event_capacity: capacity.unwrap_or_else(|| {
-                    NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
-                }),
+                event_capacity: capacity.unwrap_or(crate::client::DEFAULT_EVENT_CAPACITY),
             }),
         })
     }
@@ -479,6 +503,11 @@ impl ToolHost {
     }
 
     /// Starts one tool call without a model provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfiguration`] if the call has a blank name,
+    /// non-object arguments, or names an unregistered tool.
     pub fn start(&self, call: ToolHostCall) -> Result<ToolHostRun, Error> {
         call.validate()?;
         let tool = self
@@ -526,6 +555,32 @@ impl ToolHost {
             let mut run = self.start(call)?;
             run.outcome().await
         })
+    }
+}
+
+impl std::fmt::Debug for ToolHostBuilder {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ToolHostBuilder")
+            .field("tools", &self.tools.len())
+            .field(
+                "workspace_root",
+                &self.workspace.as_ref().map(Workspace::root),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ChildToolHostBuilder {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChildToolHostBuilder")
+            .field("tools", &self.tools.len())
+            .field(
+                "workspace_root",
+                &self.workspace.as_ref().map(Workspace::root),
+            )
+            .finish_non_exhaustive()
     }
 }
 

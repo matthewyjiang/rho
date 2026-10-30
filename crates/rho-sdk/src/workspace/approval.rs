@@ -378,6 +378,8 @@ impl Drop for PendingApproval {
     }
 }
 
+/// Creates an [`ApprovalHandler`] that forwards requests to a host-owned
+/// receiver, holding at most `capacity` unanswered requests before callers wait.
 pub fn approval_channel(
     capacity: NonZeroUsize,
 ) -> (ChannelApprovalHandler, ApprovalRequestReceiver) {

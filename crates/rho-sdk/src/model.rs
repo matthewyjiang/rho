@@ -74,6 +74,11 @@ impl ToolCall {
 /// Adding fields would break downstream struct literals. Until the next major,
 /// use [`Message::tool_image_supplement`] and [`Message::semantic`]
 /// to construct and classify the separate image entry.
+///
+/// NEXT_MAJOR(rho-sdk): replace `ToolResult::ok: bool` with a typed outcome
+/// enum such as `ToolResultStatus { Succeeded, Failed }`.
+///
+/// Changing a public field's type breaks struct literals and field reads.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolResult {
     pub id: String,
@@ -349,6 +354,11 @@ impl<'de> Deserialize<'de> for AssistantMessage {
 /// For minor compatibility tool-owned images use `User` entries. Prefer
 /// [`Self::semantic`] for exhaustive classification that distinguishes tool data
 /// from human submissions without changing the serialized variants.
+///
+/// NEXT_MAJOR(rho-sdk): mark `Message` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in
+/// host code.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     System(String),
@@ -387,6 +397,13 @@ impl Message {
 }
 
 /// One provider-neutral content item.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): mark `ContentBlock` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in
+/// host code.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text(String),
