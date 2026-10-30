@@ -28,6 +28,9 @@ enum Parent {
     Signalled,
     /// Ended with the restart, releasing its lock.
     Ended,
+    /// Ended as the restart began, so the watcher answered before it was
+    /// stopped, too late for T3 Code to see.
+    EndedFirst,
 }
 
 fn t3_server(workspace: &Workspace) -> AcpServer {
@@ -59,15 +62,20 @@ fn wait_for(path: &Path) {
     }
 }
 
-// Covers: a T3 Code restart stops a watcher mid-wait, then reopens its
-// session and sends "Continue where you left off.". The watcher must resume
-// its wait with no model turn, and end with its parent's result, or with the
-// parent-ended notice when the parent died too. A model turn there wakes a
-// model in the watcher and hands its parent a bogus result.
+// Covers: a T3 Code restart stops a watcher mid-wait, or just after it
+// answered unseen, then reopens its session and sends "Continue where you
+// left off.". The watcher must resume its wait, or repeat its answer, with no
+// model turn: its parent's result, or the parent-ended notice when the parent
+// died too. A model turn there wakes a model in the watcher and hands its
+// parent a bogus result.
 // Owner: ACP T3 wake watcher, over the real stdio server
 #[test]
 fn restarted_watcher_resumes_its_wait_without_a_model_turn() {
-    for (stop, parent) in [(Stop::Kill, Parent::Signalled), (Stop::Quit, Parent::Ended)] {
+    for (stop, parent) in [
+        (Stop::Kill, Parent::Signalled),
+        (Stop::Quit, Parent::Ended),
+        (Stop::Quit, Parent::EndedFirst),
+    ] {
         let workspace = Workspace::new();
         let signals = workspace.home.path().join(".rho/acp-wakes");
         std::fs::create_dir_all(&signals).unwrap();
@@ -93,6 +101,11 @@ fn restarted_watcher_resumes_its_wait_without_a_model_turn() {
             },
         }));
         wait_for(&signals.join(format!("{session_id}.watcher")));
+        let mut parent_lock = Some(parent_lock);
+        if let Parent::EndedFirst = parent {
+            drop(parent_lock.take());
+            while server.recv("the watcher's answer")["id"] != "wake" {}
+        }
         match stop {
             Stop::Kill => drop(server),
             Stop::Quit => server.quit(),
@@ -103,7 +116,7 @@ fn restarted_watcher_resumes_its_wait_without_a_model_turn() {
                 std::fs::write(signals.join(TOKEN), "cargo test exited 0").unwrap();
                 "cargo test exited 0"
             }
-            Parent::Ended => {
+            Parent::Ended | Parent::EndedFirst => {
                 drop(parent_lock);
                 "the Rho session that started this background work ended before it finished"
             }

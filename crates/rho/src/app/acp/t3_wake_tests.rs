@@ -302,3 +302,58 @@ async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
     .unwrap();
     assert_eq!(result.as_deref(), Some(PARENT_ENDED));
 }
+
+// Covers: a watcher starting its wait prunes finished records past their
+// TTL and keeps waiting records, which a restarted watcher still resumes,
+// and fresh finished ones, which T3 may still ask to repeat. Pruning too
+// much brings back model turns in watchers; too little grows the directory
+// by a file per watcher forever. Owner: ACP T3 wake watcher.
+#[tokio::test]
+async fn starting_a_wait_prunes_only_expired_finished_records() {
+    let signals = tempfile::tempdir().unwrap();
+    let token = uuid::Uuid::new_v4().to_string();
+    let expired = std::time::SystemTime::now() - FINISHED_RECORD_TTL - Duration::from_secs(60);
+    let records = [
+        ("old finished", format!("{token}\nmake exited 0"), expired),
+        ("old waiting", token.clone(), expired),
+        (
+            "new finished",
+            format!("{token}\nmake exited 0"),
+            std::time::SystemTime::now(),
+        ),
+    ]
+    .map(|(name, contents, modified)| {
+        let path = signals
+            .path()
+            .join(format!("{}.watcher", uuid::Uuid::new_v4()));
+        std::fs::write(&path, contents).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        (name, path)
+    });
+    let signal = WakeSignal::parse_in(signals.path(), &uuid::Uuid::new_v4().to_string()).unwrap();
+    signal.fire("cargo test exited 0").unwrap();
+
+    let summary = signal
+        .wait(WATCHER_SESSION, &CancellationToken::new())
+        .await;
+
+    assert_eq!(
+        (
+            summary.as_deref(),
+            records.map(|(name, path)| (name, path.exists()))
+        ),
+        (
+            Some("cargo test exited 0"),
+            [
+                ("old finished", false),
+                ("old waiting", true),
+                ("new finished", true)
+            ]
+        )
+    );
+}

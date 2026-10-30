@@ -54,7 +54,7 @@ ACP gives an agent no way to start a turn, and T3 refuses a thread's own request
 - It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result. The results follow it as usual.
 - One watcher covers everything still running. Work that finishes during a prompt is delivered in that prompt, so most short commands never start one.
 - If the watched work is delivered during a later prompt, Rho cancels the watcher. A watcher also ends when the session that started it closes or its Rho process exits, and it reports that the work did not finish.
-- When T3 Code restarts, it tells each thread whose turn it cut short to continue. A watcher treats any such message as a prompt to resume waiting, never as a model turn. If its parent did not survive the restart, it ends at once and reports that the work did not finish.
+- When T3 Code restarts, it tells each thread whose turn it cut short to continue. A watcher treats any such message as a prompt to resume waiting, or to repeat the result T3 missed, never as a model turn. If its parent did not survive the restart, it ends at once and reports that the work did not finish.
 - If T3 refuses the watcher, Rho says so in the transcript and the results arrive with your next message.
 
 The same applies to a finished `/workflow:` command: it wakes the thread instead of waiting for your next message.

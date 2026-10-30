@@ -195,7 +195,7 @@ impl SessionHost {
         let home = crate::paths::home_dir();
         let scope = self.command_scope(home.as_deref(), &startup.config);
         // A watcher a host restart cut off resumes its wait, whatever the prompt says.
-        let action = if let Some(signal) = self.interrupted_wake() {
+        let action = if let Some(signal) = self.recorded_wake() {
             Some(Ok(PromptAction::AwaitWake(signal)))
         } else {
             // Expansion can wait on an MCP server, so a cancel drops it.
