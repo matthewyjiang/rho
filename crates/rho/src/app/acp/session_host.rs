@@ -89,8 +89,8 @@ use credentials::SessionCredentials;
 use mode::SessionPermission;
 pub(super) use open::{History, ReopenRequest, Reopened};
 use persist::{HostStorage, TurnCheckpoint};
-pub(super) use prompt_gate::PromptGate;
 use prompt_gate::PromptGuard;
+pub(super) use prompt_gate::{Closing, PromptGate};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
 pub(super) use title::PendingTitle;
 

@@ -86,9 +86,10 @@ impl SessionHost {
     ) -> anyhow::Result<PromptResponse> {
         let session_id = self.acp_session_id.0.as_ref();
         let Some(summary) = signal.wait(session_id, cancel).await else {
-            // A session closing with its process, as when T3 Code restarts,
-            // keeps the wait for the prompt T3 sends once it is back.
-            if !self.prompt_gate.is_closed() {
+            // A session that goes on elsewhere, as when T3 Code restarts or
+            // reloads it, keeps the wait for the prompt that resumes it. A
+            // cancel or close, as T3's task_cancel sends, ends it.
+            if !self.prompt_gate.hands_off() {
                 signal.abandon(session_id);
             }
             return Ok(PromptResponse::new(StopReason::Cancelled));
