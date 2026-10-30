@@ -222,7 +222,7 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
     use super::super::codex_request::{
         build_responses_create_body, codex_test_auth, ResponsesProfile,
     };
-    use super::super::configuration_update::OPENAI_REASONING_EFFORT_KIND;
+    use super::super::configuration_update::reasoning_effort_kind;
     use super::super::reasoning::OpenAiReasoningProfile;
 
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-6-astra");
@@ -252,7 +252,7 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
             reasoning_summary: None,
             provider_context: vec![ProviderContextBlock {
                 identity,
-                kind: OPENAI_REASONING_EFFORT_KIND.into(),
+                kind: reasoning_effort_kind(),
                 position: None,
                 data: json!("low"),
             }],

@@ -57,7 +57,7 @@ The Codex exception does not extend to unencrypted reasoning, OpenAI API-key req
 
 A live Codex tool round trip verified that `gpt-5.6-sol` accepts an unchanged encrypted reasoning item produced by `gpt-6-astra`. Rho preserves those items when switching models instead of dropping them or requiring compaction. This verifies that path, not every model pair or replay longevity. A rejected native item fails the turn; the adapter does not automatically retry without it. Acceptance remains upstream-dependent.
 
-GPT-6 models also record `openai_reasoning_effort` metadata for their model-specific configuration updates. That metadata remains exact-model-only, so switching to any other model, including another GPT-6 model, can still report an effort-metadata omission even though encrypted reasoning is preserved.
+GPT-6 models also record their reasoning effort as a provider note (`ProviderContextBlock::provider_note_kind`). Notes are SDK metadata: the recording provider reads them back for the exact model, they never reach the wire, and switching models never reports them as omissions.
 
 SDK metadata is never native replay data. Unencrypted reasoning and unknown formats retain exact-model filtering.
 
