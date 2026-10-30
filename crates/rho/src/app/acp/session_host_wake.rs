@@ -70,8 +70,10 @@ impl SessionHost {
     /// The wait this session ran as a watcher in an earlier process, if
     /// any. Every prompt resumes it, or repeats its result, instead of
     /// running a model turn: T3 Code sends "continue" to each thread a
-    /// restart cut off before it saw the thread's turn end.
+    /// restart cut off before it saw the thread's turn end. Other hosts
+    /// never send it, so they never consult records.
     pub(super) fn recorded_wake(&self) -> Option<WakeSignal> {
+        self.t3_wake.as_ref()?;
         WakeSignal::recorded(self.acp_session_id.0.as_ref())
     }
 
