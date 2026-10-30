@@ -31,17 +31,18 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
 
 /// Returns whether a Responses model accepts `"async": true` on function tools.
 ///
-/// OpenAI documents this for `gpt-6-astra` and later. Rho gates on the exact
-/// Astra id for first-party OpenAI and Codex hosts.
+/// OpenAI documents this for `gpt-6-astra` and later. Rho gates on the GPT-6
+/// family for first-party OpenAI and Codex hosts; Codex rejects the flag on
+/// GPT-5.6 with a 400.
 pub fn supports_async_tools(provider: &str, model: &str) -> bool {
-    matches!(provider, "openai" | "openai-codex") && is_gpt6_astra(model)
+    matches!(provider, "openai" | "openai-codex") && is_gpt6_family(model)
 }
 
 /// Returns whether changing reasoning effort keeps the cached prompt prefix
 /// for the provider bound to `identity`.
 ///
 /// Every OpenAI Responses provider, first-party or custom host, carries
-/// `gpt-6-astra` effort changes as `configuration_update` input items instead
+/// GPT-6 family effort changes as `configuration_update` input items instead
 /// of rewriting request-level effort, so the cached prefix stays valid.
 /// Everywhere else effort is part of the prefix.
 pub fn reasoning_change_preserves_prefix(identity: &ModelIdentity) -> bool {
@@ -49,8 +50,16 @@ pub fn reasoning_change_preserves_prefix(identity: &ModelIdentity) -> bool {
         && configuration_update::preserves_prefix_for(&identity.model)
 }
 
+/// Mid-turn steering is still verified only on Astra over the Codex websocket.
 pub(super) fn is_gpt6_astra(model: &str) -> bool {
     model == "gpt-6-astra"
+}
+
+/// GPT-6 family ids: `gpt-6-<tier>` and point releases such as `gpt-6.1-<tier>`.
+pub(super) fn is_gpt6_family(model: &str) -> bool {
+    model
+        .strip_prefix("gpt-6")
+        .is_some_and(|rest| rest.starts_with(['-', '.']))
 }
 
 use crate::protocol::openai_responses::collect_codex_sse_response;

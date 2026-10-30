@@ -1,13 +1,13 @@
 //! Mid-conversation reasoning updates for OpenAI Responses.
 //!
-//! `gpt-6-astra` can change `reasoning.effort` between turns without busting
+//! GPT-6 family models can change `reasoning.effort` between turns without busting
 //! the prompt-cache prefix: leave request-level effort at the prefix baseline
 //! and insert `configuration_update` items in `input`. Other models keep
 //! today's request-level effort and never emit those items.
 //!
 //! Recorded effort lives on assistant messages as provider context so resume
 //! and `/responses/compact` replacement history can recompute the same prefix.
-//! Non-astra turns record nothing; later astra turns fall back to the current
+//! Other models record nothing; later GPT-6 turns fall back to the current
 //! request effort when no record exists.
 
 use serde_json::{json, Value};
@@ -28,12 +28,12 @@ pub(super) enum ReasoningUpdatePolicy {
     /// Compact uses this because `POST /responses/compact` rejects those items.
     CurrentLevel,
     /// Freeze request-level effort at the cached-prefix baseline on
-    /// `gpt-6-astra` and emit updates in `input`.
+    /// GPT-6 family models and emit updates in `input`.
     PreservePrefix,
 }
 
 pub(super) fn preserves_prefix_for(model: &str) -> bool {
-    super::is_gpt6_astra(model)
+    super::is_gpt6_family(model)
 }
 
 pub(super) fn reasoning_effort_context(

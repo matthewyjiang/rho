@@ -373,8 +373,8 @@ fn assert_compact_body_omits_tool_fields(body: &Value) {
     assert!(body.get("parallel_tool_calls").is_none());
 }
 
-// Covers: `"async": true` is advertised only for Astra plus a declared function
-// tool; hosted web_search never gets the flag.
+// Covers: `"async": true` is advertised only for a GPT-6 family model plus a
+// declared function tool; hosted web_search never gets the flag.
 // Owner: OpenAI Responses request lowering
 #[test]
 fn async_tools_are_advertised_only_when_supported_and_declared() {
@@ -407,6 +407,24 @@ fn async_tools_are_advertised_only_when_supported_and_declared() {
             model: "gpt-6-astra",
             tool_name: "one_agent",
             async_tools: BTreeSet::new(),
+            hosted_web_search: true,
+            expect_async: false,
+            expect_hosted: false,
+        },
+        Case {
+            name: "gpt-6.1-terra plus declared",
+            model: "gpt-6.1-terra",
+            tool_name: "one_agent",
+            async_tools: BTreeSet::from(["one_agent".into()]),
+            hosted_web_search: true,
+            expect_async: true,
+            expect_hosted: false,
+        },
+        Case {
+            name: "gpt-5.6-terra plus declared",
+            model: "gpt-5.6-terra",
+            tool_name: "one_agent",
+            async_tools: BTreeSet::from(["one_agent".into()]),
             hosted_web_search: true,
             expect_async: false,
             expect_hosted: false,

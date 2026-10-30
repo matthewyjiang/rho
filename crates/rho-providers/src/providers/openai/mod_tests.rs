@@ -926,14 +926,21 @@ fn api_responses_body_sends_output_cap_only_when_requested() {
     }
 }
 
-// Covers: keep-warm keeps its clock through an astra reasoning change on any
-// Responses host, including custom ones, and nowhere effort rewrites the prefix.
+// Covers: keep-warm keeps its clock through a GPT-6 family reasoning change on
+// any Responses host, including custom ones, and nowhere else effort rewrites
+// the prefix.
 // Owner: OpenAI provider prefix policy
 #[test]
-fn reasoning_change_preserves_prefix_only_for_responses_astra() {
+fn reasoning_change_preserves_prefix_only_for_responses_gpt6() {
     let cases = [
         ("openai", "openai-responses", "gpt-6-astra", true),
         ("my-proxy", "openai-responses", "gpt-6-astra", true),
+        ("openai-codex", "openai-responses", "gpt-6-sol", true),
+        ("openai-codex", "openai-responses", "gpt-6-luna", true),
+        ("openai-codex", "openai-responses", "gpt-6.1-sol", true),
+        ("openai-codex", "openai-responses", "gpt-6.1-terra", true),
+        ("openai-codex", "openai-responses", "gpt-5.6-terra", false),
+        ("openai-codex", "openai-responses", "gpt-60-mini", false),
         ("openai", "openai-responses", "gpt-5.5", false),
         ("anthropic", "anthropic-messages", "gpt-6-astra", false),
     ];

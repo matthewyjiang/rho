@@ -246,10 +246,10 @@ fn astra_create_bodies_preserve_prefix_effort() {
     }
 }
 
-// Covers: non-astra models keep request-level effort on the current turn
+// Covers: pre-GPT-6 models keep request-level effort on the current turn
 // Owner: openai configuration_update lowering
 #[test]
-fn non_astra_create_body_follows_current_level_without_updates() {
+fn pre_gpt6_create_body_follows_current_level_without_updates() {
     let gpt55 = identity_for("gpt-5.5");
     let messages = [
         Message::user_text("one"),
