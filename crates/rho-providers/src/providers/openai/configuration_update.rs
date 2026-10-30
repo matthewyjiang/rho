@@ -139,7 +139,15 @@ pub(super) fn lower_responses_input(
     current_effort: Option<&str>,
     policy: ReasoningUpdatePolicy,
 ) -> Result<LoweredResponsesInput, ModelError> {
-    if policy == ReasoningUpdatePolicy::CurrentLevel || !preserves_prefix_for(&identity.model) {
+    let baseline = baseline_effort(messages, identity, current_effort);
+    // Updates cannot express "no effort" (Off on hosts without `none`), and a
+    // live Codex probe showed gpt-6-sol and gpt-6-luna ignore updates from a
+    // `none` baseline. Both cases send the turn's level at request level.
+    let updates_apply = current_effort.is_some() && baseline != Some("none");
+    if policy == ReasoningUpdatePolicy::CurrentLevel
+        || !preserves_prefix_for(&identity.model)
+        || !updates_apply
+    {
         let input = crate::protocol::openai_responses::codex_input_items_for_target(
             messages,
             instructions,
@@ -153,7 +161,6 @@ pub(super) fn lower_responses_input(
         });
     }
 
-    let baseline = baseline_effort(messages, identity, current_effort);
     let (input, in_force_effort) = interleave_configuration_updates(
         messages,
         instructions,

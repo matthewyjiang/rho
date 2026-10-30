@@ -50,12 +50,16 @@ pub fn reasoning_change_preserves_prefix(identity: &ModelIdentity) -> bool {
         && configuration_update::preserves_prefix_for(&identity.model)
 }
 
-/// Mid-turn steering is still verified only on Astra over the Codex websocket.
-pub(super) fn is_gpt6_astra(model: &str) -> bool {
+/// Whether `response.steer` is forwarded over the Codex websocket. Verified
+/// live only on Astra.
+fn supports_mid_turn_steering(model: &str) -> bool {
     model == "gpt-6-astra"
 }
 
 /// GPT-6 family ids: `gpt-6-<tier>` and point releases such as `gpt-6.1-<tier>`.
+///
+/// Gates wire-protocol capabilities only. Billing tiers such as fast mode stay
+/// per-model allowlists.
 pub(super) fn is_gpt6_family(model: &str) -> bool {
     model
         .strip_prefix("gpt-6")
@@ -330,7 +334,9 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        if self.profile.contract().uses_codex_websocket() && is_gpt6_astra(self.profile.model()) {
+        if self.profile.contract().uses_codex_websocket()
+            && supports_mid_turn_steering(self.profile.model())
+        {
             self.send_codex_responses_inner(
                 request,
                 options,

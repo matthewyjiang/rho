@@ -106,10 +106,10 @@ fn assert_no_adjacent_updates(input: &[Value]) {
     );
 }
 
-// Covers: astra create bodies freeze prefix effort and insert configuration_update
+// Covers: GPT-6 create bodies freeze prefix effort and insert configuration_update
 // Owner: openai configuration_update lowering
 #[test]
-fn astra_create_bodies_preserve_prefix_effort() {
+fn gpt6_create_bodies_preserve_prefix_effort() {
     let astra = identity_for("gpt-6-astra");
     struct Case {
         name: &'static str,
@@ -267,6 +267,44 @@ fn pre_gpt6_create_body_follows_current_level_without_updates() {
     );
 }
 
+// Covers: updates are skipped when they cannot carry the change: a `none`
+// baseline (gpt-6-sol and gpt-6-luna ignore updates from it live) or a turn
+// with no effort to send (Off without a `none` mapping)
+// Owner: openai configuration_update lowering
+#[test]
+fn gpt6_create_body_uses_request_level_effort_when_updates_cannot_apply() {
+    let sol = identity_for("gpt-6-sol");
+    let cases = [
+        ("none baseline", "none", ReasoningLevel::High, Some("high")),
+        ("no effort to send", "high", ReasoningLevel::Off, None),
+    ];
+    for (name, recorded, level, expected_effort) in cases {
+        let messages = [
+            Message::user_text("one"),
+            assistant_text(&sol, "two", Some(recorded)),
+            Message::user_text("three"),
+        ];
+        let created = create_body("gpt-6-sol", &messages, level);
+        assert_eq!(
+            created.body["reasoning"]
+                .get("effort")
+                .and_then(Value::as_str),
+            expected_effort,
+            "{name}"
+        );
+        assert_eq!(
+            created.in_force_effort.as_deref(),
+            expected_effort,
+            "{name}"
+        );
+        assert_eq!(
+            created.body["input"],
+            json!([user_item("one"), assistant_item("two"), user_item("three")]),
+            "{name}"
+        );
+    }
+}
+
 // Covers: compact rejects configuration_update, so it never emits those items
 // Owner: openai configuration_update lowering
 #[test]
@@ -343,7 +381,7 @@ fn effort_context_precedes_first_retainable_stream_event() {
 // Covers: API-key Responses identity also records and freezes prefix effort
 // Owner: openai configuration_update lowering
 #[test]
-fn api_key_astra_create_body_emits_configuration_update() {
+fn api_key_gpt6_create_body_emits_configuration_update() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-6-astra");
     let identity = profile.identity().clone();
     let messages = [

@@ -211,10 +211,10 @@ fn continuation_falls_back_to_full_request_for_unrepresentable_server_output() {
     assert_eq!(state.continuation_delta(&next), None);
 }
 
-// Covers: astra effort changes must stay on configuration_update so WS deltas keep working
+// Covers: GPT-6 effort changes must stay on configuration_update so WS deltas keep working
 // Owner: openai Codex continuation
 #[test]
-fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
+fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
     use crate::model::{AssistantMessage, Message, ModelRequest, ProviderContextBlock};
     use crate::reasoning::ReasoningLevel;
     use pretty_assertions::assert_eq;

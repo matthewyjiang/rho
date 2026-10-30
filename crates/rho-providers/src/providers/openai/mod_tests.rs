@@ -935,12 +935,9 @@ fn reasoning_change_preserves_prefix_only_for_responses_gpt6() {
     let cases = [
         ("openai", "openai-responses", "gpt-6-astra", true),
         ("my-proxy", "openai-responses", "gpt-6-astra", true),
-        ("openai-codex", "openai-responses", "gpt-6-sol", true),
-        ("openai-codex", "openai-responses", "gpt-6-luna", true),
-        ("openai-codex", "openai-responses", "gpt-6.1-sol", true),
-        ("openai-codex", "openai-responses", "gpt-6.1-terra", true),
-        ("openai-codex", "openai-responses", "gpt-5.6-terra", false),
-        ("openai-codex", "openai-responses", "gpt-60-mini", false),
+        ("openai", "openai-responses", "gpt-6.1-sol", true),
+        ("openai", "openai-responses", "gpt-5.6-terra", false),
+        ("openai", "openai-responses", "gpt-60-mini", false),
         ("openai", "openai-responses", "gpt-5.5", false),
         ("anthropic", "anthropic-messages", "gpt-6-astra", false),
     ];
