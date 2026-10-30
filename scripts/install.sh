@@ -132,13 +132,22 @@ asset_url() {
   printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$tag" "$asset"
 }
 
+# Applies RHO_CREDENTIAL_STORE when set. Otherwise prints the "unset" note only
+# when install_state is `fresh` (no rho binary at the install path before this
+# run) and no backend choice is saved. Updates stay quiet: telling whether an
+# older install holds OS-store logins would mean reading the keyring, which can
+# prompt, and the first /login still asks while no choice is saved.
 configure_credential_store() {
   rho_bin="$1"
+  install_state="$2"
 
   if [ -z "${RHO_CREDENTIAL_STORE:-}" ]; then
-    echo "note: credential store left unset (OS default until first login)." >&2
-    echo "      choose a backend at first /login, or run:" >&2
-    echo "      '$rho_bin credential-store set os|file'" >&2
+    if [ "$install_state" = fresh ] &&
+      [ "$("$rho_bin" credential-store status 2>/dev/null)" = unset ]; then
+      echo "note: credential store left unset (OS default until first login)." >&2
+      echo "      choose a backend at first /login, or run:" >&2
+      echo "      '$rho_bin credential-store set os|file'" >&2
+    fi
     return
   fi
 
@@ -215,6 +224,11 @@ fi
 tar -xzf "$archive" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
 install_path="$INSTALL_DIR/$BIN_NAME"
+if [ -e "$install_path" ]; then
+  install_state=update
+else
+  install_state=fresh
+fi
 
 if command -v install >/dev/null 2>&1; then
   install -m 0755 "$tmp/$BIN_NAME" "$install_path"
@@ -224,7 +238,7 @@ else
 fi
 
 echo "rho installed to $install_path"
-configure_credential_store "$install_path"
+configure_credential_store "$install_path" "$install_state"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) echo "note: add $INSTALL_DIR to your PATH to run rho from anywhere" ;;

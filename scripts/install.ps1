@@ -135,11 +135,18 @@ try {
     ) | Out-Null
 }
 
-function Set-CredentialStorePreference($RhoPath) {
+# Applies RHO_CREDENTIAL_STORE when set. Otherwise prints the "unset" note only
+# on a fresh install (no rho.exe at the install path before this run) with no
+# saved backend choice. Updates stay quiet: telling whether an older install
+# holds OS-store logins would mean reading the keyring, and the first /login
+# still asks while no choice is saved.
+function Set-CredentialStorePreference($RhoPath, $FreshInstall) {
     if (-not $env:RHO_CREDENTIAL_STORE) {
-        Write-Host "note: credential store left unset (OS default until first login)."
-        Write-Host "      choose a backend at first /login, or run:"
-        Write-Host "      '$RhoPath credential-store set os|file'"
+        if ($FreshInstall -and "$(& $RhoPath credential-store status)".Trim() -eq "unset") {
+            Write-Host "note: credential store left unset (OS default until first login)."
+            Write-Host "      choose a backend at first /login, or run:"
+            Write-Host "      '$RhoPath credential-store set os|file'"
+        }
         return
     }
 
@@ -183,6 +190,7 @@ try {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $Source = Join-Path $TempDir $BinName
     $Destination = Join-Path $InstallDir $BinName
+    $FreshInstall = -not (Test-Path $Destination)
 
     if ($env:RHO_UPDATE_PARENT_PID) {
         $ParentPid = 0
@@ -201,7 +209,7 @@ try {
         Write-Host "rho update staged for $Destination. It will finish after the current rho process exits."
     } else {
         Write-Host "rho installed to $Destination"
-        Set-CredentialStorePreference $Destination
+        Set-CredentialStorePreference $Destination $FreshInstall
     }
     if ($PathChanged) {
         Write-Host "added $InstallDir to your user PATH. restart your terminal if rho is not found."
