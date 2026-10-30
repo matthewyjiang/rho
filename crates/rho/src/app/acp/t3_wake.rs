@@ -453,6 +453,16 @@ impl WakeSignal {
         })
     }
 
+    /// The signal watcher session `session_id` waited on in an earlier
+    /// process, if any. T3 Code reopens a watcher a restart cut off and
+    /// sends it a prompt to continue, which must resume the wait, or repeat
+    /// its result, instead of starting a model turn.
+    pub(super) fn recorded(session_id: &str) -> Option<Self> {
+        let dir = signal_dir().ok()?;
+        let token = WaitRecord::of(&dir, session_id)?.read()?.token;
+        Self::parse_in(&dir, &token)
+    }
+
     #[cfg(test)]
     pub(super) fn token(&self) -> &str {
         &self.token
@@ -488,24 +498,171 @@ impl WakeSignal {
         }
     }
 
-    /// Waits for the parent's signal, or for the parent to end, and cleans
-    /// up, returning the watcher's result. `None` when `cancel` trips first.
-    pub(super) async fn wait(&self, cancel: &CancellationToken) -> Option<String> {
-        loop {
-            if let Ok(summary) = std::fs::read_to_string(&self.path) {
-                self.cleanup();
+    /// Drops what watcher session `session_id` recorded, waiting or
+    /// finished, with the signal it names.
+    pub(super) fn forget(session_id: &str) {
+        if let Some(signal) = Self::recorded(session_id) {
+            signal.abandon(session_id);
+        }
+    }
+
+    fn record(&self, session_id: &str) -> Option<WaitRecord> {
+        WaitRecord::of(self.path.parent()?, session_id)
+    }
+
+    /// Waits, as watcher session `session_id`, for the parent's signal or
+    /// for the parent to end, and cleans up, returning the watcher's result.
+    ///
+    /// The wait and then its result stay recorded under the session, so a
+    /// watcher whose process ends mid-wait, or before T3 Code saw its
+    /// result, resumes or repeats it on the next prompt (see
+    /// [`Self::recorded`]). `None` when `cancel` trips first, leaving the
+    /// wait recorded: the caller [abandons](Self::abandon) it unless the
+    /// session is closing with its process.
+    pub(super) async fn wait(
+        &self,
+        session_id: &str,
+        cancel: &CancellationToken,
+    ) -> Option<String> {
+        let record = self.record(session_id);
+        if let Some(record) = &record {
+            if let Some(summary) = record.read().and_then(|recorded| {
+                (recorded.token == self.token)
+                    .then_some(recorded.summary)
+                    .flatten()
+            }) {
                 return Some(summary);
             }
+            record.prune_finished();
+            // A watcher left unrecorded only loses restart recovery.
+            let _ = record.write(&self.token, /*summary*/ None);
+        }
+        let summary = loop {
+            if let Ok(summary) = std::fs::read_to_string(&self.path) {
+                break summary;
+            }
             if self.parent_ended() {
-                self.cleanup();
-                return Some(PARENT_ENDED.into());
+                break PARENT_ENDED.into();
             }
             tokio::select! {
-                () = cancel.cancelled() => {
-                    self.cleanup();
-                    return None;
-                }
+                () = cancel.cancelled() => return None,
                 () = tokio::time::sleep(SIGNAL_POLL) => {}
+            }
+        };
+        // The signal and lock go only once the record holds the result: a
+        // later process repeats it from either, and from neither would
+        // report that the parent ended.
+        let recorded = record
+            .as_ref()
+            .is_none_or(|record| record.write(&self.token, Some(&summary)));
+        if recorded {
+            self.cleanup();
+        }
+        Some(summary)
+    }
+
+    /// Drops the signal, the parent's lock file, and the wait session
+    /// `session_id` recorded on them.
+    pub(super) fn abandon(&self, session_id: &str) {
+        self.cleanup();
+        if let Some(record) = self.record(session_id) {
+            record.remove();
+        }
+    }
+}
+
+/// How long a finished watcher's record outlives its result. T3 Code asks
+/// a watcher to continue only when it restarted before it saw the result,
+/// and it asks as it starts again, so the record matters until T3's next
+/// start. A month covers a machine left off for weeks; past that a lost
+/// result costs one model turn in the watcher, as before records existed.
+const FINISHED_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// One watcher session's file naming the signal it waits on, and, once the
+/// wait ends, its result: the token on the first line, then the result.
+struct WaitRecord {
+    path: PathBuf,
+}
+
+struct RecordedWait {
+    token: String,
+    /// The result, once the wait ended.
+    summary: Option<String>,
+}
+
+impl WaitRecord {
+    /// `None` for a session id that is not a UUID, which Rho never creates,
+    /// so a host's session id cannot name a path outside `dir`.
+    fn of(dir: &Path, session_id: &str) -> Option<Self> {
+        let session_id = uuid::Uuid::parse_str(session_id).ok()?;
+        Some(Self {
+            path: dir.join(format!("{session_id}.watcher")),
+        })
+    }
+
+    fn read(&self) -> Option<RecordedWait> {
+        std::fs::read_to_string(&self.path)
+            .ok()
+            .map(|contents| Self::parse(&contents))
+    }
+
+    fn parse(contents: &str) -> RecordedWait {
+        let (token, summary) = match contents.split_once('\n') {
+            Some((token, summary)) => (token, Some(summary.to_owned())),
+            None => (contents, None),
+        };
+        RecordedWait {
+            token: token.to_owned(),
+            summary,
+        }
+    }
+
+    /// Writes whole, through a temp file, so a crash never leaves a waiting
+    /// record half turned into a finished one. Returns whether it wrote;
+    /// a failure is logged.
+    fn write(&self, token: &str, summary: Option<&str>) -> bool {
+        let contents = match summary {
+            Some(summary) => format!("{token}\n{summary}"),
+            None => token.to_owned(),
+        };
+        let staging = self.path.with_extension("watcher-tmp");
+        let written =
+            std::fs::write(&staging, contents).and_then(|()| std::fs::rename(&staging, &self.path));
+        if let Err(error) = &written {
+            tracing::warn!(%error, "could not record the T3 wake watcher's wait");
+        }
+        written.is_ok()
+    }
+
+    fn remove(&self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+
+    /// Removes finished records older than [`FINISHED_RECORD_TTL`] beside
+    /// this one. Waiting records stay: their watcher can still resume.
+    fn prune_finished(&self) {
+        let Some(entries) = self
+            .path
+            .parent()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+        else {
+            return;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            let expired = path
+                .extension()
+                .is_some_and(|extension| extension == "watcher")
+                && std::fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .is_ok_and(|modified| {
+                        modified
+                            .elapsed()
+                            .is_ok_and(|age| age > FINISHED_RECORD_TTL)
+                    })
+                && std::fs::read_to_string(&path)
+                    .is_ok_and(|contents| Self::parse(&contents).summary.is_some());
+            if expired {
+                let _ = std::fs::remove_file(path);
             }
         }
     }

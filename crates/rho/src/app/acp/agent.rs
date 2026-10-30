@@ -9,7 +9,7 @@ use std::{
 
 use super::{
     prompt_acceptance::PromptAcceptance,
-    session_host::{History, PromptGate, ReopenRequest, Reopened, SessionHost},
+    session_host::{Closing, History, PromptGate, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
 use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
@@ -213,9 +213,20 @@ impl RhoAcpAgent {
         let install = self.install_lock_for(session_id).await.lock_owned().await;
         let live = self.sessions.lock().await.remove(session_id);
         if let Some(live) = live {
-            shutdown_live(live).await;
+            shutdown_live(live, Closing::Retired).await;
         }
+        self.forget_wake(session_id);
         install
+    }
+
+    /// Drops the wake record of a session closed or deleted for good, which
+    /// is how T3 Code's `task_cancel` ends a watcher, so a later load takes
+    /// prompts as turns again. Runs after teardown: a session reloaded in
+    /// place kept its record with no waiter left to drop it.
+    fn forget_wake(&self, session_id: &SessionId) {
+        if matches!(self.startup.host, super::AcpHost::T3Code) {
+            super::t3_wake::WakeSignal::forget(session_id.0.as_ref());
+        }
     }
 
     /// Switches one session's permission mode for later prompts. Like
@@ -293,7 +304,7 @@ impl RhoAcpAgent {
         let previous = { self.sessions.lock().await.get(&session_id).cloned() };
         let mut retired = None;
         if let Some(previous) = &previous {
-            previous.cancel.cancel();
+            previous.cancel.suspend();
             let host = previous.host.lock().await;
             previous.replaced.store(true, Ordering::Release);
             retired = Some(host);
@@ -464,7 +475,8 @@ impl RhoAcpAgent {
             .await
             .remove(&session_id)
             .ok_or_else(|| missing_session(&session_id))?;
-        shutdown_live(live).await;
+        shutdown_live(live, Closing::Retired).await;
+        self.forget_wake(&session_id);
         Ok(CloseSessionResponse::new())
     }
 
@@ -496,7 +508,7 @@ impl RhoAcpAgent {
         };
         self.install_locks.lock().await.clear();
         for live in lives {
-            shutdown_live(live).await;
+            shutdown_live(live, Closing::Disconnected).await;
         }
     }
 
@@ -517,14 +529,14 @@ impl RhoAcpAgent {
         let install = self.install_lock_for(&session_id).await;
         let _install = install.lock().await;
         if self.closed.load(Ordering::Acquire) {
-            shutdown_live(live).await;
+            shutdown_live(live, Closing::Disconnected).await;
             return;
         }
 
         let previous = { self.sessions.lock().await.get(&session_id).cloned() };
         let old_host = if let Some(previous) = previous {
             previous.replaced.store(true, Ordering::Release);
-            previous.cancel.cancel();
+            previous.cancel.suspend();
             previous.host.lock().await.take()
         } else {
             None
@@ -553,7 +565,7 @@ impl RhoAcpAgent {
             host.shutdown().await;
         }
         if let Err(rejected) = outcome {
-            shutdown_live(rejected).await;
+            shutdown_live(rejected, Closing::Disconnected).await;
         }
     }
 
@@ -715,8 +727,8 @@ impl DerefMut for HostGuard {
 /// tears the host down. Shutdown has no successor host, so unlike a
 /// replacement the cancelled turn still saves before the host lock is
 /// released.
-async fn shutdown_live(live: Arc<LiveSession>) {
-    live.cancel.close();
+async fn shutdown_live(live: Arc<LiveSession>, closing: Closing) {
+    live.cancel.close(closing);
     let host = live.host.lock().await.take();
     if let Some(host) = host {
         host.shutdown().await;

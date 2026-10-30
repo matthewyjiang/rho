@@ -1,6 +1,7 @@
 //! The session host's side of T3 wake watchers (see [`super::super::t3_wake`]):
 //! arming one as a parent prompt ends, recognizing the prompt T3 sends when
-//! it fires, and running `/rho-wake` as the watcher.
+//! it fires, and running `/rho-wake` as the watcher, resuming a wait, or
+//! repeating its result, after T3 Code restarts.
 
 use agent_client_protocol::schema::v1::{PromptResponse, StopReason};
 use rho_sdk::{model::ContentBlock, CancellationToken, UserInput};
@@ -66,6 +67,16 @@ impl SessionHost {
         }
     }
 
+    /// The wait this session ran as a watcher in an earlier process, if
+    /// any. Every prompt resumes it, or repeats its result, instead of
+    /// running a model turn: T3 Code sends "continue" to each thread a
+    /// restart cut off before it saw the thread's turn end. Other hosts
+    /// never send it, so they never consult records.
+    pub(super) fn recorded_wake(&self) -> Option<WakeSignal> {
+        self.t3_wake.as_ref()?;
+        WakeSignal::recorded(self.acp_session_id.0.as_ref())
+    }
+
     /// `/rho-wake`: waits for the parent's signal without a model turn or a
     /// saved prompt, then ends the turn with the signal's summary as the
     /// watcher's result.
@@ -75,7 +86,14 @@ impl SessionHost {
         cancel: &CancellationToken,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let Some(summary) = signal.wait(cancel).await else {
+        let session_id = self.acp_session_id.0.as_ref();
+        let Some(summary) = signal.wait(session_id, cancel).await else {
+            // A session that goes on elsewhere, as when T3 Code restarts or
+            // reloads it, keeps the wait for the prompt that resumes it. A
+            // cancel or close, as T3's task_cancel sends, ends it.
+            if !self.prompt_gate.hands_off() {
+                signal.abandon(session_id);
+            }
             return Ok(PromptResponse::new(StopReason::Cancelled));
         };
         send_notification(

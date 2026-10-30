@@ -20,6 +20,9 @@ const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
 /// Bounds each wait on real process exits and signal polls; a hang fails.
 const TEST_WAIT: Duration = Duration::from_secs(10);
 
+/// The ACP session id of the watcher reading a signal.
+const WATCHER_SESSION: &str = "5a7c9e1b-3d4f-4a6b-8c0d-2e4f6a8b0c1d";
+
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
 /// A `t3-code` task tool that records its calls and returns `result`.
@@ -183,9 +186,12 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
         PromptOrigin::Other
     );
     let signal = WakeSignal::parse_in(fixture.signals.path(), &token).unwrap();
-    let summary = tokio::time::timeout(TEST_WAIT, signal.wait(&CancellationToken::new()))
-        .await
-        .unwrap();
+    let summary = tokio::time::timeout(
+        TEST_WAIT,
+        signal.wait(WATCHER_SESSION, &CancellationToken::new()),
+    )
+    .await
+    .unwrap();
     let summary = summary.expect("the watcher receives the exit");
     assert!(
         summary.starts_with(LONG_RUNNING_COMMAND),
@@ -288,8 +294,96 @@ async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
     let signal = WakeSignal::parse_in(fixture.signals.path(), &second).unwrap();
     let Fixture { wake, .. } = fixture;
     drop(wake);
-    let result = tokio::time::timeout(TEST_WAIT, signal.wait(&CancellationToken::new()))
-        .await
-        .unwrap();
+    let result = tokio::time::timeout(
+        TEST_WAIT,
+        signal.wait(WATCHER_SESSION, &CancellationToken::new()),
+    )
+    .await
+    .unwrap();
     assert_eq!(result.as_deref(), Some(PARENT_ENDED));
+}
+
+// Covers: a watcher starting its wait prunes finished records past their
+// TTL and keeps waiting records, which a restarted watcher still resumes,
+// and fresh finished ones, which T3 may still ask to repeat. Pruning too
+// much brings back model turns in watchers; too little grows the directory
+// by a file per watcher forever. Owner: ACP T3 wake watcher.
+#[tokio::test]
+async fn starting_a_wait_prunes_only_expired_finished_records() {
+    let signals = tempfile::tempdir().unwrap();
+    let token = uuid::Uuid::new_v4().to_string();
+    let expired = std::time::SystemTime::now() - FINISHED_RECORD_TTL - Duration::from_secs(60);
+    let records = [
+        ("old finished", format!("{token}\nmake exited 0"), expired),
+        ("old waiting", token.clone(), expired),
+        (
+            "new finished",
+            format!("{token}\nmake exited 0"),
+            std::time::SystemTime::now(),
+        ),
+    ]
+    .map(|(name, contents, modified)| {
+        let path = signals
+            .path()
+            .join(format!("{}.watcher", uuid::Uuid::new_v4()));
+        std::fs::write(&path, contents).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        (name, path)
+    });
+    let signal = WakeSignal::parse_in(signals.path(), &uuid::Uuid::new_v4().to_string()).unwrap();
+    signal.fire("cargo test exited 0").unwrap();
+
+    let summary = signal
+        .wait(WATCHER_SESSION, &CancellationToken::new())
+        .await;
+
+    assert_eq!(
+        (
+            summary.as_deref(),
+            records.map(|(name, path)| (name, path.exists()))
+        ),
+        (
+            Some("cargo test exited 0"),
+            [
+                ("old finished", false),
+                ("old waiting", true),
+                ("new finished", true)
+            ]
+        )
+    );
+}
+
+// Covers: when the finished record cannot be written, the watcher keeps the
+// parent's signal, so a restarted watcher still repeats the real result.
+// Dropping it first turns finished work into the parent-ended notice.
+// Owner: ACP T3 wake watcher.
+#[tokio::test]
+async fn failed_result_record_keeps_the_signal_for_the_restarted_watcher() {
+    let signals = tempfile::tempdir().unwrap();
+    let signal = WakeSignal::parse_in(signals.path(), &uuid::Uuid::new_v4().to_string()).unwrap();
+    signal.fire("cargo test exited 0").unwrap();
+    // A directory where the record stages its write makes every write fail.
+    std::fs::create_dir(
+        signals
+            .path()
+            .join(format!("{WATCHER_SESSION}.watcher-tmp")),
+    )
+    .unwrap();
+
+    let first = signal
+        .wait(WATCHER_SESSION, &CancellationToken::new())
+        .await;
+    let restarted = signal
+        .wait(WATCHER_SESSION, &CancellationToken::new())
+        .await;
+
+    assert_eq!(
+        (first.as_deref(), restarted.as_deref()),
+        (Some("cargo test exited 0"), Some("cargo test exited 0"))
+    );
 }
