@@ -42,9 +42,11 @@ fn compaction_state_tracks_token_and_cost_accounting() {
     assert_eq!(state.last_previous_tokens(), Some(1_200));
     assert_eq!(state.last_current_tokens(), Some(300));
 
-    let restored = CompactionState::from_parts(1, 4, Some(Revision::from_u64(3)));
-    assert_eq!(restored.removed_tokens(), 0);
-    assert_eq!(restored.removed_cost_usd_micros(), 0);
+    let restored = CompactionState::from_parts(1, 4, Some(Revision::from_u64(3)))
+        .with_removed_tokens(900)
+        .with_removed_cost_usd_micros(2_500)
+        .with_last_compaction_tokens(1_200, 300);
+    assert_eq!(restored, state);
 
     let usage = ModelUsage {
         cost_usd_micros: Some(100),

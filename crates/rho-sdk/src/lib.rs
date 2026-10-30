@@ -132,6 +132,7 @@
 //! tools filesystem, process, or network access.
 
 #![forbid(unsafe_code)]
+#![warn(missing_debug_implementations)]
 
 mod boundary_input;
 mod cancellation;

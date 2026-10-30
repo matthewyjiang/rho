@@ -20,6 +20,7 @@ pub type ToolPrepareFuture<'a> = std::pin::Pin<
 /// Facts available while a tool validates and resolves an invocation.
 ///
 /// Preparation cannot emit progress, ask for host input, or authorize work.
+#[derive(Debug)]
 pub struct ToolPreparationContext {
     workspace: Option<Workspace>,
     cancellation: CancellationToken,
@@ -58,6 +59,7 @@ impl ToolPreparationContext {
 ///
 /// This type deliberately has no authorization method. A resource-aware
 /// executor can use only the capabilities declared by its prepared invocation.
+#[derive(Debug)]
 pub struct AuthorizedToolContext {
     execution: ToolContext,
 }
@@ -338,6 +340,18 @@ pub struct PreparedToolInvocation<'a> {
     /// True only for the plan built by the default [`Tool::prepare`], the one
     /// a tool gets when it does not implement `prepare` itself.
     from_default_prepare: bool,
+}
+
+impl std::fmt::Debug for PreparedToolInvocation<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedToolInvocation")
+            .field("execution", &self.execution)
+            .field("cancellation", &self.cancellation)
+            .field("capabilities", &self.capabilities)
+            .field("metadata", &self.metadata)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> PreparedToolInvocation<'a> {

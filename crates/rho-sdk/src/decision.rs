@@ -124,7 +124,12 @@ impl<'a> DecisionRequest<'a> {
                 (QuestionKind::Score(levels), Answer::Score(answer)) => {
                     match answer.probabilities() {
                         Some(probabilities) => probabilities.len() == levels.len(),
-                        None => answer.value <= (levels.len() - 1) as f64,
+                        // An unchecked request may have no levels; no
+                        // whole-level answer fits it.
+                        None => levels
+                            .len()
+                            .checked_sub(1)
+                            .is_some_and(|top| answer.value <= top as f64),
                     }
                 }
                 (
@@ -173,6 +178,12 @@ pub struct Question<'a> {
 }
 
 /// What a question asks for, with the descriptions that define its answers.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): mark `QuestionKind` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug)]
 pub enum QuestionKind<'a> {
     /// Yes or no, with optional descriptions of each.

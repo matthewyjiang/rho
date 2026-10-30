@@ -61,7 +61,7 @@ sequenceDiagram
 
 ### Terminal authority
 
-A terminal event describes the worker result, but `Run::outcome` remains the authoritative typed result channel. `Completed` contains the same successful outcome. Cancellation returns `Error::Cancelled`. Failure returns the typed `Error`; the event contains sanitized text and retryability for observation.
+A terminal event describes the worker result, but `Run::outcome` remains the authoritative typed result channel. `Completed` contains the same successful outcome. Cancellation returns `Error::Cancelled`. Failure returns the typed `Error`; the event contains sanitized text and retryability for observation. `Run::outcome` is cancel-safe: dropping its future before it resolves, such as when a timeout wins a `select!`, leaves the run in place for a later call. Once the outcome has been returned, further calls return `Error::RunFinished`.
 
 One coordinator consumes run commands for the whole tool batch. It queues concurrent host-input requests by ID, rejects any ID reused within the batch, and keeps the session in `WaitingForHostInput` while any request remains. Steering accepted during a batch crosses into history only after every result slot closes.
 
@@ -95,7 +95,7 @@ Providers that implement `ModelProvider::send_turn_stream_steerable` may claim a
 
 Retracting a steer that the provider already claimed or delivered returns `AlreadyApplied` in this major. The next major can add `SteeringRetraction::Delivered` for that case (`NEXT_MAJOR(rho-sdk): add SteeringRetraction::Delivered for steering already forwarded to the provider mid-turn`).
 
-`ToolHostInputRequested` moves the session into `WaitingForHostInput` and includes the owning tool call ID. The legacy `HostInputRequested` variant remains available for source compatibility. `Run::respond` validates a response and delivers it to a matching pending request exactly once. When no requests remain, the session returns to running. A response can fail because the ID is unknown, the shape is invalid, the requester was dropped, or the run no longer accepts commands.
+`ToolHostInputRequested` moves the session into `WaitingForHostInput` and includes the owning tool call ID. The legacy `HostInputRequested` variant remains available for source compatibility. `Run::respond` validates a response and delivers it to a matching pending request exactly once. When no requests remain, the session returns to running. A response can fail because the ID is unknown, the shape is invalid, the requester was dropped, or the run no longer accepts commands (`Error::RunFinished`).
 
 ## Retry contract
 

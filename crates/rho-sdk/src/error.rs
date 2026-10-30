@@ -5,36 +5,47 @@ use crate::tool::ToolError;
 use crate::{floor_char_boundary, DIAGNOSTIC_TRUNCATION_MARKER};
 
 /// Stable top-level SDK error classification.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): add a `#[source]` boxed cause to the message-only
+/// variants (`InvalidConfiguration`, `Persistence`, `Interrupted`) so callers
+/// can downcast the underlying serde, join, or I/O error.
+///
+/// Adding a field to an existing struct variant breaks exhaustive struct
+/// patterns, so until then the cause is only rendered into `message`.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    InvalidConfiguration {
-        message: String,
-    },
-    Authentication {
-        message: String,
-    },
+    /// Builder, session, or call configuration is invalid.
+    InvalidConfiguration { message: String },
+    /// Provider credentials were missing or rejected.
+    Authentication { message: String },
+    /// The model provider failed; see [`ProviderError::kind`].
     Provider(ProviderError),
+    /// A provider-free [`ToolHost`](crate::ToolHost) call failed. Tool failures
+    /// inside a model run become tool results instead.
     Tool(ToolError),
-    Persistence {
-        message: String,
-    },
-    PolicyDenied {
-        message: String,
-    },
+    /// A snapshot could not be serialized, parsed, or stored.
+    Persistence { message: String },
+    /// A host policy denied the operation.
+    PolicyDenied { message: String },
+    /// The runtime was shut down before the operation started.
     RuntimeShutdown,
+    /// The session already has an active run or operation.
     SessionBusy,
+    /// The operation was cancelled by the host.
     Cancelled,
-    Interrupted {
-        message: String,
-    },
-    InvalidHostResponse {
-        message: String,
-    },
+    /// A task or event consumer stopped before the operation finished.
+    Interrupted { message: String },
+    /// The host supplied invalid data, such as a response that does not fit
+    /// its question or an empty compaction replacement.
+    InvalidHostResponse { message: String },
     /// The host answered a host input request without answers.
-    HostInputRefused {
-        refusal: crate::HostInputRefusal,
-    },
+    HostInputRefused { refusal: crate::HostInputRefusal },
+    /// The run or tool call already ended, so it can no longer accept
+    /// commands or yield its outcome again.
+    RunFinished,
 }
 
 impl Error {
@@ -66,6 +77,7 @@ impl fmt::Display for Error {
             Self::InvalidHostResponse { message } => {
                 write!(formatter, "invalid host response: {message}")
             }
+            Self::RunFinished => formatter.write_str("run has already finished"),
             Self::HostInputRefused { refusal } => match refusal {
                 crate::HostInputRefusal::Declined => {
                     formatter.write_str("the user declined to answer")
@@ -92,7 +104,8 @@ impl std::error::Error for Error {
             | Self::Cancelled
             | Self::Interrupted { .. }
             | Self::InvalidHostResponse { .. }
-            | Self::HostInputRefused { .. } => None,
+            | Self::HostInputRefused { .. }
+            | Self::RunFinished => None,
         }
     }
 }
@@ -113,12 +126,19 @@ impl From<ToolError> for Error {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProviderErrorKind {
+    /// Credentials were missing, expired, or rejected.
     Authentication,
+    /// The provider throttled the request.
     RateLimit,
+    /// The request or stream exceeded a deadline.
     Timeout,
+    /// The provider returned a response the adapter could not interpret.
     InvalidResponse,
+    /// The provider or model is temporarily unavailable.
     Unavailable,
+    /// The connection or stream ended early.
     Interrupted,
+    /// Any failure without a more specific category.
     Other,
     /// The request did not fit the model's context window. Retrying unchanged
     /// cannot succeed; the runtime may compact history and retry once.
@@ -129,7 +149,9 @@ pub enum ProviderErrorKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Retryability {
+    /// Retrying unchanged may succeed.
     Retryable,
+    /// Retrying unchanged will fail again.
     Permanent,
 }
 
@@ -143,6 +165,7 @@ pub struct ProviderDiagnostic(String);
 impl ProviderDiagnostic {
     const MAX_BYTES: usize = 16 * 1024;
 
+    /// Wraps provider details, truncating them on a char boundary to 16 KiB.
     pub fn new(diagnostic: impl Into<String>) -> Self {
         let diagnostic = diagnostic.into();
         if diagnostic.len() <= Self::MAX_BYTES {
@@ -156,6 +179,7 @@ impl ProviderDiagnostic {
         Self(bounded)
     }
 
+    /// The bounded diagnostic text, for direct display only.
     pub fn as_str(&self) -> &str {
         &self.0
     }

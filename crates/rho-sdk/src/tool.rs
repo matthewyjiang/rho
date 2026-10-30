@@ -419,6 +419,12 @@ pub trait Tool: Send + Sync {
 }
 
 /// Deterministic outcome returned by [`ScriptedTool`].
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): mark `ScriptedToolOutcome` `#[non_exhaustive]`.
+///
+/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Debug)]
 pub enum ScriptedToolOutcome {
     Success(ToolOutput),

@@ -10,8 +10,6 @@ use crate::{
     StopReason,
 };
 
-use crate::workspace::PolicyDecision;
-
 use super::bounds::{
     bounded_path, bounded_string, bounded_tail_string, HookPayloadBounds, HookTruncation,
 };
@@ -104,17 +102,6 @@ pub enum HookCapability {
 pub enum HookPolicyOutcome {
     Allow,
     RequireApproval,
-}
-
-impl HookPolicyOutcome {
-    /// Returns the outcome a hook may observe, or `None` when policy already denied.
-    pub(crate) fn from_policy(decision: &PolicyDecision) -> Option<Self> {
-        match decision {
-            PolicyDecision::Allow => Some(Self::Allow),
-            PolicyDecision::RequireApproval { .. } => Some(Self::RequireApproval),
-            PolicyDecision::Deny { .. } => None,
-        }
-    }
 }
 
 /// How a tool call resolved.
@@ -584,6 +571,7 @@ pub(crate) fn error_label(error: &crate::Error) -> &'static str {
         crate::Error::Interrupted { .. } => "interrupted",
         crate::Error::InvalidHostResponse { .. } => "invalid_host_response",
         crate::Error::HostInputRefused { .. } => "host_input_refused",
+        crate::Error::RunFinished => "run_finished",
     }
 }
 

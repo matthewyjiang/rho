@@ -15,6 +15,7 @@ impl HandoffReport {
     }
 }
 
+#[derive(Debug)]
 pub struct PreparedAssistant {
     pub content: Vec<ContentBlock>,
     pub replay_context: Vec<ProviderContextBlock>,

@@ -46,7 +46,7 @@ impl ExecutionArbiter {
         let key = Arc::new(());
         self.queue
             .lock()
-            .expect("tool execution queue lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(Entry {
                 key: Arc::clone(&key),
                 policy: policy.clone(),
@@ -71,7 +71,10 @@ impl ExecutionArbiter {
     /// entry conflicts with it, and a slot is free for it after the earlier
     /// clear entries still waiting for one.
     fn admit(&self, key: &Arc<()>) -> bool {
-        let mut queue = self.queue.lock().expect("tool execution queue lock");
+        let mut queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut slots = self
             .limit
             .map(|limit| limit.get() - queue.iter().filter(|entry| entry.executing).count());
@@ -99,7 +102,7 @@ impl Drop for ExecutionPermit {
         self.arbiter
             .queue
             .lock()
-            .expect("tool execution queue lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|entry| !Arc::ptr_eq(&entry.key, &self.key));
         self.arbiter.changed.notify_waiters();
     }

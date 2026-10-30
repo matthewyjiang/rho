@@ -177,9 +177,7 @@ fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
         prompt: queued.clone(),
         receipt: Box::pin(std::future::pending()),
     };
-    let completion = PendingInputCompletion::Accepted(Err(rho_sdk::Error::InvalidHostResponse {
-        message: "run completed before accepting steering input".into(),
-    }));
+    let completion = PendingInputCompletion::Accepted(Err(rho_sdk::Error::RunFinished));
 
     let failure = app.finish_pending_input_request(request, completion);
 
@@ -188,7 +186,7 @@ fn rejected_steering_acceptance_becomes_a_follow_up_without_failing_the_turn() {
     assert_eq!(*app.pending.queued_prompts(), VecDeque::from([queued]));
     assert_eq!(
         app.status(),
-        "steer queued as follow-up: invalid host response: run completed before accepting steering input"
+        "steer queued as follow-up: run has already finished"
     );
 }
 

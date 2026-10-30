@@ -13,8 +13,8 @@ use crate::{
     Error, SessionId,
 };
 
-pub(crate) const DEFAULT_EVENT_CAPACITY: usize = 64;
-const DEFAULT_MAX_STEPS: usize = 32;
+pub(crate) const DEFAULT_EVENT_CAPACITY: NonZeroUsize = NonZeroUsize::new(64).unwrap();
+const DEFAULT_MAX_STEPS: NonZeroUsize = NonZeroUsize::new(32).unwrap();
 
 #[derive(Debug, Default)]
 struct LifecycleState {
@@ -434,12 +434,8 @@ impl RhoBuilder {
             provider,
             tools,
             system_prompt: self.system_prompt,
-            event_capacity: self
-                .event_capacity
-                .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_EVENT_CAPACITY).unwrap()),
-            max_steps: self
-                .max_steps
-                .unwrap_or_else(|| NonZeroUsize::new(DEFAULT_MAX_STEPS).unwrap()),
+            event_capacity: self.event_capacity.unwrap_or(DEFAULT_EVENT_CAPACITY),
+            max_steps: self.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
             max_parallel_tools: self
                 .max_parallel_tools
                 .unwrap_or_else(|| NonZeroUsize::new(1).unwrap()),
@@ -609,6 +605,11 @@ impl Rho {
         )
     }
 
+    /// Starts a new logical session and emits `session_started` to hooks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RuntimeShutdown`] after [`Rho::shutdown`].
     pub async fn session(&self, options: SessionOptions) -> Result<Session, Error> {
         self.create_session(options, SessionLifecycle::Started)
     }
@@ -618,6 +619,10 @@ impl Rho {
     /// Hosts use this while replacing runtime infrastructure around a session,
     /// for example after a policy change. Unlike [`Rho::session`], this does not
     /// emit `session_started`; the logical session has already started.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RuntimeShutdown`] after [`Rho::shutdown`].
     pub async fn rebind_session(&self, options: SessionOptions) -> Result<Session, Error> {
         self.create_session(options, SessionLifecycle::Rebound)
     }
@@ -671,6 +676,20 @@ impl Rho {
 enum SessionLifecycle {
     Started,
     Rebound,
+}
+
+impl std::fmt::Debug for RhoBuilder {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RhoBuilder")
+            .field("has_provider", &self.provider.is_some())
+            .field("tools", &self.tools.len())
+            .field(
+                "workspace_root",
+                &self.workspace.as_ref().map(crate::Workspace::root),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for Rho {

@@ -5,6 +5,14 @@ use tokio::sync::mpsc;
 use super::ToolMetadata;
 
 /// Progress emitted during one tool invocation.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): name each field once: `ToolProgress::new(message)`
+/// with `with_metadata`, read back through `message()` and `metadata()`.
+///
+/// `message` constructs and `metadata` sets, so the getters had to take other
+/// names (`text`, `presentation`); swapping them in a minor would break calls.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolProgress {
     message: String,

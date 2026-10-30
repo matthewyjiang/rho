@@ -90,10 +90,11 @@ impl ToolHostWorker {
             }
             *execution_completion
                 .lock()
-                .expect("tool cancellation policy lock") = match prepared.cancellation_policy() {
-                crate::tool::ToolCancellationPolicy::Abort => None,
-                crate::tool::ToolCancellationPolicy::Complete { timeout } => Some(timeout),
-            };
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                match prepared.cancellation_policy() {
+                    crate::tool::ToolCancellationPolicy::Abort => None,
+                    crate::tool::ToolCancellationPolicy::Complete { timeout } => Some(timeout),
+                };
             prepared.execute(context).await
         };
         tokio::pin!(execution);
@@ -104,12 +105,39 @@ impl ToolHostWorker {
         let result = loop {
             tokio::select! {
                 biased;
-                next = progress.recv(), if progress_open && !cancellation.is_cancelled() => {
+                // First, so a tool that keeps the drain arms below busy cannot
+                // exhaust the task's poll budget before the deadline is checked.
+                () = async {
+                    cancellation_cleanup_deadline
+                        .as_mut()
+                        .expect("guarded cancellation cleanup deadline")
+                        .await
+                }, if cancellation_cleanup_deadline.is_some() => {
+                    let timeout = cancellation_cleanup_timeout
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .expect("cleanup deadline requires a timeout");
+                    break Err(ToolError::new(
+                        ToolErrorKind::Cancelled,
+                        format!("tool cancellation cleanup exceeded {timeout:?}"),
+                    ));
+                }
+                // Keep draining after cancellation: a tool finishing under
+                // `ToolCancellationPolicy::Complete` may still report progress
+                // or ask for input, and a full channel would stall its cleanup
+                // until the deadline. Progress is then forwarded only when the
+                // event channel has room; host input is discarded, which fails
+                // the pending request.
+                next = progress.recv(), if progress_open => {
                     if let Some(progress) = next {
+                        if cancellation.is_cancelled() {
+                            let _ = events.try_send(ToolHostEvent::Progress(progress));
+                            continue;
+                        }
                         if !send_event(&events, ToolHostEvent::Progress(progress), &cancellation).await {
                             let timeout = *cancellation_cleanup_timeout
                                 .lock()
-                                .expect("tool cancellation policy lock");
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if let Err(error) = begin_cancellation_cleanup(
                                 timeout,
                                 &mut cancellation_cleanup_deadline,
@@ -122,8 +150,11 @@ impl ToolHostWorker {
                         progress_open = false;
                     }
                 }
-                next = host_input.recv(), if host_input_open && !cancellation.is_cancelled() => {
+                next = host_input.recv(), if host_input_open => {
                     if let Some(envelope) = next {
+                        if cancellation.is_cancelled() {
+                            continue;
+                        }
                         let pending = PendingToolHostInput::from_envelope(envelope);
                         if !send_event(
                             &events,
@@ -134,7 +165,7 @@ impl ToolHostWorker {
                         {
                             let timeout = *cancellation_cleanup_timeout
                                 .lock()
-                                .expect("tool cancellation policy lock");
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if let Err(error) = begin_cancellation_cleanup(
                                 timeout,
                                 &mut cancellation_cleanup_deadline,
@@ -148,25 +179,10 @@ impl ToolHostWorker {
                     }
                 }
                 result = &mut execution => break result,
-                () = async {
-                    cancellation_cleanup_deadline
-                        .as_mut()
-                        .expect("guarded cancellation cleanup deadline")
-                        .await
-                }, if cancellation_cleanup_deadline.is_some() => {
-                    let timeout = cancellation_cleanup_timeout
-                        .lock()
-                        .expect("tool cancellation policy lock")
-                        .expect("cleanup deadline requires a timeout");
-                    break Err(ToolError::new(
-                        ToolErrorKind::Cancelled,
-                        format!("tool cancellation cleanup exceeded {timeout:?}"),
-                    ));
-                }
                 () = cancellation.cancelled(), if !cancellation_deferred => {
                     let timeout = *cancellation_cleanup_timeout
                         .lock()
-                        .expect("tool cancellation policy lock");
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     if let Err(error) = begin_cancellation_cleanup(
                         timeout,
                         &mut cancellation_cleanup_deadline,

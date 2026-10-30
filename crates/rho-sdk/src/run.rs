@@ -23,6 +23,18 @@ pub(crate) enum RunCommand {
     },
 }
 
+/// Maps a failed non-blocking command send: a closed channel means the run
+/// ended, while a full one is backpressure the host may retry after draining
+/// events.
+fn queue_failure(error: mpsc::error::TrySendError<RunCommand>, command: &str) -> Error {
+    match error {
+        mpsc::error::TrySendError::Closed(_) => Error::RunFinished,
+        mpsc::error::TrySendError::Full(_) => Error::InvalidHostResponse {
+            message: format!("run cannot queue {command}: command queue is full"),
+        },
+    }
+}
+
 /// Cloneable port for staging steering into an active run.
 ///
 /// Obtain one from [`Run::steering_handle`] before moving the [`Run`] into an
@@ -38,25 +50,35 @@ pub struct SteeringHandle {
 
 impl SteeringHandle {
     /// Stages steering input for the next provider turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run ended before accepting it.
     pub async fn steer(&self, input: crate::UserInput) -> Result<(), Error> {
         self.steer_retractable(input).await.map(drop)
     }
 
     /// Stages steering input and returns an ID that can retract it before application.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run ended before accepting it.
     pub async fn steer_retractable(&self, input: crate::UserInput) -> Result<SteeringId, Error> {
         let (accepted, receipt) = tokio::sync::oneshot::channel();
         self.commands
             .send(RunCommand::Steer { input, accepted })
             .await
-            .map_err(|_| Error::InvalidHostResponse {
-                message: "run no longer accepts steering input".into(),
-            })?;
-        receipt.await.map_err(|_| Error::InvalidHostResponse {
-            message: "run completed before accepting steering input".into(),
-        })
+            .map_err(|_| Error::RunFinished)?;
+        receipt.await.map_err(|_| Error::RunFinished)
     }
 
     /// Starts staging steering without waiting for the runtime acknowledgement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run has ended, or
+    /// [`Error::InvalidHostResponse`] if its command queue is full. The returned
+    /// future fails with [`Error::RunFinished`] if the run ends first.
     pub fn request_steer_retractable(
         &self,
         input: crate::UserInput,
@@ -64,31 +86,31 @@ impl SteeringHandle {
         let (accepted, receipt) = tokio::sync::oneshot::channel();
         self.commands
             .try_send(RunCommand::Steer { input, accepted })
-            .map_err(|error| Error::InvalidHostResponse {
-                message: format!("run cannot queue steering input: {error}"),
-            })?;
-        Ok(async move {
-            receipt.await.map_err(|_| Error::InvalidHostResponse {
-                message: "run completed before accepting steering input".into(),
-            })
-        })
+            .map_err(|error| queue_failure(error, "steering input"))?;
+        Ok(async move { receipt.await.map_err(|_| Error::RunFinished) })
     }
 
     /// Atomically retracts previously accepted steering if it is still staged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run ended before processing it.
     pub async fn retract_steering(&self, id: SteeringId) -> Result<SteeringRetraction, Error> {
         let (completed, receipt) = tokio::sync::oneshot::channel();
         self.commands
             .send(RunCommand::RetractSteering { id, completed })
             .await
-            .map_err(|_| Error::InvalidHostResponse {
-                message: "run no longer accepts steering retractions".into(),
-            })?;
-        receipt.await.map_err(|_| Error::InvalidHostResponse {
-            message: "run completed before processing steering retraction".into(),
-        })
+            .map_err(|_| Error::RunFinished)?;
+        receipt.await.map_err(|_| Error::RunFinished)
     }
 
     /// Starts a retraction request without waiting for its runtime-decided outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run has ended, or
+    /// [`Error::InvalidHostResponse`] if its command queue is full. The returned
+    /// future fails with [`Error::RunFinished`] if the run ends first.
     pub fn request_steering_retraction(
         &self,
         id: SteeringId,
@@ -97,14 +119,8 @@ impl SteeringHandle {
         let (completed, receipt) = tokio::sync::oneshot::channel();
         self.commands
             .try_send(RunCommand::RetractSteering { id, completed })
-            .map_err(|error| Error::InvalidHostResponse {
-                message: format!("run cannot queue steering retraction: {error}"),
-            })?;
-        Ok(async move {
-            receipt.await.map_err(|_| Error::InvalidHostResponse {
-                message: "run completed before processing steering retraction".into(),
-            })
-        })
+            .map_err(|error| queue_failure(error, "steering retraction"))?;
+        Ok(async move { receipt.await.map_err(|_| Error::RunFinished) })
     }
 }
 
@@ -136,14 +152,17 @@ impl Run {
         }
     }
 
+    /// Identifier of this run.
     pub fn id(&self) -> &RunId {
         &self.id
     }
 
+    /// Token that cancels this run cooperatively, shareable across tasks.
     pub fn cancellation_handle(&self) -> CancellationToken {
         self.cancellation.clone()
     }
 
+    /// Requests cooperative cancellation; the run ends with a cancelled outcome.
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }
@@ -156,11 +175,19 @@ impl Run {
     }
 
     /// Stages steering input for the next provider turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run ended before accepting it.
     pub async fn steer(&self, input: crate::UserInput) -> Result<(), Error> {
         self.steering_handle().steer(input).await
     }
 
     /// Stages steering input and returns an ID that can retract it before application.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run ended before accepting it.
     ///
     /// The returned opaque identifier remains stable and can be passed to
     /// [`Run::retract_steering`] while the input has not reached history.
@@ -169,6 +196,12 @@ impl Run {
     }
 
     /// Starts staging steering without waiting for the runtime acknowledgement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run has ended, or
+    /// [`Error::InvalidHostResponse`] if its command queue is full. The returned
+    /// future fails with [`Error::RunFinished`] if the run ends first.
     ///
     /// This is useful for event loops that must continue consuming [`RunEvent`] values while
     /// the runtime processes the command. Await the returned future for the accepted ID.
@@ -181,6 +214,10 @@ impl Run {
 
     /// Atomically retracts previously accepted steering if it is still staged.
     ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run ended before processing it.
+    ///
     /// The runtime decides the race between applying and retracting the input
     /// when it processes this command. See [`SteeringRetraction`] for all
     /// possible outcomes.
@@ -189,6 +226,12 @@ impl Run {
     }
 
     /// Starts a retraction request without waiting for its runtime-decided outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run has ended, or
+    /// [`Error::InvalidHostResponse`] if its command queue is full. The returned
+    /// future fails with [`Error::RunFinished`] if the run ends first.
     ///
     /// Event loops can continue consuming [`RunEvent`] values before awaiting the returned
     /// future, avoiding command/event backpressure cycles.
@@ -200,6 +243,13 @@ impl Run {
         self.steering_handle().request_steering_retraction(id)
     }
 
+    /// Answers a [`RunEvent::ToolHostInputRequested`] request and waits until
+    /// the runtime accepts it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidHostResponse`] if the runtime rejects the
+    /// response, or [`Error::RunFinished`] if the run ended first.
     pub async fn respond(
         &self,
         request_id: crate::HostInputId,
@@ -213,14 +263,10 @@ impl Run {
                 accepted,
             })
             .await
-            .map_err(|_| Error::InvalidHostResponse {
-                message: "run no longer accepts host input".into(),
-            })?;
+            .map_err(|_| Error::RunFinished)?;
         receipt
             .await
-            .map_err(|_| Error::InvalidHostResponse {
-                message: "run completed before accepting host input".into(),
-            })?
+            .map_err(|_| Error::RunFinished)?
             .map_err(|message| Error::InvalidHostResponse { message })
     }
 
@@ -228,6 +274,13 @@ impl Run {
     ///
     /// Event loops can continue consuming [`RunEvent`] values before awaiting the returned
     /// future, avoiding command/event backpressure cycles.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run has ended, or
+    /// [`Error::InvalidHostResponse`] if its command queue is full. The returned
+    /// future fails with [`Error::InvalidHostResponse`] if the runtime rejects
+    /// the response, or [`Error::RunFinished`] if the run ends first.
     pub fn request_respond(
         &self,
         request_id: crate::HostInputId,
@@ -239,6 +292,13 @@ impl Run {
     /// Starts answering a host input request with no answers, like
     /// [`Run::request_respond`]. The asking tool receives
     /// [`Error::HostInputRefused`] with `refusal` and the run continues.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RunFinished`] if the run has ended, or
+    /// [`Error::InvalidHostResponse`] if its command queue is full. The returned
+    /// future fails with [`Error::InvalidHostResponse`] if the runtime rejects
+    /// the response, or [`Error::RunFinished`] if the run ends first.
     pub fn request_refuse(
         &self,
         request_id: crate::HostInputId,
@@ -259,48 +319,47 @@ impl Run {
                 response,
                 accepted,
             })
-            .map_err(|error| Error::InvalidHostResponse {
-                message: format!("run cannot queue host input: {error}"),
-            })?;
+            .map_err(|error| queue_failure(error, "host input"))?;
         Ok(async move {
             receipt
                 .await
-                .map_err(|_| Error::InvalidHostResponse {
-                    message: "run completed before accepting host input".into(),
-                })?
+                .map_err(|_| Error::RunFinished)?
                 .map_err(|message| Error::InvalidHostResponse { message })
         })
     }
 
+    /// Receives the next ordered event, or `None` once the run has finished.
     pub async fn next_event(&mut self) -> Option<RunEvent> {
         self.events.recv().await
     }
 
+    /// Waits for the run's final outcome, draining any unconsumed events.
+    ///
+    /// Cancel-safe: dropping this future before it resolves leaves the run
+    /// intact, so a later call (or dropping the [`Run`]) still owns the worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the run's own failure, [`Error::Interrupted`] if the run task
+    /// panicked or was aborted, or [`Error::RunFinished`] if the outcome was
+    /// already consumed.
     pub async fn outcome(&mut self) -> Result<RunOutcome, Error> {
-        let mut worker = self
-            .worker
-            .take()
-            .ok_or_else(|| Error::InvalidHostResponse {
-                message: "run outcome was already consumed".into(),
-            })?;
-        let result = loop {
+        let worker = self.worker.as_mut().ok_or(Error::RunFinished)?;
+        let joined = loop {
             tokio::select! {
-                result = &mut worker => {
-                    break result.map_err(|error| Error::Interrupted {
-                        message: format!("run task failed: {error}"),
-                    })?;
-                }
+                joined = &mut *worker => break joined,
                 event = self.events.recv() => {
                     if event.is_none() {
-                        break worker.await.map_err(|error| Error::Interrupted {
-                            message: format!("run task failed: {error}"),
-                        })?;
+                        break (&mut *worker).await;
                     }
                 }
             }
         };
+        self.worker = None;
         self.finished = true;
-        result
+        joined.map_err(|error| Error::Interrupted {
+            message: format!("run task failed: {error}"),
+        })?
     }
 }
 

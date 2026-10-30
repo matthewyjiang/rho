@@ -28,6 +28,7 @@ struct CompletingCancellationTool {
     started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     cleanup_timeout: std::time::Duration,
     finish_cleanup: bool,
+    cleanup_progress: usize,
 }
 
 impl Tool for CompletingCancellationTool {
@@ -56,6 +57,12 @@ impl Tool for CompletingCancellationTool {
                             let _ = started.send(());
                         }
                         context.cancellation().cancelled().await;
+                        for _ in 0..self.cleanup_progress {
+                            context
+                                .progress()
+                                .send(ToolProgress::message("cleaning"))
+                                .await;
+                        }
                         if !self.finish_cleanup {
                             std::future::pending::<()>().await;
                         }
@@ -69,17 +76,20 @@ impl Tool for CompletingCancellationTool {
 }
 
 // Covers: an opted-in prepared tool must return its typed result after it
-// observes cancellation instead of having its cleanup future dropped.
+// observes cancellation instead of having its cleanup future dropped, even
+// when cleanup reports more progress than the progress channel holds.
 // Owner: SDK ToolHost cancellation orchestration.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cancellation_can_complete_an_authorized_tool_future() {
     let (started, ready) = tokio::sync::oneshot::channel();
     let host = ToolHost::builder()
         .tool(CompletingCancellationTool {
             started: Mutex::new(Some(started)),
-            cleanup_timeout: std::time::Duration::from_secs(1),
+            cleanup_timeout: std::time::Duration::from_secs(60),
             finish_cleanup: true,
+            cleanup_progress: 3,
         })
+        .event_capacity(NonZeroUsize::new(1).unwrap())
         .build()
         .unwrap();
     let mut run = host
@@ -103,6 +113,7 @@ async fn cancellation_cleanup_deadline_resolves_the_host_run() {
             started: Mutex::new(Some(started)),
             cleanup_timeout: std::time::Duration::ZERO,
             finish_cleanup: false,
+            cleanup_progress: 0,
         })
         .build()
         .unwrap();
