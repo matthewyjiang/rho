@@ -35,7 +35,7 @@ flate2 = { version = "1", optional = true }
 lopdf = { version = "0.45", optional = true }
 pdf-inspector = { version = "1.20.0", optional = true }
 quick-xml = { version = "0.42", optional = true }
-zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

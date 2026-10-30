@@ -746,7 +746,7 @@ dependencies = [
  "log",
  "quick-xml 0.41.0",
  "serde",
- "zip",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -4845,7 +4845,7 @@ dependencies = [
  "tokio",
  "uuid",
  "windows-sys 0.61.2",
- "zip",
+ "zip 9.0.5",
 ]
 
 [[package]]
@@ -4917,7 +4917,7 @@ dependencies = [
  "vt100",
  "windows-sys 0.61.2",
  "winresource",
- "zip",
+ "zip 9.0.5",
 ]
 
 [[package]]
@@ -7773,6 +7773,21 @@ dependencies = [
  "flate2",
  "indexmap 2.14.0",
  "memchr",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.0",
+ "memchr",
+ "nix 0.31.3",
  "typed-path",
  "zopfli",
 ]
