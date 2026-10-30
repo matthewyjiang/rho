@@ -78,21 +78,39 @@ credential_command_log="$(mktemp)"
 record_credential_command() {
   printf '%s\n' "$*" >> "$credential_command_log"
 }
-RHO_CREDENTIAL_STORE=file configure_credential_store record_credential_command
+RHO_CREDENTIAL_STORE=file configure_credential_store record_credential_command update
 assert_eq "credential-store probe file
 credential-store set file" "$(cat "$credential_command_log")" \
   "non-interactive credential-store override"
 rm -f "$credential_command_log"
 unset RHO_CREDENTIAL_STORE
 
-credential_command_log="$(mktemp)"
-record_noop() {
+# Without RHO_CREDENTIAL_STORE the installer only reads the saved choice and
+# notes it when unset on a fresh install; updates and saved choices stay quiet.
+saved_status="unset"
+stub_rho() {
   printf '%s\n' "$*" >> "$credential_command_log"
-  return 1
+  printf '%s\n' "$saved_status"
 }
-configure_credential_store record_noop
-assert_eq "" "$(cat "$credential_command_log")" \
-  "unset credential store leaves installer non-interactive"
-rm -f "$credential_command_log"
+for row in \
+  "fresh unset note" \
+  "update unset quiet" \
+  "fresh file quiet" \
+  "update os quiet"; do
+  # shellcheck disable=SC2086 # split the row into fields
+  set -- $row
+  saved_status="$2"
+  credential_command_log="$(mktemp)"
+  note="$(configure_credential_store stub_rho "$1" 2>&1)"
+  shown=quiet
+  if [ -n "$note" ]; then
+    shown=note
+  fi
+  assert_eq "$3" "$shown" "credential-store note for $row"
+  case "$(cat "$credential_command_log")" in
+    *"credential-store set"*) echo "error: $row must not change the credential store" >&2; exit 1 ;;
+  esac
+  rm -f "$credential_command_log"
+done
 
 printf '%s\n' "install parser tests passed"
