@@ -267,18 +267,41 @@ fn pre_gpt6_create_body_follows_current_level_without_updates() {
     );
 }
 
-// Covers: updates are skipped when they cannot carry the change: a `none`
-// baseline (gpt-6-sol and gpt-6-luna ignore updates from it live) or a turn
-// with no effort to send (Off without a `none` mapping)
+// Covers: the prefix anchor is never `none` (gpt-6-sol and gpt-6-luna ignore
+// updates from it live) and an omitted Off effort travels as the model
+// default, so GPT-6 effort changes stay on configuration_update
 // Owner: openai configuration_update lowering
 #[test]
-fn gpt6_create_body_uses_request_level_effort_when_updates_cannot_apply() {
+fn gpt6_anchor_avoids_none_and_carries_omitted_effort_as_default() {
     let sol = identity_for("gpt-6-sol");
     let cases = [
-        ("none baseline", "none", ReasoningLevel::High, Some("high")),
-        ("no effort to send", "high", ReasoningLevel::Off, None),
+        (
+            "none history then high",
+            "none",
+            ReasoningLevel::High,
+            "medium",
+            vec![
+                update_item("none"),
+                user_item("one"),
+                assistant_item("two"),
+                update_item("high"),
+                user_item("three"),
+            ],
+        ),
+        (
+            "high history then omitted off",
+            "high",
+            ReasoningLevel::Off,
+            "high",
+            vec![
+                user_item("one"),
+                assistant_item("two"),
+                update_item("medium"),
+                user_item("three"),
+            ],
+        ),
     ];
-    for (name, recorded, level, expected_effort) in cases {
+    for (name, recorded, level, expected_effort, expected_input) in cases {
         let messages = [
             Message::user_text("one"),
             assistant_text(&sol, "two", Some(recorded)),
@@ -286,22 +309,10 @@ fn gpt6_create_body_uses_request_level_effort_when_updates_cannot_apply() {
         ];
         let created = create_body("gpt-6-sol", &messages, level);
         assert_eq!(
-            created.body["reasoning"]
-                .get("effort")
-                .and_then(Value::as_str),
-            expected_effort,
+            created.body["reasoning"]["effort"], expected_effort,
             "{name}"
         );
-        assert_eq!(
-            created.in_force_effort.as_deref(),
-            expected_effort,
-            "{name}"
-        );
-        assert_eq!(
-            created.body["input"],
-            json!([user_item("one"), assistant_item("two"), user_item("three")]),
-            "{name}"
-        );
+        assert_eq!(created.body["input"], json!(expected_input), "{name}");
     }
 }
 

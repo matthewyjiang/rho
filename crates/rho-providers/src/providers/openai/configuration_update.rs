@@ -95,16 +95,30 @@ fn is_configuration_update(item: &Value) -> bool {
     item.get("type").and_then(Value::as_str) == Some(CONFIGURATION_UPDATE_TYPE)
 }
 
-/// First recorded replayable effort, else the current turn's effort.
+/// Effort GPT-6 models run at when a request omits it. Live Codex responses
+/// report `medium` for requests without `reasoning.effort` on every GPT-6 tier.
+const GPT6_DEFAULT_EFFORT: &str = "medium";
+
+/// Request-level effort that anchors the cached prefix: the first recorded
+/// replayable effort, else the current turn's effort.
+///
+/// A `none` anchor is swapped for [`GPT6_DEFAULT_EFFORT`]: live Codex probes
+/// showed gpt-6-sol and gpt-6-luna ignore updates when request-level effort is
+/// `none`, but honor `configuration_update` to and from `none` on any other
+/// anchor.
 fn baseline_effort<'a>(
     messages: &'a [Message],
     identity: &ModelIdentity,
-    current_effort: Option<&'a str>,
-) -> Option<&'a str> {
-    messages
+    current_effort: &'a str,
+) -> &'a str {
+    match messages
         .iter()
         .find_map(|message| recorded_effort(message, identity))
-        .or(current_effort)
+        .unwrap_or(current_effort)
+    {
+        "none" => GPT6_DEFAULT_EFFORT,
+        effort => effort,
+    }
 }
 
 /// History lowered for a Responses request, plus the two effort values.
@@ -139,15 +153,7 @@ pub(super) fn lower_responses_input(
     current_effort: Option<&str>,
     policy: ReasoningUpdatePolicy,
 ) -> Result<LoweredResponsesInput, ModelError> {
-    let baseline = baseline_effort(messages, identity, current_effort);
-    // Updates cannot express "no effort" (Off on hosts without `none`), and a
-    // live Codex probe showed gpt-6-sol and gpt-6-luna ignore updates from a
-    // `none` baseline. Both cases send the turn's level at request level.
-    let updates_apply = current_effort.is_some() && baseline != Some("none");
-    if policy == ReasoningUpdatePolicy::CurrentLevel
-        || !preserves_prefix_for(&identity.model)
-        || !updates_apply
-    {
+    if policy == ReasoningUpdatePolicy::CurrentLevel || !preserves_prefix_for(&identity.model) {
         let input = crate::protocol::openai_responses::codex_input_items_for_target(
             messages,
             instructions,
@@ -161,12 +167,16 @@ pub(super) fn lower_responses_input(
         });
     }
 
+    // An omitted effort (Off without a `none` mapping) runs at the model
+    // default, so updates can carry it like any other level.
+    let current_effort = current_effort.unwrap_or(GPT6_DEFAULT_EFFORT);
+    let baseline = baseline_effort(messages, identity, current_effort);
     let (input, in_force_effort) = interleave_configuration_updates(
         messages,
         instructions,
         identity,
-        baseline,
-        current_effort,
+        Some(baseline),
+        Some(current_effort),
     )?;
     debug_assert!(
         !has_adjacent_configuration_updates(&input),
@@ -174,7 +184,7 @@ pub(super) fn lower_responses_input(
     );
     Ok(LoweredResponsesInput {
         input,
-        request_effort: baseline.map(str::to_owned),
+        request_effort: Some(baseline.to_owned()),
         in_force_effort,
     })
 }
