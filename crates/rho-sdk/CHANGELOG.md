@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.15.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.15.0...rho-sdk-v5.15.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **sdk:** stop reporting recorded reasoning effort as dropped context on model switches ([#1622](https://github.com/matthewyjiang/rho/issues/1622)) ([1190306](https://github.com/matthewyjiang/rho/commit/119030640c78c5d9be490dbccff9cc724745133f))
+
 ## [5.15.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.14.0...rho-sdk-v5.15.0) (2026-10-25)
 
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.32.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.0...rho-coding-agent-v2.32.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **sdk:** stop reporting recorded reasoning effort as dropped context on model switches ([#1622](https://github.com/matthewyjiang/rho/issues/1622)) ([1190306](https://github.com/matthewyjiang/rho/commit/119030640c78c5d9be490dbccff9cc724745133f))
+* **startup:** show the keyring unlock hint only when access stalls ([#1618](https://github.com/matthewyjiang/rho/issues/1618)) ([87f2225](https://github.com/matthewyjiang/rho/commit/87f2225af651f6815ede506bf8206b19ba7f55f6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.16.0 to 5.15.1
+    * rho-providers bumped from 2.25.0 to 2.26.0
+
 ## [2.32.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.31.0...rho-coding-agent-v2.32.0) (2026-10-28)
 
 
