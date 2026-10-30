@@ -54,6 +54,7 @@ For PRs:
 - Avoid one-use helpers unless they materially improve readability or isolate a clear invariant.
 - Follow Clippy and rustfmt style: collapse nested `if` statements when possible, inline format arguments (`format!("hello {name}")`), and prefer method references to redundant closures.
 - After Rust changes, use `rho-rust-change-validation` as the source of truth for formatting, architecture, tests, SDK compatibility, and final validation.
+- The vendored `rust-best-practices`, `rust-review`, and `rust-port` skills (from [BeautifulRust](https://github.com/morganlinton/BeautifulRust), pinned in `skills-lock.json`) give general Rust guidance. When they conflict with this file or a `rho-*` skill, such as on test module placement, the repo rules win. Update them with `npx skills update -p` rather than editing them by hand.
 
 ## Next-major debt
 
