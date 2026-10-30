@@ -108,7 +108,8 @@ fn handoff_report_names_every_omitted_context_kind() {
 }
 
 // Covers: a provider note (send-time bookkeeping) never triggers a handoff
-// omission or replays, even to the exact recording model
+// omission or replays, even to the exact recording model, and never
+// suppresses the portable reasoning summary
 // Owner: SDK handoff
 #[test]
 fn provider_notes_are_never_omitted_or_replayed() {
@@ -116,6 +117,7 @@ fn provider_notes_are_never_omitted_or_replayed() {
     let other = identity("openai-codex", "openai-responses", "gpt-other");
     let message = AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],
+        reasoning_summary: Some("checked the arithmetic".into()),
         provider_context: vec![ProviderContextBlock {
             identity: source.clone(),
             kind: ProviderContextBlock::provider_note_kind("effort"),
@@ -131,9 +133,14 @@ fn provider_notes_are_never_omitted_or_replayed() {
     );
     for target in [&source, &other] {
         assert!(!report_omissions([&message], target).has_omissions());
-        assert!(prepare_assistant(message.clone(), target)
-            .replay_context
-            .is_empty());
+        let prepared = prepare_assistant(message.clone(), target);
+        assert!(prepared.replay_context.is_empty());
+        assert!(matches!(
+            prepared.content.as_slice(),
+            [ContentBlock::Text(answer), ContentBlock::Text(summary)]
+                if answer == "answer"
+                    && summary == "<reasoning_summary>\nchecked the arithmetic\n</reasoning_summary>"
+        ));
     }
 }
 

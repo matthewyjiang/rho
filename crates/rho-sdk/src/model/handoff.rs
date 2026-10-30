@@ -29,11 +29,15 @@ pub struct PreparedAssistant {
 pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> PreparedAssistant {
     let portable_fallback = message.portable_fallback().map(str::to_owned);
     let mut content = message.content;
-    let only_sdk_metadata = !message.provider_context.is_empty()
-        && message
-            .provider_context
-            .iter()
-            .all(ProviderContextBlock::is_sdk_metadata);
+    // Provider notes are send-time bookkeeping, so they never decide whether
+    // the portable summary travels.
+    let mut context = message
+        .provider_context
+        .iter()
+        .filter(|block| block.provider_note_name().is_none())
+        .peekable();
+    let only_sdk_metadata =
+        context.peek().is_some() && context.all(ProviderContextBlock::is_sdk_metadata);
     let replay_context = message
         .provider_context
         .into_iter()
