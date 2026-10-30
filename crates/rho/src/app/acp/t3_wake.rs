@@ -526,7 +526,8 @@ impl WakeSignal {
                 return Some(summary);
             }
             record.prune_finished();
-            record.write(&self.token, /*summary*/ None);
+            // A watcher left unrecorded only loses restart recovery.
+            let _ = record.write(&self.token, /*summary*/ None);
         }
         let summary = loop {
             if let Ok(summary) = std::fs::read_to_string(&self.path) {
@@ -540,10 +541,15 @@ impl WakeSignal {
                 () = tokio::time::sleep(SIGNAL_POLL) => {}
             }
         };
-        if let Some(record) = &record {
-            record.write(&self.token, Some(&summary));
+        // The signal and lock go only once the record holds the result: a
+        // later process repeats it from either, and from neither would
+        // report that the parent ended.
+        let recorded = record
+            .as_ref()
+            .is_none_or(|record| record.write(&self.token, Some(&summary)));
+        if recorded {
+            self.cleanup();
         }
-        self.cleanup();
         Some(summary)
     }
 
@@ -604,8 +610,9 @@ impl WaitRecord {
     }
 
     /// Writes whole, through a temp file, so a crash never leaves a waiting
-    /// record half turned into a finished one.
-    fn write(&self, token: &str, summary: Option<&str>) {
+    /// record half turned into a finished one. Returns whether it wrote;
+    /// a failure is logged.
+    fn write(&self, token: &str, summary: Option<&str>) -> bool {
         let contents = match summary {
             Some(summary) => format!("{token}\n{summary}"),
             None => token.to_owned(),
@@ -613,9 +620,10 @@ impl WaitRecord {
         let staging = self.path.with_extension("watcher-tmp");
         let written =
             std::fs::write(&staging, contents).and_then(|()| std::fs::rename(&staging, &self.path));
-        if let Err(error) = written {
+        if let Err(error) = &written {
             tracing::warn!(%error, "could not record the T3 wake watcher's wait");
         }
+        written.is_ok()
     }
 
     fn remove(&self) {

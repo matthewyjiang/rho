@@ -357,3 +357,33 @@ async fn starting_a_wait_prunes_only_expired_finished_records() {
         )
     );
 }
+
+// Covers: when the finished record cannot be written, the watcher keeps the
+// parent's signal, so a restarted watcher still repeats the real result.
+// Dropping it first turns finished work into the parent-ended notice.
+// Owner: ACP T3 wake watcher.
+#[tokio::test]
+async fn failed_result_record_keeps_the_signal_for_the_restarted_watcher() {
+    let signals = tempfile::tempdir().unwrap();
+    let signal = WakeSignal::parse_in(signals.path(), &uuid::Uuid::new_v4().to_string()).unwrap();
+    signal.fire("cargo test exited 0").unwrap();
+    // A directory where the record stages its write makes every write fail.
+    std::fs::create_dir(
+        signals
+            .path()
+            .join(format!("{WATCHER_SESSION}.watcher-tmp")),
+    )
+    .unwrap();
+
+    let first = signal
+        .wait(WATCHER_SESSION, &CancellationToken::new())
+        .await;
+    let restarted = signal
+        .wait(WATCHER_SESSION, &CancellationToken::new())
+        .await;
+
+    assert_eq!(
+        (first.as_deref(), restarted.as_deref()),
+        (Some("cargo test exited 0"), Some("cargo test exited 0"))
+    );
+}
