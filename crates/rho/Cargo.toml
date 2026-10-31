@@ -23,7 +23,7 @@ path = "src/main.rs"
 
 [dependencies]
 rho-sdk = { version = "5.15.2", path = "../rho-sdk" }
-rho-providers = { version = "2.26.1", path = "../rho-providers", default-features = false }
+rho-providers = { version = "2.26.2", path = "../rho-providers", default-features = false }
 rho-tools = { version = "1.16.2", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { workspace = true }
@@ -53,7 +53,7 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 rustls = { workspace = true }
 rustls-platform-verifier = "0.7"
 regex = "1"
-rusqlite = { version = "0.40", features = ["fallible_uint"] }
+rusqlite = { version = "0.41", features = ["fallible_uint"] }
 keyring = "4.1.2"
 rand = "0.10"
 sha2 = "0.11"
