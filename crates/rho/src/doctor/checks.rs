@@ -44,13 +44,18 @@ pub(super) const RTK_LABEL: &str = "rtk";
 /// One row per signed-in auth mode, plus the active mode so a missing key
 /// warns. Unused providers without credentials are omitted; they are not
 /// diagnostics, just the provider catalog. A store read error always shows.
+/// The active mode is the one runtime resolves for `provider` and `auth`, so
+/// a mismatched pair or legacy alias warns on the mode actually used.
 /// `env_override` reports whether a mode's credentials come from the
 /// environment; inject it so tests never read process env.
 pub(super) fn authentication_checks(
     store: &dyn CredentialStore,
-    active_auth: &str,
+    provider: &str,
+    auth: &str,
     env_override: &dyn Fn(&str) -> bool,
 ) -> Vec<DoctorCheck> {
+    let active_auth =
+        provider::resolve_profile(provider, auth).map_or(auth, |profile| profile.auth_id());
     provider::providers()
         .iter()
         .flat_map(|descriptor| descriptor.auth_modes())

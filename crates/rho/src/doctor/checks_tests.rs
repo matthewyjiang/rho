@@ -34,14 +34,15 @@ fn auth_check<'a>(checks: &'a [DoctorCheck], auth_mode: &str) -> Option<&'a Doct
 
 // Covers: authentication rows come from the injected store and env-override
 // hook only: a stored key is ok, the active auth mode warns when missing, and
-// every other mode without credentials, optional or not, is omitted.
+// every other mode without credentials, optional or not, is omitted. A
+// mismatched provider/auth pair warns on the mode runtime falls back to.
 // Owner: pure unit (no process env)
 #[test]
 fn authentication_rows_show_signed_in_and_active_modes() {
     let store = MemoryCredentialStore::default();
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
 
-    let checks = authentication_checks(&store, "anthropic-api-key", &|_| false);
+    let checks = authentication_checks(&store, "anthropic", "anthropic-api-key", &|_| false);
 
     assert_eq!(
         auth_check(&checks, "api-key"),
@@ -69,7 +70,7 @@ fn authentication_rows_show_signed_in_and_active_modes() {
         )
     );
 
-    let inactive = authentication_checks(&store, "api-key", &|_| false);
+    let inactive = authentication_checks(&store, "openai", "api-key", &|_| false);
     assert_eq!(auth_check(&inactive, "anthropic-api-key"), None);
 
     let optional_host = provider::providers()
@@ -82,7 +83,19 @@ fn authentication_rows_show_signed_in_and_active_modes() {
         .expect("keyed auth mode");
     assert_eq!(auth_check(&checks, optional_mode.id), None);
 
-    let from_env = authentication_checks(&store, "api-key", &|mode| mode == "api-key");
+    let mismatched = authentication_checks(
+        &MemoryCredentialStore::default(),
+        "openai",
+        "anthropic-api-key",
+        &|_| false,
+    );
+    assert_eq!(
+        auth_check(&mismatched, "api-key").map(|check| check.status),
+        Some(DoctorStatus::Warn)
+    );
+    assert_eq!(auth_check(&mismatched, "anthropic-api-key"), None);
+
+    let from_env = authentication_checks(&store, "openai", "api-key", &|mode| mode == "api-key");
     assert_eq!(
         auth_check(&from_env, "api-key").map(|check| check.summary.as_str()),
         Some("authenticated via environment")
