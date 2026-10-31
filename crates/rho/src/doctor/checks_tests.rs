@@ -23,65 +23,55 @@ use crate::{
     },
 };
 
-fn auth_check<'a>(checks: &'a [DoctorCheck], auth_mode: &str) -> &'a DoctorCheck {
-    checks
-        .iter()
-        .find(|check| {
-            check.id
-                == DoctorCheckId::ProviderAuth {
-                    auth_mode: auth_mode.into(),
-                }
-        })
-        .unwrap_or_else(|| panic!("no authentication row for {auth_mode}"))
+fn auth_check<'a>(checks: &'a [DoctorCheck], auth_mode: &str) -> Option<&'a DoctorCheck> {
+    checks.iter().find(|check| {
+        check.id
+            == DoctorCheckId::ProviderAuth {
+                auth_mode: auth_mode.into(),
+            }
+    })
 }
 
 // Covers: authentication rows come from the injected store and env-override
-// hook only: a stored key is ok, a missing key warns only for the active auth
-// mode, and every other missing or optional key stays informational.
+// hook only: a stored key is ok, the active auth mode warns when missing, and
+// every other mode without credentials, optional or not, is omitted. A
+// mismatched provider/auth pair warns on the mode runtime falls back to.
 // Owner: pure unit (no process env)
 #[test]
-fn authentication_rows_reflect_the_injected_store() {
+fn authentication_rows_show_signed_in_and_active_modes() {
     let store = MemoryCredentialStore::default();
     save_provider_api_key(&store, "openai", "sk-test").unwrap();
 
-    let checks = authentication_checks(&store, "anthropic-api-key", &|_| false);
+    let checks = authentication_checks(&store, "anthropic", "anthropic-api-key", &|_| false);
 
     assert_eq!(
         auth_check(&checks, "api-key"),
-        &DoctorCheck::new(
+        Some(&DoctorCheck::new(
             DoctorCheckId::ProviderAuth {
                 auth_mode: "api-key".into()
             },
             "OpenAI API key",
             DoctorStatus::Ok,
             "authenticated",
-        )
+        ))
     );
     assert_eq!(
         auth_check(&checks, "anthropic-api-key"),
-        &DoctorCheck::new(
-            DoctorCheckId::ProviderAuth {
-                auth_mode: "anthropic-api-key".into()
-            },
-            "Anthropic API key",
-            DoctorStatus::Warn,
-            "missing",
+        Some(
+            &DoctorCheck::new(
+                DoctorCheckId::ProviderAuth {
+                    auth_mode: "anthropic-api-key".into()
+                },
+                "Anthropic API key",
+                DoctorStatus::Warn,
+                "missing",
+            )
+            .with_hint("run /login anthropic-api-key")
         )
-        .with_hint("run /login anthropic-api-key")
     );
 
-    let inactive = authentication_checks(&store, "api-key", &|_| false);
-    assert_eq!(
-        auth_check(&inactive, "anthropic-api-key"),
-        &DoctorCheck::new(
-            DoctorCheckId::ProviderAuth {
-                auth_mode: "anthropic-api-key".into()
-            },
-            "Anthropic API key",
-            DoctorStatus::Info,
-            "missing",
-        )
-    );
+    let inactive = authentication_checks(&store, "openai", "api-key", &|_| false);
+    assert_eq!(auth_check(&inactive, "anthropic-api-key"), None);
 
     let optional_host = provider::providers()
         .into_iter()
@@ -91,15 +81,24 @@ fn authentication_rows_reflect_the_injected_store() {
         .auth_modes()
         .find(|mode| mode.auth_kind != ProviderAuthKind::None)
         .expect("keyed auth mode");
-    assert_eq!(
-        auth_check(&checks, optional_mode.id).status,
-        DoctorStatus::Info
-    );
+    assert_eq!(auth_check(&checks, optional_mode.id), None);
 
-    let from_env = authentication_checks(&store, "api-key", &|mode| mode == "api-key");
+    let mismatched = authentication_checks(
+        &MemoryCredentialStore::default(),
+        "openai",
+        "anthropic-api-key",
+        &|_| false,
+    );
     assert_eq!(
-        auth_check(&from_env, "api-key").summary,
-        "authenticated via environment"
+        auth_check(&mismatched, "api-key").map(|check| check.status),
+        Some(DoctorStatus::Warn)
+    );
+    assert_eq!(auth_check(&mismatched, "anthropic-api-key"), None);
+
+    let from_env = authentication_checks(&store, "openai", "api-key", &|mode| mode == "api-key");
+    assert_eq!(
+        auth_check(&from_env, "api-key").map(|check| check.summary.as_str()),
+        Some("authenticated via environment")
     );
 }
 

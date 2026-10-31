@@ -49,6 +49,7 @@ pub(crate) struct DoctorInputs<'a> {
 pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
     let mut rows = checks::authentication_checks(
         inputs.credential_store,
+        inputs.provider,
         inputs.auth,
         &ProviderAuthentication::has_environment_override,
     );

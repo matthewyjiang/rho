@@ -41,70 +41,55 @@ pub(super) const CURSOR_LABEL: &str = "cursor-agent";
 const ANTIGRAVITY_LABEL: &str = "agy_acp_server";
 pub(super) const RTK_LABEL: &str = "rtk";
 
-/// One row per auth mode. Only the active mode warns when its key is
-/// missing; other providers stay informational so the report scans.
+/// One row per signed-in auth mode, plus the active mode so a missing key
+/// warns. Unused providers without credentials are omitted; they are not
+/// diagnostics, just the provider catalog. A store read error always shows.
+/// The active mode is the one runtime resolves for `provider` and `auth`, so
+/// a mismatched pair or legacy alias warns on the mode actually used.
 /// `env_override` reports whether a mode's credentials come from the
 /// environment; inject it so tests never read process env.
 pub(super) fn authentication_checks(
     store: &dyn CredentialStore,
-    active_auth: &str,
+    provider: &str,
+    auth: &str,
     env_override: &dyn Fn(&str) -> bool,
 ) -> Vec<DoctorCheck> {
+    let active_auth =
+        provider::resolve_profile(provider, auth).map_or(auth, |profile| profile.auth_id());
     provider::providers()
         .iter()
-        .flat_map(|descriptor| {
-            if descriptor.is_keyless() {
-                return vec![DoctorCheck::new(
-                    DoctorCheckId::KeylessProvider {
-                        provider: descriptor.name.into(),
-                    },
-                    format!("{} authentication", descriptor.display_name),
-                    DoctorStatus::Info,
-                    "not required",
-                )];
-            }
-            descriptor
-                .auth_modes()
-                .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
-                .map(|mode| {
-                    let id = DoctorCheckId::ProviderAuth {
-                        auth_mode: mode.id.into(),
-                    };
-                    match ProviderAuthentication::has_credentials(store, mode.id) {
-                        Ok(true) if env_override(mode.id) => DoctorCheck::new(
-                            id,
-                            mode.login_label,
-                            DoctorStatus::Ok,
-                            "authenticated via environment",
-                        ),
-                        Ok(true) => DoctorCheck::new(
-                            id,
-                            mode.login_label,
-                            DoctorStatus::Ok,
-                            "authenticated",
-                        ),
-                        Ok(false) if mode.id == active_auth => {
-                            DoctorCheck::new(id, mode.login_label, DoctorStatus::Warn, "missing")
-                                .with_hint(format!("run /login {}", mode.id))
-                        }
-                        Ok(false) if descriptor.has_none_auth() => {
-                            DoctorCheck::new(id, mode.login_label, DoctorStatus::Info, "optional")
-                        }
-                        Ok(false) => {
-                            DoctorCheck::new(id, mode.login_label, DoctorStatus::Info, "missing")
-                        }
-                        Err(error) => DoctorCheck::new(
-                            id,
-                            mode.login_label,
-                            DoctorStatus::Fail,
-                            "store unreadable",
-                        )
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
+        .filter_map(|mode| {
+            let id = DoctorCheckId::ProviderAuth {
+                auth_mode: mode.id.into(),
+            };
+            let label = mode.login_label;
+            match ProviderAuthentication::has_credentials(store, mode.id) {
+                Ok(true) if env_override(mode.id) => Some(DoctorCheck::new(
+                    id,
+                    label,
+                    DoctorStatus::Ok,
+                    "authenticated via environment",
+                )),
+                Ok(true) => Some(DoctorCheck::new(
+                    id,
+                    label,
+                    DoctorStatus::Ok,
+                    "authenticated",
+                )),
+                Ok(false) if mode.id == active_auth => Some(
+                    DoctorCheck::new(id, label, DoctorStatus::Warn, "missing")
+                        .with_hint(format!("run /login {}", mode.id)),
+                ),
+                Ok(false) => None,
+                Err(error) => Some(
+                    DoctorCheck::new(id, label, DoctorStatus::Fail, "store unreadable")
                         .with_hint(format!(
                             "credential store could not be read: {error}; no secret values were inspected"
                         )),
-                    }
-                })
-                .collect::<Vec<_>>()
+                ),
+            }
         })
         .collect()
 }
