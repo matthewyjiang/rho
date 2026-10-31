@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.32.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.1...rho-coding-agent-v2.32.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **acp:** resume T3 wake watchers after restart ([#1627](https://github.com/matthewyjiang/rho/issues/1627)) ([e74cb7f](https://github.com/matthewyjiang/rho/commit/e74cb7f153dba0f31f8decb363ca37bddde1283f))
+* **deps:** patch zip, rustls, dompurify, and vite security advisories ([#1630](https://github.com/matthewyjiang/rho/issues/1630)) ([43d5b73](https://github.com/matthewyjiang/rho/commit/43d5b73d5bafab1f984a2f4123ca0f79730255ba))
+* **sdk:** harden runtime edge cases and document public contracts ([#1628](https://github.com/matthewyjiang/rho/issues/1628)) ([bbcceb4](https://github.com/matthewyjiang/rho/commit/bbcceb4cbe835d8d9cdcc79ee5e0ba5d30b3a98b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.15.1 to 5.15.2
+    * rho-providers bumped from 2.26.0 to 2.26.1
+
 ## [2.32.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.0...rho-coding-agent-v2.32.1) (2026-10-30)
 
 

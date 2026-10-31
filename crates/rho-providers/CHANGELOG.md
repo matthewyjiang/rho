@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.26.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.26.0...rho-providers-v2.26.1) (2026-10-31)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.15.1 to 5.15.2
+
 ## [2.26.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.25.0...rho-providers-v2.26.0) (2026-10-30)
 
 
