@@ -1,5 +1,7 @@
 //! Virtual terminal screen reconstructed from PTY output.
 
+use std::num::NonZeroU16;
+
 use vt100::Parser;
 
 /// Visible terminal state driven by a VT100 parser.
@@ -79,6 +81,7 @@ pub(crate) struct ScreenCell {
 
 impl ScreenModel {
     pub fn new(rows: u16, cols: u16) -> Self {
+        let (rows, cols) = vt100_size(rows, cols);
         Self {
             parser: Parser::new_with_callbacks(
                 rows,
@@ -115,6 +118,7 @@ impl ScreenModel {
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
+        let (rows, cols) = vt100_size(rows, cols);
         self.parser.screen_mut().set_size(rows, cols);
         if let Some(presented) = &mut self.parser.callbacks_mut().presented {
             presented.set_size(rows, cols);
@@ -122,11 +126,11 @@ impl ScreenModel {
     }
 
     pub fn rows(&self) -> u16 {
-        self.presented().size().0
+        self.presented().size().0.get()
     }
 
     pub fn cols(&self) -> u16 {
-        self.presented().size().1
+        self.presented().size().1.get()
     }
 
     /// Full visible contents with trailing spaces trimmed per row.
@@ -197,6 +201,15 @@ impl ScreenModel {
             return "<empty screen>".into();
         }
         lines.join("\n")
+    }
+}
+
+/// vt100 rejects zero-sized screens by type; a zero size here is a scenario
+/// authoring bug, so fail loudly with the requested size.
+fn vt100_size(rows: u16, cols: u16) -> (NonZeroU16, NonZeroU16) {
+    match (NonZeroU16::new(rows), NonZeroU16::new(cols)) {
+        (Some(rows), Some(cols)) => (rows, cols),
+        _ => panic!("terminal size must be non-zero, got {rows}x{cols}"),
     }
 }
 

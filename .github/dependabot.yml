@@ -25,6 +25,12 @@ updates:
         versions: [">=1.27"] # rust-version 1.89
       - dependency-name: proptest
         versions: [">=1.12"] # rust-version 1.88
+      # Pinned to the version an upstream dependency uses; bumping alone
+      # duplicates the crate or breaks shared types. Drop once upstream moves.
+      - dependency-name: lopdf
+        versions: [">=0.46"] # pdf-inspector 1.25 requires ^0.45
+      - dependency-name: sse-stream
+        versions: [">=0.3"] # rmcp 3.8 exposes sse-stream 0.2 types
     groups:
       # One PR for all semver-compatible bumps; majors get their own PRs
       # since they usually need code changes.

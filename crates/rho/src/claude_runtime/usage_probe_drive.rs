@@ -5,6 +5,7 @@
 mod tests;
 
 use std::{
+    num::NonZeroU16,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -36,8 +37,8 @@ const TRUST_RETRY: Duration = Duration::from_millis(400);
 /// contributing" breakdown, skills table, and usage credits); the old 36 rows
 /// scrolled "Current session" off the top. 100 rows leaves room for Claude to
 /// add sections; a clipped panel still fails loudly as `PanelClipped`.
-const PTY_ROWS: u16 = 100;
-const PTY_COLS: u16 = 140;
+const PTY_ROWS: NonZeroU16 = NonZeroU16::new(100).unwrap();
+const PTY_COLS: NonZeroU16 = NonZeroU16::new(140).unwrap();
 const PROMPT_SETTLE: Duration = Duration::from_millis(50);
 const ENTER_SETTLE: Duration = Duration::from_millis(80);
 const POLL_SLICE: Duration = Duration::from_millis(25);
