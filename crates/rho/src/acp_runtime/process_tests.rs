@@ -96,7 +96,9 @@ async fn cancellation_reaps_a_hung_prompt_child() {
         .custom_flags(libc::O_NONBLOCK)
         .open(&fifo)
         .unwrap();
-    let reader = AsyncFd::new(reader).unwrap();
+    // SAFETY: the AsyncFd owns the `File`, so its fd stays open and unchanged
+    // until the AsyncFd drops.
+    let reader = unsafe { AsyncFd::register(reader) }.unwrap();
     let (request, mut policy) = shell_request(
         dir.path(),
         r#"

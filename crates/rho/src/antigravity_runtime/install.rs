@@ -364,7 +364,10 @@ fn sync_dir(dir: &Path) -> std::io::Result<()> {
 fn unpack(archive: &Path, dir: &Path) -> anyhow::Result<()> {
     let mut zip = zip::ZipArchive::new(std::fs::File::open(archive)?)
         .context("downloaded archive is not a zip file")?;
-    let mut names: Vec<&str> = zip.file_names().collect();
+    let mut names = zip
+        .file_names()
+        .collect::<Result<Vec<_>, _>>()
+        .context("downloaded archive has an undecodable entry name")?;
     names.sort_unstable();
     let mut expected = [ANTIGRAVITY_PROGRAM, HARNESS_FILE];
     expected.sort_unstable();

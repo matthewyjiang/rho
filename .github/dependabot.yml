@@ -18,6 +18,13 @@ updates:
       prefix: build
       include: scope
     open-pull-requests-limit: 10
+    # These releases need a newer rustc than rho-sdk's MSRV (1.86) and would
+    # fail the MSRV job on every group PR. Drop when that MSRV is raised.
+    ignore:
+      - dependency-name: uuid
+        versions: [">=1.27"] # rust-version 1.89
+      - dependency-name: proptest
+        versions: [">=1.12"] # rust-version 1.88
     groups:
       # One PR for all semver-compatible bumps; majors get their own PRs
       # since they usually need code changes.
