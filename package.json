@@ -18,6 +18,6 @@
     "esbuild@0.25.12": true
   },
   "overrides": {
-    "vite": "^6.4.4"
+    "vite": "^6.4.5"
   }
 }
