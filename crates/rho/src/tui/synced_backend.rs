@@ -17,7 +17,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
-    buffer::Cell,
+    buffer::{Cell, CellWidth},
     layout::{Position, Rect, Size},
     Terminal,
 };
@@ -62,8 +62,34 @@ pub(crate) fn repaint_after_resize(terminal: &mut DefaultTerminal) -> io::Result
 /// `flush`, so begin-in-`draw` and end-in-`flush` cover cells and caret
 /// together. A clear also begins the update and stays queued, so every clear
 /// must be followed by a draw; ratatui's resize and autoresize always are.
-/// Both markers are idempotent, so no open-update state is tracked.
+/// Both markers are idempotent, so no open-update state is tracked. Cells are
+/// reordered by [`write_covered_cells_first`] so wide emoji draw intact.
 pub(crate) struct SyncedBackend(CrosstermBackend<Stdout>);
+
+/// Moves each wide cell after the cells it covers in the same row.
+///
+/// ratatui-core writes the trailing cell of a VS16 emoji such as "❤️" right
+/// after the emoji, to clear it on terminals that draw the emoji one column
+/// wide. Where the emoji is two columns wide, that write lands one column right
+/// (ratatui-crossterm 0.1.2 skips the cursor move as if the cursor advanced one
+/// column) and shifts the rest of the row. With the cursor move (fixed upstream
+/// in ratatui/ratatui#2721), it erases the emoji's right half instead. Writing
+/// the covered cells first is correct for both widths, and the backend moves the
+/// cursor before each out-of-sequence write. CJK and other wide cells cover
+/// nothing in a diff, so they keep their order.
+fn write_covered_cells_first(cells: &mut [(u16, u16, &Cell)]) {
+    let mut index = 0;
+    while index < cells.len() {
+        let (x, y, cell) = cells[index];
+        let end = x.saturating_add(cell.cell_width());
+        let covered = cells[index + 1..]
+            .iter()
+            .take_while(|(next_x, next_y, _)| *next_y == y && *next_x < end)
+            .count();
+        cells[index..=index + covered].rotate_left(1);
+        index += covered + 1;
+    }
+}
 
 impl Backend for SyncedBackend {
     type Error = io::Error;
@@ -73,7 +99,9 @@ impl Backend for SyncedBackend {
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
         queue!(self.0, BeginSynchronizedUpdate)?;
-        self.0.draw(content)
+        let mut cells: Vec<_> = content.collect();
+        write_covered_cells_first(&mut cells);
+        self.0.draw(cells.into_iter())
     }
 
     fn flush(&mut self) -> io::Result<()> {
