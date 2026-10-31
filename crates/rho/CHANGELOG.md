@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.32.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.2...rho-coding-agent-v2.32.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* **doctor:** only list signed-in and active auth modes ([#1635](https://github.com/matthewyjiang/rho/issues/1635)) ([2292f07](https://github.com/matthewyjiang/rho/commit/2292f07aa360db4332d7aea17164453223931f3c))
+
 ## [2.32.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.1...rho-coding-agent-v2.32.2) (2026-10-31)
 
 
