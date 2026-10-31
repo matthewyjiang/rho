@@ -1,6 +1,6 @@
 //! VT100-backed Unix PTY session for the Claude `/usage` probe.
 
-use std::{path::Path, time::Duration};
+use std::{num::NonZeroU16, path::Path, time::Duration};
 
 use vt100::Parser;
 
@@ -18,10 +18,11 @@ impl PtySession {
         args: &[&str],
         env: &[(String, String)],
         cwd: &Path,
-        rows: u16,
-        cols: u16,
+        rows: NonZeroU16,
+        cols: NonZeroU16,
     ) -> Result<Self, String> {
-        let inner = PtyController::spawn(binary, PtySize::new(rows, cols), args, env, Some(cwd))
+        let size = PtySize::new(rows.get(), cols.get());
+        let inner = PtyController::spawn(binary, size, args, env, Some(cwd))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             inner,
