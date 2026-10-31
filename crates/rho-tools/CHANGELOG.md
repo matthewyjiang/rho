@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.16.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.1...rho-agent-tools-v1.16.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** patch zip, rustls, dompurify, and vite security advisories ([#1630](https://github.com/matthewyjiang/rho/issues/1630)) ([43d5b73](https://github.com/matthewyjiang/rho/commit/43d5b73d5bafab1f984a2f4123ca0f79730255ba))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.15.1 to 5.15.2
+
 ## [1.16.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.0...rho-agent-tools-v1.16.1) (2026-10-30)
 
 

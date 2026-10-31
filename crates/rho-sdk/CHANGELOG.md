@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.15.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.15.1...rho-sdk-v5.15.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **sdk:** harden runtime edge cases and document public contracts ([#1628](https://github.com/matthewyjiang/rho/issues/1628)) ([bbcceb4](https://github.com/matthewyjiang/rho/commit/bbcceb4cbe835d8d9cdcc79ee5e0ba5d30b3a98b))
+
 ## [5.15.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.15.0...rho-sdk-v5.15.1) (2026-10-30)
 
 
