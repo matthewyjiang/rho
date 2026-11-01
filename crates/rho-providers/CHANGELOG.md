@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.26.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.26.1...rho-providers-v2.26.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** bump rusqlite to 0.41.0, sse-stream to 0.2.6, and similar to 3.2.1 ([#1640](https://github.com/matthewyjiang/rho/issues/1640)) ([2197e98](https://github.com/matthewyjiang/rho/commit/2197e9808059b8f89a2f81a2e3654ea44a584db4))
+
 ## [2.26.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.26.0...rho-providers-v2.26.1) (2026-10-31)
 
 
