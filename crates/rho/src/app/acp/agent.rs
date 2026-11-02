@@ -142,9 +142,8 @@ impl RhoAcpAgent {
         }
     }
 
-    /// Rho speaks ACP v1 only, so the version does not depend on the request:
-    /// any other requested version, including the pre-release v0 and T3's v2,
-    /// gets v1 back and the client decides whether to continue.
+    /// The v1 handshake. The connection router selects the v1 or v2 adapter;
+    /// the v2 adapter reuses these capabilities and translates the response.
     pub(super) fn initialize(
         request: &InitializeRequest,
         sign_in: super::auth::OAuthSignIn,

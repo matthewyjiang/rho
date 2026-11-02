@@ -10,10 +10,10 @@ use super::{AcpServer, Workspace};
 fn negotiating_initialize() -> Value {
     json!({
         "protocolVersion": 2,
-        "info": {"name": "test-host", "version": "1.0.0"},
+        "info": {"name": "t3-code", "version": "1.0.0"},
         "capabilities": {},
         "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}},
-        "clientInfo": {"name": "test-host", "version": "1.0.0"},
+        "clientInfo": {"name": "t3-code", "version": "1.0.0"},
     })
 }
 
@@ -21,7 +21,11 @@ impl AcpServer {
     /// Sends a v2 `session/prompt` and collects every update until the
     /// session reports `idle`. Returns the reply and those updates; the reply
     /// may arrive before or after them.
-    fn prompt_v2(&mut self, session_id: &str, text: &str) -> (Result<Value, Value>, Vec<Value>) {
+    pub(super) fn prompt_v2(
+        &mut self,
+        session_id: &str,
+        text: &str,
+    ) -> (Result<Value, Value>, Vec<Value>) {
         self.next_id += 1;
         let id = self.next_id;
         self.send(&json!({
@@ -94,18 +98,21 @@ fn kinds(updates: &[Value]) -> Vec<&str> {
 // a Git patch where the path allows one.
 // Owner: ACP v2 boundary, over the real stdio server
 #[test]
-fn v2_prompt_reports_its_lifecycle_through_state_updates() {
+fn t3code_v2_prompt_reports_its_lifecycle_through_state_updates() {
     let workspace = Workspace::new();
     let config = workspace.home.path().join("config.toml");
     let settings = std::fs::read_to_string(&config)
         .unwrap()
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
-    let mut server = AcpServer::spawn(
-        workspace.home.path(),
-        &workspace.project,
-        "tool-call",
-        &workspace.project,
+    let mut server = AcpServer::from_command(
+        AcpServer::command(
+            workspace.home.path(),
+            &workspace.project,
+            "tool-call",
+            &workspace.project,
+        )
+        .arg("--t3code"),
     );
     let initialized = server
         .request("initialize", negotiating_initialize())
@@ -271,33 +278,5 @@ fn v2_resume_replays_and_refused_prompts_send_nothing() {
     assert_eq!(
         replay.last().unwrap(),
         &json!({"sessionUpdate": "state_update", "state": "idle"})
-    );
-}
-
-// Owner: ACP host selection, over the real stdio server. T3 Code renders a v2
-// agent's accepted `user_message` as a duplicate user bubble, so `--t3code`
-// must stay on v1 even when T3 asks for v2.
-#[test]
-fn t3code_answers_a_v2_initialize_with_v1() {
-    let workspace = Workspace::new();
-    let mut server = AcpServer::from_command(
-        AcpServer::command(
-            workspace.home.path(),
-            &workspace.project,
-            "tool-call",
-            &workspace.project,
-        )
-        .arg("--t3code"),
-    );
-    let initialized = server
-        .request("initialize", negotiating_initialize())
-        .0
-        .unwrap();
-    assert_eq!(
-        (
-            &initialized["protocolVersion"],
-            initialized["agentCapabilities"].is_object(),
-        ),
-        (&json!(1), true)
     );
 }

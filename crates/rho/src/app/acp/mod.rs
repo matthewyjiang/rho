@@ -67,19 +67,6 @@ impl AcpHost {
             Self::Generic
         }
     }
-
-    /// Whether this host may negotiate ACP v2.
-    ///
-    /// T3 Code asks every ACP agent for v2 but only tracks v2 prompt
-    /// acceptance for Claude. For any other agent it shows the `user_message`
-    /// a v2 agent echoes as a second user bubble that includes T3's injected
-    /// `<t3_code_instructions>`, so T3 stays on v1 until it handles that.
-    fn speaks_v2(self) -> bool {
-        match self {
-            Self::Generic => true,
-            Self::T3Code => false,
-        }
-    }
 }
 
 /// Prepared process state for a `rho acp` stdio server.
@@ -287,23 +274,14 @@ pub(super) async fn run(cli: crate::cli::Cli) -> anyhow::Result<()> {
     // Probe stdin before the transport starts reading it; on Windows a later
     // probe would wait behind that read forever. See `stdin_is_terminal`.
     let _ = crate::stdio::stdin_is_terminal();
-    let Some(crate::cli::Command::Acp(args)) = &cli.command else {
-        anyhow::bail!("ACP server requires the acp command");
-    };
-    let host = AcpHost::from_args(args);
     let agent = Arc::new(startup::LazyAgent::new(cli)?);
-    // Each connection speaks the version its `initialize` negotiates; the
-    // router picks the highest one both sides support. A v1-only router
-    // answers a v2 `initialize` with v1.
-    let router = Agent
+    // Host integrations do not change protocol negotiation: each connection
+    // uses the highest version both sides support.
+    let server = Agent
         .protocol_router()
-        .with_v1(v1_agent(Arc::clone(&agent)));
-    let router = if host.speaks_v2() {
-        router.with_v2(v2::agent(agent))
-    } else {
-        router
-    };
-    let server = router.connect_to(Stdio::new());
+        .with_v1(v1_agent(Arc::clone(&agent)))
+        .with_v2(v2::agent(agent))
+        .connect_to(Stdio::new());
     // Request handlers run inside this future. On the main thread they had
     // Windows' 1 MiB stack, which deep session setup overflowed; a runtime
     // worker has tokio's 2 MiB.
