@@ -10,6 +10,8 @@ rho acp --t3code
 
 In T3 Code, add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. Without the flag, Rho still works in T3 Code as a plain ACP agent, but subagents run inside Rho and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
 
+Rho negotiates ACP v2 when T3 Code requests it; v1 remains available when a host requests v1. Use an up-to-date T3 Code build: versions predating the October 30, 2026 prompt-echo fix can show the injected `<t3_code_instructions>` as a duplicate user message on v2. Upgrade T3 Code rather than downgrading Rho. Notices use native notice rows instead of assistant reply text.
+
 ## Sign in
 
 T3 Code's sign-in terminal appends `--login <auth-profile>` to the configured command, for example `rho acp --t3code --login codex`, which runs Rho's login flow instead of the ACP server. Sign-in works even when the configured provider has no credentials yet, and it does not need T3's MCP server. When credentials are missing, unreadable, or refused, at session start or mid-session, T3 Code reports that the agent needs terminal authentication. See [Sign in](/integrations/acp#sign-in).
@@ -48,7 +50,7 @@ Rho needs T3's `delegate_task`, `task_status`, and `task_cancel` tools. If any o
 
 Under `--t3code`, a prompt that ends while background processes or workflows are still running does not stay open. The thread goes idle, so you can keep talking to it. The first result to finish wakes it with a new turn that delivers the result.
 
-ACP gives an agent no way to start a turn, and T3 refuses a thread's own requests once its turn ends. T3 does wake a parent when a delegated task finishes, so Rho delegates one watcher task:
+ACP v2 permits agent-initiated turns, but T3 Code does not enable that lifecycle for generic ACP agents such as Rho. T3 also refuses a thread's own requests once its turn ends. It does wake a parent when a delegated task finishes, so Rho still delegates one watcher task:
 
 - The watcher is titled `waiting: <command>` and makes no model call. It runs `/rho-wake <token>`, a command Rho never lists in the menu.
 - It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result. The results follow it as usual.
@@ -67,7 +69,8 @@ T3 Code draws some ACP features differently from other hosts:
 | --- | --- |
 | Plan approval | T3's usual approve, approve for session, and decline buttons. They pick `supervised`, `allow_edits`, and keep planning. `bypass` and `auto` cannot be chosen there. A thread in full access approves without showing the plan. A sandboxed thread may reject every time; switch the session's mode by hand. |
 | Questions | Every question needs an answer, typed as text. Name a choice by its label or value, and separate several with commas or the separator the form names. Free text on a question that only accepts its listed choices counts as declining. Exact rules: [T3 Code forms](/integrations/acp/reference#t3-code-forms). |
-| Checklist | T3 currently ignores an empty checklist and keeps showing the last one, so a cleared `todo` list stays on screen. |
+| Checklist | Current T3 builds replace the checklist when Rho clears its `todo` list. Builds predating the October 30, 2026 empty-plan fix can retain the previous list. |
+| Manual compaction | T3 intercepts bare `/compact` and currently rejects it for generic ACP agents before Rho receives it. Rho's automatic compaction is unaffected. |
 | Interrupting | When you change settings and send a message mid-prompt, the message you send runs with the new settings. |
 | Background results | Result cards show the plain output, without markdown fences. |
 | Skills | `$<name>` skills appear in T3's `$` menu. |

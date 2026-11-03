@@ -33,12 +33,12 @@ fn permission_copy_moves_off_the_tool_card() {
     );
 }
 
-// Covers: v2 makes `notice` baseline, but T3 Code's v2 client drops it as an
-// unknown update, so T3 Code must keep getting notices as agent messages.
+// Covers: notices are baseline on v2, including T3 Code, without an opt-in
+// capability. Falling back to agent messages pollutes the conversation.
 // Owner: ACP v2 boundary, initialize mapping
 #[test]
-fn notices_are_on_for_v2_hosts_except_t3_code() {
-    for (client, notices) in [("zed", true), ("t3-code", false)] {
+fn v2_notices_need_no_host_opt_in() {
+    for client in ["zed", "t3-code"] {
         let request = v2::InitializeRequest::new(
             ProtocolVersion::V2,
             v2::Implementation::new(client, "1.0.0"),
@@ -48,6 +48,10 @@ fn notices_are_on_for_v2_hosts_except_t3_code() {
             .client_capabilities
             .session
             .expect("v2 baseline session features");
-        assert_eq!(session.notices.is_some(), notices, "{client}");
+        assert_eq!(
+            session.notices,
+            Some(v1::NoticeCapabilities::new()),
+            "{client}"
+        );
     }
 }

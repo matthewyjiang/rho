@@ -43,7 +43,7 @@ Start a Rho thread from the Agent Panel's new-thread menu. Zed lists saved Rho s
 
 ### T3 Code
 
-Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The `--t3code` flag runs Rho subagents as T3 threads and lets background results wake an idle thread. It also keeps the connection on ACP v1 even though T3 Code asks for v2. See [T3 Code](/integrations/acp/t3-code).
+Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The `--t3code` flag runs Rho subagents as T3 threads and lets background results wake an idle thread. The connection negotiates ACP v2 when T3 Code asks for it, with v1 still available to older hosts. See [T3 Code](/integrations/acp/t3-code).
 
 ### Other hosts
 
@@ -112,7 +112,7 @@ When the active agent has the `skill` tool, the menu also lists one `$<name>` en
 
 Background processes, workflows, and subagents report back as they do in the TUI, and each result shows up in the host as a finished tool card.
 
-ACP gives Rho no way to start a turn on its own, so Rho keeps the current prompt open while work it is waiting on is still running, and the model continues once it finishes:
+Rho keeps the current prompt open while work it is waiting on is still running, and the model continues once it finishes:
 
 - Subagents hold the prompt open until they finish, whichever prompt started them.
 - Workflows and background processes started during the prompt hold it open too. Older processes, such as a dev server, do not; their results arrive with your next message.

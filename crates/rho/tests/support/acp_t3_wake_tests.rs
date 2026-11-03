@@ -1,4 +1,4 @@
-//! T3 Code wake watchers (`rho acp --t3code`) over the real stdio server.
+//! T3 Code wake watchers (`rho acp --t3code`) over the real ACP v2 stdio server.
 
 use std::{
     fs::File,
@@ -109,30 +109,45 @@ impl Watcher {
         let session_id = self.session_id.clone();
         let project = self.workspace.project.clone();
         let loaded = self.request_beside_wake(
-            "session/load",
-            json!({"sessionId": session_id, "cwd": project, "mcpServers": []}),
+            "session/resume",
+            json!({"sessionId": session_id, "cwd": project, "mcpServers": [], "replayFrom": {"type": "start"}}),
         );
         assert!(loaded.get("error").is_none(), "{loaded}");
     }
 
+    /// The v2 prompt reply is only acceptance; the wait finishes at `idle`.
+    fn finish_wake(&mut self, stop_reason: &str) {
+        loop {
+            let message = self.server.recv("the watcher's idle state");
+            let update = &message["params"]["update"];
+            if update["sessionUpdate"] == "state_update" && update["state"] == "idle" {
+                assert_eq!(update["stopReason"], stop_reason);
+                return;
+            }
+        }
+    }
+
     /// Sends T3 Code's restart continuation and returns the stop reason and
-    /// the turn's updates, without command menus or message ids.
+    /// the turn's updates, without lifecycle frames, command menus or message ids.
     fn continue_prompt(&mut self) -> (Value, Vec<Value>) {
-        let (reply, updates) = self.server.request(
-            "session/prompt",
-            json!({
-                "sessionId": self.session_id,
-                "prompt": [{"type": "text", "text": "Continue where you left off."}],
-            }),
-        );
+        let (reply, updates) = self
+            .server
+            .prompt_v2(&self.session_id, "Continue where you left off.");
+        reply.unwrap();
+        let stop_reason = updates.last().unwrap()["stopReason"].clone();
         let turn = updates
             .into_iter()
-            .filter(|update| update["sessionUpdate"] != "available_commands_update")
+            .filter(|update| {
+                !matches!(
+                    update["sessionUpdate"].as_str(),
+                    Some("available_commands_update" | "user_message" | "state_update")
+                )
+            })
             .map(|update| {
                 json!({"sessionUpdate": update["sessionUpdate"], "content": update["content"]})
             })
             .collect();
-        (reply.unwrap()["stopReason"].clone(), turn)
+        (stop_reason, turn)
     }
 }
 
@@ -145,7 +160,14 @@ fn t3_server(workspace: &Workspace) -> AcpServer {
     );
     let mut server = AcpServer::from_command(command.arg("--t3code"));
     server
-        .request("initialize", json!({"protocolVersion": 1}))
+        .request(
+            "initialize",
+            json!({
+                "protocolVersion": 2,
+                "info": {"name": "t3-code", "version": "1.0.0"},
+                "capabilities": {},
+            }),
+        )
         .0
         .unwrap();
     server
@@ -183,7 +205,7 @@ fn stopped_watcher_resumes_its_wait_without_a_model_turn() {
         let mut watcher = Watcher::start();
         if let Parent::EndedFirst = parent {
             drop(watcher.parent_lock.take());
-            while watcher.server.recv("the watcher's answer")["id"] != "wake" {}
+            watcher.finish_wake("end_turn");
         }
         match stop {
             Stop::Kill | Stop::Quit => {
@@ -222,36 +244,54 @@ fn stopped_watcher_resumes_its_wait_without_a_model_turn() {
     }
 }
 
-/// Where a watcher stands when T3 Code closes it.
+/// How the host ends a watcher.
 #[derive(Clone, Copy, Debug)]
-enum Closed {
-    Waiting,
+enum Ending {
+    Cancel,
+    CloseWaiting,
     /// Waiting, then reloaded in place, so no prompt waits anymore.
-    Reloaded,
+    CloseReloaded,
     /// Its wait answered.
-    Finished,
+    CloseFinished,
 }
 
-// Covers: `session/close`, as T3 Code's task_cancel sends, ends a watcher for
-// good whether it is waiting, was reloaded in place, or already answered: a
+// Covers: `session/cancel` reports idle/cancelled and `session/close`, as T3
+// Code's task_cancel sends, ends a watcher whether waiting, reloaded or done: a
 // later load and prompt of the session runs as an ordinary turn instead of
 // reviving the wait or repeating its answer.
 // Owner: ACP T3 wake watcher, over the real stdio server
 #[test]
-fn closed_watcher_drops_its_wait() {
-    for closed in [Closed::Waiting, Closed::Reloaded, Closed::Finished] {
+fn ended_watcher_drops_its_wait() {
+    for ending in [
+        Ending::Cancel,
+        Ending::CloseWaiting,
+        Ending::CloseReloaded,
+        Ending::CloseFinished,
+    ] {
         let mut watcher = Watcher::start();
-        match closed {
-            Closed::Waiting => {}
-            Closed::Reloaded => watcher.load(),
-            Closed::Finished => {
+        match ending {
+            Ending::Cancel | Ending::CloseWaiting => {}
+            Ending::CloseReloaded => watcher.load(),
+            Ending::CloseFinished => {
                 drop(watcher.parent_lock.take());
-                while watcher.server.recv("the watcher's answer")["id"] != "wake" {}
+                watcher.finish_wake("end_turn");
             }
         }
         let session_id = watcher.session_id.clone();
-        let reply = watcher.request_beside_wake("session/close", json!({"sessionId": session_id}));
-        assert!(reply.get("error").is_none(), "{reply}");
+        match ending {
+            Ending::Cancel => {
+                watcher.server.send(&json!({
+                    "jsonrpc": "2.0", "method": "session/cancel",
+                    "params": {"sessionId": session_id},
+                }));
+                watcher.finish_wake("cancelled");
+            }
+            Ending::CloseWaiting | Ending::CloseReloaded | Ending::CloseFinished => {
+                let reply =
+                    watcher.request_beside_wake("session/close", json!({"sessionId": session_id}));
+                assert!(reply.get("error").is_none(), "{reply}");
+            }
+        }
         watcher.load();
 
         let (stop_reason, turn) = watcher.continue_prompt();
@@ -261,10 +301,10 @@ fn closed_watcher_drops_its_wait() {
                 stop_reason,
                 watcher.record().exists(),
                 turn.iter()
-                    .any(|update| update["sessionUpdate"] == "tool_call"),
+                    .any(|update| update["sessionUpdate"] == "tool_call_update"),
             ),
             (json!("end_turn"), false, true),
-            "{closed:?}"
+            "{ending:?}"
         );
     }
 }
