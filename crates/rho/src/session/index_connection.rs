@@ -100,7 +100,7 @@ pub(in crate::session) fn open_index(
         ParentDirectoryPrivacy::EnforcePrivate,
         |connection| migrate_index(connection).map_err(IndexOpenError::from_migration),
     )?;
-    let opened = Arc::new(Mutex::new(database.open_write_connection()?));
+    let opened = Arc::new(Mutex::new(database.into_connection()));
     // A racing opener may have won; keep its connection so every caller shares one.
     let mut connections = connections.lock().expect("session index cache poisoned");
     Ok(Arc::clone(connections.entry(path).or_insert(opened)))

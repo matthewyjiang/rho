@@ -46,10 +46,9 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
         );
     }
     let database = OwnerOnlySqlite::open(path, ParentDirectoryPrivacy::EnforcePrivate, migrate)?;
-    let connection = database.open_write_connection()?;
-    // This is connection-local, not persisted by the migration connection.
-    connection.pragma_update(None, "foreign_keys", true)?;
-    Ok(connection)
+    // `migrate` enabled the connection-local foreign_keys pragma on this
+    // same connection.
+    Ok(database.into_connection())
 }
 
 const SCHEMA_VERSION: u32 = 3;
