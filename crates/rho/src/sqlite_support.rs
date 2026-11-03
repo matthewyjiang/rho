@@ -1,9 +1,10 @@
-//! Owner-only SQLite files and the shared open / migrate / lock lifecycle.
+//! Owner-only SQLite files and the shared open / migrate / write lifecycle.
 
 use std::{
     fs::{self, OpenOptions},
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError},
     thread,
     time::{Duration, Instant},
 };
@@ -17,10 +18,23 @@ pub(crate) enum ParentDirectoryPrivacy {
     EnforcePrivate,
 }
 
-/// Short-lived connection factory for a private on-disk SQLite file.
+/// A private on-disk SQLite file and the one write connection this handle
+/// keeps open to it. Clones share that connection.
+///
+/// Keeping the writer open is what makes a write cost one transaction: a fresh
+/// connection per write re-read the schema, re-created the WAL and shared-memory
+/// index, and checkpointed the WAL on close. Independent processes still write
+/// concurrently: WAL mode and [`BUSY_TIMEOUT`] serialize writers per
+/// transaction, not per connection.
+///
+/// Durability matches the session index: with WAL and synchronous=NORMAL, a
+/// commit survives a process crash, but power loss may drop the newest commits
+/// until the next checkpoint. The per-write close used to checkpoint (and
+/// fsync) every commit.
 #[derive(Clone, Debug)]
 pub(crate) struct OwnerOnlySqlite {
     path: PathBuf,
+    writer: Arc<Mutex<Connection>>,
 }
 
 impl OwnerOnlySqlite {
@@ -35,9 +49,11 @@ impl OwnerOnlySqlite {
         let path = path.into();
         prepare_parent_directory(&path, parent_privacy)?;
         prepare_database_file(&path)?;
-        let database = Self { path };
-        database.initialize(migrate)?;
-        Ok(database)
+        let writer = initialize(&path, migrate)?;
+        Ok(Self {
+            path,
+            writer: Arc::new(Mutex::new(writer)),
+        })
     }
 
     pub(crate) fn open_existing<E>(
@@ -60,20 +76,22 @@ impl OwnerOnlySqlite {
         &self.path
     }
 
+    /// Opens an additional connection, for reads that should not hold the
+    /// shared writer.
     pub(crate) fn open_write_connection(&self) -> Result<Connection, rusqlite::Error> {
-        let connection = Connection::open_with_flags(
-            &self.path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        connection.busy_timeout(BUSY_TIMEOUT)?;
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
-        // sqlite's default page cache is 2 MB per connection (cache_size
-        // -2000). These stores live for the whole process and touch a
-        // handful of pages per write, so cap the cache at 512 KB.
-        connection.pragma_update(None, "cache_size", -512)?;
-        Ok(connection)
+        connect(&self.path)
     }
 
+    /// Hands the write connection to a caller that manages its own sharing.
+    /// Only for a handle fresh from [`Self::open`], before any clone.
+    pub(crate) fn into_connection(self) -> Connection {
+        Arc::try_unwrap(self.writer)
+            .expect("a fresh OwnerOnlySqlite has no clones")
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `f` in an immediate transaction on the shared write connection.
     pub(crate) fn with_immediate_transaction<T, E>(
         &self,
         f: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
@@ -81,40 +99,60 @@ impl OwnerOnlySqlite {
     where
         E: From<std::io::Error> + From<rusqlite::Error>,
     {
-        let mut connection = self.open_write_connection()?;
-        set_sidecar_permissions(&self.path)?;
+        // A panic inside `f` drops its transaction, which rolls back, so a
+        // poisoned writer is normally idle. That drop ignores a failed
+        // ROLLBACK, which would leave this long-lived connection holding the
+        // write lock; end any such leftover transaction before starting one.
+        let mut connection = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        if !connection.is_autocommit() {
+            connection.execute_batch("ROLLBACK")?;
+        }
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = f(&transaction)?;
         transaction.commit()?;
-        set_sidecar_permissions(&self.path)?;
+        // No sidecar chmod here: `initialize` made the WAL and shared-memory
+        // files private, and they persist while this connection is open.
         Ok(value)
     }
+}
 
-    fn initialize<E>(
-        &self,
-        mut migrate: impl FnMut(&mut Connection) -> Result<(), E>,
-    ) -> Result<(), E>
-    where
-        E: From<std::io::Error> + From<rusqlite::Error> + std::error::Error + 'static,
-    {
-        let deadline = Instant::now() + BUSY_TIMEOUT;
-        loop {
-            let result =
-                self.open_write_connection()
-                    .map_err(E::from)
-                    .and_then(|mut connection| {
-                        connection.pragma_update(None, "journal_mode", "WAL")?;
-                        set_sidecar_permissions(&self.path)?;
-                        migrate(&mut connection)?;
-                        set_sidecar_permissions(&self.path)?;
-                        Ok(())
-                    });
-            match result {
-                Err(error) if is_lock_contention(&error) && Instant::now() < deadline => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                result => return result,
+fn connect(path: &Path) -> Result<Connection, rusqlite::Error> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.busy_timeout(BUSY_TIMEOUT)?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    // sqlite's default page cache is 2 MB per connection (cache_size
+    // -2000). These stores live for the whole process and touch a
+    // handful of pages per write, so cap the cache at 512 KB.
+    connection.pragma_update(None, "cache_size", -512)?;
+    Ok(connection)
+}
+
+/// Opens the write connection, enables WAL, and migrates, retrying while
+/// another process holds the write lock.
+fn initialize<E>(
+    path: &Path,
+    mut migrate: impl FnMut(&mut Connection) -> Result<(), E>,
+) -> Result<Connection, E>
+where
+    E: From<std::io::Error> + From<rusqlite::Error> + std::error::Error + 'static,
+{
+    let deadline = Instant::now() + BUSY_TIMEOUT;
+    loop {
+        let result = connect(path).map_err(E::from).and_then(|mut connection| {
+            connection.pragma_update(None, "journal_mode", "WAL")?;
+            set_sidecar_permissions(path)?;
+            migrate(&mut connection)?;
+            set_sidecar_permissions(path)?;
+            Ok(connection)
+        });
+        match result {
+            Err(error) if is_lock_contention(&error) && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(10));
             }
+            result => return result,
         }
     }
 }

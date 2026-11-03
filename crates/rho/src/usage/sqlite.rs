@@ -7,8 +7,8 @@ use super::{
     RecordOutcome, UsageEvent, UsageLedgerError, UsageRecorder,
 };
 
-/// Durable SQLite recorder. It opens a short-lived connection for each write,
-/// allowing clones and independent Rho processes to write concurrently.
+/// Durable SQLite recorder. Clones share one write connection; independent Rho
+/// processes write concurrently through WAL.
 #[derive(Clone, Debug)]
 pub struct SqliteUsageRecorder {
     pub(super) db: OwnerOnlySqlite,

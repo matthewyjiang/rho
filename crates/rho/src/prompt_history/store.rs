@@ -6,8 +6,8 @@ use crate::sqlite_support::{OwnerOnlySqlite, ParentDirectoryPrivacy};
 
 use super::{migrations, PromptHistoryError};
 
-/// Durable SQLite store for sent composer text. Each operation opens a
-/// short-lived connection so independent Rho processes can write concurrently.
+/// Durable SQLite store for sent composer text. Writes share one connection;
+/// independent Rho processes write concurrently through WAL.
 #[derive(Clone, Debug)]
 pub(crate) struct PromptHistoryStore {
     db: OwnerOnlySqlite,

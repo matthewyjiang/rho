@@ -1,7 +1,12 @@
 use std::io;
 
 use crossterm::event::{Event, EventStream};
+#[cfg(windows)]
 use futures_util::StreamExt;
+
+#[cfg(not(windows))]
+#[path = "wake_gated_stream.rs"]
+mod wake_gated;
 
 #[cfg(windows)]
 #[path = "windows_input.rs"]
@@ -18,7 +23,7 @@ mod windows_records;
 
 pub(super) struct TerminalEvents {
     #[cfg(not(windows))]
-    stream: EventStream,
+    stream: wake_gated::WakeGated<EventStream>,
     #[cfg(windows)]
     stream: Option<WindowsStream>,
 }
@@ -33,7 +38,7 @@ impl TerminalEvents {
     pub(super) fn new() -> Self {
         Self {
             #[cfg(not(windows))]
-            stream: EventStream::new(),
+            stream: wake_gated::WakeGated::new(EventStream::new()),
             #[cfg(windows)]
             stream: None,
         }
