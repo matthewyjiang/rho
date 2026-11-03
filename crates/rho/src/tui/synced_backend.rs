@@ -66,6 +66,35 @@ pub(crate) fn repaint_after_resize(terminal: &mut DefaultTerminal) -> io::Result
 /// reordered by [`write_covered_cells_first`] so wide emoji draw intact.
 pub(crate) struct SyncedBackend(CrosstermBackend<Stdout>);
 
+/// Size of the terminal this backend draws to, read from stdout with one ioctl.
+///
+/// crossterm's `terminal::size` opens and closes `/dev/tty` on every call, and
+/// the TUI asks for the size on every frame (ratatui's autoresize) and every
+/// streamed delta. `None` (stdout is not a terminal, or reports no size) falls
+/// back to crossterm, which also tries `/dev/tty` and `tput`.
+#[cfg(unix)]
+fn stdout_window_size() -> Option<Size> {
+    use std::os::fd::AsRawFd as _;
+    let mut winsize = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: TIOCGWINSZ writes into a valid, properly sized `winsize`.
+    let status = unsafe {
+        libc::ioctl(
+            io::stdout().as_raw_fd(),
+            libc::TIOCGWINSZ,
+            &mut winsize as *mut libc::winsize,
+        )
+    };
+    (status == 0 && winsize.ws_col > 0 && winsize.ws_row > 0).then_some(Size {
+        width: winsize.ws_col,
+        height: winsize.ws_row,
+    })
+}
+
 /// Moves each wide cell after the cells it covers in the same row.
 ///
 /// ratatui-core writes the trailing cell of a VS16 emoji such as "❤️" right
@@ -148,6 +177,10 @@ impl Backend for SyncedBackend {
     }
 
     fn size(&self) -> io::Result<Size> {
+        #[cfg(unix)]
+        if let Some(size) = stdout_window_size() {
+            return Ok(size);
+        }
         self.0.size()
     }
 
