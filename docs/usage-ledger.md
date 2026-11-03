@@ -10,6 +10,8 @@ In the interactive TUI, `/spend` reads this database (read-only) and summarizes 
 
 The database uses WAL mode and a five-second busy timeout. Multiple Rho processes can write concurrently, and reporting tools can use SQLite's read-only mode while Rho is active. Readers should tolerate normal SQLite `-wal` and `-shm` sidecar files.
 
+Each Rho process keeps one write connection open and commits with `synchronous=NORMAL`. A committed row survives a Rho crash or kill. A power loss or operating-system crash can drop the most recent rows that SQLite has not yet checkpointed into the main database file.
+
 ## Compatibility and schema
 
 `PRAGMA user_version` versions database migrations. Version 1 contains `usage_events`; each immutable row also has a `schema_version` for row-semantics evolution. Version 2 adds `compaction_events`. Rho builds that predate version 2 reject an upgraded ledger: they stop recording usage and `/spend` reports an error until they are updated. Future schema changes should be additive, and existing columns will be preserved. Readers should ignore columns they do not recognize and reject a `user_version` newer than they support.
