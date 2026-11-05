@@ -371,9 +371,9 @@ impl EventMapper {
         session_id: &SessionId,
         messages: &[crate::session::tree::ProjectedMessage],
         cwd: &Path,
-        mcp_tools: &McpToolNames,
+        tool_set: &crate::tools::sdk_registry::AppToolSet,
     ) -> Vec<SessionNotification> {
-        replay::history(session_id, messages, cwd, mcp_tools)
+        replay::history(session_id, messages, cwd, tool_set)
     }
 
     /// The ID a load replays the display row saved at `origin` with.

@@ -1,14 +1,20 @@
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, ImageContent, MessageId, SessionId, SessionNotification,
     SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields,
+    ToolCallUpdateFields, ToolKind,
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::model::{self, AbortedAssistant, AssistantMessage, Message, ToolResult};
 use serde_json::json;
 
 use super::history;
-use crate::session::tree::{DisplayRowOrigin, NodeId, ProjectedMessage};
+use crate::{
+    agent::{AgentCapabilities, ToolCapability},
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    session::tree::{DisplayRowOrigin, NodeId, ProjectedMessage},
+    tools::sdk_registry::{AppToolSet, ToolSetOptions},
+};
 
 fn call_block(id: &str) -> model::ContentBlock {
     model::ContentBlock::ToolCall(model::ToolCall {
@@ -24,7 +30,7 @@ fn raw_replay(messages: &[Message]) -> Vec<SessionNotification> {
         &SessionId::new("s1"),
         &saved_rows(messages),
         std::path::Path::new(""),
-        &Default::default(),
+        &AppToolSet::disabled(),
     )
 }
 
@@ -273,8 +279,9 @@ fn replay_closes_superseded_occurrences_without_retargeting_their_images() {
 }
 
 // Covers: replayed chunks carry message IDs that split where live ones do
-// (text after a tool call, a reasoning summary), give equal text saved twice
-// two IDs, and come out the same when the same history replays again.
+// (text after a tool call, a reasoning summary), come in live order (the
+// summary before the text it led to), give equal text saved twice two IDs,
+// and come out the same when the same history replays again.
 // Owner: ACP replay mapping; the stdio test covers reloading a saved session.
 #[test]
 fn replay_message_ids_split_at_boundaries_and_repeat_across_replays() {
@@ -312,12 +319,55 @@ fn replay_message_ids_split_at_boundaries_and_repeat_across_replays() {
         chunks(replay(&messages)),
         vec![
             chunk("continue", "m0"),
-            chunk("before", "m1"),
-            chunk("after", "m2"),
-            chunk(" more", "m2"),
-            chunk("why", "m3"),
+            chunk("why", "m1"),
+            chunk("before", "m2"),
+            chunk("after", "m3"),
+            chunk(" more", "m3"),
             chunk("continue", "m4"),
         ]
     );
     assert_eq!(chunks(raw_replay(&messages)), chunks(raw_replay(&messages)));
+}
+
+// Covers: a replayed call of a registered tool gets the kind its tool reports
+// at start, as a live call does; an unknown tool stays `other`.
+// Owner: ACP replay mapping; saved history keeps no tool metadata.
+#[test]
+fn replayed_calls_take_their_kind_from_the_session_tools() {
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::ReadFile, ToolCapability::Bash].into(),
+        )),
+    );
+    let call = |id: &str, name: &str, arguments: serde_json::Value| {
+        model::ContentBlock::ToolCall(model::ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+        })
+    };
+    let messages = saved_rows(&[Message::assistant(AssistantMessage::from_content(vec![
+        call("a", "read_file", json!({"path": "src/lib.rs"})),
+        call("b", "bash", json!({"command": "cargo test"})),
+        call("c", "not_a_tool", json!({})),
+    ]))]);
+    let kinds: Vec<ToolKind> = history(
+        &SessionId::new("s1"),
+        &messages,
+        std::path::Path::new(""),
+        &tool_set,
+    )
+    .into_iter()
+    .filter_map(|notification| match notification.update {
+        SessionUpdate::ToolCall(call) => Some(call.kind),
+        _ => None,
+    })
+    .collect();
+    assert_eq!(
+        kinds,
+        vec![ToolKind::Read, ToolKind::Execute, ToolKind::Other]
+    );
 }

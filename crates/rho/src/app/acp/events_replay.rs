@@ -8,17 +8,14 @@ use agent_client_protocol::schema::v1::{
     SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields,
 };
-use rho_sdk::{
-    model::{self, Message, SemanticMessage},
-    tool::ToolMetadata,
-};
+use rho_sdk::model::{self, Message, SemanticMessage};
 use serde_json::Value;
 
-use super::{notify, text_chunk, tool_title, EventMapper, UNNAMED_TOOL_TITLE};
+use super::{notify, text_chunk, tool_title, tools, EventMapper, UNNAMED_TOOL_TITLE};
 use crate::{
     display_transcript::DisplayTranscript,
     session::tree::{DisplayRowOrigin, ProjectedMessage},
-    tools::mcp::exported_name::McpToolNames,
+    tools::{mcp::exported_name::McpToolNames, sdk_registry::AppToolSet},
 };
 
 /// Hosts with their own transcript use this marker to avoid duplicating it.
@@ -28,11 +25,13 @@ pub(super) fn history(
     session_id: &SessionId,
     messages: &[ProjectedMessage],
     cwd: &Path,
-    mcp_tools: &McpToolNames,
+    tool_set: &AppToolSet,
 ) -> Vec<SessionNotification> {
+    let mcp_tools = tool_set.mcp_report().tool_names();
     let mut replay = Replay {
         cwd,
-        mcp_tools,
+        tool_set,
+        mcp_tools: &mcp_tools,
         tools: BTreeMap::new(),
         message_ids: MessageIds::default(),
     };
@@ -69,6 +68,9 @@ pub(super) fn saved_message_id(origin: &DisplayRowOrigin) -> MessageId {
 struct Replay<'a> {
     /// Session working directory; titles show paths relative to it.
     cwd: &'a Path,
+    /// The session's tools. Saved calls keep no metadata, so each tool
+    /// reports what it would at start, as it does live.
+    tool_set: &'a AppToolSet,
     /// Identifies MCP calls, whose capped names cannot be decoded.
     mcp_tools: &'a McpToolNames,
     /// Latest occurrence by stored/provider ID; ACP identities are session-unique.
@@ -128,12 +130,8 @@ impl Replay<'_> {
                 self.blocks(session_id, ReplayRole::Agent, blocks, notifications)
             }
             SemanticMessage::EnrichedAssistant(message) => {
-                self.blocks(
-                    session_id,
-                    ReplayRole::Agent,
-                    &message.content,
-                    notifications,
-                );
+                // Reasoning streams before the text and calls it led to, so
+                // it replays first too.
                 if let Some(summary) = message
                     .reasoning_summary
                     .as_deref()
@@ -147,6 +145,12 @@ impl Replay<'_> {
                         )),
                     ));
                 }
+                self.blocks(
+                    session_id,
+                    ReplayRole::Agent,
+                    &message.content,
+                    notifications,
+                );
             }
             SemanticMessage::AbortedAssistant(message) => self.blocks(
                 session_id,
@@ -181,15 +185,21 @@ impl Replay<'_> {
                     image.mime_type.clone(),
                 )),
                 model::ContentBlock::ToolCall(call) => {
+                    let metadata = self
+                        .tool_set
+                        .tool_named(&call.name)
+                        .map(|tool| tool.start_metadata(&call.arguments))
+                        .unwrap_or_default();
                     let title = tool_title(
                         &call.name,
                         Some(&call.arguments),
-                        &ToolMetadata::default(),
+                        &metadata,
                         self.cwd,
                         self.mcp_tools,
                     );
                     let tool = ToolCall::new(fresh_tool_call_id(), title)
                         .name(call.name.clone())
+                        .kind(tools::kind(&call.name, Some(&call.arguments), &metadata))
                         .status(ToolCallStatus::Pending)
                         .raw_input(call.arguments.clone());
                     if let Some(update) = self
