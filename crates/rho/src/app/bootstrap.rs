@@ -322,10 +322,14 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
 
     let store = AppCredentialStore;
     // Interactive sessions refresh custom-provider models after the first frame
-    // so a slow host cannot hold up paint. Automation and ACP resolve the model
-    // list up front, because they get one shot to pick a model.
+    // so a slow host cannot hold up paint. Automation and ACP get one shot to
+    // pick a model, so they wait for the session's own host; the rest refresh
+    // in the background.
     if matches!(role, AgentRole::AutomationRoot) {
-        cli_config::refresh_custom_provider_models(&config, &store).await;
+        // The background refresh runs detached.
+        let _ =
+            cli_config::refresh_custom_provider_models_for_session(&cli, &config, Arc::new(store))
+                .await?;
     }
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let permission_mode_before_override = config.permission_mode;
@@ -515,15 +519,10 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         .config
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
-    let pending_custom_models = (!startup.config.providers.custom.is_empty()).then(|| {
-        let config = startup.config.clone();
-        tokio::spawn(
-            async move {
-                cli_config::refresh_custom_provider_models(&config, &AppCredentialStore).await;
-            }
-            .instrument(tracing::info_span!("startup.custom_models")),
-        )
-    });
+    let pending_custom_models = cli_config::spawn_custom_provider_models_refresh(
+        startup.config.providers.clone(),
+        Arc::new(AppCredentialStore),
+    );
     let prompt_history_limit = startup.config.prompt_history_limit;
     let pending_prompt_history = (prompt_history_limit > 0 && !startup.cli.no_save).then(|| {
         tokio::spawn(
