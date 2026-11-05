@@ -27,9 +27,9 @@ pub enum ReplayScope {
 
 /// Opaque provider-native data tagged with its producing model identity.
 ///
-/// Serialization omits the default [`ReplayScope::ExactModel`]. Blocks saved
-/// by rho-sdk 5.x carry no scope; loading derives it from their old encodings
-/// (provider-note kind prefix, Codex cross-model formats).
+/// Serialization always writes `replay`. Blocks saved by rho-sdk 5.x carry no
+/// scope; loading derives it from their old encodings (provider-note kind
+/// prefix, Codex cross-model formats), so a missing field means a 5.x block.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "ProviderContextBlockRepr")]
 pub struct ProviderContextBlock {

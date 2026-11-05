@@ -135,11 +135,12 @@ indexes never shift. Unknown shapes are left untouched. 5.x boundary input was
 plain user text and stays `User`.
 
 `ProviderContextBlock::replay` is a `ReplayScope` the producing adapter sets:
-`ExactModel` (the default, omitted from JSON), `ProviderApi` for formats the API
-accepts across model names (Codex Responses compaction items and encrypted
-reasoning), or `Never` for provider notes, which are never replayed and never
-counted as handoff omissions. Blocks saved without a scope derive it from their
-5.x encoding.
+`ExactModel` (the default), `ProviderApi` for formats the API accepts across
+model names (Codex Responses compaction items and encrypted reasoning), or
+`Never` for provider notes, which are never replayed and never counted as
+handoff omissions. JSON always includes `replay`. A block without it was saved
+by 5.x and derives its scope from its 5.x encoding, so hosts that write
+snapshots by hand must include the field.
 
 ### `rho_sdk::provider` and `rho_sdk::tool`
 
