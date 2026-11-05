@@ -423,6 +423,16 @@ pub(super) fn rtk_check(available: bool) -> DoctorCheck {
     }
 }
 
+pub(super) fn rtk_disabled_check() -> DoctorCheck {
+    DoctorCheck::new(
+        DoctorCheckId::Rtk,
+        RTK_LABEL,
+        DoctorStatus::Info,
+        "disabled",
+    )
+    .with_hint("set [behavior].rtk = true to rewrite shell commands")
+}
+
 /// Herdr socket state as seen from this process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HerdrProbe {

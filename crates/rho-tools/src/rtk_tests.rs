@@ -37,7 +37,7 @@ async fn logs_rtk_discover_compatible_tool_pairs() {
         ok: true,
         content: "stdout:\nclean".into(),
     };
-    log_execution_in_projects_dir(root.path(), cwd, "rtk git status", &result)
+    log_execution_in_projects_dir(root.path(), cwd, "rtk git status", (&result).into())
         .await
         .unwrap();
 

@@ -28,6 +28,7 @@ pub(super) fn sdk_bundle(
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
     file_view: rho_tools::FileViewPolicy,
+    rtk_enabled: bool,
     host_io: &HostIo,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
@@ -59,14 +60,13 @@ pub(super) fn sdk_bundle(
     #[cfg(not(any(unix, windows)))]
     let shell_enabled = false;
     if shell_enabled {
-        // RTK stays disabled here. Authorization and execution must use the same
-        // immutable process description.
         tools.push(rho_tools::shell_tool(
             host_io.shell_options(
                 rho_tools::ShellToolOptions::new()
                     .max_output_bytes(max_output_bytes)
                     .environment(process_environment)
-                    .mutation_observer(mutation_observer),
+                    .mutation_observer(mutation_observer)
+                    .rtk(rtk_enabled),
             ),
         ));
     }

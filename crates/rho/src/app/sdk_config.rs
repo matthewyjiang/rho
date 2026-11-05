@@ -73,7 +73,6 @@ impl SdkBootstrapOptions {
             tools: ToolOptions {
                 max_output_bytes: config.max_output_bytes,
                 max_output_lines: config.max_tool_output_lines,
-                rtk_enabled: config.rtk,
                 inline_shell: config.inline_shell.clone(),
             },
         })
@@ -153,7 +152,6 @@ impl WorkspaceOptions {
 pub(crate) struct ToolOptions {
     pub(crate) max_output_bytes: usize,
     pub(crate) max_output_lines: usize,
-    pub(crate) rtk_enabled: bool,
     pub(crate) inline_shell: String,
 }
 

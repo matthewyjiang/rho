@@ -18,7 +18,10 @@ use crate::{
     DEFAULT_MAX_OUTPUT_BYTES,
 };
 
-use super::sdk_support::{map_app_error, map_invalid_app_error};
+use super::{
+    rtk::{CommandRun, Rtk},
+    sdk_support::{map_app_error, map_invalid_app_error},
+};
 
 /// Options for the host-facing shell tool adapter.
 #[derive(Clone)]
@@ -27,6 +30,7 @@ pub struct ShellToolOptions {
     environment: ProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     host_terminals: Option<Arc<dyn crate::HostTerminals>>,
+    rtk: Option<Rtk>,
 }
 
 impl Default for ShellToolOptions {
@@ -36,6 +40,7 @@ impl Default for ShellToolOptions {
             environment: ProcessEnvironment::InheritAll,
             mutation_observer: None,
             host_terminals: None,
+            rtk: None,
         }
     }
 }
@@ -69,6 +74,25 @@ impl ShellToolOptions {
         self.host_terminals = Some(terminals);
         self
     }
+
+    /// Rewrite commands through [RTK](https://github.com/rtk-ai/rtk) when an
+    /// `rtk` 0.23+ binary is on `PATH`. Off by default, and off when the
+    /// process has `RTK_DISABLED=1`.
+    ///
+    /// The rewrite happens before authorization, so approval sees the command
+    /// that runs (`rtk git status`), while start metadata keeps the command the
+    /// model wrote. Each run is also recorded under the Claude Code projects
+    /// directory (`$CLAUDE_CONFIG_DIR` or `~/.claude`) for `rtk discover`.
+    pub fn rtk(mut self, enabled: bool) -> Self {
+        self.rtk = enabled.then(Rtk::system).flatten();
+        self
+    }
+
+    #[cfg(test)]
+    fn rtk_with(mut self, rtk: Rtk) -> Self {
+        self.rtk = Some(rtk);
+        self
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -85,6 +109,7 @@ struct SdkShellTool {
     environment: ProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     host_terminals: Option<Arc<dyn crate::HostTerminals>>,
+    rtk: Option<Rtk>,
 }
 
 impl SdkShellTool {
@@ -96,6 +121,7 @@ impl SdkShellTool {
             environment: options.environment,
             mutation_observer: options.mutation_observer,
             host_terminals: options.host_terminals,
+            rtk: options.rtk,
         }
     }
 
@@ -108,6 +134,7 @@ impl SdkShellTool {
             mutation_observer: options.mutation_observer,
             // Host terminals run `bash` scripts; PowerShell stays local.
             host_terminals: None,
+            rtk: options.rtk,
         }
     }
 }
@@ -115,17 +142,22 @@ impl SdkShellTool {
 struct ShellPlan {
     execution: ProcessExecution,
     resolved_cwd: ResolvedWorkspacePath,
+    /// Records the run for `rtk discover` once it finishes.
+    rtk_log: Option<(Rtk, String)>,
 }
 
 impl ShellPlan {
-    fn parse(
+    /// Validates the call, then applies any RTK rewrite, so the approved
+    /// execution is the one that runs.
+    async fn parse(
         kind: ShellKind,
         arguments: Value,
         workspace: Option<&Workspace>,
         max_output_bytes: usize,
         environment: ProcessEnvironment,
+        rtk: Option<&Rtk>,
     ) -> Result<Self, ToolError> {
-        let arguments = ShellArgs::parse(arguments).map_err(map_invalid_app_error)?;
+        let mut arguments = ShellArgs::parse(arguments).map_err(map_invalid_app_error)?;
         let timeout = arguments.timeout().map_err(map_invalid_app_error)?;
         let workspace = workspace.ok_or_else(|| {
             ToolError::new(
@@ -136,6 +168,13 @@ impl ShellPlan {
         let resolved_cwd = workspace
             .resolve_for_read(workspace.root())
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
+        let mut rtk_log = None;
+        if let Some(rtk) = rtk {
+            if let Some(command) = rtk.rewrite(&arguments.command).await {
+                arguments.command = command;
+            }
+            rtk_log = Some((rtk.clone(), arguments.command.clone()));
+        }
         let execution = ProcessExecution::new(
             resolved_cwd.path(),
             kind.invocation(arguments.command),
@@ -145,6 +184,7 @@ impl ShellPlan {
         Ok(Self {
             execution,
             resolved_cwd,
+            rtk_log,
         })
     }
 
@@ -200,6 +240,13 @@ impl ShellPlan {
             }
             None => execute_with_progress(kind, self.execution, context).await?,
         };
+        if let Some((rtk, command)) = &self.rtk_log {
+            let run = CommandRun {
+                output_len: run.text().len(),
+                failed: run.is_failure(),
+            };
+            rtk.log(self.resolved_cwd.path(), command, run).await;
+        }
         // Taken before `limit_data`, which may drop the structured view.
         let process = run.data().map(|outcome| outcome.process.clone());
         let mut output = run
@@ -305,7 +352,9 @@ impl Tool for SdkShellTool {
                 context.workspace(),
                 self.max_output_bytes,
                 self.environment.clone(),
-            )?;
+                self.rtk.as_ref(),
+            )
+            .await?;
             Ok(PreparedToolInvocation::exclusive_with_capabilities(
                 [plan.capability(self.kind)],
                 metadata,

@@ -41,6 +41,8 @@ pub(crate) struct DoctorInputs<'a> {
     pub(crate) plugins_report: &'a PluginLoadReport,
     /// The permission screen's configured model, when it is not the classifier's.
     pub(crate) permission_screen: Option<&'a InternalAgentModelConfig>,
+    /// `[behavior].rtk`. When off, the rtk row says so instead of probing.
+    pub(crate) rtk_enabled: bool,
     /// Probes the host will run, rendered as `Checking` rows until they finish.
     pub(crate) probes: &'a [DoctorProbeId],
 }
@@ -68,6 +70,9 @@ pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
             .map(checks::permission_screen_check),
     );
     rows.push(checks::herdr_check(inputs.herdr));
+    if !inputs.rtk_enabled {
+        rows.push(checks::rtk_disabled_check());
+    }
     rows.push(checks::path_check(
         DoctorCheckId::ConfigPath,
         "Configuration",
