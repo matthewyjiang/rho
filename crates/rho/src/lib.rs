@@ -19,6 +19,8 @@ mod config;
 mod config_writer;
 mod credential_store;
 mod cursor_runtime;
+#[cfg(unix)]
+mod daemon;
 mod decision;
 mod diagnostics;
 mod display_transcript;

@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = {
     "crates/rho": ROOT / "crates" / "rho" / "Cargo.toml",
+    "crates/rho-protocol": ROOT / "crates" / "rho-protocol" / "Cargo.toml",
     "crates/rho-providers": ROOT / "crates" / "rho-providers" / "Cargo.toml",
     "crates/rho-sdk": ROOT / "crates" / "rho-sdk" / "Cargo.toml",
     "crates/rho-tools": ROOT / "crates" / "rho-tools" / "Cargo.toml",

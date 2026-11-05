@@ -22,13 +22,15 @@ use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     automation, automation_protocol, classifier_eval, cli_config, compaction_eval, computer_cli,
     config_repository::ConfigRepository,
-    doctor_cli, interactive, login, mcp_cli, plugins_cli,
+    daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
     sessions_cli, workflow_cli,
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
-    crate::logging::install_from_env();
+    if !daemon_cli::runs_daemon(cli.command.as_ref()) {
+        crate::logging::install_from_env();
+    }
     if workflow_cli::planner_worker_requested(&cli) {
         return workflow_cli::run_planner_worker().await;
     }
@@ -187,6 +189,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Plugins { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
+    }
+    if let Some(Command::Daemon { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(daemon_cli::run(*command).await));
     }
     if let Some(Command::Doctor { json }) = &cli.command {
         return Ok(EarlyDispatch::Handled(doctor_cli::run(*json, cli).await));

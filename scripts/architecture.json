@@ -32,6 +32,11 @@
       "manifest": "crates/rho-tools/Cargo.toml",
       "packages": ["rho-coding-agent", "rho-providers"],
       "reason": "tools remain below providers and independent from the application"
+    },
+    {
+      "manifest": "crates/rho-protocol/Cargo.toml",
+      "packages": ["rho-sdk", "rho-coding-agent", "rho-providers", "rho-agent-tools"],
+      "reason": "frontends depend on the protocol, so an SDK or app major must never break their build"
     }
   ],
   "forbidden_source_patterns": [

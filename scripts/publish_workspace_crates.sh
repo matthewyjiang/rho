@@ -20,7 +20,7 @@ Usage: scripts/publish_workspace_crates.sh --sha <full-sha> [--sdk] [--tools] [-
   --sdk             Publish rho-sdk
   --tools           Publish rho-agent-tools
   --providers       Publish rho-providers
-  --app             Publish rho-agent-tools, rho-providers, then rho-coding-agent
+  --app             Publish rho-agent-tools, rho-providers, rho-protocol, then rho-coding-agent
   --dry-run         Validate packages without publishing
 EOF
 }
@@ -115,6 +115,7 @@ crate_version() {
 sdk_version="$(crate_version rho-sdk)"
 tools_version="$(crate_version rho-agent-tools)"
 providers_version="$(crate_version rho-providers)"
+protocol_version="$(crate_version rho-protocol)"
 app_version="$(crate_version rho-coding-agent)"
 
 crates_io_curl=(
@@ -234,6 +235,10 @@ if [[ "$publish_providers" == true ]]; then
 fi
 
 if [[ "$publish_app" == true ]]; then
+  # rho-protocol has no internal dependencies, so it needs no path patches.
+  # publish_crate reuses a version that is already on crates.io.
+  publish_crate rho-protocol "$protocol_version"
+
   app_validation_flags=()
   if [[ "$dry_run" == true ]]; then
     load_dry_run_validation_flags rho-coding-agent
