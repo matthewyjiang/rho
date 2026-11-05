@@ -41,20 +41,17 @@ impl App {
             InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
         });
         terminal.draw(|frame| self.draw(frame))?;
-        let login = match ProviderAuthentication::start_interactive_login_with_availability(
-            &target.auth,
-            mode,
-            availability,
-        )
-        .await
-        {
-            Ok(login) => login,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("login failed");
-                return Ok(());
-            }
-        };
+        let login =
+            match ProviderAuthentication::start_interactive_login(&target.auth, mode, availability)
+                .await
+            {
+                Ok(login) => login,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(err.to_string()));
+                    self.set_status("login failed");
+                    return Ok(());
+                }
+            };
 
         let provider_label = login.provider_label;
         let device_flow = login.prompt.user_code.is_some();
@@ -63,13 +60,16 @@ impl App {
         }
         let completion = match login.completion {
             InteractiveLoginCompletion::Confirm(completion) => completion,
-            InteractiveLoginCompletion::Unconfirmed { instruction } => {
+            InteractiveLoginCompletion::Unconfirmed {
+                instruction,
+                authentication,
+            } => {
                 // Nothing is recorded until Enter, so Esc stays a real cancel.
-                let finish = PendingLoginFinish::UserConfirms;
+                let finish = PendingLoginFinish::UserConfirms(authentication);
                 self.insert_entry(&Entry::Notice(instruction.into()));
                 self.set_status(format!(
                     "waiting for {provider_label} approval · {}",
-                    super::login_presentation::login_key_hint(finish)
+                    super::login_presentation::login_key_hint(&finish)
                 ));
                 self.input_ui.set_composer(ComposerMode::InteractivePending(
                     PendingLoginComposer {
@@ -86,7 +86,7 @@ impl App {
         let flow = if device_flow { " device" } else { "" };
         self.set_status(format!(
             "waiting for {provider_label}{flow} login · {}",
-            super::login_presentation::login_key_hint(finish)
+            super::login_presentation::login_key_hint(&finish)
         ));
         self.input_ui
             .set_composer(ComposerMode::InteractivePending(PendingLoginComposer {
@@ -124,15 +124,16 @@ impl App {
         let ComposerMode::InteractivePending(pending) = self.input_ui.composer() else {
             return None;
         };
-        let (target, finish) = (pending.target.clone(), pending.finish);
-        if let Err(err) = ProviderAuthentication::accept_unconfirmed_login(
-            self.credential_store.as_ref(),
-            &target.auth,
-        ) {
+        let (target, finish) = (pending.target.clone(), pending.finish.clone());
+        // Only a login the provider cannot confirm carries a handle to accept.
+        let PendingLoginFinish::UserConfirms(authentication) = finish.clone() else {
+            return None;
+        };
+        if let Err(err) = authentication.accept(self.credential_store.as_ref()) {
             self.insert_entry(&Entry::Error(format!("could not record login: {err}")));
             self.set_status(format!(
                 "login failed · {}",
-                super::login_presentation::login_key_hint(finish)
+                super::login_presentation::login_key_hint(&finish)
             ));
             return None;
         }

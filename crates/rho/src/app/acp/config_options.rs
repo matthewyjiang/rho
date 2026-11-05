@@ -164,6 +164,8 @@ fn map_selection_error(error: ModelSelectionError, asked: &str) -> AcpError {
         } => format!(
             "model '{model}' is not available for provider '{provider}' (value '{asked}'). {hint}"
         ),
+        // Non-exhaustive: a future variant still reports its own message.
+        other => format!("{other} (value '{asked}')"),
     };
     AcpError::invalid_params().data(message)
 }

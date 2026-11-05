@@ -7,14 +7,15 @@ one root scope containing typed parameters and the node graph. Run and resume
 use that program and do not evaluate Starlark or reload agent definitions.
 
 The current runtime executes only a static root scope, identified as `s0`.
-Root task instances keep their source names, such as `review`, in events,
+Root task instances are qualified by that scope, such as `s0.review`, in events,
 status, hooks, and artifact paths. The root closes with a typed result
 containing its outcome and named exports. Runtime map and iterate controllers
 and dynamic expansion are not supported.
 
-Plans and runs saved by earlier releases remain listed and readable with
-`status`, but they are read-only. Run, resume, and cancel reject them. Replan
-from source to run the workflow again.
+Plans and runs saved by Rho before 2.15 are not supported. `list` and the
+workflow hub still show them, so you can delete them from the hub, but status,
+run, resume, and cancel fail with an error that names the record. Inspect them
+with Rho 2.x, or replan from source to run the workflow again.
 
 Use a workflow when a task needs fixed steps, parallel work, typed conditions,
 durable status, or manual resume. Use `rho run` for one model task that does not
@@ -177,7 +178,8 @@ CLI help is the source of truth for supported flags and recovery actions.
 
 `list` prints saved plans and runs for the current workspace. Use `--plans` or
 `--runs` to show one section. `--limit` caps each section. `--json` prints one
-JSON document.
+JSON document. Records saved by Rho before 2.15 are reported as warnings on
+stderr instead of rows.
 
 ```bash
 rho workflow list
@@ -243,7 +245,9 @@ rho workflow status 0190... --output json
 
 You may use a full run UUID or a unique UUID prefix. Status reports typed node
 states, current attempts, outcomes, and artifact references. It does not print
-complete artifacts.
+complete artifacts. JSON status is `{"run": ..., "outcome": ...}`, where `run`
+holds the stored `manifest`, frozen `graph` (with `program` and
+`program_digest`), and `state` with per-scope task maps under `scopes`.
 
 ### Cancel
 

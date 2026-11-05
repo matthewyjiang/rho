@@ -147,7 +147,7 @@ impl StatusSink {
 
 fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
     if let Some(session_id) = terminal.session_id.clone() {
-        status.claude_session_id = Some(session_id);
+        status.runtime_session_id = Some(session_id);
     }
     status.turns = terminal.turns;
     status.result = Some(terminal.result_text.clone());

@@ -662,10 +662,8 @@ mod tests {
     // Owner: /info context row
     #[test]
     fn context_row_formats_usage_and_limit_combinations() {
-        let metadata = ModelMetadata {
-            advertised_context_window: Some(200_000),
-            ..ModelMetadata::default()
-        };
+        let mut metadata = ModelMetadata::default();
+        metadata.advertised_context_window = Some(200_000);
         for (case, usage, metadata, expected) in [
             (
                 "tokens without a reported limit",

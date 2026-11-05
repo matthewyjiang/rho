@@ -100,7 +100,7 @@ mod workflow;
 // Real command workflows require the verified-handle process adapter, not just a PTY.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod workflow_background;
-mod workflow_hub_legacy;
+mod workflow_hub_unsupported;
 mod workspace_rewind;
 mod write_stream;
 mod zen_tool_run;
@@ -204,8 +204,9 @@ use transcript_search::{TRANSCRIPT_SEARCH_HOLDS_HIT_SCENARIO, TRANSCRIPT_SEARCH_
 use turn_notifications::TURN_NOTIFICATIONS_SCENARIO;
 use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
-use workflow_hub_legacy::{
-    setup_workflow_hub_legacy_run, WORKFLOW_HUB_LEGACY_RUN_ID, WORKFLOW_HUB_LEGACY_RUN_STEPS,
+use workflow_hub_unsupported::{
+    setup_workflow_hub_unsupported_records, WORKFLOW_HUB_UNSUPPORTED_ID,
+    WORKFLOW_HUB_UNSUPPORTED_STEPS,
 };
 use workspace_rewind::{WORKSPACE_REWIND_OFF_SCENARIO, WORKSPACE_REWIND_SCENARIO};
 use zen_tool_run::ZEN_TOOL_RUN_SUMMARY_SCENARIO;
@@ -722,13 +723,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     Scenario::new(
-        WORKFLOW_HUB_LEGACY_RUN_ID,
-        "Report a read-only run from an older release in the workflows hub without exiting",
+        WORKFLOW_HUB_UNSUPPORTED_ID,
+        "List records saved before Rho 2.15 in the workflows hub and explain them without exiting",
         DEFAULT_SIZE,
-        WORKFLOW_HUB_LEGACY_RUN_STEPS,
+        WORKFLOW_HUB_UNSUPPORTED_STEPS,
         false,
     )
-    .with_setup(setup_workflow_hub_legacy_run),
+    .with_setup(setup_workflow_hub_unsupported_records),
     OPEN_CONFIG_PICKER_SCENARIO,
     SCREEN_ALLOW_THRESHOLD_SCENARIO,
     Scenario::new(

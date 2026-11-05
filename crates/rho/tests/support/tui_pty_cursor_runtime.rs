@@ -66,7 +66,7 @@ fn fake_cursor_acp_runtime_end_to_end() {
         "provider": status["provider"],
         "runtime": status["runtime"],
         "result": status["result"],
-        "session_id": status["claude_session_id"],
+        "session_id": status["runtime_session_id"],
     });
     assert_eq!(
         observed,

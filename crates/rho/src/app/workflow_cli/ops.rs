@@ -10,8 +10,8 @@ use crate::{
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
-        FrozenWorkflow, InputName, PlanConsent, PlanId, PlanInventoryItem, PlannerIdentity,
-        PlanningLimits, ResolvedNode, RunId, RunInventoryItem, RunLifecycle, SourceCollector,
+        FrozenWorkflow, InputName, Inventory, PlanConsent, PlanId, PlanInventory, PlannerIdentity,
+        PlanningLimits, ResolvedNode, RunId, RunInventory, RunLifecycle, SourceCollector,
         StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
         FROZEN_WORKFLOW_SCHEMA_VERSION,
     },
@@ -35,8 +35,6 @@ pub(crate) struct PreparedPlan {
     pub(crate) sources: CollectedSources,
     pub(crate) workflow: FrozenWorkflow,
 }
-
-pub(crate) use crate::workflow::RunRecord;
 
 /// Owns validate | plan | run | status | cancel | resume policy for both adapters.
 pub(crate) struct WorkflowOps {
@@ -132,60 +130,41 @@ impl WorkflowOps {
         Ok(self.service.store().load_run(run_id)?)
     }
 
-    /// Loads a run for display, including read-only runs from older releases.
-    pub(crate) fn load_run_record(&self, prefix: &str) -> anyhow::Result<RunRecord> {
-        let store = self.service.store();
-        let run_id = store.resolve_run(prefix)?;
-        self.load_run_record_id(run_id)
-    }
-
-    pub(crate) fn load_run_record_id(&self, run_id: RunId) -> anyhow::Result<RunRecord> {
-        Ok(self.service.store().load_run_record(run_id)?)
-    }
-
     pub(crate) fn load_run_id(&self, run_id: RunId) -> anyhow::Result<StoredRun> {
         Ok(self.service.store().load_run(run_id)?)
     }
 
-    pub(crate) fn read_run_inventory(&self, run_id: RunId) -> anyhow::Result<RunInventoryItem> {
-        Ok(self.service.store().read_run_inventory(run_id)?)
-    }
-
-    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<PlanInventoryItem>> {
+    pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<PlanInventory> {
         let identity = workspace_identity(&self.workspace)?;
-        Ok(self
-            .service
-            .store()
-            .list_plan_inventory()?
-            .into_iter()
-            .filter(|plan| plan.workspace_identity == identity)
-            .collect())
+        let mut inventory = self.service.store().list_plan_inventory()?;
+        retain_workspace(&mut inventory, &identity, |plan| {
+            plan.workspace_identity.as_str()
+        });
+        Ok(inventory)
     }
 
-    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<Vec<RunInventoryItem>> {
+    pub(crate) fn list_workspace_runs(&self) -> anyhow::Result<RunInventory> {
         let identity = workspace_identity(&self.workspace)?;
-        Ok(self
-            .service
-            .store()
-            .list_run_inventory()?
-            .into_iter()
-            .filter(|run| run.workspace_identity == identity)
-            .collect())
+        let mut inventory = self.service.store().list_run_inventory()?;
+        retain_workspace(&mut inventory, &identity, |run| {
+            run.workspace_identity.as_str()
+        });
+        Ok(inventory)
     }
 
+    /// Deletes a plan of either generation owned by this workspace.
     pub(crate) fn delete_workspace_plan(&self, plan_id: PlanId) -> anyhow::Result<()> {
-        let manifest = self.service.store().read_plan_inventory(plan_id)?;
-        let identity = workspace_identity(&self.workspace)?;
-        if manifest.workspace_identity != identity {
+        let owner = self.service.store().plan_workspace_identity(plan_id)?;
+        if owner != workspace_identity(&self.workspace)? {
             anyhow::bail!("plan belongs to another workspace");
         }
         Ok(self.service.store().delete_plan(plan_id)?)
     }
 
+    /// Deletes a run of either generation owned by this workspace.
     pub(crate) fn delete_workspace_run(&self, run_id: RunId) -> anyhow::Result<()> {
-        let run = self.service.store().read_run_inventory(run_id)?;
-        let identity = workspace_identity(&self.workspace)?;
-        if run.workspace_identity != identity {
+        let owner = self.service.store().run_workspace_identity(run_id)?;
+        if owner != workspace_identity(&self.workspace)? {
             anyhow::bail!("run belongs to another workspace");
         }
         Ok(self.service.store().delete_run(run_id)?)
@@ -326,6 +305,18 @@ pub(crate) fn freeze_planned_workflow(
     validate_workflow(&workflow)?;
     validate_runtime_budgets(&workflow, limits)?;
     Ok(PreparedPlan { sources, workflow })
+}
+
+/// Keeps only inventory rows, current or unsupported, owned by `identity`.
+fn retain_workspace<T, Id>(
+    inventory: &mut Inventory<T, Id>,
+    identity: &str,
+    owner: impl Fn(&T) -> &str,
+) {
+    inventory.items.retain(|item| owner(item) == identity);
+    inventory
+        .unsupported
+        .retain(|record| record.workspace_identity == identity);
 }
 
 #[cfg(test)]

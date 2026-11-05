@@ -19,9 +19,7 @@ use serde::Deserialize;
 
 use crate::{provider::CatalogReasoningPolicy, reasoning::ReasoningLevel};
 
-use super::{
-    CachedRow, ImageInput, ModelCost, ModelMetadata, ReasoningControl, ReasoningOffBehavior,
-};
+use super::{ImageInput, ModelCost, ModelMetadata, ReasoningControl, ReasoningOffBehavior};
 
 /// models.dev root object: provider id -> provider document.
 #[derive(Clone, Debug, Default)]
@@ -182,7 +180,7 @@ pub(super) fn cached_row_from_catalog(
     provider: &str,
     model: &str,
     reasoning_policy: CatalogReasoningPolicy,
-) -> Option<CachedRow> {
+) -> Option<ModelMetadata> {
     let (provider_doc, model) = api.model(provider, model)?;
     Some(cached_row_from_model(
         model,
@@ -202,7 +200,7 @@ pub(super) fn cached_row_from_catalog(
 pub(super) fn cached_row_from_canonical(
     model: &ModelsDevModel,
     policy: CatalogReasoningPolicy,
-) -> CachedRow {
+) -> ModelMetadata {
     let policy = if reasoning_metadata_complete(model, policy) {
         policy
     } else {
@@ -215,8 +213,8 @@ fn cached_row_from_model(
     model: &ModelsDevModel,
     sdk_package: Option<String>,
     reasoning_policy: CatalogReasoningPolicy,
-) -> CachedRow {
-    let metadata = ModelMetadata {
+) -> ModelMetadata {
+    ModelMetadata {
         display_name: model
             .name
             .as_deref()
@@ -242,9 +240,6 @@ fn cached_row_from_model(
         reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
         sdk_package,
-    };
-    CachedRow {
-        metadata,
         image_input: model.modalities.image_input(),
         reasoning_control: if model.reasoning == Some(true)
             && effort_values(model).is_none()

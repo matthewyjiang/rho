@@ -152,7 +152,7 @@ pub(super) async fn run<P: AcpAgentPolicy>(
                     started.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = started_tx.send(());
                     sink.apply_effect(StreamEffect::Status(StatusPatch {
-                        claude_session_id: Some(session.session_id().to_string()),
+                        runtime_session_id: Some(session.session_id().to_string()),
                         ..StatusPatch::default()
                     }));
                     tokio::select! {

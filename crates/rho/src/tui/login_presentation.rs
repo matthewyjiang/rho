@@ -15,10 +15,10 @@ use super::{
 };
 
 /// Key hint for a pending login; only user-confirmed logins take Enter.
-pub(super) fn login_key_hint(finish: PendingLoginFinish) -> &'static str {
+pub(super) fn login_key_hint(finish: &PendingLoginFinish) -> &'static str {
     match finish {
         PendingLoginFinish::ProviderCallback => "c copy  Esc cancel",
-        PendingLoginFinish::UserConfirms => "Enter done  c copy  Esc cancel",
+        PendingLoginFinish::UserConfirms(_) => "Enter done  c copy  Esc cancel",
     }
 }
 
@@ -35,7 +35,7 @@ pub(super) fn login_composer_view(
     prompt_composer_view(
         &pending.target.label,
         &pending.prompt,
-        login_key_hint(pending.finish),
+        login_key_hint(&pending.finish),
         width,
         hovered,
     )

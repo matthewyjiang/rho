@@ -115,18 +115,11 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_plan(&self, id: PlanId) -> WorkflowResult<StoredPlan> {
-        let legacy::ManifestRecord::Current(manifest) =
-            legacy::read_manifest::<PlanManifest, legacy::LegacyPlanManifest>(
-                self,
-                &plan_relative(id, Path::new("manifest.json")),
-                "plan manifest",
-                PLAN_MANIFEST_VERSION,
-                "plan_id",
-                id,
-            )?
-        else {
-            return Err(legacy::legacy_record("plan", id));
-        };
+        let manifest: PlanManifest = self.read_manifest(
+            RecordKind::Plan,
+            &plan_relative(id, Path::new("manifest.json")),
+            &id.to_string(),
+        )?;
         let graph: FrozenWorkflow =
             read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
         validate_plan(&self.layout, &self.root, id, &manifest, &graph)?;
@@ -210,48 +203,11 @@ impl WorkflowStore {
         &self,
         id: RunId,
     ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
-        let legacy::ManifestRecord::Current(manifest) =
-            legacy::read_manifest::<RunManifest, legacy::LegacyRunManifest>(
-                self,
-                &run_relative(id, Path::new("manifest.json")),
-                "run manifest",
-                RUN_MANIFEST_VERSION,
-                "run_id",
-                id,
-            )?
-        else {
-            return Err(legacy::legacy_record("run", id));
-        };
-        self.read_current_run(id, manifest)
-    }
-
-    pub(crate) fn load_run_record(&self, id: RunId) -> WorkflowResult<RunRecord> {
-        match legacy::read_manifest(
-            self,
+        let manifest: RunManifest = self.read_manifest(
+            RecordKind::Run,
             &run_relative(id, Path::new("manifest.json")),
-            "run manifest",
-            RUN_MANIFEST_VERSION,
-            "run_id",
-            id,
-        )? {
-            legacy::ManifestRecord::Current(manifest) => Ok(RunRecord::Current(Box::new(
-                self.load_current_run(id, manifest)?,
-            ))),
-            legacy::ManifestRecord::Legacy(manifest) => Ok(RunRecord::Legacy(Box::new(
-                self.load_legacy_run(id, manifest)?,
-            ))),
-        }
-    }
-
-    fn load_current_run(&self, id: RunId, manifest: RunManifest) -> WorkflowResult<StoredRun> {
-        self.read_current_run(id, manifest).map(|(run, _)| run)
-    }
-
-    fn read_current_run(
-        &self,
-        id: RunId,
-        manifest: RunManifest,
-    ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
+            &id.to_string(),
+        )?;
         let graph: FrozenWorkflow =
             read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
         validate_frozen_graph(&graph, &manifest.program_digest, &self.layout.run_graph(id))?;
@@ -278,7 +234,7 @@ impl WorkflowStore {
     }
 
     pub(crate) fn lock_run(&self, id: RunId) -> WorkflowResult<RunMutationGuard> {
-        self.require_executable_run(id)?;
+        self.require_current_run(id)?;
         let file = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
@@ -409,13 +365,13 @@ impl WorkflowStore {
         id: RunId,
         bytes: &[u8],
     ) -> WorkflowResult<bool> {
-        self.require_executable_run(id)?;
+        self.require_current_run(id)?;
         self.root
             .write_file_if_absent(&run_relative(id, Path::new("cancel.request")), bytes)
     }
 
     pub(crate) fn clear_cancellation_request(&self, id: RunId) -> WorkflowResult<()> {
-        self.require_executable_run(id)?;
+        self.require_current_run(id)?;
         match self
             .root
             .remove_file(&run_relative(id, Path::new("cancel.request")))
@@ -449,16 +405,18 @@ fn delete_child_directory(parent: &Path, child: &Path) -> WorkflowResult<()> {
     Ok(())
 }
 
+#[path = "store_generation.rs"]
+mod generation;
+use generation::RecordKind;
+
 #[path = "store_inventory.rs"]
 mod inventory;
-pub(crate) use inventory::{PlanInventoryItem, RecordAccess, RunInventoryItem};
+pub(crate) use inventory::{
+    Inventory, PlanInventory, PlanInventoryItem, RunInventory, RunInventoryItem, UnsupportedRecord,
+};
 
 #[path = "store_mutate.rs"]
 mod mutate;
-
-#[path = "store_legacy.rs"]
-mod legacy;
-pub(crate) use legacy::{LegacyRun, LegacyWorkflowState, RunRecord};
 
 pub(crate) struct RunMutationGuard {
     id: RunId,

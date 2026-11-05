@@ -1,5 +1,6 @@
-//! A run saved by an earlier release is listed in the workflows hub but is
-//! read-only. Opening it shows status without attempting a watch handoff.
+//! Plans and runs saved before Rho 2.15 (version 1 manifests) stay listed in
+//! the workflows hub, but this release cannot open them. Enter explains that
+//! in the transcript and the TUI keeps running.
 
 use std::{fs, path::Path, time::Duration};
 
@@ -8,7 +9,7 @@ use serde_json::json;
 
 use crate::{env::IsolatedHome, harness::WaitTimeout, keys::Key, scenario::Step};
 
-pub(super) const WORKFLOW_HUB_LEGACY_RUN_ID: &str = "workflow_hub_legacy_run";
+pub(super) const WORKFLOW_HUB_UNSUPPORTED_ID: &str = "workflow_hub_unsupported_records";
 
 const RUN_ID: &str = "1e9ac700-0000-4000-8000-000000000001";
 const PLAN_ID: &str = "1e9ac700-0000-4000-8000-000000000002";
@@ -16,8 +17,9 @@ const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
 const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 
-/// Writes a completed run in the version 1 single-graph store format.
-pub(super) fn setup_workflow_hub_legacy_run(home: &IsolatedHome) -> Result<()> {
+/// Writes a plan and a run manifest in the version 1 single-graph store format.
+/// Inventory reads only the manifest of such records.
+pub(super) fn setup_workflow_hub_unsupported_records(home: &IsolatedHome) -> Result<()> {
     let workspace = fs::canonicalize(&home.workspace).context("canonicalize workspace")?;
     let workflows = home.home.join(".rho/workflows");
     let run = workflows.join("runs").join(RUN_ID);
@@ -35,14 +37,10 @@ pub(super) fn setup_workflow_hub_legacy_run(home: &IsolatedHome) -> Result<()> {
         &plan.join("manifest.json"),
         &json!({
             "schema_version": 1, "plan_id": PLAN_ID,
-            "graph_digest": "sha256:legacy", "source_digests": {},
+            "graph_digest": "sha256:old", "source_digests": {},
             "workspace_identity": workspace.to_string_lossy(),
-            "name": "legacy plan", "step_count": 1,
+            "name": "old plan", "step_count": 1,
         }),
-    )?;
-    write_private_json(
-        &run.join("graph.json"),
-        &json!({"schema_version": 2, "graph_digest": "sha256:legacy"}),
     )?;
     write_private_json(
         &run.join("manifest.json"),
@@ -50,29 +48,12 @@ pub(super) fn setup_workflow_hub_legacy_run(home: &IsolatedHome) -> Result<()> {
             "schema_version": 1,
             "run_id": RUN_ID,
             "created_at_unix_nanos": 1,
-            "plan_id": "1e9ac700-0000-4000-8000-000000000002",
-            "graph_digest": "sha256:legacy",
+            "plan_id": PLAN_ID,
+            "graph_digest": "sha256:old",
             "workspace_identity": workspace.to_string_lossy(),
-            "consent": {"graph_digest": "sha256:legacy", "confirmed": true},
-            "name": "legacy",
+            "consent": {"graph_digest": "sha256:old", "confirmed": true},
+            "name": "old run",
             "step_count": 1,
-        }),
-    )?;
-    write_private_json(
-        &run.join("state.json"),
-        &json!({
-            "schema_version": 2,
-            "last_event_sequence": 0,
-            "state": {
-                "revision": 1,
-                "lifecycle": "completed",
-                "outcome": "success",
-                "cancellation_requested": false,
-                "nodes": {"greet": {"state": "terminal", "outcome": "success"}},
-                "command_exits": {},
-                "outputs": {},
-                "completions": {},
-            },
         }),
     )
 }
@@ -98,13 +79,13 @@ fn write_private_json(path: &Path, value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-pub(super) const WORKFLOW_HUB_LEGACY_RUN_STEPS: &[Step] = &[
+pub(super) const WORKFLOW_HUB_UNSUPPORTED_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("select_legacy_run"),
+    Step::Phase("select_unsupported_run"),
     Step::SubmitText("/workflow"),
     Step::WaitText {
         text: "WORKFLOWS",
@@ -115,21 +96,21 @@ pub(super) const WORKFLOW_HUB_LEGACY_RUN_STEPS: &[Step] = &[
         text: "Run id 1e9ac700",
         timeout: SETTLE,
     },
-    Step::Phase("open_legacy_run"),
+    Step::Phase("open_unsupported_run"),
     Step::WaitText {
-        text: "Read-only legacy run",
+        text: "Saved by Rho before 2.15",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "legacy run 1e9ac700",
+        text: "could not open workflow run 1e9ac700",
         timeout: SETTLE,
     },
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
         timeout: SETTLE,
     },
-    Step::Phase("tui_still_running"),
+    Step::Phase("open_unsupported_plan"),
     Step::SubmitText("/workflow"),
     Step::WaitText {
         text: "WORKFLOWS",
@@ -144,17 +125,18 @@ pub(super) const WORKFLOW_HUB_LEGACY_RUN_STEPS: &[Step] = &[
     },
     Step::Key(Key::Down),
     Step::WaitText {
-        text: "Read-only legacy plan",
+        text: "Plan id 1e9ac700",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "legacy plan 1e9ac700 is read-only",
+        text: "could not open workflow plan 1e9ac700",
         timeout: SETTLE,
     },
-    Step::SubmitText("after legacy run"),
+    Step::Phase("tui_still_running"),
+    Step::SubmitText("after unsupported records"),
     Step::WaitText {
-        text: "fixture response: after legacy run",
+        text: "fixture response: after unsupported records",
         timeout: STREAM,
     },
     Step::ExitCommand,

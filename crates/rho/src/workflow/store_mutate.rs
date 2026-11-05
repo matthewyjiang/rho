@@ -7,14 +7,14 @@ use std::path::Path;
 
 use fs2::FileExt;
 
-use super::{delete_child_directory, run_relative, WorkflowStore};
+use super::{delete_child_directory, inventory::InventoryRow, run_relative, WorkflowStore};
 use crate::workflow::{PlanId, RunId, WorkflowError, WorkflowResult};
 
 impl WorkflowStore {
     /// Deletes one plan directory. Runs keep their copied graph, so resume still works.
     pub(crate) fn delete_plan(&self, id: PlanId) -> WorkflowResult<()> {
-        // Confirm the plan directory is a real store entry before removal.
-        let _ = self.read_plan_inventory(id)?;
+        // Confirm the plan directory is a real store entry of either generation before removal.
+        let _ = self.read_plan_row(id)?;
         delete_child_directory(&self.layout.plans(), &self.layout.plan(id))
     }
 
@@ -22,9 +22,9 @@ impl WorkflowStore {
     ///
     /// Holds the exclusive writer lock across a rename of the run ID path so
     /// another process cannot `lock_run` and drive the tree while it is removed.
-    /// Live (`Running` / `Cancelling`) runs are refused under that lock, except
-    /// read-only legacy runs: nothing can cancel or resume them, so a free lock
-    /// means no owner remains.
+    /// Live (`Running` / `Cancelling`) runs are refused under that lock.
+    /// Unsupported records have no lifecycle this release reads, and nothing in
+    /// it can drive them, so the free writer lock is their only check.
     pub(crate) fn delete_run(&self, id: RunId) -> WorkflowResult<()> {
         let lock = self
             .root
@@ -36,14 +36,15 @@ impl WorkflowStore {
             })?;
 
         // The store owns the live-run deletion policy; check it under the lock.
-        let run = self.read_run_inventory(id)?;
-        // NEXT_MAJOR(rho-coding-agent): drop the legacy exemption with version 1 run support.
-        if run.lifecycle.is_live() && run.access == super::RecordAccess::Executable {
-            let _ = lock.unlock();
-            return Err(WorkflowError::LiveRun {
-                id,
-                lifecycle: run.lifecycle,
-            });
+        match self.read_run_row(id)? {
+            InventoryRow::Current(run) if run.lifecycle.is_live() => {
+                let _ = lock.unlock();
+                return Err(WorkflowError::LiveRun {
+                    id,
+                    lifecycle: run.lifecycle,
+                });
+            }
+            InventoryRow::Current(_) | InventoryRow::Unsupported(_) => {}
         }
 
         // Move the run ID path aside so lock_run cannot attach by the original path.

@@ -1,11 +1,12 @@
 //! Saved frozen plans are secondary to sources and active runs in the hub.
 
 use super::{
-    item, short_id, App, ComposerMode, OverlayChrome, PickerBadgeTone, PickerLayout,
-    PlanInventoryItem, RecordAccess, UiPicker, PLAN_PREFIX, READ_ONLY_PLAN_PREFIX,
+    item, short_id, App, ComposerMode, OverlayChrome, PickerBadgeTone, PickerLayout, UiPicker,
+    PLAN_PREFIX, UNSUPPORTED_PLAN_PREFIX,
 };
+use crate::workflow::PlanInventory;
 
-fn plans_picker(plans: &[PlanInventoryItem]) -> UiPicker {
+fn plans_picker(plans: &PlanInventory) -> UiPicker {
     let mut items = vec![item(
         None,
         "Back to workflows",
@@ -14,32 +15,32 @@ fn plans_picker(plans: &[PlanInventoryItem]) -> UiPicker {
         None,
         Some("back"),
     )];
-    for plan in plans {
+    for plan in &plans.items {
         let id = plan.plan_id.to_string();
         let short = short_id(&id);
         let name = &plan.name;
         let steps = plan.step_count;
-        let (prefix, status, action, detail) = match plan.access {
-            RecordAccess::ReadOnly => (
-                READ_ONLY_PLAN_PREFIX,
-                "read-only",
-                "close",
-                "Read-only legacy plan. Create a new plan from source to run it. Press d to delete.",
-            ),
-            RecordAccess::Executable => (
-                PLAN_PREFIX,
-                "saved",
-                "run",
-                "Enter starts a new run. Press d to delete. Existing runs keep their own graph copy.",
-            ),
-        };
         items.push(item(
             Some("SAVED PLANS"),
             format!("{name} · {short}"),
-            format!("{name}\n{steps} steps frozen\n{detail}\nPlan id {short}"),
-            format!("{prefix}{id}"),
-            Some((status.into(), PickerBadgeTone::Internal)),
-            Some(action),
+            format!("{name}\n{steps} steps frozen\nEnter starts a new run. Press d to delete. Existing runs keep their own graph copy.\nPlan id {short}"),
+            format!("{PLAN_PREFIX}{id}"),
+            Some(("saved".into(), PickerBadgeTone::Internal)),
+            Some("run"),
+        ));
+    }
+    // Saved before scoped workflow programs: listed so they can be deleted.
+    for record in &plans.unsupported {
+        let id = record.id.to_string();
+        let short = short_id(&id);
+        let name = &record.name;
+        items.push(item(
+            Some("SAVED PLANS"),
+            format!("{name} · {short}"),
+            format!("{name}\nSaved by Rho before 2.15. Inspect it with Rho 2.x. Press d to delete.\nPlan id {short}"),
+            format!("{UNSUPPORTED_PLAN_PREFIX}{id}"),
+            Some(("unsupported".into(), PickerBadgeTone::Warning)),
+            Some("close"),
         ));
     }
     UiPicker::workflow("Saved plans", items)

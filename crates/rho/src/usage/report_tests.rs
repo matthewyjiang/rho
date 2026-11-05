@@ -26,15 +26,14 @@ fn utc() -> FixedOffset {
 
 /// $1/M input, $10/M output, cache reads unpriced.
 fn priced() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(10_000_000),
-            cache_read_micros_per_m: None,
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    }
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(1_000_000),
+        output_micros_per_m: Some(10_000_000),
+        cache_read_micros_per_m: None,
+        cache_write_micros_per_m: None,
+    });
+    metadata
 }
 
 fn pricing(provider: &str, model: &str) -> RoutePricing {

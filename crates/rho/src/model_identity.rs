@@ -42,7 +42,7 @@ pub(crate) enum PromptModel {
     /// `requested` is the model Rho passes through, or `None` when the runtime
     /// chooses. `resolved` is the concrete id a run reported, when one has.
     /// Config and bind paths leave `resolved` empty; run status fills it from
-    /// `claude_model`.
+    /// `runtime_model`.
     ExternalCli {
         runtime: AgentRuntime,
         requested: Option<String>,
@@ -96,7 +96,7 @@ impl PromptModel {
             ) => Some(Self::ExternalCli {
                 runtime,
                 requested: non_empty(status.model.as_deref()),
-                resolved: non_empty(status.claude_model.as_deref()),
+                resolved: non_empty(status.runtime_model.as_deref()),
             }),
             Some(AgentRuntime::Rho) | None => Some(Self::Rho {
                 provider: non_empty(status.provider.as_deref())?,

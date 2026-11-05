@@ -98,13 +98,10 @@ async fn sign_in_with_oauth(
     // The host opens the URL, so nothing is launched here; availability
     // only picks the grant, as it does for `rho login`.
     let mode = ProviderAuthentication::preferred_mode(auth, BrowserAvailability::from_process());
-    let login = ProviderAuthentication::start_interactive_login_with_availability(
-        auth,
-        mode,
-        BrowserAvailability::Headless,
-    )
-    .await
-    .map_err(|error| sign_in_error(auth, &error))?;
+    let login =
+        ProviderAuthentication::start_interactive_login(auth, mode, BrowserAvailability::Headless)
+            .await
+            .map_err(|error| sign_in_error(auth, &error))?;
     let label = login.provider_label;
     let completion = match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => completion,

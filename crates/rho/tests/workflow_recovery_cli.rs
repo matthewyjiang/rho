@@ -105,7 +105,7 @@ fn killed_agent_node_continues_from_its_checkpoint() {
         json!({
             "run_id": run_id,
             "needs_confirmation": true,
-            "attempts": [{"node": "inspect", "attempt": 1, "action": "continue"}],
+            "attempts": [{"node": "s0.inspect", "attempt": 1, "action": "continue"}],
         })
     );
 
@@ -172,7 +172,7 @@ fn tool_checkpoint(runs: &Path) -> Option<(String, PathBuf)> {
     let run = std::fs::read_dir(runs).ok()?.next()?.ok()?;
     let checkpoint = run
         .path()
-        .join("nodes/inspect/attempts/1/agent/session.json");
+        .join("nodes/s0.inspect/attempts/1/agent/session.json");
     // Saves replace the file atomically, so any read sees a complete snapshot.
     let snapshot: Value = serde_json::from_slice(&std::fs::read(&checkpoint).ok()?).ok()?;
     let has_tool_result = snapshot["history"]

@@ -1,15 +1,34 @@
 use std::sync::Arc;
 
-use super::{AuthenticationError, ProviderAuthentication};
+use super::{
+    AuthenticationError, InteractiveLoginCompletion, InteractiveLoginMode, ProviderAuthentication,
+};
 use crate::{
     auth::{
-        browser::{BrowserAvailability, BrowserOpen},
-        login_prompt::LoginPrompt,
+        browser::BrowserAvailability,
         ollama_device::{with_ollama_device_key_dir_for_tests, OllamaDeviceKey},
         provider_credentials::{ApplicationCredentialSource, ProviderCredentialSource},
     },
-    credentials::{available_auth_modes, MemoryCredentialStore},
+    credentials::{available_auth_modes, CredentialStore, MemoryCredentialStore},
 };
+
+/// Starts the device-key login and accepts its handle, as a host does once
+/// the user says they approved.
+fn accept_device_login(store: &dyn CredentialStore, auth: &str) {
+    let login = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(ProviderAuthentication::start_interactive_login(
+            auth,
+            InteractiveLoginMode::Device,
+            BrowserAvailability::Headless,
+        ))
+        .unwrap();
+    let InteractiveLoginCompletion::Unconfirmed { authentication, .. } = login.completion else {
+        panic!("{auth} login sends no completion callback");
+    };
+    authentication.accept(store).unwrap();
+}
 
 // Covers: public device-login capability matches the providers with a device grant
 // Owner: login dispatch
@@ -124,7 +143,8 @@ fn owns_api_key_storage_and_deletion() {
     assert!(!ProviderAuthentication::has_credentials(&store, "openai").unwrap());
 }
 
-// Covers: a device key on disk stays unused until a Rho device login, and logout undoes it
+// Covers: a device key on disk stays unused until the Rho device login's
+// acceptance handle records it, and logout undoes it
 // Owner: login dispatch
 #[test]
 fn ollama_device_key_needs_rho_login_and_logout_undoes_it() {
@@ -140,7 +160,7 @@ fn ollama_device_key_needs_rho_login_and_logout_undoes_it() {
         assert!(!listed());
         assert!(source.acquire("ollama-cloud", device).is_err());
 
-        ProviderAuthentication::accept_unconfirmed_login(store.as_ref(), device).unwrap();
+        accept_device_login(store.as_ref(), device);
         assert!(signed_in());
         assert!(listed());
         assert!(source.acquire("ollama-cloud", device).is_ok());
@@ -154,65 +174,12 @@ fn ollama_device_key_needs_rho_login_and_logout_undoes_it() {
         assert!(OllamaDeviceKey::load_from_dir(dir.path()).is_ok());
 
         // Provider-level logout covers every mode, including the device key.
-        ProviderAuthentication::accept_unconfirmed_login(store.as_ref(), device).unwrap();
+        accept_device_login(store.as_ref(), device);
         assert!(
             ProviderAuthentication::delete_credentials(store.as_ref(), "ollama-cloud").unwrap()
         );
         assert!(!signed_in());
     });
-}
-
-// Covers: LoginPrompt maps onto the deprecated InteractiveUserAction shim without drift
-// Owner: login dispatch
-#[allow(deprecated)]
-#[test]
-fn login_prompt_maps_to_interactive_user_action() {
-    let cases = [
-        (
-            "device code",
-            LoginPrompt::device_code(
-                "https://auth.example/device",
-                "WD4E-T6MC",
-                Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
-                "Visit this URL and enter the code.",
-            )
-            .with_browser(BrowserOpen::Launched),
-            super::InteractiveUserAction::DeviceCode {
-                verification_uri: "https://auth.example/device".into(),
-                user_code: "WD4E-T6MC".into(),
-                verification_uri_complete: Some(
-                    "https://auth.example/device?user_code=WD4E-T6MC".into(),
-                ),
-            },
-        ),
-        (
-            "launched browser",
-            LoginPrompt::browser_flow(
-                "https://auth.example/authorize",
-                "Open this URL to finish login.",
-            )
-            .with_browser(BrowserOpen::Launched),
-            super::InteractiveUserAction::BrowserOpened,
-        ),
-        (
-            "not launched",
-            LoginPrompt::browser_flow(
-                "https://auth.example/authorize",
-                "Open this URL to finish login.",
-            ),
-            super::InteractiveUserAction::OpenUrl {
-                url: "https://auth.example/authorize".into(),
-                instruction: "Open this URL to finish login.".into(),
-            },
-        ),
-    ];
-    for (name, prompt, expected) in cases {
-        pretty_assertions::assert_eq!(
-            super::InteractiveUserAction::from(&prompt),
-            expected,
-            "{name}"
-        );
-    }
 }
 
 // Covers: one OpenCode console key logs in to Zen and Go, so login offers a

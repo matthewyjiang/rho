@@ -73,7 +73,7 @@ pub(super) fn footer_line(chrome: AttachChrome, width: usize) -> Line<'static> {
     Line::styled(truncate_one_line(&text, width), Theme::dim())
 }
 
-/// Middle header row: model, reasoning, runtime, turn, elapsed, optional Claude session, cost.
+/// Middle header row: model, reasoning, runtime, turn, elapsed, optional runtime session, cost.
 pub(super) fn identity_line(
     status: Option<&RunStatus>,
     reasoning: Option<crate::agent::ReasoningLevel>,
@@ -103,11 +103,12 @@ pub(super) fn identity_line(
         parts.push(elapsed);
     }
     if let Some(session_id) = status
-        .claude_session_id
+        .runtime_session_id
         .as_deref()
         .filter(|session_id| !session_id.is_empty())
     {
-        parts.push(format!("claude {session_id}"));
+        // The runtime part earlier in this row says whose session id this is.
+        parts.push(format!("session {session_id}"));
     }
     if let Some(cost) = format_run_cost(status, run_usage) {
         parts.push(cost);

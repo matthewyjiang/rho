@@ -24,7 +24,11 @@ pub fn gate_images<'a>(identity: &ModelIdentity, messages: &'a [Message]) -> Cow
     if !messages.iter().any(user_has_image) {
         return Cow::Borrowed(messages);
     }
-    match models_dev::image_input(&identity.provider, &identity.model) {
+    // Stale rows count: modalities rarely change, and an offline session should
+    // still avoid sending images to a text-only model.
+    let image_input = models_dev::cached_model_metadata(&identity.provider, &identity.model)
+        .map_or(ImageInput::Unknown, |metadata| metadata.image_input);
+    match image_input {
         ImageInput::Supported | ImageInput::Unknown => Cow::Borrowed(messages),
         ImageInput::Unsupported => Cow::Owned(strip_user_images(messages)),
     }

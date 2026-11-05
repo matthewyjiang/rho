@@ -464,26 +464,16 @@ fn reasoning_picker_offers_catalog_valid_levels() {
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
-        write_cached_model_metadata_for_tests(
-            "meta",
-            "muse-spark-1.2",
-            &ModelMetadata {
-                supported_reasoning_levels: Some(spark_levels.to_vec()),
-                reasoning_capabilities_known: true,
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            },
-        );
-        write_cached_model_metadata_for_tests(
-            "meta",
-            "muse-stone-1.0",
-            &ModelMetadata {
-                supported_reasoning_levels: Some(vec![]),
-                reasoning_capabilities_known: true,
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            },
-        );
+        for (model, levels) in [
+            ("muse-spark-1.2", spark_levels.to_vec()),
+            ("muse-stone-1.0", vec![]),
+        ] {
+            let mut metadata = ModelMetadata::default();
+            metadata.supported_reasoning_levels = Some(levels);
+            metadata.reasoning_capabilities_known = true;
+            metadata.reasoning_metadata_complete = true;
+            write_cached_model_metadata_for_tests("meta", model, &metadata);
+        }
 
         for case in &cases {
             let picker = agent_choice_picker(

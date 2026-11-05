@@ -355,14 +355,15 @@ fn ping_budget_is_half_the_break_even_at_catalog_cache_prices() {
         ("no catalog row", None, FALLBACK_PING_BUDGET),
     ];
     for (name, prices, expected) in cases {
-        let metadata = prices.map(|(input, read, write)| ModelMetadata {
-            cost_default: Some(ModelCost {
+        let metadata = prices.map(|(input, read, write)| {
+            let mut metadata = ModelMetadata::default();
+            metadata.cost_default = Some(ModelCost {
                 input_micros_per_m: Some(input),
                 output_micros_per_m: None,
                 cache_read_micros_per_m: read,
                 cache_write_micros_per_m: write,
-            }),
-            ..ModelMetadata::default()
+            });
+            metadata
         });
         assert_eq!(ping_budget(metadata.as_ref()), expected, "{name}");
     }

@@ -62,13 +62,11 @@ async fn deferred_metadata_preserves_context_unless_reasoning_changes() {
             .unwrap();
         agent.set_context_window(Some(131_072)).unwrap();
 
-        let metadata = ModelMetadata {
-            usable_context_window: Some(131_072),
-            supported_reasoning_levels: Some(vec![effective]),
-            reasoning_capabilities_known: true,
-            reasoning_metadata_complete: true,
-            ..ModelMetadata::default()
-        };
+        let mut metadata = ModelMetadata::default();
+        metadata.usable_context_window = Some(131_072);
+        metadata.supported_reasoning_levels = Some(vec![effective]);
+        metadata.reasoning_capabilities_known = true;
+        metadata.reasoning_metadata_complete = true;
         let (release, fetched) = oneshot::channel();
         let (finished, completion) = oneshot::channel();
         let reasoning_at_start = (

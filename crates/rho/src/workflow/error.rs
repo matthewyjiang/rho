@@ -67,10 +67,10 @@ pub(crate) enum WorkflowError {
         supported: u32,
     },
     #[error(
-        "workflow {kind} {id} was saved by an older Rho release and is read-only; \
-         create a new plan from source to run it"
+        "could not open workflow {kind} {id}: it was saved by Rho before 2.15; \
+         inspect it with Rho 2.x or delete it from the /workflow hub"
     )]
-    LegacyRecord { kind: &'static str, id: String },
+    UnsupportedRecord { kind: &'static str, id: String },
     #[error("run {id} is still {}, stop it before deleting", lifecycle.as_str())]
     LiveRun {
         id: super::RunId,

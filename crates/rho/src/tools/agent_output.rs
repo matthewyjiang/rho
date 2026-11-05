@@ -291,7 +291,7 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
         Some(AgentRuntime::Antigravity) => ANTIGRAVITY_LABEL,
         Some(AgentRuntime::ClaudeCli) | Some(AgentRuntime::Rho) | None => CLAUDE_LABEL,
     };
-    if let Some(session_id) = &snapshot.status.claude_session_id {
+    if let Some(session_id) = &snapshot.status.runtime_session_id {
         let session_label = label.session_label;
         lines.push(match label.resume_command {
             Some(command) => format!(
