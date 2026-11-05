@@ -251,6 +251,13 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             login::run(provider, device_auth)
                 .await
                 .and_then(|completion| {
+                    if let Some(descriptor) =
+                        rho_providers::model::catalog::login_target_for_provider(provider).and_then(
+                            |target| rho_providers::provider::provider_descriptor(&target.provider),
+                        )
+                    {
+                        login::record_login(&config_repository, *descriptor)?;
+                    }
                     completion.finish(
                         /*require_confirmation*/
                         matches!(cli.command, Some(Command::Acp(_))),

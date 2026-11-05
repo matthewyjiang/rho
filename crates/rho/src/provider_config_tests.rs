@@ -454,51 +454,37 @@ fn invalid_endpoint_options_name_the_offending_field() {
     }
 }
 
-// Covers: Ollama counts as logged in after the TUI wrote its endpoint or a
-// CLI/ACP login stored its key, never from an environment key alone, and
-// providers without an endpoint login are never held back.
+// Covers: an Ollama login is recorded in config with or without a key: a
+// URL-less login records the default base without overwriting a chosen one,
+// logout removes it, and providers without an endpoint login are untouched.
 // Owner: provider config
 #[test]
-fn awaits_endpoint_login_until_endpoint_or_stored_key() {
-    use rho_providers::{
-        credentials::{CredentialStore, MemoryCredentialStore},
-        provider::{provider_descriptor, OLLAMA_API_BASE, OLLAMA_API_KEY_ACCOUNT},
-    };
+fn endpoint_login_is_recorded_and_forgotten_in_config() {
+    use rho_providers::provider::{provider_descriptor, OLLAMA_API_BASE};
     let ollama = *provider_descriptor("ollama").unwrap();
     let openai = *provider_descriptor("openai").unwrap();
-    let mut with_endpoint = ProviderConfigs::default();
-    with_endpoint
-        .set_endpoint("ollama", OLLAMA_API_BASE)
-        .unwrap();
-    let keyed = MemoryCredentialStore::default();
-    keyed
-        .set_secret(OLLAMA_API_KEY_ACCOUNT, "ollama-secret")
-        .unwrap();
-    let empty = MemoryCredentialStore::default();
-    let bare = ProviderConfigs::default();
+    let base_url = |configs: &ProviderConfigs| {
+        configs
+            .ollama
+            .as_ref()
+            .map(|endpoint| endpoint.base_url.to_string())
+    };
 
-    for (case, configs, descriptor, store, expected) in [
-        ("no endpoint, no key", &bare, ollama, &empty, true),
-        (
-            "endpoint from /login",
-            &with_endpoint,
-            ollama,
-            &empty,
-            false,
-        ),
-        ("key from rho login or ACP", &bare, ollama, &keyed, false),
-        (
-            "provider without endpoint login",
-            &bare,
-            openai,
-            &empty,
-            false,
-        ),
-    ] {
-        assert_eq!(
-            configs.awaits_endpoint_login(descriptor, store),
-            expected,
-            "{case}"
-        );
-    }
+    let mut configs = ProviderConfigs::default();
+    assert!(configs.awaits_endpoint_login(ollama));
+    assert!(!configs.awaits_endpoint_login(openai));
+    assert!(!configs.record_login(openai).unwrap());
+    assert!(configs.record_login(ollama).unwrap());
+    assert_eq!(base_url(&configs).as_deref(), Some(OLLAMA_API_BASE));
+    assert!(!configs.awaits_endpoint_login(ollama));
+
+    let chosen = "http://10.0.0.5:11434/v1";
+    configs.set_endpoint("ollama", chosen).unwrap();
+    assert!(!configs.record_login(ollama).unwrap());
+    assert_eq!(base_url(&configs).as_deref(), Some(chosen));
+
+    assert!(!configs.forget_login(openai));
+    assert!(configs.forget_login(ollama));
+    assert!(configs.awaits_endpoint_login(ollama));
+    assert!(!configs.forget_login(ollama));
 }

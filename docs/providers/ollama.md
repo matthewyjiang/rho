@@ -23,7 +23,7 @@ ollama serve
 ollama pull <tool-capable-model>
 ```
 
-In Rho, run `/login ollama`. The first field is the API base, prefilled with the local default. Keep it or replace it with another host. The second field is an API key; leave it blank for a keyless local server, or to keep a stored or env-supplied key. Use `/logout ollama` to drop a stored key.
+In Rho, run `/login ollama`. The first field is the API base, prefilled with the local default. Keep it or replace it with another host. The second field is an API key; leave it blank for a keyless local server, or to keep a stored or env-supplied key. Use `/logout ollama` to log out; it removes the stored key and `[providers.ollama]`.
 
 ```text
 /login ollama
@@ -35,7 +35,7 @@ Login refreshes the model list right away, and the model picker then shows the m
 /model ollama/<tool-capable-model>
 ```
 
-First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. A key stored by `rho login ollama` or an ACP sign-in also counts. Until then Rho treats Ollama as not set up, even when a local server is running: **Refresh model lists** and `/refresh-models` skip it, and its models stay out of the pickers. Removing the table undoes the login; the next start drops Ollama's cached model list.
+First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. `rho login ollama` and an ACP sign-in record the same login at the default API base. Until then Rho treats Ollama as not set up, even when a local server is running: **Refresh model lists** and `/refresh-models` skip it, and its models stay out of the pickers. Logging out, or removing the table by hand, drops Ollama's cached model list.
 
 ## Use another server
 

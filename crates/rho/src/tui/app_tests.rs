@@ -500,6 +500,7 @@ fn secret_input_masks_api_key() {
 async fn logout_provider_picker_propagates_credential_store_errors() {
     let error = provider_picker::logout_provider_picker(
         &FailingCredentialStore,
+        &crate::config::ProviderConfigs::default(),
         /*claude_signed_in*/ false,
     )
     .unwrap_err();

@@ -44,6 +44,26 @@ impl LoginCompletion {
     }
 }
 
+/// Records a finished login to a host logged in through its endpoint
+/// (Ollama) in config, at its default API base when none is set. `rho login`
+/// and ACP sign-in collect no URL, but the login must count the same as the
+/// TUI's, key or no key. Leaves config untouched for every other provider.
+pub(in crate::app) fn record_login(
+    repository: &super::config_repository::ConfigRepository,
+    descriptor: rho_providers::provider::ProviderDescriptor,
+) -> anyhow::Result<()> {
+    if !repository
+        .load()?
+        .providers
+        .awaits_endpoint_login(descriptor)
+    {
+        return Ok(());
+    }
+    repository
+        .update(|config| config.providers.record_login(descriptor))?
+        .map(drop)
+}
+
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<LoginCompletion> {
     if rho_providers::provider::provider_descriptor(provider)
         .is_some_and(|descriptor| descriptor.is_keyless())

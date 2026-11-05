@@ -383,8 +383,9 @@ fn spawn_fake_ollama() -> String {
     base
 }
 
-// Covers: Ollama is refreshed and listed only after /login ollama; a list
-// cached before its table was removed stops showing on the next start.
+// Covers: Ollama is refreshed and listed only after /login ollama, key or no
+// key; a list cached before its table was removed stops showing on the next
+// start; /logout ollama signs a keyless login out and drops its list.
 // Owner: interactive provider setup.
 #[test]
 fn ollama_is_refreshed_and_listed_only_after_login() {
@@ -419,6 +420,55 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
         "refresh-all must not touch Ollama before /login ollama:\n{screen}"
     );
 
+    keyless_ollama_login_lists_its_model(&mut harness, &ollama_base);
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    // Dropping [providers.ollama] undoes the login; its cached list must go.
+    std::fs::write(&home.config_path, original_config).unwrap();
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_removed").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
+        .unwrap();
+    harness.submit_text("/model").unwrap();
+    harness
+        .wait_for_text(
+            "no cached provider models",
+            WaitTimeout::secs(10, "ollama list dropped"),
+        )
+        .unwrap();
+
+    // A keyless login is still a login, so /logout ollama signs it out.
+    keyless_ollama_login_lists_its_model(&mut harness, &ollama_base);
+    harness.submit_text("/logout ollama").unwrap();
+    harness
+        .wait_for_text("logged out of ollama", WaitTimeout::secs(10, "logout"))
+        .unwrap();
+    // A fresh transcript, so the notice below cannot be the earlier one.
+    harness.submit_text("/new").unwrap();
+    harness
+        .wait_for_text_gone(
+            "no cached provider models",
+            WaitTimeout::secs(10, "fresh transcript"),
+        )
+        .unwrap();
+    harness.submit_text("/model").unwrap();
+    harness
+        .wait_for_text(
+            "no cached provider models",
+            WaitTimeout::secs(10, "logout drops the ollama list"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+    let config = std::fs::read_to_string(&home.config_path).unwrap();
+    assert!(
+        !config.contains("[providers.ollama]"),
+        "logout must remove the login record:\n{config}"
+    );
+}
+
+/// Runs `/login ollama` against `base` with no key, then checks the login
+/// refreshed and lists the fake server's model.
+fn keyless_ollama_login_lists_its_model(harness: &mut PtyHarness, base: &str) {
     harness.submit_text("/login ollama").unwrap();
     harness
         .wait_for_text("edit base URL", WaitTimeout::secs(10, "endpoint prompt"))
@@ -426,7 +476,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     for _ in 0..rho_providers::provider::OLLAMA_API_BASE.len() {
         harness.inject_key(&Key::Backspace).unwrap();
     }
-    harness.type_text(&ollama_base).unwrap();
+    harness.type_text(base).unwrap();
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
@@ -449,20 +499,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
         )
         .unwrap();
     harness.inject_key(&Key::Esc).unwrap();
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
-
-    // Dropping [providers.ollama] undoes the login; its cached list must go.
-    std::fs::write(&home.config_path, original_config).unwrap();
-    let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_removed").unwrap();
     harness
-        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
+        .wait_for_text_gone("llama-pty:latest", WaitTimeout::secs(5, "picker closed"))
         .unwrap();
-    harness.submit_text("/model").unwrap();
-    harness
-        .wait_for_text(
-            "no cached provider models",
-            WaitTimeout::secs(10, "ollama list dropped"),
-        )
-        .unwrap();
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }

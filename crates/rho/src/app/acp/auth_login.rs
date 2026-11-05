@@ -65,16 +65,25 @@ pub(super) async fn authenticate(
         AgentLogin::ApiKey => Some(KeyLogin::prepare(auth)?),
     };
     super::auth_store::choose_if_unset(config.clone(), forms, &request_id, port).await?;
+    let repository = ConfigRepository::new(config.clone());
     let config = open_credential_store(config)
         .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
     match key_login {
         None => sign_in_with_oauth(auth, request_id, port).await?,
         Some(key_login) => {
-            let endpoint = provider::resolve_auth_mode(auth)
-                .and_then(|(descriptor, _)| config.resolved_provider_endpoint(descriptor.name));
+            let descriptor = provider::resolve_auth_mode(auth).map(|(descriptor, _)| descriptor);
+            let endpoint = descriptor
+                .and_then(|descriptor| config.resolved_provider_endpoint(descriptor.name));
             key_login
                 .sign_in(endpoint.as_ref(), &AppCredentialStore, request_id, port)
                 .await?;
+            if let Some(descriptor) = descriptor {
+                crate::app::login::record_login(&repository, *descriptor).map_err(|error| {
+                    AcpError::internal_error().data(format!(
+                        "saved the key, but could not record the login: {error:#}"
+                    ))
+                })?;
+            }
         }
     }
     Ok(AuthenticateResponse::new())

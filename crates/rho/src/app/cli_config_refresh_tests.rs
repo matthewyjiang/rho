@@ -63,14 +63,7 @@ async fn cold_cache_refresh_uses_the_cli_auth_profile_credentials() {
         ..test_cli()
     };
 
-    // A logged-in Ollama keeps the startup purge from reading its key, so the
-    // store sees only the refresh's own lookup.
-    let mut config = Config::default();
-    config
-        .providers
-        .set_endpoint("ollama", rho_providers::provider::OLLAMA_API_BASE)
-        .unwrap();
-    let error = match refresh_model_cache(&cli, &config, &store).await {
+    let error = match refresh_model_cache(&cli, &Config::default(), &store).await {
         Ok(_) => panic!("cold-cache refresh unexpectedly succeeded"),
         Err(error) => error,
     };
