@@ -60,7 +60,8 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
         .ok()
         .filter(|filter| !filter.trim().is_empty())
         .unwrap_or_else(|| "info".to_owned());
-    let journald = std::env::var_os("JOURNAL_STREAM").is_some();
+    let journald =
+        std::env::var_os("JOURNAL_STREAM").is_some_and(|stream| stderr_is_journal_stream(&stream));
     let sink = if journald {
         LogSink::Journal
     } else {
@@ -101,6 +102,26 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     let served = bound.serve(shutdown).await;
     signal_task.abort();
     Ok(served?)
+}
+
+/// Whether stderr is the journal stream systemd describes in `JOURNAL_STREAM`
+/// (`<device>:<inode>`). Per systemd.exec(5), the variable alone is not
+/// enough: a child of a systemd service inherits it even when its stderr was
+/// redirected elsewhere.
+#[cfg(unix)]
+fn stderr_is_journal_stream(stream: &std::ffi::OsStr) -> bool {
+    use std::os::{fd::AsFd, unix::fs::MetadataExt};
+    let Some((device, inode)) = stream.to_str().and_then(|value| value.split_once(':')) else {
+        return false;
+    };
+    let (Ok(device), Ok(inode)) = (device.parse::<u64>(), inode.parse::<u64>()) else {
+        return false;
+    };
+    std::io::stderr()
+        .as_fd()
+        .try_clone_to_owned()
+        .and_then(|fd| std::fs::File::from(fd).metadata())
+        .is_ok_and(|stderr| stderr.dev() == device && stderr.ino() == inode)
 }
 
 #[cfg(unix)]

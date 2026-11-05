@@ -65,7 +65,10 @@ impl DaemonSpawner for ProcessSpawner {
             .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            // The caller's journal stream is not the daemon's stderr; the
+            // daemon logs to its file instead.
+            .env_remove("JOURNAL_STREAM");
         if let Some(rho_home) = &self.rho_home {
             command.env("RHO_HOME", rho_home);
         }

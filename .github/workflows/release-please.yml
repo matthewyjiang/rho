@@ -246,6 +246,7 @@ jobs:
           PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
           PUBLISH_TOOLS: ${{ needs.release.outputs.tools_release_created }}
           PUBLISH_PROVIDERS: ${{ needs.release.outputs.providers_release_created }}
+          PUBLISH_PROTOCOL: ${{ needs.release.outputs.protocol_release_created }}
           PUBLISH_APP: ${{ needs.release.outputs.release_created }}
         run: |
           set -euo pipefail
@@ -258,6 +259,9 @@ jobs:
           fi
           if [[ "$PUBLISH_PROVIDERS" == "true" ]]; then
             args+=(--providers)
+          fi
+          if [[ "$PUBLISH_PROTOCOL" == "true" ]]; then
+            args+=(--protocol)
           fi
           if [[ "$PUBLISH_APP" == "true" ]]; then
             args+=(--app)
@@ -281,7 +285,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PROVIDERS_TAG: ${{ needs.release.outputs.providers_tag_name }}
         run: gh release edit "$PROVIDERS_TAG" --draft=false
-      # rho-protocol is published with the app (--app), which depends on it.
       - name: Publish draft rho-protocol release after crates.io success
         if: ${{ needs.release.outputs.protocol_release_created == 'true' }}
         env:
