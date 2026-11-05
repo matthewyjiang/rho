@@ -174,7 +174,7 @@ fn run_card_facts_use_reported_values_and_mute_unknowns() {
     finished.status = RunStatus {
         state: RunState::Ok,
         model: Some("opus".into()),
-        claude_model: Some("claude-opus-5-5".into()),
+        runtime_model: Some("claude-opus-5-5".into()),
         reasoning: Some(rho_sdk::ReasoningLevel::High),
         runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
         finished_at: Some(1_000),

@@ -81,7 +81,7 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
     assert_eq!(status.state, RunState::Ok);
     assert_eq!(status.result.as_deref(), Some("done"));
     assert_eq!(status.last_text.as_deref(), Some("thinking\nhello"));
-    assert_eq!(status.claude_session_id.as_deref(), Some("sess"));
+    assert_eq!(status.runtime_session_id.as_deref(), Some("sess"));
     assert_eq!(rx.borrow().state, RunState::Ok);
 
     assert_eq!(

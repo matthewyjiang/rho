@@ -23,7 +23,7 @@ fn cursor_session_line_has_no_resume_command() {
         status: RunStatus {
             state: RunState::Ok,
             runtime: Some(AgentRuntime::Cursor),
-            claude_session_id: Some("sess-cursor".into()),
+            runtime_session_id: Some("sess-cursor".into()),
             ..RunStatus::default()
         },
         done: true,

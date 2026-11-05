@@ -243,7 +243,7 @@ impl AcpAgentPolicy for ClaudeAcpPolicy {
         }
         if let Some(model) = meta.get(MODEL_META).and_then(Value::as_str) {
             effects.push(StreamEffect::Status(StatusPatch {
-                claude_model: Some(model.to_owned()),
+                runtime_model: Some(model.to_owned()),
                 ..StatusPatch::default()
             }));
         }

@@ -36,7 +36,7 @@ Parentless runs, including delegated work started by `rho run`, remain under `~/
 
 Each run directory can contain:
 
-- `result.json` - live status, agent ID, runtime (`rho`, `claude-cli`, `cursor`, or `antigravity`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id` (Claude, Cursor, and Antigravity share this field until the next major; for Cursor and Antigravity it is the ACP session id, with no resume command)
+- `result.json` - live status, agent ID, runtime (`rho`, `claude-cli`, `cursor`, or `antigravity`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and, for external runtimes, optional `runtime_session_id` and `runtime_model` (the ACP session id and the concrete model the runtime reported; read them according to `runtime`: only `claude-cli` session ids have a resume command). Rho 3 writes these names and still reads the rho 2.x names `claude_session_id` and `claude_model`
 - `events.jsonl` - append-only display history used by attachment replay
 - `tool-previews.json` - replaceable live tool-argument cards, when arguments stream;
   attach combines these with the journal without retaining every growing snapshot
