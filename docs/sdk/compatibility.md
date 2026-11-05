@@ -84,10 +84,6 @@ are not SDK exports.
 
 ### `rho_sdk::model`
 
-`Message::model_context` and `Message::as_model_context` construct and recognize live host context. Until a typed message variant is available, `Message::semantic()` classifies it as `User`; request readers must check the helper when distinguishing context from human input. This recognition is attribution, not authentication.
-
-`NEXT_MAJOR(rho-sdk): add a typed model-context message and SemanticMessage::ModelContext instead of encoding request context as user-role blocks.`
-
 The provider-neutral model exports are the tool-call, content, message, model
 identity, provider-context, request/response/event, and usage DTOs. Their public
 fields and variants support provider implementations and serialized history.
@@ -95,8 +91,33 @@ Adding a required field or exhaustive variant is source-breaking. Compatible
 serialized additions must be optional or defaulted. Provider-native context is
 opaque JSON scoped by exact `ModelIdentity`; it must not contain credentials.
 
+`Message` is exhaustive: a new history entry is a breaking change every
+provider converter must handle. Besides `System`, `User`, the assistant forms,
+and `ToolResult`, history holds typed SDK entries:
+
+- `CompactionSummary(CompactionSummary { trigger, text })`, written by
+  `Message::compaction_summary(trigger, text)`. `trigger` is `None` only for
+  summaries saved before triggers were recorded.
+- `ModelContext(String)`, live host context built with
+  `Message::model_context(text)`: data, not instructions.
+- `BoundaryInput(Vec<ContentBlock>)`, host input accepted at a runtime
+  boundary, not human input.
+- `ReasoningShift(ReasoningShift { from, to })`, appended by
+  `Session::set_reasoning_level` once the conversation has started.
+
+Classification is attribution, not authentication: user-controlled history can
+forge any entry, so no variant may grant authority.
+
+Provider converters match `Message::wire()` instead of `Message`. `WireMessage`
+renders compaction summaries, model context, and boundary input as `User`
+content with the same labels earlier releases sent, so every provider receives
+them identically. `WireMessage::ReasoningShift` sends nothing unless the
+provider pins effort mid-conversation (Anthropic per-message effort).
+
 Use `Message::semantic()` and exhaustively match `SemanticMessage` when
-classifying transcript entries or finding user-turn boundaries. Tool images ride
+classifying transcript entries or finding user-turn boundaries. `SemanticMessage`
+mirrors the typed entries, so `User` is only input a person (or the host on
+their behalf) submitted. Tool images ride
 on `ToolResult::images`, never on a user-role message. `ToolResult::status` is a
 `ToolResultStatus` (`Succeeded` or `Failed`). Snapshots serialize only `status`
 and omit empty `images`; deserialization also accepts the rho-sdk 5.x `ok: bool`
@@ -104,15 +125,22 @@ field. History saved by 5.x keeps tool images in a following user message until
 `SessionOptions::from_snapshot` or `model::attach_legacy_tool_images` moves
 them onto their result.
 
-Compaction summaries also use the `User` wire role, and `semantic()` still
-classifies them as `User`. Build them with `Message::compaction_summary(trigger,
-text)` and recognize them with `Message::as_compaction_summary()`, which returns
-the text and the `CompactionTrigger`. Recognition also covers the older
-single-block `Automatic compaction summary …` form; those return no trigger.
-Recognition is attribution only. It must not grant
-authority, because user-controlled history can forge the encoding.
+History saved by rho-sdk 5.x encoded summaries and model context as labelled
+user-role text, async tool calls as `rho.sdk.async_tool_call.v1` marker blocks,
+and provider notes as `rho.sdk.provider_note.v1:<name>` kinds. Deserializing a
+`Message` or `ProviderContextBlock` recognizes those exact encodings and
+converts them one-for-one to the typed forms (including the older single-block
+`Automatic compaction summary …` form, which loads with no trigger), so message
+indexes never shift. Unknown shapes are left untouched. 5.x boundary input was
+plain user text and stays `User`.
 
-`NEXT_MAJOR(rho-sdk): add a typed compaction-summary history entry and a SemanticMessage::CompactionSummary variant instead of encoding summaries as user-role text.`
+`ProviderContextBlock::replay` is a `ReplayScope` the producing adapter sets:
+`ExactModel` (the default), `ProviderApi` for formats the API accepts across
+model names (Codex Responses compaction items and encrypted reasoning), or
+`Never` for provider notes, which are never replayed and never counted as
+handoff omissions. JSON always includes `replay`. A block without it was saved
+by 5.x and derives its scope from its 5.x encoding, so hosts that write
+snapshots by hand must include the field.
 
 ### `rho_sdk::provider` and `rho_sdk::tool`
 
@@ -131,15 +159,12 @@ and owned argument parsing. `ToolRegistry::len`, `is_empty`, and
 without relying on tool specs. These convenience methods are part of the
 planned stable public surface.
 
-`ModelEvent` and `ToolCall` cannot grow in this major, so a provider that
-accepted an async tool call records it as SDK metadata on
-`ProviderContextBlock::async_tool_call` (kind `rho.sdk.async_tool_call.v1`)
-rather than a first-class event or field. That block is never replayed as
-provider-native context and is never counted as a handoff omission.
-`NEXT_MAJOR(rho-sdk): replace the async-call marker block with a ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode } variant and an execution field on ToolCall.`
-
-`ModelEvent` and `ModelResponse` also cannot carry a turn's stop reason in this major, so providers report it with `ModelEvent::stop_reason(ModelStopReason)`. That builds a `ProviderContext` event with an SDK-reserved kind, and the runtime consumes it instead of storing it. Build and read it only through `ModelEvent::stop_reason` and `ModelEvent::as_stop_reason`.
-`NEXT_MAJOR(rho-sdk): replace the stop-reason ProviderContext marker with a typed ModelEvent::Stopped(ModelStopReason) variant.`
+A provider that accepted a tool call as async sends
+`ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode::Async }`; the
+runtime records it on the stored call's `ToolCall::execution` (omitted from JSON
+when `Sync`). A provider whose turn stopped early sends
+`ModelEvent::Stopped(ModelStopReason)`; the runtime consumes it rather than
+storing it.
 
 `RunEvent::ToolStarted` carries `execution: ToolExecution`. `Detached` marks an honoured async call whose `ToolFinished` may arrive after later steps; `Attached` marks every other call.
 

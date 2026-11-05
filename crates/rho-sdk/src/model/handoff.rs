@@ -1,4 +1,6 @@
-use super::{AssistantMessage, ContentBlock, Message, ModelIdentity, ProviderContextBlock};
+use super::{
+    AssistantMessage, ContentBlock, Message, ModelIdentity, ProviderContextBlock, ReplayScope,
+};
 
 const REASONING_SUMMARY_OPEN: &str = "<reasoning_summary>";
 const REASONING_SUMMARY_CLOSE: &str = "</reasoning_summary>";
@@ -35,7 +37,7 @@ pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> P
     let mut context = message
         .provider_context
         .iter()
-        .filter(|block| block.provider_note_name().is_none())
+        .filter(|block| block.replay != ReplayScope::Never)
         .peekable();
     let only_sdk_metadata =
         context.peek().is_some() && context.all(ProviderContextBlock::is_sdk_metadata);
@@ -83,7 +85,11 @@ pub fn omitted_message_context<'a>(
             Message::System(_)
             | Message::User(_)
             | Message::Assistant(_)
-            | Message::ToolResult(_) => &[],
+            | Message::ToolResult(_)
+            | Message::CompactionSummary(_)
+            | Message::ModelContext(_)
+            | Message::BoundaryInput(_)
+            | Message::ReasoningShift(_) => &[],
         })
         .filter(|block| is_omitted(block, target))
 }

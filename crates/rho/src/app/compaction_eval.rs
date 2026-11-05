@@ -269,10 +269,10 @@ impl EvalSetup {
             context_window,
             before_tokens,
             after_tokens: Some(after_tokens),
-            summary: after
-                .iter()
-                .find_map(Message::as_compaction_summary)
-                .map(|summary| summary.text().to_owned()),
+            summary: after.iter().find_map(|message| match message {
+                Message::CompactionSummary(summary) => Some(summary.text.clone()),
+                _ => None,
+            }),
             compaction: record,
             error: None,
             probes: results,

@@ -31,6 +31,10 @@ fn codex_model_switch_preserves_native_context_on_repeated_sends() {
                 kind: "openai_response_output_item".into(),
                 position: Some(0),
                 data: native_item.clone(),
+                replay: crate::protocol::openai_responses::output_item_replay_scope(
+                    "openai-codex",
+                    &native_item,
+                ),
             });
             let mut history = vec![Message::assistant(AssistantMessage {
                 content: Vec::new(),

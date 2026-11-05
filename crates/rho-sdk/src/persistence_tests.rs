@@ -14,6 +14,7 @@ use super::{
 
 const SNAPSHOT_V1: &str = include_str!("fixtures/session-snapshot-v1.json");
 const SNAPSHOT_V2: &str = include_str!("fixtures/session-snapshot-v2.json");
+const SNAPSHOT_V3: &str = include_str!("fixtures/session-snapshot-v3.json");
 
 fn aborted_history(identity: &ModelIdentity) -> Vec<Message> {
     vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
@@ -24,6 +25,7 @@ fn aborted_history(identity: &ModelIdentity) -> Vec<Message> {
             kind: "encrypted_reasoning".into(),
             position: Some(0),
             data: json!({"encrypted": "opaque"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
         ..AbortedAssistant::default()
     }))]
@@ -68,10 +70,11 @@ fn snapshot_json_round_trip_preserves_replay_context_but_omits_raw_reasoning() {
 fn every_supported_snapshot_fixture_migrates_to_the_current_schema() {
     for (version, fixture, expected_cache_key) in [
         (MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_V1, None),
+        (2, SNAPSHOT_V2, Some("rho:fixture-cache")),
         (
             SESSION_SNAPSHOT_SCHEMA_VERSION,
-            SNAPSHOT_V2,
-            Some("rho:fixture-cache"),
+            SNAPSHOT_V3,
+            Some("rho:fixture-cache-v3"),
         ),
     ] {
         let original: serde_json::Value = serde_json::from_str(fixture).unwrap();

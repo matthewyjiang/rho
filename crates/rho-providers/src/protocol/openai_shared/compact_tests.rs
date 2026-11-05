@@ -51,7 +51,7 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
         &retained_system_messages,
         &output,
         NOTICE,
-        CompactUserRetention::KeepServerUsers,
+        CompactUserRetention::KeepServerUsers { request: &[] },
         &[],
     )
     .unwrap();
@@ -81,6 +81,55 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
     assert!(!replacement
         .iter()
         .any(|message| matches!(message, Message::Assistant(_))));
+}
+
+// Covers: user-role items echoed by the compact endpoint are restored to the
+// typed request entry they were rendered from, so a model-written summary or
+// host context never comes back as human input; other text stays user input.
+// Owner: Responses compaction protocol
+#[test]
+fn echoed_typed_user_role_entries_keep_their_type() {
+    let identity = ModelIdentity::new("openai", "openai-responses", "gpt-5.4");
+    let summary =
+        Message::compaction_summary(rho_sdk::CompactionTrigger::Automatic, "earlier work");
+    let context = Message::model_context("checklist");
+    let request = vec![
+        Message::System("system".into()),
+        summary.clone(),
+        Message::user_text("human"),
+        context.clone(),
+    ];
+    let echoed = |message: &Message| {
+        let WireMessage::User(blocks) = message.wire() else {
+            panic!("user-role entry");
+        };
+        let content = blocks
+            .iter()
+            .map(|block| match block {
+                ContentBlock::Text(text) => json!({"type": "input_text", "text": text}),
+                other => panic!("text only: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        json!({"type": "message", "role": "user", "content": content})
+    };
+    let output = vec![
+        echoed(&request[1]),
+        echoed(&request[2]),
+        echoed(&request[3]),
+        json!({"type": "compaction", "encrypted_content": "blob"}),
+    ];
+
+    let replacement = replacement_from_compact_output(
+        identity,
+        &request[..1],
+        &output,
+        NOTICE,
+        CompactUserRetention::KeepServerUsers { request: &request },
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(replacement[..4], request[..]);
 }
 
 #[test]
@@ -139,7 +188,7 @@ fn parse_compact_response_reads_usage() {
         &[],
         &body,
         NOTICE,
-        CompactUserRetention::KeepServerUsers,
+        CompactUserRetention::KeepServerUsers { request: &[] },
         &[],
     )
     .unwrap();

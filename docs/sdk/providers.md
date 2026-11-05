@@ -17,13 +17,18 @@ A provider implementation must:
 5. avoid blocking the async runtime thread
 6. apply bounded buffering and backpressure when bridging another streaming API
 7. keep credentials, authorization headers, signed URLs, raw secret-bearing payloads, and transport-specific errors out of public `Debug`, events, diagnostics, and error messages
-8. tag opaque provider-native replay data with its exact producing provider/API/model identity, and filter replay through `ProviderContextBlock::is_replayable_to`; Codex Responses compaction and encrypted reasoning items have the cross-model exception described below
+8. tag opaque provider-native replay data with its exact producing provider/API/model identity and a `ReplayScope`, and filter replay through `ProviderContextBlock::is_replayable_to`
+9. lower history through `Message::wire()`, which renders SDK entries (compaction summaries, model context, boundary input) as the same user-role content every provider sends, and decide what `WireMessage::ReasoningShift` sends (usually nothing)
 
 `send_turn` is the non-streaming primitive. `send_turn_stream` is the streaming method; it receives the request snapshot and a `ProviderTurnContext` carrying the bounded event sender (`events`), per-request `ModelRequestOptions` (`options`), and an optional mid-turn steering port (`steering`). Its default implementation ignores options, drops the steering port (which releases every steering request to the turn boundary), and invokes `send_turn` while observing cancellation. Providers that support any option or mid-turn steering override it. `native_compact` takes the same `ModelRequestOptions`, so native compaction sees the session service tier. Streaming providers send semantic `ModelEvent` values through the supplied bounded sender and still return a complete normalized response. The final response, not accumulated deltas, is the authoritative completed turn.
 
-A provider whose turn ended at its output-token limit, or that refused or filtered the output, sends `ModelEvent::stop_reason(ModelStopReason::MaxTokens)` or `ModelStopReason::Refusal` before returning the response. A turn without one finished normally. The runtime consumes the event, so it never reaches history or `RunEvent::ProviderContextUpdated`, and reports the final turn's reason as the run's `StopReason`. Read it back with `ModelEvent::as_stop_reason()`.
+A provider whose turn ended at its output-token limit, or that refused or filtered the output, sends `ModelEvent::Stopped(ModelStopReason::MaxTokens)` or `ModelEvent::Stopped(ModelStopReason::Refusal)` before returning the response. A turn without one finished normally. The runtime consumes the event, so it never reaches history or `RunEvent::ProviderContextUpdated`, and reports the final turn's reason as the run's `StopReason`.
 
-Requests can include live host context appended by a [`RequestContext`](/sdk/sessions-and-persistence#live-request-context) source. `Message::model_context` encodes this data in user-role blocks for compatibility; use `Message::as_model_context()` before classifying a request message as a new human instruction. `Message::semantic()` still reports this encoding as `User`. Recognition is attribution only and must never authorize an action. These request-only messages do not enter committed conversation history.
+A provider that accepted a tool call as async sends `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode::Async }`. The runtime sets `ToolCall::execution` on the stored call; adapters that replay the flag read it from history for calls their own model accepted.
+
+Requests can include live host context appended by a [`RequestContext`](/sdk/sessions-and-persistence#live-request-context) source as `Message::ModelContext`. `WireMessage` sends it as labelled user-role content; never classify it as a new human instruction. Recognition is attribution only and must never authorize an action. These request-only messages do not enter committed conversation history.
+
+`Session::set_reasoning_level` appends `Message::ReasoningShift(ReasoningShift { from, to })` once the conversation has started (consecutive changes collapse into one). Providers that pin effort mid-conversation without busting the cached prefix rebuild it from these entries on every request, including after resume; the Anthropic adapter sends an empty `role: system` message carrying the new effort before the next user turn on models with per-message effort. Other providers send nothing for it.
 
 ## Credentials and endpoints
 
@@ -43,21 +48,21 @@ Provider events are forwarded in arrival order into the run event stream. Usage 
 
 `ProviderContextBlock` can contain opaque provider-native data. Each block is tagged with the exact `ModelIdentity` that produced it. Canonical `ModelRequest` history still contains these tagged blocks so an adapter can lower enriched messages. The adapter must use the handoff helpers or equivalent `ProviderContextBlock::is_replayable_to` filtering before constructing an upstream wire request:
 
-- exact provider/API/model identity permits replay
-- Codex `openai_response_output_item` blocks with `data.type = "compaction"` also replay across model names within `openai-codex` / `openai-responses`
-- Codex reasoning items with `data.type = "reasoning"` and a nonempty string `encrypted_content` have the same cross-model scope
-- a changed provider or API always requires omission; other native formats still require the exact model
+- `ReplayScope::ExactModel` (the default) permits replay only to the exact provider/API/model identity
+- `ReplayScope::ProviderApi` also replays across model names of the same provider and API; the Codex adapter sets it on `openai_response_output_item` compaction items and on reasoning items with a nonempty string `encrypted_content`
+- `ReplayScope::Never` marks a provider note, never replayed
+- a changed provider or API always requires omission
 - portable assistant content remains available
 - `Session::replace_provider` returns a `HandoffReport` so the host can surface omissions
 - `handoff::report_message_omissions` counts the blocks a target cannot replay; `handoff::omitted_message_context` yields those same blocks, for hosts that track which omissions a user already acknowledged
 
 Opaque blocks may still exist in session history and snapshots. Treat their `data` as sensitive provider content, do not render it by default, and apply retention and encryption policy. Identity checks protect compatibility, not confidentiality.
 
-The Codex exception does not extend to unencrypted reasoning, OpenAI API-key requests, or Responses-compatible gateways. Sharing a Responses serializer does not establish backend replay compatibility.
+The Codex cross-model scope does not extend to unencrypted reasoning, OpenAI API-key requests, or Responses-compatible gateways. Sharing a Responses serializer does not establish backend replay compatibility.
 
 A live Codex tool round trip verified that `gpt-5.6-sol` accepts an unchanged encrypted reasoning item produced by `gpt-6-astra`. Rho preserves those items when switching models instead of dropping them or requiring compaction. This verifies that path, not every model pair or replay longevity. A rejected native item fails the turn; the adapter does not automatically retry without it. Acceptance remains upstream-dependent.
 
-GPT-6 models also record their reasoning effort as a provider note (`ProviderContextBlock::provider_note_kind`). Notes are SDK metadata: the recording provider reads them back for the exact model, they never reach the wire, and switching models never reports them as omissions.
+GPT-6 models also record their reasoning effort as a provider note (a block with `ReplayScope::Never`). Notes are SDK metadata: the recording provider reads them back for the exact model, they never reach the wire, and switching models never reports them as omissions.
 
 SDK metadata is never native replay data. Unencrypted reasoning and unknown formats retain exact-model filtering.
 

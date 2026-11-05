@@ -178,6 +178,7 @@ async fn reset_preserves_prompt_policy_and_provider_replacement_reports_handoff(
             kind: "opaque".into(),
             position: None,
             data: json!({"secret": "provider-owned"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     })];
     let runtime = Rho::builder()
@@ -643,11 +644,7 @@ async fn questionnaire_tool_waits_for_one_valid_typed_host_response() {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "question-1".into(),
-                    name: "questionnaire".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("question-1".into(), "questionnaire".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "configured".into(),
@@ -915,11 +912,7 @@ impl ModelProvider for BlockingToolProvider {
                 .push(request.messages.to_vec());
             if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
                 Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "blocked-call".into(),
-                        name: "blocking".into(),
-                        arguments: json!({}),
-                    },
+                    ToolCall::new("blocked-call".into(), "blocking".into(), json!({})),
                 )]))
             } else {
                 self.second_started.notify_one();
@@ -1021,11 +1014,7 @@ async fn between_step_steer_is_applied_before_next_request() {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "read".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("call-1".into(), "read".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -1671,21 +1660,17 @@ impl Tool for LiveHistoryTool {
 
 fn scripted_tool_call(id: &str) -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: "peek".into(),
-            arguments: json!({}),
-        },
+        ToolCall::new(id.into(), "peek".into(), json!({})),
     )]))
 }
 
 fn assistant_tool_call(id: &str) -> Message {
     Message::assistant(crate::model::AssistantMessage {
-        content: vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "peek".into(),
-            arguments: json!({}),
-        })],
+        content: vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "peek".into(),
+            json!({}),
+        ))],
         provenance: Some(identity()),
         reasoning_summary: None,
         provider_context: Vec::new(),

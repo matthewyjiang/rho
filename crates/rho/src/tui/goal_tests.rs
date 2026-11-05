@@ -107,6 +107,7 @@ fn transcript_omits_opaque_provider_context() {
                 kind: "anthropic_content_block".into(),
                 position: Some(0),
                 data: serde_json::json!({"signature": "secret-signature"}),
+                replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
         },
     )]);
@@ -128,6 +129,7 @@ fn transcript_preserves_portable_fallback_without_opaque_context() {
             kind: "openai_response_output_item".into(),
             position: Some(0),
             data: serde_json::json!({"encrypted_content": "secret-ciphertext"}),
+            replay: rho_sdk::model::ReplayScope::ExactModel,
         }],
         ..rho_providers::model::AssistantMessage::default()
     }

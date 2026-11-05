@@ -56,7 +56,7 @@ Filesystem tools must build resources from the same `ResolvedWorkspacePath` reta
 `Tool::execution_mode` defaults to `ToolExecutionMode::Sync`. Override it to `Async` when the tool can run while the model continues. The runtime detaches a call only when **both** keys are present:
 
 1. the registered tool declares `Async`
-2. the provider marks that call id as async via `ProviderContextBlock::async_tool_call` (kind `rho.sdk.async_tool_call.v1`)
+2. the provider accepts that call as async with `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode::Async }`, recorded on the call's `ToolCall::execution`
 
 Either key missing keeps today's synchronous path. An async plan must be `PreparedToolInvocation::resource_aware` with shared access only. Exclusive plans, or any exclusive resource, fail that call with a `ToolError`; the run continues. Detached jobs cannot request host input.
 

@@ -549,8 +549,23 @@ impl Session {
         self.core.runtime().reasoning_level
     }
 
+    /// Changes the reasoning level for future runs while the session is idle.
+    ///
+    /// Once the conversation has started, a change is recorded in history as
+    /// [`crate::model::Message::ReasoningShift`] so providers can pin effort
+    /// mid-conversation without rewriting the cached request prefix.
     pub fn set_reasoning_level(&self, reasoning_level: crate::ReasoningLevel) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
+        let previous = self.core.runtime().reasoning_level;
+        let mut history = self.history();
+        let committed_len = history.len();
+        if crate::model::record_reasoning_shift(&mut history, previous, reasoning_level) {
+            if history.len() <= committed_len {
+                // The pending shift was rewritten or removed, not appended.
+                self.core.invalidate_context();
+            }
+            self.core.commit(history)?;
+        }
         let mut runtime = self
             .core
             .runtime

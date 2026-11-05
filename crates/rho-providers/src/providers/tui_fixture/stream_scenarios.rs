@@ -424,16 +424,16 @@ fn questionnaire_call() -> Result<ModelResponse, ProviderError> {
 
 fn concurrent_progress() -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse::Assistant(vec![
-        ContentBlock::ToolCall(ToolCall {
-            id: CONCURRENT_SLOW_CALL_ID.into(),
-            name: "tui_fixture_progress".into(),
-            arguments: serde_json::json!({"label": "slow fixture", "delay_ms": 2500}),
-        }),
-        ContentBlock::ToolCall(ToolCall {
-            id: CONCURRENT_FAST_CALL_ID.into(),
-            name: "tui_fixture_progress".into(),
-            arguments: serde_json::json!({"label": "fast fixture", "delay_ms": 200}),
-        }),
+        ContentBlock::ToolCall(ToolCall::new(
+            CONCURRENT_SLOW_CALL_ID.into(),
+            "tui_fixture_progress".into(),
+            serde_json::json!({"label": "slow fixture", "delay_ms": 2500}),
+        )),
+        ContentBlock::ToolCall(ToolCall::new(
+            CONCURRENT_FAST_CALL_ID.into(),
+            "tui_fixture_progress".into(),
+            serde_json::json!({"label": "fast fixture", "delay_ms": 200}),
+        )),
     ]))
 }
 

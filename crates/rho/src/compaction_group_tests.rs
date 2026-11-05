@@ -5,22 +5,18 @@ use super::completed_tool_group_end;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: "agent".into(),
-        arguments: json!({}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        "agent".into(),
+        json!({}),
+    ))])
 }
 
 fn calls(ids: &[&str]) -> Message {
     Message::Assistant(
         ids.iter()
             .map(|id| {
-                ContentBlock::ToolCall(ToolCall {
-                    id: (*id).into(),
-                    name: "agent".into(),
-                    arguments: json!({}),
-                })
+                ContentBlock::ToolCall(ToolCall::new((*id).into(), "agent".into(), json!({})))
             })
             .collect(),
     )

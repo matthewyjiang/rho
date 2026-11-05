@@ -22,11 +22,7 @@ fn describe(request: &CapabilityRequest) -> (PathBuf, Option<PathScope>) {
 }
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ContentBlock {
-    ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    })
+    ContentBlock::ToolCall(ToolCall::new(id.into(), name.into(), arguments))
 }
 
 // Covers: a fixture becomes the history and request production would build,

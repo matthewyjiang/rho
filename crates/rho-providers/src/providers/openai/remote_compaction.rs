@@ -68,12 +68,15 @@ pub(super) async fn compact_with_http(
     let wire = compact.profile.contract().native_compaction();
     // Capture only the messages the replacement keeps so the full conversation
     // is not cloned across the HTTP round-trip.
+    let request_messages = request.messages;
     let (retained_messages, endpoint, format, user_retention) = match wire {
         NativeCompactionWire::CompactEndpoint => (
-            retained_system_messages(request.messages),
+            retained_system_messages(request_messages),
             ResponsesEndpoint::Compact,
             CompactBodyFormat::Json,
-            CompactUserRetention::KeepServerUsers,
+            CompactUserRetention::KeepServerUsers {
+                request: request_messages,
+            },
         ),
         NativeCompactionWire::CompactionTrigger => (
             retained_system_and_recent_user_messages(

@@ -37,11 +37,11 @@ fn source(name: &str) -> CapabilitySource {
 fn sample_history() -> Vec<Message> {
     vec![
         Message::User(vec![ContentBlock::Text("please update config.toml".into())]),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-1".into(),
-            name: "write".into(),
-            arguments: serde_json::json!({"path": "config.toml", "content": "x=1"}),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "write".into(),
+            serde_json::json!({"path": "config.toml", "content": "x=1"}),
+        ))]),
     ]
 }
 
@@ -349,11 +349,13 @@ fn request_state(request: &rho_sdk::provider::RecordedModelRequest) -> String {
 async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
     let mut history = sample_history();
     for index in 0..200 {
-        history.push(Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: format!("old-{index}"),
-            name: "bash".into(),
-            arguments: serde_json::json!({"command": "x".repeat(500)}),
-        })]));
+        history.push(Message::Assistant(vec![ContentBlock::ToolCall(
+            ToolCall::new(
+                format!("old-{index}"),
+                "bash".into(),
+                serde_json::json!({"command": "x".repeat(500)}),
+            ),
+        )]));
         history.push(Message::ToolResult(ToolResult::succeeded(
             format!("old-{index}"),
             "done",

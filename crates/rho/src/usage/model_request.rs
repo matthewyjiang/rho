@@ -103,6 +103,8 @@ pub(crate) async fn send_recorded_with(
                     | ModelEvent::ProviderContext { .. }
                     | ModelEvent::GenerationOutputTokens(_)
                     | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ToolCallAccepted { .. }
+                    | ModelEvent::Stopped(_)
                     | ModelEvent::ServiceTierFallback { .. },
                 ) => {}
                 ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {

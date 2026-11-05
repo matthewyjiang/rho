@@ -123,16 +123,16 @@ async fn main() -> Result<(), rho_sdk::Error> {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-1".into(),
-                    name: "reverse".into(),
-                    arguments: json!({"text": "rho"}),
-                }),
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-2".into(),
-                    name: "length".into(),
-                    arguments: json!({"text": "rho"}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-1".into(),
+                    "reverse".into(),
+                    json!({"text": "rho"}),
+                )),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-2".into(),
+                    "length".into(),
+                    json!({"text": "rho"}),
+                )),
             ])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "reversed".into(),

@@ -29,11 +29,11 @@ fn restore_uses_successful_paired_native_calls_only_without_metadata() {
     let first = list("original");
     let second = list("replacement");
     let proposal = |id: &str, list: &TodoList| {
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "todo".into(),
-            arguments: serde_json::to_value(list).unwrap(),
-        })])
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "todo".into(),
+            serde_json::to_value(list).unwrap(),
+        ))])
     };
     let result = |id: &str, ok: bool| {
         let status = if ok {
@@ -69,11 +69,11 @@ fn restore_uses_successful_paired_native_calls_only_without_metadata() {
 
 fn todo_call(id: &str, list: &TodoList) -> [Message; 2] {
     [
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "todo".into(),
-            arguments: serde_json::to_value(list).unwrap(),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "todo".into(),
+            serde_json::to_value(list).unwrap(),
+        ))]),
         Message::ToolResult(ToolResult::succeeded(id, "receipt")),
     ]
 }

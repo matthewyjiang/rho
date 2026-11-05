@@ -7,7 +7,7 @@ use crate::model::{
     handoff::prepare_assistant,
     inclusive_prompt::{model_usage_from_inclusive_prompt, InclusivePromptUsage},
     ContentBlock, Message, ModelError, ModelEvent, ModelIdentity, ModelResponse, ModelUsage,
-    ToolCall, ToolSpec,
+    ToolCall, ToolSpec, WireMessage,
 };
 
 use super::types::*;
@@ -40,18 +40,18 @@ pub fn build_request<'a>(
     let mut call_names = HashMap::new();
     let mut contents = Vec::new();
     for message in messages.iter().map(std::borrow::Cow::as_ref) {
-        let content = match message {
-            Message::System(_) => continue,
-            Message::User(blocks) => Content {
+        let content = match message.wire() {
+            WireMessage::System(_) | WireMessage::ReasoningShift(_) => continue,
+            WireMessage::User(blocks) => Content {
                 role: Some(Role::User),
-                parts: blocks_to_parts(blocks, &mut call_names),
+                parts: blocks_to_parts(&blocks, &mut call_names),
             },
-            Message::Assistant(blocks) => Content {
+            WireMessage::Assistant(blocks) => Content {
                 role: Some(Role::Model),
                 parts: blocks_to_parts(blocks, &mut call_names),
             },
-            Message::EnrichedAssistant(message) => {
-                let prepared = prepare_assistant((**message).clone(), target);
+            WireMessage::EnrichedAssistant(message) => {
+                let prepared = prepare_assistant(message.clone(), target);
                 let mut parts = blocks_to_parts(&prepared.content, &mut call_names);
                 replay_provider_context(
                     &mut parts,
@@ -64,7 +64,7 @@ pub fn build_request<'a>(
                     parts,
                 }
             }
-            Message::AbortedAssistant(message) => {
+            WireMessage::AbortedAssistant(message) => {
                 let prepared = prepare_assistant(
                     crate::model::AssistantMessage {
                         content: aborted_content_blocks(message, target),
@@ -88,7 +88,7 @@ pub fn build_request<'a>(
                     parts,
                 }
             }
-            Message::ToolResult(result) => {
+            WireMessage::ToolResult(result) => {
                 let info = call_names.get(&result.id);
                 let name = info
                     .map(|info| info.name.clone())
@@ -274,11 +274,11 @@ fn aborted_content_blocks(
         if !arguments.is_object() {
             continue;
         }
-        blocks.push(ContentBlock::ToolCall(ToolCall {
-            id: id.clone(),
-            name: name.clone(),
+        blocks.push(ContentBlock::ToolCall(ToolCall::new(
+            id.clone(),
+            name.clone(),
             arguments,
-        }));
+        )));
     }
     blocks
 }
@@ -378,7 +378,7 @@ impl ResponseCollector {
                     });
                 }
                 if let Some(stop_reason) = reason.model_stop_reason() {
-                    emit(&mut on_event, ModelEvent::stop_reason(stop_reason))?;
+                    emit(&mut on_event, ModelEvent::Stopped(stop_reason))?;
                 }
             }
             let Some(content) = candidate.content else {
@@ -416,6 +416,7 @@ impl ResponseCollector {
                                     "failed to preserve Gemini thought part: {error}"
                                 ))
                             })?,
+                            replay: crate::model::ReplayScope::ExactModel,
                         },
                     )?;
                 } else if let Some(signature) = &part.thought_signature {
@@ -441,6 +442,7 @@ impl ResponseCollector {
                                 self.content.len()
                             }),
                             data,
+                            replay: crate::model::ReplayScope::ExactModel,
                         },
                     )?;
                 }
@@ -478,6 +480,7 @@ impl ResponseCollector {
                                 kind: MISSING_FUNCTION_CALL_ID_CONTEXT.into(),
                                 position: Some(self.content.len()),
                                 data: serde_json::Value::Null,
+                                replay: crate::model::ReplayScope::ExactModel,
                             },
                         )?;
                         id
@@ -491,11 +494,9 @@ impl ResponseCollector {
                             arguments: call.args.to_string(),
                         },
                     )?;
-                    self.content.push(ContentBlock::ToolCall(ToolCall {
-                        id,
-                        name: call.name,
-                        arguments: call.args,
-                    }));
+                    self.content.push(ContentBlock::ToolCall(ToolCall::new(
+                        id, call.name, call.args,
+                    )));
                 } else if !has_text {
                     self.can_merge_output_text = false;
                 }

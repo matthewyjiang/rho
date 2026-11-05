@@ -7,11 +7,11 @@ use serde_json::json;
 use super::{path_recall, references, Probe, Reference};
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
         arguments,
-    })])
+    ))])
 }
 
 fn result(id: &str, ok: bool, content: &str) -> Message {

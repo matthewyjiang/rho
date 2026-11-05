@@ -33,6 +33,7 @@ fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
             kind: "opaque".into(),
             position: None,
             data: serde_json::json!({"signature": "signed"}),
+            replay: crate::model::ReplayScope::ExactModel,
         };
         for event in [
             ModelEvent::ReasoningDelta("more raw".into()),
@@ -41,6 +42,7 @@ fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
                 kind: context.kind.clone(),
                 position: context.position,
                 data: context.data.clone(),
+                replay: crate::model::ReplayScope::ExactModel,
             },
         ] {
             capture_provider_event(event, &identity(), &ModelUsage::default(), &mut capture);
@@ -163,11 +165,11 @@ fn tool_call_arguments_complete_across_nested_and_escaped_fragments() {
     let aborted = capture.into_aborted_assistant().unwrap();
     assert_eq!(
         aborted.content,
-        vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-2".into(),
-            name: "write".into(),
-            arguments: serde_json::from_str(arguments).unwrap(),
-        })]
+        vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-2".into(),
+            "write".into(),
+            serde_json::from_str(arguments).unwrap()
+        ))]
     );
     assert_eq!(
         aborted.tool_calls,
@@ -231,11 +233,11 @@ fn multi_chunk_object_arguments_materialize_on_aborted_capture() {
     let aborted = capture.into_aborted_assistant().unwrap();
     assert_eq!(
         aborted.content,
-        vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-large".into(),
-            name: "write".into(),
-            arguments: serde_json::from_str(&arguments).unwrap(),
-        })]
+        vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-large".into(),
+            "write".into(),
+            serde_json::from_str(&arguments).unwrap()
+        ))]
     );
     assert_eq!(
         aborted.tool_calls,
@@ -300,6 +302,7 @@ fn provider_context_only_splits_text_at_positioned_boundaries() {
                     kind: "test.context".into(),
                     position: *position,
                     data: serde_json::json!({}),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
                 &identity(),
                 &ModelUsage::default(),

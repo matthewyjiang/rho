@@ -70,11 +70,11 @@ async fn checkpoint_initialization_failure_pauses_capture_but_turns_continue() -
         let temp = tempfile::tempdir()?;
         let turns = vec![
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "write-1".into(),
-                    name: "write".into(),
-                    arguments: serde_json::json!({"path":"tracked.txt", "content":"written"}),
-                },
+                ToolCall::new(
+                    "write-1".into(),
+                    "write".into(),
+                    serde_json::json!({"path":"tracked.txt", "content":"written"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

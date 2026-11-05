@@ -1,0 +1,21 @@
+{
+  "schema_version": 3,
+  "session_id": "33333333-3333-4333-8333-333333333333",
+  "revision": 6,
+  "history": [
+    {"CompactionSummary": {"trigger": "Automatic", "text": "earlier work"}},
+    {"User": [{"Text": "current prompt"}]}
+  ],
+  "provider": {
+    "provider": "fixture-provider",
+    "api": "fixture-api",
+    "model": "fixture-model"
+  },
+  "compaction": {
+    "completed_compactions": 3,
+    "removed_messages": 9,
+    "last_revision": 5
+  },
+  "metadata": {"title": "snapshot v3"},
+  "prompt_cache_key": "rho:fixture-cache-v3"
+}

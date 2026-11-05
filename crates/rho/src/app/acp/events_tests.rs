@@ -106,11 +106,7 @@ fn proposed_started_finished_map_kind_and_status() {
     let proposed = mapper.map_event(
         &session_id(),
         &RunEvent::ToolProposed {
-            call: ToolCall {
-                id: "call-1".into(),
-                name: "write".into(),
-                arguments: json!({"path": "a.rs"}),
-            },
+            call: ToolCall::new("call-1".into(), "write".into(), json!({"path": "a.rs"})),
         },
     );
     assert_eq!(proposed, Vec::new());
@@ -248,11 +244,7 @@ fn started_call_titles_describe_the_call() {
             mapper.map_event(
                 &session_id(),
                 &RunEvent::ToolProposed {
-                    call: ToolCall {
-                        id: "call-1".into(),
-                        name: name.into(),
-                        arguments,
-                    },
+                    call: ToolCall::new("call-1".into(), name.into(), arguments),
                 },
             );
         }

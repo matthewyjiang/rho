@@ -851,11 +851,11 @@ fn open_v1_session_with_tail(extra: &[Message]) -> (tempfile::TempDir, tempfile:
 }
 
 fn incomplete_tool_tail() -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: "call-1".into(),
-        name: "bash".into(),
-        arguments: serde_json::json!({"command": "echo hi"}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        "call-1".into(),
+        "bash".into(),
+        serde_json::json!({"command": "echo hi"}),
+    ))])
 }
 
 fn aborted_assistant_with_reasoning() -> Message {

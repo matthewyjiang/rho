@@ -31,6 +31,7 @@ async fn receiver_with_queued_events() -> ProviderEventReceiver {
             kind: "replayable".into(),
             position: Some(1),
             data: serde_json::json!({ "value": true }),
+            replay: crate::model::ReplayScope::ExactModel,
         })
         .await
         .unwrap();
@@ -51,6 +52,7 @@ fn expected_capture() -> AbortedAssistant {
             kind: "replayable".into(),
             position: Some(1),
             data: serde_json::json!({ "value": true }),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
         usage: ModelUsage {
             output_tokens: Some(5),

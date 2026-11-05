@@ -13,11 +13,33 @@ use serde_json::Value;
 
 use crate::model::{
     AssistantMessage, ContentBlock, Message, ModelError, ModelIdentity, ModelUsage,
-    ProviderContextBlock,
+    ProviderContextBlock, ReplayScope, WireMessage,
 };
 
 /// Provider-context kind for Responses output items that must replay verbatim.
 pub(crate) const COMPACTION_OUTPUT_ITEM_KIND: &str = "openai_response_output_item";
+
+/// Replay scope for a Responses output item stored by `provider`.
+///
+/// Codex accepts its compaction items and encrypted reasoning from any Codex
+/// model, so those replay across model names; everything else replays only to
+/// the exact producing model.
+pub(crate) fn output_item_replay_scope(provider: &str, item: &Value) -> ReplayScope {
+    let crosses_models = provider == "openai-codex"
+        && match item.get("type").and_then(Value::as_str) {
+            Some("compaction") => true,
+            Some("reasoning") => item
+                .get("encrypted_content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| !content.is_empty()),
+            _ => false,
+        };
+    if crosses_models {
+        ReplayScope::ProviderApi
+    } else {
+        ReplayScope::ExactModel
+    }
+}
 
 /// Host-owned system prompts retained across compact; the endpoint returns
 /// conversation items, not the instructions channel.
@@ -35,8 +57,14 @@ pub(crate) fn retained_system_messages(messages: &[Message]) -> Vec<Message> {
 /// mirrors the server-side default of `/responses/compact`.
 pub(crate) const RETAINED_USER_MESSAGE_TOKEN_BUDGET: u64 = 64_000;
 
-/// System prompts plus the newest user messages that fit `user_token_budget`,
-/// in original order.
+/// Whether a provider sends `message` as user-role content (human input,
+/// boundary input, and labelled SDK entries such as compaction summaries).
+fn is_user_role(message: &Message) -> bool {
+    matches!(message.wire(), WireMessage::User(_))
+}
+
+/// System prompts plus the newest user-role messages that fit
+/// `user_token_budget`, in original order.
 ///
 /// Trigger-based compaction returns only the compaction item, so the client
 /// keeps recent user turns itself. Selection walks newest-first and stops at
@@ -48,7 +76,7 @@ pub(crate) fn retained_system_and_recent_user_messages(
     let mut remaining = user_token_budget;
     let mut keep_user = vec![false; messages.len()];
     for (index, message) in messages.iter().enumerate().rev() {
-        if !matches!(message, Message::User(_)) {
+        if !is_user_role(message) {
             continue;
         }
         let tokens = rho_sdk::model::context::estimate_message_tokens(message);
@@ -67,10 +95,13 @@ pub(crate) fn retained_system_and_recent_user_messages(
 }
 
 /// Whether compact `output` user messages are kept in replacement history.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CompactUserRetention {
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CompactUserRetention<'a> {
     /// OpenAI keeps recent user messages returned by the compact endpoint.
-    KeepServerUsers,
+    /// `request` is the compacted history: a returned item that renders like
+    /// one of its typed user-role entries (summary, model context, boundary
+    /// input) is restored to that entry instead of becoming human input.
+    KeepServerUsers { request: &'a [Message] },
     /// xAI returns only the compaction item for the whole prior window.
     CompactionItemOnly,
 }
@@ -81,7 +112,7 @@ pub(crate) fn parse_compact_response(
     retained_messages: &[Message],
     body: &Value,
     portable_handoff_notice: &str,
-    user_retention: CompactUserRetention,
+    user_retention: CompactUserRetention<'_>,
     assistant_context: &[ProviderContextBlock],
 ) -> Result<(Vec<Message>, ModelUsage), ModelError> {
     let output = body
@@ -110,7 +141,7 @@ pub(crate) fn replacement_from_compact_output<'a>(
     retained_messages: impl IntoIterator<Item = &'a Message>,
     output_items: &[Value],
     portable_handoff_notice: &str,
-    user_retention: CompactUserRetention,
+    user_retention: CompactUserRetention<'_>,
     assistant_context: &[ProviderContextBlock],
 ) -> Result<Vec<Message>, ModelError> {
     let compaction_item = extract_compaction_item(output_items)?;
@@ -120,16 +151,17 @@ pub(crate) fn replacement_from_compact_output<'a>(
     // items, not the instructions channel. Trigger compaction also retains
     // recent user turns client-side.
     for message in retained_messages {
+        let retained = matches!(message, Message::System(_)) || is_user_role(message);
         debug_assert!(
-            matches!(message, Message::System(_) | Message::User(_)),
-            "retained_messages must only contain system or user messages"
+            retained,
+            "retained_messages must only contain system or user-role messages"
         );
-        if matches!(message, Message::System(_) | Message::User(_)) {
+        if retained {
             replacement.push(message.clone());
         }
     }
 
-    if matches!(user_retention, CompactUserRetention::KeepServerUsers) {
+    if let CompactUserRetention::KeepServerUsers { request } = user_retention {
         for item in output_items {
             let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
             let is_user = item.get("role").and_then(Value::as_str) == Some("user");
@@ -139,8 +171,8 @@ pub(crate) fn replacement_from_compact_output<'a>(
                 // Drop assistant/tool/reasoning items; the encrypted compaction item
                 // is the server's compressed substitute for those.
                 _ if is_user => {
-                    if let Some(message) = user_message_from_output_item(item) {
-                        replacement.push(message);
+                    if let Some(blocks) = user_blocks_from_output_item(item) {
+                        replacement.push(restore_typed_user_role(request, blocks));
                     }
                 }
                 _ => {}
@@ -152,6 +184,7 @@ pub(crate) fn replacement_from_compact_output<'a>(
         identity: identity.clone(),
         kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
         position: Some(0),
+        replay: output_item_replay_scope(&identity.provider, &compaction_item),
         data: compaction_item,
     }];
     provider_context.extend_from_slice(assistant_context);
@@ -176,7 +209,19 @@ pub(crate) fn replacement_from_compact_output<'a>(
     Ok(replacement)
 }
 
-fn user_message_from_output_item(item: &Value) -> Option<Message> {
+/// The compact endpoint echoes user-role items as plain text. Returns the typed
+/// request entry that rendered to the same blocks, so model-written summaries
+/// and host context never come back as human input.
+fn restore_typed_user_role(request: &[Message], blocks: Vec<ContentBlock>) -> Message {
+    request
+        .iter()
+        .filter(|message| !matches!(message, Message::User(_)))
+        .find(|message| matches!(message.wire(), WireMessage::User(content) if *content == *blocks))
+        .cloned()
+        .unwrap_or(Message::User(blocks))
+}
+
+fn user_blocks_from_output_item(item: &Value) -> Option<Vec<ContentBlock>> {
     let content = item.get("content")?;
     let mut blocks = Vec::new();
     match content {
@@ -215,7 +260,7 @@ fn user_message_from_output_item(item: &Value) -> Option<Message> {
         }
         _ => {}
     }
-    (!blocks.is_empty()).then_some(Message::User(blocks))
+    (!blocks.is_empty()).then_some(blocks)
 }
 
 pub(crate) fn extract_compaction_item(output_items: &[Value]) -> Result<Value, ModelError> {

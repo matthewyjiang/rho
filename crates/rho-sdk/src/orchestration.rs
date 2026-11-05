@@ -408,7 +408,8 @@ async fn execute_turn_loop(
             );
         }
 
-        let ModelResponse::Assistant(content) = response;
+        let ModelResponse::Assistant(mut content) = response;
+        capture.apply_accepted_executions(&mut content);
         let tool_calls = content
             .iter()
             .filter_map(|block| match block {
@@ -416,7 +417,6 @@ async fn execute_turn_loop(
                 ContentBlock::Text(_) | ContentBlock::Image(_) => None,
             })
             .collect::<Vec<_>>();
-        let async_ids = capture.async_call_ids();
         let model_stop_reason = capture.stop_reason();
         let (reasoning_summary, provider_context) = capture.take_assistant_context();
         let assistant = AssistantMessage {
@@ -437,8 +437,7 @@ async fn execute_turn_loop(
         }
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
-        let (async_calls, sync_calls) =
-            split_tool_calls(tool_calls, &async_ids, &runtime, &tool_specs);
+        let (async_calls, sync_calls) = split_tool_calls(tool_calls, &runtime, &tool_specs);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
         if let Err(error) = async {

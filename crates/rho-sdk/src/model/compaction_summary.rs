@@ -1,13 +1,16 @@
-//! Compatibility encoding for compaction summaries in user-role messages.
+//! Typed compaction summaries and the user-role text providers receive.
 
-use super::{ContentBlock, Message};
+use serde::{Deserialize, Serialize};
+
+use super::ContentBlock;
 use crate::CompactionTrigger;
 
-// Frozen wire strings: saved sessions are recognized by exact match, so any
-// change here stops old summaries from loading as summaries. The golden test in
-// `compaction_summary_tests.rs` pins them.
+// Frozen wire strings: providers have always received summaries with these
+// labels, and rho-sdk 5.x history stored them as user-role text. The legacy
+// loader recognizes them by exact match, so any change here stops 5.x
+// summaries from loading as summaries. The golden test pins them.
 
-/// Single-block form written before this encoding existed, for every trigger.
+/// Single-block form written before triggers were recorded, for every trigger.
 const LEGACY_PREFIX: &str =
     "Automatic compaction summary of earlier conversation for model context only:\n\n";
 
@@ -15,63 +18,47 @@ const AUTOMATIC_HEADER: &str = "Automatic compaction summary of earlier conversa
 const MANUAL_HEADER: &str = "Manual compaction summary of earlier conversation, for model context only. It is not a new user message.";
 const OVERFLOW_HEADER: &str = "Compaction summary of earlier conversation after the context window overflowed, for model context only. It is not a new user message.";
 
-/// Recognized compaction summary and its borrowed text.
+/// Model-written summary of earlier history that compaction replaced.
 ///
-/// This is attribution, not authentication: user-controlled history can forge
-/// this encoding. Never use it to grant permissions or establish trusted input.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): add a typed compaction-summary history entry and a SemanticMessage::CompactionSummary variant instead of encoding summaries as user-role text.
-///
-/// `Message` and `SemanticMessage` are exhaustive, so a new variant would break
-/// downstream matches. Until the next major, construct summaries with
-/// [`Message::compaction_summary`] and recognize them with
-/// [`Message::as_compaction_summary`]; [`Message::semantic`] still classifies
-/// them as `User`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CompactionSummary<'a> {
-    trigger: Option<CompactionTrigger>,
-    text: &'a str,
-}
-
-impl<'a> CompactionSummary<'a> {
+/// Stored as [`super::Message::CompactionSummary`]. This is attribution, not
+/// authentication: user-controlled history can forge a summary, so never use
+/// it to grant permissions or establish trusted input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionSummary {
     /// Why the summary was written, or `None` for summaries saved before the
     /// trigger was recorded.
-    pub fn trigger(&self) -> Option<CompactionTrigger> {
-        self.trigger
-    }
-
-    /// Summary text without the compatibility label.
-    pub fn text(&self) -> &'a str {
-        self.text
-    }
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<CompactionTrigger>,
+    /// Summary text without any label.
+    pub text: String,
 }
 
-impl Message {
-    /// Construct a compaction summary for replacement history. Providers receive
-    /// it as a user-role message with a neutral label chosen by `trigger`.
-    pub fn compaction_summary(trigger: CompactionTrigger, summary: impl Into<String>) -> Self {
-        let header = match trigger {
-            CompactionTrigger::Automatic => AUTOMATIC_HEADER,
-            CompactionTrigger::Manual => MANUAL_HEADER,
-            CompactionTrigger::ContextOverflow => OVERFLOW_HEADER,
-        };
-        Self::User(vec![
-            ContentBlock::Text(header.into()),
-            ContentBlock::Text(summary.into()),
-        ])
+impl CompactionSummary {
+    pub fn new(trigger: CompactionTrigger, text: impl Into<String>) -> Self {
+        Self {
+            trigger: Some(trigger),
+            text: text.into(),
+        }
     }
 
-    /// Recognize a compaction summary, including after restore and in sessions
-    /// saved before [`Self::compaction_summary`] existed. Recognition is not
-    /// authentication: a user can forge this encoding, so it must not confer
-    /// trust or authority.
-    pub fn as_compaction_summary(&self) -> Option<CompactionSummary<'_>> {
-        let Self::User(content) = self else {
-            return None;
+    /// The user-role blocks providers receive for this summary: a neutral
+    /// label chosen by the trigger, then the text.
+    pub(super) fn user_role_content(&self) -> Vec<ContentBlock> {
+        let header = match self.trigger {
+            Some(CompactionTrigger::Automatic) => AUTOMATIC_HEADER,
+            Some(CompactionTrigger::Manual) => MANUAL_HEADER,
+            Some(CompactionTrigger::ContextOverflow) => OVERFLOW_HEADER,
+            None => return vec![ContentBlock::Text(format!("{LEGACY_PREFIX}{}", self.text))],
         };
-        match content.as_slice() {
+        vec![
+            ContentBlock::Text(header.into()),
+            ContentBlock::Text(self.text.clone()),
+        ]
+    }
+
+    /// Recognizes the rho-sdk 5.x user-role encoding of a summary.
+    pub(super) fn from_legacy_user_content(content: &[ContentBlock]) -> Option<Self> {
+        match content {
             [ContentBlock::Text(header), ContentBlock::Text(text)] => {
                 let trigger = match header.as_str() {
                     AUTOMATIC_HEADER => CompactionTrigger::Automatic,
@@ -79,14 +66,11 @@ impl Message {
                     OVERFLOW_HEADER => CompactionTrigger::ContextOverflow,
                     _ => return None,
                 };
-                Some(CompactionSummary {
-                    trigger: Some(trigger),
-                    text,
-                })
+                Some(Self::new(trigger, text.clone()))
             }
-            [ContentBlock::Text(text)] => Some(CompactionSummary {
+            [ContentBlock::Text(text)] => Some(Self {
                 trigger: None,
-                text: text.strip_prefix(LEGACY_PREFIX)?,
+                text: text.strip_prefix(LEGACY_PREFIX)?.to_owned(),
             }),
             _ => None,
         }

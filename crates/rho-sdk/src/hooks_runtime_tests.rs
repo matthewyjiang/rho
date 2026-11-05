@@ -127,11 +127,7 @@ fn tool_then_text() -> ScriptedProvider {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "read_file".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("call-1".into(), "read_file".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -389,11 +385,7 @@ async fn completed_failure_reports_failed_hook_without_capability() {
             identity(),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "silent".into(),
-                        arguments: json!({}),
-                    },
+                    ToolCall::new("call-1".into(), "silent".into(), json!({})),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -550,16 +542,16 @@ async fn parallel_tool_calls_keep_per_call_hook_identity() {
         identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-a".into(),
-                    name: "read_file".into(),
-                    arguments: json!({}),
-                }),
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-b".into(),
-                    name: "read_file".into(),
-                    arguments: json!({}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-a".into(),
+                    "read_file".into(),
+                    json!({}),
+                )),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-b".into(),
+                    "read_file".into(),
+                    json!({}),
+                )),
             ])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

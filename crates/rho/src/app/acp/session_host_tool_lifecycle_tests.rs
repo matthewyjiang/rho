@@ -108,11 +108,7 @@ impl RecordingPort {
 
 fn tool_turn(id: &str, name: &str) -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments: serde_json::json!({}),
-        },
+        ToolCall::new(id.into(), name.into(), serde_json::json!({})),
     )]))
 }
 

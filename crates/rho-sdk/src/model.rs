@@ -7,41 +7,28 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const PORTABLE_FALLBACK_CONTEXT_KIND: &str = "rho.sdk.portable_fallback.v1";
-/// Kind string providers emit on [`ModelEvent::ProviderContext`] when a tool
-/// call was accepted as async.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): replace the async-call marker block with a
-/// `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode }` variant
-/// and an `execution` field on `ToolCall`.
-pub const ASYNC_TOOL_CALL_CONTEXT_KIND: &str = "rho.sdk.async_tool_call.v1";
-/// Kind prefix for provider notes: bookkeeping a provider records on an
-/// assistant turn for its own later requests. Build kinds with
-/// [`ProviderContextBlock::provider_note_kind`].
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): replace the reserved provider-note kind prefix with the
-/// explicit replay scope on ProviderContextBlock.
-pub const PROVIDER_NOTE_CONTEXT_KIND_PREFIX: &str = "rho.sdk.provider_note.v1:";
-
-use crate::CancellationToken;
+use crate::{tool::ToolExecutionMode, CancellationToken};
 
 mod compaction_summary;
 pub mod context;
 pub mod handoff;
+mod legacy_history;
 mod legacy_tool_images;
 mod model_context;
+mod provider_context;
+mod reasoning_shift;
 mod semantic;
 mod stop_reason;
+mod wire;
 
 pub use compaction_summary::CompactionSummary;
 pub use legacy_tool_images::attach_legacy_tool_images;
+pub use provider_context::{ProviderContextBlock, ReplayScope};
+pub(crate) use reasoning_shift::record as record_reasoning_shift;
+pub use reasoning_shift::ReasoningShift;
 pub use semantic::SemanticMessage;
 pub use stop_reason::ModelStopReason;
-pub(crate) use stop_reason::STOP_REASON_CONTEXT_KIND;
+pub use wire::WireMessage;
 
 /// Provider-neutral specification for a tool available during a model turn.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -52,14 +39,30 @@ pub struct ToolSpec {
 }
 
 /// Complete tool call requested by a model or supplied by the host.
+///
+/// `execution` records how the provider accepted the call; it is
+/// [`ToolExecutionMode::Sync`] unless the provider reported
+/// [`ModelEvent::ToolCallAccepted`]. Serialization omits the default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: Value,
+    #[serde(default, skip_serializing_if = "ToolExecutionMode::is_sync")]
+    pub execution: ToolExecutionMode,
 }
 
 impl ToolCall {
+    /// A call the loop waits for before the next model request.
+    pub fn new(id: String, name: String, arguments: Value) -> Self {
+        Self {
+            id,
+            name,
+            arguments,
+            execution: ToolExecutionMode::Sync,
+        }
+    }
+
     pub(crate) fn has_valid_protocol_fields(&self) -> bool {
         !self.id.is_empty() && !self.name.is_empty() && self.arguments.is_object()
     }
@@ -212,124 +215,6 @@ impl ModelIdentity {
     }
 }
 
-/// Opaque provider-native data tagged with its producing model identity.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ProviderContextBlock {
-    pub identity: ModelIdentity,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<usize>,
-    pub data: Value,
-}
-
-impl ProviderContextBlock {
-    /// Whether the target can replay this native format without rewriting it.
-    ///
-    /// Unknown formats require exact identity. Codex Responses compaction items
-    /// and reasoning items with nonempty encrypted content can replay across
-    /// model names within the same provider and API. This exception does not
-    /// apply to API-key OpenAI or other Responses-compatible providers.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): replace the Codex format exception with explicit
-    /// replay scope on ProviderContextBlock, set by the producing adapter.
-    /// Adding that field now would break downstream struct literals. Until then,
-    /// use this method for both omission reporting and request filtering.
-    pub fn is_replayable_to(&self, target: &ModelIdentity) -> bool {
-        if self.is_sdk_metadata()
-            || self.identity.provider != target.provider
-            || self.identity.api != target.api
-        {
-            return false;
-        }
-        self.identity.model == target.model
-            || match (
-                self.identity.provider.as_str(),
-                self.identity.api.as_str(),
-                self.kind.as_str(),
-                self.data.get("type").and_then(Value::as_str),
-            ) {
-                (
-                    "openai-codex",
-                    "openai-responses",
-                    "openai_response_output_item",
-                    Some("compaction"),
-                ) => true,
-                (
-                    "openai-codex",
-                    "openai-responses",
-                    "openai_response_output_item",
-                    Some("reasoning"),
-                ) => self
-                    .data
-                    .get("encrypted_content")
-                    .and_then(Value::as_str)
-                    .is_some_and(|content| !content.is_empty()),
-                _ => false,
-            }
-    }
-
-    /// Marks a tool call the provider accepted as async.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): replace the async-call marker block with a
-    /// `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode }` variant
-    /// and an `execution` field on `ToolCall`.
-    ///
-    /// Providers emit this via [`crate::model::ModelEvent::ProviderContext`] because
-    /// `ModelEvent` and [`ToolCall`] cannot grow in a minor. SDK metadata: never
-    /// replayed as provider-native context, never counted as a handoff omission.
-    pub fn async_tool_call(identity: ModelIdentity, call_id: impl Into<String>) -> Self {
-        Self {
-            identity,
-            kind: ASYNC_TOOL_CALL_CONTEXT_KIND.into(),
-            position: None,
-            data: Value::String(call_id.into()),
-        }
-    }
-
-    /// Kind for the provider note `name`.
-    ///
-    /// Notes are SDK metadata: never replayed as provider-native context and
-    /// never counted as a handoff omission. The producing provider reads its
-    /// own notes back with [`Self::provider_note_name`] and an identity check.
-    pub fn provider_note_kind(name: &str) -> String {
-        format!("{PROVIDER_NOTE_CONTEXT_KIND_PREFIX}{name}")
-    }
-
-    /// The note name when this block is a provider note.
-    pub fn provider_note_name(&self) -> Option<&str> {
-        self.kind
-            .strip_prefix(PROVIDER_NOTE_CONTEXT_KIND_PREFIX)
-            .filter(|name| !name.is_empty())
-    }
-
-    /// Returns the call id when this block is a well-formed async-call marker.
-    pub fn async_tool_call_id(&self) -> Option<&str> {
-        (self.kind == ASYNC_TOOL_CALL_CONTEXT_KIND
-            && self.position.is_none()
-            && self.data.is_string())
-        .then(|| self.data.as_str())
-        .flatten()
-    }
-
-    pub(crate) fn is_portable_fallback(&self) -> bool {
-        self.kind == PORTABLE_FALLBACK_CONTEXT_KIND
-            && self.position.is_none()
-            && self.data.is_string()
-    }
-
-    /// Portable fallback, async-call marker, or provider note: never replayed
-    /// as provider-native context, never counted as a handoff omission.
-    pub(crate) fn is_sdk_metadata(&self) -> bool {
-        self.is_portable_fallback()
-            || self.async_tool_call_id().is_some()
-            || self.provider_note_name().is_some()
-    }
-}
-
 /// Completed assistant output with portable and provider-native context.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AssistantMessage {
@@ -366,9 +251,10 @@ impl AssistantMessage {
             .unwrap_or_else(|| ModelIdentity::new("", "", ""));
         self.provider_context.push(ProviderContextBlock {
             identity,
-            kind: PORTABLE_FALLBACK_CONTEXT_KIND.into(),
+            kind: provider_context::PORTABLE_FALLBACK_CONTEXT_KIND.into(),
             position: None,
             data: Value::String(fallback.into()),
+            replay: ReplayScope::ExactModel,
         });
         self
     }
@@ -423,14 +309,17 @@ impl<'de> Deserialize<'de> for AssistantMessage {
 
 /// One provider-neutral history entry.
 ///
-/// Tool-owned images ride on [`ToolResult::images`]. Prefer [`Self::semantic`]
-/// for exhaustive classification that separates compatibility encodings from
-/// human submissions without changing the serialized variants.
+/// Tool-owned images ride on [`ToolResult::images`]. Provider converters send
+/// entries through [`Self::wire`]; classify meaning with [`Self::semantic`].
 ///
 /// Exhaustive on purpose, like [`ContentBlock`]: every provider converter must
 /// decide how to send each variant, so a new one is a breaking change rather
 /// than a silently dropped history entry.
+///
+/// Deserialization converts rho-sdk 5.x encodings (user-role compaction
+/// summaries and model context, async-call marker blocks) to these variants.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "MessageRepr")]
 pub enum Message {
     System(String),
     User(Vec<ContentBlock>),
@@ -441,6 +330,49 @@ pub enum Message {
     /// Partial assistant output retained when a model turn ends incompletely.
     AbortedAssistant(Box<AbortedAssistant>),
     ToolResult(ToolResult),
+    /// Model-written summary that replaced earlier history.
+    CompactionSummary(CompactionSummary),
+    /// Request-only host context: data, not instructions. Built by
+    /// [`crate::RequestContext`] sources; never committed to history.
+    ModelContext(String),
+    /// Host input accepted at a runtime boundary (see
+    /// [`crate::BoundaryInputRequest::respond`]), not human input.
+    BoundaryInput(Vec<ContentBlock>),
+    /// The session's reasoning level changed before the next entry.
+    ReasoningShift(ReasoningShift),
+}
+
+/// Serialized shape of [`Message`]; deserialization upgrades 5.x encodings.
+#[derive(Deserialize)]
+enum MessageRepr {
+    System(String),
+    User(Vec<ContentBlock>),
+    Assistant(Vec<ContentBlock>),
+    EnrichedAssistant(Box<AssistantMessage>),
+    AbortedAssistant(Box<AbortedAssistant>),
+    ToolResult(ToolResult),
+    CompactionSummary(CompactionSummary),
+    ModelContext(String),
+    BoundaryInput(Vec<ContentBlock>),
+    ReasoningShift(ReasoningShift),
+}
+
+impl From<MessageRepr> for Message {
+    fn from(repr: MessageRepr) -> Self {
+        let message = match repr {
+            MessageRepr::System(text) => Self::System(text),
+            MessageRepr::User(content) => Self::User(content),
+            MessageRepr::Assistant(content) => Self::Assistant(content),
+            MessageRepr::EnrichedAssistant(message) => Self::EnrichedAssistant(message),
+            MessageRepr::AbortedAssistant(message) => Self::AbortedAssistant(message),
+            MessageRepr::ToolResult(result) => Self::ToolResult(result),
+            MessageRepr::CompactionSummary(summary) => Self::CompactionSummary(summary),
+            MessageRepr::ModelContext(text) => Self::ModelContext(text),
+            MessageRepr::BoundaryInput(content) => Self::BoundaryInput(content),
+            MessageRepr::ReasoningShift(shift) => Self::ReasoningShift(shift),
+        };
+        legacy_history::upgrade_message(message)
+    }
 }
 
 impl Message {
@@ -456,13 +388,23 @@ impl Message {
         Self::EnrichedAssistant(Box::new(message))
     }
 
+    /// Construct a compaction summary for replacement history.
+    pub fn compaction_summary(trigger: crate::CompactionTrigger, text: impl Into<String>) -> Self {
+        Self::CompactionSummary(CompactionSummary::new(trigger, text))
+    }
+
     pub fn completed_assistant_content(&self) -> Option<&[ContentBlock]> {
         match self {
             Self::Assistant(content) => Some(content),
             Self::EnrichedAssistant(message) => Some(&message.content),
-            Self::System(_) | Self::User(_) | Self::AbortedAssistant(_) | Self::ToolResult(_) => {
-                None
-            }
+            Self::System(_)
+            | Self::User(_)
+            | Self::AbortedAssistant(_)
+            | Self::ToolResult(_)
+            | Self::CompactionSummary(_)
+            | Self::ModelContext(_)
+            | Self::BoundaryInput(_)
+            | Self::ReasoningShift(_) => None,
         }
     }
 }
@@ -721,11 +663,25 @@ pub enum ModelEvent {
         name: Option<String>,
         arguments: String,
     },
+    /// Opaque provider-native data the runtime stores on the assistant turn as
+    /// a [`ProviderContextBlock`] tagged with the provider's identity.
     ProviderContext {
         kind: String,
         position: Option<usize>,
         data: Value,
+        replay: ReplayScope,
     },
+    /// The provider accepted tool call `id` with `execution`. The runtime
+    /// records it on [`ToolCall::execution`]; send it before returning the
+    /// response. Only [`ToolExecutionMode::Async`] changes scheduling.
+    ToolCallAccepted {
+        id: String,
+        execution: ToolExecutionMode,
+    },
+    /// Why the provider ended this turn early. Send it once the reason is
+    /// known; if a turn reports more than once, the last report wins. The
+    /// runtime consumes it; it never reaches history.
+    Stopped(ModelStopReason),
     Usage(ModelUsage),
     /// Generation-window output tokens for this attempt.
     ///

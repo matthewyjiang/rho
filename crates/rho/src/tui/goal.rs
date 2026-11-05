@@ -5,6 +5,7 @@ use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
 use serde::Deserialize;
 
 use rho_providers::model::Message;
+use rho_sdk::model::SemanticMessage;
 
 use crate::history_message::HistoryMessage;
 
@@ -226,8 +227,8 @@ fn evaluation_transcript(messages: &[Message]) -> String {
         .map(|message| match HistoryMessage::of(message) {
             // A model-written summary is not user input; label it so the
             // judge weighs it as a recap, not as a user claim.
-            HistoryMessage::CompactionSummary(summary) => {
-                serde_json::json!({ "CompactionSummary": summary.text() }).to_string()
+            HistoryMessage::Semantic(SemanticMessage::CompactionSummary(summary)) => {
+                serde_json::json!({ "CompactionSummary": summary.text }).to_string()
             }
             HistoryMessage::ChecklistRestatement(blocks) => serde_json::json!({
                 "ChecklistRestatement": {
@@ -236,14 +237,19 @@ fn evaluation_transcript(messages: &[Message]) -> String {
                 }
             })
             .to_string(),
-            HistoryMessage::System(_)
-            | HistoryMessage::User(_)
-            | HistoryMessage::Assistant(_)
-            | HistoryMessage::EnrichedAssistant(_)
-            | HistoryMessage::AbortedAssistant(_)
-            | HistoryMessage::ToolResult(_) => {
-                serde_json::to_string(&safe_transcript_message(message)).unwrap_or_default()
-            }
+            // Other entries serialize under their typed variant name, which
+            // already labels runtime input and host context.
+            HistoryMessage::Semantic(
+                SemanticMessage::System(_)
+                | SemanticMessage::User(_)
+                | SemanticMessage::Assistant(_)
+                | SemanticMessage::EnrichedAssistant(_)
+                | SemanticMessage::AbortedAssistant(_)
+                | SemanticMessage::ToolResult(_)
+                | SemanticMessage::ModelContext(_)
+                | SemanticMessage::BoundaryInput(_)
+                | SemanticMessage::ReasoningShift(_),
+            ) => serde_json::to_string(&safe_transcript_message(message)).unwrap_or_default(),
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -255,7 +261,14 @@ fn safe_transcript_message(message: &Message) -> Message {
     match &mut message {
         Message::EnrichedAssistant(assistant) => assistant.retain_portable_context(),
         Message::AbortedAssistant(assistant) => assistant.provider_context.clear(),
-        Message::System(_) | Message::User(_) | Message::Assistant(_) | Message::ToolResult(_) => {}
+        Message::System(_)
+        | Message::User(_)
+        | Message::Assistant(_)
+        | Message::ToolResult(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
+        | Message::BoundaryInput(_)
+        | Message::ReasoningShift(_) => {}
     }
     message
 }

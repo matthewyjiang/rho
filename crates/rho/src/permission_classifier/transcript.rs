@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::history_message::HistoryMessage;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 use rho_sdk::{
-    ApprovalRequest, CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget,
-    PathScope,
+    model::SemanticMessage, ApprovalRequest, CapabilityOperation, CapabilityRequest,
+    CapabilitySource, NetworkTarget, PathScope,
 };
 
 use super::budget::{
@@ -112,13 +112,21 @@ fn render(
     let mut latest_executable: HashMap<&str, usize> = HashMap::new();
 
     for message in history {
-        match HistoryMessage::of(message) {
-            // Model-written summaries and host-restated model checklists
-            // cannot supply evidence of human authorization.
-            HistoryMessage::System(_)
-            | HistoryMessage::ChecklistRestatement(_)
-            | HistoryMessage::CompactionSummary(_) => {}
-            HistoryMessage::User(blocks) => {
+        let semantic = match HistoryMessage::of(message) {
+            // Host-restated model checklists cannot supply evidence of human
+            // authorization.
+            HistoryMessage::ChecklistRestatement(_) => continue,
+            HistoryMessage::Semantic(semantic) => semantic,
+        };
+        match semantic {
+            // Model-written summaries, host context, and runtime notices
+            // cannot supply evidence of human authorization either.
+            SemanticMessage::System(_)
+            | SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::BoundaryInput(_)
+            | SemanticMessage::ReasoningShift(_) => {}
+            SemanticMessage::User(blocks) => {
                 for block in blocks {
                     let text = match block {
                         ContentBlock::Text(text) => text.as_str(),
@@ -131,7 +139,7 @@ fn render(
                     )?)));
                 }
             }
-            HistoryMessage::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 let lifecycle = CallLifecycle::Unanswered;
                 push_calls(
                     &mut entries,
@@ -141,7 +149,7 @@ fn render(
                     lifecycle,
                 );
             }
-            HistoryMessage::EnrichedAssistant(assistant) => {
+            SemanticMessage::EnrichedAssistant(assistant) => {
                 let lifecycle = CallLifecycle::Unanswered;
                 let blocks = &assistant.content;
                 push_calls(
@@ -152,7 +160,7 @@ fn render(
                     lifecycle,
                 );
             }
-            HistoryMessage::AbortedAssistant(aborted) => {
+            SemanticMessage::AbortedAssistant(aborted) => {
                 let lifecycle = CallLifecycle::Aborted;
                 let blocks = &aborted.content;
                 push_calls(
@@ -163,7 +171,7 @@ fn render(
                     lifecycle,
                 );
             }
-            HistoryMessage::ToolResult(result) => {
+            SemanticMessage::ToolResult(result) => {
                 let Some(&index) = latest_executable.get(result.id.as_str()) else {
                     continue;
                 };

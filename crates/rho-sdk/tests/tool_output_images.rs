@@ -9,7 +9,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{
         ContentBlock, ImageContent, Message, ModelEvent, ModelIdentity, ModelRequest,
-        ModelResponse, ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
+        ModelResponse, ToolCall, ToolResult, ToolSpec,
     },
     provider::{
         ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
@@ -37,11 +37,7 @@ fn has_tool_images(message: &Message) -> bool {
 }
 
 fn call(id: &str) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: "capture".into(),
-        arguments: json!({"id": id}),
-    }
+    ToolCall::new(id.into(), "capture".into(), json!({"id": id}))
 }
 
 struct ImageTool {
@@ -139,12 +135,10 @@ impl ModelProvider for ImageProvider {
                 .push(request.messages.to_vec());
             if self.turns.fetch_add(1, Ordering::SeqCst) == 0 {
                 for id in self.async_calls {
-                    let marker = ProviderContextBlock::async_tool_call(identity(), *id);
                     events
-                        .send(ModelEvent::ProviderContext {
-                            kind: marker.kind,
-                            position: marker.position,
-                            data: marker.data,
+                        .send(ModelEvent::ToolCallAccepted {
+                            id: (*id).to_owned(),
+                            execution: rho_sdk::tool::ToolExecutionMode::Async,
                         })
                         .await?;
                 }

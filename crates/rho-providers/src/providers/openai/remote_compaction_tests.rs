@@ -83,7 +83,7 @@ fn astra_compaction_preserves_reasoning_baseline() {
             }]
         }),
         PORTABLE_HANDOFF_NOTICE,
-        CompactUserRetention::KeepServerUsers,
+        CompactUserRetention::KeepServerUsers { request: &[] },
         &context,
     )
     .unwrap();

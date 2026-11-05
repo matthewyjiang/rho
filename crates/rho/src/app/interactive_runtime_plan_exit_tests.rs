@@ -21,11 +21,11 @@ use crate::{
 async fn plan_exit_registration_and_one_shot_decision() {
     let mut agent = super::super::test_runtime(vec![
         ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall {
-                id: "plan-exit-test".into(),
-                name: "exit_plan_mode".into(),
-                arguments: json!({"plan":"# Plan\nImplement the change"}),
-            },
+            ToolCall::new(
+                "plan-exit-test".into(),
+                "exit_plan_mode".into(),
+                json!({"plan":"# Plan\nImplement the change"}),
+            ),
         )])),
         ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
             "acknowledged".into(),

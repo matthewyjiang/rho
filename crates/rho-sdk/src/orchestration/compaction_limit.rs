@@ -116,7 +116,11 @@ fn pending_prefix_end(history: &[Message], running: &BTreeSet<&str>) -> Option<u
                 | SemanticMessage::User(_)
                 | SemanticMessage::Assistant(_)
                 | SemanticMessage::EnrichedAssistant(_)
-                | SemanticMessage::AbortedAssistant(_) => None,
+                | SemanticMessage::AbortedAssistant(_)
+                | SemanticMessage::CompactionSummary(_)
+                | SemanticMessage::ModelContext(_)
+                | SemanticMessage::BoundaryInput(_)
+                | SemanticMessage::ReasoningShift(_) => None,
             })
             .copied()
             .min()

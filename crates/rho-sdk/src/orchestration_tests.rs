@@ -189,11 +189,7 @@ fn validate_tool_result_pairs(messages: &[Message]) -> Result<(), ProviderError>
 }
 
 fn tool_call(id: &str, name: &str) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    }
+    ToolCall::new(id.into(), name.into(), json!({}))
 }
 
 fn tool_spec(name: &str) -> ToolSpec {

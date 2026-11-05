@@ -12,11 +12,11 @@ use super::*;
 // Owner: SDK context estimation.
 #[test]
 fn estimates_include_every_request_part() {
-    let call = ToolCall {
-        id: "call_1".into(),
-        name: "read_file".into(),
-        arguments: json!({"path": "src/main.rs"}),
-    };
+    let call = ToolCall::new(
+        "call_1".into(),
+        "read_file".into(),
+        json!({"path": "src/main.rs"}),
+    );
     let result = ToolResult::succeeded("call_1", "file contents");
     let identity = ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
     let context = ProviderContextBlock {
@@ -24,6 +24,7 @@ fn estimates_include_every_request_part() {
         kind: "openai_response_output_item".into(),
         position: Some(0),
         data: json!({"type": "reasoning", "encrypted_content": "x".repeat(400)}),
+        replay: crate::model::ReplayScope::ExactModel,
     };
     let replay = Message::assistant(AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],

@@ -451,6 +451,7 @@ fn resumed_snapshot_reports_and_filters_incompatible_provider_context() {
                 kind: "source_native_context".into(),
                 position: None,
                 data: json!({"opaque": true}),
+                replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
             ..AssistantMessage::default()
         })],

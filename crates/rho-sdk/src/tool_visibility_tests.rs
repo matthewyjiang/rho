@@ -53,11 +53,7 @@ async fn calls_use_the_advertised_request_snapshot() {
                 ["visible", "hidden"]
                     .into_iter()
                     .map(|name| {
-                        ContentBlock::ToolCall(ToolCall {
-                            id: name.into(),
-                            name: name.into(),
-                            arguments: json!({}),
-                        })
+                        ContentBlock::ToolCall(ToolCall::new(name.into(), name.into(), json!({})))
                     })
                     .collect(),
             )),

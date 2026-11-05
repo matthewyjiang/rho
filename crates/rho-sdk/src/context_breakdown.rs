@@ -20,10 +20,10 @@ pub enum ContextItem {
     ToolSchema { name: String },
     /// The leading system message, which holds the session system prompt.
     SystemPrompt,
-    /// A later system message in history.
+    /// A later system message in history, or a reasoning-level shift.
     System,
-    /// A user-role message that is not a compaction summary. This includes
-    /// context the host appended as a user message.
+    /// A user message, or host input accepted at a runtime boundary. This
+    /// includes context the host appended as a user message.
     User,
     /// A compaction summary that replaced earlier history.
     CompactionSummary,
@@ -91,11 +91,12 @@ impl ContextBreakdown {
         for (index, message) in history.iter().enumerate() {
             let item = match message.semantic() {
                 SemanticMessage::System(_) if index == 0 => ContextItem::SystemPrompt,
-                SemanticMessage::System(_) => ContextItem::System,
-                SemanticMessage::User(_) if message.as_compaction_summary().is_some() => {
-                    ContextItem::CompactionSummary
+                SemanticMessage::System(_) | SemanticMessage::ReasoningShift(_) => {
+                    ContextItem::System
                 }
-                SemanticMessage::User(_) => ContextItem::User,
+                SemanticMessage::CompactionSummary(_) => ContextItem::CompactionSummary,
+                SemanticMessage::User(_) | SemanticMessage::BoundaryInput(_) => ContextItem::User,
+                SemanticMessage::ModelContext(_) => ContextItem::RequestContext,
                 SemanticMessage::Assistant(content) => {
                     record_calls(&mut call_names, content);
                     ContextItem::Assistant

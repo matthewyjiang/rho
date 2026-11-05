@@ -52,7 +52,7 @@ Context that changes between requests moves the end of every request. Providers 
 
 The Codex adapter tracks the durable conversation prefix separately from trailing model context. Incremental requests send new conversation items plus the current context, so context updates do not force a full replay. Earlier context can remain in the server-side response chain, but the fresh projection supplies the latest state. Pending steering auto-continuations are reused only when the context is unchanged; a changed projection requires replay because the server has already begun generating with the old context. Rewritten conversation history still invalidates continuation. Context accounting calibration is independent of transport continuation reuse.
 
-Construct data messages with `Message::model_context(text)`. Providers and other request readers can recognize them with `Message::as_model_context()`; this is attribution, not authentication. The text is data, not a new user request or a grant of authority.
+Construct data messages with `Message::model_context(text)`, which builds `Message::ModelContext`. Request readers match that variant (or `SemanticMessage::ModelContext`); this is attribution, not authentication. The text is data, not a new user request or a grant of authority. Providers receive it as labelled user-role content through `Message::wire()`.
 
 Request context participates in token estimates and provider calibration. Compactors receive raw history and must reserve the mandatory context's footprint when sizing replacement history; the context source itself is not summarized.
 

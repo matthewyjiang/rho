@@ -68,11 +68,7 @@ fn content(rng: &mut DeterministicRng) -> ContentBlock {
             data: rng.string(48),
             mime_type: rng.string(16),
         }),
-        _ => ContentBlock::ToolCall(ToolCall {
-            id: rng.string(16),
-            name: rng.string(16),
-            arguments: rng.value(),
-        }),
+        _ => ContentBlock::ToolCall(ToolCall::new(rng.string(16), rng.string(16), rng.value())),
     }
 }
 
@@ -95,6 +91,7 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 kind: rng.string(16),
                 position: Some(rng.usize(32)),
                 data: rng.value(),
+                replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
         }),
         4 => Message::AbortedAssistant(Box::new(AbortedAssistant {

@@ -80,11 +80,7 @@ async fn run_fetch_with_tool(
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "fetch-1".into(),
-                    name: FETCH_CONTENT_TOOL.into(),
-                    arguments,
-                },
+                ToolCall::new("fetch-1".into(), FETCH_CONTENT_TOOL.into(), arguments),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

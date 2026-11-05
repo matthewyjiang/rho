@@ -55,11 +55,11 @@ async fn patch_paths_follow_workspace_authorization() {
                     ModelIdentity::new("scripted", "test", "model"),
                     [
                         ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                            ContentBlock::ToolCall(ToolCall {
-                                id: "call-1".into(),
-                                name: "apply_patch".into(),
-                                arguments: json!({"input": input}),
-                            }),
+                            ContentBlock::ToolCall(ToolCall::new(
+                                "call-1".into(),
+                                "apply_patch".into(),
+                                json!({"input": input}),
+                            )),
                         ])),
                         ScriptedTurn::completed(ModelResponse::Assistant(vec![
                             ContentBlock::Text("done".into()),

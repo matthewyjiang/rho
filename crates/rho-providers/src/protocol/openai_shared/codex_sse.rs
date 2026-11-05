@@ -240,7 +240,7 @@ pub(crate) struct CodexSseState {
     /// stream carried no text or function calls yet; skip those keys so
     /// WebSearch / HostedToolActivity are not dual-emitted.
     emitted_activity_keys: BTreeSet<String>,
-    /// Async-call ids already published as `rho.sdk.async_tool_call.v1`.
+    /// Async-call ids already published as [`ModelEvent::ToolCallAccepted`].
     ///
     /// `response.completed` may restate the same `function_call` items that
     /// `output_item.done` already marked.
@@ -510,12 +510,13 @@ fn emit_output_item_replay(
             kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
             position,
             data,
+            replay: crate::model::ReplayScope::ExactModel,
         })?;
     }
     Ok(())
 }
 
-fn emit_async_tool_call_marker(
+fn emit_async_tool_call_accepted(
     item: &serde_json::Value,
     state: &mut CodexSseState,
     on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
@@ -538,10 +539,9 @@ fn emit_async_tool_call_marker(
         return Ok(());
     }
     if let Some(on_event) = on_event.as_mut() {
-        on_event(ModelEvent::ProviderContext {
-            kind: rho_sdk::model::ASYNC_TOOL_CALL_CONTEXT_KIND.into(),
-            position: None,
-            data: serde_json::Value::String(call_id.to_string()),
+        on_event(ModelEvent::ToolCallAccepted {
+            id: call_id.to_string(),
+            execution: rho_sdk::tool::ToolExecutionMode::Async,
         })?;
     }
     Ok(())
@@ -630,11 +630,7 @@ fn extract_codex_function_call(item: &serde_json::Value) -> Result<Option<ToolCa
             "tool call arguments for {name} are not a JSON object"
         )));
     }
-    Ok(Some(ToolCall {
-        id,
-        name,
-        arguments,
-    }))
+    Ok(Some(ToolCall::new(id, name, arguments)))
 }
 
 pub(crate) fn handle_codex_sse_line(
@@ -833,7 +829,7 @@ pub(crate) fn handle_codex_sse_value(
                     })?;
                 }
             }
-            emit_async_tool_call_marker(item, state, on_event)?;
+            emit_async_tool_call_accepted(item, state, on_event)?;
             state.tool_calls.push(call);
         }
     } else if event_type == "response.created" {
@@ -882,7 +878,7 @@ pub(crate) fn handle_codex_sse_value(
             for item in output {
                 emit_codex_search_activity(item, state, on_event)?;
                 emit_image_generation_activity(item, state, on_event)?;
-                emit_async_tool_call_marker(item, state, on_event)?;
+                emit_async_tool_call_accepted(item, state, on_event)?;
                 if codex_output_item_was_processed(state, item) {
                     continue;
                 }

@@ -74,6 +74,7 @@ fn native_history(payloads: &[&str]) -> Vec<Message> {
                     kind: "openai_response_output_item".into(),
                     position: None,
                     data: serde_json::json!({"type": "message", "id": payload}),
+                    replay: rho_sdk::model::ReplayScope::ExactModel,
                 }],
                 ..AssistantMessage::default()
             }))

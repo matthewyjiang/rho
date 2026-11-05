@@ -131,11 +131,7 @@ async fn classifies_max_steps_stop_without_cli_flag_context() {
         .provider(ScriptedProvider::new(
             ModelIdentity::new("test", "test", "max-steps-terminal"),
             [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-1".into(),
-                    name: "noop".into(),
-                    arguments: json!({}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new("call-1".into(), "noop".into(), json!({}))),
             ]))],
         ))
         .tool(ScriptedTool::new(
@@ -407,11 +403,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         ModelIdentity::new("test", "test", "automation-compaction"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "expand_context".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("call-1".into(), "expand_context".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "compact summary".into(),
@@ -482,12 +474,12 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     let summary = requests[2]
         .messages
         .iter()
-        .find_map(Message::as_compaction_summary)
+        .find_map(|message| match message {
+            Message::CompactionSummary(summary) => Some(summary),
+            _ => None,
+        })
         .expect("compacted history carries a typed summary");
-    assert_eq!(
-        summary.trigger(),
-        Some(rho_sdk::CompactionTrigger::Automatic)
-    );
+    assert_eq!(summary.trigger, Some(rho_sdk::CompactionTrigger::Automatic));
     runtime.shutdown();
 }
 
@@ -507,11 +499,11 @@ fn assistant_calls(calls: &[(&str, &str, &str)]) -> ModelResponse {
         calls
             .iter()
             .map(|(id, name, key)| {
-                ContentBlock::ToolCall(ToolCall {
-                    id: (*id).into(),
-                    name: (*name).into(),
-                    arguments: json!({ "key": key }),
-                })
+                ContentBlock::ToolCall(ToolCall::new(
+                    (*id).into(),
+                    (*name).into(),
+                    json!({ "key": key }),
+                ))
             })
             .collect(),
     )

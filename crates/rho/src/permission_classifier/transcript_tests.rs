@@ -39,11 +39,11 @@ fn questionnaire_answers_are_paired_with_the_completed_question() {
         };
         let result = Message::ToolResult(ToolResult::new(result_id, status, content));
         let history = vec![
-            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                id: "ask".into(),
-                name: tool_name.into(),
-                arguments: serde_json::json!({"questions": [{"question": question, "type": "confirm"}]}),
-            })]),
+            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+                "ask".into(),
+                tool_name.into(),
+                serde_json::json!({"questions": [{"question": question, "type": "confirm"}]}),
+            ))]),
             result.clone(),
             result,
         ];
@@ -87,20 +87,20 @@ fn sample_history() -> Vec<Message> {
         Message::User(vec![ContentBlock::Text("please update the config".into())]),
         Message::Assistant(vec![
             ContentBlock::Text("I'll inspect the file first.".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "config.toml"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "read_file".into(),
+                serde_json::json!({"path": "config.toml"}),
+            )),
         ]),
         Message::assistant(AssistantMessage {
             content: vec![
                 ContentBlock::Text("Checking write access.".into()),
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-2".into(),
-                    name: "write".into(),
-                    arguments: serde_json::json!({"path": "config.toml", "content": "x=1"}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-2".into(),
+                    "write".into(),
+                    serde_json::json!({"path": "config.toml", "content": "x=1"}),
+                )),
             ],
             reasoning_summary: Some("planning a safe edit".into()),
             ..AssistantMessage::default()
@@ -197,11 +197,11 @@ fn transcript_appends_pending_capability_details_at_end() {
 #[test]
 fn batched_sections_name_the_call_behind_each_request() {
     let write = |id: &str, content: &str| {
-        ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "write".into(),
-            arguments: serde_json::json!({"path": "a", "content": content}),
-        })
+        ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "write".into(),
+            serde_json::json!({"path": "a", "content": content}),
+        ))
     };
     let history = vec![Message::Assistant(vec![
         write("w1", "safe"),
@@ -278,11 +278,11 @@ fn untrusted_newlines_and_labels_cannot_forge_transcript_records() {
 fn budget_drops_completed_calls_but_keeps_authorization_evidence() {
     let long = "x".repeat(COMPLETED_CALL_STRING_CAP_CHARS + 7);
     let call = |id: &str, name: &str, arguments| {
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: name.into(),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            name.into(),
             arguments,
-        })])
+        ))])
     };
     let result = |id: &str, content: &str| Message::ToolResult(ToolResult::succeeded(id, content));
     let history = vec![
@@ -387,11 +387,11 @@ fn call_lifecycle_decides_which_arguments_stay_whole() {
     let long = "x".repeat(COMPLETED_CALL_STRING_CAP_CHARS + 1);
     let capped = format!("{}…[+1 chars]", &long[..COMPLETED_CALL_STRING_CAP_CHARS]);
     let call = |id: &str| {
-        ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "bash".into(),
-            arguments: serde_json::json!({ "command": long }),
-        })
+        ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "bash".into(),
+            serde_json::json!({ "command": long }),
+        ))
     };
     let answered = |id: &str| Message::ToolResult(ToolResult::succeeded(id, "done"));
     let aborted = |id: &str| {
@@ -469,11 +469,11 @@ fn call_lifecycle_decides_which_arguments_stay_whole() {
 #[test]
 fn duplicate_results_cannot_answer_an_aborted_questionnaire() {
     let ask = |question: &str| {
-        ContentBlock::ToolCall(ToolCall {
-            id: "call_0".into(),
-            name: "questionnaire".into(),
-            arguments: serde_json::json!({"questions": [{"question": question, "type": "confirm"}]}),
-        })
+        ContentBlock::ToolCall(ToolCall::new(
+            "call_0".into(),
+            "questionnaire".into(),
+            serde_json::json!({"questions": [{"question": question, "type": "confirm"}]}),
+        ))
     };
     let yes = Message::ToolResult(ToolResult::succeeded(
         "call_0",

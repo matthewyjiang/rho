@@ -48,11 +48,11 @@ mod unix {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "shell-1".into(),
-                        name: "bash".into(),
-                        arguments: json!({"command": command, "timeout_seconds": 9}),
-                    },
+                    ToolCall::new(
+                        "shell-1".into(),
+                        "bash".into(),
+                        json!({"command": command, "timeout_seconds": 9}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -196,11 +196,11 @@ mod unix {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "shell-1".into(),
-                        name: "bash".into(),
-                        arguments: json!({ "command": command }),
-                    },
+                    ToolCall::new(
+                        "shell-1".into(),
+                        "bash".into(),
+                        json!({ "command": command }),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -393,11 +393,11 @@ mod unix {
                 ModelIdentity::new("scripted", "test", "model"),
                 [
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                        ContentBlock::ToolCall(ToolCall {
-                            id: "shell-1".into(),
-                            name: "bash".into(),
-                            arguments: json!({ "command": &command }),
-                        }),
+                        ContentBlock::ToolCall(ToolCall::new(
+                            "shell-1".into(),
+                            "bash".into(),
+                            json!({ "command": &command }),
+                        )),
                     ])),
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                         "done".into(),

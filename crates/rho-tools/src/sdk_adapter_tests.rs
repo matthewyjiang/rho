@@ -207,11 +207,11 @@ async fn allowed_policy_reads_and_reports_metadata() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "read_file".into(),
-                        arguments: json!({"path": "note.txt", "offset": 1, "limit": 1}),
-                    },
+                    ToolCall::new(
+                        "call-1".into(),
+                        "read_file".into(),
+                        json!({"path": "note.txt", "offset": 1, "limit": 1}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -273,11 +273,11 @@ async fn read_file_image_reaches_the_next_model_request() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "read_file".into(),
-                    arguments: json!({"path": "red.png"}),
-                },
+                ToolCall::new(
+                    "call-1".into(),
+                    "read_file".into(),
+                    json!({"path": "red.png"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "red".into(),
@@ -328,11 +328,11 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "write".into(),
-                        arguments: json!({"path": "nested/out.txt", "content": "created"}),
-                    },
+                    ToolCall::new(
+                        "call-1".into(),
+                        "write".into(),
+                        json!({"path": "nested/out.txt", "content": "created"}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "wrote".into(),
@@ -400,11 +400,11 @@ async fn write_only_policy_cannot_diff_existing_file_contents() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "write".into(),
-                        arguments: json!({"path": "secret.txt", "content": "new secret"}),
-                    },
+                    ToolCall::new(
+                        "call-1".into(),
+                        "write".into(),
+                        json!({"path": "secret.txt", "content": "new secret"}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "blocked".into(),
@@ -519,11 +519,11 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
                 ModelIdentity::new("scripted", "test", "model"),
                 [
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                        ContentBlock::ToolCall(ToolCall {
-                            id: "call-1".into(),
-                            name: name.into(),
+                        ContentBlock::ToolCall(ToolCall::new(
+                            "call-1".into(),
+                            name.into(),
                             arguments,
-                        }),
+                        )),
                     ])),
                     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                         "done".into(),
@@ -582,13 +582,13 @@ async fn apply_patch_upgrades_cached_path_validation_for_symlink_delete() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "call-1".into(),
-                        name: "apply_patch".into(),
-                        arguments: json!({
+                    ToolCall::new(
+                        "call-1".into(),
+                        "apply_patch".into(),
+                        json!({
                             "input": "*** Begin Patch\n*** Update File: alias.txt\n@@\n-keep\n+changed\n*** Delete File: alias.txt\n*** End Patch"
                         }),
-                    },
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),

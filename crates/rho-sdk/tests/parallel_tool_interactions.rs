@@ -63,11 +63,11 @@ async fn next_started(receiver: &mut mpsc::UnboundedReceiver<String>) -> String 
 }
 
 fn call(id: &str, name: &str, key: &str, resource: &str) -> ContentBlock {
-    ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({"key": key, "resource": resource}),
-    })
+    ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
+        json!({"key": key, "resource": resource}),
+    ))
 }
 
 fn provider(calls: Vec<ContentBlock>) -> ScriptedProvider {

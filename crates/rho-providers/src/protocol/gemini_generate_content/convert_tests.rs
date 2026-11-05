@@ -17,11 +17,11 @@ fn request_maps_system_tools_results_and_thought_signatures() {
         Message::System("be concise".into()),
         Message::user_text("run it"),
         Message::assistant(AssistantMessage {
-            content: vec![ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: json!({"command":"pwd"}),
-            })],
+            content: vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                json!({"command":"pwd"}),
+            ))],
             provenance: Some(identity.clone()),
             provider_context: vec![
                 ProviderContextBlock {
@@ -37,6 +37,7 @@ fn request_maps_system_tools_results_and_thought_signatures() {
                         thought_signature: Some("thought-signature".into()),
                     })
                     .unwrap(),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
                 ProviderContextBlock {
                     identity: identity.clone(),
@@ -51,12 +52,14 @@ fn request_maps_system_tools_results_and_thought_signatures() {
                         thought_signature: Some("signature-only".into()),
                     })
                     .unwrap(),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
                 ProviderContextBlock {
                     identity: identity.clone(),
                     kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                     position: Some(0),
                     data: json!("opaque-signature"),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
             ],
             ..AssistantMessage::default()
@@ -119,16 +122,16 @@ fn parallel_tool_results_share_one_user_content() {
     let messages = vec![
         Message::user_text("run both"),
         Message::Assistant(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: json!({"command":"pwd"}),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-2".into(),
-                name: "read_file".into(),
-                arguments: json!({"path":"README.md"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                json!({"command":"pwd"}),
+            )),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-2".into(),
+                "read_file".into(),
+                json!({"path":"README.md"}),
+            )),
         ]),
         Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
         Message::ToolResult(ToolResult::succeeded("call-2", "readme")),
@@ -200,11 +203,13 @@ fn missing_function_call_ids_stay_local_and_replay_as_absent() {
                 kind,
                 position,
                 data,
+                ..
             } => Some(ProviderContextBlock {
                 identity: identity.clone(),
                 kind,
                 position,
                 data,
+                replay: crate::model::ReplayScope::ExactModel,
             }),
             _ => None,
         })
@@ -275,6 +280,7 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
                 kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                 position: Some(0),
                 data: json!("opaque-signature"),
+                replay: crate::model::ReplayScope::ExactModel,
             }],
             tool_calls: vec![crate::model::PartialToolCall {
                 id: Some("call-1".into()),
@@ -319,12 +325,14 @@ fn aborted_parallel_tool_calls_keep_stream_order_not_id_order() {
                     kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                     position: Some(0),
                     data: json!("sig-z"),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
                 ProviderContextBlock {
                     identity: identity.clone(),
                     kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                     position: Some(1),
                     data: json!("sig-a"),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
             ],
             // Stream order is z then a; lexical ID order is the opposite.
@@ -397,11 +405,11 @@ fn aborted_mixed_tool_and_text_keeps_signature_targets() {
         Message::AbortedAssistant(Box::new(crate::model::AbortedAssistant {
             // Cancellation capture now stores tool calls in content at stream positions.
             content: vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: "call-1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command":"pwd"}),
-                }),
+                ContentBlock::ToolCall(ToolCall::new(
+                    "call-1".into(),
+                    "bash".into(),
+                    json!({"command":"pwd"}),
+                )),
                 ContentBlock::Text("done".into()),
             ],
             provenance: Some(identity.clone()),
@@ -411,12 +419,14 @@ fn aborted_mixed_tool_and_text_keeps_signature_targets() {
                     kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                     position: Some(0),
                     data: json!("sig-call"),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
                 ProviderContextBlock {
                     identity: identity.clone(),
                     kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                     position: Some(1),
                     data: json!("sig-text"),
+                    replay: crate::model::ReplayScope::ExactModel,
                 },
             ],
             ..crate::model::AbortedAssistant::default()
@@ -450,6 +460,7 @@ fn aborted_signed_text_keeps_nonzero_signature_position() {
                 kind: THOUGHT_SIGNATURE_CONTEXT.into(),
                 position: Some(1),
                 data: json!("sig-world"),
+                replay: crate::model::ReplayScope::ExactModel,
             }],
             ..crate::model::AbortedAssistant::default()
         })),
@@ -500,8 +511,7 @@ fn signed_text_parts_are_not_merged_with_neighbors() {
         crate::model::ModelEvent::ProviderContext {
             kind,
             position: Some(1),
-            data,
-        } if kind == THOUGHT_SIGNATURE_CONTEXT && data == "sig-1"
+            data, .. } if kind == THOUGHT_SIGNATURE_CONTEXT && data == "sig-1"
     )));
 }
 
@@ -676,7 +686,9 @@ fn max_tokens_finish_reports_a_truncated_turn() {
             .apply(
                 response,
                 Some(&mut |event: crate::model::ModelEvent| {
-                    stops.extend(event.as_stop_reason());
+                    if let crate::model::ModelEvent::Stopped(reason) = event {
+                        stops.push(reason);
+                    }
                     Ok(())
                 }),
             )

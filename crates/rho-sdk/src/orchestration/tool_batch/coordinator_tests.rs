@@ -37,11 +37,7 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
     .await;
     completion_observed.await.unwrap();
     let mut batch = [BatchCall {
-        call: ToolCall {
-            id: "completed".into(),
-            name: "test".into(),
-            arguments: serde_json::json!({}),
-        },
+        call: ToolCall::new("completed".into(), "test".into(), serde_json::json!({})),
         id: ToolCallId::from_string("completed").unwrap(),
         state: CallState::Running(forwarded),
         progress: None,

@@ -176,11 +176,7 @@ fn probe_turns(count: usize) -> Vec<ScriptedTurn> {
         .flat_map(|index| {
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: format!("call-{index}"),
-                        name: PROBE.into(),
-                        arguments: serde_json::json!({}),
-                    },
+                    ToolCall::new(format!("call-{index}"), PROBE.into(), serde_json::json!({})),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),
@@ -283,11 +279,11 @@ async fn mode_change_during_a_turn_waits_and_applies_to_the_next_prompt() {
             Arc::new(WriteProbe),
         ]));
         let mut turns = vec![ScriptedTurn::completed(ModelResponse::Assistant(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "hold".into(),
-                name: HOLD.into(),
-                arguments: serde_json::json!({}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "hold".into(),
+                HOLD.into(),
+                serde_json::json!({}),
+            )),
         ]))];
         // A released tool hands its result back to the model; a cancelled
         // turn ends without another request.

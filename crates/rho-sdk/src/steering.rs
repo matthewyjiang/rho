@@ -199,7 +199,11 @@ fn user_blocks(message: &Message) -> Vec<ContentBlock> {
         | Message::Assistant(_)
         | Message::EnrichedAssistant(_)
         | Message::AbortedAssistant(_)
-        | Message::ToolResult(_) => Vec::new(),
+        | Message::ToolResult(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
+        | Message::BoundaryInput(_)
+        | Message::ReasoningShift(_) => Vec::new(),
     }
 }
 

@@ -23,10 +23,7 @@ use rho_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{
-    history_message::HistoryMessage,
-    session::replay_points::{self, HistorySegment},
-};
+use crate::session::replay_points::{self, HistorySegment};
 
 /// Workspace root every fixture case runs in.
 pub(super) const FIXTURE_WORKSPACE: &str = "/workspace";
@@ -115,15 +112,8 @@ pub(super) fn replay_cases(
     for (segment_index, segment) in segments.iter().enumerate() {
         let history = &segment.messages;
         for (index, message) in history.iter().enumerate().skip(segment.new_from) {
-            let blocks = match HistoryMessage::of(message) {
-                HistoryMessage::Assistant(blocks) => blocks,
-                HistoryMessage::EnrichedAssistant(assistant) => assistant.content.as_slice(),
-                HistoryMessage::AbortedAssistant(_)
-                | HistoryMessage::System(_)
-                | HistoryMessage::User(_)
-                | HistoryMessage::ChecklistRestatement(_)
-                | HistoryMessage::CompactionSummary(_)
-                | HistoryMessage::ToolResult(_) => continue,
+            let Some(blocks) = message.completed_assistant_content() else {
+                continue;
             };
             for block in blocks {
                 let ContentBlock::ToolCall(call) = block else {
@@ -290,11 +280,9 @@ impl FixtureCase {
             .map(FixtureEntry::into_message)
             .collect();
         let (name, arguments, capability, summary) = self.pending.into_request(&workspace);
-        history.push(Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: FIXTURE_PENDING_CALL_ID.into(),
-            name: name.into(),
-            arguments,
-        })]));
+        history.push(Message::Assistant(vec![ContentBlock::ToolCall(
+            ToolCall::new(FIXTURE_PENDING_CALL_ID.into(), name.into(), arguments),
+        )]));
         EvalCase {
             id: self.id,
             source: CaseSource::Fixture,
@@ -340,11 +328,9 @@ impl FixtureEntry {
                 id,
                 name,
                 arguments,
-            } => Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                id,
-                name,
-                arguments,
-            })]),
+            } => Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+                id, name, arguments,
+            ))]),
             Self::Result { id, content, ok } => {
                 let status = if ok {
                     rho_sdk::model::ToolResultStatus::Succeeded

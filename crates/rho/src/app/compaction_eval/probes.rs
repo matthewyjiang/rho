@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use rho_sdk::model::{ContentBlock, Message, ToolCall, ToolResult};
+use rho_sdk::model::{ContentBlock, Message, SemanticMessage, ToolCall, ToolResult};
 use serde::Serialize;
 
 use crate::history_message::HistoryMessage;
@@ -131,7 +131,7 @@ pub(super) fn references(history: &[Message]) -> BTreeMap<Probe, Reference> {
     let requests = history
         .iter()
         .filter_map(|message| match HistoryMessage::of(message) {
-            HistoryMessage::User(blocks) => Some(text_of(blocks)),
+            HistoryMessage::Semantic(SemanticMessage::User(blocks)) => Some(text_of(blocks)),
             _ => None,
         })
         .filter(|text| !text.trim().is_empty() && !is_host_context(text))

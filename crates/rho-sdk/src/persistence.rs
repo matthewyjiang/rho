@@ -9,8 +9,10 @@ use crate::{
 
 /// Oldest portable session snapshot schema accepted by this SDK.
 pub const MIN_SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-/// Current portable session snapshot schema.
-pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+/// Current portable session snapshot schema. Version 3 (rho-sdk 6.0) stores
+/// typed history entries and tool-result status, so older SDKs reject it with
+/// this version instead of failing on an unknown message variant.
+pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// Versioned, portable state required to continue an SDK session.
 ///

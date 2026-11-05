@@ -38,11 +38,11 @@ async fn search_runtime(storage: StoredSession) -> (InteractiveRuntime, Scripted
         interactive.provider_identity(),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "search".into(),
-                    name: "tool_search".into(),
-                    arguments: json!({"query": MCP_TOOL}),
-                },
+                ToolCall::new(
+                    "search".into(),
+                    "tool_search".into(),
+                    json!({"query": MCP_TOOL}),
+                ),
             )])),
             text(),
             text(),

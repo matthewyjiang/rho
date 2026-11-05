@@ -120,21 +120,21 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
     let history = vec![
         Message::System("system".into()),
         Message::user_text("build the thing"),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-old".into(),
-            name: "read_file".into(),
-            arguments: json!({"path": payload}),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-old".into(),
+            "read_file".into(),
+            json!({"path": payload}),
+        ))]),
         Message::ToolResult(ToolResult::failed(
             "call-old",
             format!("missing\n{payload}"),
         )),
         Message::assistant(AssistantMessage::from_content(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-new".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "true"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-new".into(),
+                "bash".into(),
+                json!({"command": "true"}),
+            )),
         ])),
     ];
     let request =
@@ -164,11 +164,11 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
             "call-lost",
             format!("missing file\n{payload}"),
         )),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-new".into(),
-            name: "bash".into(),
-            arguments: json!({"command": "true"}),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-new".into(),
+            "bash".into(),
+            json!({"command": "true"}),
+        ))]),
     ];
     let result_request = build_session_summary_request(
         &result_history,
@@ -278,30 +278,30 @@ fn summary_transcript_renders_tool_calls_and_results_as_text() {
     let messages = vec![
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::Text("reading".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "read_file".into(),
-                arguments: json!({"path": "src/a.rs", "offset": 1}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "read_file".into(),
+                json!({"path": "src/a.rs", "offset": 1}),
+            )),
             ContentBlock::Image(ImageContent {
                 mime_type: "image/png".into(),
                 data: image_bytes.into(),
             }),
         ])),
         Message::ToolResult(ToolResult::succeeded("call-1", body)),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-elided".into(),
-            name: "read_file".into(),
-            arguments: json!({"path": "src/a.rs"}),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-elided".into(),
+            "read_file".into(),
+            json!({"path": "src/a.rs"}),
+        ))]),
         Message::ToolResult(ToolResult::succeeded("call-elided", stub)),
         Message::ToolResult(ToolResult::failed("call-missing", "boom\n")),
         Message::assistant(AssistantMessage::from_content(vec![
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "true"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                json!({"command": "true"}),
+            )),
         ])),
         Message::ToolResult(ToolResult::succeeded("call-1", "ran\n")),
     ];

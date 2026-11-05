@@ -19,10 +19,7 @@ use super::cases::{
     replay_request, spread_evenly, CaseSource, Decision, FixtureEntry, FixturePending,
     FIXTURE_WORKSPACE,
 };
-use crate::{
-    history_message::HistoryMessage,
-    session::replay_points::{self, HistorySegment},
-};
+use crate::session::replay_points::{self, HistorySegment};
 
 /// Requests made at once, with the history they share.
 #[derive(Debug)]
@@ -112,15 +109,8 @@ pub(super) fn replay_batches(
     for (segment_index, segment) in segments.iter().enumerate() {
         let history = &segment.messages;
         for (index, message) in history.iter().enumerate().skip(segment.new_from) {
-            let blocks = match HistoryMessage::of(message) {
-                HistoryMessage::Assistant(blocks) => blocks,
-                HistoryMessage::EnrichedAssistant(assistant) => assistant.content.as_slice(),
-                HistoryMessage::AbortedAssistant(_)
-                | HistoryMessage::System(_)
-                | HistoryMessage::User(_)
-                | HistoryMessage::ChecklistRestatement(_)
-                | HistoryMessage::CompactionSummary(_)
-                | HistoryMessage::ToolResult(_) => continue,
+            let Some(blocks) = message.completed_assistant_content() else {
+                continue;
             };
             let members: Vec<EvalMember> = blocks
                 .iter()
@@ -203,11 +193,11 @@ impl FixtureBatch {
                     member.pending.into_request(&workspace);
                 // Prefixed so a member ID cannot collide with a history call.
                 let call_id = format!("pending-{}", member.id);
-                calls.push(ContentBlock::ToolCall(ToolCall {
-                    id: call_id.clone(),
-                    name: name.into(),
+                calls.push(ContentBlock::ToolCall(ToolCall::new(
+                    call_id.clone(),
+                    name.into(),
                     arguments,
-                }));
+                )));
                 EvalMember {
                     id: member.id,
                     label: Some(member.label),

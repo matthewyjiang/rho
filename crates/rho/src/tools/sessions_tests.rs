@@ -32,11 +32,11 @@ async fn archive_access_is_authorized_before_search_execution() {
             ModelIdentity::new("scripted", "test", "model"),
             [
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                    ToolCall {
-                        id: "search".into(),
-                        name: "sessions".into(),
-                        arguments: json!({"action":"search","query":"permissionneedle"}),
-                    },
+                    ToolCall::new(
+                        "search".into(),
+                        "sessions".into(),
+                        json!({"action":"search","query":"permissionneedle"}),
+                    ),
                 )])),
                 ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "done".into(),

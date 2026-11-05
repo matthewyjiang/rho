@@ -47,11 +47,11 @@ fn finished_card_is_the_script() {
     use crate::app::interactive_presenter::InteractiveToolPresenter;
     use rho_sdk::{model::ToolCall, tool::ToolOutput, ToolCallId, ToolCompletion};
 
-    let call = ToolCall {
-        id: "script-call".into(),
-        name: "codemode".into(),
-        arguments: json!({"script": "a = 1\nresult = a"}),
-    };
+    let call = ToolCall::new(
+        "script-call".into(),
+        "codemode".into(),
+        json!({"script": "a = 1\nresult = a"}),
+    );
     let script = ["a = 1", "result = a"];
     let mut presenter = InteractiveToolPresenter::new(".".into(), Default::default());
     presenter.proposed(call.clone());

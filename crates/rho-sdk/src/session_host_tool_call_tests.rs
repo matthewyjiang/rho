@@ -32,11 +32,7 @@ fn spec(name: &str) -> ToolSpec {
 }
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    }
+    ToolCall::new(id.into(), name.into(), arguments)
 }
 
 fn done_provider() -> ScriptedProvider {
