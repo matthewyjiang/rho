@@ -312,3 +312,50 @@ fn logout_forgets_a_keyless_ollama_login() {
         "new sessions need a sign-in after logout",
     );
 }
+
+// Covers: an Ollama login recorded after `rho acp` started (another process,
+// or ACP sign-in) is honored by the next session, built against the API base
+// that login chose rather than the built-in default.
+// Owner: ACP session build from the on-disk Ollama login record.
+#[test]
+fn a_later_ollama_login_builds_against_its_recorded_endpoint() {
+    let fixture = MockProviderHome::new(&Arc::new(Mutex::new(FIRST_KEY.to_owned())));
+    let config_path = fixture.home.path().join("config.toml");
+    let mock_config = std::fs::read_to_string(&config_path).unwrap();
+    let base_url = mock_config
+        .lines()
+        .find_map(|line| line.strip_prefix("base_url = "))
+        .unwrap()
+        .to_owned();
+    let without_login = mock_config
+        .replace(
+            "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"",
+            "provider = \"ollama\"\nmodel = \"mock-model\"\nauth = \"ollama-api-key\"",
+        )
+        .replace(
+            &format!("[providers.custom.mock]\nbase_url = {base_url}\n"),
+            "",
+        );
+    std::fs::write(&config_path, &without_login).unwrap();
+    fixture
+        .store
+        .set_secret(rho_providers::provider::OLLAMA_API_KEY_ACCOUNT, FIRST_KEY)
+        .unwrap();
+    let (mut server, _) = fixture.server_with_args(&["acp"]);
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "a key alone is not an Ollama login",
+    );
+
+    std::fs::write(
+        &config_path,
+        format!("{without_login}\n[providers.ollama]\nbase_url = {base_url}\n"),
+    )
+    .unwrap();
+    let (session, _) = server.request("session/new", fixture.new_session());
+    let session_id = session.expect("the recorded login opens sessions")["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(server.prompt(&session_id, "hi"), "answered");
+}

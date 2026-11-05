@@ -498,7 +498,7 @@ async fn mode_config_option_switches_the_permission_mode() {
         |value: &str| SetSessionConfigOptionRequest::new(session_id.clone(), "mode", value);
 
     let response = host
-        .set_config_option(request("plan"), &config)
+        .set_config_option(request("plan"), &config, &home.path().join("config.toml"))
         .await
         .unwrap();
     let mode = response
@@ -513,7 +513,7 @@ async fn mode_config_option_switches_the_permission_mode() {
     assert_eq!(host.permission.mode, PermissionMode::Plan);
 
     let error = host
-        .set_config_option(request("yolo"), &config)
+        .set_config_option(request("yolo"), &config, &home.path().join("config.toml"))
         .await
         .expect_err("unknown mode");
     assert_eq!(error.code, ErrorCode::InvalidParams);

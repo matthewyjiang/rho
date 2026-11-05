@@ -435,7 +435,9 @@ impl RhoAcpAgent {
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         let session_id = request.session_id.clone();
         let mut host = self.lock_settings_host(&session_id).await?;
-        let result = host.set_config_option(request, &self.startup.config).await;
+        let result = host
+            .set_config_option(request, &self.startup.config, &self.startup.config_path)
+            .await;
         host.refresh_advertisements(&self.startup.config, port)
             .await;
         result

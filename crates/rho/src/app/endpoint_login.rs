@@ -4,26 +4,36 @@
 //! login path records it and every logout path forgets it, so this module is
 //! the one place the TUI, `rho login`, and ACP change it.
 
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use rho_providers::provider::ProviderDescriptor;
 
 use super::config_repository::ConfigRepository;
+use crate::config::Config;
 
-/// Refuses a session on `provider` when the config at `config_path` records
-/// no login to it. Reads the file rather than a loaded snapshot, so a
-/// logout or login since startup (another process, an ACP `logout`) counts
-/// the way a deleted or saved key does. The refusal is a missing credential.
-pub(crate) fn require(config_path: &Path, provider: &str) -> anyhow::Result<()> {
-    let needs_login = rho_providers::provider::provider_descriptor(provider)
+/// `config` with the login record of its provider taken from the config
+/// file at `config_path`, for building that provider. Refuses, as a missing
+/// credential, when the file records no login.
+///
+/// A long-lived process (ACP, a TUI session) holds config loaded at startup,
+/// but a logout or login since then (an ACP `logout`, another process)
+/// changes the file. Reading it here makes that count the way a deleted or
+/// saved key does, and builds against the endpoint the login chose. Other
+/// providers, and every other setting, keep `config` as given.
+pub(crate) fn with_disk_login<'a>(
+    config: &'a Config,
+    config_path: &Path,
+) -> anyhow::Result<Cow<'a, Config>> {
+    let needs_login = rho_providers::provider::provider_descriptor(&config.provider)
         .is_some_and(|descriptor| descriptor.collects_login_endpoint());
-    if needs_login {
-        ConfigRepository::new(Some(config_path.to_path_buf()))
-            .load()?
-            .providers
-            .require_endpoint_login(provider)?;
+    if !needs_login {
+        return Ok(Cow::Borrowed(config));
     }
-    Ok(())
+    let on_disk = ConfigRepository::new(Some(config_path.to_path_buf())).load()?;
+    let mut config = config.clone();
+    config.providers.ollama = on_disk.providers.ollama;
+    config.providers.require_endpoint_login(&config.provider)?;
+    Ok(Cow::Owned(config))
 }
 
 /// Records a finished login to a host logged in through its endpoint, at
