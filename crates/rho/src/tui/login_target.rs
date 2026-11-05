@@ -19,7 +19,7 @@ pub(super) fn external_login_methods() -> [ExternalLoginMethod; 3] {
             value: CLAUDE_CODE_TARGET,
             aliases: &[],
             name: "Claude Code",
-            detail: "Uses the claude CLI, not Anthropic API billing. \
+            detail: "Uses Claude Code through claude-agent-acp, not Anthropic API billing. \
 Claude Code manages credentials, not Rho.",
         },
         ExternalLoginMethod {
@@ -66,7 +66,7 @@ impl ExternalLoginMethod {
 /// Parsed once at each command or picker boundary so the provider flows never
 /// re-sniff for an external runtime.
 pub(super) enum SignInTarget {
-    /// Claude Code, whose credential the `claude` binary owns.
+    /// Claude Code, which owns its credential.
     ClaudeCode,
     /// Cursor Agent CLI, whose credential `cursor-agent` owns.
     Cursor,

@@ -341,7 +341,7 @@ async fn consult_advisor(
     }
 }
 
-/// Runs the advisor on the Claude Code CLI.
+/// Runs the advisor on Claude Code, over `claude-agent-acp`.
 ///
 /// Same contract as the Rho path: one turn, no tools, guidance text back. The
 /// call bills to the user's Claude subscription, so the cost Claude reports
@@ -369,11 +369,12 @@ async fn consult_advisor_with_claude_cli(
     );
     let forward_progress = forward_advisor_progress(updates_rx, progress);
     let (result, ()) = tokio::join!(started, forward_progress);
-    let result = result.map_err(|error| {
-        if error == crate::claude_runtime::one_shot::CANCELLATION_ERROR {
+    let result = result.map_err(|error| match error {
+        crate::acp_runtime::one_shot::OneShotError::Cancelled => {
             execution_error("the advisor request was cancelled")
-        } else {
-            execution_error(format!("the advisor request failed: {error}"))
+        }
+        crate::acp_runtime::one_shot::OneShotError::Failed(detail) => {
+            execution_error(format!("the advisor request failed: {detail}"))
         }
     })?;
     Ok((result.text, result.usage))

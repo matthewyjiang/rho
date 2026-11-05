@@ -67,6 +67,7 @@ pub(crate) struct Script {
 #[serde(tag = "step", rename_all = "snake_case")]
 pub(crate) enum Step {
     Update {
+        #[serde(deserialize_with = "update_from_value")]
         update: Box<SessionUpdate>,
     },
     Permission {
@@ -94,6 +95,17 @@ pub(crate) enum Step {
     BeforeQueued {
         update: Box<SessionUpdate>,
     },
+}
+
+/// Parse an update the way the wire does. Inside the internally tagged
+/// [`Step`], serde buffers the nested internally tagged `SessionUpdate`, and
+/// the schema's default-on-error fields (such as `usage_update.cost`) then
+/// silently drop.
+fn update_from_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Box<SessionUpdate>, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 /// Whole wire requests/replies, without assertions embedded in the fake.

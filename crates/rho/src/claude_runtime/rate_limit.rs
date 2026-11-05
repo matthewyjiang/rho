@@ -512,7 +512,7 @@ impl RateLimitRecorder for ClaudeRateLimitRecorder {
     fn notice(&self, info: &RateLimitInfo) -> Option<String> {
         Some(format!(
             "claude limits: {}",
-            super::stream::describe_rate_limit(info)
+            super::rate_limit_display::describe_rate_limit(info)
         ))
     }
 

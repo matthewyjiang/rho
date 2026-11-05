@@ -78,7 +78,7 @@ impl App {
                     CONFIRM_LOGOUT_VALUE,
                     '2',
                     "Sign out everywhere",
-                    "Run claude auth logout for this machine",
+                    "Sign Claude Code out on this machine",
                 )
                 .with_alternate_shortcut('s'),
             ],
@@ -124,10 +124,10 @@ impl App {
         match auth::query().await {
             Ok(status) if !status.logged_in => {
                 let mut notice =
-                    "claude code: signed out everywhere the claude binary is used".to_string();
+                    "claude code: signed out everywhere Claude Code is used".to_string();
                 if let Err(error) = &logout_result {
                     notice.push_str(&format!(
-                        "\nclaude auth logout also reported: {}",
+                        "\nclaude code sign-out also reported: {}",
                         error.sanitized_detail()
                     ));
                 }
@@ -136,7 +136,7 @@ impl App {
             }
             Ok(status) => {
                 let mut message = format!(
-                    "claude auth logout finished, but status still reports signed in ({})",
+                    "claude code sign-out finished, but status still reports signed in ({})",
                     status.describe()
                 );
                 if let Err(error) = &logout_result {
@@ -147,7 +147,7 @@ impl App {
             }
             Err(error) => {
                 let mut message =
-                    format!("claude auth logout finished, but status could not be read: {error}");
+                    format!("claude code sign-out finished, but status could not be read: {error}");
                 if let Err(child) = &logout_result {
                     message.push_str(&format!("\nchild detail: {}", child.sanitized_detail()));
                 } else if let Some(excerpt) = error.stderr_excerpt() {
@@ -165,7 +165,7 @@ impl App {
     fn prompt_claude_code_login(&mut self) {
         let choice = InlineChoice::new(
             "Hand the terminal to Claude Code?",
-            "Rho will suspend and run `claude auth login --claudeai`. \
+            "Rho will suspend and run `claude-agent-acp --cli auth login --claudeai`. \
 Cancel if you did not mean to sign in.",
             vec![
                 InlineChoiceOption::available(CANCEL_LOGIN_VALUE, '1', "Cancel", "Stay in Rho")
@@ -174,7 +174,7 @@ Cancel if you did not mean to sign in.",
                     RELAY_LOGIN_VALUE,
                     '2',
                     "Continue",
-                    "Hand the terminal to claude auth login",
+                    "Hand the terminal to Claude Code sign-in",
                 )
                 .with_alternate_shortcut('s'),
             ],
@@ -193,7 +193,7 @@ Cancel if you did not mean to sign in.",
         let choice = InlineChoice::new(
             "Claude Code is already signed in",
             format!(
-                "{}\nContinue only if you want to re-run `claude auth login --claudeai`.",
+                "{}\nContinue only if you want to re-run `claude-agent-acp --cli auth login --claudeai`.",
                 status.describe()
             ),
             vec![
@@ -208,7 +208,7 @@ Cancel if you did not mean to sign in.",
                     RELAY_LOGIN_VALUE,
                     '2',
                     "Sign in again",
-                    "Hand the terminal to claude auth login",
+                    "Hand the terminal to Claude Code sign-in",
                 )
                 .with_alternate_shortcut('s'),
             ],
@@ -226,7 +226,7 @@ Cancel if you did not mean to sign in.",
 
 fn claude_login_spec() -> ExternalLoginSpec<ClaudeAuthStatus, ClaudeAuthError> {
     ExternalLoginSpec {
-        command_label: "claude auth login",
+        command_label: "claude-agent-acp --cli auth login",
         resolve: executable::resolve,
         login_args: auth::login_args(),
         query: || Box::pin(auth::query()),
@@ -236,17 +236,17 @@ fn claude_login_spec() -> ExternalLoginSpec<ClaudeAuthStatus, ClaudeAuthError> {
             signed_in_notice: ClaudeAuthStatus::describe_login_success,
             incomplete_signed_out: |status| {
                 format!(
-                    "claude auth login finished, but status still reports signed out ({})",
+                    "claude code sign-in finished, but status still reports signed out ({})",
                     status.describe()
                 )
             },
             incomplete_query_error: |error| {
-                format!("claude auth login finished, but status could not be read: {error}")
+                format!("claude code sign-in finished, but status could not be read: {error}")
             },
             failed: |error| format!("claude code login failed: {error:#}"),
             child_failed_but_signed_in: |error, status| {
                 format!(
-                    "claude auth login reported an error ({error:#}), but status shows signed in.\n{}",
+                    "claude code sign-in reported an error ({error:#}), but status shows signed in.\n{}",
                     status.describe_login_success()
                 )
             },

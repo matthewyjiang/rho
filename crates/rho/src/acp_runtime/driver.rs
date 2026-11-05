@@ -43,7 +43,7 @@ use tokio::sync::{mpsc, oneshot};
 // Receipt: OwnedChild's 200 ms termination grace. A cooperative cancel was
 // observed at ~4 ms in the spike; share the existing shutdown budget before
 // forcing termination, rather than leave a hung agent immortal after cancel.
-const CANCEL_DRAIN_BUDGET: Duration = Duration::from_millis(200);
+pub(super) const CANCEL_DRAIN_BUDGET: Duration = Duration::from_millis(200);
 
 pub(super) struct DriverOutcome {
     pub(super) classification: TurnClassification,
@@ -146,7 +146,8 @@ pub(super) async fn run<P: AcpAgentPolicy>(
             // run_until preserves session/new's actual JSON-RPC error (unlike
             // start_session, which starts a background request task). Bound
             // only startup: after the closure starts, turns have no deadline.
-            let session_run = cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()))
+            let session_meta = policy.lock().expect("ACP policy").session_meta();
+            let session_run = cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()).meta(session_meta))
                 .block_task().run_until(async |session| {
                     started.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = started_tx.send(());
@@ -449,26 +450,16 @@ async fn dispatch_update<P: AcpAgentPolicy>(
 ) -> Result<(), Error> {
     MatchDispatch::new(dispatch)
         .if_notification(async |notification: SessionNotification| {
-            let (mut update, required_mode) = {
+            let (mut update, required_mode, status) = {
                 let policy = policy.lock().expect("ACP policy");
-                (
-                    policy.normalize_update(notification.update),
-                    policy.session_mode(),
-                )
+                let update = policy.normalize_update(notification.update);
+                let status = policy.status_effects(&update);
+                (update, policy.session_mode(), status)
             };
-            // A policy may rely on the required mode as part of its fence: an
-            // agent that leaves it fails the run instead of continuing
-            // unfenced.
-            if let (SessionUpdate::CurrentModeUpdate(mode), Some(required)) =
-                (&update, &required_mode)
-            {
-                if mode.current_mode_id != *required {
-                    return Err(error(format!(
-                        "acp: agent switched to mode `{}`, leaving required mode `{required}`",
-                        mode.current_mode_id
-                    )));
-                }
+            for effect in status {
+                sink.apply_effect(effect);
             }
+            handshake::check_mode_update(&update, required_mode.as_ref())?;
             tracking.turn_live |= is_turn_content(&update);
             if let SessionUpdate::ToolCallUpdate(call) = &mut update {
                 if call.fields.status == Some(ToolCallStatus::Completed)

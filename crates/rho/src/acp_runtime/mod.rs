@@ -5,6 +5,7 @@
 
 mod driver;
 mod handshake;
+pub(crate) mod one_shot;
 pub(crate) mod permission;
 pub(crate) mod policy;
 mod session;

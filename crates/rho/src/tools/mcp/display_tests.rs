@@ -4,7 +4,7 @@ use serde_json::json;
 use rho_tools::tool_card::{ToolFact, ToolHeader};
 
 use super::{argument_summary, mcp_header_and_facts, primary_argument};
-use crate::tools::mcp::exported_name::{parse_exported_name, ExportedNameDialect, McpToolIdentity};
+use crate::tools::mcp::exported_name::{parse_exported_name, McpToolIdentity};
 
 // Covers: plain exported names decode to server + tool; non-MCP names and
 // malformed shapes are rejected rather than half-parsed.
@@ -25,11 +25,7 @@ fn parse_exported_name_splits_server_and_tool() {
             server: server.into(),
             tool: tool.into(),
         });
-        assert_eq!(
-            parse_exported_name(name, ExportedNameDialect::Rho),
-            expected,
-            "name: {name}"
-        );
+        assert_eq!(parse_exported_name(name), expected, "name: {name}");
     }
 }
 
@@ -41,11 +37,8 @@ fn parse_exported_name_splits_server_and_tool() {
 fn parse_exported_name_decodes_rho_escapes() {
     // Legacy encoding of server "git-hub", tool "issues/list". Keep the hex
     // server: current exports leave "git-hub" verbatim.
-    let parsed = parse_exported_name(
-        "mcp___rho_6769742d687562___rho_6973737565732f6c697374",
-        ExportedNameDialect::Rho,
-    )
-    .unwrap();
+    let parsed =
+        parse_exported_name("mcp___rho_6769742d687562___rho_6973737565732f6c697374").unwrap();
     assert_eq!(
         parsed,
         McpToolIdentity {
@@ -55,7 +48,7 @@ fn parse_exported_name_decodes_rho_escapes() {
     );
 
     // Odd-length / non-hex payloads stay as-is.
-    let parsed = parse_exported_name("mcp___rho_zz__tool", ExportedNameDialect::Rho).unwrap();
+    let parsed = parse_exported_name("mcp___rho_zz__tool").unwrap();
     assert_eq!(parsed.server, "_rho_zz");
     assert_eq!(parsed.tool, "tool");
 }

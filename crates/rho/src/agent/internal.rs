@@ -173,7 +173,7 @@ pub(crate) fn is_internal_agent_id(id: &str) -> bool {
 ///
 /// Rho selections read the model's advertised controls. Claude Code resolves
 /// the model itself and never appears in the models.dev catalog, so a
-/// delegating selection uses Claude's fixed `--effort` ladder instead.
+/// delegating selection uses Claude's fixed effort ladder instead.
 pub(crate) fn internal_agent_reasoning_capabilities(
     selection: &InternalAgentModelConfig,
 ) -> ReasoningCapabilities {
@@ -185,10 +185,10 @@ pub(crate) fn internal_agent_reasoning_capabilities(
     }
 }
 
-/// Claude's fixed `--effort` ladder as selection capabilities. Built once:
+/// Claude's fixed effort ladder as selection capabilities. Built once:
 /// picker render paths ask for this on every frame.
 static CLAUDE_REASONING_CAPABILITIES: LazyLock<ReasoningCapabilities> = LazyLock::new(|| {
-    ReasoningCapabilities::Levels(crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.clone())
+    ReasoningCapabilities::Levels(crate::claude_runtime::fence::CLAUDE_EFFORT_LEVELS.clone())
 });
 
 /// Reasoning for an overridden model of an internal agent whose definition

@@ -151,7 +151,7 @@ Cancel sends `session/cancel` and waits up to 200 ms for the turn to end before 
 
 Known gaps compared with Claude runs:
 
-- ACP reports no token usage or cost, so Cursor runs show none.
+- Cursor reports no token usage or cost over ACP, so Cursor runs show none.
 - The ACP session id is not a `cursor-agent --resume` id, and chats for these runs are stored under the run's managed config dir rather than the user's Cursor config, so there is no Cursor-side resume path.
 - `result.json` carries the last assistant text segment of the final turn as the result.
 

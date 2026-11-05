@@ -1,19 +1,27 @@
-//! Locate the `claude` program.
+//! Locate `claude-agent-acp`, the ACP adapter Rho runs Claude Code through.
 //!
-//! Resolution and invocation rules are generic and live in
-//! [`crate::cli_runtime`]; the only Claude-specific policy is how a missing
-//! binary is reported.
+//! The adapter bundles the Claude CLI it drives and runs that CLI with the
+//! arguments after [`CLI`]. Sign-in, auth status, the version probe, and the
+//! `/usage` panel all go through it, so one install serves every Claude
+//! surface and the CLI always matches the adapter's Agent SDK. Resolution and
+//! invocation rules are generic and live in [`crate::cli_runtime`].
 
 use crate::cli_runtime::CliExecutable;
 
-use super::auth::{ClaudeAuthError, CLAUDE_PROGRAM};
+use super::auth::ClaudeAuthError;
 
-/// Locate `claude` for spawning. On Windows, prefer real binaries and then
-/// `.cmd` / `.ps1` shims that Rust's bare-name lookup will not find.
+/// Program name resolved on `PATH`.
+pub(crate) const ADAPTER_PROGRAM: &str = "claude-agent-acp";
+
+/// `claude-agent-acp --cli <args>` runs the bundled Claude CLI with `<args>`.
+pub(crate) const CLI: &str = "--cli";
+
+/// How to install the adapter, for missing-binary errors.
+pub(crate) const INSTALL_HINT: &str =
+    "install it with `npm install -g @agentclientprotocol/claude-agent-acp` (or `bun add -g`)";
+
+/// Locate `claude-agent-acp` for spawning. On Windows, prefer real binaries
+/// and then `.cmd` / `.ps1` shims that Rust's bare-name lookup will not find.
 pub(crate) fn resolve() -> Result<CliExecutable, ClaudeAuthError> {
-    resolve_named(CLAUDE_PROGRAM)
-}
-
-pub(crate) fn resolve_named(program: &str) -> Result<CliExecutable, ClaudeAuthError> {
-    CliExecutable::resolve(program).ok_or(ClaudeAuthError::BinaryMissing)
+    CliExecutable::resolve(ADAPTER_PROGRAM).ok_or(ClaudeAuthError::BinaryMissing)
 }

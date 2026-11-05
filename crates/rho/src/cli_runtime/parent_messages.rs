@@ -53,10 +53,6 @@ impl ParentMessageInbox {
         }
     }
 
-    pub(crate) fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
-
     pub(crate) async fn recv(&mut self) -> Option<String> {
         self.receiver.recv().await
     }

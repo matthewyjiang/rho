@@ -4,7 +4,7 @@ use tokio::sync::watch;
 
 use super::{RuntimeLabel, StatusSink};
 use crate::cli_runtime::{
-    stream_effect::{StreamEffect, TerminalClassification, TerminalResult},
+    stream_effect::{StreamEffect, TerminalResult},
     stream_format::{reasoning_effects, text_effects},
 };
 
@@ -34,18 +34,9 @@ fn identity() -> RunArtifactIdentity {
 
 fn success_terminal() -> TerminalResult {
     TerminalResult {
-        classification: TerminalClassification::Success {
-            subtype: "success".into(),
-        },
-        result_text: Some("done".into()),
-        error: None,
+        result_text: "done".into(),
         session_id: Some("sess".into()),
-        num_turns: Some(2),
-        usage: None,
-        context: None,
-        total_cost_usd: Some(0.12),
-        permission_denials: Vec::new(),
-        stop_reason: None,
+        turns: 2,
     }
 }
 
@@ -84,14 +75,13 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
         }
         assert_eq!(rx.borrow().last_text.as_deref(), Some(expected_text));
     }
-    sink.finalize_success_from_stream(&success_terminal()).await;
+    sink.succeed(&success_terminal()).await;
 
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Ok);
     assert_eq!(status.result.as_deref(), Some("done"));
     assert_eq!(status.last_text.as_deref(), Some("thinking\nhello"));
     assert_eq!(status.claude_session_id.as_deref(), Some("sess"));
-    assert_eq!(status.total_cost_usd, Some(0.12));
     assert_eq!(rx.borrow().state, RunState::Ok);
 
     assert_eq!(
@@ -139,7 +129,7 @@ async fn sink_fail_and_stop_are_terminal() {
         TEST_LABEL,
     )
     .unwrap();
-    sink.stop("cancelled", None).await;
+    sink.stop("cancelled", &success_terminal()).await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Stopped);
     assert_eq!(status.input_tokens, None);
@@ -162,7 +152,7 @@ async fn second_terminal_finish_is_ignored() {
         TEST_LABEL,
     )
     .unwrap();
-    sink.finalize_success_from_stream(&success_terminal()).await;
+    sink.succeed(&success_terminal()).await;
     sink.fail("later").await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Ok);

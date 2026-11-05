@@ -64,7 +64,7 @@ pub(crate) enum AttachmentEvent {
 /// Generic attachment journal mechanics for `rho attach`.
 ///
 /// Owns private file creation, durable event appends, and replaceable previews.
-/// Runtime-specific translation (SDK events, Claude stream-json) stays
+/// Runtime-specific translation (SDK events, ACP session updates) stays
 /// outside this type so callers cannot mix event vocabularies by accident.
 pub(crate) struct AttachmentWriter {
     file: File,

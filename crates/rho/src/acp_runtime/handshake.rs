@@ -5,8 +5,8 @@ use agent_client_protocol::{
     schema::{
         v1::{
             AuthenticateRequest, Implementation, InitializeRequest, SessionConfigKind,
-            SessionConfigOption, SessionConfigSelectOptions, SessionConfigValueId,
-            SetSessionConfigOptionRequest, SetSessionModeRequest,
+            SessionConfigOption, SessionConfigSelectOptions, SessionConfigValueId, SessionModeId,
+            SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
         },
         ProtocolVersion,
     },
@@ -79,6 +79,23 @@ pub(super) async fn initialize<P: AcpAgentPolicy>(
     Ok(AgentFeatures {
         steering: super::steering::supported(response.meta.as_ref()),
     })
+}
+
+/// A policy may rely on its required mode as part of its fence: an agent that
+/// leaves it fails the run instead of continuing unfenced.
+pub(super) fn check_mode_update(
+    update: &SessionUpdate,
+    required: Option<&SessionModeId>,
+) -> Result<(), Error> {
+    if let (SessionUpdate::CurrentModeUpdate(mode), Some(required)) = (update, required) {
+        if mode.current_mode_id != *required {
+            return Err(error(format!(
+                "acp: agent switched to mode `{}`, leaving required mode `{required}`",
+                mode.current_mode_id
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) async fn require_mode<P: AcpAgentPolicy>(

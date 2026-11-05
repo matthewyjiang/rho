@@ -1,7 +1,8 @@
 //! Read Claude Code `/usage` through a dedicated PTY session.
 //!
 //! Claude owns the subscription token. Rho never reads credential files; it
-//! spawns the `claude` TUI, sends `/usage`, and parses the panel.
+//! spawns the Claude TUI bundled in `claude-agent-acp` (`--cli`), sends `/usage`,
+//! and parses the panel.
 
 use std::time::Duration;
 #[cfg(unix)]
@@ -85,7 +86,11 @@ const RATE_LIMITED_MARKER: &str = "rate limited";
 
 #[derive(Debug, Error)]
 pub(crate) enum UsageProbeError {
-    #[error("claude code: binary not found on PATH")]
+    #[error(
+        "claude code: {} not found on PATH; {}",
+        super::executable::ADAPTER_PROGRAM,
+        super::executable::INSTALL_HINT
+    )]
     #[cfg(unix)]
     BinaryMissing,
     #[error("claude code: not signed in - run /login claude-code")]
@@ -226,6 +231,7 @@ fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbe
     read_usage_from_binary(
         executable.path(),
         &[
+            executable::CLI,
             "--setting-sources",
             "",
             "--strict-mcp-config",

@@ -182,12 +182,8 @@ exit 1
 #[tokio::test]
 async fn query_program_reports_missing_binary() {
     let directory = tempfile::tempdir().unwrap();
-    let missing = directory.path().join("missing-claude");
-    // Explicit missing-path spawn: resolve_named must not invent a binary.
-    let error = executable::resolve_named(missing.to_str().unwrap()).unwrap_err();
-    assert!(error.is_binary_missing());
-
-    // Also cover the probe spawn path when the program image is absent.
+    let missing = directory.path().join("missing-claude-agent-acp");
+    // The probe spawn path when the program image is absent.
     let mut command = Command::new(&missing);
     command.args(["auth", "status"]);
     let spawn_error =

@@ -5,13 +5,14 @@ use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTim
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf, time::Duration};
 
-use super::{acp_e2e::FakeAcpAgent, claude_e2e};
+use super::acp_e2e::{self, FakeAcpAgent};
 
 const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
     program: "cursor-agent",
     fixtures: "cursor_acp",
     recorded_env: Some("CURSOR_CONFIG_DIR"),
     acp_subcommand: Some("acp"),
+    prelude: "",
 };
 
 /// Full fake-Cursor ACP path: matrix parent -> agent tool -> binder/executor
@@ -24,9 +25,9 @@ fn fake_cursor_acp_runtime_end_to_end() {
     FAKE_CURSOR.install_agent(&home.home, "cursor-worker.md");
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
     let fake = FAKE_CURSOR.install(&home.path().join("fake-cursor"), &binary);
-    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+    let path = acp_e2e::path_with_fake(&fake.bin_dir);
     assert_eq!(
-        claude_e2e::which_on_path("cursor-agent", &path).as_deref(),
+        acp_e2e::which_on_path("cursor-agent", &path).as_deref(),
         Some(fake.program.as_path()),
         "PATH must resolve the fake cursor-agent first"
     );
@@ -52,13 +53,13 @@ fn fake_cursor_acp_runtime_end_to_end() {
         )
         .unwrap();
 
-    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let run_dir = acp_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
     let run_id = run_dir
         .file_name()
         .and_then(|name| name.to_str())
         .expect("run id")
         .to_string();
-    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    let status = acp_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
     let observed = json!({
         "state": status["state"],
         "agent_id": status["agent_id"],
@@ -90,7 +91,7 @@ fn fake_cursor_acp_runtime_end_to_end() {
     let config_dir = PathBuf::from(&spawn.env);
     assert_eq!(config_dir, run_dir.join("cursor-config"));
     assert_eq!(
-        claude_e2e::read_json(&config_dir.join("cli-config.json")).unwrap(),
+        acp_e2e::read_json(&config_dir.join("cli-config.json")).unwrap(),
         json!({
             "approvalMode": "allowlist",
             "autoAcceptWebSearch": false,

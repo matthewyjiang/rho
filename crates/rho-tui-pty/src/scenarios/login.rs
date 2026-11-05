@@ -115,7 +115,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
         text: "not Anthropic API billing",
         timeout: SETTLE,
     },
-    Step::AssertText("Uses the claude CLI"),
+    Step::AssertText("Uses Claude Code through"),
     Step::AssertText("Claude Code manages credentials"),
     // Choose API Key deliberately after browsing methods, not by default selection.
     Step::TypeIntoField("API Key"),

@@ -2,7 +2,7 @@
 //!
 //! Owns `result.json` status writes, the `events.jsonl` attachment journal, and
 //! replaceable `tool-previews.json` live argument cards.
-//! Runtime adapters (Rho SDK, Claude stream-json) translate into this surface;
+//! Runtime adapters (Rho SDK, ACP) translate into this surface;
 //! the TUI only reads and renders it.
 
 mod journal;

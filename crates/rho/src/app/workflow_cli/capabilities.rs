@@ -202,7 +202,9 @@ impl AppWorkflowToolService {
                     let entry = catalog.find(&agent.agent)?;
                     match &entry.definition.runtime {
                         crate::agent::AgentRuntimeSpec::ClaudeCli(_) => {
-                            executables.insert("claude".to_owned());
+                            executables.insert(
+                                crate::claude_runtime::executable::ADAPTER_PROGRAM.to_owned(),
+                            );
                         }
                         crate::agent::AgentRuntimeSpec::Cursor(_) => {
                             executables

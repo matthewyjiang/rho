@@ -6,13 +6,14 @@ use rho_tui_pty::{IsolatedHome, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout}
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 
-use super::{acp_e2e::FakeAcpAgent, claude_e2e};
+use super::acp_e2e::{self, FakeAcpAgent};
 
 const FAKE_ANTIGRAVITY: FakeAcpAgent = FakeAcpAgent {
     program: "agy",
     fixtures: "antigravity_acp",
     recorded_env: None,
     acp_subcommand: Some("acp"),
+    prelude: "",
 };
 
 /// Full fake-Antigravity ACP path: matrix parent -> agent tool ->
@@ -27,9 +28,9 @@ fn fake_antigravity_acp_runtime_end_to_end() {
     FAKE_ANTIGRAVITY.install_agent(&home.home, "antigravity-worker.md");
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
     let fake = FAKE_ANTIGRAVITY.install(&home.path().join("fake-antigravity"), &binary);
-    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+    let path = acp_e2e::path_with_fake(&fake.bin_dir);
     assert_eq!(
-        claude_e2e::which_on_path("agy", &path).as_deref(),
+        acp_e2e::which_on_path("agy", &path).as_deref(),
         Some(fake.program.as_path()),
         "PATH must resolve the fake agy first"
     );
@@ -55,8 +56,8 @@ fn fake_antigravity_acp_runtime_end_to_end() {
         )
         .unwrap();
 
-    let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
-    let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
+    let run_dir = acp_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
+    let status = acp_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));
     assert_eq!(
         json!({
             "state": status["state"],

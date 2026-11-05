@@ -1,7 +1,7 @@
 //! The Claude model vocabulary Rho offers when a surface picks one.
 //!
-//! Rho does not resolve Claude model names. `--model` is a pass-through, and
-//! the `claude` binary has no command that enumerates models, so this list is
+//! Rho does not resolve Claude model names. The model is a pass-through, and
+//! the adapter advertises only a few current choices, so this list is
 //! deliberately limited to family aliases: Claude resolves each one to the
 //! latest model in that family, which keeps the list stable across model
 //! launches. A full model id remains valid everywhere Rho accepts a model, it
@@ -10,7 +10,7 @@
 /// One offered Claude model alias.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ClaudeModelAlias {
-    /// Value passed through as `--model`.
+    /// Value passed through as the Claude session `model` option.
     pub(crate) name: &'static str,
     /// Row detail text, phrased for a picker.
     pub(crate) detail: &'static str,
@@ -52,12 +52,12 @@ pub(crate) fn is_offered_alias(model: &str) -> bool {
 /// `crate::config::CLAUDE_CLI_RUNTIME_KEY` (`claude-cli`).
 pub(crate) const CLAUDE_CODE_SOURCE_LABEL: &str = "claude-code";
 
-/// Label for the row that omits `--model` and lets Claude Code choose.
+/// Label for the row that sets no model and lets Claude Code choose.
 pub(crate) const CLAUDE_DEFAULT_MODEL_LABEL: &str = "Claude Code default";
 
 /// Detail for the default row.
 pub(crate) const CLAUDE_DEFAULT_MODEL_DETAIL: &str =
-    "Omit --model and use whichever model Claude Code selects.";
+    "Set no model and use whichever model Claude Code selects.";
 
 /// How a pinned model reads on a status line or badge when Claude Code picks
 /// the model itself.

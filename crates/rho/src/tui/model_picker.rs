@@ -148,7 +148,7 @@ pub(super) enum InternalAgentModelRow {
     /// Clear the override: the agent falls back to the conversation model,
     /// its own file's model, or (for the permission screen) the classifier.
     ClearOverride,
-    /// Delegate to the Claude Code CLI. `None` omits `--model`.
+    /// Delegate to the Claude Code CLI. `None` lets Claude Code choose.
     ClaudeCode { model: Option<String> },
     /// A Rho `provider/model` reference to resolve against the catalog.
     RhoModel(String),
@@ -218,7 +218,7 @@ pub(super) enum FallbackModelRow {
 /// Whether an internal-agent model picker offers Claude Code rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClaudeCodeRows {
-    /// This agent may delegate and the `claude` binary is installed.
+    /// This agent may delegate and `claude-agent-acp` is installed.
     Offered,
     /// This agent cannot delegate, or Claude Code is not installed.
     Omitted,
@@ -531,7 +531,7 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
 }
 
 const CLAUDE_CODE_ROW_DETAIL: &str =
-    "Runs on the installed claude binary and bills to your Claude subscription. Sign in with /login claude-code.";
+    "Runs on Claude Code through claude-agent-acp and bills to your Claude subscription. Sign in with /login claude-code.";
 
 struct CurrentModel<'a> {
     provider: &'a str,

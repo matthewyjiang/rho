@@ -87,17 +87,15 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ## Claude Code binary (optional)
 
-Agent definitions with `runtime: claude-cli` need the `claude` binary on `PATH`. Rho does not ship or install it. Install Claude Code from Anthropic's docs ([setup](https://code.claude.com/docs/en/setup)), for example:
+Agent definitions with `runtime: claude-cli`, and a Claude Code advisor, need [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) on `PATH`. It is the Agent Client Protocol adapter for Claude Code and bundles its own Claude Code CLI, so a separate `claude` install is not needed. Rho does not ship or install it. It needs Node.js or Bun:
 
 ```bash
-curl -fsSL https://claude.ai/install.sh | bash
+npm install -g @agentclientprotocol/claude-agent-acp
+# or
+bun add -g @agentclientprotocol/claude-agent-acp
 ```
 
-```powershell
-irm https://claude.ai/install.ps1 | iex
-```
-
-Confirm with `claude --version`. Sign in from Rho with `/login claude-code` (terminal handoff; Claude Code stores the credential). Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in) and [Claude Code as a delegated runtime](/subagents/claude-cli).
+Confirm with `claude-agent-acp --cli --version`. Sign in from Rho with `/login claude-code` (terminal handoff; Claude Code stores the credential). Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in) and [Claude Code as a delegated runtime](/subagents/claude-cli).
 
 ## Cursor Agent binary (optional)
 

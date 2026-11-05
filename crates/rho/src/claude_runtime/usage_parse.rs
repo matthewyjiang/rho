@@ -4,7 +4,8 @@
 //! shows. Window keys match stream `rate_limit_event` types so `/limits`
 //! can merge a live probe with last-observed cache.
 
-use super::{rate_limit::RateLimitState, stream::RateLimitInfo, window_kind::WindowKind};
+use super::{rate_limit::RateLimitState, window_kind::WindowKind};
+use crate::cli_runtime::stream_effect::RateLimitInfo;
 
 /// Look-ahead after a header for `% used` / `Resets`.
 const HEADER_SCAN_LINES: usize = 6;

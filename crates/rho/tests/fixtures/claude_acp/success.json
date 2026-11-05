@@ -1,0 +1,71 @@
+{
+  "modes": ["default", "acceptEdits", "plan", "auto", "bypassPermissions"],
+  "steering": true,
+  "turns": [
+    [
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "tool_call",
+          "toolCallId": "toolu_read_1",
+          "title": "Read README.md",
+          "kind": "read",
+          "status": "pending",
+          "rawInput": {"file_path": "README.md"},
+          "locations": [{"path": "README.md", "line": 1}],
+          "_meta": {"claudeCode": {"toolName": "Read"}}
+        }
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "toolu_read_1",
+          "status": "completed",
+          "content": [{"type": "content", "content": {"type": "text", "text": "```\n1\t# Fixture workspace\n```"}}],
+          "_meta": {"claudeCode": {"toolName": "Read"}}
+        }
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "usage_update",
+          "used": 13675,
+          "size": 200000,
+          "_meta": {
+            "_claude/model": "claude-sonnet-5",
+            "_claude/rateLimit": {
+              "status": "allowed",
+              "resetsAt": 1793866200,
+              "rateLimitType": "five_hour",
+              "isUsingOverage": false,
+              "unifiedWindows": {
+                "five_hour": {"utilization": 0.12, "resetsAt": 1793866200},
+                "seven_day": {"utilization": 0.18, "resetsAt": 1794063600}
+              }
+            }
+          }
+        }
+      },
+      {
+        "step": "update",
+        "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "r"}}
+      },
+      {
+        "step": "update",
+        "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ho-claude-e2e-ok"}}
+      },
+      {
+        "step": "update",
+        "update": {
+          "sessionUpdate": "usage_update",
+          "used": 13757,
+          "size": 200000,
+          "cost": {"amount": 0.034271, "currency": "USD"},
+          "_meta": {"_claude/model": "claude-sonnet-5"}
+        }
+      },
+      {"step": "stop", "reason": "end_turn"}
+    ]
+  ]
+}

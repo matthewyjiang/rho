@@ -209,7 +209,7 @@ pub(super) fn logout_provider_picker(
     // global effect without probing here.
     if claude_signed_in {
         picker.items.push(PickerItem {
-            detail: Some("Sign out of Claude Code everywhere the claude binary is used.".into()),
+            detail: Some("Sign out of Claude Code everywhere it is used.".into()),
             ..PickerItem::new(
                 super::claude_login::CLAUDE_CODE_TARGET.into(),
                 super::claude_login::CLAUDE_CODE_TARGET.into(),

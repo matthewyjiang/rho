@@ -1,6 +1,6 @@
 ---
 id: claude-planner
-description: Deterministic Claude Code planner for fake-runtime PTY E2E.
+description: Deterministic Claude Code planner for the fake claude-agent-acp PTY E2E.
 runtime: claude-cli
 model: claude-opus-demo
 tools: [Read, Edit, "Bash(git *)"]

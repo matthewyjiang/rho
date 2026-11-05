@@ -19,7 +19,7 @@ fn rho_codec_round_trips_unsafe_and_reserved_components() {
     ] {
         let name = namespaced_tool_name(server, tool);
         assert_eq!(
-            parse_exported_name(&name, ExportedNameDialect::Rho),
+            parse_exported_name(&name),
             Some(McpToolIdentity {
                 server: server.into(),
                 tool: tool.into(),
@@ -60,7 +60,7 @@ fn capped_names_resolve_only_through_registered_names() {
             .iter()
             .map(|name| (
                 name.len() <= 64,
-                parse_exported_name(name, ExportedNameDialect::Rho),
+                parse_exported_name(name),
                 McpToolNames::default().identify(name),
                 registered.identify(name),
             ))
@@ -73,20 +73,6 @@ fn capped_names_resolve_only_through_registered_names() {
     assert_eq!(
         McpToolNames::default().identify(&uncapped),
         Some(identity("t3-code", "task_status"))
-    );
-}
-
-#[test]
-fn conventional_names_never_decode_rho_escape_shaped_components() {
-    assert_eq!(
-        parse_exported_name(
-            "mcp___rho_6162___rho_746f6f6c",
-            ExportedNameDialect::Conventional,
-        ),
-        Some(McpToolIdentity {
-            server: "_rho_6162".into(),
-            tool: "_rho_746f6f6c".into(),
-        })
     );
 }
 

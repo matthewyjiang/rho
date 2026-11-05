@@ -27,8 +27,8 @@ flowchart TD
    payload.
 3. Rho starts a one-shot advisor run on the configured advisor model. That run
    has no tools. It cannot read files, run commands, or change the workspace.
-   This holds on both runtimes: a Claude Code advisor is spawned with
-   `--tools ""`.
+   This holds on both runtimes: a Claude Code advisor session gets an empty
+   tool list, and Rho rejects any permission request it sends.
 4. While the request is in flight, the advisor tool card shows live status on
    the first line (`waiting for provider`, `thinking`, `responding`, or
    `retrying provider`) and streams guidance text into the card body as it
@@ -39,8 +39,8 @@ flowchart TD
 
 Rho runs the advisor itself. There is no server-side advisor and no provider
 beta flag, so any model in Rho's [catalog](/authentication-and-models#selecting-models)
-can be the advisor on any provider. The advisor can also run on the installed
-`claude` binary instead, using your Claude Code subscription. See
+can be the advisor on any provider. The advisor can also run on Claude Code
+instead, through `claude-agent-acp`, using your Claude Code subscription. See
 [Claude Code as the advisor](#claude-code-as-the-advisor).
 
 ## Turn it on
@@ -98,15 +98,16 @@ claude-code/sonnet
 claude-code/haiku
 ```
 
-Choosing one of those rows also chooses the runtime. Rho runs the review on the
-installed `claude` binary, and nothing else changes: the advisor still sees only
-the rendered transcript, still gets no tools, and still returns guidance text
-into the same card.
+Choosing one of those rows also chooses the runtime. Rho runs the review on
+Claude Code through `claude-agent-acp`, and nothing else changes: the advisor
+still sees only the rendered transcript, still gets no tools, and still returns
+guidance text into the same card.
 
-The rows appear only when the `claude` binary is on `PATH`. Sign in first with
-`/login claude-code`; Rho never stores a Claude token. A signed-out binary makes
-the advisor call fail with that same instruction, and the executor's turn
-survives it.
+The rows appear only when `claude-agent-acp` is on `PATH`
+([installation](/installation#claude-code-binary-optional)). Sign in first with
+`/login claude-code`; Rho never stores a Claude token. A signed-out Claude Code
+makes the advisor call fail with `Authentication required`, and the executor's
+turn survives it.
 
 The equivalent config is:
 
@@ -121,22 +122,23 @@ reasoning = "high"
 ```
 
 - `runtime` defaults to `rho`, so existing config keeps working unchanged.
-- `model` is a Claude alias or full Claude model name, passed through as
-  `--model`. Omit it to let Claude Code choose. Rho `@alias` references are not
+- `model` is a Claude alias or full Claude model name, passed through as the
+  session `model` option. Omit it to let Claude Code choose. Rho `@alias` references are not
   resolved here.
 - `provider` and `auth` do not apply. Claude Code owns both, and Rho drops them
   with a warning if they appear.
-- `reasoning` maps to Claude `--effort`, so only `low`, `medium`, `high`,
+- `reasoning` maps to Claude `effort`, so only `low`, `medium`, `high`,
   `xhigh`, and `max` are offered.
 
 Differences worth knowing before you choose it:
 
 - Calls bill to your Claude subscription, not to a Rho provider, and they draw
   on the same 5-hour and 7-day windows as your own Claude Code use. Reported
-  cost folds into the session total in the TUI. The
+  cost folds into the session total in the TUI. Claude Code reports no token
+  counts for these calls. The
   [usage ledger](/usage-ledger) does not record them, matching delegated Claude
   runs.
-- Each call spawns a process, so it starts slower than a provider request.
+- Each call spawns the adapter, so it starts slower than a provider request.
 - The run is one turn with no tools and no session persistence, so it leaves
   nothing in your Claude session list.
 

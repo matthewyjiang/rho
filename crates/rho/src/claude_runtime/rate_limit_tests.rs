@@ -538,7 +538,7 @@ fn format_age_since_ignores_sentinel_timestamps() {
 async fn sink_collects_rate_limits_until_settle() {
     use crate::cli_runtime::{
         status_sink::StatusSink,
-        stream_effect::{StreamEffect, TerminalClassification, TerminalResult},
+        stream_effect::{StreamEffect, TerminalResult},
     };
     use crate::run_artifacts::RunArtifactIdentity;
     use crate::subagent;
@@ -575,19 +575,10 @@ async fn sink_collects_rate_limits_until_settle() {
         is_using_overage: None,
     }));
     assert!(load_at(&rate_limit_path).is_none());
-    sink.finalize_success_from_stream(&TerminalResult {
-        classification: TerminalClassification::Success {
-            subtype: "success".into(),
-        },
-        result_text: Some("done".into()),
-        error: None,
+    sink.succeed(&TerminalResult {
+        result_text: "done".into(),
         session_id: Some("sess".into()),
-        num_turns: Some(2),
-        usage: None,
-        context: None,
-        total_cost_usd: Some(0.12),
-        permission_denials: Vec::new(),
-        stop_reason: None,
+        turns: 2,
     })
     .await;
     let state = load_at(&rate_limit_path).expect("cached");

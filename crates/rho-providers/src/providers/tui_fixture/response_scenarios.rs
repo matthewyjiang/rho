@@ -255,7 +255,7 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         && prompt.contains("rho-antigravity-acp-e2e-ok")
     {
         format!("antigravity-background-delivery-{deliveries}: delegated result received")
-    } else if prompt.contains("(claude-planner): error") && prompt.contains("hit max turns") {
+    } else if prompt.contains("(claude-planner): error") && prompt.contains("max_turn_requests") {
         format!("claude-background-delivery-{deliveries}: failed result received")
     } else {
         format!("unexpected agent notification payload: {prompt}")

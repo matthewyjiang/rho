@@ -55,15 +55,15 @@ pub(crate) enum BoundRuntime {
         capabilities: AgentCapabilities,
     },
     ClaudeCli {
-        /// Claude `--model` value, byte-for-byte from the definition when set.
-        /// `None` means inherit Claude's own default (no `--model` flag).
+        /// Claude model, byte-for-byte from the definition when set. `None`
+        /// means inherit Claude's own default.
         model: Option<String>,
         tools: Vec<String>,
         inherit_claude_config: bool,
         /// Snapshot of the parent permission mode at bind time. Claude spawn
         /// maps this; it is not a Rho model/provider config.
         permission_mode: crate::permission::PermissionMode,
-        /// Exact Claude `--max-turns` value from the configured step budget.
+        /// Exact Claude `maxTurns` value from the configured step budget.
         max_turns: u64,
         /// Definition `reasoning:`. `None` inherits Claude's default effort.
         reasoning: Option<crate::agent::ReasoningLevel>,
@@ -206,7 +206,7 @@ impl BoundAgent {
                 agent_id: self.id().to_string(),
                 agent_fingerprint: self.fingerprint().to_string(),
                 provider: "claude-code".into(),
-                // `None` means no `--model` pin; Claude Code chooses.
+                // `None` means no model pin; Claude Code chooses.
                 model: model.clone(),
                 runtime: crate::agent::AgentRuntime::ClaudeCli,
                 reasoning: *reasoning,
@@ -275,7 +275,6 @@ impl BoundAgent {
             status_tx,
             started_status,
             parent_messages: None,
-            auth_status: None,
             rate_limit_state_path: None,
             overrides: Default::default(),
         })
@@ -511,6 +510,14 @@ impl AgentBinder {
                 frozen_antigravity_runtime(frozen, permission_mode)?
             }
             crate::workflow::AgentRuntime::ClaudeCli => {
+                // Plans frozen for the retired `claude -p` runtime recorded its
+                // argv and froze the `claude` binary, which cannot speak ACP.
+                if !frozen.arguments.is_empty() {
+                    anyhow::bail!(
+                        "frozen agent '{}' was planned for the retired `claude -p` runtime; plan the workflow again",
+                        frozen.agent_id
+                    );
+                }
                 let reasoning = frozen
                     .reasoning
                     .as_deref()
@@ -523,7 +530,7 @@ impl AgentBinder {
                     inherit_claude_config: false,
                     permission_mode,
                     max_turns: frozen.step_limit,
-                    reasoning: crate::claude_runtime::spawn::require_claude_reasoning(reasoning)
+                    reasoning: crate::claude_runtime::fence::require_claude_reasoning(reasoning)
                         .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?,
                 }
             }
@@ -908,7 +915,7 @@ set a Claude model name or alias (for example opus), not '{model}'",
             );
         }
     }
-    let reasoning = crate::claude_runtime::spawn::require_claude_reasoning(config.reasoning)
+    let reasoning = crate::claude_runtime::fence::require_claude_reasoning(config.reasoning)
         .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
 
     // Binder snapshots host permission mode and the shared step budget.

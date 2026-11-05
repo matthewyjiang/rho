@@ -163,7 +163,7 @@ fn parse_reasoning(
         .transpose()?;
     if runtime == AgentRuntime::ClaudeCli {
         if let Some(level) = reasoning {
-            // Claude `--effort` accepts low/medium/high/xhigh/max only.
+            // Claude effort accepts low/medium/high/xhigh/max only.
             if matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal) {
                 return Err(AgentCatalogError::at_field(
                     path.to_path_buf(),

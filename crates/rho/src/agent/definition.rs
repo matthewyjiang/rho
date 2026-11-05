@@ -253,8 +253,8 @@ pub enum ToolPolicy {
 /// Which harness executes an agent definition.
 ///
 /// Runtime is independent of model selection. `Rho` uses Rho's own loop and
-/// tool vocabulary. `ClaudeCli` delegates the loop to the `claude` binary and
-/// uses Claude Code tool names. `Cursor` delegates the loop to `cursor-agent`
+/// tool vocabulary. `ClaudeCli` delegates the loop to Claude Code over
+/// `claude-agent-acp` and uses Claude Code tool names. `Cursor` delegates the loop to `cursor-agent`
 /// and uses the closed Cursor tool vocabulary. `Antigravity` delegates the
 /// loop to `agy acp` and uses the closed Antigravity tool vocabulary.
 #[derive(
@@ -358,7 +358,7 @@ pub struct ClaudeAgentConfig {
     /// When true, widen Claude setting sources to the user's full Claude
     /// config. Default is closed.
     pub inherit_claude_config: bool,
-    /// Pass-through `--model` value. `None` omits the flag.
+    /// Pass-through Claude model. `None` lets Claude Code choose.
     pub model: Option<String>,
     /// Bound reasoning for fingerprint stability and spawn. `None` inherits
     /// Claude's default effort.
@@ -427,8 +427,8 @@ impl AgentRuntimeSpec {
         }
     }
 
-    /// Pass-through model for external runtimes: `--model` for Claude Code
-    /// and Cursor, the session `model` option for Antigravity.
+    /// Pass-through model for external runtimes: `--model` for Cursor, the
+    /// session `model` option for Claude Code and Antigravity.
     ///
     /// `Some` for every external runtime (inner `None` keeps its default).
     /// `None` for Rho, which uses [`ModelPolicy`] instead.
