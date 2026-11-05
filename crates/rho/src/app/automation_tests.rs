@@ -603,7 +603,7 @@ impl Tool for HeadlessHostInputTool {
                                 }
                                 permit = self.progress_gate.acquire() => {
                                     permit.unwrap().forget();
-                                    if !context.progress().send(ToolProgress::message("tick")).await {
+                                    if !context.progress().send(ToolProgress::new("tick")).await {
                                         return Err(ToolError::cancelled());
                                     }
                                     self.progress_sent.fetch_add(1, Ordering::AcqRel);

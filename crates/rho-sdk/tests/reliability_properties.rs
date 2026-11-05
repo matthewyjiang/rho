@@ -7,7 +7,7 @@ use rho_sdk::{
     model::{
         AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, ModelEvent,
         ModelIdentity, ModelRequest, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall,
-        ToolResult,
+        ToolResult, ToolResultStatus,
     },
     provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     Error, RunEvent, SessionSnapshot, Workspace, SESSION_SNAPSHOT_SCHEMA_VERSION,
@@ -113,11 +113,15 @@ fn message(rng: &mut DeterministicRng) -> Message {
                 ..ModelUsage::default()
             },
         })),
-        _ => Message::ToolResult(ToolResult {
-            id: rng.string(16),
-            ok: rng.usize(2) == 0,
-            content: rng.string(80),
-        }),
+        _ => Message::ToolResult(ToolResult::new(
+            rng.string(16),
+            if rng.usize(2) == 0 {
+                ToolResultStatus::Succeeded
+            } else {
+                ToolResultStatus::Failed
+            },
+            rng.string(80),
+        )),
     }
 }
 

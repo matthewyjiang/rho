@@ -61,11 +61,7 @@ fn request_maps_system_tools_results_and_thought_signatures() {
             ],
             ..AssistantMessage::default()
         }),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "/tmp".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
     ];
     let tools = [ToolSpec {
         name: "bash".into(),
@@ -134,16 +130,8 @@ fn parallel_tool_results_share_one_user_content() {
                 arguments: json!({"path":"README.md"}),
             }),
         ]),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "/tmp".into(),
-        }),
-        Message::ToolResult(ToolResult {
-            id: "call-2".into(),
-            ok: true,
-            content: "readme".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
+        Message::ToolResult(ToolResult::succeeded("call-2", "readme")),
     ];
 
     let body = build_request(&messages, &[], &identity, None).unwrap();
@@ -229,11 +217,7 @@ fn missing_function_call_ids_stay_local_and_replay_as_absent() {
             provider_context,
             ..AssistantMessage::default()
         }),
-        Message::ToolResult(ToolResult {
-            id: first_call_id,
-            ok: true,
-            content: "pong".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded(first_call_id, "pong")),
     ];
     let body = build_request(&messages, &[], &identity, None).unwrap();
 
@@ -299,11 +283,7 @@ fn aborted_assistant_replays_thought_signatures_before_abort_marker() {
             }],
             ..crate::model::AbortedAssistant::default()
         })),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "/tmp".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", "/tmp")),
     ];
 
     let body = build_request(&messages, &[], &identity, None).unwrap();

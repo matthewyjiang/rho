@@ -58,10 +58,7 @@ impl Tool for CompletingCancellationTool {
                         }
                         context.cancellation().cancelled().await;
                         for _ in 0..self.cleanup_progress {
-                            context
-                                .progress()
-                                .send(ToolProgress::message("cleaning"))
-                                .await;
+                            context.progress().send(ToolProgress::new("cleaning")).await;
                         }
                         if !self.finish_cleanup {
                             std::future::pending::<()>().await;
@@ -166,7 +163,7 @@ impl Tool for BlockedProgressCancellationTool {
                         let progress = context.progress().clone();
                         let progress_task = tokio::spawn(async move {
                             for text in ["first", "second", "third"] {
-                                progress.send(ToolProgress::message(text)).await;
+                                progress.send(ToolProgress::new(text)).await;
                             }
                             if let Some(progress_blocked) = progress_blocked {
                                 let _ = progress_blocked.send(());
@@ -477,10 +474,7 @@ impl Tool for InteractiveTool {
 
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            context
-                .progress()
-                .send(ToolProgress::message("ready"))
-                .await;
+            context.progress().send(ToolProgress::new("ready")).await;
             let question = HostQuestion::new(
                 "choice",
                 "Continue?",
@@ -511,7 +505,7 @@ async fn call_emits_progress_and_accepts_host_input() {
     let ToolHostEvent::Progress(progress) = run.next_event().await.unwrap() else {
         panic!("first event must be progress")
     };
-    assert_eq!(progress.text(), "ready");
+    assert_eq!(progress.message(), "ready");
     let ToolHostEvent::HostInputRequested(mut pending) = run.next_event().await.unwrap() else {
         panic!("second event must request host input")
     };

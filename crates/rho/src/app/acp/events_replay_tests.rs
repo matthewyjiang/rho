@@ -97,24 +97,22 @@ fn tool(id: &str) -> ToolCall {
         .raw_input(json!({"path": "a.png"}))
 }
 
-// Covers: parallel calls must keep their ids and order, and tool-image
-// supplements must update the same card without erasing output or failed status.
+// Covers: parallel calls must keep their ids and order, and a result's images
+// land on its card after the output without changing its status.
 // Owner: ACP replay mapping (the stdio test covers persistence of ordinary results)
 #[test]
-fn replay_pairs_out_of_order_results_and_accumulates_images() {
-    for (ok, status) in [
-        (true, ToolCallStatus::Completed),
-        (false, ToolCallStatus::Failed),
+fn replay_pairs_out_of_order_results_with_their_images() {
+    for (result, status) in [
+        (
+            ToolResult::succeeded("b", "output"),
+            ToolCallStatus::Completed,
+        ),
+        (ToolResult::failed("b", "output"), ToolCallStatus::Failed),
     ] {
         let image = model::ImageContent {
             data: "YWJj".into(),
             mime_type: "image/png".into(),
         };
-        let content = vec![ToolCallContent::from("output")];
-        let mut with_image = content.clone();
-        with_image.push(ToolCallContent::from(ContentBlock::Image(
-            ImageContent::new("YWJj", "image/png"),
-        )));
         let messages = vec![
             Message::user_text("read images"),
             Message::Assistant(vec![
@@ -122,17 +120,8 @@ fn replay_pairs_out_of_order_results_and_accumulates_images() {
                 model::ContentBlock::Text("between".into()),
                 call_block("b"),
             ]),
-            Message::ToolResult(ToolResult {
-                id: "b".into(),
-                ok,
-                content: "output".into(),
-            }),
-            Message::tool_image_supplement("read", "b", vec![image]).unwrap(),
-            Message::ToolResult(ToolResult {
-                id: "a".into(),
-                ok: true,
-                content: String::new(),
-            }),
+            Message::ToolResult(result.with_images(vec![image])),
+            Message::ToolResult(ToolResult::succeeded("a", String::new())),
         ];
         assert_eq!(
             replay(&messages),
@@ -145,14 +134,14 @@ fn replay_pairs_out_of_order_results_and_accumulates_images() {
                     ToolCallId::new("1"),
                     ToolCallUpdateFields::new()
                         .status(status)
-                        .content(content)
+                        .content(vec![
+                            ToolCallContent::from("output"),
+                            ToolCallContent::from(ContentBlock::Image(ImageContent::new(
+                                "YWJj",
+                                "image/png",
+                            ))),
+                        ])
                         .raw_output(json!("output"))
-                )),
-                SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                    ToolCallId::new("1"),
-                    ToolCallUpdateFields::new()
-                        .status(status)
-                        .content(with_image)
                 )),
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                     ToolCallId::new("0"),
@@ -192,16 +181,18 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
             ])
         );
     }
-    for (ok, status) in [
-        (true, ToolCallStatus::Completed),
-        (false, ToolCallStatus::Failed),
+    for (result, status) in [
+        (
+            ToolResult::succeeded("orphan", "output"),
+            ToolCallStatus::Completed,
+        ),
+        (
+            ToolResult::failed("orphan", "output"),
+            ToolCallStatus::Failed,
+        ),
     ] {
         assert_eq!(
-            replay(&[Message::ToolResult(ToolResult {
-                id: "orphan".into(),
-                ok,
-                content: "output".into()
-            })]),
+            replay(&[Message::ToolResult(result)]),
             expected(vec![SessionUpdate::ToolCall(
                 ToolCall::new(ToolCallId::new("0"), "tool")
                     .status(status)
@@ -213,38 +204,25 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
 }
 
 // Covers: a reused provider ID must close the superseded unfinished occurrence,
-// and later results/images and end-of-history closure must target the new cards.
+// and later results and end-of-history closure must target the new cards.
 // Owner: ACP replay mapping; the stdio test covers ordinary completed reuse.
 #[test]
-fn replay_closes_superseded_occurrences_without_retargeting_their_images() {
-    let image = model::ImageContent {
-        data: "YWJj".into(),
-        mime_type: "image/png".into(),
-    };
-    let image_content =
-        ToolCallContent::from(ContentBlock::Image(ImageContent::new("YWJj", "image/png")));
+fn replay_closes_superseded_occurrences() {
     let messages = vec![
         Message::Assistant(vec![call_block("reused")]),
-        Message::tool_image_supplement("read", "reused", vec![image.clone()]).unwrap(),
         Message::Assistant(vec![call_block("reused")]),
-        Message::ToolResult(ToolResult {
-            id: "reused".into(),
-            ok: false,
-            content: "second output".into(),
-        }),
-        Message::tool_image_supplement("read", "reused", vec![image]).unwrap(),
+        Message::ToolResult(
+            ToolResult::failed("reused", "second output").with_images(vec![model::ImageContent {
+                data: "YWJj".into(),
+                mime_type: "image/png".into(),
+            }]),
+        ),
         Message::Assistant(vec![call_block("reused")]),
     ];
     assert_eq!(
         replay(&messages),
         expected(vec![
             SessionUpdate::ToolCall(tool("0")),
-            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                ToolCallId::new("0"),
-                ToolCallUpdateFields::new()
-                    .status(ToolCallStatus::Pending)
-                    .content(vec![image_content.clone()])
-            )),
             SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                 ToolCallId::new("0"),
                 ToolCallUpdateFields::new().status(ToolCallStatus::Failed)
@@ -254,14 +232,14 @@ fn replay_closes_superseded_occurrences_without_retargeting_their_images() {
                 ToolCallId::new("1"),
                 ToolCallUpdateFields::new()
                     .status(ToolCallStatus::Failed)
-                    .content(vec![ToolCallContent::from("second output")])
+                    .content(vec![
+                        ToolCallContent::from("second output"),
+                        ToolCallContent::from(ContentBlock::Image(ImageContent::new(
+                            "YWJj",
+                            "image/png",
+                        ))),
+                    ])
                     .raw_output(json!("second output"))
-            )),
-            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-                ToolCallId::new("1"),
-                ToolCallUpdateFields::new()
-                    .status(ToolCallStatus::Failed)
-                    .content(vec![ToolCallContent::from("second output"), image_content])
             )),
             SessionUpdate::ToolCall(tool("2")),
             SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
@@ -290,11 +268,7 @@ fn replay_message_ids_split_at_boundaries_and_repeat_across_replays() {
     let messages = vec![
         Message::user_text("continue"),
         Message::assistant(assistant),
-        Message::ToolResult(ToolResult {
-            id: "a".into(),
-            ok: true,
-            content: String::new(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("a", String::new())),
         Message::user_text("continue"),
     ];
     let chunks = |notifications: Vec<SessionNotification>| {

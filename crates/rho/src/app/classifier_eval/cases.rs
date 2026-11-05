@@ -123,8 +123,7 @@ pub(super) fn replay_cases(
                 | HistoryMessage::User(_)
                 | HistoryMessage::ChecklistRestatement(_)
                 | HistoryMessage::CompactionSummary(_)
-                | HistoryMessage::ToolResult(_)
-                | HistoryMessage::ToolImageSupplement(_) => continue,
+                | HistoryMessage::ToolResult(_) => continue,
             };
             for block in blocks {
                 let ContentBlock::ToolCall(call) = block else {
@@ -346,7 +345,14 @@ impl FixtureEntry {
                 name,
                 arguments,
             })]),
-            Self::Result { id, content, ok } => Message::ToolResult(ToolResult { id, ok, content }),
+            Self::Result { id, content, ok } => {
+                let status = if ok {
+                    rho_sdk::model::ToolResultStatus::Succeeded
+                } else {
+                    rho_sdk::model::ToolResultStatus::Failed
+                };
+                Message::ToolResult(ToolResult::new(id, status, content))
+            }
         }
     }
 }

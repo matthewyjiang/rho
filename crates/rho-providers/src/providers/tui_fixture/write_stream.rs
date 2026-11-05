@@ -24,10 +24,10 @@ pub(super) async fn intercept(
         return None;
     }
     if let Some(result) = tool_result(request, CALL_ID) {
-        return Some(completed(if result.ok {
-            "streamed write completed successfully"
-        } else {
+        return Some(completed(if result.is_failure() {
             "streamed write failed"
+        } else {
+            "streamed write completed successfully"
         }));
     }
     Some(stream(request, events).await)

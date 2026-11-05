@@ -379,8 +379,8 @@ impl InteractiveToolPresenter {
         progress: &ToolProgress,
     ) -> ToolPresentation {
         if let Some(view) = self.calls.get_mut(&call_id.to_string()) {
-            if progress.presentation() != &ToolMetadata::default() {
-                view.metadata = progress.presentation().clone();
+            if progress.metadata() != &ToolMetadata::default() {
+                view.metadata = progress.metadata().clone();
             }
             let card = progress_card(Some((view, &self.cwd)), progress);
             return presentation(view, card);
@@ -410,7 +410,7 @@ impl InteractiveToolPresenter {
                 metadata: ToolMetadata::default(),
             });
         let (ok, content, data) = match &result {
-            ToolCompletion::Success(output) | ToolCompletion::CompletedFailure(output) => {
+            ToolCompletion::Completed(output) => {
                 if output.presentation() != &ToolMetadata::default() {
                     view.metadata = output.presentation().clone();
                 }

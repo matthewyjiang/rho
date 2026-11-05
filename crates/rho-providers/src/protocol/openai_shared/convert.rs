@@ -332,11 +332,17 @@ fn append_codex_history_message(
             let prepared = prepare_assistant(enriched, target);
             append_codex_prepared_assistant(input, prepared, &async_call_ids)?;
         }
-        Message::ToolResult(result) => input.push(json!({
-            "type": "function_call_output",
-            "call_id": &result.id,
-            "output": &result.content,
-        })),
+        Message::ToolResult(result) => {
+            input.push(json!({
+                "type": "function_call_output",
+                "call_id": &result.id,
+                "output": &result.content,
+            }));
+            // Responses has no adjacency rule, so images follow their output.
+            if let Some(images) = crate::protocol::tool_images::tool_images_message(result) {
+                append_codex_history_message(&images, input, instructions, target)?;
+            }
+        }
     }
     Ok(())
 }
@@ -580,6 +586,8 @@ pub(crate) fn to_openai_message_for_target(
             let synthesize = synthesizes_tool_reasoning(enriched.provenance.as_ref(), target);
             openai_prepared_assistant(prepare_assistant(enriched, target), synthesize)
         }
+        // `to_openai_messages_for_target` has already moved result images
+        // into the user message after the result run.
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),
             content: Some(json!(result.content)),

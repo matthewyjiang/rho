@@ -265,16 +265,16 @@ async fn streams_progress_before_completion_with_plain_final_output() {
             progress = progress_rx.recv() => {
                 let progress = progress.expect("progress channel closed before partial output");
                 assert!(
-                    !progress.text().contains("do not show"),
+                    !progress.message().contains("do not show"),
                     "reasoning leaked into progress: {}",
-                    progress.text()
+                    progress.message()
                 );
-                if progress.presentation().command_summary_text() == Some("responding")
-                    && progress.text().contains("prefer")
+                if progress.metadata().command_summary_text() == Some("responding")
+                    && progress.message().contains("prefer")
                 {
                     saw_partial = true;
                     // Provider is still gated; completion text must not be present yet.
-                    assert!(!progress.text().contains("simple path"));
+                    assert!(!progress.message().contains("simple path"));
                 }
             }
             result = &mut consult => {

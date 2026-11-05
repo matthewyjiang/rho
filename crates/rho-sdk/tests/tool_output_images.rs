@@ -31,6 +31,11 @@ fn image() -> ImageContent {
     }
 }
 
+/// Whether `message` is a tool result carrying images.
+fn has_tool_images(message: &Message) -> bool {
+    matches!(message, Message::ToolResult(result) if !result.images.is_empty())
+}
+
 fn call(id: &str) -> ToolCall {
     ToolCall {
         id: id.into(),
@@ -152,11 +157,7 @@ impl ModelProvider for ImageProvider {
                 release.add_permits(1);
             }
             if let Some(release) = &self.release_second {
-                if request
-                    .messages
-                    .iter()
-                    .any(|message| message.as_tool_image_supplement().is_some())
-                {
+                if request.messages.iter().any(has_tool_images) {
                     release.add_permits(1);
                 }
                 let permit = self.finished.acquire().await.unwrap();
@@ -180,10 +181,10 @@ impl ModelProvider for ImageProvider {
     }
 }
 
-// Covers: image supplements follow their results and survive resume despite restored dangling calls.
+// Covers: tool images ride on their results and survive resume despite restored dangling calls.
 // Owner: SDK orchestration/history contract. Existing batch tests cover text-only results.
 #[tokio::test]
-async fn tool_images_follow_committed_results_and_survive_resume() {
+async fn tool_images_ride_on_committed_results_and_survive_resume() {
     for async_calls in [
         &[][..],
         &["first"][..],
@@ -228,7 +229,7 @@ async fn tool_images_follow_committed_results_and_survive_resume() {
         tokio::time::timeout(TEST_TIMEOUT, async {
             while let Some(event) = run.next_event().await {
                 if let RunEvent::ToolFinished {
-                    result: ToolCompletion::Success(output),
+                    result: ToolCompletion::Completed(output),
                     ..
                 } = event
                 {
@@ -247,10 +248,6 @@ async fn tool_images_follow_committed_results_and_survive_resume() {
         {
             let requests = provider.requests.lock().unwrap();
             let last = requests.last().unwrap();
-            let image_index = last
-                .iter()
-                .position(|message| message.as_tool_image_supplement().is_some())
-                .expect("model did not receive the tool image");
             let mut results = last
                 .iter()
                 .filter_map(|message| match message {
@@ -262,37 +259,10 @@ async fn tool_images_follow_committed_results_and_survive_resume() {
             assert_eq!(
                 results,
                 vec![
-                    ToolResult {
-                        id: "first".into(),
-                        ok: true,
-                        content: "captured".into()
-                    },
-                    ToolResult {
-                        id: "second".into(),
-                        ok: false,
-                        content: "capture failed".into()
-                    }
-                ]
-            );
-            let supplement = last[image_index].as_tool_image_supplement().unwrap();
-            assert!(last[..image_index].iter().any(
-                |message| matches!(message, Message::ToolResult(result) if result.id == "first")
-            ));
-            assert_eq!(
-                last[..image_index]
-                    .iter()
-                    .filter(|message| matches!(message, Message::ToolResult(_)))
-                    .count(),
-                2,
-                "all available batch results must precede supplements: {async_calls:?}"
-            );
-            assert_eq!(
-                (
-                    supplement.tool_name(),
-                    supplement.tool_call_id(),
-                    supplement.images().cloned().collect::<Vec<_>>()
-                ),
-                ("capture", "first", vec![image()])
+                    ToolResult::succeeded("first", "captured").with_images(vec![image()]),
+                    ToolResult::failed("second", "capture failed"),
+                ],
+                "{async_calls:?}"
             );
         }
 
@@ -358,11 +328,7 @@ async fn completed_image_does_not_wait_for_unrelated_async_call() {
     let requests = provider.requests.lock().unwrap();
     let first_image_request = requests
         .iter()
-        .find(|request| {
-            request
-                .iter()
-                .any(|message| message.as_tool_image_supplement().is_some())
-        })
+        .find(|request| request.iter().any(has_tool_images))
         .unwrap();
     let results = first_image_request
         .iter()
@@ -376,7 +342,7 @@ async fn completed_image_does_not_wait_for_unrelated_async_call() {
         session
             .history()
             .iter()
-            .filter(|message| message.as_tool_image_supplement().is_some())
+            .filter(|m| has_tool_images(m))
             .count(),
         1
     );
@@ -418,12 +384,9 @@ async fn host_started_tool_commits_paired_image_before_first_provider_request() 
         vec![
             Message::User(vec![ContentBlock::Text("capture".into())]),
             Message::Assistant(vec![ContentBlock::ToolCall(call("first"))]),
-            Message::ToolResult(ToolResult {
-                id: "first".into(),
-                ok: true,
-                content: "captured".into(),
-            }),
-            Message::tool_image_supplement("capture", "first", vec![image()]).unwrap(),
+            Message::ToolResult(
+                ToolResult::succeeded("first", "captured").with_images(vec![image()])
+            ),
         ]
     );
 }
@@ -464,7 +427,7 @@ async fn cancelled_batch_discards_only_uncommitted_tool_images() {
             if matches!(event, RunEvent::ToolStarted { ref call_id, .. } if call_id.as_str() == "second") {
                 second_started = true;
             }
-            if matches!(event, RunEvent::ToolFinished { ref call_id, result: ToolCompletion::Success(_), .. } if call_id.as_str() == "first") {
+            if matches!(event, RunEvent::ToolFinished { ref call_id, result: ToolCompletion::Completed(_), .. } if call_id.as_str() == "first") {
                 image_finished = true;
             }
             if image_finished && second_started {
@@ -481,13 +444,7 @@ async fn cancelled_batch_discards_only_uncommitted_tool_images() {
                 .count(),
             2
         );
-        assert_eq!(
-            history
-                .iter()
-                .filter(|message| message.as_tool_image_supplement().is_some())
-                .count(),
-            0
-        );
+        assert!(!history.iter().any(has_tool_images));
     }
 }
 
@@ -535,12 +492,10 @@ async fn provider_failure_discards_buffered_images_after_settlement() {
     let results = history
         .iter()
         .filter_map(|message| match message {
-            Message::ToolResult(result) => Some((result.id.as_str(), result.ok)),
+            Message::ToolResult(result) => Some((result.id.as_str(), !result.is_failure())),
             _ => None,
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     assert_eq!(results, [("first", true), ("second", false)].into());
-    assert!(!history
-        .iter()
-        .any(|message| message.as_tool_image_supplement().is_some()));
+    assert!(!history.iter().any(has_tool_images));
 }

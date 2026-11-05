@@ -289,7 +289,7 @@ fn inserts_interrupted_tool_results_on_load() {
         assert_eq!(messages.len(), 3);
         assert!(matches!(&messages[0], Message::User(_)));
         assert!(
-            matches!(&messages[2], Message::ToolResult(result) if result.id == "call-1" && !result.ok)
+            matches!(&messages[2], Message::ToolResult(result) if result.id == "call-1" && result.is_failure())
         );
     }
 }
@@ -470,7 +470,7 @@ fn export_by_id_normalizes_incomplete_display_tool_calls() {
         &export.messages[3].message,
         Message::ToolResult(result)
             if result.id == "call-1"
-                && !result.ok
+                && result.is_failure()
                 && result.content == "tool call interrupted before completion"
     ));
 }

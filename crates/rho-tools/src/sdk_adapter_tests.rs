@@ -232,7 +232,7 @@ async fn allowed_policy_reads_and_reports_metadata() {
     while let Some(event) = run.next_event().await {
         match event {
             RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Completed(output) => {
                     let text = "hello\nworld\n";
                     let expected =
                         crate::text_view::format_numbered_view("note.txt", text, Some(1), Some(1))
@@ -302,8 +302,11 @@ async fn read_file_image_reaches_the_next_model_request() {
     let images = requests[1]
         .messages
         .iter()
-        .filter_map(rho_sdk::model::Message::as_tool_image_supplement)
-        .flat_map(|supplement| supplement.images().cloned().collect::<Vec<_>>())
+        .filter_map(|message| match message {
+            rho_sdk::model::Message::ToolResult(result) => Some(result.images.clone()),
+            _ => None,
+        })
+        .flatten()
         .collect::<Vec<_>>();
     assert_eq!(images.len(), 1);
     assert_eq!(images[0].mime_type, "image/png");
@@ -354,14 +357,14 @@ async fn allowed_policy_writes_with_diff_metadata_and_progress() {
         match event {
             RunEvent::ToolUpdated { progress, .. } => {
                 saw_progress = true;
-                assert!(progress.text().contains("writing"));
+                assert!(progress.message().contains("writing"));
                 assert_eq!(
-                    progress.presentation().operation_kind(),
+                    progress.metadata().operation_kind(),
                     Some(&OperationKind::Write)
                 );
             }
             RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Completed(output) => {
                     write_metadata = Some(output.presentation().clone());
                     assert!(output.content().contains("created"));
                     assert!(output.content().contains("nested/out.txt\n1:created"));
@@ -542,7 +545,7 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
         while let Some(event) = run.next_event().await {
             match event {
                 RunEvent::ToolFinished {
-                    result: ToolCompletion::Success(_),
+                    result: ToolCompletion::Completed(_),
                     ..
                 } => succeeded = true,
                 RunEvent::ToolFinished { result, .. } => {

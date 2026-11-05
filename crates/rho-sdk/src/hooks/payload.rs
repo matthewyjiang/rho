@@ -209,8 +209,7 @@ impl<'a> From<&'a crate::ToolCompletion> for ToolOutcomeRef<'a> {
     fn from(completion: &'a crate::ToolCompletion) -> Self {
         match completion {
             // `status` reads the failure flag from the output itself.
-            crate::ToolCompletion::Success(output)
-            | crate::ToolCompletion::CompletedFailure(output) => Self::Completed(output),
+            crate::ToolCompletion::Completed(output) => Self::Completed(output),
             crate::ToolCompletion::Failure(failure) => {
                 Self::Failed(failure.kind(), failure.message())
             }

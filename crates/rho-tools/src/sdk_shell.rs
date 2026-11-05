@@ -399,7 +399,7 @@ async fn execute_with_progress(
                     Some(lines) => {
                         let _ = context
                             .progress()
-                            .send(ToolProgress::message(lines.join("\n")))
+                            .send(ToolProgress::new(lines.join("\n")))
                             .await;
                     }
                     None => updates_open = false,
@@ -410,7 +410,7 @@ async fn execute_with_progress(
     while let Ok(lines) = updates.try_recv() {
         let _ = context
             .progress()
-            .send(ToolProgress::message(lines.join("\n")))
+            .send(ToolProgress::new(lines.join("\n")))
             .await;
     }
     result.map_err(map_app_error)

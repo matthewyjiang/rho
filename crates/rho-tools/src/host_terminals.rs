@@ -203,7 +203,7 @@ pub(crate) async fn run(
     let id = terminal.id().to_owned();
     let _ = progress
         .send(
-            ToolProgress::message(String::new()).metadata(
+            ToolProgress::new(String::new()).with_metadata(
                 ToolMetadata::new()
                     .operation(OperationKind::Execute)
                     .host_terminal(id.clone()),

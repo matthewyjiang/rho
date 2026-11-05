@@ -758,7 +758,7 @@ for line in sys.stdin:
     let reported = progress_events.recv().await.unwrap();
     assert_eq!(
         (
-            reported.text(),
+            reported.message(),
             reported.completed_units(),
             reported.total_units()
         ),

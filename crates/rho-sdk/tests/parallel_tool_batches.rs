@@ -487,10 +487,7 @@ async fn one_tool_failure_does_not_cancel_an_unrelated_sibling() {
     let mut completions = BTreeMap::<String, bool>::new();
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolFinished { call_id, result } = event {
-            completions.insert(
-                call_id.to_string(),
-                matches!(result, ToolCompletion::Success(_)),
-            );
+            completions.insert(call_id.to_string(), !result.is_failure());
         }
     }
     assert_eq!(run.outcome().await.unwrap().text(), "done");

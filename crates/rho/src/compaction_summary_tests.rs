@@ -125,11 +125,10 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
             name: "read_file".into(),
             arguments: json!({"path": payload}),
         })]),
-        Message::ToolResult(ToolResult {
-            id: "call-old".into(),
-            ok: false,
-            content: format!("missing\n{payload}"),
-        }),
+        Message::ToolResult(ToolResult::failed(
+            "call-old",
+            format!("missing\n{payload}"),
+        )),
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::ToolCall(ToolCall {
                 id: "call-new".into(),
@@ -161,11 +160,10 @@ fn session_summary_markers_name_tool_calls_instead_of_json() {
     let result_history = vec![
         Message::System("system".into()),
         Message::user_text("build the thing"),
-        Message::ToolResult(ToolResult {
-            id: "call-lost".into(),
-            ok: false,
-            content: format!("missing file\n{payload}"),
-        }),
+        Message::ToolResult(ToolResult::failed(
+            "call-lost",
+            format!("missing file\n{payload}"),
+        )),
         Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
             id: "call-new".into(),
             name: "bash".into(),
@@ -290,26 +288,14 @@ fn summary_transcript_renders_tool_calls_and_results_as_text() {
                 data: image_bytes.into(),
             }),
         ])),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: body.into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", body)),
         Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
             id: "call-elided".into(),
             name: "read_file".into(),
             arguments: json!({"path": "src/a.rs"}),
         })]),
-        Message::ToolResult(ToolResult {
-            id: "call-elided".into(),
-            ok: true,
-            content: stub.into(),
-        }),
-        Message::ToolResult(ToolResult {
-            id: "call-missing".into(),
-            ok: false,
-            content: "boom\n".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-elided", stub)),
+        Message::ToolResult(ToolResult::failed("call-missing", "boom\n")),
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::ToolCall(ToolCall {
                 id: "call-1".into(),
@@ -317,11 +303,7 @@ fn summary_transcript_renders_tool_calls_and_results_as_text() {
                 arguments: json!({"command": "true"}),
             }),
         ])),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "ran\n".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", "ran\n")),
     ];
 
     let rendered = render_messages_for_summary(&messages);

@@ -112,9 +112,6 @@ fn pending_prefix_end(history: &[Message], running: &BTreeSet<&str>) -> Option<u
             .iter()
             .filter_map(|message| match message.semantic() {
                 SemanticMessage::ToolResult(result) => call_owners.get(result.id.as_str()),
-                SemanticMessage::ToolImageSupplement(images) => {
-                    call_owners.get(images.tool_call_id())
-                }
                 SemanticMessage::System(_)
                 | SemanticMessage::User(_)
                 | SemanticMessage::Assistant(_)

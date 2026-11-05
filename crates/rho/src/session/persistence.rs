@@ -649,9 +649,9 @@ pub(super) fn active_display_from_tree(
             message: row.message,
         })
         .collect();
-    insert_interrupted_placeholders_by(
+    normalize_loaded_history_by(
         &mut messages,
-        |projected| &projected.message,
+        |projected| &mut projected.message,
         |_source, result| ProjectedMessage {
             origin: None,
             message: Message::ToolResult(result),
@@ -785,8 +785,9 @@ fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
         .collect()
 }
 
+/// Loaded model history; see [`normalize_loaded_history_by`].
 pub(crate) fn insert_interrupted_tool_placeholders(mut messages: Vec<Message>) -> Vec<Message> {
-    insert_interrupted_placeholders_by(
+    normalize_loaded_history_by(
         &mut messages,
         |message| message,
         |_source, result| Message::ToolResult(result),
@@ -794,12 +795,13 @@ pub(crate) fn insert_interrupted_tool_placeholders(mut messages: Vec<Message>) -
     messages
 }
 
+/// Loaded display history; see [`normalize_loaded_history_by`].
 pub(crate) fn insert_interrupted_display_placeholders(
     mut messages: Vec<StoredDisplayMessage>,
 ) -> Vec<StoredDisplayMessage> {
-    insert_interrupted_placeholders_by(
+    normalize_loaded_history_by(
         &mut messages,
-        |stored| &stored.message,
+        |stored| &mut stored.message,
         |source, result| StoredDisplayMessage {
             timestamp: source.timestamp.clone(),
             message: Message::ToolResult(result),
@@ -808,22 +810,28 @@ pub(crate) fn insert_interrupted_display_placeholders(
     messages
 }
 
-fn insert_interrupted_placeholders_by<T>(
+/// Load-time normalization shared by model and display history: moves rho
+/// 2.x tool-image user messages onto their results, then closes tool calls
+/// that never got a result with a failed placeholder.
+fn normalize_loaded_history_by<T>(
     messages: &mut Vec<T>,
-    get_message: impl Fn(&T) -> &Message,
+    message: impl Fn(&mut T) -> &mut Message,
     make_placeholder: impl Fn(&T, ToolResult) -> T,
 ) {
+    rho_sdk::model::attach_legacy_tool_images(messages, &message);
     let mut index = 0usize;
     while index < messages.len() {
-        let tool_call_ids = completed_tool_call_ids(get_message(&messages[index]));
-        if tool_call_ids.is_empty() {
+        let mut remaining: std::collections::BTreeSet<String> =
+            completed_tool_call_ids(message(&mut messages[index]))
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+        if remaining.is_empty() {
             index += 1;
             continue;
         }
-        let mut remaining: std::collections::BTreeSet<String> =
-            tool_call_ids.iter().map(|id| (*id).to_owned()).collect();
-        for item in &messages[index + 1..] {
-            let Message::ToolResult(result) = get_message(item) else {
+        for item in &mut messages[index + 1..] {
+            let Message::ToolResult(result) = message(item) else {
                 continue;
             };
             remaining.remove(&result.id);
@@ -840,11 +848,7 @@ fn insert_interrupted_placeholders_by<T>(
             .map(|id| {
                 make_placeholder(
                     &messages[index],
-                    ToolResult {
-                        id,
-                        ok: false,
-                        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-                    },
+                    ToolResult::failed(id, INTERRUPTED_TOOL_RESULT_CONTENT),
                 )
             })
             .collect::<Vec<_>>();

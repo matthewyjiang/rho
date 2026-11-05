@@ -148,7 +148,7 @@ pub(super) fn references(history: &[Message]) -> BTreeMap<Probe, Reference> {
         .filter(|call| is_consequential(call))
         .filter_map(|call| {
             let result = results.get(call.id.as_str())?;
-            (!result.ok).then(|| {
+            result.is_failure().then(|| {
                 format!(
                     "{} {}: {}",
                     call.name,
@@ -321,10 +321,10 @@ fn is_check_command(command: &str) -> bool {
 }
 
 fn status(result: &ToolResult) -> &'static str {
-    if result.ok {
-        "passed"
-    } else {
+    if result.is_failure() {
         "failed"
+    } else {
+        "passed"
     }
 }
 

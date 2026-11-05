@@ -27,11 +27,7 @@ fn calls(ids: &[&str]) -> Message {
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: id.into(),
-        ok: true,
-        content: "ok".into(),
-    })
+    Message::ToolResult(ToolResult::succeeded(id, "ok"))
 }
 
 // Covers: compaction groups an assistant with later/out-of-order results, and
@@ -45,24 +41,6 @@ fn completed_tool_group_end_is_id_set_based() {
         expected: Option<usize>,
     }
     let cases = [
-        Case {
-            name: "tool image supplement stays with its result",
-            messages: vec![
-                call("a"),
-                result("a"),
-                Message::tool_image_supplement(
-                    "agent",
-                    "a",
-                    vec![rho_sdk::model::ImageContent {
-                        data: "aW1hZ2U=".into(),
-                        mime_type: "image/png".into(),
-                    }],
-                )
-                .unwrap(),
-                Message::user_text("next"),
-            ],
-            expected: Some(3),
-        },
         Case {
             name: "late result after user steer",
             messages: vec![call("a"), Message::user_text("steer"), result("a")],

@@ -113,21 +113,6 @@ pub(super) fn transcript_entries_from_messages(
     let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
         match message.semantic() {
-            SemanticMessage::ToolImageSupplement(images) => {
-                let mut card = ToolCard::new(
-                    ToolStatus::Ok,
-                    ToolFamily::Default,
-                    ToolHeader::call(images.tool_name(), None),
-                );
-                for image in images.images() {
-                    card.push_fact(ToolFact::Text {
-                        text: image_summary(image),
-                    });
-                }
-                entries.push(Entry::Tool(ToolEntry::new(
-                    card, /*expanded*/ false, /*image*/ None, /*started_at*/ None,
-                )));
-            }
             SemanticMessage::System(text) => {
                 if let Some(transcript) =
                     crate::display_transcript::DisplayTranscript::from_display(text)
@@ -190,13 +175,31 @@ pub(super) fn transcript_entries_from_messages(
                         name: "tool".into(),
                         arguments: serde_json::Value::Object(Default::default()),
                     });
-                let presented = presenter.historical(&call, result.ok, &result.content);
+                let presented = presenter.historical(&call, !result.is_failure(), &result.content);
                 entries.push(Entry::Tool(ToolEntry::new(
                     presented.presentation,
                     false,
                     None,
                     None,
                 )));
+                // Restored tool screenshots stay on a tool card, never a
+                // human message.
+                if !result.images.is_empty() {
+                    let mut card = ToolCard::new(
+                        ToolStatus::Ok,
+                        ToolFamily::Default,
+                        ToolHeader::call(&call.name, None),
+                    );
+                    for image in &result.images {
+                        card.push_fact(ToolFact::Text {
+                            text: image_summary(image),
+                        });
+                    }
+                    entries.push(Entry::Tool(ToolEntry::new(
+                        card, /*expanded*/ false, /*image*/ None,
+                        /*started_at*/ None,
+                    )));
+                }
             }
         }
     }

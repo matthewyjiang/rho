@@ -145,7 +145,7 @@ mod tests {
             .expect("command should not wait for terminal input");
 
         assert!(
-            result.ok,
+            !result.is_failure(),
             "command should complete on closed stdin: {}",
             result.content
         );
@@ -176,7 +176,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.ok, "command failed: {}", result.content);
+        assert!(!result.is_failure(), "command failed: {}", result.content);
         assert!(
             result.content.contains("own-session"),
             "command shares the host session: {}",
@@ -195,7 +195,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.ok);
+        assert!(!result.is_failure());
         assert!(result.content.contains("ok\u{FFFD}"));
     }
 

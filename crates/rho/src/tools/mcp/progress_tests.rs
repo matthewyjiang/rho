@@ -38,7 +38,7 @@ async fn progress_reaches_the_subscribed_call_only() {
     let counted = receiver.recv().await.unwrap();
     assert_eq!(
         (
-            counted.text(),
+            counted.message(),
             counted.completed_units(),
             counted.total_units()
         ),

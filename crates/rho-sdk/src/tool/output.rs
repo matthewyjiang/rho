@@ -176,7 +176,7 @@ pub struct ToolOutput {
     metadata: ToolMetadata,
     images: Vec<crate::model::ImageContent>,
     failure: bool,
-    /// Boxed: rare, and keeps `ToolCompletion` variants close in size.
+    /// Boxed: rare, and keeps `ToolCompletion` small.
     extras: Option<Box<OutputExtras>>,
 }
 
@@ -244,16 +244,11 @@ impl ToolOutput {
 
     /// Attaches images to this completed output, replacing any prior images.
     ///
-    /// The runtime delivers images as attributed, untrusted supplemental user content
-    /// after all outstanding tool calls have paired results. Cancelled batches discard
-    /// undelivered images. Hosts can read them from `ToolCompletion::Success` and
-    /// `ToolCompletion::CompletedFailure`; failed output retains images but does
-    /// not deliver them to the model.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): represent images in structured tool results instead of supplemental user messages.
-    /// Adding fields to `ToolResult` or variants to `Message` would break minor compatibility.
+    /// The runtime commits successful output's images on the model-visible
+    /// [`ToolResult::images`](crate::model::ToolResult::images) as untrusted
+    /// tool data. Cancelled batches and terminal settlement discard images not
+    /// yet committed. Hosts read them from `ToolCompletion::Completed`; failed
+    /// output retains images but does not deliver them to the model.
     pub fn with_images(mut self, images: Vec<crate::model::ImageContent>) -> Self {
         self.images = images;
         self

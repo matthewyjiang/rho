@@ -112,7 +112,7 @@ async fn calls_use_the_advertised_request_snapshot() {
             .history()
             .into_iter()
             .filter_map(|message| match message {
-                Message::ToolResult(result) => Some((result.id, result.ok)),
+                Message::ToolResult(result) => Some((result.id.clone(), !result.is_failure())),
                 _ => None,
             })
             .collect::<Vec<_>>(),

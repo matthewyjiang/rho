@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use {
     crate::session::{ExportedMessage, SessionExport},
-    rho_providers::model::{ContentBlock, Message},
+    rho_providers::model::{ContentBlock, ImageContent, Message},
     rho_tools::tool::{ToolCall, ToolResult},
 };
 
@@ -118,8 +118,7 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
             }
             SemanticMessage::System(_)
             | SemanticMessage::User(_)
-            | SemanticMessage::AbortedAssistant(_)
-            | SemanticMessage::ToolImageSupplement(_) => {}
+            | SemanticMessage::AbortedAssistant(_) => {}
         }
     }
 
@@ -134,20 +133,6 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
                 } else {
                     push_fenced(out, None, text);
                 }
-            }
-            SemanticMessage::ToolImageSupplement(images) => {
-                out.push_str("## Tool output images\n\n");
-                push_fenced(
-                    out,
-                    None,
-                    &format!("tool: {} ({})", images.tool_name(), images.tool_call_id()),
-                );
-                push_blocks_markdown(
-                    out,
-                    images.content(),
-                    &results_by_id,
-                    /*pair_tools*/ false,
-                );
             }
             SemanticMessage::User(blocks) => {
                 out.push_str("## You\n\n");
@@ -200,13 +185,7 @@ fn push_blocks_markdown(
                 }
                 out.push('\n');
             }
-            ContentBlock::Image(image) => {
-                let _ = writeln!(
-                    out,
-                    "![attached image](data:{};base64,{})\n",
-                    image.mime_type, image.data
-                );
-            }
+            ContentBlock::Image(image) => push_image_markdown(out, image, "attached image"),
             ContentBlock::ToolCall(call) => {
                 let result = if pair_tools {
                     results_by_id.get(call.id.as_str()).copied()
@@ -226,7 +205,7 @@ fn push_tool_result_markdown(
 ) {
     let name = call.map_or("tool result", |call| call.name.as_str());
     let status = match result {
-        Some(result) if result.ok => "ok",
+        Some(result) if !result.is_failure() => "ok",
         Some(_) => "error",
         None => "no result",
     };
@@ -244,7 +223,18 @@ fn push_tool_result_markdown(
         } else {
             push_fenced(out, None, &result.content);
         }
+        for image in &result.images {
+            push_image_markdown(out, image, "tool output image");
+        }
     }
+}
+
+fn push_image_markdown(out: &mut String, image: &ImageContent, alt: &str) {
+    let _ = writeln!(
+        out,
+        "![{alt}](data:{};base64,{})\n",
+        image.mime_type, image.data
+    );
 }
 
 fn push_fenced(out: &mut String, language: Option<&str>, body: &str) {

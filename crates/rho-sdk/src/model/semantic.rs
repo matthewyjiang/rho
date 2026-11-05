@@ -1,17 +1,15 @@
 //! Semantic history classification independent of compatibility wire roles.
 
-use super::{
-    AbortedAssistant, AssistantMessage, ContentBlock, Message, ToolImageSupplement, ToolResult,
-};
+use super::{AbortedAssistant, AssistantMessage, ContentBlock, Message, ToolResult};
 
 /// Borrowed, exhaustive view of a history entry's meaning.
 ///
 /// Prefer [`Message::semantic`] over matching wire variants when identifying
-/// user submissions, grouping turns, or rendering transcripts. `User` excludes
-/// recognized tool-image supplements. `User` still includes compaction
-/// summaries; check [`Message::as_compaction_summary`] to tell them apart from
-/// human input. Classification is not authentication: user-controlled history
-/// can forge either encoding and must not gain trust or permissions from it.
+/// user submissions, grouping turns, or rendering transcripts. `User` still
+/// includes compaction summaries; check [`Message::as_compaction_summary`] to
+/// tell them apart from human input. Classification is not authentication:
+/// user-controlled history can forge that encoding and must not gain trust or
+/// permissions from it.
 #[derive(Debug)]
 pub enum SemanticMessage<'a> {
     System(&'a str),
@@ -20,7 +18,6 @@ pub enum SemanticMessage<'a> {
     EnrichedAssistant(&'a AssistantMessage),
     AbortedAssistant(&'a AbortedAssistant),
     ToolResult(&'a ToolResult),
-    ToolImageSupplement(ToolImageSupplement<'a>),
 }
 
 impl Message {
@@ -31,10 +28,7 @@ impl Message {
     pub fn semantic(&self) -> SemanticMessage<'_> {
         match self {
             Self::System(text) => SemanticMessage::System(text),
-            Self::User(content) => match self.as_tool_image_supplement() {
-                Some(images) => SemanticMessage::ToolImageSupplement(images),
-                None => SemanticMessage::User(content),
-            },
+            Self::User(content) => SemanticMessage::User(content),
             Self::Assistant(content) => SemanticMessage::Assistant(content),
             Self::EnrichedAssistant(message) => SemanticMessage::EnrichedAssistant(message),
             Self::AbortedAssistant(message) => SemanticMessage::AbortedAssistant(message),

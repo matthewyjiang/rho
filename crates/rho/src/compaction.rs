@@ -351,18 +351,12 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
                 SemanticMessage::ToolResult(result) if call_ids.contains(result.id.as_str()) => {
                     Some(offset)
                 }
-                SemanticMessage::ToolImageSupplement(images)
-                    if call_ids.contains(images.tool_call_id()) =>
-                {
-                    Some(offset)
-                }
                 SemanticMessage::System(_)
                 | SemanticMessage::User(_)
                 | SemanticMessage::Assistant(_)
                 | SemanticMessage::EnrichedAssistant(_)
                 | SemanticMessage::AbortedAssistant(_)
-                | SemanticMessage::ToolResult(_)
-                | SemanticMessage::ToolImageSupplement(_) => None,
+                | SemanticMessage::ToolResult(_) => None,
             })
             .next_back()
         else {
@@ -609,11 +603,7 @@ mod tests {
                 // Over the verbatim first-turn budget, so it is summarized.
                 Message::user_text("x".repeat(20_000)),
                 assistant.clone(),
-                Message::ToolResult(ToolResult {
-                    id: "call_1".into(),
-                    ok: true,
-                    content: "hi".into(),
-                }),
+                Message::ToolResult(ToolResult::succeeded("call_1", "hi")),
                 Message::user_text("new"),
             ];
 

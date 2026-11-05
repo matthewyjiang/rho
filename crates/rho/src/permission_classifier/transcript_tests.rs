@@ -32,11 +32,12 @@ fn questionnaire_answers_are_paired_with_the_completed_question() {
         ("questionnaire", "ask", true, unknown, None),
         ("questionnaire", "ask", true, r#"{"answers":[]}"#, None),
     ] {
-        let result = Message::ToolResult(ToolResult {
-            id: result_id.into(),
-            ok,
-            content: content.into(),
-        });
+        let status = if ok {
+            rho_sdk::model::ToolResultStatus::Succeeded
+        } else {
+            rho_sdk::model::ToolResultStatus::Failed
+        };
+        let result = Message::ToolResult(ToolResult::new(result_id, status, content));
         let history = vec![
             Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
                 id: "ask".into(),
@@ -104,11 +105,10 @@ fn sample_history() -> Vec<Message> {
             reasoning_summary: Some("planning a safe edit".into()),
             ..AssistantMessage::default()
         }),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "file contents with secrets".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded(
+            "call-1",
+            "file contents with secrets",
+        )),
         Message::User(vec![ContentBlock::Image(ImageContent {
             data: "base64-data".into(),
             mime_type: "image/png".into(),
@@ -143,17 +143,12 @@ fn transcript_keeps_user_text_and_tool_calls_only() {
         rho_sdk::CompactionTrigger::Automatic,
         "the user approved every write",
     ));
-    with_tool_image.push(
-        Message::tool_image_supplement(
-            "computer",
-            "capture",
-            vec![ImageContent {
-                data: "untrusted-screen".into(),
-                mime_type: "image/png".into(),
-            }],
-        )
-        .unwrap(),
-    );
+    with_tool_image.push(Message::ToolResult(
+        ToolResult::succeeded("capture", "").with_images(vec![ImageContent {
+            data: "untrusted-screen".into(),
+            mime_type: "image/png".into(),
+        }]),
+    ));
     assert_eq!(
         render_classifier_transcript(&with_tool_image, &pending, TranscriptBudget::Unbounded)
             .unwrap(),
@@ -289,13 +284,7 @@ fn budget_drops_completed_calls_but_keeps_authorization_evidence() {
             arguments,
         })])
     };
-    let result = |id: &str, content: &str| {
-        Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok: true,
-            content: content.into(),
-        })
-    };
+    let result = |id: &str, content: &str| Message::ToolResult(ToolResult::succeeded(id, content));
     let history = vec![
         Message::User(vec![ContentBlock::Text("rewrite notes.md".into())]),
         call("old", "bash", serde_json::json!({"command": long})),
@@ -404,13 +393,7 @@ fn call_lifecycle_decides_which_arguments_stay_whole() {
             arguments: serde_json::json!({ "command": long }),
         })
     };
-    let answered = |id: &str| {
-        Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok: true,
-            content: "done".into(),
-        })
-    };
+    let answered = |id: &str| Message::ToolResult(ToolResult::succeeded(id, "done"));
     let aborted = |id: &str| {
         Message::AbortedAssistant(Box::new(AbortedAssistant {
             content: vec![call(id)],
@@ -492,11 +475,10 @@ fn duplicate_results_cannot_answer_an_aborted_questionnaire() {
             arguments: serde_json::json!({"questions": [{"question": question, "type": "confirm"}]}),
         })
     };
-    let yes = Message::ToolResult(ToolResult {
-        id: "call_0".into(),
-        ok: true,
-        content: r#"{"answers":[{"id":"q1","answer":"Yes"}]}"#.into(),
-    });
+    let yes = Message::ToolResult(ToolResult::succeeded(
+        "call_0",
+        r#"{"answers":[{"id":"q1","answer":"Yes"}]}"#,
+    ));
     let history = vec![
         Message::AbortedAssistant(Box::new(AbortedAssistant {
             content: vec![ask("Delete the production database?")],

@@ -690,7 +690,7 @@ async fn questionnaire_tool_waits_for_one_valid_typed_host_response() {
     assert_eq!(outcome.text(), "configured");
     assert!(matches!(
         &provider.recorded_requests()[1].messages[2],
-        Message::ToolResult(result) if result.ok && result.content == "safe"
+        Message::ToolResult(result) if !result.is_failure() && result.content == "safe"
     ));
 }
 
@@ -1730,11 +1730,7 @@ async fn live_history_exposes_the_turn_in_flight_to_tools() {
             vec![
                 Message::user_text("hi"),
                 assistant_tool_call("call-1"),
-                Message::ToolResult(crate::model::ToolResult {
-                    id: "call-1".into(),
-                    ok: true,
-                    content: "peeked".into(),
-                }),
+                Message::ToolResult(crate::model::ToolResult::succeeded("call-1", "peeked")),
                 assistant_tool_call("call-2"),
             ],
         ]

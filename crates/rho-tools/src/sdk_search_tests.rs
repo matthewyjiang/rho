@@ -200,7 +200,7 @@ async fn allowed_policy_runs_grep_and_glob_with_search_metadata() {
     while let Some(event) = run.next_event().await {
         match event {
             RunEvent::ToolFinished { result, .. } => match result {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Completed(output) => {
                     assert_eq!(
                         output.presentation().operation_kind(),
                         Some(&OperationKind::Search)

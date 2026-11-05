@@ -144,10 +144,14 @@ impl SessionOptions {
         self
     }
 
+    /// Continues a saved session. History saved by rho-sdk 5.x is converted:
+    /// its tool-image user messages move onto their tool results.
     pub fn from_snapshot(snapshot: SessionSnapshot) -> Self {
+        let mut history = snapshot.history().to_vec();
+        crate::model::attach_legacy_tool_images(&mut history, |message| message);
         Self {
             id: snapshot.session_id().clone(),
-            history: snapshot.history().to_vec(),
+            history,
             revision: snapshot.revision(),
             compaction: snapshot.compaction().clone(),
             metadata: snapshot.metadata().clone(),

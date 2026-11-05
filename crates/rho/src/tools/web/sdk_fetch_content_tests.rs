@@ -151,7 +151,7 @@ async fn local_target_reads_only_after_workspace_authorization() {
     )
     .await;
 
-    let ToolCompletion::Success(output) = completion else {
+    let ToolCompletion::Completed(output) = completion else {
         panic!("authorized local fetch should succeed");
     };
     assert!(output.content().contains("workspace content"));
@@ -219,7 +219,7 @@ async fn granted_root_still_requires_explicit_outside_workspace_policy() {
         json!({"urls": [file]}),
     )
     .await;
-    assert!(matches!(allowed, ToolCompletion::Success(_)));
+    assert!(matches!(allowed, ToolCompletion::Completed(_)));
 }
 
 #[tokio::test]
@@ -301,7 +301,7 @@ async fn authorized_http_target_executes_the_authorized_url() {
     .await;
     server.join().unwrap();
 
-    let ToolCompletion::Success(output) = completion else {
+    let ToolCompletion::Completed(output) = completion else {
         panic!("authorized HTTP fetch should succeed");
     };
     assert!(output.content().contains("authorized response"));

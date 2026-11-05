@@ -77,11 +77,7 @@ async fn breakdown_parts_sum_to_session_estimate_and_attribute_tool_results() {
     );
 
     for message in [
-        Message::ToolResult(ToolResult {
-            id: "unknown-call".into(),
-            ok: true,
-            content: "orphan".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("unknown-call", "orphan")),
         Message::compaction_summary(CompactionTrigger::Manual, "earlier work"),
     ] {
         session.append_message(message).unwrap();

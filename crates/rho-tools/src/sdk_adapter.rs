@@ -304,8 +304,8 @@ fn execute_prepared_write(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("writing {display}"))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                ToolProgress::new(format!("writing {display}"))
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         workspace.revalidate(&resolved).map_err(map_path_error)?;

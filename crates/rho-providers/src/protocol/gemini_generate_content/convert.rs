@@ -104,7 +104,7 @@ pub fn build_request<'a>(
                                 .is_none_or(|info| info.has_provider_id)
                                 .then(|| result.id.clone()),
                             name,
-                            response: json!({"output": result.content, "ok": result.ok}),
+                            response: json!({"output": result.content, "ok": !result.is_failure()}),
                         }),
                         thought: false,
                         thought_signature: None,

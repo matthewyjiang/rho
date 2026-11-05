@@ -58,11 +58,10 @@ impl Tool for ReadFile {
                 /*host_files*/ None,
             )
             .await?;
-            Ok(ToolResult {
+            Ok(ToolResult::succeeded(
                 id,
-                ok: true,
-                content: truncate(output.content, ctx.max_output_bytes),
-            })
+                truncate(output.content, ctx.max_output_bytes),
+            ))
         })
     }
 }

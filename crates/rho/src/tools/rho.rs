@@ -157,11 +157,7 @@ impl Tool for Rho {
             let args: Args = serde_json::from_value(args)?;
             let content = respond(&self.diagnostics, &args.action, Some(&ctx.cwd))
                 .map_err(ToolError::Message)?;
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content,
-            })
+            Ok(ToolResult::succeeded(id, content))
         })
     }
 }

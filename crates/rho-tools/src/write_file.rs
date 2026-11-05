@@ -44,11 +44,7 @@ impl Tool for WriteFile {
                 /*host_files*/ None,
             )
             .await?;
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content: outcome.content,
-            })
+            Ok(ToolResult::succeeded(id, outcome.content))
         })
     }
 }

@@ -12,11 +12,7 @@ use super::*;
 fn recalls_saved_original_by_id() {
     let root = TempDir::new().unwrap();
     let dir = root.path().join("recall");
-    let result = ToolResult {
-        id: "call_0".into(),
-        ok: false,
-        content: "héllo world".into(),
-    };
+    let result = ToolResult::failed("call_0", "héllo world");
     save(&dir, std::slice::from_ref(&result)).unwrap();
     let id = crate::compaction::recall_id(&result);
     let recall = |recall_id: &str, start: usize, chars: usize, budget: usize| {

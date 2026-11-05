@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::{
-    event::{ToolCompletion, ToolFailure},
+    event::{ToolCompletion, ToolExecution, ToolFailure},
     model::{Message, ToolCall, ToolResult},
     session::SessionCore,
     tool::{
@@ -272,13 +272,13 @@ impl RunControl<'_> {
                         events,
                         cancellation,
                         RunEvent::ToolStarted {
-                            call_id: id.clone(),
+                            call_id: id,
                             name: call.name.clone(),
                             metadata,
+                            execution: ToolExecution::Detached,
                         },
                     )
                     .await?;
-                    emit(events, cancellation, RunEvent::ToolDetached { call_id: id }).await?;
                 }
                 Ok(Err(error)) => {
                     let job = jobs
@@ -290,11 +290,7 @@ impl RunControl<'_> {
                         error.kind(),
                         error.message().to_owned(),
                     ));
-                    let result = ToolResult {
-                        id: call.id.clone(),
-                        ok: false,
-                        content: error.message().to_owned(),
-                    };
+                    let result = ToolResult::failed(call.id.clone(), error.message().to_owned());
                     fail_call(
                         hooks,
                         events,
@@ -323,11 +319,7 @@ impl RunControl<'_> {
                         error.kind(),
                         error.message().to_owned(),
                     ));
-                    let result = ToolResult {
-                        id: call.id.clone(),
-                        ok: false,
-                        content: error.message().to_owned(),
-                    };
+                    let result = ToolResult::failed(call.id.clone(), error.message().to_owned());
                     fail_call(
                         hooks,
                         events,
@@ -429,6 +421,7 @@ async fn fail_call(
             call_id: id.clone(),
             name: call.name.clone(),
             metadata: Default::default(),
+            execution: ToolExecution::Attached,
         },
     )
     .await?;

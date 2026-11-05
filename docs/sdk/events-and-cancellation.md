@@ -51,7 +51,7 @@ sequenceDiagram
 4. A complete tool call emits `ToolProposed` before execution.
 5. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
 6. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
-7. An honoured async call emits `ToolDetached` after `ToolStarted`. The loop continues; `ToolFinished` for that id may arrive after later `StepStarted` events. Hosts should keep the card alive until `ToolFinished`.
+7. An honoured async call emits `ToolStarted` with `execution: ToolExecution::Detached`. The loop continues; `ToolFinished` for that id may arrive after later `StepStarted` events. Hosts should keep the card alive until `ToolFinished`.
 8. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, detach, and finish events from different calls may interleave.
 9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
 10. Sync calls in one model response still enter provider and persisted history in model order. Async results enter history in completion order and may be non-adjacent to the original call.

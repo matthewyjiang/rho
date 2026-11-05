@@ -31,7 +31,7 @@ fn running_card_ignores_call_rows() {
         arguments: arguments.clone(),
         metadata: Default::default(),
     };
-    let rows = rho_sdk::tool::ToolProgress::message("✓ read_file a.rs 1ms\n● bash sleep 5");
+    let rows = rho_sdk::tool::ToolProgress::new("✓ read_file a.rs 1ms\n● bash sleep 5");
     let card = crate::app::interactive_presenter::format::progress_card(
         Some((&view, std::path::Path::new("."))),
         &rows,
@@ -58,7 +58,7 @@ fn finished_card_is_the_script() {
     let output = ToolOutput::text("printed line").with_structured_content(json!({"calls": 3}));
     let (ok, live) = presenter.finished(
         &ToolCallId::from_string(call.id.clone()).unwrap(),
-        ToolCompletion::from_output(output),
+        ToolCompletion::Completed(output),
     );
     assert!(ok);
     let want = expected(ToolStatus::Ok, Some("3 calls"), &script);
@@ -74,7 +74,7 @@ fn finished_card_is_the_script() {
         .with_structured_content(json!({"calls": 1, "error": "x"}));
     let (ok, failed) = presenter.finished(
         &ToolCallId::from_string(call.id).unwrap(),
-        ToolCompletion::from_output(failed_output),
+        ToolCompletion::Completed(failed_output),
     );
     assert!(!ok);
     let mut card = expected(ToolStatus::Error, Some("1 call"), &script);

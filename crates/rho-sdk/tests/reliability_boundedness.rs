@@ -297,7 +297,7 @@ async fn large_tool_output_has_one_history_copy_and_one_bounded_semantic_event()
         .expect("large output event delivery stalled")
     {
         if let RunEvent::ToolFinished {
-            result: rho_sdk::ToolCompletion::Success(output),
+            result: rho_sdk::ToolCompletion::Completed(output),
             ..
         } = event
         {

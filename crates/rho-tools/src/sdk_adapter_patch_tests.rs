@@ -84,7 +84,7 @@ async fn patch_paths_follow_workspace_authorization() {
             run.outcome().await.unwrap();
             let allowed = permission == "allow";
             match completion.expect("patch completion") {
-                ToolCompletion::Success(_) if allowed => {}
+                ToolCompletion::Completed(_) if allowed => {}
                 ToolCompletion::Failure(failure) if !allowed => {
                     assert_eq!(
                         failure.kind(),

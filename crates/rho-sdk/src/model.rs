@@ -32,16 +32,16 @@ use crate::CancellationToken;
 mod compaction_summary;
 pub mod context;
 pub mod handoff;
+mod legacy_tool_images;
 mod model_context;
 mod semantic;
 mod stop_reason;
-mod tool_image_supplement;
 
 pub use compaction_summary::CompactionSummary;
+pub use legacy_tool_images::attach_legacy_tool_images;
 pub use semantic::SemanticMessage;
 pub use stop_reason::ModelStopReason;
 pub(crate) use stop_reason::STOP_REASON_CONTEXT_KIND;
-pub use tool_image_supplement::ToolImageSupplement;
 
 /// Provider-neutral specification for a tool available during a model turn.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -65,25 +65,101 @@ impl ToolCall {
     }
 }
 
+/// Outcome a tool result reports to the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToolResultStatus {
+    Succeeded,
+    Failed,
+}
+
 /// Result returned to a model after a tool call.
 ///
-/// # Next major
+/// `images` are untrusted tool data, not user instructions. Provider
+/// converters must deliver them: inside the tool result when the API accepts
+/// that, and otherwise as attributed user content after the result.
 ///
-/// NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.
-///
-/// Adding fields would break downstream struct literals. Until the next major,
-/// use [`Message::tool_image_supplement`] and [`Message::semantic`]
-/// to construct and classify the separate image entry.
-///
-/// NEXT_MAJOR(rho-sdk): replace `ToolResult::ok: bool` with a typed outcome
-/// enum such as `ToolResultStatus { Succeeded, Failed }`.
-///
-/// Changing a public field's type breaks struct literals and field reads.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Serialization writes `status` and omits empty `images`. Deserialization
+/// also accepts the rho-sdk 5.x `ok: bool` shape; move 5.x tool-image user
+/// messages onto their results with [`attach_legacy_tool_images`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ToolResult {
     pub id: String,
-    pub ok: bool,
+    pub status: ToolResultStatus,
     pub content: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageContent>,
+}
+
+impl ToolResult {
+    /// A text-only result with `status`.
+    pub fn new(
+        id: impl Into<String>,
+        status: ToolResultStatus,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            status,
+            content: content.into(),
+            images: Vec::new(),
+        }
+    }
+
+    pub fn succeeded(id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::new(id, ToolResultStatus::Succeeded, content)
+    }
+
+    pub fn failed(id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::new(id, ToolResultStatus::Failed, content)
+    }
+
+    /// Replaces the images returned with this result.
+    pub fn with_images(mut self, images: Vec<ImageContent>) -> Self {
+        self.images = images;
+        self
+    }
+
+    /// Whether the model should see this result as an error.
+    pub fn is_failure(&self) -> bool {
+        match self.status {
+            ToolResultStatus::Succeeded => false,
+            ToolResultStatus::Failed => true,
+        }
+    }
+}
+
+/// Accepts the current shape and the rho-sdk 5.x `ok: bool` shape.
+#[derive(Deserialize)]
+struct ToolResultRepr {
+    id: String,
+    #[serde(default)]
+    status: Option<ToolResultStatus>,
+    #[serde(default)]
+    ok: Option<bool>,
+    content: String,
+    #[serde(default)]
+    images: Vec<ImageContent>,
+}
+
+impl<'de> Deserialize<'de> for ToolResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = ToolResultRepr::deserialize(deserializer)?;
+        let status = match (repr.status, repr.ok) {
+            (Some(status), _) => status,
+            (None, Some(true)) => ToolResultStatus::Succeeded,
+            (None, Some(false)) => ToolResultStatus::Failed,
+            (None, None) => return Err(serde::de::Error::missing_field("status")),
+        };
+        Ok(Self {
+            id: repr.id,
+            status,
+            content: repr.content,
+            images: repr.images,
+        })
+    }
 }
 
 /// Tool call fragment retained when a model turn is interrupted.
@@ -347,13 +423,9 @@ impl<'de> Deserialize<'de> for AssistantMessage {
 
 /// One provider-neutral history entry.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.
-///
-/// For minor compatibility tool-owned images use `User` entries. Prefer
-/// [`Self::semantic`] for exhaustive classification that distinguishes tool data
-/// from human submissions without changing the serialized variants.
+/// Tool-owned images ride on [`ToolResult::images`]. Prefer [`Self::semantic`]
+/// for exhaustive classification that separates compatibility encodings from
+/// human submissions without changing the serialized variants.
 ///
 /// Exhaustive on purpose, like [`ContentBlock`]: every provider converter must
 /// decide how to send each variant, so a new one is a breaking change rather

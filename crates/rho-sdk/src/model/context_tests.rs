@@ -17,11 +17,7 @@ fn estimates_include_every_request_part() {
         name: "read_file".into(),
         arguments: json!({"path": "src/main.rs"}),
     };
-    let result = ToolResult {
-        id: "call_1".into(),
-        ok: true,
-        content: "file contents".into(),
-    };
+    let result = ToolResult::succeeded("call_1", "file contents");
     let identity = ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
     let context = ProviderContextBlock {
         identity: identity.clone(),

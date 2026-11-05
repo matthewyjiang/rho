@@ -29,7 +29,7 @@ pub(super) fn intercept(
         return None;
     }
     if let Some(result) = tool_result(request, RUN_CALL) {
-        return Some(if result.ok {
+        return Some(if !result.is_failure() {
             completed("workflow fixture dispatched")
         } else {
             completed(format!("workflow fixture run failed: {}", result.content))
@@ -42,7 +42,7 @@ pub(super) fn intercept(
             json!({"action": "plan", "file": ".rho/workflows/pty-background.star"}),
         ));
     };
-    if !result.ok {
+    if result.is_failure() {
         return Some(completed(format!(
             "workflow fixture plan failed: {}",
             result.content

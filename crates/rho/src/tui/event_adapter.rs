@@ -304,12 +304,20 @@ impl SdkEventAdapter {
                 call_id,
                 name,
                 metadata,
+                execution,
             } => {
                 let presented = self.presenter().started(call_id.clone(), name, metadata);
-                vec![ViewEvent::Update(ViewModelEvent::ToolStarted {
-                    call_id,
+                let started = ViewEvent::Update(ViewModelEvent::ToolStarted {
+                    call_id: call_id.clone(),
                     card: presented.card,
-                })]
+                });
+                match execution {
+                    rho_sdk::ToolExecution::Attached => vec![started],
+                    rho_sdk::ToolExecution::Detached => vec![
+                        started,
+                        ViewEvent::Update(ViewModelEvent::ToolDetached { call_id }),
+                    ],
+                }
             }
             RunEvent::ToolUpdated { call_id, progress } => {
                 let presented = self.presenter().updated(&call_id, &progress);
@@ -325,9 +333,6 @@ impl SdkEventAdapter {
                     presentation: presented.presentation,
                     image_asset: presented.image_asset,
                 })]
-            }
-            RunEvent::ToolDetached { call_id } => {
-                vec![ViewEvent::Update(ViewModelEvent::ToolDetached { call_id })]
             }
             RunEvent::UsageUpdated { usage } => {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]

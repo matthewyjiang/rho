@@ -9,11 +9,7 @@ use crate::{
 pub(super) const INTERRUPTED_TOOL_RESULT_CONTENT: &str = "tool call interrupted before completion";
 
 pub(super) fn interrupted_result(call: &ToolCall) -> ToolResult {
-    ToolResult {
-        id: call.id.clone(),
-        ok: false,
-        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-    }
+    ToolResult::failed(call.id.clone(), INTERRUPTED_TOOL_RESULT_CONTENT)
 }
 
 /// Terminal settlement preserves completed output, but cancellation means interrupted.

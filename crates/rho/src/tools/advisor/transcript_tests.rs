@@ -30,11 +30,7 @@ fn renders_every_role_in_session_order() {
                 arguments: json!({ "command": "cargo test" }),
             }),
         ])),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: false,
-            content: "1 failed".into(),
-        }),
+        Message::ToolResult(ToolResult::failed("call-1", "1 failed")),
         Message::Assistant(vec![ContentBlock::Image(ImageContent {
             data: "AAAA".into(),
             mime_type: "image/png".into(),
@@ -178,11 +174,7 @@ fn clips_oversized_items_to_their_own_budgets() {
             name: "bash".into(),
             arguments: json!({ "command": "echo a very long command line" }),
         })]),
-        Message::ToolResult(ToolResult {
-            id: "call-1".into(),
-            ok: true,
-            content: "a very long tool result".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call-1", "a very long tool result")),
     ];
 
     let rendered = render_transcript(

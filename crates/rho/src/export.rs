@@ -382,9 +382,7 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                 }
             }
             SemanticMessage::AbortedAssistant(_) => {}
-            SemanticMessage::System(_)
-            | SemanticMessage::User(_)
-            | SemanticMessage::ToolImageSupplement(_) => {}
+            SemanticMessage::System(_) | SemanticMessage::User(_) => {}
         }
     }
 
@@ -393,17 +391,6 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
     let mut previous_role: Option<&str> = None;
     for entry in messages {
         match entry.message.semantic() {
-            SemanticMessage::ToolImageSupplement(images) => {
-                let _ = writeln!(
-                    html,
-                    "<div class=\"notice\">Tool output images: {}</div>",
-                    escape_html(images.tool_name())
-                );
-                for image in images.images() {
-                    push_image(html, image);
-                }
-                previous_role = None;
-            }
             SemanticMessage::System(text) => {
                 if let Some(transcript) =
                     crate::display_transcript::DisplayTranscript::from_display(text)
@@ -546,7 +533,7 @@ fn push_image(html: &mut String, image: &ImageContent) {
 
 fn push_tool_call(html: &mut String, call: Option<&ToolCall>, result: Option<&ToolResult>) {
     let (status_class, status_label) = match result {
-        Some(result) if result.ok => ("ok", "ok"),
+        Some(result) if !result.is_failure() => ("ok", "ok"),
         Some(_) => ("err", "error"),
         None => ("pending", "no result"),
     };
@@ -596,6 +583,9 @@ fn push_tool_call(html: &mut String, call: Option<&ToolCall>, result: Option<&To
                 "<pre class=\"tool-output\">{}</pre>",
                 escape_html(&result.content)
             );
+        }
+        for image in &result.images {
+            push_image(html, image);
         }
     }
     html.push_str("</div>\n</details>\n");

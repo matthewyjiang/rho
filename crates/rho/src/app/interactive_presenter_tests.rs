@@ -83,13 +83,13 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     }]);
     for (completion, ok, content, expected) in [
         (
-            ToolCompletion::Success(rho_sdk::tool::ToolOutput::text(summary)),
+            ToolCompletion::Completed(rho_sdk::tool::ToolOutput::text(summary)),
             true,
             summary,
             expected,
         ),
         (
-            ToolCompletion::from_output(rho_sdk::tool::ToolOutput::text(rejection).failed()),
+            ToolCompletion::Completed(rho_sdk::tool::ToolOutput::text(rejection).failed()),
             false,
             rejection,
             rejected,
@@ -207,8 +207,8 @@ fn advisor_cards_use_status_first_headers() {
 
     let progress = progress_card(
         Some((&view, dir.path())),
-        &rho_sdk::tool::ToolProgress::message("try the simpler path")
-            .metadata(rho_sdk::tool::ToolMetadata::new().command_summary("responding")),
+        &rho_sdk::tool::ToolProgress::new("try the simpler path")
+            .with_metadata(rho_sdk::tool::ToolMetadata::new().command_summary("responding")),
     );
     assert_eq!(
         progress.header,
@@ -221,7 +221,7 @@ fn advisor_cards_use_status_first_headers() {
 
     let progress_fallback = progress_card(
         Some((&view, dir.path())),
-        &rho_sdk::tool::ToolProgress::message(""),
+        &rho_sdk::tool::ToolProgress::new(""),
     );
     assert_eq!(
         progress_fallback.header,
@@ -301,7 +301,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
     );
     let (_, finished) = presenter.finished(
         &ToolCallId::from_string("ok").unwrap(),
-        ToolCompletion::Success(ToolOutput::text("clicked").metadata(metadata.clone())),
+        ToolCompletion::Completed(ToolOutput::text("clicked").metadata(metadata.clone())),
     );
     assert_eq!(
         finished.presentation,

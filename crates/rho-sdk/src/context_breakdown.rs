@@ -22,14 +22,14 @@ pub enum ContextItem {
     SystemPrompt,
     /// A later system message in history.
     System,
-    /// A user-role message that is neither a compaction summary nor a tool
-    /// image supplement. This includes context the host appended as a user message.
+    /// A user-role message that is not a compaction summary. This includes
+    /// context the host appended as a user message.
     User,
     /// A compaction summary that replaced earlier history.
     CompactionSummary,
     /// Assistant output, including reasoning replay and tool call arguments.
     Assistant,
-    /// A tool result or its image supplement. `tool` is `None` when no earlier
+    /// A tool result, including its images. `tool` is `None` when no earlier
     /// assistant tool call carries the result's id.
     ToolResult { tool: Option<String> },
     /// One request-only message from the host's [`crate::RequestContext`],
@@ -110,9 +110,6 @@ impl ContextBreakdown {
                 }
                 SemanticMessage::ToolResult(result) => ContextItem::ToolResult {
                     tool: call_names.get(result.id.as_str()).cloned(),
-                },
-                SemanticMessage::ToolImageSupplement(supplement) => ContextItem::ToolResult {
-                    tool: Some(supplement.tool_name().to_owned()),
                 },
             };
             parts.push(ContextPart {

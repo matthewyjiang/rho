@@ -13,11 +13,7 @@ fn call(id: &str) -> Message {
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: id.into(),
-        ok: true,
-        content: "ok".into(),
-    })
+    Message::ToolResult(ToolResult::succeeded(id, "ok"))
 }
 
 // Covers: an undelivered async call gets an interrupted placeholder so later
@@ -37,11 +33,10 @@ fn uncovered_async_call_inserts_placeholder_and_keeps_later_turn() {
         vec![
             Message::user_text("go"),
             call("a"),
-            Message::ToolResult(ToolResult {
-                id: "a".into(),
-                ok: false,
-                content: "tool call interrupted before completion".into(),
-            }),
+            Message::ToolResult(ToolResult::failed(
+                "a",
+                "tool call interrupted before completion"
+            )),
             Message::user_text("later"),
             call("b"),
             result("b"),

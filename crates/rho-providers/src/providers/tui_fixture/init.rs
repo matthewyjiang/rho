@@ -31,11 +31,11 @@ pub(super) fn intercept(
         .lines()
         .find_map(|line| line.strip_prefix("Target path: "))?;
     let skill = tool_result_for_name(request, "skill")?;
-    if !skill.ok || skill.content.lines().next() != Some("Loaded skill: rho-init") {
+    if skill.is_failure() || skill.content.lines().next() != Some("Loaded skill: rho-init") {
         return None;
     }
     if let Some(result) = tool_result(request, WRITE_CALL_ID) {
-        return Some(completed(if result.ok {
+        return Some(completed(if !result.is_failure() {
             "fixture init wrote AGENTS.md".to_string()
         } else {
             format!("fixture init write failed: {}", result.content)
@@ -63,7 +63,7 @@ pub(super) fn intercept(
             serde_json::json!({"path": target}),
         ));
     };
-    if !read.ok {
+    if read.is_failure() {
         return Some(completed(format!(
             "fixture init read failed: {}",
             read.content

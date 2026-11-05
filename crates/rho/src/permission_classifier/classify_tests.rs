@@ -354,11 +354,10 @@ async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
             name: "bash".into(),
             arguments: serde_json::json!({"command": "x".repeat(500)}),
         })]));
-        history.push(Message::ToolResult(ToolResult {
-            id: format!("old-{index}"),
-            ok: true,
-            content: "done".into(),
-        }));
+        history.push(Message::ToolResult(ToolResult::succeeded(
+            format!("old-{index}"),
+            "done",
+        )));
     }
     let pending = pending_write();
     let screen_budget = TranscriptBudget::Tokens(10_500);

@@ -64,13 +64,13 @@ fn emits_safe_tool_lifecycle_fields_only() {
     assert!(adapter
         .event(&RunEvent::ToolUpdated {
             call_id: call_id.clone(),
-            progress: ToolProgress::message("private progress text"),
+            progress: ToolProgress::new("private progress text"),
         })
         .is_none());
     let updated = adapter
         .event(&RunEvent::ToolUpdated {
             call_id: call_id.clone(),
-            progress: ToolProgress::message("private progress text").units(1, 2),
+            progress: ToolProgress::new("private progress text").units(1, 2),
         })
         .unwrap();
     let finished = adapter

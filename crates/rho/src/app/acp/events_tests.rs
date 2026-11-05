@@ -35,6 +35,7 @@ fn mapper_with_started_call() -> EventMapper {
             call_id: ToolCallId::from_string("call-1").unwrap(),
             name: "write".into(),
             metadata: ToolMetadata::new(),
+            execution: rho_sdk::ToolExecution::Attached,
         },
     );
     mapper
@@ -123,6 +124,7 @@ fn proposed_started_finished_map_kind_and_status() {
                 .operation(OperationKind::Write)
                 .affected_path("a.rs")
                 .command_summary("patch a.rs"),
+            execution: rho_sdk::ToolExecution::Attached,
         },
     );
     match started {
@@ -147,7 +149,7 @@ fn proposed_started_finished_map_kind_and_status() {
         &mut mapper,
         RunEvent::ToolFinished {
             call_id,
-            result: ToolCompletion::Success(
+            result: ToolCompletion::Completed(
                 ToolOutput::text("ok").metadata(ToolMetadata::new().diff("diff --git a/a.rs")),
             ),
         },
@@ -260,6 +262,7 @@ fn started_call_titles_describe_the_call() {
                 call_id: ToolCallId::from_string("call-1").unwrap(),
                 name: name.into(),
                 metadata,
+                execution: rho_sdk::ToolExecution::Attached,
             },
         );
         match started {
@@ -425,7 +428,7 @@ fn tool_updated_is_in_progress() {
         &mut mapper,
         RunEvent::ToolUpdated {
             call_id: call_id.clone(),
-            progress: ToolProgress::message("working"),
+            progress: ToolProgress::new("working"),
         },
     );
     match update {
@@ -448,12 +451,12 @@ fn tool_updated_is_in_progress() {
         &mut mapper,
         RunEvent::ToolFinished {
             call_id: call_id.clone(),
-            result: ToolCompletion::Success(ToolOutput::text("ok")),
+            result: ToolCompletion::Completed(ToolOutput::text("ok")),
         },
     );
     let late = RunEvent::ToolUpdated {
         call_id,
-        progress: ToolProgress::message("late"),
+        progress: ToolProgress::new("late"),
     };
     assert_eq!(mapper.map_event(&session_id(), &late), Vec::new());
 }
@@ -573,6 +576,7 @@ fn chunks_share_a_message_id_until_a_boundary() {
             call_id: ToolCallId::from_string("call-1").unwrap(),
             name: "read_file".into(),
             metadata: ToolMetadata::new(),
+            execution: rho_sdk::ToolExecution::Attached,
         },
         text("found"),
         step(2),

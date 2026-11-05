@@ -6,7 +6,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    event::{ToolCompletion, ToolFailure},
+    event::{ToolCompletion, ToolExecution, ToolFailure},
     host_input::HostInputEnvelope,
     model::{Message, ToolCall},
     run::RunCommand,
@@ -210,7 +210,6 @@ pub(in crate::orchestration) async fn execute(
                 return Ok(true);
             }
             // Parked detached completions and this batch are available together.
-            // Commit all their results before any image supplements.
             CompletedToolOutput::commit_all(
                 control.pending_outputs.take_finished().into_iter().chain(
                     batch
@@ -349,6 +348,7 @@ async fn resolve_without_work(
                         call_id: entry.id.clone(),
                         name: entry.call.name.clone(),
                         metadata: Default::default(),
+                        execution: ToolExecution::Attached,
                     },
                 )
                 .await?;
@@ -420,6 +420,7 @@ async fn start_eligible(
                 call_id: batch[index].id.clone(),
                 name: batch[index].call.name.clone(),
                 metadata,
+                execution: ToolExecution::Attached,
             },
         )
         .await?;
