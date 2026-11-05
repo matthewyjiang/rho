@@ -61,7 +61,7 @@ impl App {
         match self.input_ui.composer() {
             ComposerMode::Input => Ok(false),
             ComposerMode::InteractivePending(pending)
-                if pending.finish == PendingLoginFinish::UserConfirms
+                if matches!(pending.finish, PendingLoginFinish::UserConfirms(_))
                     && key.code == KeyCode::Enter
                     && key.modifiers.is_empty() =>
             {

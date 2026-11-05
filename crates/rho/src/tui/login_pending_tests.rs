@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rho_providers::{
-    auth::login_prompt::LoginPrompt,
+    auth::{login_dispatch::UnconfirmedAuthentication, login_prompt::LoginPrompt},
     credentials::{CredentialError, CredentialResult, CredentialStore, MemoryCredentialStore},
     model::catalog::LoginTarget,
 };
@@ -39,7 +39,9 @@ fn ollama_device_pending() -> PendingLoginComposer {
             None,
             "Approve this device on ollama.com.",
         ),
-        finish: PendingLoginFinish::UserConfirms,
+        finish: PendingLoginFinish::UserConfirms(
+            UnconfirmedAuthentication::ollama_device_for_tests(),
+        ),
     }
 }
 

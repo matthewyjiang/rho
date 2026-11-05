@@ -45,13 +45,9 @@ pub struct ModelSelection {
 
 /// Why a `provider/model` reference cannot be the chat model.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark ModelSelectionError `#[non_exhaustive]` so new variants are minor-compatible.
-///
-/// New variants land in minor releases, as `DecisionOnly` did in 2.14; an
-/// exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new variants land in minor releases.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ModelSelectionError {
     #[error("unknown provider '{provider}' for model selection")]
     UnknownProvider { provider: String },

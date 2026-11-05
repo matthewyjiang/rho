@@ -167,11 +167,6 @@ pub enum OllamaDeviceError {
     Setup(String),
     #[error("Ollama device key already exists")]
     AlreadyExists,
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): remove OllamaDeviceError::Browser; browser launch lives in the login dispatch layer
-    #[error("could not open a browser for Ollama device login")]
-    Browser,
 }
 
 #[derive(Clone, Debug)]
@@ -181,21 +176,12 @@ pub struct OllamaDeviceLogin {
 
 /// Starts sign-in for the local Ollama device key.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): remove the `open_browser` argument; the dispatch layer owns browser launch
-///
-/// When `open_browser` is true, opens the Ollama connect page. Callers in
-/// headless environments can pass false and show [`OllamaDeviceLogin::connect_url`]
-/// instead. Ollama does not send a completion callback to the client.
-pub async fn start_ollama_device_login(
-    open_browser: bool,
-) -> Result<OllamaDeviceLogin, OllamaDeviceError> {
+/// Returns the Ollama connect page for the caller to present; the login
+/// dispatch layer owns browser launch. Ollama does not send a completion
+/// callback to the client.
+pub async fn start_ollama_device_login() -> Result<OllamaDeviceLogin, OllamaDeviceError> {
     let key = OllamaDeviceKey::load_or_create_default()?;
     let connect_url = key.connect_url()?;
-    if open_browser {
-        webbrowser::open(&connect_url).map_err(|_| OllamaDeviceError::Browser)?;
-    }
     Ok(OllamaDeviceLogin { connect_url })
 }
 

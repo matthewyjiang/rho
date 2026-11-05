@@ -5,7 +5,8 @@ use rho_sdk::model::{ContentBlock, ImageContent, Message, ModelIdentity, ToolRes
 
 use super::{gate_images, IMAGE_UNSUPPORTED_TEXT};
 use crate::model::models_dev::{
-    with_models_dev_cache_dir_for_tests, write_cached_image_input_for_tests, ImageInput,
+    with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ImageInput,
+    ModelMetadata,
 };
 
 fn image() -> ImageContent {
@@ -45,7 +46,14 @@ fn gate_strips_images_only_for_models_marked_text_only() {
             ("vision", ImageInput::Supported),
             ("text-only", ImageInput::Unsupported),
         ] {
-            write_cached_image_input_for_tests("openai", model, image_input);
+            write_cached_model_metadata_for_tests(
+                "openai",
+                model,
+                &ModelMetadata {
+                    image_input,
+                    ..ModelMetadata::default()
+                },
+            );
         }
 
         for (model, expected) in [

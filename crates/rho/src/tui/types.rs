@@ -27,7 +27,7 @@ use ratatui::{
     text::Line,
 };
 use rho_providers::{
-    auth::login_prompt::LoginPrompt,
+    auth::{login_dispatch::UnconfirmedAuthentication, login_prompt::LoginPrompt},
     model::{
         catalog::{LoginTarget, ModelSelection},
         ContextUsage, ModelUsage,
@@ -42,12 +42,13 @@ pub(super) struct PendingLoginComposer {
 }
 
 /// How a pending interactive login reaches success.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PendingLoginFinish {
     /// A background task waits for the provider's callback.
     ProviderCallback,
-    /// The provider sends no callback, so Enter means the user approved.
-    UserConfirms,
+    /// The provider sends no callback, so Enter means the user approved and
+    /// accepts this handle.
+    UserConfirms(UnconfirmedAuthentication),
 }
 
 #[cfg(test)]

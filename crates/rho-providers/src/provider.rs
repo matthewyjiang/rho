@@ -75,13 +75,9 @@ pub enum OpenAiRuntimeAuth {
 /// Owned on [`ProviderDescriptor`] so adding a provider is a single table row
 /// rather than a parallel match arm in the registry.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark ProviderRuntime `#[non_exhaustive]` so new runtimes are minor-compatible.
-///
-/// New runtimes land in minor releases, as the repo has added providers since
-/// 1.x; an exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new runtimes land in minor releases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProviderRuntime {
     OpenAi {
         auth_mode: OpenAiRuntimeAuth,
@@ -131,6 +127,21 @@ impl ProviderRuntime {
             | Self::SystemOne { .. } => CatalogConstruction::Runtime,
         }
     }
+
+    /// API base used when config sets no endpoint, for runtimes that have one.
+    pub fn default_api_base(self) -> Option<&'static str> {
+        match self {
+            Self::OpenAiCompatible {
+                default_api_base, ..
+            }
+            | Self::SystemOne { default_api_base } => Some(default_api_base),
+            Self::OpenAi { .. }
+            | Self::Anthropic
+            | Self::Google
+            | Self::GithubCopilot
+            | Self::Xai => None,
+        }
+    }
 }
 
 /// Provider families that share one backend for auth-profile switching.
@@ -168,13 +179,11 @@ pub(crate) fn shared_api_key_auths(auth: &str) -> impl Iterator<Item = &'static 
 /// Config-defined OpenAI-compatible hosts share [`Self::OpenAiCompatible`].
 /// Distinguish those hosts by [`ProviderDescriptor::name`].
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): mark ProviderId `#[non_exhaustive]` so new providers are minor-compatible.
-///
-/// New providers land in minor releases, as the repo has added providers since
-/// 1.x; an exhaustive match outside this crate breaks on each one until then.
+/// Non-exhaustive: new providers land in minor releases. Put per-provider
+/// behavior on a descriptor field or a method here instead of matching on the
+/// id outside this crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ProviderId {
     Ollama,
     OllamaCloud,

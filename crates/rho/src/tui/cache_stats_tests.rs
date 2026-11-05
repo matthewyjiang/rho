@@ -96,29 +96,27 @@ fn play(
 }
 
 fn priced_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(2_000_000),
-            cache_read_micros_per_m: Some(100_000),
-            cache_write_micros_per_m: Some(1_250_000),
-        }),
-        ..ModelMetadata::default()
-    }
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(1_000_000),
+        output_micros_per_m: Some(2_000_000),
+        cache_read_micros_per_m: Some(100_000),
+        cache_write_micros_per_m: Some(1_250_000),
+    });
+    metadata
 }
 
 /// High input/cache-read spread so a miss below the token tripwire can still
 /// cross the $0.10 notice floor.
 fn expensive_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(ModelCost {
-            input_micros_per_m: Some(20_000_000),
-            output_micros_per_m: None,
-            cache_read_micros_per_m: Some(0),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
-    }
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(20_000_000),
+        output_micros_per_m: None,
+        cache_read_micros_per_m: Some(0),
+        cache_write_micros_per_m: None,
+    });
+    metadata
 }
 
 struct Case {

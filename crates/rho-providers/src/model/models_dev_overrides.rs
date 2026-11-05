@@ -11,7 +11,7 @@ use std::{
 
 use crate::reasoning::ReasoningLevel;
 
-use super::{ImageInput, ModelCost, ModelMetadata};
+use super::{ImageInput, ModelCost, ModelMetadata, ReasoningControl};
 
 const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
 
@@ -20,10 +20,7 @@ pub(super) fn apply_builtin_overrides(
     model: &str,
     metadata: ModelMetadata,
 ) -> ModelMetadata {
-    match builtin_override_table(provider, model) {
-        Some(table) => merge_toml_override(metadata, table),
-        None => metadata,
-    }
+    merge_optional_toml_override(metadata, builtin_override_table(provider, model))
 }
 
 pub(super) fn builtin_override_table(provider: &str, model: &str) -> Option<&'static toml::Table> {
@@ -46,10 +43,7 @@ pub(super) fn apply_local_overrides(
     model: &str,
     metadata: ModelMetadata,
 ) -> ModelMetadata {
-    match local_override_table(provider, model) {
-        Some(table) => merge_toml_override(metadata, &table),
-        None => metadata,
-    }
+    merge_optional_toml_override(metadata, local_override_table(provider, model).as_ref())
 }
 
 /// Resolves `catalog` from one `~/.rho/models.toml` model table.
@@ -208,6 +202,19 @@ fn local_overrides_path() -> Option<PathBuf> {
     Some(crate::paths::rho_dir().ok()?.join("models.toml"))
 }
 
+/// [`merge_toml_override`] when a table exists; `metadata` unchanged otherwise.
+pub(super) fn merge_optional_toml_override(
+    metadata: ModelMetadata,
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> ModelMetadata {
+    match table {
+        Some(table) => merge_toml_override(metadata, table),
+        None => metadata,
+    }
+}
+
+/// Applies one override table. Explicit levels replace catalog toggle
+/// semantics, even when the resulting level list is identical.
 pub(super) fn merge_toml_override(
     mut metadata: ModelMetadata,
     table: &toml::map::Map<String, toml::Value>,
@@ -235,12 +242,14 @@ pub(super) fn merge_toml_override(
     if let Some(levels) = toml_reasoning_levels(table, "supported_reasoning_levels") {
         metadata.supported_reasoning_levels = Some(levels);
         metadata.reasoning_capabilities_known = true;
+        metadata.reasoning_control = ReasoningControl::Effort;
     }
+    metadata.image_input = local_image_input(table).unwrap_or(metadata.image_input);
     metadata
 }
 
 /// `image_input = true|false` from one `models.toml` model table.
-pub(super) fn local_image_input(table: &toml::map::Map<String, toml::Value>) -> Option<ImageInput> {
+fn local_image_input(table: &toml::map::Map<String, toml::Value>) -> Option<ImageInput> {
     let supported = table.get("image_input")?.as_bool()?;
     Some(if supported {
         ImageInput::Supported
@@ -249,7 +258,7 @@ pub(super) fn local_image_input(table: &toml::map::Map<String, toml::Value>) -> 
     })
 }
 
-pub(super) fn toml_reasoning_levels(
+fn toml_reasoning_levels(
     table: &toml::map::Map<String, toml::Value>,
     key: &str,
 ) -> Option<Vec<ReasoningLevel>> {
