@@ -34,11 +34,19 @@ pub(crate) struct Elision {
 
 /// Stable handle for one persisted tool result. Hashing the call id with the
 /// content keeps ids unique even when providers reuse call ids like `call_0`.
+/// Images are hashed only when present, so text-only ids match the ones saved
+/// before results carried images.
 pub(crate) fn recall_id(result: &ToolResult) -> String {
     let mut digest = Sha256::new();
     digest.update(result.id.as_bytes());
     digest.update([0]);
     digest.update(result.content.as_bytes());
+    for image in &result.images {
+        digest.update([0]);
+        digest.update(image.mime_type.as_bytes());
+        digest.update([0]);
+        digest.update(image.data.as_bytes());
+    }
     let digest = hex::encode(digest.finalize());
     format!("r{}", &digest[..16])
 }
