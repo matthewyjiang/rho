@@ -21,6 +21,14 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        // Same gate as `rho login antigravity`: an agy without `agy acp`
+        // must not get the terminal.
+        if let Err(error) = auth::login_preflight().await {
+            // The error already names antigravity (`antigravity: ...`).
+            self.insert_entry(&Entry::Error(format!("could not log in to {error}")));
+            self.set_status("antigravity login failed");
+            return Ok(());
+        }
         self.start_external_login(terminal, antigravity_login_spec())
             .await
     }

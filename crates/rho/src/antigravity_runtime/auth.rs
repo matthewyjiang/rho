@@ -119,10 +119,17 @@ async fn supported_version(agy: &CliExecutable) -> Result<String, AntigravityPro
     Ok(version)
 }
 
-/// `rho login antigravity`: hand this terminal to `agy acp --login`.
-pub(crate) async fn login() -> anyhow::Result<()> {
+/// Resolve `agy` and refuse releases without `agy acp`, before any login
+/// hands it the terminal.
+pub(crate) async fn login_preflight() -> Result<CliExecutable, AntigravityProbeError> {
     let agy = executable::resolve()?;
     supported_version(&agy).await?;
+    Ok(agy)
+}
+
+/// `rho login antigravity`: hand this terminal to `agy acp --login`.
+pub(crate) async fn login() -> anyhow::Result<()> {
+    let agy = login_preflight().await?;
     let status = agy
         .try_command(executable::LOGIN_ARGS.iter().copied())?
         .status()

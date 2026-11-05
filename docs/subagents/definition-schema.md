@@ -416,7 +416,15 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "enum": ["read_file", "write_file", "edit_file", "run_command", "search_web"]
+              "enum": [
+                "read_file",
+                "write_file",
+                "edit_file",
+                "run_command",
+                "search_web",
+                "view_file",
+                "create_file"
+              ]
             }
           }
         },

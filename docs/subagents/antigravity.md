@@ -86,7 +86,7 @@ Each run writes an agy custom agent whose `tools:` is the run's allow list, and 
 
 Bypass runs whatever the kept tools allow, inside or outside the workspace, just like a shell tool on any other runtime. In agy 1.5.0, agy asks before every command, while workspace edits and web search run without asking. If agy leaves the mode Rho set, Rho fails the run.
 
-agy falls back to its default agent, with every built-in, when it cannot find the named agent, and says so only in its log. Rho writes the agent before starting agy, and a command still needs `run_command` in the list to be approved, but a workspace edit would not be stopped in that case.
+agy falls back to its default agent, with every built-in, when it cannot find the named agent, and says so only in its log. Rho writes the agent before starting agy. In that case the declared list does not stop a workspace edit; a command that asks Rho still needs `run_command` in the list, but one a project permission already allows (below) runs without asking.
 
 agy's `default` mode also honors your agy `toolPermission` setting, which can approve every tool without asking Rho. So Rho runs `agy acp --cli_dir_name rho`, which reads settings from `~/.gemini/antigravity-cli/rho/` instead of your `~/.gemini/antigravity-cli/settings.json`, while keeping your sign-in. Project and shared Antigravity configuration under `~/.gemini/config/` still applies: hooks and MCP servers run, and a command a project permission already allows never reaches Rho as a request, even in Plan.
 
