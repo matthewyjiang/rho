@@ -14,13 +14,17 @@ rtk --version
 
 Rho needs RTK **0.23 or newer** so `rtk rewrite` is available. Older versions are treated as unavailable.
 
+Rewritten commands run in `bash -lc`, so `rtk` must also be on your login shell's `PATH`, not only one set by `.bashrc` or an interactive-only activation.
+
 ## What Rho does
 
 When RTK is available and enabled:
 
-1. Before `bash` or `powershell` runs a command, Rho calls `rtk rewrite` on the command string.
-2. If rewrite returns a different non-empty command, Rho runs that rewritten form.
+1. Before `bash` or `powershell` asks for permission, Rho calls `rtk rewrite` on the command string.
+2. If rewrite returns a different non-empty command, that rewritten form is what the [permission mode](/configuration/permissions) checks and what runs. An approval prompt shows `rtk git status`, not `git status`.
 3. After the command finishes, Rho writes RTK-compatible analytics records so `rtk gain` and `rtk discover` can account for Rho shell use.
+
+The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) and the Auto classifier see the rewritten command, so a deny hook that anchors on `^git push` misses `rtk git push`. Match the command anywhere in `shell_command`, or strip a leading `rtk ` first.
 
 Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the process environment sets `RTK_DISABLED=1`.
 
@@ -28,9 +32,10 @@ Rho does not rewrite:
 
 - [inline shell](/inline-shell) commands you type in the TUI
 - in-process tools such as [`grep` and `glob`](/tools-workspace/search) (prefer those for workspace search)
-- SDK coding-tool shells that must authorize and execute the same immutable process description
 
 Rewritten commands still go through the normal shell path, so RTK records savings through its usual `rtk gain` path.
+
+SDK hosts that build the shell tool with `rho_agent_tools::shell_tool` opt in with `ShellToolOptions::rtk(true)`. It is off by default.
 
 ### Example
 
@@ -75,6 +80,17 @@ Set `CLAUDE_CONFIG_DIR` to override the default `~/.claude` root used by both Rh
 
 These records store the command string and a placeholder sized to the tool output length. They do not copy command output text.
 
+### "No hook installed" warning
+
+RTK 1.x warns ``No hook installed — run `rtk init -g` `` when `~/.claude` exists without its Claude Code hook. Rho's discover records create that directory, so `rtk gain` and `rtk discover` can show the warning on machines that only use Rho. Rho does not need the hook. To hide the warning, set this in RTK's own config (`rtk config` shows the path):
+
+```toml
+[hooks]
+suppress_hook_warning = true
+```
+
+Or export `RTK_SUPPRESS_HOOK_WARNING=1`. Either one hides only the missing-hook warning, not RTK's outdated-hook prompt.
+
 ## Check the integration
 
 In the interactive TUI, run `/doctor`. The **rtk** row reports:
@@ -83,8 +99,9 @@ In the interactive TUI, run `/doctor`. The **rtk** row reports:
 | --- | --- |
 | `available` | `rtk --version` succeeds and supports rewrite |
 | `unavailable` | Binary missing, too old, or not runnable |
+| `disabled` | `[behavior].rtk = false`; Rho does not probe the binary |
 
-Unavailable is not an error and is shown as an informational row. Rho runs shell commands without rewrite until RTK is installed.
+Unavailable and disabled are not errors; both show as informational rows. In both cases Rho runs shell commands unchanged.
 
 ## Related
 

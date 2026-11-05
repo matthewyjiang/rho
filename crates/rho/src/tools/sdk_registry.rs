@@ -296,6 +296,7 @@ impl AppToolSet {
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
             tool_set.file_view.clone(),
+            config.rtk,
             &tool_set.host_io,
         ));
         if capabilities.contains(&ToolCapability::Process) {

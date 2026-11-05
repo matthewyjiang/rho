@@ -104,6 +104,10 @@ output from it cannot change scheduler state, a condition, or a template.
 Read `bounds` before trusting payload text. A shortened field is named there,
 for example `payload.capability.shell_command`.
 
+`shell_command` is the command that runs. With [RTK](/integrations/rtk) on,
+that is the rewritten form, such as `rtk git push --force`, so match the command
+anywhere in the string instead of anchoring at its start.
+
 ### What is never in a payload
 
 Provider credentials, authorization headers, raw process environments, secret

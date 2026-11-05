@@ -9,6 +9,15 @@ pub struct Bash {
 }
 
 impl Bash {
+    /// Builds the application tool. `rtk_enabled` rewrites commands through
+    /// RTK inside [`Tool::call`], after any caller has seen the original.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-agent-tools): drop `rtk_enabled` and take no arguments; RTK belongs to [`crate::ShellToolOptions::rtk`] only.
+    ///
+    /// Agent hosts use [`crate::shell_tool`], which rewrites before authorization.
+    /// The parameter stays because this constructor is public.
     pub const fn new(rtk_enabled: bool) -> Self {
         Self { rtk_enabled }
     }

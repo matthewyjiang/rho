@@ -81,6 +81,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         plugins_report: &discovery.report,
         permission_screen: config
             .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),
+        rtk_enabled: config.rtk,
         probes: &probes,
     });
     let handles = probes

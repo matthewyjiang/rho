@@ -295,7 +295,9 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
     });
     let config = Config {
         max_output_bytes: 777,
-        rtk: true,
+        // RTK rewriting before approval is covered by the shell adapter's own
+        // test; keep this one independent of an `rtk` on PATH.
+        rtk: false,
         ..Config::default()
     };
     // Snapshot before the run: the provider registry is process-global and a

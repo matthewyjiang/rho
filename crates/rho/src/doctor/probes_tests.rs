@@ -5,9 +5,9 @@ use super::*;
 
 // Covers: the disabled gate plans nothing; the live gate plans an endpoint
 // probe only for the active provider or a user-configured host, then the
-// binaries. Unused built-in defaults are not probed. The active host is the
-// argument, not `config.provider`, so an unsaved session provider is still
-// planned.
+// binaries. Unused built-in defaults are not probed, nor is rtk when
+// `[behavior].rtk` is off. The active host is the argument, not
+// `config.provider`, so an unsaved session provider is still planned.
 // Owner: pure unit
 #[test]
 fn plan_follows_gate_and_selected_or_configured_hosts() {
@@ -21,6 +21,18 @@ fn plan_follows_gate_and_selected_or_configured_hosts() {
             DoctorProbeId::Cursor,
             DoctorProbeId::Antigravity,
             DoctorProbeId::Rtk,
+        ]
+    );
+    let rtk_off = Config {
+        rtk: false,
+        ..Config::default()
+    };
+    assert_eq!(
+        plan_probes(&rtk_off, &rtk_off.provider, DoctorProbeGate::Live),
+        vec![
+            DoctorProbeId::Claude,
+            DoctorProbeId::Cursor,
+            DoctorProbeId::Antigravity,
         ]
     );
 

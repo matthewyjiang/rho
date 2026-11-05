@@ -15,7 +15,11 @@ async fn scripts_branch_on_workspace_and_process_results() {
     std::fs::create_dir(root.path().join("src")).unwrap();
     std::fs::write(root.path().join("src/a.rs"), "fn a() {}\n// TODO one\n").unwrap();
     std::fs::write(root.path().join("src/b.rs"), "// TODO two\n// TODO three\n").unwrap();
-    let config = Config::default();
+    // Real `bash` runs here; keep it independent of an `rtk` on PATH.
+    let config = Config {
+        rtk: false,
+        ..Config::default()
+    };
     let tools = AppToolSet::new(
         &config,
         RuntimeDiagnostics::new(&config),

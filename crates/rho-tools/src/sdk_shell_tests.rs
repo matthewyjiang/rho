@@ -137,6 +137,153 @@ mod unix {
         );
     }
 
+    // Covers: with RTK on, the shell must rewrite before authorization, so the
+    // approved process is the rewritten one that runs and the run is recorded
+    // for `rtk discover`; with RTK unavailable, nothing is rewritten or
+    // recorded. RTK was silently off for months when this broke.
+    // Owner: shell tool adapter
+    #[tokio::test]
+    async fn rtk_rewrites_the_command_before_it_is_approved() {
+        let original = "printf original > out.txt";
+        let rewritten = "printf rewritten > out.txt";
+        let available = "case \"$1\" in\n\
+             --version) echo 'rtk 1.1.0' ;;\n\
+             rewrite) [ \"$2\" = 'printf original > out.txt' ] || exit 1\n\
+             printf 'printf rewritten > out.txt'; exit 3 ;;\n\
+             esac\n";
+        let unavailable = "exit 127\n";
+        for (script, expected_command, expected_output, expected_records) in [
+            (available, rewritten, "rewritten", 1),
+            (unavailable, original, "original", 0),
+        ] {
+            let outcome = run_with_fake_rtk(script, original).await;
+            assert_eq!(
+                outcome,
+                FakeRtkOutcome {
+                    // The card shows what the model asked for.
+                    started_command: Some(original.to_owned()),
+                    approved_command: Some(expected_command.to_owned()),
+                    output: expected_output.to_owned(),
+                    recorded_commands: vec![expected_command.to_owned(); expected_records],
+                },
+                "{script}"
+            );
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct FakeRtkOutcome {
+        started_command: Option<String>,
+        approved_command: Option<String>,
+        output: String,
+        recorded_commands: Vec<String>,
+    }
+
+    async fn run_with_fake_rtk(script: &str, command: &str) -> FakeRtkOutcome {
+        let root = tempfile::tempdir().unwrap();
+        let rtk_dir = tempfile::tempdir().unwrap();
+        let fake_rtk = rtk_dir.path().join("rtk.sh");
+        // Run through `sh` rather than exec'd: a freshly written executable can
+        // fail with ETXTBSY while concurrent tests fork.
+        std::fs::write(&fake_rtk, script).unwrap();
+        let projects_dir = rtk_dir.path().join("projects");
+        let rtk = crate::rtk::Rtk::new(
+            "sh".into(),
+            vec![fake_rtk.into()],
+            Some(projects_dir.clone()),
+        );
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "model"),
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "shell-1".into(),
+                        name: "bash".into(),
+                        arguments: json!({ "command": command }),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        );
+        let approvals = Arc::new(ApproveAndRecord {
+            requests: Mutex::new(Vec::new()),
+        });
+        let runtime = Rho::builder()
+            .provider(provider)
+            .workspace(Workspace::new(root.path()).unwrap())
+            .workspace_policy(
+                ScopedWorkspacePolicy::new()
+                    .allow_processes()
+                    .require_process_approval(),
+            )
+            .approval_handler_shared(approvals.clone())
+            .tool(SdkShellTool::bash(ShellToolOptions::new().rtk_with(rtk)))
+            .build()
+            .unwrap();
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        let mut run = session.start(UserInput::text("run it")).await.unwrap();
+        let mut started_command = None;
+        while let Some(event) = run.next_event().await {
+            if let RunEvent::ToolStarted { metadata, .. } = event {
+                started_command = metadata.command_line_text().map(str::to_owned);
+            }
+        }
+        run.outcome().await.unwrap();
+
+        let approved_command = {
+            let requests = approvals
+                .requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let CapabilityOperation::ExecuteProcess(approved) =
+                requests[0].capability().operation()
+            else {
+                panic!("shell approval must contain typed process facts");
+            };
+            approved.invocation().shell_command().map(str::to_owned)
+        };
+        let recorded_commands = jsonl_files(&projects_dir)
+            .iter()
+            .flat_map(|path| {
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| {
+                        serde_json::from_str::<serde_json::Value>(line)
+                            .unwrap()
+                            .pointer("/message/content/0/input/command")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        FakeRtkOutcome {
+            started_command,
+            approved_command,
+            output: std::fs::read_to_string(root.path().join("out.txt")).unwrap(),
+            recorded_commands,
+        }
+    }
+
+    fn jsonl_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "jsonl") {
+                    found.push(path);
+                }
+            }
+        }
+        found
+    }
+
     /// Concurrent approver that holds each request until both have arrived.
     #[derive(Default)]
     struct HoldUntilBoth {
