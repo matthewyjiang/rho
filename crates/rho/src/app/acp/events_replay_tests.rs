@@ -17,10 +17,14 @@ use crate::{
 };
 
 fn call_block(id: &str) -> model::ContentBlock {
+    named_call_block(id, "read", json!({"path": "a.png"}))
+}
+
+fn named_call_block(id: &str, name: &str, arguments: serde_json::Value) -> model::ContentBlock {
     model::ContentBlock::ToolCall(model::ToolCall {
         id: id.into(),
-        name: "read".into(),
-        arguments: json!({"path": "a.png"}),
+        name: name.into(),
+        arguments,
     })
 }
 
@@ -330,7 +334,9 @@ fn replay_message_ids_split_at_boundaries_and_repeat_across_replays() {
 }
 
 // Covers: a replayed call of a registered tool gets the kind its tool reports
-// at start, as a live call does; an unknown tool stays `other`.
+// at start, as a live call does, including a tool that builds its metadata
+// while preparing (`sessions`); an unknown tool stays `other`. The tools are
+// ones every platform registers.
 // Owner: ACP replay mapping; saved history keeps no tool metadata.
 #[test]
 fn replayed_calls_take_their_kind_from_the_session_tools() {
@@ -339,20 +345,19 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(AgentCapabilities::new(
-            [ToolCapability::ReadFile, ToolCapability::Bash].into(),
+            [
+                ToolCapability::ReadFile,
+                ToolCapability::Grep,
+                ToolCapability::Sessions,
+            ]
+            .into(),
         )),
     );
-    let call = |id: &str, name: &str, arguments: serde_json::Value| {
-        model::ContentBlock::ToolCall(model::ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        })
-    };
     let messages = saved_rows(&[Message::assistant(AssistantMessage::from_content(vec![
-        call("a", "read_file", json!({"path": "src/lib.rs"})),
-        call("b", "bash", json!({"command": "cargo test"})),
-        call("c", "not_a_tool", json!({})),
+        named_call_block("a", "read_file", json!({"path": "src/lib.rs"})),
+        named_call_block("b", "grep", json!({"pattern": "fn main"})),
+        named_call_block("s", "sessions", json!({"action": "search", "query": "x"})),
+        named_call_block("c", "not_a_tool", json!({})),
     ]))]);
     let kinds: Vec<ToolKind> = history(
         &SessionId::new("s1"),
@@ -368,6 +373,11 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
     .collect();
     assert_eq!(
         kinds,
-        vec![ToolKind::Read, ToolKind::Execute, ToolKind::Other]
+        vec![
+            ToolKind::Read,
+            ToolKind::Search,
+            ToolKind::Read,
+            ToolKind::Other
+        ]
     );
 }

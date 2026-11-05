@@ -15,7 +15,8 @@ use rho_sdk::{
     model::ToolSpec,
     tool::{
         PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolInvocation,
-        ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgressSender, ToolSecurity,
+        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgressSender,
+        ToolSecurity,
     },
     CancellationToken,
 };
@@ -170,6 +171,10 @@ impl Tool for McpTool {
         // load. Tool calls are RPCs on that already-running host-owned session
         // and must not pretend to spawn a process or open a fresh network grant.
         ToolSecurity::built_in([])
+    }
+
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        self.slot.read().presentation.metadata(&self.transport)
     }
 
     fn prepare<'a>(

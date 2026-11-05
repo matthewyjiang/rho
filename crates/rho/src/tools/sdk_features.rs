@@ -72,7 +72,7 @@ impl SdkSkillTool {
         let directory_display = crate::paths::display(skill_directory);
         let max_output_bytes = self.max_output_bytes;
         let name = name.to_string();
-        let metadata = ToolMetadata::new().operation(OperationKind::Read);
+        let metadata = skill_metadata();
         Ok(PreparedToolInvocation::resource_aware(
             [access],
             [capability],
@@ -126,6 +126,10 @@ impl SdkTool for SdkSkillTool {
         ToolSecurity::built_in([CapabilityKind::Skill])
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        skill_metadata()
+    }
+
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -166,7 +170,7 @@ impl SdkTool for SdkSkillTool {
             let source_display = skill.source.to_string();
             match skill.source {
                 crate::skills::SkillSource::BuiltIn => {
-                    let metadata = ToolMetadata::new().operation(OperationKind::Read);
+                    let metadata = skill_metadata();
                     let capability = CapabilityRequest::skill(
                         &name,
                         None,
@@ -418,6 +422,11 @@ fn map_sdk_error(error: rho_sdk::Error) -> SdkToolError {
         rho_sdk::Error::Cancelled => SdkToolError::cancelled(),
         error => SdkToolError::new(ToolErrorKind::Execution, error.to_string()),
     }
+}
+
+/// Loading a skill reads its files.
+fn skill_metadata() -> ToolMetadata {
+    ToolMetadata::new().operation(OperationKind::Read)
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use agent_client_protocol::schema::v1::{
 use rho_sdk::model::{self, Message, SemanticMessage};
 use serde_json::Value;
 
-use super::{notify, text_chunk, tool_title, tools, EventMapper, UNNAMED_TOOL_TITLE};
+use super::{call_card, notify, text_chunk, EventMapper, UNNAMED_TOOL_TITLE};
 use crate::{
     display_transcript::DisplayTranscript,
     session::tree::{DisplayRowOrigin, ProjectedMessage},
@@ -71,7 +71,8 @@ struct Replay<'a> {
     /// The session's tools. Saved calls keep no metadata, so each tool
     /// reports what it would at start, as it does live.
     tool_set: &'a AppToolSet,
-    /// Identifies MCP calls, whose capped names cannot be decoded.
+    /// `tool_set`'s MCP names, computed once: they identify MCP calls,
+    /// whose capped names cannot be decoded.
     mcp_tools: &'a McpToolNames,
     /// Latest occurrence by stored/provider ID; ACP identities are session-unique.
     tools: BTreeMap<String, ToolCall>,
@@ -190,18 +191,17 @@ impl Replay<'_> {
                         .tool_named(&call.name)
                         .map(|tool| tool.start_metadata(&call.arguments))
                         .unwrap_or_default();
-                    let title = tool_title(
+                    // No locations: a host that follows them would jump
+                    // through history as it loads.
+                    let tool = call_card(
+                        fresh_tool_call_id(),
                         &call.name,
-                        Some(&call.arguments),
+                        Some(call.arguments.clone()),
                         &metadata,
                         self.cwd,
                         self.mcp_tools,
-                    );
-                    let tool = ToolCall::new(fresh_tool_call_id(), title)
-                        .name(call.name.clone())
-                        .kind(tools::kind(&call.name, Some(&call.arguments), &metadata))
-                        .status(ToolCallStatus::Pending)
-                        .raw_input(call.arguments.clone());
+                    )
+                    .status(ToolCallStatus::Pending);
                     if let Some(update) = self
                         .tools
                         .insert(call.id.clone(), tool.clone())

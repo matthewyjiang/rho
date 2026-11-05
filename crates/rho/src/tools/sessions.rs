@@ -97,6 +97,10 @@ impl Tool for Sessions {
         ToolSecurity::built_in([CapabilityKind::Read])
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        metadata()
+    }
+
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -153,7 +157,7 @@ impl Tool for Sessions {
             Ok(PreparedToolInvocation::resource_aware(
                 [access],
                 capabilities,
-                ToolMetadata::new().operation(OperationKind::Read),
+                metadata(),
                 move |context| {
                     Box::pin(async move {
                         let cancellation = context.cancellation().clone();
@@ -199,32 +203,32 @@ impl Sessions {
             None => (Vec::new(), Vec::new()),
         };
         let max_output_bytes = self.max_output_bytes;
-        PreparedToolInvocation::resource_aware(
-            accesses,
-            capabilities,
-            ToolMetadata::new().operation(OperationKind::Read),
-            move |_| {
-                Box::pin(async move {
-                    tokio::task::spawn_blocking(move || {
-                        let dir = dir.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "recall is unavailable: this session keeps no saved tool results"
-                            )
-                        })?;
-                        recall::recall(&dir, &request, max_output_bytes)
-                    })
-                    .await
-                    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?
-                    .map(ToolOutput::text)
-                    .map_err(execution_error)
+        PreparedToolInvocation::resource_aware(accesses, capabilities, metadata(), move |_| {
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || {
+                    let dir = dir.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "recall is unavailable: this session keeps no saved tool results"
+                        )
+                    })?;
+                    recall::recall(&dir, &request, max_output_bytes)
                 })
-            },
-        )
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?
+                .map(ToolOutput::text)
+                .map_err(execution_error)
+            })
+        })
     }
 }
 
 fn execution_error(error: anyhow::Error) -> ToolError {
     ToolError::new(ToolErrorKind::Execution, error.to_string())
+}
+
+/// Both actions only read session history.
+fn metadata() -> ToolMetadata {
+    ToolMetadata::new().operation(OperationKind::Read)
 }
 
 #[cfg(test)]

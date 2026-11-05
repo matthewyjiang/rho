@@ -41,6 +41,10 @@ impl Tool for SdkGetSearchContent {
         ToolSecurity::built_in([])
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        metadata()
+    }
+
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
