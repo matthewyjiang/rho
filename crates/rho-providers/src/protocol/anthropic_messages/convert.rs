@@ -66,13 +66,15 @@ pub(crate) fn split_system_and_messages(
     for message in messages.iter().map(std::borrow::Cow::as_ref) {
         match message.wire() {
             WireMessage::System(content) => system.push(content),
-            WireMessage::User(blocks) => push_message(
+            WireMessage::User(blocks) => push_entry(
                 &mut converted,
+                &mut reasoning_shifts,
                 AnthropicRole::User,
                 blocks.iter().map(user_block).collect(),
             ),
-            WireMessage::Assistant(blocks) => push_message(
+            WireMessage::Assistant(blocks) => push_entry(
                 &mut converted,
+                &mut reasoning_shifts,
                 AnthropicRole::Assistant,
                 blocks.iter().map(assistant_block).collect(),
             ),
@@ -104,7 +106,12 @@ pub(crate) fn split_system_and_messages(
                         );
                     }
                 }
-                push_message(&mut converted, AnthropicRole::Assistant, content);
+                push_entry(
+                    &mut converted,
+                    &mut reasoning_shifts,
+                    AnthropicRole::Assistant,
+                    content,
+                );
             }
             WireMessage::AbortedAssistant(message) => {
                 let content = message
@@ -145,10 +152,16 @@ pub(crate) fn split_system_and_messages(
                         }
                     }
                 }
-                push_message(&mut converted, AnthropicRole::Assistant, content);
+                push_entry(
+                    &mut converted,
+                    &mut reasoning_shifts,
+                    AnthropicRole::Assistant,
+                    content,
+                );
             }
-            WireMessage::ToolResult(result) => push_message(
+            WireMessage::ToolResult(result) => push_entry(
                 &mut converted,
+                &mut reasoning_shifts,
                 AnthropicRole::User,
                 vec![AnthropicContentBlock::ToolResult {
                     tool_use_id: result.id.clone(),
@@ -167,13 +180,26 @@ pub(crate) fn split_system_and_messages(
     })
 }
 
-fn push_message(
+/// Appends one history entry, merging it into the previous message when the
+/// roles match. A shift waiting for the next message then moves before the
+/// merged one: effort governs the response that follows the whole turn, and a
+/// marker past it would point at the wrong message.
+fn push_entry(
     messages: &mut Vec<AnthropicMessage>,
+    shifts: &mut [PlacedReasoningShift],
     role: AnthropicRole,
     mut content: Vec<AnthropicContentBlock>,
 ) {
+    let len = messages.len();
     if let Some(previous) = messages.last_mut().filter(|message| message.role == role) {
         previous.content.append(&mut content);
+        for pending in shifts
+            .iter_mut()
+            .rev()
+            .take_while(|placed| placed.at == len)
+        {
+            pending.at = len - 1;
+        }
     } else {
         messages.push(AnthropicMessage::new(role, content));
     }

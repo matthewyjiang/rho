@@ -191,6 +191,54 @@ fn fable_5_1_history_reasoning_shift_keeps_prefix_output_config() {
     );
 }
 
+// Covers: a shift between two user-role entries that merge into one Anthropic
+// turn places its marker before that turn instead of past it, so the prefix
+// keeps its output_config rather than restarting
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn reasoning_shift_inside_a_merged_user_turn_marks_that_turn() {
+    let provider = test_provider_with_capabilities("claude-fable-5-1", &adaptive_capabilities());
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &[
+                    Message::user_text("plan this"),
+                    Message::assistant_text("1. export"),
+                    Message::user_text("summarize"),
+                    Message::ReasoningShift(crate::model::ReasoningShift {
+                        from: ReasoningLevel::High,
+                        to: ReasoningLevel::Low,
+                    }),
+                    Message::BoundaryInput(vec![ContentBlock::Text("process exited".into())]),
+                ],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Low,
+                prompt_cache_key: Some("rho:session"),
+            },
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(
+        body.output_config,
+        Some(AnthropicOutputConfig { effort: "high" })
+    );
+    let value = serde_json::to_value(&body).unwrap();
+    let roles = value["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["role"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(roles, ["user", "assistant", "system", "user"]);
+    assert_eq!(
+        value["messages"][2]["output_config"],
+        json!({"effort": "low"})
+    );
+    assert_eq!(value["messages"][3]["content"].as_array().unwrap().len(), 2);
+}
+
 #[test]
 fn provider_context_replay_follows_effective_thinking_mode() {
     let adaptive = AnthropicThinkingConfig::Adaptive {
