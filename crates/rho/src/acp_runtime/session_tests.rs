@@ -581,6 +581,50 @@ async fn declined_or_failed_steer_becomes_next_turn() {
     }
 }
 
+// Covers: a declined steer waiting for a next turn that a failed turn never
+// starts is reported as undelivered, not silently dropped or sent anyway.
+// Owner: ACP turn scheduling.
+#[tokio::test]
+async fn held_message_is_reported_when_the_turn_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = run_with_mid_turn_message(
+        dir.path(),
+        Script {
+            steering: true,
+            steer_reply: Some(json!({"outcome":"promptRequired", "reason":"noRunningTurn"})),
+            ..script(vec![vec![
+                text("first"),
+                Step::AwaitSteer,
+                Step::Stop {
+                    reason: StopReason::Refusal,
+                },
+            ]])
+        },
+    )
+    .await;
+    assert_eq!(
+        prompts_and_steers(&record),
+        vec![task_prompt(), steer_request()]
+    );
+    let (status, events) = read_artifacts(dir.path());
+    assert_eq!(
+        (
+            status.state,
+            events
+                .into_iter()
+                .filter(|event| matches!(event, AttachmentEvent::Notice(text) if text.contains("parent message")))
+                .collect::<Vec<_>>()
+        ),
+        (
+            RunState::Error,
+            vec![AttachmentEvent::Notice(
+                "acp: a parent message was not delivered: the run ended before its next turn"
+                    .into()
+            )]
+        )
+    );
+}
+
 // Covers: cancel mid-turn sends session/cancel and settles Stopped with the
 // partial result whether the agent answers the cancelled prompt or hangs up,
 // without turning it into success/error or writing two terminals.

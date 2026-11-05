@@ -357,6 +357,9 @@ async fn turns<P: AcpAgentPolicy>(
                             sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::Message(Box::new(parent_message_card(text, NotificationDelivery::Queued, "sent as the next agent turn".into())))));
                             continue;
                         }
+                    } else if steering.take_declined().is_some() {
+                        // It was waiting for a next turn that will not come.
+                        render(renderer, sink, AgentEvent::Notice("acp: a parent message was not delivered: the run ended before its next turn".into()));
                     }
                     if let Some(inbox) = inbox.as_ref() { inbox.seal(); }
                     return Ok(DriverOutcome { classification, session_id: Some(session_id), result_text: renderer.result_text().to_owned(), turns: renderer.turns() });
