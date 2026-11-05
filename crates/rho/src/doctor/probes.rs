@@ -68,9 +68,9 @@ pub(crate) enum DoctorProbeGate {
 
 /// Probes this host should spawn: the active OpenAI-compatible endpoint when
 /// it is probeable, any other host the user configured an endpoint for, plus
-/// the Claude Code and Cursor binaries, and rtk unless `[behavior].rtk` is off. Built-in defaults for unused keyless
-/// hosts are not probed; those would fail `rho doctor` on machines that never
-/// run them.
+/// the Claude Code, Cursor, and Antigravity binaries, and rtk unless
+/// `[behavior].rtk` is off. Built-in defaults for unused keyless hosts are not
+/// probed; those would fail `rho doctor` on machines that never run them.
 ///
 /// `active_provider` is the host the session is using. That can differ from
 /// [`Config::provider`] when a `--provider` override was not saved or a model
