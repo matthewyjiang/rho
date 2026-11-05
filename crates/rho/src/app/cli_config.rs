@@ -150,28 +150,28 @@ fn cli_target(cli: &Cli, config: &Config) -> anyhow::Result<CliTarget> {
 /// front (automation and ACP).
 ///
 /// Waits only for the host the session will use, and only when its cached list
-/// is stale, was never fetched, or lacks the session's model. Every other host
-/// refreshes in the background, so an unreachable host the session does not
-/// use cannot delay startup; ACP pickers built later read whatever it caches.
-/// Returns the background refresh, if any, which the caller may detach.
+/// is stale, was never fetched, or lacks the session's model. Every other host,
+/// and the session's host when its cache already serves the session, refreshes
+/// in the background, so an unreachable host the session does not use cannot
+/// delay startup; ACP pickers built later read whatever it caches. Returns the
+/// background refresh, if any, which the caller may detach.
 pub(super) async fn refresh_custom_provider_models_for_session(
     cli: &Cli,
     config: &Config,
     store: Arc<dyn CredentialStore>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
-    let target = cli_target(cli, config)?;
-    let mut others = config.providers.clone();
-    let session_host = others.custom.remove_entry(&target.provider);
-    let background = spawn_custom_provider_models_refresh(others, Arc::clone(&store));
-    if let Some((name, endpoint)) = session_host {
-        let needs_refresh = !provider_models_are_fresh(&name)
-            || target
-                .model
-                .as_deref()
-                .is_some_and(|model| cached_provider_model(&name, model).is_none());
-        if needs_refresh {
-            refresh_custom_provider_model_list(&name, &endpoint.base_url, store.as_ref()).await;
-        }
+    let CliTarget { provider, model } = cli_target(cli, config)?;
+    let session_needs_models = !provider_models_are_fresh(&provider)
+        || model
+            .as_deref()
+            .is_some_and(|model| cached_provider_model(&provider, model).is_none());
+    let mut background_hosts = config.providers.clone();
+    let awaited_host = session_needs_models
+        .then(|| background_hosts.custom.remove_entry(&provider))
+        .flatten();
+    let background = spawn_custom_provider_models_refresh(background_hosts, Arc::clone(&store));
+    if let Some((name, endpoint)) = awaited_host {
+        refresh_custom_provider_model_list(&name, &endpoint.base_url, store.as_ref()).await;
     }
     Ok(background)
 }

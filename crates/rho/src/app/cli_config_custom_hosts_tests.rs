@@ -9,8 +9,12 @@ use {
     crate::cli::Cli,
     crate::config::Config,
     rho_providers::credentials::MemoryCredentialStore,
-    rho_providers::model::provider_models::{
-        cached_provider_models, set_provider_models_cache_dir_for_tests,
+    rho_providers::model::{
+        provider_models::{
+            cached_provider_models, replace_cached_provider_models_for_tests,
+            set_provider_models_cache_dir_for_tests, ProviderModel,
+        },
+        ReasoningCapabilities,
     },
 };
 
@@ -143,68 +147,120 @@ async fn custom_hosts_refresh_models_concurrently() {
     let _ = std::fs::remove_dir_all(cache_dir);
 }
 
-// Covers: an unreachable custom host the session does not use must not delay
-// automation or ACP startup, and must still refresh in the background
+// Covers: automation and ACP wait for the session's custom host only when its
+// cache cannot serve the session, never for other hosts, and every host still
+// refreshes in the background
 // Owner: app startup
 // Same process-wide registry lock as the fetch test above.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "current_thread")]
-async fn session_refresh_waits_only_for_the_session_host() {
+async fn session_refresh_waits_only_when_the_session_host_cache_falls_short() {
     let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    let serve = |listener: tokio::net::TcpListener,
-                 model: &'static str,
-                 mut release_rx: tokio::sync::watch::Receiver<bool>| {
-        tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buffer = [0; 2048];
-            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
-                .await
-                .unwrap();
-            release_rx.wait_for(|released| *released).await.unwrap();
-            let body = format!(r#"{{"data":[{{"id":"{model}"}}]}}"#);
-            let reply = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes()).await;
-        })
-    };
-    let session_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let other_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let session_api = format!("http://{}/v1", session_listener.local_addr().unwrap());
-    let other_api = format!("http://{}/v1", other_listener.local_addr().unwrap());
-    // The session host answers at once; the other host answers only after
-    // the session refresh returned, so waiting on it would time out.
-    let (_session_sender, session_released) = tokio::sync::watch::channel(true);
-    serve(session_listener, "m", session_released);
-    let (release_other, other_released) = tokio::sync::watch::channel(false);
-    serve(other_listener, "o", other_released);
+    // (case, session host cache before startup, session host cache at return)
+    let cases: [(&str, Option<&[&str]>, &[&str]); 3] = [
+        ("never fetched", None, &["m", "new"]),
+        ("fresh with the model", Some(&["m"]), &["m"]),
+        ("fresh without the model", Some(&["old"]), &["m", "new"]),
+    ];
+    for (case, cached, expected_at_return) in cases {
+        let session_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let other_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let session_api = format!("http://{}/v1", session_listener.local_addr().unwrap());
+        let other_api = format!("http://{}/v1", other_listener.local_addr().unwrap());
+        // The session host answers at once. The other host answers only after
+        // the session refresh returned, so waiting on it would time out.
+        let (_session_sender, session_released) = tokio::sync::watch::channel(true);
+        serve_models(
+            session_listener,
+            r#"[{"id":"m"},{"id":"new"}]"#,
+            session_released,
+        );
+        let (release_other, other_released) = tokio::sync::watch::channel(false);
+        serve_models(other_listener, r#"[{"id":"o"}]"#, other_released);
 
-    let cache_dir = unique_cache_dir("custom-host-session");
-    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
-    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
-    let _restore = RestoreCustomProviders;
-    let mut cfg = Config::default();
-    cfg.providers.set_endpoint("session", &session_api).unwrap();
-    cfg.providers.set_endpoint("other", &other_api).unwrap();
-    cfg.providers.activate().unwrap();
-    let cli = Cli::try_parse_from(["rho", "--model", "session/m"]).unwrap();
+        let cache_dir = unique_cache_dir("custom-host-session");
+        set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+        rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+        let _restore = RestoreCustomProviders;
+        let mut cfg = Config::default();
+        cfg.providers.set_endpoint("session", &session_api).unwrap();
+        cfg.providers.set_endpoint("other", &other_api).unwrap();
+        cfg.providers.activate().unwrap();
+        if let Some(cached) = cached {
+            let models = cached
+                .iter()
+                .map(|model| ProviderModel {
+                    provider: "session".into(),
+                    model: (*model).into(),
+                    display_name: (*model).into(),
+                    context_window: None,
+                    max_output_tokens: None,
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
+                })
+                .collect::<Vec<_>>();
+            replace_cached_provider_models_for_tests("session", &models).unwrap();
+        }
+        let cli = Cli::try_parse_from(["rho", "--model", "session/m"]).unwrap();
 
-    let background = refresh_custom_provider_models_for_session(
-        &cli,
-        &cfg,
-        Arc::new(MemoryCredentialStore::default()),
-    )
-    .await
-    .unwrap()
-    .expect("the other host refreshes in the background");
-    let at_return = (cached_model_ids("session"), cached_model_ids("other"));
-    release_other.send(true).unwrap();
-    background.await.unwrap();
-    let after_background = cached_model_ids("other");
-    set_provider_models_cache_dir_for_tests(None);
-    let _ = std::fs::remove_dir_all(cache_dir);
+        // Fails well before the 5 s discovery timeout if the other host is awaited.
+        let background = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            refresh_custom_provider_models_for_session(
+                &cli,
+                &cfg,
+                Arc::new(MemoryCredentialStore::default()),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{case}: session refresh waited on the other host"))
+        .unwrap()
+        .expect("other hosts refresh in the background");
+        let at_return = (
+            background.is_finished(),
+            cached_model_ids("session"),
+            cached_model_ids("other"),
+        );
+        release_other.send(true).unwrap();
+        background.await.unwrap();
+        let after_background = (cached_model_ids("session"), cached_model_ids("other"));
+        set_provider_models_cache_dir_for_tests(None);
+        let _ = std::fs::remove_dir_all(cache_dir);
 
-    assert_eq!(at_return, (vec!["m".to_string()], Vec::new()));
-    assert_eq!(after_background, ["o"]);
+        assert_eq!(
+            at_return,
+            (false, strings(expected_at_return), Vec::new()),
+            "{case}"
+        );
+        assert_eq!(
+            after_background,
+            (strings(&["m", "new"]), strings(&["o"])),
+            "{case}"
+        );
+    }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+/// Answers one `/v1/models` request with `data` once `release` turns true.
+fn serve_models(
+    listener: tokio::net::TcpListener,
+    data: &'static str,
+    mut release: tokio::sync::watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 2048];
+        let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+        release.wait_for(|released| *released).await.unwrap();
+        let body = format!(r#"{{"data":{data}}}"#);
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes()).await;
+    });
 }
