@@ -371,9 +371,9 @@ impl EventMapper {
         session_id: &SessionId,
         messages: &[crate::session::tree::ProjectedMessage],
         cwd: &Path,
-        mcp_tools: &McpToolNames,
+        tool_set: &crate::tools::sdk_registry::AppToolSet,
     ) -> Vec<SessionNotification> {
-        replay::history(session_id, messages, cwd, mcp_tools)
+        replay::history(session_id, messages, cwd, tool_set)
     }
 
     /// The ID a load replays the display row saved at `origin` with.
@@ -465,20 +465,37 @@ fn started_tool_call(
     cwd: &Path,
     mcp_tools: &McpToolNames,
 ) -> ToolCall {
-    let title = tool_title(name, proposed.as_ref(), metadata, cwd, mcp_tools);
-    let tool = ToolCall::new(ToolCallId::new(call_id.as_str()), title)
+    let locations = tools::started_locations(name, proposed.as_ref(), metadata, cwd);
+    call_card(
+        ToolCallId::new(call_id.as_str()),
+        name,
+        proposed,
+        metadata,
+        cwd,
+        mcp_tools,
+    )
+    .status(ToolCallStatus::InProgress)
+    .locations(locations)
+}
+
+/// A call's card as it opens: its title, name, kind and arguments. Live and
+/// replayed calls both start here, so a reloaded card matches the live one;
+/// each adds its own status, and only live calls add locations.
+fn call_card(
+    id: ToolCallId,
+    name: &str,
+    arguments: Option<Value>,
+    metadata: &ToolMetadata,
+    cwd: &Path,
+    mcp_tools: &McpToolNames,
+) -> ToolCall {
+    let title = tool_title(name, arguments.as_ref(), metadata, cwd, mcp_tools);
+    let card = ToolCall::new(id, title)
         .name(name.to_owned())
-        .kind(tools::kind(name, proposed.as_ref(), metadata))
-        .status(ToolCallStatus::InProgress)
-        .locations(tools::started_locations(
-            name,
-            proposed.as_ref(),
-            metadata,
-            cwd,
-        ));
-    match proposed {
-        Some(arguments) => tool.raw_input(arguments),
-        None => tool,
+        .kind(tools::kind(name, arguments.as_ref(), metadata));
+    match arguments {
+        Some(arguments) => card.raw_input(arguments),
+        None => card,
     }
 }
 
@@ -486,13 +503,14 @@ fn started_tool_call(
 /// title once, so it names the call, never a live phase:
 /// - a shell call is its bare command, since hosts such as Zed show an
 ///   execute call's title verbatim as the command it runs; the call's
-///   `command_line` metadata is that command, and replay reads it from the
-///   arguments instead;
+///   `command_line` metadata is that command, and without metadata it is
+///   read from the arguments instead;
 /// - a status-first header keeps its identity and drops the phase;
 /// - an MCP call leads with its server, which the card shows on a fact line.
 ///
-/// Replayed history has no metadata, so a generic tool that describes
-/// itself through `command_summary` is titled by name alone there.
+/// Replay passes the metadata the session's tool reports at start. A call
+/// whose tool the session no longer has gets none, so a generic tool that
+/// describes itself through `command_summary` is titled by name alone.
 fn tool_title(
     name: &str,
     arguments: Option<&Value>,

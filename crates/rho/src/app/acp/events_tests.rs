@@ -502,7 +502,7 @@ fn replayed_display_rows_become_finished_tool_cards() {
             message: transcript.display_message(),
         }],
         Path::new(""),
-        &Default::default(),
+        &crate::tools::sdk_registry::AppToolSet::disabled(),
     )
     .into_iter()
     .map(|notification| match notification.update {
