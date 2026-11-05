@@ -156,13 +156,36 @@ async fn custom_hosts_refresh_models_concurrently() {
 #[tokio::test(flavor = "current_thread")]
 async fn session_refresh_waits_only_when_the_session_host_cache_falls_short() {
     let _lock = rho_providers::provider::custom_provider_registry_test_lock();
-    // (case, session host cache before startup, session host cache at return)
-    let cases: [(&str, Option<&[&str]>, &[&str]); 3] = [
-        ("never fetched", None, &["m", "new"]),
-        ("fresh with the model", Some(&["m"]), &["m"]),
-        ("fresh without the model", Some(&["old"]), &["m", "new"]),
+    struct Case {
+        name: &'static str,
+        /// Session host cache before startup; `None` when never fetched.
+        cached: Option<&'static [&'static str]>,
+        /// Session host cache when the startup refresh returns.
+        at_return: &'static [&'static str],
+    }
+    let cases = [
+        Case {
+            name: "never fetched",
+            cached: None,
+            at_return: &["m", "new"],
+        },
+        Case {
+            name: "fresh with the model",
+            cached: Some(&["m"]),
+            at_return: &["m"],
+        },
+        Case {
+            name: "fresh without the model",
+            cached: Some(&["old"]),
+            at_return: &["m", "new"],
+        },
     ];
-    for (case, cached, expected_at_return) in cases {
+    for Case {
+        name: case,
+        cached,
+        at_return: expected_at_return,
+    } in cases
+    {
         let session_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let other_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let session_api = format!("http://{}/v1", session_listener.local_addr().unwrap());
