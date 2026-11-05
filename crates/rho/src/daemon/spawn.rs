@@ -39,18 +39,19 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 
 /// Starts `rho daemon run` from the current executable, detached from the
 /// caller's terminal.
+///
+/// The daemon inherits the caller's environment on purpose: `RHO_HOME` and
+/// `XDG_RUNTIME_DIR` are what produced the caller's [`DaemonPaths`], so the
+/// child resolves the same socket the caller then polls. Passing a different
+/// home here would start a daemon the caller can never reach.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
-    /// `RHO_HOME` for the daemon; `None` keeps the default data root. Read
-    /// from the environment at the CLI boundary, not here.
-    rho_home: Option<PathBuf>,
 }
 
 impl ProcessSpawner {
-    pub(crate) fn current_exe(rho_home: Option<PathBuf>) -> io::Result<Self> {
+    pub(crate) fn current_exe() -> io::Result<Self> {
         Ok(Self {
             executable: std::env::current_exe()?,
-            rho_home,
         })
     }
 }
@@ -69,9 +70,6 @@ impl DaemonSpawner for ProcessSpawner {
             // The caller's journal stream is not the daemon's stderr; the
             // daemon logs to its file instead.
             .env_remove("JOURNAL_STREAM");
-        if let Some(rho_home) = &self.rho_home {
-            command.env("RHO_HOME", rho_home);
-        }
         let mut child = command.spawn()?;
         // Reap the daemon if it exits while this process is still running.
         std::thread::spawn(move || child.wait());
