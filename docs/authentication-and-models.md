@@ -40,7 +40,7 @@ Rho's implemented providers are:
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
+Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key, then refreshes the model list. Until that login, Rho neither refreshes nor lists Ollama. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
 
 ## First run
 
@@ -101,7 +101,7 @@ Claude Code login is the exception: `/login claude-code` hands the terminal to `
 
 Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
 
-`/logout` opens a provider picker containing only providers with stored credentials that can be deleted. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
+`/logout` opens a provider picker containing providers with stored credentials that can be deleted, plus Ollama whenever `[providers.ollama]` records its login, with or without a key. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
 
 `rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts can run this same flow in a terminal, or, when they can open links, take the key on a one-time local page Rho serves; see [Sign in](/integrations/acp#sign-in).
 

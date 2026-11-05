@@ -140,6 +140,12 @@ provider = "disabled"
 
     /// Starts and initializes `rho acp`, returning the `initialize` result.
     fn server(&self) -> (AcpServer, Value) {
+        // An explicit provider makes startup discover its models, so the
+        // missing key fails startup itself rather than the session build.
+        self.server_with_args(&["--provider", "mock", "acp"])
+    }
+
+    fn server_with_args(&self, args: &[&str]) -> (AcpServer, Value) {
         let home = self.home.path();
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
         command
@@ -152,9 +158,7 @@ provider = "disabled"
             .current_dir(&self.project)
             .arg("--config")
             .arg(home.join("config.toml"))
-            // An explicit provider makes startup discover its models, so the
-            // missing key fails startup itself rather than the session build.
-            .args(["--provider", "mock", "acp"]);
+            .args(args);
         // Winsock cannot initialize without SystemRoot, so a cleared Windows
         // environment fails every HTTP request before it reaches the fixture.
         if let Some(root) = std::env::var_os("SystemRoot") {
@@ -270,4 +274,88 @@ fn logout_requires_a_new_sign_in_for_new_and_live_sessions() {
 
     fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
     assert_eq!(server.prompt(&session_id, "signed in again"), "answered");
+}
+
+// Covers: ACP `logout` on a keyless Ollama login signs it out: the
+// `[providers.ollama]` login record goes, not only stored credentials, and
+// later sessions in the same process need a sign-in.
+// Owner: ACP logout of an endpoint-recorded login, over real stdio.
+#[test]
+fn logout_forgets_a_keyless_ollama_login() {
+    let fixture = MockProviderHome::new(&Arc::new(Mutex::new(FIRST_KEY.to_owned())));
+    let config_path = fixture.home.path().join("config.toml");
+    // The fixture host refuses keyless requests, so no Ollama models are found.
+    let config = std::fs::read_to_string(&config_path)
+        .unwrap()
+        .replace(
+            "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"",
+            "provider = \"ollama\"\nmodel = \"llama\"\nauth = \"none\"",
+        )
+        .replace("[providers.custom.mock]", "[providers.ollama]");
+    std::fs::write(&config_path, config).unwrap();
+    let (mut server, _) = fixture.server_with_args(&["acp"]);
+    server
+        .request("session/new", fixture.new_session())
+        .0
+        .expect("a logged-in keyless Ollama opens sessions");
+
+    let (logged_out, _) = server.request("logout", json!({}));
+    assert_eq!(logged_out.unwrap(), json!({}));
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        !config.contains("[providers.ollama]"),
+        "logout must remove the Ollama login record:\n{config}"
+    );
+    // The process loaded config before the logout; sessions must still see it.
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "new sessions need a sign-in after logout",
+    );
+}
+
+// Covers: an Ollama login recorded after `rho acp` started (another process,
+// or ACP sign-in) is honored by the next session, built against the API base
+// that login chose rather than the built-in default.
+// Owner: ACP session build from the on-disk Ollama login record.
+#[test]
+fn a_later_ollama_login_builds_against_its_recorded_endpoint() {
+    let fixture = MockProviderHome::new(&Arc::new(Mutex::new(FIRST_KEY.to_owned())));
+    let config_path = fixture.home.path().join("config.toml");
+    let mock_config = std::fs::read_to_string(&config_path).unwrap();
+    let base_url = mock_config
+        .lines()
+        .find_map(|line| line.strip_prefix("base_url = "))
+        .unwrap()
+        .to_owned();
+    let without_login = mock_config
+        .replace(
+            "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"",
+            "provider = \"ollama\"\nmodel = \"mock-model\"\nauth = \"ollama-api-key\"",
+        )
+        .replace(
+            &format!("[providers.custom.mock]\nbase_url = {base_url}\n"),
+            "",
+        );
+    std::fs::write(&config_path, &without_login).unwrap();
+    fixture
+        .store
+        .set_secret(rho_providers::provider::OLLAMA_API_KEY_ACCOUNT, FIRST_KEY)
+        .unwrap();
+    let (mut server, _) = fixture.server_with_args(&["acp"]);
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "a key alone is not an Ollama login",
+    );
+
+    std::fs::write(
+        &config_path,
+        format!("{without_login}\n[providers.ollama]\nbase_url = {base_url}\n"),
+    )
+    .unwrap();
+    let (session, _) = server.request("session/new", fixture.new_session());
+    let session_id = session.expect("the recorded login opens sessions")["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(server.prompt(&session_id, "hi"), "answered");
 }

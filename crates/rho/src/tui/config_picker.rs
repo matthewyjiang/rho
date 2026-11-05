@@ -793,7 +793,15 @@ impl App {
 
     pub(super) fn open_config_refresh_model_picker(&mut self) {
         self.refresh_available_auths();
-        let picker = provider_picker::refresh_model_list_picker(&self.available_auths);
+        let config = match self.info.services.config_repository.load() {
+            Ok(config) => config,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!("could not load config: {err}")));
+                return;
+            }
+        };
+        let picker =
+            provider_picker::refresh_model_list_picker(&self.available_auths, &config.providers);
         self.open_child_picker(picker);
         self.set_status("select provider to refresh");
     }
@@ -836,8 +844,10 @@ impl App {
 
     pub(super) async fn open_config_logout_picker(&mut self) -> anyhow::Result<()> {
         let claude_signed_in = Self::claude_signed_in().await;
+        let config = self.info.services.config_repository.load()?;
         match provider_picker::logout_provider_picker(
             self.credential_store.as_ref(),
+            &config.providers,
             claude_signed_in,
         ) {
             Ok(picker) if picker.items.is_empty() => {

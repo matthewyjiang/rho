@@ -178,6 +178,20 @@ impl App {
         }
     }
 
+    /// Removes the login of a host logged in through its endpoint (Ollama)
+    /// and drops its cached models. Returns whether a login was recorded.
+    pub(super) fn forget_endpoint_login(&mut self, provider: &str) -> anyhow::Result<bool> {
+        let Some(descriptor) = provider::provider_descriptor(provider) else {
+            return Ok(false);
+        };
+        let forgot =
+            crate::app::endpoint_login::forget(&self.info.services.config_repository, *descriptor)?;
+        if forgot {
+            self.refresh_catalog_chrome();
+        }
+        Ok(forgot)
+    }
+
     /// Refreshes a provider's model list right after login, when it has a
     /// refreshable list, and reports the count or the failure.
     pub(super) async fn refresh_model_list_after_login(

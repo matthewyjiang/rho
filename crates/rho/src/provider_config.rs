@@ -126,6 +126,68 @@ impl ProviderConfigs {
         }
     }
 
+    /// A built-in host whose `/login` collects an endpoint (Ollama) and that
+    /// is not logged in.
+    ///
+    /// For such a host `[providers.<name>]` is the login record, with or
+    /// without a key: every login path writes it ([`Self::record_login`]) and
+    /// `/logout` removes it ([`Self::forget_login`]). Until then the host is
+    /// neither refreshed nor listed; its keyless profile needs no credentials,
+    /// so credential availability alone would probe any local server.
+    pub(crate) fn awaits_endpoint_login(
+        &self,
+        descriptor: rho_providers::provider::ProviderDescriptor,
+    ) -> bool {
+        descriptor.collects_login_endpoint() && self.endpoint(descriptor.name).is_none()
+    }
+
+    /// Refuses a session on `provider` while it awaits its endpoint login, as
+    /// a missing credential, so startup offers `/login` and ACP answers
+    /// `auth_required` instead of probing a server the user never set up.
+    pub(crate) fn require_endpoint_login(
+        &self,
+        provider: &str,
+    ) -> Result<(), rho_providers::model::ModelError> {
+        match rho_providers::provider::provider_descriptor(provider) {
+            Some(descriptor) if self.awaits_endpoint_login(*descriptor) => {
+                Err(rho_providers::model::ModelError::missing_credentials(
+                    "not logged in to Ollama; run /login ollama in the TUI",
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Records a login to `descriptor` when it is a host logged in through its
+    /// endpoint and none is recorded yet, at its default API base. Logins that
+    /// collect no URL (`rho login`, ACP sign-in) call this. Returns whether
+    /// anything changed.
+    pub(crate) fn record_login(
+        &mut self,
+        descriptor: rho_providers::provider::ProviderDescriptor,
+    ) -> anyhow::Result<bool> {
+        if !self.awaits_endpoint_login(descriptor) {
+            return Ok(false);
+        }
+        let rho_providers::provider::ProviderRuntime::OpenAiCompatible {
+            default_api_base, ..
+        } = descriptor.runtime
+        else {
+            anyhow::bail!("{} has no default API base to log in to", descriptor.name);
+        };
+        self.set_endpoint(descriptor.name, default_api_base)?;
+        Ok(true)
+    }
+
+    /// Removes the login record of a host logged in through its endpoint.
+    /// Returns whether one was recorded.
+    pub(crate) fn forget_login(
+        &mut self,
+        descriptor: rho_providers::provider::ProviderDescriptor,
+    ) -> bool {
+        descriptor.collects_login_endpoint() && self.ollama.take().is_some()
+    }
+
     /// Validates and stores a provider base URL. Updating a custom provider
     /// leaves all of its other options untouched.
     pub(crate) fn set_endpoint(&mut self, provider: &str, base_url: &str) -> anyhow::Result<()> {

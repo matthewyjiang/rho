@@ -72,6 +72,7 @@ impl SessionHost {
     pub(super) async fn renew_stale_credentials(
         &mut self,
         process_config: &Config,
+        config_path: &std::path::Path,
     ) -> anyhow::Result<()> {
         if !self.credentials.stale() {
             return Ok(());
@@ -82,9 +83,13 @@ impl SessionHost {
         // The login that fixes it ran in another process, such as the
         // editor's terminal login.
         AppCredentialStore::reread_external_logins();
-        let provider =
-            build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
-                .await?;
+        // A keyless login lives in config, which `logout` edits on disk.
+        let login_config = crate::app::endpoint_login::with_disk_login(&config, config_path)?;
+        let provider = build_provider_from_config_ensuring_catalog(
+            &login_config,
+            Arc::new(AppCredentialStore),
+        )
+        .await?;
         // The model switch path also rebinds the compactor, which holds its
         // own provider. The model is unchanged, so no switch notice is saved.
         self.switch_provider(provider, &config, read)

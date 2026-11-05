@@ -109,18 +109,11 @@ impl App {
         selected_provider: &str,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
         let providers = if selected_provider == provider_picker::ALL_REFRESHABLE_PROVIDERS {
             self.refresh_available_auths();
-            provider::providers()
-                .iter()
-                .filter(|descriptor| {
-                    descriptor.supports_model_refresh() || lists_decision_models(descriptor.name)
-                })
-                .filter(|descriptor| {
-                    descriptor
-                        .auth_modes()
-                        .any(|mode| self.available_auths.iter().any(|auth| auth == mode.id))
-                })
+            provider_picker::refreshable_providers(&self.available_auths, &config.providers)
+                .into_iter()
                 .map(|descriptor| {
                     (
                         descriptor.name.to_string(),
@@ -156,7 +149,6 @@ impl App {
 
         self.set_status("refreshing model list");
         terminal.draw(|frame| self.draw(frame))?;
-        let config = self.info.services.config_repository.load()?;
         for (provider, auth) in providers {
             if lists_decision_models(&provider) {
                 self.refresh_decision_models(&provider, &auth).await?;

@@ -167,7 +167,10 @@ where
     // from_config already scopes custom-provider resolution. Do not hold a
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.
-    let sdk_options = SdkBootstrapOptions::from_config(config, cwd)?;
+    let sdk_options = SdkBootstrapOptions::from_config(
+        &*super::endpoint_login::with_disk_login(config, &config_path)?,
+        cwd,
+    )?;
     let credentials = ApplicationCredentialSource::new(Arc::new(AppCredentialStore));
     // Automation and ACP normally skip the catalog fetch, but catalog-constructed
     // providers need the hydrate before build; a no-op for the rest.

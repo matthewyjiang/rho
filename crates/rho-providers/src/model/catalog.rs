@@ -500,7 +500,12 @@ fn provider_uses_static_catalog(provider: &str) -> bool {
 }
 
 fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
-    let hint = if provider_uses_cached_models(provider) {
+    let collects_login_endpoint = provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| descriptor.collects_login_endpoint());
+    let hint = if collects_login_endpoint {
+        // Rho refreshes such a host only after its /login, which also refreshes.
+        "Run /login for this provider to set it up and refresh its models."
+    } else if provider_uses_cached_models(provider) {
         "Open /config and choose Refresh model lists to update available models."
     } else {
         "Choose a model from the provider allowlist."

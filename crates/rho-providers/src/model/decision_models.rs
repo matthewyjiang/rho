@@ -4,7 +4,8 @@
 //! Ollama advertises decision models through native `/api/tags` capabilities;
 //! every model returned by TypeSafe's `/models` is a decision model. These lists
 //! are separate from chat discovery but share its HTTP authentication, timeout,
-//! and SQLite cache location. Only successful refreshes replace cached rows.
+//! and SQLite cache location. Only successful refreshes replace cached rows;
+//! [`super::provider_models::forget_provider_models`] also clears them.
 //! OpenAI's `/models` marks no model as a decision model, so its list is fixed.
 
 use reqwest::Url;
@@ -243,6 +244,15 @@ fn replace_cache(provider: &str, models: &[String]) -> rusqlite::Result<()> {
         }
         tx.commit()
     })?
+}
+
+/// Deletes `provider`'s cached decision models inside the caller's transaction.
+pub(super) fn forget_in(tx: &rusqlite::Transaction<'_>, provider: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "delete from decision_models where provider = ?1",
+        params![provider],
+    )
+    .map(drop)
 }
 
 fn cache_error(error: rusqlite::Error) -> ModelError {

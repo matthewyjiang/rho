@@ -539,6 +539,32 @@ fn replace_cached_provider_model_records_with_context(
     Ok(())
 }
 
+/// Drops `provider`'s cached chat and decision model lists and its refresh
+/// record, as if it was never refreshed. Pickers stop listing its models
+/// until the next refresh.
+///
+/// Applications call this for a host the user has not set up, so a list
+/// fetched before setup cannot keep showing it.
+pub fn forget_provider_models(provider: &str) -> Result<(), ModelError> {
+    with_provider_models_cache(|connection| -> rusqlite::Result<()> {
+        let tx = connection.transaction()?;
+        tx.execute(
+            "delete from provider_models where provider = ?1",
+            params![provider],
+        )?;
+        tx.execute(
+            "delete from provider_model_refresh where provider = ?1",
+            params![provider],
+        )?;
+        super::decision_models::forget_in(&tx, provider)?;
+        tx.commit()
+    })
+    .map_err(model_cache_error)?
+    .map_err(model_cache_error)?;
+    super::display_name::forget_provider_display_names(provider);
+    Ok(())
+}
+
 async fn fetch_openai_models(
     provider: &str,
     store: &dyn CredentialStore,

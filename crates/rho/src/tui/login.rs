@@ -133,8 +133,10 @@ impl App {
     ) -> anyhow::Result<()> {
         if invocation.args.is_empty() {
             let claude_signed_in = Self::claude_signed_in().await;
+            let config = self.info.services.config_repository.load()?;
             match provider_picker::logout_provider_picker(
                 self.credential_store.as_ref(),
+                &config.providers,
                 claude_signed_in,
             ) {
                 Ok(picker) => {
@@ -750,6 +752,16 @@ impl App {
 
         match deleted {
             Ok(deleted) => {
+                let forgot_login = match self.forget_endpoint_login(&target.provider) {
+                    Ok(forgot) => forgot,
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(format!(
+                            "could not remove the {} login from config: {err}",
+                            target.provider
+                        )));
+                        false
+                    }
+                };
                 self.refresh_available_auths();
                 let env_active = ProviderAuthentication::has_environment_override(&target.auth);
                 let message = if env_active {
@@ -757,13 +769,15 @@ impl App {
                         "deleted stored credentials for {}, but an env override is still active",
                         target.provider
                     )
+                } else if forgot_login {
+                    format!("logged out of {}", target.provider)
                 } else if deleted {
                     format!("deleted stored credentials for {}", target.provider)
                 } else {
                     format!("no stored credentials for {} were present", target.provider)
                 };
                 self.insert_entry(&Entry::Notice(message));
-                if self.invalidate_active_provider_if_needed(&target, agent) {
+                if self.invalidate_active_provider_if_needed(&target, forgot_login, agent) {
                     self.insert_entry(&Entry::Notice(
                             "the active provider no longer has credentials. Run /login or switch with /model."
                                 .into(),
@@ -781,12 +795,17 @@ impl App {
         }
     }
 
+    /// `forgot_login` is set when logout removed an endpoint login (Ollama),
+    /// which signs out every auth mode of that provider, keyless included.
     fn invalidate_active_provider_if_needed(
         &mut self,
         target: &LoginTarget,
+        forgot_login: bool,
         agent: &mut InteractiveRuntime,
     ) -> bool {
-        if self.info.runtime.provider != target.provider || self.info.runtime.auth != target.auth {
+        if self.info.runtime.provider != target.provider
+            || (self.info.runtime.auth != target.auth && !forgot_login)
+        {
             self.set_status("logout complete");
             return false;
         }

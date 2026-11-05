@@ -11,8 +11,9 @@ use {
         catalog,
         models_dev::{cached_reasoning_capabilities, current_reasoning_capabilities},
         provider_models::{
-            cached_provider_model, provider_model_capabilities_need_refresh,
-            provider_models_are_fresh, refresh_provider_models_with_store, ProviderModelEndpoint,
+            cached_provider_model, forget_provider_models,
+            provider_model_capabilities_need_refresh, provider_models_are_fresh,
+            refresh_provider_models_with_store, ProviderModelEndpoint,
         },
     },
     rho_providers::provider::{self, ProviderAuthKind, ProviderModelSource},
@@ -55,11 +56,21 @@ pub(super) async fn refresh_model_cache(
     config: &Config,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<ProviderRefreshStatus> {
+    forget_models_awaiting_endpoint_login(config);
     let CliTarget {
         provider,
         model: selected_model,
     } = cli_target(cli, config)?;
     let provider = provider.as_str();
+    let explicit_selection = cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some();
+    // A host not logged in is never probed: naming it fails with the login
+    // hint, and a saved selection is reported unavailable when it builds.
+    if let Err(error) = config.providers.require_endpoint_login(provider) {
+        if explicit_selection {
+            return Err(error.into());
+        }
+        return Ok(ProviderRefreshStatus::NotAttempted);
+    }
     if cli.provider.is_none()
         && cli.model.is_none()
         && cli.auth.is_none()
@@ -83,8 +94,7 @@ pub(super) async fn refresh_model_cache(
         provider,
         &auth,
         selected_model.as_deref(),
-        /*explicit_selection*/
-        cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some(),
+        explicit_selection,
         store,
         model_endpoint,
     )
@@ -96,6 +106,20 @@ pub(super) async fn refresh_model_cache(
     } else {
         ProviderRefreshStatus::NotAttempted
     })
+}
+
+/// Drops cached model lists of built-in hosts that await their endpoint login,
+/// so a list fetched before `/login` (or kept after its table was removed)
+/// does not keep them in pickers. Failures only log: a stale list is cosmetic.
+fn forget_models_awaiting_endpoint_login(config: &Config) {
+    for descriptor in provider::builtin_providers() {
+        if !config.providers.awaits_endpoint_login(*descriptor) {
+            continue;
+        }
+        if let Err(error) = forget_provider_models(descriptor.name) {
+            tracing::warn!(provider = descriptor.name, %error, "could not drop cached models");
+        }
+    }
 }
 
 /// Provider and model a CLI session resolves to once `--auth`, `--model`, and
@@ -418,6 +442,10 @@ fn needs_startup_capability_refresh(
     provider_refresh: &ProviderRefreshStatus,
 ) -> bool {
     !provider_refresh.was_attempted_for(&config.provider)
+        && config
+            .providers
+            .require_endpoint_login(&config.provider)
+            .is_ok()
         && provider_model_capabilities_need_refresh(&config.provider, &config.model)
 }
 

@@ -20,7 +20,7 @@ use agent_client_protocol::Error as AcpError;
 use rho_providers::{auth::login_dispatch::ProviderAuthentication, provider};
 
 use super::auth_login::open_credential_store;
-use crate::credential_store::AppCredentialStore;
+use crate::{app::config_repository::ConfigRepository, credential_store::AppCredentialStore};
 
 /// How many logouts this connection has completed. Shared by the agent, which
 /// records each one, and its session hosts, which compare against it.
@@ -49,8 +49,10 @@ impl Logouts {
     }
 }
 
-/// Deletes auth profile `auth`'s stored credentials. `config` is the
-/// `--config` override the process started with.
+/// Deletes auth profile `auth`'s stored credentials, and forgets the login
+/// of `provider` when it is logged in through its endpoint (Ollama), whose
+/// login counts with or without a key. `config` is the `--config` override
+/// the process started with.
 ///
 /// The store is resolved from config as it is now, as `authenticate` does,
 /// so a store chosen by a terminal login after launch is the one cleared.
@@ -58,7 +60,11 @@ impl Logouts {
 /// A credential set in the environment cannot be removed, so that refuses
 /// before anything is deleted: success always means new sessions need a
 /// sign-in.
-pub(super) fn sign_out(auth: &str, config: Option<PathBuf>) -> Result<(), AcpError> {
+pub(super) fn sign_out(
+    provider: &str,
+    auth: &str,
+    config: Option<PathBuf>,
+) -> Result<(), AcpError> {
     if ProviderAuthentication::has_environment_override(auth) {
         let source = provider::resolve_auth_mode(auth)
             .and_then(|(_, mode)| mode.auth_kind.env_var())
@@ -67,10 +73,18 @@ pub(super) fn sign_out(auth: &str, config: Option<PathBuf>) -> Result<(), AcpErr
             "'{auth}' reads its credential from {source}; unset it to sign out"
         )));
     }
-    open_credential_store(config)
+    open_credential_store(config.clone())
         .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
     ProviderAuthentication::delete_credentials(&AppCredentialStore, auth).map_err(|error| {
         AcpError::internal_error().data(format!("could not delete {auth} credentials: {error}"))
     })?;
+    if let Some(descriptor) = provider::provider_descriptor(provider) {
+        crate::app::endpoint_login::forget(&ConfigRepository::new(config), *descriptor).map_err(
+            |error| {
+                AcpError::internal_error()
+                    .data(format!("could not remove the {provider} login: {error:#}"))
+            },
+        )?;
+    }
     Ok(())
 }

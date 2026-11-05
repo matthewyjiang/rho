@@ -1,4 +1,5 @@
 use super::{sort_items_by_ascii_label, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use crate::config::ProviderConfigs;
 use rho_providers::{
     auth::login_dispatch::ProviderAuthentication,
     credentials::{CredentialError, CredentialStore},
@@ -164,16 +165,16 @@ pub(super) fn auth_mode_picker(
     .with_confirm_verb("switch"))
 }
 
-pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker {
-    let mut items = vec![PickerItem {
-        detail: Some("Refresh every available provider with model discovery support.".into()),
-        ..PickerItem::new(
-            "All configured providers".into(),
-            ALL_REFRESHABLE_PROVIDERS.into(),
-        )
-    }];
-    let mut providers = provider::providers()
-        .iter()
+/// Providers that Refresh model lists offers and that "All configured
+/// providers" refreshes: each has a model or decision-model list and an
+/// available auth mode, and none awaits its endpoint login. Built-in Ollama is
+/// skipped until `/login ollama`, so a local server is never probed before that.
+pub(super) fn refreshable_providers(
+    available_auths: &[String],
+    configs: &ProviderConfigs,
+) -> Vec<&'static provider::ProviderDescriptor> {
+    provider::providers()
+        .into_iter()
         .filter(|descriptor| {
             descriptor.supports_model_refresh()
                 || rho_providers::model::decision_models::lists_decision_models(descriptor.name)
@@ -183,6 +184,23 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
                 .auth_modes()
                 .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
         })
+        .filter(|descriptor| !configs.awaits_endpoint_login(**descriptor))
+        .collect()
+}
+
+pub(super) fn refresh_model_list_picker(
+    available_auths: &[String],
+    configs: &ProviderConfigs,
+) -> UiPicker {
+    let mut items = vec![PickerItem {
+        detail: Some("Refresh every available provider with model discovery support.".into()),
+        ..PickerItem::new(
+            "All configured providers".into(),
+            ALL_REFRESHABLE_PROVIDERS.into(),
+        )
+    }];
+    let mut providers = refreshable_providers(available_auths, configs)
+        .into_iter()
         .map(|descriptor| PickerItem {
             detail: Some(format!("Refresh cached {} models.", descriptor.display_name).into()),
             ..PickerItem::new(descriptor.display_name.into(), descriptor.name.into())
@@ -193,13 +211,20 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
     UiPicker::refresh_model_list("Refresh model lists", items)
 }
 
+/// Logout targets: stored credentials, plus a host logged in through its
+/// endpoint (Ollama), whose login counts with or without a key.
 pub(super) fn logout_provider_picker(
     store: &dyn CredentialStore,
+    configs: &ProviderConfigs,
     claude_signed_in: bool,
 ) -> rho_providers::credentials::CredentialResult<UiPicker> {
     let mut targets = Vec::new();
     for target in catalog::login_targets() {
-        if ProviderAuthentication::has_stored_credentials(store, &target.auth)? {
+        let endpoint_login =
+            provider::provider_descriptor(&target.provider).is_some_and(|descriptor| {
+                descriptor.collects_login_endpoint() && !configs.awaits_endpoint_login(*descriptor)
+            });
+        if endpoint_login || ProviderAuthentication::has_stored_credentials(store, &target.auth)? {
             targets.push(target);
         }
     }

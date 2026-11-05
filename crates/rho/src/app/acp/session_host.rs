@@ -179,7 +179,8 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
-        self.renew_stale_credentials(&startup.config).await?;
+        self.renew_stale_credentials(&startup.config, &startup.config_path)
+            .await?;
         self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
         let _ = self
@@ -277,6 +278,7 @@ impl SessionHost {
         &mut self,
         request: SetSessionConfigOptionRequest,
         process_config: &Config,
+        config_path: &std::path::Path,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         match request.config_id.0.as_ref() {
             permission::MODE_CONFIG_ID => {
@@ -298,7 +300,8 @@ impl SessionHost {
             }
             _ => {
                 return Ok(SetSessionConfigOptionResponse::new(
-                    self.set_model_option(&request, process_config).await?,
+                    self.set_model_option(&request, process_config, config_path)
+                        .await?,
                 ));
             }
         }
@@ -348,6 +351,7 @@ impl SessionHost {
         &mut self,
         request: &SetSessionConfigOptionRequest,
         process_config: &Config,
+        config_path: &std::path::Path,
     ) -> Result<Vec<SessionConfigOption>, AcpError> {
         let current = self.current_model();
         let available_auths = available_auth_modes(&AppCredentialStore);
@@ -366,10 +370,15 @@ impl SessionHost {
             self.validate_model_override_switch(&config)
                 .map_err(host_apply_error)?;
             let read = self.credentials.before_read();
-            let provider =
-                build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
-                    .await
-                    .map_err(host_apply_error)?;
+            // A keyless login lives in config, which `logout` edits on disk.
+            let login_config = crate::app::endpoint_login::with_disk_login(&config, config_path)
+                .map_err(host_apply_error)?;
+            let provider = build_provider_from_config_ensuring_catalog(
+                &login_config,
+                Arc::new(AppCredentialStore),
+            )
+            .await
+            .map_err(host_apply_error)?;
             self.switch_provider(provider, &config, read)?;
         }
         self.persist_model_override().map_err(|error| {

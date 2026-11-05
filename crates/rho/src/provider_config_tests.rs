@@ -453,3 +453,38 @@ fn invalid_endpoint_options_name_the_offending_field() {
         assert!(format!("{error:#}").contains(field), "{case}: {error:#}");
     }
 }
+
+// Covers: an Ollama login is recorded in config with or without a key: a
+// URL-less login records the default base without overwriting a chosen one,
+// logout removes it, and providers without an endpoint login are untouched.
+// Owner: provider config
+#[test]
+fn endpoint_login_is_recorded_and_forgotten_in_config() {
+    use rho_providers::provider::{provider_descriptor, OLLAMA_API_BASE};
+    let ollama = *provider_descriptor("ollama").unwrap();
+    let openai = *provider_descriptor("openai").unwrap();
+    let base_url = |configs: &ProviderConfigs| {
+        configs
+            .ollama
+            .as_ref()
+            .map(|endpoint| endpoint.base_url.to_string())
+    };
+
+    let mut configs = ProviderConfigs::default();
+    assert!(configs.awaits_endpoint_login(ollama));
+    assert!(!configs.awaits_endpoint_login(openai));
+    assert!(!configs.record_login(openai).unwrap());
+    assert!(configs.record_login(ollama).unwrap());
+    assert_eq!(base_url(&configs).as_deref(), Some(OLLAMA_API_BASE));
+    assert!(!configs.awaits_endpoint_login(ollama));
+
+    let chosen = "http://10.0.0.5:11434/v1";
+    configs.set_endpoint("ollama", chosen).unwrap();
+    assert!(!configs.record_login(ollama).unwrap());
+    assert_eq!(base_url(&configs).as_deref(), Some(chosen));
+
+    assert!(!configs.forget_login(openai));
+    assert!(configs.forget_login(ollama));
+    assert!(configs.awaits_endpoint_login(ollama));
+    assert!(!configs.forget_login(ollama));
+}

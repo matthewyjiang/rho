@@ -435,7 +435,9 @@ impl RhoAcpAgent {
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         let session_id = request.session_id.clone();
         let mut host = self.lock_settings_host(&session_id).await?;
-        let result = host.set_config_option(request, &self.startup.config).await;
+        let result = host
+            .set_config_option(request, &self.startup.config, &self.startup.config_path)
+            .await;
         host.refresh_advertisements(&self.startup.config, port)
             .await;
         result
@@ -493,7 +495,11 @@ impl RhoAcpAgent {
         // Synchronous, with no await before `record`: a newer `authenticate`
         // that supersedes this logout drops it at an await, so it either
         // deletes and counts, or does neither.
-        super::auth_logout::sign_out(&self.startup.config.auth, config)?;
+        super::auth_logout::sign_out(
+            &self.startup.config.provider,
+            &self.startup.config.auth,
+            config,
+        )?;
         self.startup.logouts.record();
         Ok(())
     }
