@@ -1,45 +1,39 @@
-//! Antigravity's per-run fence: which built-ins exist, and which permission
-//! requests Rho approves.
+//! Antigravity's per-run fence: which built-ins exist, the agy session mode,
+//! and which permission requests Rho approves.
 //!
-//! Two layers, both derived from the declared tools and the Rho mode:
-//! 1. `_meta.agy.enabledTools` on `session/new` is the per-tool allowlist.
-//!    Undeclared built-ins never reach the model (verified: `[view_file]`
-//!    leaves only `view_file`).
-//! 2. Permission answers gate by category. agy_acp_server 1.3.0 asks (in mode
-//!    `default`) with kind `edit` for create/edit, `execute` for
-//!    `run_command`, `search` for `search_web`, and `fetch` for
-//!    `read_url_content`; `view_file` never asks. Anything else rejects.
+//! Three layers, all derived from the declared tools and the Rho mode:
+//! 1. The run's agy custom agent lists the kept tools (see `agent_file`);
+//!    agy 1.5.0 builds the agent with only those built-ins, plus
+//!    `manage_task`. Plan keeps read-only tools.
+//! 2. The agy session mode: `plan` in Plan, `default` in Bypass. The ACP
+//!    driver fails the run if agy leaves it.
+//! 3. Permission answers by request kind. agy 1.5.0 (mode `default`, Rho's
+//!    own settings) asks before every command (kind `execute`); workspace
+//!    edits never ask. Plan rejects everything. Bypass approves a request
+//!    only when a kept tool covers its kind, so a command is refused unless
+//!    `run_command` is declared, even if agy ignored the agent file.
+//!
+//! Auto, Allow edits, and Supervised are refused: Rho answers agy's
+//! permission requests itself and cannot put a human in front of them.
 
-use agent_client_protocol::schema::v1::{Meta, RequestPermissionRequest, ToolKind};
-use serde_json::json;
+use agent_client_protocol::schema::v1::{RequestPermissionRequest, ToolKind};
 
 use crate::{
     acp_runtime::permission::PermissionDecision, agent::AntigravityTool, permission::PermissionMode,
 };
 
-/// The tools a run keeps, proven nonempty and narrowed for its mode (Plan
-/// keeps read-only tools). Only [`map_permission_mode`] constructs it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AllowedTools {
-    tools: Vec<AntigravityTool>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FenceMode {
+    Plan,
+    Bypass,
 }
 
-impl AllowedTools {
-    pub(crate) fn tools(&self) -> &[AntigravityTool] {
-        &self.tools
-    }
-
-    /// `session/new` `_meta`: the built-in allowlist.
-    pub(crate) fn session_meta(&self) -> Meta {
-        let names = self
-            .tools
-            .iter()
-            .map(|tool| tool.as_name())
-            .collect::<Vec<_>>();
-        let mut meta = Meta::new();
-        meta.insert("agy".into(), json!({ "enabledTools": names }));
-        meta
-    }
+/// The tools a run keeps, proven nonempty and narrowed for its mode. Only
+/// [`AntigravityFence::new`] constructs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AntigravityFence {
+    mode: FenceMode,
+    tools: Vec<AntigravityTool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -52,71 +46,74 @@ pub(crate) enum AntigravityFenceError {
         "antigravity agents require a nonempty tools list: it is the source of Antigravity's tool allowlist"
     )]
     NoToolsAllowed,
-    #[error("antigravity agents in Plan need a read-only tool (view_file) in their tools list")]
+    #[error("antigravity agents in Plan need a read-only tool (read_file) in their tools list")]
     NoReadOnlyToolsInPlan,
 }
 
-/// Gate a Rho permission mode for Antigravity and narrow the tools it keeps.
-///
-/// Plan keeps [`AntigravityTool::is_read_only`] tools. Bypass keeps every
-/// declared tool. Auto, Allow edits, and Supervised are refused: Rho answers
-/// Antigravity's permission requests and cannot prompt.
-pub(crate) fn map_permission_mode(
-    mode: PermissionMode,
-    tools: &[AntigravityTool],
-) -> Result<AllowedTools, AntigravityFenceError> {
-    let tools: Vec<AntigravityTool> = match mode {
-        PermissionMode::Plan => tools
-            .iter()
-            .copied()
-            .filter(|tool| tool.is_read_only())
-            .collect(),
-        PermissionMode::Bypass => tools.to_vec(),
-        PermissionMode::Auto | PermissionMode::AllowEdits | PermissionMode::Supervised => {
-            return Err(AntigravityFenceError::ApprovalUnsupported(mode));
+impl AntigravityFence {
+    /// Gate a Rho permission mode and narrow the declared tools for it: Plan
+    /// keeps [`AntigravityTool::is_read_only`] tools, Bypass keeps all.
+    pub(crate) fn new(
+        mode: PermissionMode,
+        declared: &[AntigravityTool],
+    ) -> Result<Self, AntigravityFenceError> {
+        let (mode, tools) = match mode {
+            PermissionMode::Plan => (
+                FenceMode::Plan,
+                declared
+                    .iter()
+                    .copied()
+                    .filter(|tool| tool.is_read_only())
+                    .collect::<Vec<_>>(),
+            ),
+            PermissionMode::Bypass => (FenceMode::Bypass, declared.to_vec()),
+            PermissionMode::Auto | PermissionMode::AllowEdits | PermissionMode::Supervised => {
+                return Err(AntigravityFenceError::ApprovalUnsupported(mode));
+            }
+        };
+        if tools.is_empty() {
+            return Err(match mode {
+                FenceMode::Plan => AntigravityFenceError::NoReadOnlyToolsInPlan,
+                FenceMode::Bypass => AntigravityFenceError::NoToolsAllowed,
+            });
         }
-    };
-    if tools.is_empty() {
-        return Err(match mode {
-            PermissionMode::Plan => AntigravityFenceError::NoReadOnlyToolsInPlan,
-            PermissionMode::Bypass
-            | PermissionMode::Auto
-            | PermissionMode::AllowEdits
-            | PermissionMode::Supervised => AntigravityFenceError::NoToolsAllowed,
-        });
+        Ok(Self { mode, tools })
     }
-    Ok(AllowedTools { tools })
-}
 
-/// Answer one permission request. Fails closed outside Bypass, and for any
-/// request whose kind is not a declared category.
-pub(crate) fn decide(
-    allowed: &AllowedTools,
-    mode: PermissionMode,
-    request: &RequestPermissionRequest,
-) -> PermissionDecision {
-    match mode {
-        PermissionMode::Plan
-        | PermissionMode::Auto
-        | PermissionMode::AllowEdits
-        | PermissionMode::Supervised => return PermissionDecision::Reject,
-        PermissionMode::Bypass => {}
+    pub(crate) fn tools(&self) -> &[AntigravityTool] {
+        &self.tools
     }
-    use AntigravityTool as T;
-    // Local search built-ins are outside the vocabulary, so a `search`
-    // request is web search. MCP tools are unsupported in this runtime.
-    let category: &[AntigravityTool] = match request.tool_call.fields.kind {
-        Some(ToolKind::Read) => &[T::ViewFile],
-        Some(ToolKind::Edit | ToolKind::Delete | ToolKind::Move) => &[T::CreateFile, T::EditFile],
-        Some(ToolKind::Execute) => &[T::RunCommand],
-        Some(ToolKind::Search) => &[T::SearchWeb],
-        Some(ToolKind::Fetch) => &[T::ReadUrlContent],
-        _ => return PermissionDecision::Reject,
-    };
-    if category.iter().any(|tool| allowed.tools.contains(tool)) {
-        PermissionDecision::AllowOnce
-    } else {
-        PermissionDecision::Reject
+
+    /// The agy session mode id.
+    pub(crate) fn session_mode(&self) -> &'static str {
+        match self.mode {
+            FenceMode::Plan => "plan",
+            FenceMode::Bypass => "default",
+        }
+    }
+
+    /// Answer one permission request. Fails closed in Plan, and for any
+    /// request whose kind no kept tool covers.
+    pub(crate) fn decide(&self, request: &RequestPermissionRequest) -> PermissionDecision {
+        match self.mode {
+            FenceMode::Plan => return PermissionDecision::Reject,
+            FenceMode::Bypass => {}
+        }
+        use AntigravityTool as T;
+        let covering: &[AntigravityTool] = match request.tool_call.fields.kind {
+            Some(ToolKind::Read) => &[T::ReadFile],
+            Some(ToolKind::Edit | ToolKind::Delete | ToolKind::Move) => {
+                &[T::WriteFile, T::EditFile]
+            }
+            Some(ToolKind::Execute) => &[T::RunCommand],
+            Some(ToolKind::Search) => &[T::SearchWeb],
+            _ => return PermissionDecision::Reject,
+        };
+        if covering.iter().any(|tool| self.tools.contains(tool)) {
+            PermissionDecision::AllowOnce
+        } else {
+            PermissionDecision::Reject
+        }
     }
 }
 

@@ -40,7 +40,7 @@ Each run directory can contain:
 - `events.jsonl` - append-only display history used by attachment replay
 - `tool-previews.json` - replaceable live tool-argument cards, when arguments stream;
   attach combines these with the journal without retaining every growing snapshot
-- `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs, server stderr for `runtime: antigravity` runs
+- `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs, `agy acp` stderr for `runtime: antigravity` runs
 
 On a slow disk, terminal status can appear before the background writer appends
 its terminal display event. If recording cannot keep up, `attachment_error` in

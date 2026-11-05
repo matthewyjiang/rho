@@ -142,8 +142,7 @@ pub(super) async fn run<P: AcpAgentPolicy>(
             // run_until preserves session/new's actual JSON-RPC error (unlike
             // start_session, which starts a background request task). Bound
             // only startup: after the closure starts, turns have no deadline.
-            let session_meta = policy.lock().expect("ACP policy").session_meta();
-            let session_run = cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()).meta(session_meta))
+            let session_run = cx.build_session_from(NewSessionRequest::new(cwd.to_path_buf()))
                 .block_task().run_until(async |session| {
                     started.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = started_tx.send(());
@@ -269,10 +268,26 @@ async fn dispatch_update<P: AcpAgentPolicy>(
 ) -> Result<(), Error> {
     MatchDispatch::new(dispatch)
         .if_notification(async |notification: SessionNotification| {
-            let mut update = policy
-                .lock()
-                .expect("ACP policy")
-                .normalize_update(notification.update);
+            let (mut update, required_mode) = {
+                let policy = policy.lock().expect("ACP policy");
+                (
+                    policy.normalize_update(notification.update),
+                    policy.session_mode(),
+                )
+            };
+            // A policy may rely on the required mode as part of its fence: an
+            // agent that leaves it fails the run instead of continuing
+            // unfenced.
+            if let (SessionUpdate::CurrentModeUpdate(mode), Some(required)) =
+                (&update, &required_mode)
+            {
+                if mode.current_mode_id != *required {
+                    return Err(error(format!(
+                        "acp: agent switched to mode `{}`, leaving required mode `{required}`",
+                        mode.current_mode_id
+                    )));
+                }
+            }
             if let SessionUpdate::ToolCallUpdate(call) = &mut update {
                 if call.fields.status == Some(ToolCallStatus::Completed)
                     && rejected.contains(&call.tool_call_id)

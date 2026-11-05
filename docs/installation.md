@@ -103,8 +103,10 @@ Confirm with `claude --version`. Sign in from Rho with `/login claude-code` (ter
 
 Agent definitions with `runtime: cursor` need the `cursor-agent` binary on `PATH`. Rho does not ship or install it. Install Cursor Agent from Cursor's docs, then confirm with `cursor-agent --version`. Sign in from Rho with `/login cursor` (terminal handoff; Cursor stores the credential in `~/.cursor`). Details: [Cursor Agent runtime sign-in](/authentication-and-models#cursor-agent-runtime-sign-in).
 
-## Antigravity ACP server (optional)
+## Antigravity CLI (optional)
 
-Agent definitions with `runtime: antigravity` need Google Antigravity's ACP server, `agy_acp_server.par` (`agy_acp_server.exe` on Windows). It is a separate download from the `agy` CLI. Run `/login antigravity` or `rho login antigravity`: when the server is missing, Rho asks before downloading Google's pinned release into `~/.rho/runtimes/antigravity-acp/`, verifies its checksum, and then starts sign-in. A server you install on `PATH` yourself takes precedence. Details: [Google Antigravity as a delegated runtime](/subagents/antigravity).
+Agent definitions with `runtime: antigravity` need Google's `agy` CLI, version 1.5.0 or later, on `PATH`; Rho runs its built-in ACP server, `agy acp`. Rho does not ship or install it. Install it from [Google's releases](https://github.com/google-antigravity/antigravity-cli/releases) (update with `agy update`), then confirm with `agy --version`. Sign in from Rho with `/login antigravity` (terminal handoff to `agy acp --login`; agy stores the credential). Details: [Google Antigravity as a delegated runtime](/subagents/antigravity).
+
+Earlier Rho releases downloaded a separate `agy_acp_server` into `~/.rho/runtimes/antigravity-acp/`. Rho no longer uses it; delete that directory to reclaim about 1 GB.
 
 Next, configure [authentication and models](/authentication-and-models). To embed Rho as a headless Rust library instead of installing the CLI, start with [SDK installation and support](/sdk/installation).

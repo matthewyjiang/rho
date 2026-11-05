@@ -2,36 +2,35 @@ use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, ToolCallUpdate, ToolCallUpdateFields,
 };
 use pretty_assertions::assert_eq;
-use serde_json::json;
 
 use super::*;
 
-fn allowed(mode: PermissionMode, tools: &[AntigravityTool]) -> AllowedTools {
-    map_permission_mode(mode, tools).expect("test fence is valid")
+fn fence(mode: PermissionMode, tools: &[AntigravityTool]) -> AntigravityFence {
+    AntigravityFence::new(mode, tools).expect("test fence is valid")
 }
 
-// Covers: Plan keeps only read-only built-ins (and needs one), Bypass keeps
-// the declared list, and modes that would need a human approver are refused.
-// The kept list is exactly what `session/new` allowlists.
+// Covers: Plan keeps only read-only built-ins (and needs one) in agy mode
+// `plan`, Bypass keeps the declared list in mode `default`, and modes that
+// would need a human approver are refused.
 // Owner: Antigravity fence derivation; bind and plan host only call it.
 #[test]
 fn permission_mode_narrows_the_allowlist() {
     use AntigravityTool as T;
-    let declared = [T::ViewFile, T::RunCommand, T::SearchWeb];
+    let declared = [T::ReadFile, T::RunCommand, T::SearchWeb];
     let cases = [
         (
             PermissionMode::Plan,
             &declared[..],
-            Ok(json!({"agy": {"enabledTools": ["view_file"]}})),
+            Ok(("plan", vec![T::ReadFile])),
         ),
         (
             PermissionMode::Bypass,
             &declared[..],
-            Ok(json!({"agy": {"enabledTools": ["view_file", "run_command", "search_web"]}})),
+            Ok(("default", declared.to_vec())),
         ),
         (
             PermissionMode::Plan,
-            &[T::CreateFile][..],
+            &[T::WriteFile][..],
             Err(AntigravityFenceError::NoReadOnlyToolsInPlan),
         ),
         (
@@ -62,15 +61,16 @@ fn permission_mode_narrows_the_allowlist() {
         ),
     ];
     for (mode, tools, expected) in cases {
-        let actual = map_permission_mode(mode, tools)
-            .map(|allowed| serde_json::Value::Object(allowed.session_meta()));
+        let actual = AntigravityFence::new(mode, tools)
+            .map(|fence| (fence.session_mode(), fence.tools().to_vec()));
         assert_eq!(actual, expected, "{mode} {tools:?}");
     }
 }
 
-// Covers: each permission kind agy_acp_server 1.3.0 sends approves only when
-// a built-in of that category is declared, never on Bypass alone; Plan and
-// unsupported modes approve nothing; unclassified kinds fail closed.
+// Covers: each permission kind approves in Bypass only when a kept tool
+// covers it, never on Bypass alone (a command without `run_command` is
+// refused even if agy ignored the agent file); Plan approves nothing;
+// unclassified kinds fail closed.
 // Owner: Antigravity permission answers; option selection is generic ACP.
 #[test]
 fn permission_decision_table() {
@@ -88,54 +88,48 @@ fn permission_decision_table() {
         )
     };
     let cases = [
-        (K::Read, T::ViewFile),
-        (K::Edit, T::CreateFile),
+        (K::Read, T::ReadFile),
+        (K::Edit, T::WriteFile),
         (K::Edit, T::EditFile),
         (K::Delete, T::EditFile),
-        (K::Move, T::EditFile),
+        (K::Move, T::WriteFile),
         (K::Execute, T::RunCommand),
         (K::Search, T::SearchWeb),
-        (K::Fetch, T::ReadUrlContent),
     ];
+    let plan = fence(PermissionMode::Plan, T::ALL);
     for (kind, member) in cases {
         let request = request(Some(kind));
         let other = if member == T::RunCommand {
-            T::ViewFile
+            T::ReadFile
         } else {
             T::RunCommand
         };
-        for (tools, expected) in [
+        for (tool, expected) in [
             (member, PermissionDecision::AllowOnce),
             (other, PermissionDecision::Reject),
         ] {
             assert_eq!(
-                decide(
-                    &allowed(PermissionMode::Bypass, &[tools]),
-                    PermissionMode::Bypass,
-                    &request
-                ),
+                fence(PermissionMode::Bypass, &[tool]).decide(&request),
                 expected,
-                "kind {kind:?}, tools {tools:?}"
+                "kind {kind:?}, tool {tool:?}"
             );
         }
-        let full = allowed(PermissionMode::Bypass, T::ALL);
-        for mode in [
-            PermissionMode::Plan,
-            PermissionMode::Auto,
-            PermissionMode::AllowEdits,
-            PermissionMode::Supervised,
-        ] {
-            assert_eq!(
-                decide(&full, mode, &request),
-                PermissionDecision::Reject,
-                "{mode} {kind:?}"
-            );
-        }
-    }
-    let full = allowed(PermissionMode::Bypass, T::ALL);
-    for kind in [Some(K::Other), Some(K::Think), Some(K::SwitchMode), None] {
         assert_eq!(
-            decide(&full, PermissionMode::Bypass, &request(kind)),
+            plan.decide(&request),
+            PermissionDecision::Reject,
+            "{kind:?}"
+        );
+    }
+    let full = fence(PermissionMode::Bypass, T::ALL);
+    for kind in [
+        Some(K::Fetch),
+        Some(K::Other),
+        Some(K::Think),
+        Some(K::SwitchMode),
+        None,
+    ] {
+        assert_eq!(
+            full.decide(&request(kind)),
             PermissionDecision::Reject,
             "{kind:?}"
         );

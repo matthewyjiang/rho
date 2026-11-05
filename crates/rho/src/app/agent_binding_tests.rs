@@ -256,6 +256,50 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
     }
 }
 
+// Covers: a plan frozen for the retired agy_acp_server runtime (its own
+// argv, its own executable) refuses to resume instead of driving that binary
+// with `agy acp` argv; a plan frozen for `agy acp` binds with its tools.
+// Owner: frozen workflow agent binding
+#[test]
+fn frozen_antigravity_requires_an_agy_acp_plan() {
+    let frozen = |arguments: &[&str]| crate::workflow::ResolvedAgent {
+        agent_id: "agy".into(),
+        fingerprint: "0".repeat(64),
+        runtime: crate::workflow::AgentRuntime::Antigravity,
+        source_origin: "project".into(),
+        trust_required: false,
+        plugin_trust_required: false,
+        prompt_policy: "extend:frozen".into(),
+        provider: None,
+        model: Some("gemini-3.8-flash".into()),
+        reasoning: None,
+        step_limit: 9,
+        capabilities: ["run_command".to_owned()].into_iter().collect(),
+        permission_ceiling: "bypass".into(),
+        auth_profile: None,
+        fast: false,
+        executable: None,
+        executable_identity: None,
+        arguments: arguments.iter().map(|arg| (*arg).to_owned()).collect(),
+    };
+    let current = Config {
+        permission_mode: crate::permission::PermissionMode::Bypass,
+        ..Config::default()
+    };
+    assert!(AgentBinder::bind_frozen(&frozen(&["--uid="]), &current, &capabilities()).is_err());
+    let bound = AgentBinder::bind_frozen(
+        &frozen(crate::antigravity_runtime::executable::SERVER_ARGS),
+        &current,
+        &capabilities(),
+    )
+    .unwrap();
+    assert!(matches!(
+        bound.runtime(),
+        BoundRuntime::Antigravity { tools, .. }
+            if tools == &[crate::agent::AntigravityTool::RunCommand]
+    ));
+}
+
 // Covers: bind keeps the host web_search ceiling; registration, not bind, gates
 // current readiness so interactive rebind can enable search later.
 // Owner: delegated agent binding

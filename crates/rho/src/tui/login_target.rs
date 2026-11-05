@@ -27,8 +27,8 @@ Claude Code manages credentials, not Rho.",
             value: AgentRuntime::Antigravity.as_str(),
             aliases: &[],
             name: "Antigravity",
-            detail: "Uses agy_acp_server, not Gemini API billing. \
-Antigravity manages credentials, not Rho.",
+            detail: "Uses the agy CLI, not Gemini API billing. \
+agy manages credentials, not Rho.",
         },
         ExternalLoginMethod {
             group_id: "xai",
@@ -70,7 +70,7 @@ pub(super) enum SignInTarget {
     ClaudeCode,
     /// Cursor Agent CLI, whose credential `cursor-agent` owns.
     Cursor,
-    /// Antigravity ACP server, which owns its Google sign-in.
+    /// Antigravity's `agy` CLI, which owns its Google sign-in.
     Antigravity,
     /// Onboarding for a host that does not exist yet.
     NewCustomHost { api: OpenAiCompatibleApi },

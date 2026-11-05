@@ -1,23 +1,14 @@
 //! `/login antigravity` for the external Antigravity runtime.
 //!
-//! Hands the terminal to `rho login antigravity` (this same binary), which
-//! offers to install a missing server, then drives the server's Google
-//! sign-in and accepts a pasted redirect over SSH.
-//! Rho's credential store is never touched; the server keeps its token under
-//! the Gemini home.
-//!
-//! Login counts as complete only when runs can start (server installed and
-//! signed in), so a declined or failed install never reads as signed in on
-//! the strength of an earlier sign-in.
+//! Hands the terminal to `agy acp --login`, agy's own Google sign-in, which
+//! accepts a pasted code so it also works over SSH. Rho's credential store
+//! is never touched; agy keeps the token, shared with the agy CLI.
 
 use crate::tui::DefaultTerminal;
 
-use crate::{
-    antigravity_runtime::{
-        home::{AntigravityAuthStatus, AntigravityHome},
-        setup::AntigravitySetup,
-    },
-    cli_runtime::CliExecutable,
+use crate::antigravity_runtime::{
+    auth::{self, AntigravityProbeError, AntigravityStatus},
+    executable,
 };
 
 use super::{
@@ -30,84 +21,52 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        // Same gate as `rho login antigravity`: an agy without `agy acp`
+        // must not get the terminal.
+        if let Err(error) = auth::login_preflight().await {
+            // The error already names antigravity (`antigravity: ...`).
+            self.insert_entry(&Entry::Error(format!("could not log in to {error}")));
+            self.set_status("antigravity login failed");
+            return Ok(());
+        }
         self.start_external_login(terminal, antigravity_login_spec())
             .await
     }
 
     pub(super) fn report_antigravity_logout_unsupported(&mut self) {
-        let token = AntigravityHome::from_env(&crate::paths::home_dir().unwrap_or_default());
-        self.insert_entry(&Entry::Error(format!(
-            "could not log out of antigravity: not available from rho, delete the token in {}",
-            crate::paths::display(token.acp_dir())
-        )));
+        self.insert_entry(&Entry::Error(
+            "could not log out of antigravity: not available from rho, sign out with /logout in agy"
+                .into(),
+        ));
         self.set_status("logout failed");
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-enum AntigravityLoginError {
-    #[error("could not locate the running rho binary: {0}")]
-    RhoExecutable(std::io::Error),
-}
-
-/// Run this binary; it checks for (and offers to install) the server.
-fn resolve_login_command() -> Result<CliExecutable, AntigravityLoginError> {
-    std::env::current_exe()
-        .map(CliExecutable::from_path)
-        .map_err(AntigravityLoginError::RhoExecutable)
-}
-
-fn antigravity_login_spec() -> ExternalLoginSpec<AntigravitySetup, AntigravityLoginError> {
+fn antigravity_login_spec() -> ExternalLoginSpec<AntigravityStatus, AntigravityProbeError> {
     ExternalLoginSpec {
-        command_label: "rho login antigravity",
-        resolve: resolve_login_command,
-        login_args: &["login", "antigravity"],
-        query: || Box::pin(async { Ok(setup_from_env()) }),
-        is_signed_in: AntigravitySetup::is_ready,
+        command_label: "agy acp --login",
+        resolve: || executable::resolve().map_err(AntigravityProbeError::from),
+        login_args: executable::LOGIN_ARGS,
+        query: || Box::pin(auth::query()),
+        is_signed_in: |status| status.signed_in,
         copy: LoginAuthCopy {
             status_line_prefix: "antigravity login",
             signed_in_notice,
-            incomplete_signed_out: |setup| {
-                format!(
-                    "could not complete antigravity login: {}",
-                    setup.description()
-                )
-            },
+            incomplete_signed_out: |_| "could not complete antigravity login: not signed in".into(),
             incomplete_query_error: |error| {
                 format!("could not complete antigravity login: {error}")
             },
-            // The child's own output is gone once the TUI redraws; keep the
-            // likeliest cause (install declined or failed) in the transcript.
-            failed: |error| match setup_from_env() {
-                setup if setup.is_ready() => {
-                    format!("could not complete antigravity login: {error:#}")
-                }
-                setup => format!(
-                    "could not complete antigravity login: {} ({error:#})",
-                    setup.description()
-                ),
-            },
+            failed: |error| format!("could not complete antigravity login: {error:#}"),
             child_failed_but_signed_in: |_, status| signed_in_notice(status),
         },
         confirm: LoginConfirm::Direct,
-        handoff_notice: "handing the terminal to rho login antigravity",
-        handoff_status: "rho login antigravity".into(),
+        handoff_notice: "handing the terminal to agy acp --login",
+        handoff_status: "agy acp --login".into(),
         complete_announcement: CompleteAnnouncement::NoticeAndStatus,
         after_success: None,
     }
 }
 
-fn setup_from_env() -> AntigravitySetup {
-    AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default())
-}
-
-fn signed_in_notice(setup: &AntigravitySetup) -> String {
-    match &setup.auth {
-        AntigravityAuthStatus::Configured { method } => {
-            format!("signed in to antigravity ({method})")
-        }
-        AntigravityAuthStatus::SignedOut { .. }
-        | AntigravityAuthStatus::MissingToken { .. }
-        | AntigravityAuthStatus::Unreadable { .. } => "signed in to antigravity".into(),
-    }
+fn signed_in_notice(status: &AntigravityStatus) -> String {
+    format!("signed in to antigravity (agy {})", status.version)
 }

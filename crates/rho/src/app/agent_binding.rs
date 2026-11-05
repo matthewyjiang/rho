@@ -353,9 +353,6 @@ impl BoundAgent {
                 status_tx,
                 started_status,
                 parent_messages: None,
-                home: crate::antigravity_runtime::home::AntigravityHome::from_env(
-                    &crate::paths::home_dir().unwrap_or_default(),
-                ),
                 overrides: Default::default(),
             },
         )

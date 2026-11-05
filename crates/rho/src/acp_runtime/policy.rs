@@ -3,8 +3,8 @@
 use super::permission::PermissionDecision;
 use crate::cli_runtime::{agent_event::AgentEvent, status_sink::RuntimeLabel, CliExecutable};
 use agent_client_protocol::schema::v1::{
-    AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionConfigId,
-    SessionConfigValueId, SessionModeId, SessionUpdate,
+    AuthMethod, AuthMethodId, RequestPermissionRequest, SessionConfigId, SessionConfigValueId,
+    SessionModeId, SessionUpdate,
 };
 use serde_json::Value;
 use std::{
@@ -29,13 +29,10 @@ pub(crate) trait AcpAgentPolicy: Send + 'static {
     fn prepare(&mut self, run_dir: &Path) -> Result<Vec<String>, String>;
     fn log_path(&self, output_file: &Path) -> PathBuf;
     fn auth_method(&self, advertised: &[AuthMethod]) -> Option<AuthMethodId>;
-    /// A required mode must be advertised and successfully set before prompting.
+    /// A required mode must be advertised and successfully set before prompting,
+    /// and the agent must stay in it: a `current_mode_update` to another mode
+    /// fails the run.
     fn session_mode(&self) -> Option<SessionModeId>;
-    /// `_meta` sent with `session/new`, for vendor session parameters such as
-    /// tool filters.
-    fn session_meta(&self) -> Option<Meta> {
-        None
-    }
     /// Select options to set, in order, after `session/new` and the mode.
     /// Each must be advertised with the asked value, or the run fails before
     /// prompting.

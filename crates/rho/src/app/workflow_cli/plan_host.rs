@@ -341,24 +341,25 @@ fn resolve_agent(
             tools,
             permission_mode,
         } => {
-            let (executable, executable_identity) = host
-                .resolve_executable(&crate::antigravity_runtime::executable::workflow_program()?)?;
-            let allowed =
-                crate::antigravity_runtime::fence::map_permission_mode(*permission_mode, tools)?;
+            let (executable, executable_identity) =
+                host.resolve_executable(crate::antigravity_runtime::executable::AGY_PROGRAM)?;
+            let fence =
+                crate::antigravity_runtime::fence::AntigravityFence::new(*permission_mode, tools)?;
             ResolvedAgent {
                 model: model.clone(),
-                capabilities: allowed
+                capabilities: fence
                     .tools()
                     .iter()
                     .map(|tool| tool.as_name().to_owned())
                     .collect(),
                 executable: Some(crate::paths::display(&executable)),
                 executable_identity: Some(executable_identity),
-                // Unused at launch (the policy rebuilds argv); recorded so the
-                // plan shows what will run.
-                arguments: crate::antigravity_runtime::executable::server_args()
-                    .into_iter()
-                    .map(|arg| arg.to_string_lossy().into_owned())
+                // Unused at launch (the policy rebuilds argv and adds the
+                // run's own agent flags); recorded so the plan shows what will
+                // run.
+                arguments: crate::antigravity_runtime::executable::SERVER_ARGS
+                    .iter()
+                    .map(|arg| (*arg).to_owned())
                     .collect(),
                 ..common
             }

@@ -1,14 +1,25 @@
 {
-  "modes": ["default", "auto_edit", "yolo"],
+  "modes": ["default", "accept-edits", "plan"],
   "config_options": [
     {
       "id": "model",
       "name": "Model",
       "type": "select",
-      "currentValue": "gemini-3.8-flash-high",
+      "currentValue": "gemini-4-argon",
       "options": [
-        {"value": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)"},
-        {"value": "gemini-3.8-flash-low", "name": "Gemini 3.8 Flash (Low)"}
+        {"value": "gemini-4-argon", "name": "Gemini 4 Argon"},
+        {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"}
+      ]
+    },
+    {
+      "id": "thought_level",
+      "name": "Thinking Level",
+      "type": "select",
+      "currentValue": "medium",
+      "options": [
+        {"value": "low", "name": "Low"},
+        {"value": "medium", "name": "Medium"},
+        {"value": "high", "name": "High"}
       ]
     }
   ],
@@ -19,24 +30,15 @@
         "update": {
           "sessionUpdate": "tool_call",
           "toolCallId": "run-1",
-          "title": "Run run_command?",
+          "title": "cargo test",
           "kind": "execute",
-          "status": "pending",
+          "status": "in_progress",
           "rawInput": {"CommandLine": "cargo test"}
         }
       },
       {
         "step": "permission",
-        "call": {"toolCallId": "run-1", "title": "Run run_command?", "kind": "execute", "status": "pending"},
-        "options": [
-          {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
-          {"optionId": "allow_always", "name": "Allow always", "kind": "allow_always"},
-          {"optionId": "deny", "name": "Deny", "kind": "reject_once"}
-        ]
-      },
-      {
-        "step": "permission",
-        "call": {"toolCallId": "fetch-1", "title": "Run read_url_content?", "kind": "fetch", "status": "pending"},
+        "call": {"toolCallId": "run-1", "title": "cargo test", "kind": "execute", "status": "pending"},
         "options": [
           {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
           {"optionId": "deny", "name": "Deny", "kind": "reject_once"}

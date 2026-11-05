@@ -17,13 +17,13 @@ use std::{
 use serde_json::Value;
 
 /// One vendor shim: binary name, fixture directory under `tests/fixtures`,
-/// and the environment variable whose spawn-time value is recorded.
+/// and the environment variable whose spawn-time value is recorded, if any.
 pub struct FakeAcpAgent {
     pub program: &'static str,
     pub fixtures: &'static str,
-    pub recorded_env: &'static str,
-    /// Required last argument of the ACP spawn, when the vendor binary also
-    /// serves other commands (Cursor's model and status probes) that must
+    pub recorded_env: Option<&'static str>,
+    /// Required argument of the ACP spawn, when the vendor binary also serves
+    /// other commands (Cursor's and agy's model and status probes) that must
     /// fail fast instead of overwriting the spawn record.
     pub acp_subcommand: Option<&'static str>,
 }
@@ -60,9 +60,9 @@ impl FakeAcpAgent {
         };
         let guard = match self.acp_subcommand {
             Some(subcommand) => format!(
-                r#"last=
-for arg in "$@"; do last=$arg; done
-if [ "$last" != "{subcommand}" ]; then
+                r#"found=
+for arg in "$@"; do case "$arg" in {subcommand}) found=1 ;; esac; done
+if [ -z "$found" ]; then
   printf 'unexpected fake ACP agent args:' >&2
   printf ' %s' "$@" >&2
   printf '\n' >&2
@@ -78,12 +78,15 @@ set -eu
 {guard}: > {argv}
 for arg in "$@"; do printf '%s\0' "$arg" >> {argv}; done
 pwd > {cwd}
-printf '%s' "${{{env}-}}" > {env_record}
+{record_env} > {env_record}
 exec {rho} __acp-fixture-agent --script {script} --journal {journal}
 "#,
             argv = quote(&paths.argv_path),
             cwd = quote(&paths.cwd_path),
-            env = self.recorded_env,
+            record_env = match self.recorded_env {
+                Some(env) => format!("printf '%s' \"${{{env}-}}\""),
+                None => ":".to_owned(),
+            },
             env_record = quote(&paths.env_path),
             rho = quote(rho),
             script = quote(&self.fixture_dir().join("success.json")),
@@ -115,7 +118,7 @@ pub struct FakeAcpPaths {
 pub struct AcpSpawnRecord {
     pub args: Vec<String>,
     pub cwd: PathBuf,
-    /// The recorded environment variable; empty when unset.
+    /// The recorded environment variable; empty when unset or not recorded.
     pub env: String,
 }
 

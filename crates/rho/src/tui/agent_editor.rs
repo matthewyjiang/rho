@@ -412,7 +412,7 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AgentRuntime::Antigravity => {
             items.push(field_item(
                 "Model",
-                "Antigravity model id (for example gemini-3.8-flash-high), set as the session's model option. Empty lets Antigravity choose.",
+                "Antigravity model (for example gemini-3.8-flash), set as the session's model option. Empty lets Antigravity choose.",
                 Some(draft.model_badge()),
                 AGENT_FIELD_MODEL,
             ));
@@ -556,7 +556,7 @@ fn agent_choice_picker(
                         ),
                         (
                             AgentRuntime::Antigravity.as_str(),
-                            "Delegate the loop to agy_acp_server with a closed tool allow list.",
+                            "Delegate the loop to agy acp with a closed tool allow list.",
                         ),
                     ],
                     current,
@@ -713,8 +713,8 @@ fn selectable_agent_reasoning_levels(
     conversation: ConversationModelView<'_>,
 ) -> Vec<ReasoningLevel> {
     // Claude Code efforts are fixed; Claude model ids are not resolved through
-    // models.dev provider rows in this editor. Cursor and Antigravity have no
-    // reasoning flag.
+    // models.dev provider rows in this editor. Cursor and Antigravity take no
+    // reasoning setting.
     let (capabilities, fallback) = match draft.runtime.runtime() {
         AgentRuntime::ClaudeCli => (
             ReasoningCapabilities::Unknown,

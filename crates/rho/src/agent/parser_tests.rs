@@ -302,10 +302,10 @@ fn closed_tool_runtime_frontmatter_rules() {
         ),
         (
             "antigravity",
-            "view_file",
-            "start_subagent",
+            "read_file",
+            "invoke_subagent",
             AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
-                tools: vec![AntigravityTool::ViewFile],
+                tools: vec![AntigravityTool::ReadFile],
                 model: Some("gpt-5.3-codex[effort=high,fast=false]".into()),
             }),
         ),
@@ -356,6 +356,24 @@ fn closed_tool_runtime_frontmatter_rules() {
         .expect_err("replace prompt");
         assert_eq!(error.field.as_deref(), Some("prompt"), "{runtime}: {error}");
     }
+}
+
+// Covers: antigravity definitions written for agy_acp_server keep loading:
+// its renamed built-ins parse as their agy acp names.
+// Owner: agent parser
+#[test]
+fn antigravity_accepts_agy_acp_server_tool_names() {
+    let definition = parse(
+        "---\ndescription: demo\nruntime: antigravity\ntools: [view_file, create_file]\n---\n",
+    )
+    .unwrap();
+    assert_eq!(
+        definition.runtime,
+        AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
+            tools: vec![AntigravityTool::ReadFile, AntigravityTool::WriteFile],
+            model: None,
+        })
+    );
 }
 
 // Covers: `fast` is Rho-only, needs a pinned model, and round-trips through

@@ -223,7 +223,7 @@ fn model_override_rejects_unavailable_selections_and_external_runtimes() {
             model: None,
         }),
         AgentRuntimeSpec::Antigravity(crate::agent::AntigravityAgentConfig {
-            tools: vec![crate::agent::AntigravityTool::ViewFile],
+            tools: vec![crate::agent::AntigravityTool::ReadFile],
             model: None,
         }),
     ] {

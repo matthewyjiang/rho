@@ -45,7 +45,7 @@ flowchart TD
 | `model` | string | policy-dependent | unset | Non-empty; no whitespace. Rho may use `@alias`. Claude, Cursor, and Antigravity reject `@alias`; Claude and Cursor pass the value to `--model`, Antigravity sets it as the session `model` option. Cursor allows brackets and commas, for example `gpt-5.3-codex[effort=high,fast=false]` |
 | `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli`, `cursor`, and `antigravity` |
 | `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli`, `cursor`, `antigravity`, and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
-| `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` and `antigravity` (no reasoning flag; put effort in `model`) |
+| `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` (no reasoning flag; put effort in `model`) and `antigravity` (runs use agy's default thinking level) |
 | `fast` | bool | no | `false` | `true` \| `false`. **Rho only**, and requires a pinned model (not `model-policy: inherit`). Turns on fast serving for this agent, independent of the parent's `/fast`. Bind fails when the resolved provider, model, and auth do not support fast mode (Codex GPT-5.5+/GPT-6, SpaceXAI OAuth `grok-4.7`). For SpaceXAI, pin `auth: xai-oauth`; with `auth` unset bind may select the API-key login |
 | `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho, Claude, Cursor, and Antigravity names is a parse error. Required and nonempty on `cursor` and `antigravity` |
 | `inherit_claude_config` | bool | no | `false` | `true` \| `false`. `true` only with `runtime: claude-cli` |
@@ -101,7 +101,7 @@ Cursor has no `--effort` / reasoning flag. Put effort in the model id (`gpt-5.3-
 | any | `@...` | - | rejected (no Rho alias resolution) |
 | any | any | set | rejected |
 
-Antigravity has no reasoning setting; effort is part of the model id (`gemini-3.8-flash-high`). A model the server does not offer fails the run before the prompt and lists the offered ids.
+Antigravity has no reasoning setting; runs use agy's default thinking level. `model` is an agy model such as `gemini-3.8-flash` or `gemini-4-argon`. A model the server does not offer fails the run before the prompt and lists the offered values.
 
 ## Tool vocabulary by runtime
 
@@ -211,22 +211,23 @@ Deliberately absent: `task_tool_call` (nested fan-out), `ask_question_tool_call`
 | Form | Meaning |
 | --- | --- |
 | omitted | rejected (`tools` is required) |
-| `tools: all` | rejected. Antigravity enables every built-in by default and Rho fences only classified names |
+| `tools: all` | rejected. agy offers every built-in to an agent without a list |
 | `tools: []` | rejected (need at least one built-in) |
-| `tools: [name, ...]` | closed allow list, sent as the session's built-in allowlist ([Permission modes](/subagents/antigravity#permission-modes)) |
+| `tools: [name, ...]` | closed allow list, written as the `tools:` of the run's agy custom agent ([Permission modes](/subagents/antigravity#permission-modes)) |
 
 Accepted names (this is the whole set):
 
 ```text
-view_file
-create_file
+read_file
+write_file
 edit_file
 run_command
 search_web
-read_url_content
 ```
 
-Deliberately absent: `ask_question` (no headless answer path), `start_subagent` (nested fan-out), `schedule` (timers that outlive the run), `generate_image`, `finish`, and the directory search built-ins.
+Deliberately absent: `invoke_subagent`, `define_subagent`, `manage_subagents`, and `send_message` (nested agents outside Rho's run), `schedule` (timers that outlive the run), `ask_question` (no headless answer path), and `generate_image`. agy always adds `manage_task`, which manages the agent's own background commands.
+
+Names from the earlier `agy_acp_server` runtime: `view_file` and `create_file` still parse, as `read_file` and `write_file` (saving from `/agents` writes the new names); `read_url_content` has no replacement and fails to parse.
 
 ## Body / prompt semantics
 
@@ -416,12 +417,13 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
             "items": {
               "type": "string",
               "enum": [
-                "view_file",
-                "create_file",
+                "read_file",
+                "write_file",
                 "edit_file",
                 "run_command",
                 "search_web",
-                "read_url_content"
+                "view_file",
+                "create_file"
               ]
             }
           }
@@ -533,8 +535,8 @@ Antigravity delegated agent:
 id: agy-reviewer
 description: Reviews with Antigravity on a read and shell allow list
 runtime: antigravity
-model: gemini-3.8-flash-high
-tools: [view_file, run_command]
+model: gemini-3.8-flash
+tools: [read_file, run_command]
 ---
 Review the requested changes. Prefer reading before editing.
 ```

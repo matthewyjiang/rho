@@ -1,18 +1,21 @@
 //! Antigravity built-in tool names a `runtime: antigravity` agent may declare.
 //!
-//! Closed set: each name is a canonical `agy_acp_server` built-in that Rho
-//! sends in the session's `_meta.agy.enabledTools` allowlist and classifies for
-//! permission answers (see `antigravity_runtime::permissions`). Antigravity
-//! enables every built-in by default, so a nonempty list is mandatory and
-//! unknown names are rejected at parse time.
+//! Closed set: each name is an `agy acp` built-in that Rho writes into the
+//! run's agy custom agent `tools:` allowlist (see `antigravity_runtime::agent_file`)
+//! and classifies for permission answers (see `antigravity_runtime::fence`).
+//! agy offers every built-in to an agent without a list, so a nonempty list is
+//! mandatory and unknown names are rejected at parse time (agy 1.5.0 itself
+//! fails the run on an unknown name and silently ignores deprecated ones).
+//! The `agy_acp_server` names `view_file` and `create_file` still parse, as
+//! `read_file` and `write_file`; `read_url_content` has no equivalent.
 //!
-//! Deliberately absent (agy_acp_server 1.3.0):
-//! - `ask_question` (no headless answer path)
-//! - `start_subagent` (nested agents outside Rho's run)
+//! Deliberately absent (agy 1.5.0):
+//! - `invoke_subagent`, `define_subagent`, `manage_subagents`, `send_message`
+//!   (nested agents outside Rho's run)
 //! - `schedule` (timers that outlive the run)
-//! - `generate_image`, `finish`
-//! - `list_directory`, `search_directory`, `find_file` (disabled server-side
-//!   by default; allowlisting them produced an unstable tool surface)
+//! - `ask_question` (no headless answer path)
+//! - `generate_image`
+//! - `manage_task` (agy always adds it)
 
 use std::{fmt, str::FromStr};
 
@@ -22,55 +25,50 @@ use thiserror::Error;
 /// Antigravity built-ins Rho has classified for fencing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AntigravityTool {
-    ViewFile,
-    CreateFile,
+    ReadFile,
+    WriteFile,
     EditFile,
     RunCommand,
     SearchWeb,
-    ReadUrlContent,
 }
 
 impl AntigravityTool {
     pub const ALL: &[AntigravityTool] = &[
-        Self::ViewFile,
-        Self::CreateFile,
+        Self::ReadFile,
+        Self::WriteFile,
         Self::EditFile,
         Self::RunCommand,
         Self::SearchWeb,
-        Self::ReadUrlContent,
     ];
 
-    /// Canonical built-in name, as written in agent definitions and sent in
-    /// `enabledTools`.
+    /// agy built-in name, as written in Rho and agy agent definitions.
     pub fn as_name(self) -> &'static str {
         match self {
-            Self::ViewFile => "view_file",
-            Self::CreateFile => "create_file",
+            Self::ReadFile => "read_file",
+            Self::WriteFile => "write_file",
             Self::EditFile => "edit_file",
             Self::RunCommand => "run_command",
             Self::SearchWeb => "search_web",
-            Self::ReadUrlContent => "read_url_content",
         }
     }
 
     /// One-line description for picker detail text.
     pub fn detail(self) -> &'static str {
         match self {
-            Self::ViewFile => "Read a file.",
-            Self::CreateFile => "Create a file.",
+            Self::ReadFile => "Read a file.",
+            Self::WriteFile => "Create or overwrite a file.",
             Self::EditFile => "Edit a file.",
             Self::RunCommand => "Run a shell command.",
             Self::SearchWeb => "Search the web.",
-            Self::ReadUrlContent => "Fetch a URL.",
         }
     }
 
     pub fn capability_kind(self) -> CapabilityKind {
         match self {
-            Self::ViewFile => CapabilityKind::Read,
-            Self::CreateFile | Self::EditFile => CapabilityKind::Write,
+            Self::ReadFile => CapabilityKind::Read,
+            Self::WriteFile | Self::EditFile => CapabilityKind::Write,
             Self::RunCommand => CapabilityKind::Process,
-            Self::SearchWeb | Self::ReadUrlContent => CapabilityKind::Network,
+            Self::SearchWeb => CapabilityKind::Network,
         }
     }
 
@@ -97,6 +95,13 @@ impl FromStr for AntigravityTool {
     type Err = AntigravityToolError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
+        // NEXT_MAJOR(rho-coding-agent agent definitions): drop the
+        // agy_acp_server aliases `view_file` and `create_file`.
+        match value {
+            "view_file" => return Ok(Self::ReadFile),
+            "create_file" => return Ok(Self::WriteFile),
+            _ => {}
+        }
         Self::ALL
             .iter()
             .copied()

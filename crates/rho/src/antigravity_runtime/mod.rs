@@ -1,23 +1,24 @@
-//! Google Antigravity (`agy_acp_server`) as an external subagent runtime.
+//! Google Antigravity (`agy acp`) as an external subagent runtime.
 //!
-//! Delegated runs speak ACP through the generic `acp_runtime`. Protocol facts
-//! (recorded 2026-10-06 against agy_acp_server 1.3.0, see
-//! `docs/subagents/antigravity.md`): there is no plan mode, so Rho requires
-//! mode `default`, narrows built-ins with `_meta.agy.enabledTools`, and answers
-//! every permission request itself. Rho supports Plan and Bypass only.
-//!
-//! Nothing here is a Rho credential: the server owns its sign-in under the
-//! Gemini home, and Rho only checks that one exists.
+//! Delegated runs speak ACP to `agy acp` (agy 1.5.0 and later) through the
+//! generic `acp_runtime`. Protocol facts, recorded 2026-11-04 against agy
+//! 1.5.0 (see `docs/subagents/antigravity.md`):
+//! - `session/new` has no tool allowlist; an agy custom agent's `tools:` is
+//!   one, so each run writes its own agent ([`agent_file`]) and fences by it,
+//!   the session mode, and permission answers ([`fence`]).
+//! - Mode `default` asks before commands, but honors the user's agy
+//!   `toolPermission` setting, which can approve everything without asking.
+//!   Runs pass `--cli_dir_name` so agy reads Rho's own (default) settings
+//!   instead ([`executable::server_args`]).
+//! - Sign-in belongs to agy and is shared with the agy CLI; `agy acp --login`
+//!   signs in from a terminal ([`auth`]).
 
+pub(crate) mod agent_file;
+pub(crate) mod auth;
 pub(crate) mod executable;
 pub(crate) mod fence;
-pub(crate) mod home;
-pub(crate) mod install;
-pub(crate) mod login;
-
 pub(crate) mod policy;
 pub(crate) mod session;
-pub(crate) mod setup;
 
 use crate::cli_runtime::status_sink::RuntimeLabel;
 
