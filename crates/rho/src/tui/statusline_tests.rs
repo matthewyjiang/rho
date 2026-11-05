@@ -32,25 +32,18 @@ fn reasoning_capabilities_refresh_on_catalog_and_metadata_changes() {
         let mut info = test_info(dir.path().to_path_buf());
         info.provider = "openai".into();
         info.model = "gpt-4o".into();
-        write_cached_model_metadata_for_tests(
-            &info.provider,
-            &info.model,
-            &ModelMetadata {
-                reasoning_capabilities_known: true,
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            },
-        );
+        let mut metadata = ModelMetadata::default();
+        metadata.reasoning_capabilities_known = true;
+        metadata.reasoning_metadata_complete = true;
+        write_cached_model_metadata_for_tests(&info.provider, &info.model, &metadata);
         let mut app = crate::tui::tests::test_app();
         app.info.runtime = info;
         app.statusline = StatusLine::new(&app.info.runtime);
         for levels in [Some(vec![ReasoningLevel::High]), None] {
-            let metadata = ModelMetadata {
-                supported_reasoning_levels: levels.clone(),
-                reasoning_capabilities_known: true,
-                reasoning_metadata_complete: true,
-                ..ModelMetadata::default()
-            };
+            let mut metadata = ModelMetadata::default();
+            metadata.supported_reasoning_levels = levels.clone();
+            metadata.reasoning_capabilities_known = true;
+            metadata.reasoning_metadata_complete = true;
             let before = app.statusline.state.reasoning_configurable;
             write_cached_model_metadata_for_tests(
                 &app.info.runtime.provider,
@@ -101,11 +94,9 @@ async fn startup_catalog_completion_preserves_mcp_picker() {
     let home = tempfile::tempdir().unwrap();
     let _cache_dir = ModelsDevCacheDirGuard::new(home.path().to_path_buf());
     let mut app = crate::tui::tests::test_app();
-    let mut metadata = ModelMetadata {
-        reasoning_capabilities_known: true,
-        reasoning_metadata_complete: true,
-        ..ModelMetadata::default()
-    };
+    let mut metadata = ModelMetadata::default();
+    metadata.reasoning_capabilities_known = true;
+    metadata.reasoning_metadata_complete = true;
     write_cached_model_metadata_for_tests(
         &app.info.runtime.provider,
         &app.info.runtime.model,

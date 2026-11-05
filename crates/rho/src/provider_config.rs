@@ -509,23 +509,13 @@ impl Config {
     pub(crate) fn resolved_provider_endpoint(&self, provider: &str) -> Option<Url> {
         self.configured_provider_endpoint(provider)
             .cloned()
-            .or_else(
-                || match rho_providers::model::registry::provider_runtime(provider) {
-                    Some(
-                        rho_providers::model::registry::ProviderRuntime::OpenAiCompatible {
-                            default_api_base,
-                            ..
-                        }
-                        | rho_providers::model::registry::ProviderRuntime::SystemOne {
-                            default_api_base,
-                        },
-                    ) => Some(
-                        Url::parse(default_api_base)
-                            .expect("built-in provider API bases must be valid URLs"),
-                    ),
-                    _ => None,
-                },
-            )
+            .or_else(|| {
+                rho_providers::model::registry::provider_runtime(provider)
+                    .and_then(rho_providers::provider::ProviderRuntime::default_api_base)
+                    .map(|base| {
+                        Url::parse(base).expect("built-in provider API bases must be valid URLs")
+                    })
+            })
     }
 }
 

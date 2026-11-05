@@ -443,14 +443,10 @@ async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
 // Owner: permission classifier model resolution
 #[test]
 fn text_screen_budget_trusts_only_a_served_window() {
-    let advertised = ModelMetadata {
-        advertised_context_window: Some(262_144),
-        ..ModelMetadata::default()
-    };
-    let measured = ModelMetadata {
-        usable_context_window: Some(16_384),
-        ..advertised.clone()
-    };
+    let mut advertised = ModelMetadata::default();
+    advertised.advertised_context_window = Some(262_144);
+    let mut measured = advertised.clone();
+    measured.usable_context_window = Some(16_384);
     let cases = [
         (
             "ollama advertised only",

@@ -14,26 +14,19 @@ fn catalog(api: &Value) -> super::document::ModelsDevCatalog {
 }
 
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
-    upstream_row_from_api(&catalog(api), provider, model).map(|row| row.metadata)
+    upstream_row_from_api(&catalog(api), provider, model)
 }
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    cached_upstream_row(provider, model, CacheFreshness::AllowStale).map(|row| row.metadata)
+    cached_upstream_row(provider, model, CacheFreshness::AllowStale)
 }
 
 fn current_cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    cached_upstream_row(provider, model, CacheFreshness::CurrentOnly).map(|row| row.metadata)
+    cached_upstream_row(provider, model, CacheFreshness::CurrentOnly)
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
     write_cached_model_metadata_for_tests(provider, model, metadata);
-}
-
-fn row(metadata: ModelMetadata) -> CachedRow {
-    CachedRow {
-        metadata,
-        ..CachedRow::default()
-    }
 }
 
 fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<String> {
@@ -101,6 +94,8 @@ fn malformed_catalog_rows_stay_lenient() {
             reasoning_capabilities_known: false,
             reasoning_metadata_complete: false,
             sdk_package: Some("@ai-sdk/openai".to_string()),
+            image_input: ImageInput::Unknown,
+            reasoning_control: ReasoningControl::Effort,
         }
     );
 
@@ -111,8 +106,8 @@ fn malformed_catalog_rows_stay_lenient() {
     assert!(!bad_option.reasoning_metadata_complete);
 }
 
-// Covers: hydrate carries models.dev `modalities.input` into the cache row
-// that image_input() reads; a missing or malformed list stays unknown
+// Covers: hydrate carries models.dev `modalities.input` into the cached
+// metadata's image_input; a missing or malformed list stays unknown
 // instead of guessing text-only
 // Owner: models.dev catalog cache
 #[test]
@@ -140,7 +135,10 @@ fn image_input_follows_advertised_input_modalities() {
             ("malformed", ImageInput::Unknown),
             ("uncatalogued", ImageInput::Unknown),
         ] {
-            assert_eq!(image_input("anthropic", model), expected, "{model}");
+            let image_input = cached_model_metadata("anthropic", model)
+                .map(|metadata| metadata.image_input)
+                .unwrap_or_default();
+            assert_eq!(image_input, expected, "{model}");
         }
     });
 }
@@ -702,6 +700,8 @@ fn models_dev_parses_long_context_cost_tiers() {
             reasoning_capabilities_known: true,
             reasoning_metadata_complete: true,
             sdk_package: None,
+            image_input: ImageInput::Unknown,
+            reasoning_control: ReasoningControl::Effort,
         }
     );
     assert_eq!(
@@ -1214,7 +1214,7 @@ fn batch_metadata_writes_returns_zero_on_commit_failure() {
         };
 
         let written =
-            write_cached_upstream_model_metadata_batch([("provider-x", "model-1", &row(meta))]);
+            write_cached_upstream_model_metadata_batch([("provider-x", "model-1", &meta)]);
         assert_eq!(written, 0, "must report 0 written rows when commit fails");
 
         assert!(
@@ -2042,10 +2042,10 @@ fn model_id_host_falls_back_to_canonical_row() {
                 effective_context_window: Some(262_144),
                 max_output_tokens: Some(131_072),
                 reasoning_metadata_complete: true,
+                image_input: ImageInput::Supported,
                 ..ModelMetadata::default()
             })
         );
-        assert_eq!(image_input("cliproxyapi", model), ImageInput::Supported);
         assert_eq!(
             known_reasoning_capabilities("cliproxyapi", model),
             ReasoningCapabilities::Unknown
@@ -2058,8 +2058,9 @@ fn model_id_host_falls_back_to_canonical_row() {
             ReasoningCapabilities::NotConfigurable
         );
         assert_eq!(
-            image_input("cliproxyapi", "acme/plain-instruct"),
-            ImageInput::Unsupported
+            cached_model_metadata("cliproxyapi", "acme/plain-instruct")
+                .map(|metadata| metadata.image_input),
+            Some(ImageInput::Unsupported)
         );
 
         // Absent from both documents: the miss notice still fires.
@@ -2106,10 +2107,10 @@ fn provider_tree_row_wins_over_canonical_row() {
                 supported_reasoning_levels: Some(vec![ReasoningLevel::Low, ReasoningLevel::High]),
                 reasoning_capabilities_known: true,
                 reasoning_metadata_complete: true,
+                image_input: ImageInput::Unsupported,
                 ..ModelMetadata::default()
             })
         );
-        assert_eq!(image_input("cliproxyapi", model), ImageInput::Unsupported);
 
         // A published but incomplete api.json row keeps base behavior (no
         // row) rather than taking the canonical lab limits for this host.
@@ -2150,4 +2151,42 @@ fn opportunistic_hydrate_rechecks_model_id_hosts_under_lock() {
         assert!(!hydrate::catalog_snapshot_is_ready());
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: old complete cache rows must refresh to recover toggle provenance.
+// Owner: models.dev cache migration
+#[test]
+fn pre_toggle_cache_rows_rehydrate_with_control_provenance() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let api = json!({"opencode-go": {"models": {"qwen3.7-max": {
+            "reasoning": true, "reasoning_options": [{"type": "toggle"}]
+        }}}});
+        cache_catalog_for_tests(&api);
+        with_models_dev_cache(|connection| {
+            connection.execute(
+                "update model_metadata set cache_version = 12,
+             metadata_json = json_remove(metadata_json, '$.reasoning_control')",
+                [],
+            )
+        })
+        .unwrap()
+        .unwrap();
+        assert!(model_metadata_needs_refresh("opencode-go", "qwen3.7-max"));
+        assert_eq!(current_model_metadata("opencode-go", "qwen3.7-max"), None);
+
+        cache_catalog_for_tests(&api);
+        let metadata = current_model_metadata("opencode-go", "qwen3.7-max").unwrap();
+        assert_eq!(
+            (
+                metadata.reasoning_control,
+                metadata.supported_reasoning_levels
+            ),
+            (
+                ReasoningControl::Toggle,
+                Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+            )
+        );
+        assert!(!model_metadata_needs_refresh("opencode-go", "qwen3.7-max"));
+    });
 }

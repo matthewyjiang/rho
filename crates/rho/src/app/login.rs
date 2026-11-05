@@ -82,12 +82,8 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<Log
     } else {
         ProviderAuthentication::preferred_mode(&target.auth, availability)
     };
-    let login = ProviderAuthentication::start_interactive_login_with_availability(
-        &target.auth,
-        mode,
-        availability,
-    )
-    .await?;
+    let login =
+        ProviderAuthentication::start_interactive_login(&target.auth, mode, availability).await?;
     eprint_login_prompt(login.provider_label, &login.prompt);
 
     match login.completion {
@@ -96,8 +92,11 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<Log
             eprintln!("Successfully logged in to {}", target.auth);
             Ok(LoginCompletion::Saved)
         }
-        InteractiveLoginCompletion::Unconfirmed { instruction } => {
-            ProviderAuthentication::accept_unconfirmed_login(&AppCredentialStore, &target.auth)?;
+        InteractiveLoginCompletion::Unconfirmed {
+            instruction,
+            authentication,
+        } => {
+            authentication.accept(&AppCredentialStore)?;
             eprintln!("{instruction}");
             Ok(LoginCompletion::Unconfirmed)
         }

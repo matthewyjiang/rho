@@ -3,13 +3,12 @@ use crate::tui::usage_cost::CostSource;
 use rho_sdk::model::ContextUsage;
 
 fn input_cost_metadata() -> ModelMetadata {
-    ModelMetadata {
-        cost_default: Some(rho_providers::model::models_dev::ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            ..Default::default()
-        }),
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(rho_providers::model::models_dev::ModelCost {
+        input_micros_per_m: Some(1_000_000),
         ..Default::default()
-    }
+    });
+    metadata
 }
 
 #[test]
@@ -123,22 +122,21 @@ fn metadata_loaded_after_first_step_recomputes_uncosted_baseline() {
 #[test]
 fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
     let mut app = test_app();
-    app.model_metadata = Some(ModelMetadata {
-        cost_default: Some(rho_providers::model::models_dev::ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(2_000_000),
-            cache_read_micros_per_m: Some(100_000),
-            cache_write_micros_per_m: None,
-        }),
-        long_context_threshold: Some(200_000),
-        cost_long_context: Some(rho_providers::model::models_dev::ModelCost {
-            input_micros_per_m: Some(4_000_000),
-            output_micros_per_m: Some(8_000_000),
-            cache_read_micros_per_m: Some(400_000),
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(rho_providers::model::models_dev::ModelCost {
+        input_micros_per_m: Some(1_000_000),
+        output_micros_per_m: Some(2_000_000),
+        cache_read_micros_per_m: Some(100_000),
+        cache_write_micros_per_m: None,
     });
+    metadata.long_context_threshold = Some(200_000);
+    metadata.cost_long_context = Some(rho_providers::model::models_dev::ModelCost {
+        input_micros_per_m: Some(4_000_000),
+        output_micros_per_m: Some(8_000_000),
+        cache_read_micros_per_m: Some(400_000),
+        cache_write_micros_per_m: None,
+    });
+    app.model_metadata = Some(metadata);
 
     app.record_agent_event(ViewModelEvent::RunStarted);
     app.record_agent_event(ViewModelEvent::StepStarted(1));
@@ -206,15 +204,14 @@ fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
 #[test]
 fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
     let mut app = test_app();
-    app.model_metadata = Some(ModelMetadata {
-        cost_default: Some(rho_providers::model::models_dev::ModelCost {
-            input_micros_per_m: Some(1_000_000),
-            output_micros_per_m: Some(2_000_000),
-            cache_read_micros_per_m: None,
-            cache_write_micros_per_m: None,
-        }),
-        ..ModelMetadata::default()
+    let mut metadata = ModelMetadata::default();
+    metadata.cost_default = Some(rho_providers::model::models_dev::ModelCost {
+        input_micros_per_m: Some(1_000_000),
+        output_micros_per_m: Some(2_000_000),
+        cache_read_micros_per_m: None,
+        cache_write_micros_per_m: None,
     });
+    app.model_metadata = Some(metadata);
     app.record_agent_event(ViewModelEvent::RunStarted);
     app.record_agent_event(ViewModelEvent::StepStarted(1));
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
