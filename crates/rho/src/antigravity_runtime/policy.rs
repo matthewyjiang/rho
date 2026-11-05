@@ -39,8 +39,7 @@ pub(crate) struct AntigravityAcpPolicy {
 
 struct Prepared {
     fence: AntigravityFence,
-    /// Workspace root holding the run's agy agent (see `agent_file`).
-    agent_root: PathBuf,
+    agent: agent_file::RunAgent,
 }
 
 impl AntigravityAcpPolicy {
@@ -77,7 +76,7 @@ impl AcpAgentPolicy for AntigravityAcpPolicy {
             .as_ref()
             .ok_or("antigravity: run was not prepared")?;
         Ok(AcpSpawnPlan {
-            argv: executable::server_args(&prepared.agent_root),
+            argv: executable::server_args(&prepared.agent),
             cwd: self.cwd.clone(),
             env: Vec::new(),
         })
@@ -88,10 +87,10 @@ impl AcpAgentPolicy for AntigravityAcpPolicy {
         // binding closed, and fails through the terminal artifact.
         let fence = AntigravityFence::new(self.permission_mode, &self.tools)
             .map_err(|error| error.to_string())?;
-        let agent_root = agent_file::write(run_dir, fence.tools()).map_err(|error| {
+        let agent = agent_file::write(run_dir, fence.tools()).map_err(|error| {
             format!("antigravity: could not write the run's agy agent: {error}")
         })?;
-        self.prepared = Some(Prepared { fence, agent_root });
+        self.prepared = Some(Prepared { fence, agent });
         Ok(Vec::new())
     }
 

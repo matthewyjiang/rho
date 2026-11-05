@@ -275,9 +275,9 @@ async fn dispatch_update<P: AcpAgentPolicy>(
                     policy.session_mode(),
                 )
             };
-            // The required mode is part of the fence (Antigravity Plan does
-            // not ask before edits): an agent that leaves it fails the run
-            // instead of continuing unfenced.
+            // A policy may rely on the required mode as part of its fence: an
+            // agent that leaves it fails the run instead of continuing
+            // unfenced.
             if let (SessionUpdate::CurrentModeUpdate(mode), Some(required)) =
                 (&update, &required_mode)
             {

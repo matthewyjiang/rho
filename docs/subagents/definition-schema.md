@@ -227,6 +227,8 @@ search_web
 
 Deliberately absent: `invoke_subagent`, `define_subagent`, `manage_subagents`, and `send_message` (nested agents outside Rho's run), `schedule` (timers that outlive the run), `ask_question` (no headless answer path), and `generate_image`. agy always adds `manage_task`, which manages the agent's own background commands.
 
+Names from the earlier `agy_acp_server` runtime: `view_file` and `create_file` still parse, as `read_file` and `write_file` (saving from `/agents` writes the new names); `read_url_content` has no replacement and fails to parse.
+
 ## Body / prompt semantics
 
 | `prompt` | Body empty | Body non-empty |

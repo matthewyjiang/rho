@@ -6,6 +6,8 @@
 //! agy offers every built-in to an agent without a list, so a nonempty list is
 //! mandatory and unknown names are rejected at parse time (agy 1.5.0 itself
 //! fails the run on an unknown name and silently ignores deprecated ones).
+//! The `agy_acp_server` names `view_file` and `create_file` still parse, as
+//! `read_file` and `write_file`; `read_url_content` has no equivalent.
 //!
 //! Deliberately absent (agy 1.5.0):
 //! - `invoke_subagent`, `define_subagent`, `manage_subagents`, `send_message`
@@ -93,6 +95,13 @@ impl FromStr for AntigravityTool {
     type Err = AntigravityToolError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
+        // NEXT_MAJOR(rho-coding-agent agent definitions): drop the
+        // agy_acp_server aliases `view_file` and `create_file`.
+        match value {
+            "view_file" => return Ok(Self::ReadFile),
+            "create_file" => return Ok(Self::WriteFile),
+            _ => {}
+        }
         Self::ALL
             .iter()
             .copied()

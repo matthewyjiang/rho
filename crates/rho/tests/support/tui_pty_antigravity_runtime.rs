@@ -80,6 +80,7 @@ fn fake_antigravity_acp_runtime_end_to_end() {
     // agy agent, whose `tools:` is the declared allowlist, in the workspace.
     let spawn = fake.spawn_record();
     let agent_root = run_dir.join("agy");
+    let name = spawn.args.last().cloned().unwrap_or_default();
     assert_eq!(
         spawn.args,
         [
@@ -89,12 +90,15 @@ fn fake_antigravity_acp_runtime_end_to_end() {
             "--add-dir",
             &agent_root.display().to_string(),
             "--agent",
-            "rho-run",
+            &name,
         ]
     );
-    assert_eq!(
-        std::fs::read_to_string(agent_root.join(".agents/agents/rho-run.md")).unwrap(),
-        "---\nname: rho-run\ndescription: Rho delegated run.\ntools:\n  - read_file\n  - run_command\n---\n"
+    let agent =
+        std::fs::read_to_string(agent_root.join(format!(".agents/agents/{name}.md"))).unwrap();
+    assert!(
+        agent.contains(&format!("name: {name}\n"))
+            && agent.contains("tools:\n  - read_file\n  - run_command\n"),
+        "{agent}"
     );
     assert_eq!(
         spawn.cwd.canonicalize().unwrap(),

@@ -106,9 +106,14 @@ pub(super) fn frozen_antigravity_runtime(
     frozen: &ResolvedAgent,
     permission_mode: PermissionMode,
 ) -> anyhow::Result<BoundRuntime> {
-    // Plans frozen for agy_acp_server may name its retired tools
-    // (`view_file`, `create_file`, `read_url_content`); those fail to parse,
-    // so the plan must be made again.
+    // Plans frozen for agy_acp_server recorded its own arguments and froze
+    // its executable, which `agy acp` argv cannot drive.
+    if frozen.arguments != crate::antigravity_runtime::executable::SERVER_ARGS {
+        anyhow::bail!(
+            "frozen agent '{}' was planned for the retired agy_acp_server runtime; plan the workflow again",
+            frozen.agent_id
+        );
+    }
     let tools = frozen_tools::<AntigravityTool>(frozen)?;
     AntigravityFence::new(permission_mode, &tools)
         .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?;

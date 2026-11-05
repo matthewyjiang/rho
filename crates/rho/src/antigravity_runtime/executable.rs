@@ -1,8 +1,10 @@
 //! Locate `agy` and build the `agy acp` command line.
 
-use std::{ffi::OsString, path::Path};
+use std::ffi::OsString;
 
 use crate::cli_runtime::CliExecutable;
+
+use super::agent_file::RunAgent;
 
 pub(crate) const AGY_PROGRAM: &str = "agy";
 
@@ -31,13 +33,13 @@ pub(crate) const SERVER_ARGS: &[&str] = &["acp", "--cli_dir_name", RHO_CLI_DIR];
 
 /// `agy acp` argv for one delegated run: [`SERVER_ARGS`], then the run's
 /// agent workspace root and agent (see `agent_file`).
-pub(crate) fn server_args(agent_root: &Path) -> Vec<OsString> {
+pub(crate) fn server_args(agent: &RunAgent) -> Vec<OsString> {
     let mut argv: Vec<OsString> = SERVER_ARGS.iter().map(OsString::from).collect();
     argv.extend([
         "--add-dir".into(),
-        agent_root.into(),
+        agent.root.clone().into(),
         "--agent".into(),
-        super::agent_file::AGENT_NAME.into(),
+        agent.name.clone().into(),
     ]);
     argv
 }

@@ -3,9 +3,13 @@
 //! agy 1.5.0 discovers custom agents only under `.agents/agents/` in a
 //! workspace root, `~/.gemini/config/agents/`, or a plugin; it ignores a path
 //! passed to `--agent`. So each run writes its own workspace root under the
-//! run directory and passes `--add-dir <root> --agent rho-run`, touching
+//! run directory and passes `--add-dir <root> --agent <name>`, touching
 //! neither the user's project nor their agy config. The added root is visible
 //! to the agent but holds only this file.
+//!
+//! The project is a workspace root too, so its `.agents/agents/` is searched
+//! as well. Each run's name is random, so a project cannot ship an agent that
+//! shadows it.
 //!
 //! agy silently falls back to its default agent (every built-in) when the
 //! named agent is not found. A failed write fails the run before spawn, and
@@ -18,23 +22,28 @@ use std::{
 
 use crate::agent::AntigravityTool;
 
-/// Agent name passed to `--agent`.
-pub(crate) const AGENT_NAME: &str = "rho-run";
+/// One run's agent: the workspace root for `--add-dir` and the name for
+/// `--agent`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunAgent {
+    pub(crate) root: PathBuf,
+    pub(crate) name: String,
+}
 
-/// Write the agent under `run_dir` and return the workspace root to pass to
-/// `--add-dir`.
-pub(crate) fn write(run_dir: &Path, tools: &[AntigravityTool]) -> io::Result<PathBuf> {
+/// Write a freshly named agent under `run_dir`.
+pub(crate) fn write(run_dir: &Path, tools: &[AntigravityTool]) -> io::Result<RunAgent> {
+    let name = format!("rho-run-{}", uuid::Uuid::new_v4().simple());
     let root = run_dir.join("agy");
     let agents = root.join(".agents").join("agents");
     std::fs::create_dir_all(&agents)?;
-    std::fs::write(agents.join(format!("{AGENT_NAME}.md")), render(tools))?;
-    Ok(root)
+    std::fs::write(agents.join(format!("{name}.md")), render(&name, tools))?;
+    Ok(RunAgent { root, name })
 }
 
 /// The agent Markdown. The body is empty: Rho's prompt policy travels in the
 /// first prompt, and agy keeps its default system prompt.
-fn render(tools: &[AntigravityTool]) -> String {
-    let mut out = format!("---\nname: {AGENT_NAME}\ndescription: Rho delegated run.\ntools:\n");
+fn render(name: &str, tools: &[AntigravityTool]) -> String {
+    let mut out = format!("---\nname: {name}\ndescription: Rho delegated run.\ntools:\n");
     for tool in tools {
         out.push_str("  - ");
         out.push_str(tool.as_name());

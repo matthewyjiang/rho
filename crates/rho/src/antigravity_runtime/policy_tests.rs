@@ -26,7 +26,6 @@ fn permission_request(kind: ToolKind) -> RequestPermissionRequest {
 #[test]
 fn prepared_run_pins_agent_mode_permissions_and_model() {
     let run_dir = tempfile::tempdir().unwrap();
-    let agent_root = run_dir.path().join("agy");
     let execute = permission_request(ToolKind::Execute);
     for (mode, expected_mode, expected_decision) in [
         (PermissionMode::Plan, "plan", PermissionDecision::Reject),
@@ -49,6 +48,8 @@ fn prepared_run_pins_agent_mode_permissions_and_model() {
         );
         assert!(policy.spawn_plan(None).is_err(), "{mode}: before prepare");
         assert_eq!(policy.prepare(run_dir.path()), Ok(vec![]));
+        let agent = policy.prepared.as_ref().unwrap().agent.clone();
+        assert_eq!(agent.root, run_dir.path().join("agy"));
         let argv = policy.spawn_plan(None).unwrap().argv;
         assert_eq!(
             (
@@ -64,9 +65,9 @@ fn prepared_run_pins_agent_mode_permissions_and_model() {
                     "--cli_dir_name".into(),
                     "rho".into(),
                     "--add-dir".into(),
-                    agent_root.clone().into_os_string(),
+                    agent.root.into_os_string(),
                     "--agent".into(),
-                    "rho-run".into(),
+                    agent.name.into(),
                 ],
                 Some(SessionModeId::new(expected_mode)),
                 vec![SessionConfigChoice {
@@ -81,20 +82,22 @@ fn prepared_run_pins_agent_mode_permissions_and_model() {
     }
 }
 
-// Covers: a run fails before spawning in a mode Rho cannot answer for, or
-// when Plan leaves no read-only tool.
+// Covers: `prepare` gates the run through the fence, so a mode Rho cannot
+// answer for fails before spawn (the fence table owns the other cases).
 // Owner: Antigravity preflight; message wording is not locked.
 #[test]
-fn prepare_refuses_runs_the_fence_cannot_hold() {
+fn prepare_refuses_modes_that_need_a_human() {
     let run_dir = tempfile::tempdir().unwrap();
-    for (mode, tools) in [
-        (PermissionMode::Auto, vec![AntigravityTool::ReadFile]),
-        (PermissionMode::AllowEdits, vec![AntigravityTool::ReadFile]),
-        (PermissionMode::Supervised, vec![AntigravityTool::ReadFile]),
-        (PermissionMode::Plan, vec![AntigravityTool::RunCommand]),
-    ] {
-        let prepared = AntigravityAcpPolicy::new(None, tools, mode, PathBuf::from("/work"))
-            .prepare(run_dir.path());
-        assert!(prepared.is_err(), "{mode}");
-    }
+    let prepared = AntigravityAcpPolicy::new(
+        None,
+        vec![AntigravityTool::ReadFile],
+        PermissionMode::Auto,
+        PathBuf::from("/work"),
+    )
+    .prepare(run_dir.path());
+    assert!(prepared.is_err());
+    assert!(
+        !run_dir.path().join("agy").exists(),
+        "no agent file is written"
+    );
 }

@@ -105,10 +105,10 @@ agy's `default` mode also honors your agy `toolPermission` setting, which can ap
 
 ## Execution details
 
-Rho runs `agy acp --cli_dir_name rho --add-dir <run>/agy --agent rho-run` in the workspace. agy 1.5.0 finds custom agents only in `.agents/agents/` under a workspace root, its global config, or a plugin, so each run writes `<run>/agy/.agents/agents/rho-run.md` under its own run directory and adds that folder to the workspace. Your project and agy configuration are untouched; the child can see the added folder, which holds only that file. Its `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured with agy 1.5.0, `initialize` took under 0.1 s and `session/new` about 1.5 s.
+Rho runs `agy acp --cli_dir_name rho --add-dir <run>/agy --agent rho-run-<random>` in the workspace. agy 1.5.0 finds custom agents only in `.agents/agents/` under a workspace root, its global config, or a plugin, so each run writes `<run>/agy/.agents/agents/rho-run-<random>.md` under its own run directory and adds that folder to the workspace. Your project and agy configuration are untouched; the child can see the added folder, which holds only that file. The random name keeps a project's own `.agents/agents/` from supplying the agent. Its `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured with agy 1.5.0, `initialize` took under 0.1 s and `session/new` about 1.5 s.
 
 Rho never calls ACP `authenticate` during a run. A signed-out agy fails `session/new` with `Authentication required`; run `/login antigravity`.
 
 Cancel sends `session/cancel`. Rho always terminates `agy acp` after the last turn. The ACP session id is recorded but there is no resume command.
 
-Workflow plans freeze the resolved `agy` executable and the kept tools. Plans made for the earlier `agy_acp_server` runtime may name its retired tools (`view_file`, `create_file`, `read_url_content`); those refuse to resume, so plan them again.
+Workflow plans freeze the resolved `agy` executable and the kept tools. Plans made for the earlier `agy_acp_server` runtime refuse to resume; plan them again.
