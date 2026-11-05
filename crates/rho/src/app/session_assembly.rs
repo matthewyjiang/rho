@@ -168,7 +168,7 @@ where
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.
     let sdk_options = SdkBootstrapOptions::from_config(config, cwd)?;
-    config.providers.require_endpoint_login(&config.provider)?;
+    super::endpoint_login::require(&config_path, &config.provider)?;
     let credentials = ApplicationCredentialSource::new(Arc::new(AppCredentialStore));
     // Automation and ACP normally skip the catalog fetch, but catalog-constructed
     // providers need the hydrate before build; a no-op for the rest.

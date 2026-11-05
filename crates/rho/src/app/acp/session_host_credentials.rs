@@ -72,6 +72,7 @@ impl SessionHost {
     pub(super) async fn renew_stale_credentials(
         &mut self,
         process_config: &Config,
+        config_path: &std::path::Path,
     ) -> anyhow::Result<()> {
         if !self.credentials.stale() {
             return Ok(());
@@ -82,6 +83,8 @@ impl SessionHost {
         // The login that fixes it ran in another process, such as the
         // editor's terminal login.
         AppCredentialStore::reread_external_logins();
+        // A keyless login lives in config, which `logout` edits on disk.
+        crate::app::endpoint_login::require(config_path, &config.provider)?;
         let provider =
             build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                 .await?;

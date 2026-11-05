@@ -179,7 +179,8 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         let starting = self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
-        self.renew_stale_credentials(&startup.config).await?;
+        self.renew_stale_credentials(&startup.config, &startup.config_path)
+            .await?;
         self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
         let _ = self

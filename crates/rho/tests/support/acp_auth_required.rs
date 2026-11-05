@@ -277,7 +277,8 @@ fn logout_requires_a_new_sign_in_for_new_and_live_sessions() {
 }
 
 // Covers: ACP `logout` on a keyless Ollama login signs it out: the
-// `[providers.ollama]` login record goes, not only stored credentials.
+// `[providers.ollama]` login record goes, not only stored credentials, and
+// later sessions in the same process need a sign-in.
 // Owner: ACP logout of an endpoint-recorded login, over real stdio.
 #[test]
 fn logout_forgets_a_keyless_ollama_login() {
@@ -293,6 +294,10 @@ fn logout_forgets_a_keyless_ollama_login() {
         .replace("[providers.custom.mock]", "[providers.ollama]");
     std::fs::write(&config_path, config).unwrap();
     let (mut server, _) = fixture.server_with_args(&["acp"]);
+    server
+        .request("session/new", fixture.new_session())
+        .0
+        .expect("a logged-in keyless Ollama opens sessions");
 
     let (logged_out, _) = server.request("logout", json!({}));
     assert_eq!(logged_out.unwrap(), json!({}));
@@ -300,5 +305,10 @@ fn logout_forgets_a_keyless_ollama_login() {
     assert!(
         !config.contains("[providers.ollama]"),
         "logout must remove the Ollama login record:\n{config}"
+    );
+    // The process loaded config before the logout; sessions must still see it.
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "new sessions need a sign-in after logout",
     );
 }

@@ -4,9 +4,27 @@
 //! login path records it and every logout path forgets it, so this module is
 //! the one place the TUI, `rho login`, and ACP change it.
 
+use std::path::Path;
+
 use rho_providers::provider::ProviderDescriptor;
 
 use super::config_repository::ConfigRepository;
+
+/// Refuses a session on `provider` when the config at `config_path` records
+/// no login to it. Reads the file rather than a loaded snapshot, so a
+/// logout or login since startup (another process, an ACP `logout`) counts
+/// the way a deleted or saved key does. The refusal is a missing credential.
+pub(crate) fn require(config_path: &Path, provider: &str) -> anyhow::Result<()> {
+    let needs_login = rho_providers::provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| descriptor.collects_login_endpoint());
+    if needs_login {
+        ConfigRepository::new(Some(config_path.to_path_buf()))
+            .load()?
+            .providers
+            .require_endpoint_login(provider)?;
+    }
+    Ok(())
+}
 
 /// Records a finished login to a host logged in through its endpoint, at
 /// its default API base when none is set. `rho login` and ACP sign-in collect
