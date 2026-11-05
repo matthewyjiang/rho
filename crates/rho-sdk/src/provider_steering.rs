@@ -144,32 +144,43 @@ pub enum ProviderSteeringOutcome {
     Released,
 }
 
+/// Sending end of a mid-turn steering port.
+///
+/// The runtime offers staged steering through it; provider crates use it to
+/// inject requests in tests.
 // The request and outcome channels are unbounded but cannot grow without
 // limit. The runtime offers only staged entries that are not already on offer,
 // and an entry returns to staged only after its single outcome is processed.
 // So in-flight requests and outcomes never exceed staged steering, which the
 // host feeds through the run's bounded command channel.
-pub(crate) type ProviderSteeringSender = mpsc::UnboundedSender<ProviderSteeringRequest>;
+#[derive(Clone, Debug)]
+pub struct ProviderSteeringSender {
+    tx: mpsc::UnboundedSender<ProviderSteeringRequest>,
+}
+
+impl ProviderSteeringSender {
+    /// Offers one request to the provider.
+    ///
+    /// Returns the request when the receiver was dropped; dropping it then
+    /// reports [`ProviderSteeringOutcome::Released`].
+    pub fn send(&self, request: ProviderSteeringRequest) -> Result<(), ProviderSteeringRequest> {
+        self.tx.send(request).map_err(|error| error.0)
+    }
+}
+
 pub(crate) type ProviderSteeringOutcomes =
     mpsc::UnboundedSender<(SteeringId, ProviderSteeringOutcome)>;
 
 /// Creates a mid-turn steering port.
 ///
 /// The constructor is public so provider crates can inject requests in tests.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): return an SDK-owned sender newtype instead of
-/// `tokio::sync::mpsc::UnboundedSender`.
-///
-/// Changing the return type breaks provider crates that call this today.
 #[doc(hidden)]
-pub fn provider_steering_channel() -> (
-    mpsc::UnboundedSender<ProviderSteeringRequest>,
-    ProviderSteeringReceiver,
-) {
+pub fn provider_steering_channel() -> (ProviderSteeringSender, ProviderSteeringReceiver) {
     let (tx, rx) = mpsc::unbounded_channel();
-    (tx, ProviderSteeringReceiver { rx })
+    (
+        ProviderSteeringSender { tx },
+        ProviderSteeringReceiver { rx },
+    )
 }
 
 pub(crate) fn try_retract_claim(claim: &Arc<Mutex<ClaimState>>) -> bool {

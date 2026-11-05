@@ -4,7 +4,7 @@ use rho_sdk::{
     model::{ModelEvent, ModelRequest, ModelResponse, ModelUsage},
     provider::{
         provider_event_channel, ModelProvider, ModelRequestOptions, ProviderRequestEvent,
-        ProviderStreamEvent,
+        ProviderStreamEvent, ProviderTurnContext,
     },
     ProviderError, ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
     ProviderRequestUsageRecording,
@@ -81,7 +81,10 @@ pub(crate) async fn send_recorded_with(
     let cancellation = request.cancellation.clone();
     let (events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(EVENT_CAPACITY).expect("capacity is nonzero"));
-    let provider_call = provider.send_turn_stream_with_options(request, options, events);
+    let provider_call = provider.send_turn_stream(
+        request,
+        ProviderTurnContext::new(events).with_options(options),
+    );
     let collect_usage = async {
         let mut usage = ModelUsage::default();
         let mut failed_attempts = Vec::new();

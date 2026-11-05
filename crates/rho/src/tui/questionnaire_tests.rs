@@ -52,7 +52,7 @@ fn submit_sends_selection_answers() {
                     SelectionMode::One,
                 )
                 .unwrap()
-                .default_value(serde_json::json!("main"))
+                .with_default_value(serde_json::json!("main"))
                 .allow_other(),
                 HostQuestion::new(
                     "test_suites",
@@ -61,10 +61,10 @@ fn submit_sends_selection_answers() {
                     SelectionMode::Many,
                 )
                 .unwrap()
-                .default_value(serde_json::json!(["unit"])),
+                .with_default_value(serde_json::json!(["unit"])),
                 HostQuestion::new("apply", "Apply changes?", yes_no(), SelectionMode::One)
                     .unwrap()
-                    .default_value(serde_json::json!("yes")),
+                    .with_default_value(serde_json::json!("yes")),
             ],
         ),
         QuestionnaireResponseChannel::new(reply_tx),
@@ -121,7 +121,7 @@ fn multi_select_default_preserves_commas() {
         SelectionMode::Many,
     )
     .unwrap()
-    .default_value(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
+    .with_default_value(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
     .allow_other();
 
     let field = QuestionnaireFieldState::new(&question);
@@ -152,7 +152,7 @@ fn form_composer() -> QuestionnaireComposer {
                     SelectionMode::One,
                 )
                 .unwrap()
-                .default_value(serde_json::json!("main"))
+                .with_default_value(serde_json::json!("main"))
                 .allow_other(),
                 HostQuestion::new(
                     "suites",

@@ -199,6 +199,7 @@ fn record_switch_notice(
     };
     result.map_err(|error| Error::InvalidConfiguration {
         message: format!("could not record the conversation model switch for the model: {error}"),
+        source: None,
     })
 }
 
@@ -234,6 +235,7 @@ fn restore_after_failed_step(
             message: format!(
                 "{primary}; also failed to restore the previous reasoning: {rollback_error}"
             ),
+            source: None,
         };
     }
     if let Err(rollback_error) = session.replace_provider(Arc::clone(&previous_provider)) {
@@ -241,6 +243,7 @@ fn restore_after_failed_step(
             message: format!(
                 "{primary}; also failed to restore the previous provider: {rollback_error}"
             ),
+            source: None,
         };
     }
     if matches!(compaction, RestoreCompaction::Required) {
@@ -261,6 +264,7 @@ fn restore_after_failed_step(
                 message: format!(
                     "{primary}; could not restore compaction for the previous provider: {refresh_error}"
                 ),
+                source: None,
             };
         }
     }
@@ -268,6 +272,7 @@ fn restore_after_failed_step(
         Ok(_) => primary,
         Err(rollback) => Error::InvalidConfiguration {
             message: format!("{primary}; could not restore previous prompt/history: {rollback}"),
+            source: None,
         },
     }
 }

@@ -333,23 +333,24 @@ impl InteractiveRuntime {
         if let Some(RunEvent::ToolProposed { call }) = &event {
             self.diagnostics.observe_tool_call(call);
         }
-        // Stream usage precedes SDK calibration. ToolProposed first observes the
-        // accepted response (even while approval waits); completion of a tool is
-        // accounted at the next history boundary.
-        if matches!(
-            event,
+        // Stream usage precedes SDK calibration. A step carries its request's
+        // estimate. ToolProposed first observes the accepted response (even while
+        // approval waits); completion of a tool is accounted at the next history
+        // boundary.
+        match &event {
+            Some(RunEvent::StepStarted {
+                context_estimate, ..
+            }) => self.note_context_estimate(*context_estimate),
             Some(
-                RunEvent::StepStarted { .. }
-                    | RunEvent::ToolProposed { .. }
-                    | RunEvent::ToolStarted { .. }
-                    | RunEvent::BoundaryInputApplied { .. }
-                    | RunEvent::CompactionCompleted { .. }
-                    | RunEvent::Completed { .. }
-                    | RunEvent::Failed { .. }
-                    | RunEvent::Cancelled { .. }
-            )
-        ) {
-            self.refresh_context_usage();
+                RunEvent::ToolProposed { .. }
+                | RunEvent::ToolStarted { .. }
+                | RunEvent::BoundaryInputApplied { .. }
+                | RunEvent::CompactionCompleted { .. }
+                | RunEvent::Completed { .. }
+                | RunEvent::Failed { .. }
+                | RunEvent::Cancelled { .. },
+            ) => self.refresh_context_usage(),
+            _ => {}
         }
         // After a failed write, drain only. Later buffered checkpoints must not
         // advance storage or replace the failure/rollback checkpoint we captured.

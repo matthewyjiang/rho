@@ -382,7 +382,7 @@ fn host_question(
             .map(|choice| {
                 let host = HostChoice::new(&choice.label, &choice.label);
                 match &choice.description {
-                    Some(description) => host.description(description),
+                    Some(description) => host.with_description(description),
                     None => host,
                 }
             })
@@ -398,15 +398,15 @@ fn host_question(
         host = host.allow_other();
     }
     if let Some(header) = &question.header {
-        host = host.header(header);
+        host = host.with_header(header);
     }
     if let Some(help) = &question.help {
-        host = host.help(help);
+        host = host.with_help(help);
     }
     if let Some(default) = &question.default {
-        host = host.default_value(default.clone());
+        host = host.with_default_value(default.clone());
     }
-    host = host.default_selection(question.default_selection.into());
+    host = host.with_default_selection(question.default_selection.into());
     if !question.required {
         host = host.optional();
     }

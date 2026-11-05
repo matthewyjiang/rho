@@ -363,12 +363,6 @@ async fn after_tool_use_reports_the_call_that_a_hook_denied() {
     assert_eq!(payload["status"], json!("failed"));
     assert_eq!(payload["capability"]["operation"], json!("read_path"));
     assert_eq!(payload["capability"]["path"], json!("/work/notes.txt"));
-    assert_eq!(
-        after
-            .after_tool_use_capability()
-            .map(|capability| { serde_json::to_value(capability).unwrap()["operation"].clone() }),
-        Some(json!("read_path"))
-    );
 }
 
 struct SilentTool;
@@ -422,7 +416,6 @@ async fn completed_failure_reports_failed_hook_without_capability() {
     let payload = serde_json::to_value(after).unwrap()["payload"].clone();
     assert_eq!(payload["status"], json!("failed"));
     assert!(payload["capability"].is_null());
-    assert_eq!(after.after_tool_use_capability(), None);
 }
 
 #[tokio::test]

@@ -260,6 +260,7 @@ impl ToolContext {
         if self.detached {
             return Err(crate::Error::InvalidConfiguration {
                 message: "detached async tools cannot request host input".into(),
+                source: None,
             });
         }
         let requester =
@@ -267,6 +268,7 @@ impl ToolContext {
                 .as_ref()
                 .ok_or_else(|| crate::Error::InvalidConfiguration {
                     message: "tool context is not attached to an active run".into(),
+                    source: None,
                 })?;
         requester.request(request).await
     }

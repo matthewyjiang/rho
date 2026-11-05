@@ -54,10 +54,10 @@ impl ToolHostWorker {
         let started = Instant::now();
         let invocation = match context.invocation_source() {
             super::ToolInvocationSource::Model => {
-                ToolInvocation::new(call.call_id().clone(), call.arguments().clone())
+                ToolInvocation::new(call.id().clone(), call.arguments().clone())
             }
             super::ToolInvocationSource::Host => {
-                ToolInvocation::from_host(call.call_id().clone(), call.arguments().clone())
+                ToolInvocation::from_host(call.id().clone(), call.arguments().clone())
             }
         };
         let workspace = core.workspace.clone();
@@ -200,7 +200,7 @@ impl ToolHostWorker {
         }
         authorization.after_tool_use(
             call.name(),
-            call.call_id(),
+            call.id(),
             &result,
             started.elapsed(),
             first_capability.get(),

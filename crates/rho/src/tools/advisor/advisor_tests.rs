@@ -160,7 +160,7 @@ async fn streams_progress_before_completion_with_plain_final_output() {
 
     use rho_sdk::{
         model::{ModelEvent, ModelRequest},
-        provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+        provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     };
 
     struct GatedAdvisorProvider {
@@ -185,8 +185,9 @@ async fn streams_progress_before_completion_with_plain_final_output() {
         fn send_turn_stream<'a>(
             &'a self,
             request: ModelRequest<'a>,
-            events: ProviderEventSender,
+            context: ProviderTurnContext,
         ) -> ProviderFuture<'a> {
+            let events = context.events;
             Box::pin(async move {
                 if request.cancellation.is_cancelled() {
                     return Err(rho_sdk::ProviderError::interrupted(

@@ -271,8 +271,9 @@ impl ModelProvider for GatedSecondTurnProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: crate::provider::ProviderEventSender,
+        context: crate::provider::ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             self.requests
                 .lock()

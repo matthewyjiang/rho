@@ -91,6 +91,7 @@ impl Summarizer {
                             "could not build the compaction model {}: {error}",
                             rho_providers::provider::model_reference(provider, model)
                         ),
+                        source: None,
                     })
             })
             .await
@@ -577,10 +578,7 @@ impl ModelCompactor {
             Some(tier) => ModelRequestOptions::default().with_service_tier(tier),
             None => ModelRequestOptions::default(),
         };
-        let Some(future) = self
-            .provider
-            .native_compact_with_options(model_request, options)
-        else {
+        let Some(future) = self.provider.native_compact(model_request, options) else {
             return NativeCompactionResult::Unavailable;
         };
         let response = future.await;

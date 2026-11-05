@@ -11,7 +11,10 @@ use crate::{
 };
 use futures_util::{SinkExt, StreamExt};
 use rho_sdk::{
-    provider::{provider_event_channel, ModelProvider as SdkModelProvider},
+    provider::{
+        provider_event_channel, ModelProvider as SdkModelProvider, ModelRequestOptions,
+        ProviderTurnContext,
+    },
     CancellationToken, ProviderErrorKind,
 };
 use serde_json::json;
@@ -50,7 +53,7 @@ async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
 
     let mut events = Vec::new();
     let response = provider
-        .stream_turn(
+        .stream_turn_with_options(
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
@@ -58,6 +61,7 @@ async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
                 reasoning_level: crate::reasoning::ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
+            ModelRequestOptions::default(),
             &mut |event| {
                 events.push(event);
                 Ok(())
@@ -108,7 +112,7 @@ async fn completed_responses_turn_emits_reasoning_effort_context() {
 
     let mut events = Vec::new();
     provider
-        .stream_turn(
+        .stream_turn_with_options(
             ModelRequest {
                 messages: &[Message::user_text("hello")],
                 tools: &[],
@@ -116,6 +120,7 @@ async fn completed_responses_turn_emits_reasoning_effort_context() {
                 reasoning_level: crate::reasoning::ReasoningLevel::Low,
                 prompt_cache_key: None,
             },
+            ModelRequestOptions::default(),
             &mut |event| {
                 events.push(event);
                 Ok(())
@@ -210,13 +215,13 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
-        sender,
+        ProviderTurnContext::new(sender),
     );
     let (result, ()) = tokio::join!(first_turn, cancel_after_request);
     assert_eq!(result.unwrap_err().kind(), ProviderErrorKind::Interrupted);
 
     let response = provider
-        .stream_turn(
+        .stream_turn_with_options(
             ModelRequest {
                 messages: &[Message::user_text("second")],
                 tools: &[],
@@ -224,6 +229,7 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
                 reasoning_level: Default::default(),
                 prompt_cache_key: None,
             },
+            ModelRequestOptions::default(),
             &mut |_| Ok(()),
             &mut |_| Ok(()),
         )

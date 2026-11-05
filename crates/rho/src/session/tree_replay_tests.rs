@@ -64,15 +64,11 @@ fn replay_validates_every_delta_even_when_revision_is_unchanged() {
         ("revision", json!(1)),
         (
             "compaction",
-            serde_json::to_value(CompactionState::from_accounting(
-                1,
-                0,
-                4,
-                0,
-                Some(8),
-                Some(4),
-                Some(Revision::from_u64(3)),
-            ))
+            serde_json::to_value(
+                CompactionState::from_parts(1, 0, Some(Revision::from_u64(3)))
+                    .with_removed_tokens(4)
+                    .with_last_compaction_tokens(8, 4),
+            )
             .unwrap(),
         ),
     ];

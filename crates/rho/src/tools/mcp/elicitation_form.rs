@@ -253,10 +253,10 @@ fn question_for(
         .description
         .filter(|_| presentation.title.is_some())
     {
-        question = question.help(help);
+        question = question.with_help(help);
     }
     if let Some(default) = presentation.default {
-        question = question.default_value(default);
+        question = question.with_default_value(default);
     }
     if !required {
         question = question.optional();

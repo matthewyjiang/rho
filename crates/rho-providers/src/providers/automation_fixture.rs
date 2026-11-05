@@ -9,7 +9,7 @@ use rho_sdk::{
     model::{
         ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage, ToolCall,
     },
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -199,8 +199,9 @@ impl ModelProvider for AutomationFixtureProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             let cancellation = request.cancellation.clone();
             let response = tokio::select! {

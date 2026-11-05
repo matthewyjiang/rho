@@ -37,7 +37,7 @@ use rho_sdk::{
     },
     provider::{
         ModelProvider, ModelRequestOptions, NativeCompactionFuture, ProviderEventSender,
-        ProviderFuture, ProviderSteeringReceiver,
+        ProviderFuture, ProviderSteeringReceiver, ProviderTurnContext,
     },
     CancellationToken, ProviderError,
 };
@@ -101,24 +101,20 @@ impl ModelProvider for TuiFixtureProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
-        Box::pin(async move { fixture_stream(request, events).await })
-    }
-
-    fn send_turn_stream_steerable<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
-        _options: ModelRequestOptions,
-        events: ProviderEventSender,
-        mut steering: ProviderSteeringReceiver,
-    ) -> ProviderFuture<'a> {
+        let ProviderTurnContext {
+            events, steering, ..
+        } = context;
         Box::pin(async move {
             let prompt = last_user_text(&request).unwrap_or_default();
             if prompt == "fixture mid-turn steer" {
-                return stream_mid_turn_steer(request, events, &mut steering).await;
+                if let Some(mut steering) = steering {
+                    return stream_mid_turn_steer(request, events, &mut steering).await;
+                }
+            } else {
+                drop(steering);
             }
-            drop(steering);
             fixture_stream(request, events).await
         })
     }
@@ -126,6 +122,7 @@ impl ModelProvider for TuiFixtureProvider {
     fn native_compact<'a>(
         &'a self,
         request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
     ) -> Option<NativeCompactionFuture<'a>> {
         compact::native_compact(request)
     }

@@ -109,8 +109,9 @@ async fn finished_tools_send_the_checklist_only_when_it_changed() {
     }
 }
 
-// Covers: context fill reports the configured window as ACP `size`, and 0 (no
-// maximum) when neither config nor provider knows the window.
+// Covers: a step reports its own request's context fill, with the configured
+// window as ACP `size`, and 0 (no maximum) when neither config nor provider
+// knows the window.
 // Owner: ACP session signals
 #[tokio::test]
 async fn usage_reports_the_known_window_or_zero() {
@@ -119,12 +120,11 @@ async fn usage_reports_the_known_window_or_zero() {
             SessionSignals::new(session().await, TodoState::default(), window, Vec::new());
         let step = RunEvent::StepStarted {
             step: 1,
-            estimated_context_tokens: 0,
+            context_estimate: rho_sdk::ContextEstimate::from_estimated_tokens(1_234),
         };
         match signals.observe(&step).await {
             Some(SessionUpdate::UsageUpdate(update)) => {
-                assert_eq!(update.size, size, "{window:?}");
-                assert!(update.used > 0, "a non-empty session has context");
+                assert_eq!((update.used, update.size), (1_234, size), "{window:?}");
             }
             other => panic!("expected usage, got {other:?}"),
         }

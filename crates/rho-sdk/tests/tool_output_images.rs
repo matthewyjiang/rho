@@ -12,7 +12,7 @@ use rho_sdk::{
         ModelResponse, ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
     },
     provider::{
-        ModelProvider, ProviderEventSender, ProviderFuture, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
     },
     tool::{
         PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolExecutionMode,
@@ -124,8 +124,9 @@ impl ModelProvider for ImageProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             self.requests
                 .lock()

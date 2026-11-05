@@ -242,22 +242,6 @@ impl XaiProvider {
     }
 
     /// Streams one turn through a `Send` callback for the public SDK adapter.
-    pub(crate) async fn stream_turn(
-        &self,
-        request: ModelRequest<'_>,
-        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
-        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
-                  + Send),
-    ) -> Result<ModelResponse, ModelError> {
-        self.stream_turn_with_options(
-            request,
-            ModelRequestOptions::default(),
-            on_event,
-            on_request_event,
-        )
-        .await
-    }
-
     pub(crate) async fn stream_turn_with_options(
         &self,
         request: ModelRequest<'_>,

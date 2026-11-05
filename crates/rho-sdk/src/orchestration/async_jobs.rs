@@ -452,6 +452,7 @@ async fn send_tool_finished(
         .await
         .map_err(|_| Error::Interrupted {
             message: "run event consumer was dropped".into(),
+            source: None,
         })
 }
 

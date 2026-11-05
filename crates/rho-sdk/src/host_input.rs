@@ -7,14 +7,6 @@ use crate::{CancellationToken, Error, HostInputId};
 use serde_json::Value;
 
 /// One selectable answer in a host question.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): rename the `description` setter to `with_description`
-/// and the `description_text` getter to `description`.
-///
-/// The builder setter took the plain name first; swapping them in a minor
-/// would silently change what existing calls do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostChoice {
     value: String,
@@ -32,7 +24,7 @@ impl HostChoice {
     }
 
     /// Add short supporting text that hosts may show below the choice label.
-    pub fn description(mut self, description: impl Into<String>) -> Self {
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
@@ -45,7 +37,7 @@ impl HostChoice {
         &self.label
     }
 
-    pub fn description_text(&self) -> Option<&str> {
+    pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 }
@@ -71,15 +63,6 @@ pub enum DefaultSelection {
 }
 
 /// One structured question presented by a host.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): rename the `header`, `help`, `default_value`, and
-/// `default_selection` setters to `with_*` and drop the `_text`, `_ref`, and
-/// `_mode` suffixes from their getters.
-///
-/// The builder setters took the plain names first; swapping them in a minor
-/// would silently change what existing calls do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostQuestion {
     id: String,
@@ -145,23 +128,23 @@ impl HostQuestion {
 
     /// Very short label hosts may show in place of the full prompt where
     /// space is tight, such as a question tab.
-    pub fn header(mut self, header: impl Into<String>) -> Self {
+    pub fn with_header(mut self, header: impl Into<String>) -> Self {
         self.header = Some(header.into());
         self
     }
 
-    pub fn help(mut self, help: impl Into<String>) -> Self {
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
     }
 
-    pub fn default_value(mut self, default: Value) -> Self {
+    pub fn with_default_value(mut self, default: Value) -> Self {
         self.default = Some(default);
         self
     }
 
-    /// Control whether `default_value` pre-selects or only focuses the choice.
-    pub fn default_selection(mut self, selection: DefaultSelection) -> Self {
+    /// Control whether the default value pre-selects or only focuses the choice.
+    pub fn with_default_selection(mut self, selection: DefaultSelection) -> Self {
         self.default_selection = selection;
         self
     }
@@ -179,7 +162,7 @@ impl HostQuestion {
         &self.prompt
     }
 
-    pub fn header_text(&self) -> Option<&str> {
+    pub fn header(&self) -> Option<&str> {
         self.header.as_deref()
     }
 
@@ -195,15 +178,15 @@ impl HostQuestion {
         self.allow_other
     }
 
-    pub fn help_text(&self) -> Option<&str> {
+    pub fn help(&self) -> Option<&str> {
         self.help.as_deref()
     }
 
-    pub fn default_value_ref(&self) -> Option<&Value> {
+    pub fn default_value(&self) -> Option<&Value> {
         self.default.as_ref()
     }
 
-    pub fn default_selection_mode(&self) -> DefaultSelection {
+    pub fn default_selection(&self) -> DefaultSelection {
         self.default_selection
     }
 
@@ -461,6 +444,7 @@ impl HostInputRequester {
             result = self.sender.send(HostInputEnvelope { request, response }) => {
                 result.map_err(|_| Error::Interrupted {
                     message: "run stopped accepting host input requests".into(),
+                    source: None,
                 })?;
             }
             () = self.cancellation.cancelled() => return Err(Error::Cancelled),
@@ -468,6 +452,7 @@ impl HostInputRequester {
         tokio::select! {
             result = receiver => result.map_err(|_| Error::Interrupted {
                 message: "host input request was dropped without a response".into(),
+                source: None,
             })?,
             () = self.cancellation.cancelled() => Err(Error::Cancelled),
         }

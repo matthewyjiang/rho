@@ -44,6 +44,7 @@ impl InteractiveRuntime {
                 .await
                 .map_err(|error| Error::Persistence {
                     message: error.to_string(),
+                    source: None,
                 })?;
         match computer_update {
             ComputerUseUpdate::Unchanged | ComputerUseUpdate::Connected => {}
@@ -63,11 +64,13 @@ impl InteractiveRuntime {
             .await
             .map_err(|error| Error::Persistence {
                 message: error.to_string(),
+                source: None,
             })?;
         }
         self.refresh_computer_context()
             .map_err(|error| Error::Persistence {
                 message: error.to_string(),
+                source: None,
             })?;
         self.sessions
             .session()
@@ -83,6 +86,7 @@ impl InteractiveRuntime {
         self.begin_workspace_checkpoint()
             .map_err(|error| Error::Persistence {
                 message: error.to_string(),
+                source: None,
             })?;
         // Host calls run as one batch before the first model request.
         let run_result = if host_calls.is_empty() {

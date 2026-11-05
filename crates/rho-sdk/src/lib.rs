@@ -180,7 +180,8 @@ pub use context_breakdown::{ContextBreakdown, ContextItem, ContextPart};
 pub use context_estimate::ContextEstimate;
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{
-    format_retry_after, Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability,
+    format_retry_after, Error, ErrorSource, ProviderDiagnostic, ProviderError, ProviderErrorKind,
+    Retryability,
 };
 pub use event::{
     ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,

@@ -282,7 +282,7 @@ fn ignored_events_emit_nothing() {
         },
         RunEvent::StepStarted {
             step: 1,
-            estimated_context_tokens: 0,
+            context_estimate: rho_sdk::ContextEstimate::from_estimated_tokens(0),
         },
         RunEvent::ToolCallUpdated {
             index: 0,
@@ -558,7 +558,7 @@ fn chunks_share_a_message_id_until_a_boundary() {
     let text = |text: &str| RunEvent::AssistantTextDelta { text: text.into() };
     let step = |step| RunEvent::StepStarted {
         step,
-        estimated_context_tokens: 0,
+        context_estimate: rho_sdk::ContextEstimate::from_estimated_tokens(0),
     };
     let events = [
         RunEvent::ReasoningDelta {

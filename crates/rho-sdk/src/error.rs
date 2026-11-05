@@ -4,21 +4,22 @@ use std::time::Duration;
 use crate::tool::ToolError;
 use crate::{floor_char_boundary, DIAGNOSTIC_TRUNCATION_MARKER};
 
+/// Underlying cause carried by message-only [`Error`] variants.
+pub type ErrorSource = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 /// Stable top-level SDK error classification.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): add a `#[source]` boxed cause to the message-only
-/// variants (`InvalidConfiguration`, `Persistence`, `Interrupted`) so callers
-/// can downcast the underlying serde, join, or I/O error.
-///
-/// Adding a field to an existing struct variant breaks exhaustive struct
-/// patterns, so until then the cause is only rendered into `message`.
+/// In the message-only variants, `message` is complete display text and
+/// `source` holds the underlying error, when one exists, so callers can reach
+/// it through [`std::error::Error::source`] and downcast it.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Builder, session, or call configuration is invalid.
-    InvalidConfiguration { message: String },
+    InvalidConfiguration {
+        message: String,
+        source: Option<ErrorSource>,
+    },
     /// Provider credentials were missing or rejected.
     Authentication { message: String },
     /// The model provider failed; see [`ProviderError::kind`].
@@ -27,7 +28,10 @@ pub enum Error {
     /// inside a model run become tool results instead.
     Tool(ToolError),
     /// A snapshot could not be serialized, parsed, or stored.
-    Persistence { message: String },
+    Persistence {
+        message: String,
+        source: Option<ErrorSource>,
+    },
     /// A host policy denied the operation.
     PolicyDenied { message: String },
     /// The runtime was shut down before the operation started.
@@ -37,7 +41,10 @@ pub enum Error {
     /// The operation was cancelled by the host.
     Cancelled,
     /// A task or event consumer stopped before the operation finished.
-    Interrupted { message: String },
+    Interrupted {
+        message: String,
+        source: Option<ErrorSource>,
+    },
     /// The host supplied invalid data, such as a response that does not fit
     /// its question or an empty compaction replacement.
     InvalidHostResponse { message: String },
@@ -58,7 +65,7 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidConfiguration { message } => {
+            Self::InvalidConfiguration { message, .. } => {
                 write!(formatter, "invalid configuration: {message}")
             }
             Self::Authentication { message } => {
@@ -66,14 +73,16 @@ impl fmt::Display for Error {
             }
             Self::Provider(error) => error.fmt(formatter),
             Self::Tool(error) => error.fmt(formatter),
-            Self::Persistence { message } => write!(formatter, "persistence failed: {message}"),
+            Self::Persistence { message, .. } => write!(formatter, "persistence failed: {message}"),
             Self::PolicyDenied { message } => {
                 write!(formatter, "policy denied operation: {message}")
             }
             Self::RuntimeShutdown => formatter.write_str("runtime has been shut down"),
             Self::SessionBusy => formatter.write_str("session already has an active run"),
             Self::Cancelled => formatter.write_str("operation cancelled"),
-            Self::Interrupted { message } => write!(formatter, "operation interrupted: {message}"),
+            Self::Interrupted { message, .. } => {
+                write!(formatter, "operation interrupted: {message}")
+            }
             Self::InvalidHostResponse { message } => {
                 write!(formatter, "invalid host response: {message}")
             }
@@ -95,14 +104,16 @@ impl std::error::Error for Error {
         match self {
             Self::Provider(error) => Some(error),
             Self::Tool(error) => Some(error),
-            Self::InvalidConfiguration { .. }
-            | Self::Authentication { .. }
-            | Self::Persistence { .. }
+            Self::InvalidConfiguration { source, .. }
+            | Self::Persistence { source, .. }
+            | Self::Interrupted { source, .. } => source
+                .as_deref()
+                .map(|source| source as &(dyn std::error::Error + 'static)),
+            Self::Authentication { .. }
             | Self::PolicyDenied { .. }
             | Self::RuntimeShutdown
             | Self::SessionBusy
             | Self::Cancelled
-            | Self::Interrupted { .. }
             | Self::InvalidHostResponse { .. }
             | Self::HostInputRefused { .. }
             | Self::RunFinished => None,

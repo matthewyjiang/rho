@@ -19,7 +19,7 @@ pub(super) async fn collect(
     let reply = tokio::select! {
         biased;
         () = cancellation.cancelled() => return Err(Error::Cancelled),
-        () = events.closed() => return Err(Error::Interrupted { message: "run event consumer disconnected".into() }),
+        () = events.closed() => return Err(Error::Interrupted { message: "run event consumer disconnected".into(), source: None }),
         reply = source.request(session_id, run_id, boundary) => reply?,
     };
     let input = reply.input;

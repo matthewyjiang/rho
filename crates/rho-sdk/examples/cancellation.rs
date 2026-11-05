@@ -6,7 +6,7 @@
 
 use rho_sdk::{
     model::{ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     Error, Rho, RunEvent, SessionOptions, UserInput,
 };
 
@@ -29,8 +29,9 @@ impl ModelProvider for PartialProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             events
                 .send(ModelEvent::OutputDelta("partial".into()))
@@ -68,6 +69,7 @@ async fn main() -> Result<(), rho_sdk::Error> {
             eprintln!("expected cancellation, got {}", outcome.text());
             Err(Error::Interrupted {
                 message: "run completed instead of cancelling".into(),
+                source: None,
             })
         }
         Err(error) => Err(error),

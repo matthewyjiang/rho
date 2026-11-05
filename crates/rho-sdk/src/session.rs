@@ -56,6 +56,7 @@ impl UserInput {
         if content.is_empty() {
             return Err(Error::InvalidConfiguration {
                 message: "user input must contain at least one content block".into(),
+                source: None,
             });
         }
         Ok(Self { content })
@@ -88,6 +89,7 @@ impl HostToolCalls {
         if calls.is_empty() {
             return Err(Error::InvalidConfiguration {
                 message: "host tool call batch must contain at least one call".into(),
+                source: None,
             });
         }
         let mut ids = BTreeSet::new();
@@ -97,11 +99,13 @@ impl HostToolCalls {
                     message: format!(
                         "host tool call {index} requires a nonempty ID and name plus object arguments"
                     ),
+                    source: None,
                 });
             }
             if !ids.insert(call.id.as_str()) {
                 return Err(Error::InvalidConfiguration {
                     message: format!("duplicate host tool call ID '{}'", call.id),
+                    source: None,
                 });
             }
         }
@@ -173,6 +177,7 @@ impl SessionData {
             .checked_next()
             .ok_or_else(|| Error::Persistence {
                 message: "session revision is exhausted".into(),
+                source: None,
             })
     }
 }
@@ -584,6 +589,7 @@ impl Session {
         if policy.is_some() && compactor.is_none() {
             return Err(Error::InvalidConfiguration {
                 message: "automatic compaction policy requires a compactor".into(),
+                source: None,
             });
         }
         let mut runtime = self
@@ -789,6 +795,7 @@ impl Session {
                 .cloned()
                 .ok_or_else(|| Error::InvalidConfiguration {
                     message: "no compactor is configured".into(),
+                    source: None,
                 })?;
         let run_id = RunId::new();
         self.core.begin_run(&run_id)?;

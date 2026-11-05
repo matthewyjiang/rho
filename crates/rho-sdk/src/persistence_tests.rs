@@ -107,3 +107,12 @@ fn in_memory_store_replaces_complete_snapshots_atomically() {
     assert_eq!(store.remove(&id), Some(second));
     assert!(store.is_empty());
 }
+
+// Covers: a malformed snapshot keeps the serde error as a downcastable source.
+// Owner: SDK persistence error contract
+#[test]
+fn malformed_snapshot_error_exposes_serde_source() {
+    let error = SessionSnapshot::from_json("{").unwrap_err();
+    let source = std::error::Error::source(&error).expect("persistence error has a source");
+    assert!(source.downcast_ref::<serde_json::Error>().is_some());
+}

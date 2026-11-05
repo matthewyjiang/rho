@@ -38,6 +38,8 @@ pub struct CompactionState {
 
 impl CompactionState {
     /// Reconstructs persisted compaction continuation state in a storage adapter.
+    ///
+    /// Restore token and cost totals with the `with_*` setters.
     pub const fn from_parts(
         completed_compactions: u64,
         removed_messages: u64,
@@ -75,37 +77,6 @@ impl CompactionState {
         self.last_previous_tokens = Some(previous);
         self.last_current_tokens = Some(current);
         self
-    }
-
-    /// Reconstructs full compaction accounting, including token and cost totals.
-    ///
-    /// Prefer [`Self::from_parts`] with the `with_*` setters, whose names keep
-    /// the four counters and two token readings from being transposed.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): remove `CompactionState::from_accounting` in favor of
-    /// `from_parts` plus the `with_*` setters.
-    ///
-    /// Removing it now would break existing storage adapters.
-    pub const fn from_accounting(
-        completed_compactions: u64,
-        removed_messages: u64,
-        removed_tokens: u64,
-        removed_cost_usd_micros: u64,
-        last_previous_tokens: Option<u64>,
-        last_current_tokens: Option<u64>,
-        last_revision: Option<Revision>,
-    ) -> Self {
-        Self {
-            completed_compactions,
-            removed_messages,
-            removed_tokens,
-            removed_cost_usd_micros,
-            last_previous_tokens,
-            last_current_tokens,
-            last_revision,
-        }
     }
 
     pub fn completed_compactions(&self) -> u64 {

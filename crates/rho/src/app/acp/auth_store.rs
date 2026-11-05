@@ -111,9 +111,9 @@ fn question(choices: &StoreChoiceRequest) -> Result<HostInputRequest, AcpError> 
         SelectionMode::One,
     )
     .map_err(internal)?
-    .help("Rho saves this choice to config and uses it for future logins on this machine.");
+    .with_help("Rho saves this choice to config and uses it for future logins on this machine.");
     if let Some(default) = choices.default_backend() {
-        question = question.default_value(serde_json::Value::from(default.as_str()));
+        question = question.with_default_value(serde_json::Value::from(default.as_str()));
     }
     HostInputRequest::questionnaire("Choose where Rho stores credentials", vec![question])
         .map_err(internal)

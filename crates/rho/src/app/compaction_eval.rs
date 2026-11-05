@@ -563,14 +563,12 @@ impl ModelProvider for NoNativeCompaction {
         self.0.send_turn(request)
     }
 
-    fn send_turn_stream_with_options<'a>(
+    fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        options: rho_sdk::provider::ModelRequestOptions,
-        events: rho_sdk::provider::ProviderEventSender,
+        context: rho_sdk::provider::ProviderTurnContext,
     ) -> rho_sdk::provider::ProviderFuture<'a> {
-        self.0
-            .send_turn_stream_with_options(request, options, events)
+        self.0.send_turn_stream(request, context)
     }
 }
 

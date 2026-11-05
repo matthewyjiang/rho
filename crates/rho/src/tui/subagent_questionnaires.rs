@@ -312,6 +312,7 @@ impl App {
                 };
                 let _ = pending.response_tx.send(Err(rho_sdk::Error::Interrupted {
                     message: message.into(),
+                    source: None,
                 }));
                 self.insert_entry(&Entry::Notice(format!(
                     "cancelled questionnaire for agent {} ({})",
@@ -321,6 +322,7 @@ impl App {
             Err(_) => {
                 let _ = pending.response_tx.send(Err(rho_sdk::Error::Interrupted {
                     message: "delegated questionnaire reply channel closed".into(),
+                    source: None,
                 }));
             }
         }
@@ -389,6 +391,7 @@ impl App {
                 let _ = pending.response.send(Err(rho_sdk::Error::Interrupted {
                     message: "parent session changed before the delegated questionnaire was shown"
                         .into(),
+                    source: None,
                 }));
                 changed = true;
                 continue;

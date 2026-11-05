@@ -377,13 +377,16 @@ async fn native_compact_posts_to_responses_compact_and_returns_marker() {
         Message::assistant_text("world"),
     ];
     let response = provider
-        .native_compact(ModelRequest {
-            messages: &messages,
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        })
+        .native_compact(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            ModelRequestOptions::default(),
+        )
         .expect("xAI exposes native compact")
         .await;
     let (result, failed_attempts) = response.into_parts();
@@ -448,13 +451,16 @@ async fn native_compact_unauthorized_without_refresh_fails() {
     .unwrap();
     let provider = XaiProvider::new_with_api_base("grok-4.5".into(), store, api_base).unwrap();
     let response = provider
-        .native_compact(ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        })
+        .native_compact(
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            ModelRequestOptions::default(),
+        )
         .expect("xAI exposes native compact")
         .await;
     let (result, failed_attempts) = response.into_parts();

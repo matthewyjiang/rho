@@ -106,17 +106,17 @@ pub(super) fn form(
 /// question's label and the description as its text, so the full prompt
 /// goes in the description when a short header takes the title.
 fn title_and_description(question: &HostQuestion) -> (String, Option<String>) {
-    match question.header_text() {
+    match question.header() {
         Some(header) => (
             header.to_owned(),
-            Some(match question.help_text() {
+            Some(match question.help() {
                 Some(help) => format!("{}\n\n{help}", question.prompt()),
                 None => question.prompt().to_owned(),
             }),
         ),
         None => (
             question.prompt().to_owned(),
-            question.help_text().map(str::to_owned),
+            question.help().map(str::to_owned),
         ),
     }
 }
@@ -259,16 +259,16 @@ fn select(
 
 fn option(choice: &HostChoice) -> EnumOption {
     EnumOption::new(choice.value(), choice.label())
-        .description(choice.description_text().map(str::to_owned))
+        .description(choice.description().map(str::to_owned))
 }
 
 /// Defaults the question pre-selects. A focused default only highlights a
 /// choice, which a form cannot express, so it is left unset.
 fn selected_defaults(question: &HostQuestion) -> Vec<String> {
-    if question.default_selection_mode() != DefaultSelection::Selected {
+    if question.default_selection() != DefaultSelection::Selected {
         return Vec::new();
     }
-    let values = match question.default_value_ref() {
+    let values = match question.default_value() {
         Some(serde_json::Value::Array(values)) => values.iter().collect(),
         Some(value) => vec![value],
         None => Vec::new(),

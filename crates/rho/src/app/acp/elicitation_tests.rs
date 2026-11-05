@@ -17,15 +17,15 @@ fn request() -> HostInputRequest {
             "scope",
             "Which scope should the change cover?",
             vec![
-                HostChoice::new("crate", "One crate").description("Only the touched crate"),
+                HostChoice::new("crate", "One crate").with_description("Only the touched crate"),
                 HostChoice::new("workspace", "Workspace"),
             ],
             SelectionMode::One,
         )
         .unwrap()
-        .header("Scope")
-        .help("Pick the narrowest that works.")
-        .default_value(json!("workspace")),
+        .with_header("Scope")
+        .with_help("Pick the narrowest that works.")
+        .with_default_value(json!("workspace")),
         HostQuestion::new(
             "checks",
             "Which checks?",
@@ -484,7 +484,7 @@ fn defaults_prefer_a_choice_value_over_another_label() {
             SelectionMode::One,
         )
         .unwrap()
-        .default_value(json!(default));
+        .with_default_value(json!(default));
         let request = HostInputRequest::questionnaire("Pick", vec![question]).unwrap();
         let form = elicitation_request(&request, &SessionId::new("s"), None, FormDialect::Standard);
         serde_json::to_value(form).unwrap()["requestedSchema"]["properties"]["q"]["default"].clone()

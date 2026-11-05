@@ -66,6 +66,7 @@ impl InteractiveRuntime {
             InteractiveRuntime::record_user_context_with_display(&self.sessions, context, display)
                 .map_err(|error| Error::InvalidConfiguration {
                     message: error.to_string(),
+                    source: None,
                 })
         };
         let result = conversation_switch::apply_conversation_switch(
@@ -122,6 +123,7 @@ impl InteractiveRuntime {
             .transpose()
             .map_err(|error| Error::InvalidConfiguration {
                 message: format!("could not load model prompt: {error:#}"),
+                source: None,
             })
     }
 
@@ -145,6 +147,7 @@ impl InteractiveRuntime {
             .transpose()
             .map_err(|error| Error::InvalidConfiguration {
                 message: format!("could not load model prompt: {error:#}"),
+                source: None,
             })?;
         Ok(PreparedSessionPrompt { prompt, template })
     }

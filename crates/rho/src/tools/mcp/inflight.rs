@@ -68,9 +68,11 @@ impl McpCaller {
             .await
             .map_err(|_| Error::Interrupted {
                 message: "the MCP tool call stopped accepting questions".into(),
+                source: None,
             })?;
         answer.await.map_err(|_| Error::Interrupted {
             message: "the MCP tool call ended before the question was answered".into(),
+            source: None,
         })?
     }
 

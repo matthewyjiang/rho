@@ -676,21 +676,22 @@ pub(super) fn apply_legacy_history_replacement(
     let current_tokens = rho_sdk::model::context::estimate_messages_tokens(&messages);
     state.model = messages;
     state.revision = next_revision(state.revision)?;
-    state.compaction = CompactionState::from_accounting(
+    state.compaction = CompactionState::from_parts(
         state.compaction.completed_compactions().saturating_add(1),
         state
             .compaction
             .removed_messages()
             .saturating_add(previous_messages.saturating_sub(state.model.len()) as u64),
+        Some(state.revision),
+    )
+    .with_removed_tokens(
         state
             .compaction
             .removed_tokens()
             .saturating_add(previous_tokens.saturating_sub(current_tokens)),
-        state.compaction.removed_cost_usd_micros(),
-        Some(previous_tokens),
-        Some(current_tokens),
-        Some(state.revision),
-    );
+    )
+    .with_removed_cost_usd_micros(state.compaction.removed_cost_usd_micros())
+    .with_last_compaction_tokens(previous_tokens, current_tokens);
     Ok(())
 }
 

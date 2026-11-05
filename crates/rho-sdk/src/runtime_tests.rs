@@ -18,8 +18,7 @@ use crate::{
         ModelResponse, ToolCall, ToolSpec,
     },
     provider::{
-        ModelProvider, ModelRequestOptions, ProviderEventSender, ProviderFuture,
-        ProviderSteeringReceiver, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
     },
     tool::{
         ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
@@ -730,8 +729,9 @@ impl ModelProvider for SteeringProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             self.requests
                 .lock()
@@ -1105,13 +1105,15 @@ impl ModelProvider for MidTurnSteeringProvider {
         })
     }
 
-    fn send_turn_stream_steerable<'a>(
+    fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        _options: ModelRequestOptions,
-        events: ProviderEventSender,
-        mut steering: ProviderSteeringReceiver,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let ProviderTurnContext {
+            events, steering, ..
+        } = context;
+        let mut steering = steering.expect("the runtime offers a steering port");
         Box::pin(async move {
             self.requests
                 .lock()
@@ -1320,8 +1322,9 @@ impl ModelProvider for PartialProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             events
                 .send(ModelEvent::OutputDelta("partial".into()))
