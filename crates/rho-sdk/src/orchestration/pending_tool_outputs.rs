@@ -1,38 +1,37 @@
 use crate::{
     event::ToolCompletion,
-    model::{Message, ToolResult},
+    model::{ImageContent, Message, ToolResult},
 };
 
-/// One completion owns its textual result and optional image supplement together.
-/// Schedulers may park it, but cannot commit its image without its result.
+/// One completion owns its textual result and its deliverable images together.
+/// Schedulers may park it; only a normal commit delivers the images.
 pub(super) struct CompletedToolOutput {
     result: ToolResult,
-    supplement: Option<Message>,
+    /// Successful output images, attached to `result` when it commits.
+    images: Vec<ImageContent>,
 }
 
 impl CompletedToolOutput {
     pub(super) fn new(name: &str, id: &str, completion: &ToolCompletion) -> Self {
         Self {
             result: completion.model_result(name, id),
-            supplement: completion
+            images: completion
                 .output()
                 .filter(|_| !completion.is_failure())
-                .and_then(|output| {
-                    Message::tool_image_supplement(name, id, output.images().to_vec())
-                }),
+                .map(|output| output.images().to_vec())
+                .unwrap_or_default(),
         }
     }
 
-    /// A commit writes every result before its supplements, in the same order.
-    /// Other detached calls may finish later. Adjacency-only providers normalize
-    /// those late results at conversion; they do not require a run-global barrier.
+    /// Commits results with their images, in order. Other detached calls may
+    /// finish later; adjacency-only providers normalize those late results at
+    /// conversion, so a commit needs no run-global barrier.
     pub(super) fn commit_all(outputs: impl IntoIterator<Item = Self>, history: &mut Vec<Message>) {
-        let mut supplements = Vec::new();
-        for output in outputs {
-            history.push(Message::ToolResult(output.result));
-            supplements.extend(output.supplement);
-        }
-        history.extend(supplements);
+        history.extend(
+            outputs
+                .into_iter()
+                .map(|output| Message::ToolResult(output.result.with_images(output.images))),
+        );
     }
 
     /// Terminal settlement keeps text pairing but drops undelivered images.
@@ -45,7 +44,7 @@ impl From<ToolResult> for CompletedToolOutput {
     fn from(result: ToolResult) -> Self {
         Self {
             result,
-            supplement: None,
+            images: Vec::new(),
         }
     }
 }

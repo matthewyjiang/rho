@@ -442,7 +442,7 @@ pub(super) fn progress_card(
             return advisor_progress_card(progress);
         }
         if view.kind == ToolKind::Agent {
-            return agent_format::agent_progress_card(view, progress.text());
+            return agent_format::agent_progress_card(view, progress.message());
         }
         if view.kind == ToolKind::Codemode {
             return codemode_format::preview_card(
@@ -460,7 +460,7 @@ pub(super) fn progress_card(
             return shell_result_card(
                 prompt,
                 &view.arguments,
-                progress.text(),
+                progress.message(),
                 ToolStatus::Running,
             );
         }
@@ -475,14 +475,14 @@ pub(super) fn progress_card(
         },
         |(view, cwd)| start_card(view, cwd),
     );
-    if !progress.text().trim().is_empty() {
+    if !progress.message().trim().is_empty() {
         if card.body.is_diff() {
             // Keep an existing proposed/result diff visible; progress is metadata.
             card.push_fact(ToolFact::Meta {
-                text: progress.text().to_string(),
+                text: progress.message().to_string(),
             });
         } else {
-            card.body = ToolBody::Lines(split_body_lines(progress.text()));
+            card.body = ToolBody::Lines(split_body_lines(progress.message()));
         }
     }
     if let (Some(completed), total) = (progress.completed_units(), progress.total_units()) {
@@ -501,12 +501,12 @@ fn advisor_card(status: ToolStatus, detail: impl Into<String>) -> ToolCard {
 
 fn advisor_progress_card(progress: &ToolProgress) -> ToolCard {
     let phase = progress
-        .presentation()
+        .metadata()
         .command_summary_text()
         .unwrap_or(crate::agent::OneShotPhase::WaitingForProvider.label());
     let mut card = advisor_card(ToolStatus::Running, phase);
-    if !progress.text().trim().is_empty() {
-        card.body = ToolBody::Lines(split_body_lines(progress.text()));
+    if !progress.message().trim().is_empty() {
+        card.body = ToolBody::Lines(split_body_lines(progress.message()));
     }
     card
 }

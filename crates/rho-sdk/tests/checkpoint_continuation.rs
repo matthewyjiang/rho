@@ -140,16 +140,11 @@ async fn continuation_reruns_read_only_calls_and_interrupts_the_rest() {
     assert_eq!(rerun, ["read"]);
     let mut expected = saved.history().to_vec();
     expected.extend([
-        Message::ToolResult(ToolResult {
-            id: "write-1".into(),
-            ok: false,
-            content: "tool call interrupted before completion".into(),
-        }),
-        Message::ToolResult(ToolResult {
-            id: "read-1".into(),
-            ok: true,
-            content: "read again".into(),
-        }),
+        Message::ToolResult(ToolResult::failed(
+            "write-1",
+            "tool call interrupted before completion",
+        )),
+        Message::ToolResult(ToolResult::succeeded("read-1", "read again")),
     ]);
     assert_eq!(provider.recorded_requests()[0].messages, expected);
 }

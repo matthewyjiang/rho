@@ -326,41 +326,25 @@ async fn tool_questions_follow_the_hosts_answer() {
             "accept",
             STANDARD_FORMS,
             accept(&[("color", "blue")]),
-            ToolResult {
-                id: "ask".into(),
-                ok: true,
-                content: "blue".into(),
-            },
+            ToolResult::succeeded("ask", "blue"),
         ),
         (
             "decline",
             STANDARD_FORMS,
             ElicitationAction::Decline,
-            ToolResult {
-                id: "ask".into(),
-                ok: false,
-                content: "the user declined to answer".into(),
-            },
+            ToolResult::failed("ask", "the user declined to answer"),
         ),
         (
             "cancel",
             STANDARD_FORMS,
             ElicitationAction::Cancel,
-            ToolResult {
-                id: "ask".into(),
-                ok: false,
-                content: "the user dismissed the question without answering".into(),
-            },
+            ToolResult::failed("ask", "the user dismissed the question without answering"),
         ),
         (
             "no forms",
             Forms::Unavailable,
             accept(&[("color", "blue")]),
-            ToolResult {
-                id: "ask".into(),
-                ok: false,
-                content: "the user declined to answer".into(),
-            },
+            ToolResult::failed("ask", "the user declined to answer"),
         ),
     ];
     for (label, forms, action, expected) in cases {

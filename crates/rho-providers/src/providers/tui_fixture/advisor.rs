@@ -76,7 +76,11 @@ pub(super) fn completion(
     request: &ModelRequest<'_>,
 ) -> Option<Result<ModelResponse, ProviderError>> {
     let result = tool_result(request, CALL_ID)?;
-    let outcome = if result.ok { "advice" } else { "error" };
+    let outcome = if result.is_failure() {
+        "error"
+    } else {
+        "advice"
+    };
     Some(completed(format!(
         "advisor consulted ({outcome}): {}",
         result.content.lines().next().unwrap_or_default()

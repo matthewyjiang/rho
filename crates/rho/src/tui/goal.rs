@@ -241,8 +241,7 @@ fn evaluation_transcript(messages: &[Message]) -> String {
             | HistoryMessage::Assistant(_)
             | HistoryMessage::EnrichedAssistant(_)
             | HistoryMessage::AbortedAssistant(_)
-            | HistoryMessage::ToolResult(_)
-            | HistoryMessage::ToolImageSupplement(_) => {
+            | HistoryMessage::ToolResult(_) => {
                 serde_json::to_string(&safe_transcript_message(message)).unwrap_or_default()
             }
         })

@@ -106,11 +106,12 @@ impl<T> Rendered<T> {
 
     /// Legacy model-only callers do not serialize the typed script view.
     pub fn into_result(self, id: String) -> crate::tool::ToolResult {
-        crate::tool::ToolResult {
-            id,
-            ok: !self.failed,
-            content: self.text,
-        }
+        let status = if self.failed {
+            rho_sdk::model::ToolResultStatus::Failed
+        } else {
+            rho_sdk::model::ToolResultStatus::Succeeded
+        };
+        crate::tool::ToolResult::new(id, status, self.text)
     }
 }
 

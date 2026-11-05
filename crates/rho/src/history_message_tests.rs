@@ -1,12 +1,12 @@
 use rho_sdk::{
-    model::{ContentBlock, ImageContent, Message},
+    model::{ContentBlock, Message},
     CompactionTrigger,
 };
 
 use super::HistoryMessage;
 
 // Covers: summaries and host-restated checklists never classify as user input,
-// while ordinary user text and tool images keep their semantic meaning.
+// while ordinary user text keeps its semantic meaning.
 // Owner: model-history classification
 #[test]
 fn compaction_context_is_not_user_input() {
@@ -18,10 +18,6 @@ fn compaction_context_is_not_user_input() {
         .unwrap(),
     ));
     let restatement = todo.checkpoint().restatement().unwrap();
-    let image = ImageContent {
-        data: "aW1hZ2U=".into(),
-        mime_type: "image/png".into(),
-    };
     let cases = [
         (restatement, "checklist"),
         (
@@ -42,10 +38,6 @@ fn compaction_context_is_not_user_input() {
             ]),
             "user",
         ),
-        (
-            Message::tool_image_supplement("computer", "call-1", vec![image]).unwrap(),
-            "tool images",
-        ),
     ];
 
     for (message, expected) in cases {
@@ -53,7 +45,6 @@ fn compaction_context_is_not_user_input() {
             HistoryMessage::CompactionSummary(_) => "summary",
             HistoryMessage::ChecklistRestatement(_) => "checklist",
             HistoryMessage::User(_) => "user",
-            HistoryMessage::ToolImageSupplement(_) => "tool images",
             other => panic!("unexpected {other:?}"),
         };
         assert_eq!(kind, expected, "{message:?}");

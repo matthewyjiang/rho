@@ -68,19 +68,17 @@ async fn settled_jobs_preserve_completion_metadata() {
         Err(ToolError::new(ToolErrorKind::Execution, "failed")),
     ] {
         let expected = match &outcome {
-            Ok(output) if output.is_failure() => ToolCompletion::CompletedFailure(output.clone()),
-            Ok(output) => ToolCompletion::Success(output.clone()),
+            Ok(output) => ToolCompletion::Completed(output.clone()),
             Err(error) => {
                 ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
             }
         };
-        let expected_result = ToolResult {
-            id: "capture-1".into(),
-            ok: outcome.as_ref().is_ok_and(|output| !output.is_failure()),
-            content: match &outcome {
-                Ok(output) => output.content().to_owned(),
-                Err(error) => error.message().to_owned(),
-            },
+        let expected_result = match &outcome {
+            Ok(output) if !output.is_failure() => {
+                ToolResult::succeeded("capture-1", output.content())
+            }
+            Ok(output) => ToolResult::failed("capture-1", output.content()),
+            Err(error) => ToolResult::failed("capture-1", error.message()),
         };
         let worker = tokio::spawn(async move { outcome });
         let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
@@ -151,11 +149,7 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
         jobs.completions_tx
             .send(JobCompletion { call_id, result })
             .unwrap();
-        expected.push(Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok: true,
-            content: id.into(),
-        }));
+        expected.push(Message::ToolResult(ToolResult::succeeded(id, id)));
     }
     // One terminal event per ready call, with enough capacity for cleanup too.
     let (events, _receiver) = mpsc::channel(expected.len());

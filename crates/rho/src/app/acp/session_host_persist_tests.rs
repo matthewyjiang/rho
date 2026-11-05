@@ -368,11 +368,7 @@ fn only_a_prompt_answered_by_replies_alone_rolls_back() {
         name: "read_file".into(),
         arguments: serde_json::json!({}),
     })]);
-    let result = Message::ToolResult(rho_sdk::model::ToolResult {
-        id: "call".into(),
-        ok: true,
-        content: "file".into(),
-    });
+    let result = Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "file"));
     let steer = Message::user_text("steer");
     let display = TurnDisplay::new(input.clone(), input.clone(), 1);
 

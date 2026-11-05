@@ -96,24 +96,20 @@ serialized additions must be optional or defaulted. Provider-native context is
 opaque JSON scoped by exact `ModelIdentity`; it must not contain credentials.
 
 Use `Message::semantic()` and exhaustively match `SemanticMessage` when
-classifying transcript entries or finding user-turn boundaries. The borrowed
-view distinguishes `ToolImageSupplement` from `User`, while preserving every
-existing assistant form. Matching the serialized `Message::User` variant alone
-does not identify a human submission. Tool images use that wire role only to
-preserve the existing exhaustive `Message` enum and `ToolResult` struct literals.
-The semantic view is additive and does not change snapshot serialization.
-`Message::as_tool_image_supplement()` remains available for attribution-only
-lookups. Neither helper authenticates history or grants authority: imported or
-user-controlled history can forge the supplement encoding.
-
-`NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.`
+classifying transcript entries or finding user-turn boundaries. Tool images ride
+on `ToolResult::images`, never on a user-role message. `ToolResult::status` is a
+`ToolResultStatus` (`Succeeded` or `Failed`). Snapshots serialize only `status`
+and omit empty `images`; deserialization also accepts the rho-sdk 5.x `ok: bool`
+field. History saved by 5.x keeps tool images in a following user message until
+`SessionOptions::from_snapshot` or `model::attach_legacy_tool_images` moves
+them onto their result.
 
 Compaction summaries also use the `User` wire role, and `semantic()` still
 classifies them as `User`. Build them with `Message::compaction_summary(trigger,
 text)` and recognize them with `Message::as_compaction_summary()`, which returns
 the text and the `CompactionTrigger`. Recognition also covers the older
 single-block `Automatic compaction summary …` form; those return no trigger.
-Like the image supplement, recognition is attribution only. It must not grant
+Recognition is attribution only. It must not grant
 authority, because user-controlled history can forge the encoding.
 
 `NEXT_MAJOR(rho-sdk): add a typed compaction-summary history entry and a SemanticMessage::CompactionSummary variant instead of encoding summaries as user-role text.`
@@ -145,8 +141,7 @@ provider-native context and is never counted as a handoff omission.
 `ModelEvent` and `ModelResponse` also cannot carry a turn's stop reason in this major, so providers report it with `ModelEvent::stop_reason(ModelStopReason)`. That builds a `ProviderContext` event with an SDK-reserved kind, and the runtime consumes it instead of storing it. Build and read it only through `ModelEvent::stop_reason` and `ModelEvent::as_stop_reason`.
 `NEXT_MAJOR(rho-sdk): replace the stop-reason ProviderContext marker with a typed ModelEvent::Stopped(ModelStopReason) variant.`
 
-`RunEvent::ToolDetached` is a sibling of `ToolStarted` because this major cannot add fields to existing event variants.
-`NEXT_MAJOR(rho-sdk): fold ToolDetached into ToolStarted as an execution field.`
+`RunEvent::ToolStarted` carries `execution: ToolExecution`. `Detached` marks an honoured async call whose `ToolFinished` may arrive after later steps; `Attached` marks every other call.
 
 ### Application compatibility shims
 

@@ -4,18 +4,21 @@
 //! Anthropic, Gemini, and chat-completions require each tool result to follow
 //! its assistant call immediately. When a result is delayed, insert a
 //! placeholder beside the call and rewrite the real result as user text.
+//! Tool images then move to user messages after their result run (see
+//! [`super::tool_images`]).
 
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
 };
 
+use super::tool_images::{defer_tool_result_images, tool_images_message};
 use crate::model::{ContentBlock, Message, ToolResult};
 
 const LATE_PLACEHOLDER: &str = "result delivered later in this conversation";
 
 /// Returns history where every completed assistant tool call is followed by an
-/// adjacent `ToolResult`, rewriting delayed results into user text.
+/// adjacent image-free `ToolResult`, rewriting delayed results into user text.
 pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Vec<Cow<'_, Message>> {
     let mut out = Vec::with_capacity(messages.len());
     let mut late_names = BTreeMap::<String, String>::new();
@@ -28,6 +31,7 @@ pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Vec<Cow<'_, M
                     &name,
                     &result.content,
                 )));
+                out.extend(tool_images_message(result).map(Cow::Owned));
                 index += 1;
                 continue;
             }
@@ -57,16 +61,15 @@ pub(crate) fn normalize_late_tool_results(messages: &[Message]) -> Vec<Cow<'_, M
             if adjacent_ids.contains(id) {
                 continue;
             }
-            out.push(Cow::Owned(Message::ToolResult(ToolResult {
-                id: id.to_owned(),
-                ok: true,
-                content: LATE_PLACEHOLDER.into(),
-            })));
+            out.push(Cow::Owned(Message::ToolResult(ToolResult::succeeded(
+                id,
+                LATE_PLACEHOLDER,
+            ))));
             late_names.insert(id.to_owned(), name.to_owned());
         }
     }
 
-    out
+    defer_tool_result_images(out)
 }
 
 fn assistant_tool_calls(message: &Message) -> Vec<(&str, &str)> {

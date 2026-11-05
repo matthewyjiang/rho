@@ -185,7 +185,7 @@ pub use error::{
 };
 pub use event::{
     ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,
-    StopReason, ToolCompletion, ToolFailure,
+    StopReason, ToolCompletion, ToolExecution, ToolFailure,
 };
 pub use host_input::{
     DefaultSelection, HostChoice, HostInputRefusal, HostInputRequest, HostInputResponse,

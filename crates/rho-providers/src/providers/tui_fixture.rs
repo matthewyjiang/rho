@@ -435,17 +435,15 @@ mod tests {
     fn questionnaire_count_is_scoped_to_the_current_user_turn() {
         let messages = vec![
             Message::user_text("fixture questionnaire"),
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: QUESTIONNAIRE_CALL_ID.into(),
-                ok: true,
-                content: "old answer".into(),
-            }),
+            Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
+                QUESTIONNAIRE_CALL_ID,
+                "old answer",
+            )),
             Message::user_text("fixture questionnaire"),
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: QUESTIONNAIRE_CALL_ID.into(),
-                ok: true,
-                content: "current answer".into(),
-            }),
+            Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
+                QUESTIONNAIRE_CALL_ID,
+                "current answer",
+            )),
         ];
         let request = ModelRequest {
             messages: &messages,

@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::model::{ImageContent, ToolCall};
+use rho_sdk::model::{ImageContent, ToolCall, ToolResultStatus};
 use serde_json::json;
 
 use super::*;
@@ -12,24 +12,20 @@ fn call(id: &str, path: &str) -> Message {
     })])
 }
 
-fn result(id: &str, ok: bool, bytes: usize) -> ToolResult {
-    ToolResult {
-        id: id.into(),
-        ok,
-        content: "x".repeat(bytes),
-    }
+fn result(id: &str, status: ToolResultStatus, bytes: usize) -> ToolResult {
+    ToolResult::new(id, status, "x".repeat(bytes))
 }
 
 fn stub(result: &ToolResult, path: &str, status: &str, images: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: result.id.clone(),
-        ok: result.ok,
-        content: format!(
+    Message::ToolResult(ToolResult::new(
+        result.id.clone(),
+        result.status,
+        format!(
             "[elided tool result: read_file path={path} · {status} · {} bytes{images} · recall_id={}; fetch the text with the sessions tool, action=recall]",
             result.content.len(),
             recall_id(result),
         ),
-    })
+    ))
 }
 
 // Covers: oldest-first selection outside the recent tail, the minimum-size
@@ -37,10 +33,10 @@ fn stub(result: &ToolResult, path: &str, status: &str, images: &str) -> Message 
 // Owner: elision tier selection policy.
 #[test]
 fn elides_oldest_large_results_outside_the_tail_until_target() {
-    let old = result("a", true, 8_000);
-    let small = result("b", false, 200);
-    let middle = result("c", false, 8_000);
-    let recent = result("d", true, 8_000);
+    let old = result("a", ToolResultStatus::Succeeded, 8_000);
+    let small = result("b", ToolResultStatus::Failed, 200);
+    let middle = result("c", ToolResultStatus::Failed, 8_000);
+    let recent = result("d", ToolResultStatus::Succeeded, 8_000);
     let messages = vec![
         Message::System("system".into()),
         Message::user_text("go"),
@@ -85,38 +81,39 @@ fn elides_oldest_large_results_outside_the_tail_until_target() {
     }
 }
 
-// Covers: a tool-image supplement is removed with its elided result, so no
-// orphaned image message remains, and the stub records the image count.
-// Owner: elision tier supplement pairing.
+// Covers: an elided result drops its images even when its text is small, the
+// stub records the image count, and the original keeps the images.
+// Owner: elision tier image handling.
 #[test]
-fn elided_result_drops_its_image_supplement() {
-    let shot = result("shot", true, 10);
-    let image = ImageContent {
+fn elided_result_drops_its_images() {
+    let shot = result("shot", ToolResultStatus::Succeeded, 10).with_images(vec![ImageContent {
         mime_type: "image/png".into(),
         data: "a".repeat(20_000),
-    };
+    }]);
     let messages = vec![
         Message::System("system".into()),
         Message::user_text("look"),
         call("shot", "shot.png"),
         Message::ToolResult(shot.clone()),
-        Message::tool_image_supplement("read_file", "shot", vec![image]).unwrap(),
         Message::user_text("recent"),
         Message::assistant_text("y".repeat(4_000)),
     ];
 
-    let elision = elide_tool_results(&messages, &[], 1_200).unwrap();
+    let elision = elide_tool_results(&messages, &[], 1_000).unwrap();
 
     assert_eq!(
-        elision.messages,
-        vec![
-            messages[0].clone(),
-            messages[1].clone(),
-            messages[2].clone(),
-            stub(&shot, "shot.png", "ok", " + 1 image"),
-            messages[5].clone(),
-            messages[6].clone(),
-        ]
+        elision,
+        Elision {
+            messages: vec![
+                messages[0].clone(),
+                messages[1].clone(),
+                messages[2].clone(),
+                stub(&shot, "shot.png", "ok", " + 1 image"),
+                messages[4].clone(),
+                messages[5].clone(),
+            ],
+            originals: vec![shot],
+        }
     );
 }
 
@@ -129,7 +126,7 @@ fn returns_none_when_nothing_is_eligible() {
         Message::System("system".into()),
         Message::user_text("x".repeat(8_000)),
         call("a", "a"),
-        Message::ToolResult(result("a", true, 100)),
+        Message::ToolResult(result("a", ToolResultStatus::Succeeded, 100)),
         Message::user_text("recent"),
     ];
 
@@ -137,15 +134,14 @@ fn returns_none_when_nothing_is_eligible() {
 }
 
 // Covers: providers that reuse call ids (`call_0` every turn). Each result
-// keeps its own call summary, and an image stays with the result it follows,
-// so eliding only the first result neither drops the second's image nor
-// borrows its tool name.
+// keeps its own call summary, so eliding only the first result neither drops
+// the second's image nor borrows its tool name.
 // Owner: elision tier ownership.
 #[test]
 fn reused_call_ids_pair_by_position() {
-    let first = result("call_0", true, 8_000);
-    let second = result("call_0", true, 10);
-    let image = || ImageContent {
+    let first = result("call_0", ToolResultStatus::Succeeded, 8_000);
+    let second = result("call_0", ToolResultStatus::Succeeded, 10);
+    let image = ImageContent {
         mime_type: "image/png".into(),
         data: "a".repeat(8_000),
     };
@@ -155,8 +151,7 @@ fn reused_call_ids_pair_by_position() {
         call("call_0", "first.rs"),
         Message::ToolResult(first.clone()),
         call("call_0", "second.png"),
-        Message::ToolResult(second),
-        Message::tool_image_supplement("read_file", "call_0", vec![image()]).unwrap(),
+        Message::ToolResult(second.with_images(vec![image])),
         Message::user_text("recent"),
         Message::assistant_text("y".repeat(4_000)),
     ];

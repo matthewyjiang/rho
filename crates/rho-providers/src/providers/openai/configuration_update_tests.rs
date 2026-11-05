@@ -182,11 +182,7 @@ fn gpt6_create_bodies_preserve_prefix_effort() {
             messages: vec![
                 Message::user_text("read it"),
                 assistant_tool_call(&astra, "low"),
-                Message::ToolResult(ToolResult {
-                    id: "call_1".into(),
-                    ok: true,
-                    content: "contents".into(),
-                }),
+                Message::ToolResult(ToolResult::succeeded("call_1", "contents")),
             ],
             level: ReasoningLevel::High,
             expected_effort: "low",

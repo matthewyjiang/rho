@@ -35,12 +35,13 @@ fn restore_uses_successful_paired_native_calls_only_without_metadata() {
             arguments: serde_json::to_value(list).unwrap(),
         })])
     };
-    let result = |id: &str, ok| {
-        Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok,
-            content: "receipt".into(),
-        })
+    let result = |id: &str, ok: bool| {
+        let status = if ok {
+            rho_sdk::model::ToolResultStatus::Succeeded
+        } else {
+            rho_sdk::model::ToolResultStatus::Failed
+        };
+        Message::ToolResult(ToolResult::new(id, status, "receipt"))
     };
     let history = vec![
         proposal("one", &first),
@@ -73,11 +74,7 @@ fn todo_call(id: &str, list: &TodoList) -> [Message; 2] {
             name: "todo".into(),
             arguments: serde_json::to_value(list).unwrap(),
         })]),
-        Message::ToolResult(ToolResult {
-            id: id.into(),
-            ok: true,
-            content: "receipt".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded(id, "receipt")),
     ]
 }
 

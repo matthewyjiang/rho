@@ -403,11 +403,7 @@ async fn native_compaction_cancellation_is_explicit() {
 }
 
 fn elision_history() -> (rho_sdk::model::ToolResult, Vec<Message>) {
-    let old = rho_sdk::model::ToolResult {
-        id: "old".into(),
-        ok: true,
-        content: "x".repeat(40_000),
-    };
+    let old = rho_sdk::model::ToolResult::succeeded("old", "x".repeat(40_000));
     let history = vec![
         Message::System("system".into()),
         Message::user_text("read it"),
@@ -478,11 +474,10 @@ async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
                 name: "read_file".into(),
                 arguments: serde_json::json!({"path": "recent.rs"}),
             })]),
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: "recent-tool".into(),
-                ok: true,
-                content: old.content[..old.content.len() / 10].to_owned(),
-            }),
+            Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
+                "recent-tool",
+                old.content[..old.content.len() / 10].to_owned(),
+            )),
         ],
     );
     let mut registry = vec![read_spec(), read_spec()];

@@ -120,8 +120,7 @@ pub(super) fn replay_batches(
                 | HistoryMessage::User(_)
                 | HistoryMessage::ChecklistRestatement(_)
                 | HistoryMessage::CompactionSummary(_)
-                | HistoryMessage::ToolResult(_)
-                | HistoryMessage::ToolImageSupplement(_) => continue,
+                | HistoryMessage::ToolResult(_) => continue,
             };
             let members: Vec<EvalMember> = blocks
                 .iter()

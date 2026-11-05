@@ -6,7 +6,7 @@
 //! they are written, then the whole transcript is elided in the middle so the
 //! advisor keeps both the opening of the session and the most recent work.
 
-use rho_sdk::model::{ContentBlock, Message, ToolCall};
+use rho_sdk::model::{ContentBlock, ImageContent, Message, ToolCall};
 
 use crate::history_message::HistoryMessage;
 
@@ -65,15 +65,6 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
             push_clipped(out, text, budget.system_prompt_bytes);
             out.push('\n');
         }
-        HistoryMessage::ToolImageSupplement(images) => {
-            out.push_str("\n## tool output images\n\n");
-            out.push_str(&format!(
-                "tool: {} ({})\n",
-                images.tool_name(),
-                images.tool_call_id()
-            ));
-            push_blocks(out, images.content(), budget);
-        }
         HistoryMessage::CompactionSummary(summary) => {
             out.push_str("\n## compaction summary (model-written)\n\n");
             out.push_str(summary.text().trim_end());
@@ -108,7 +99,7 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
             }
         }
         HistoryMessage::ToolResult(result) => {
-            let status = if result.ok { "ok" } else { "error" };
+            let status = if result.is_failure() { "error" } else { "ok" };
             out.push_str("\n## tool result ");
             out.push_str(&result.id);
             out.push_str(" (");
@@ -116,6 +107,9 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
             out.push_str(")\n\n");
             push_clipped(out, &result.content, budget.tool_result_bytes);
             out.push('\n');
+            for image in &result.images {
+                push_image(out, image);
+            }
         }
     }
 }
@@ -127,14 +121,16 @@ fn push_blocks(out: &mut String, blocks: &[ContentBlock], budget: TranscriptBudg
                 out.push_str(text.trim_end());
                 out.push('\n');
             }
-            ContentBlock::Image(image) => {
-                out.push_str("[image: ");
-                out.push_str(&image.mime_type);
-                out.push_str("]\n");
-            }
+            ContentBlock::Image(image) => push_image(out, image),
             ContentBlock::ToolCall(call) => push_tool_call(out, call, budget.tool_call_bytes),
         }
     }
+}
+
+fn push_image(out: &mut String, image: &ImageContent) {
+    out.push_str("[image: ");
+    out.push_str(&image.mime_type);
+    out.push_str("]\n");
 }
 
 fn push_tool_call(out: &mut String, call: &ToolCall, max_bytes: usize) {

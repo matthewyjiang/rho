@@ -87,38 +87,22 @@ impl Replay<'_> {
             SemanticMessage::ToolResult(result) => {
                 let mut call =
                     ToolCall::new(ToolCallId::new(result.id.clone()), UNNAMED_TOOL_TITLE)
-                        .status(if result.ok {
-                            ToolCallStatus::Completed
-                        } else {
+                        .status(if result.is_failure() {
                             ToolCallStatus::Failed
+                        } else {
+                            ToolCallStatus::Completed
                         })
                         .raw_output(Value::String(result.content.clone()));
                 if !result.content.is_empty() {
                     call.content
                         .push(ToolCallContent::from(result.content.clone()));
                 }
-                notifications.push(notify(session_id, self.tool_update(call)));
-            }
-            SemanticMessage::ToolImageSupplement(images) => {
-                let status = self
-                    .tools
-                    .get(images.tool_call_id())
-                    .map_or(ToolCallStatus::Completed, |call| call.status);
-                let call =
-                    ToolCall::new(ToolCallId::new(images.tool_call_id()), images.tool_name())
-                        .name(images.tool_name().to_owned())
-                        .status(status)
-                        .content(
-                            images
-                                .images()
-                                .map(|image| {
-                                    ToolCallContent::from(ContentBlock::Image(ImageContent::new(
-                                        image.data.clone(),
-                                        image.mime_type.clone(),
-                                    )))
-                                })
-                                .collect(),
-                        );
+                call.content.extend(result.images.iter().map(|image| {
+                    ToolCallContent::from(ContentBlock::Image(ImageContent::new(
+                        image.data.clone(),
+                        image.mime_type.clone(),
+                    )))
+                }));
                 notifications.push(notify(session_id, self.tool_update(call)));
             }
             SemanticMessage::User(blocks) => {
@@ -219,8 +203,7 @@ impl Replay<'_> {
         }
     }
 
-    /// Results and supplemental images replace ACP content as a whole, so
-    /// retain earlier output. An orphan result still opens a complete card.
+    /// Results replace ACP content as a whole, so retain earlier output. An orphan result still opens a complete card.
     fn tool_update(&mut self, mut call: ToolCall) -> SessionUpdate {
         let id = call.tool_call_id.0.to_string();
         if let Some(previous) = self.tools.get_mut(&id) {

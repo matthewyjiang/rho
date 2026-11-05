@@ -427,7 +427,7 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
     let mut progress_messages = Vec::new();
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolUpdated { progress, .. } = event {
-            progress_messages.push(progress.text().to_string());
+            progress_messages.push(progress.message().to_string());
         }
     }
     run.outcome().await.unwrap();
@@ -492,7 +492,7 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
     let mut output = None;
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolFinished {
-            result: ToolCompletion::Success(completion),
+            result: ToolCompletion::Completed(completion),
             ..
         } = event
         {
@@ -620,7 +620,7 @@ async fn sdk_skill_tool_loads_embedded_agent_creator_without_workspace() {
     let mut output = None;
     while let Some(event) = run.next_event().await {
         if let RunEvent::ToolFinished {
-            result: ToolCompletion::Success(completion),
+            result: ToolCompletion::Completed(completion),
             ..
         } = event
         {

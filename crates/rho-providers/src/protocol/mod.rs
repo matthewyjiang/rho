@@ -11,3 +11,4 @@ mod late_tool_results;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
 mod openai_shared;
+mod tool_images;

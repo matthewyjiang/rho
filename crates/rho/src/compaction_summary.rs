@@ -162,10 +162,6 @@ fn marker_parts(message: &Message) -> (&'static str, String) {
             ("earlier compaction summary", first_line(summary.text()))
         }
         HistoryMessage::System(text) => ("system", first_line(text)),
-        HistoryMessage::ToolImageSupplement(images) => (
-            "tool output images",
-            format!("{} ({})", images.tool_name(), images.tool_call_id()),
-        ),
         HistoryMessage::ChecklistRestatement(blocks) => (
             "checklist restatement (host context, not human authorization)",
             block_marker(blocks),
@@ -209,7 +205,7 @@ fn block_marker(blocks: &[ContentBlock]) -> String {
 }
 
 fn tool_result_marker(result: &ToolResult) -> String {
-    let status = if result.ok { "ok" } else { "error" };
+    let status = if result.is_failure() { "error" } else { "ok" };
     match first_nonempty_line(&result.content) {
         Some(line) => format!("({}) [{status}] {line}", result.id),
         None => format!("({}) [{status}]", result.id),
@@ -329,7 +325,6 @@ fn message_content_blocks(message: &Message) -> &[ContentBlock] {
         | HistoryMessage::ChecklistRestatement(_)
         | HistoryMessage::System(_)
         | HistoryMessage::User(_)
-        | HistoryMessage::ToolImageSupplement(_)
         | HistoryMessage::ToolResult(_) => &[],
     }
 }
@@ -344,14 +339,6 @@ fn render_message_for_summary(message: &Message, names: &HashMap<&str, &str>) ->
             render_blocks(blocks)
         ),
         HistoryMessage::System(text) => format!("system:\n{text}"),
-        HistoryMessage::ToolImageSupplement(images) => {
-            format!(
-                "tool output images for {} ({}):\n{}",
-                images.tool_name(),
-                images.tool_call_id(),
-                render_blocks(images.content())
-            )
-        }
         HistoryMessage::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
         HistoryMessage::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
         HistoryMessage::EnrichedAssistant(message) => {
@@ -388,11 +375,15 @@ fn render_tool_call(call: &ToolCall) -> String {
 
 fn render_tool_result(result: &ToolResult, names: &HashMap<&str, &str>) -> String {
     let name = names.get(result.id.as_str()).copied().unwrap_or("unknown");
-    let status = if result.ok { "ok" } else { "error" };
-    format!(
+    let status = if result.is_failure() { "error" } else { "ok" };
+    let mut rendered = format!(
         "tool result {name} ({}) [{status}]:\n{}",
         result.id, result.content
-    )
+    );
+    for image in &result.images {
+        rendered.push_str(&format!("\n[image: {}]", image.mime_type));
+    }
+    rendered
 }
 
 #[cfg(test)]

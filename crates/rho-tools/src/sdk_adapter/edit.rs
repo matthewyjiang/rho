@@ -287,8 +287,8 @@ fn execute_prepared_string_edit(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("editing {display}"))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                ToolProgress::new(format!("editing {display}"))
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         workspace.revalidate(&resolved).map_err(map_path_error)?;
@@ -327,8 +327,8 @@ fn execute_prepared_patch(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("applying patch ({total} file op(s))"))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                ToolProgress::new(format!("applying patch ({total} file op(s))"))
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         let mutation_paths = resolved
@@ -369,9 +369,9 @@ fn execute_prepared_patch(
         let _ = context
             .progress()
             .send(
-                ToolProgress::message(format!("updated {} file(s)", outcome.display_paths.len()))
+                ToolProgress::new(format!("updated {} file(s)", outcome.display_paths.len()))
                     .units(total.max(1), total.max(1))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
+                    .with_metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
         Ok(mutation_output(outcome))

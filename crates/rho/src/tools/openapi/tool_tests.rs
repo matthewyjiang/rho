@@ -255,7 +255,7 @@ async fn results_carry_status_body_next_and_kept_headers() {
     for (arguments, failed, data) in cases {
         let completion = call(list_items.clone(), arguments, RecordingPolicy::default()).await;
         let output = match completion {
-            ToolCompletion::Success(output) | ToolCompletion::CompletedFailure(output) => output,
+            ToolCompletion::Completed(output) => output,
             other => panic!("expected a completed call, got {other:?}"),
         };
         assert_eq!(
@@ -282,7 +282,7 @@ auth = {{ type = "api_key", in = "query", name = "api_key", value_env = "KEY" }}
     let list_items = tool(&config, &[("KEY", "k")], MAX_RESPONSE_BYTES, "listItems").await;
 
     let completion = call(list_items, json!({"page": 1}), RecordingPolicy::default()).await;
-    let ToolCompletion::Success(output) = completion else {
+    let ToolCompletion::Completed(output) = completion else {
         panic!("expected success, got {completion:?}");
     };
     assert_eq!(

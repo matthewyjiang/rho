@@ -482,11 +482,10 @@ fn tool_result_request_body(tool_results: usize) -> AnthropicRequest {
         Message::Assistant(vec![ContentBlock::Text("ok".into())]),
     ];
     messages.extend((1..=tool_results).map(|index| {
-        Message::ToolResult(rho_sdk::model::ToolResult {
-            id: format!("toolu_{index}"),
-            ok: true,
-            content: index.to_string(),
-        })
+        Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
+            format!("toolu_{index}"),
+            index.to_string(),
+        ))
     }));
     messages.push(Message::User(vec![ContentBlock::Text("suffix".into())]));
     provider

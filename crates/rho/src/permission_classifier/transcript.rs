@@ -113,10 +113,9 @@ fn render(
 
     for message in history {
         match HistoryMessage::of(message) {
-            // Tool images, model-written summaries, and host-restated model
-            // checklists cannot supply evidence of human authorization.
+            // Model-written summaries and host-restated model checklists
+            // cannot supply evidence of human authorization.
             HistoryMessage::System(_)
-            | HistoryMessage::ToolImageSupplement(_)
             | HistoryMessage::ChecklistRestatement(_)
             | HistoryMessage::CompactionSummary(_) => {}
             HistoryMessage::User(blocks) => {
@@ -262,7 +261,7 @@ fn append_questionnaire_answers(
     call: &ToolCall,
     result: &ToolResult,
 ) -> anyhow::Result<()> {
-    if call.name != crate::questionnaire::TOOL_NAME || !result.ok {
+    if call.name != crate::questionnaire::TOOL_NAME || result.is_failure() {
         return Ok(());
     }
     let Ok(request) = crate::questionnaire::parse_request(call.arguments.clone()) else {

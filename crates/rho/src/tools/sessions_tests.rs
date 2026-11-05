@@ -71,7 +71,7 @@ async fn archive_access_is_authorized_before_search_execution() {
         }
         run.outcome().await.unwrap();
         match (allow_archive, result.unwrap()) {
-            (true, ToolCompletion::Success(output)) => {
+            (true, ToolCompletion::Completed(output)) => {
                 let output: Value = serde_json::from_str(output.content()).unwrap();
                 assert_eq!(output["sessions"][0]["id"], prior.id());
             }

@@ -1,4 +1,5 @@
-//! Strip image input for models the catalog marks as text-only.
+//! Strip image input, including tool-result images, for models the catalog
+//! marks as text-only.
 //!
 //! Every built-in transport goes through [`crate::impl_sdk_model_provider`],
 //! which calls [`gate_images`] before conversion. The wire converters then
@@ -7,7 +8,7 @@
 
 use std::borrow::Cow;
 
-use rho_sdk::model::{ContentBlock, Message, ModelIdentity};
+use rho_sdk::model::{ContentBlock, Message, ModelIdentity, ToolResult};
 
 use crate::model::models_dev::{self, ImageInput};
 
@@ -17,11 +18,11 @@ pub(crate) const IMAGE_UNSUPPORTED_TEXT: &str =
 
 /// Returns history safe to send to `identity`.
 ///
-/// Borrowed unchanged unless the history carries an image and the catalog
-/// explicitly marks the model `Unsupported`. `Unknown` keeps images, so
-/// uncatalogued hosts behave as before.
+/// Borrowed unchanged unless the history carries a user or tool-result image
+/// and the catalog explicitly marks the model `Unsupported`. `Unknown` keeps
+/// images, so uncatalogued hosts behave as before.
 pub fn gate_images<'a>(identity: &ModelIdentity, messages: &'a [Message]) -> Cow<'a, [Message]> {
-    if !messages.iter().any(user_has_image) {
+    if !messages.iter().any(has_input_image) {
         return Cow::Borrowed(messages);
     }
     // Stale rows count: modalities rarely change, and an offline session should
@@ -30,19 +31,27 @@ pub fn gate_images<'a>(identity: &ModelIdentity, messages: &'a [Message]) -> Cow
         .map_or(ImageInput::Unknown, |metadata| metadata.image_input);
     match image_input {
         ImageInput::Supported | ImageInput::Unknown => Cow::Borrowed(messages),
-        ImageInput::Unsupported => Cow::Owned(strip_user_images(messages)),
+        ImageInput::Unsupported => Cow::Owned(strip_input_images(messages)),
     }
 }
 
-fn user_has_image(message: &Message) -> bool {
-    matches!(message, Message::User(blocks) if blocks.iter().any(|block| matches!(block, ContentBlock::Image(_))))
+fn has_input_image(message: &Message) -> bool {
+    match message {
+        Message::User(blocks) => blocks
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Image(_))),
+        Message::ToolResult(result) => !result.images.is_empty(),
+        Message::System(_)
+        | Message::Assistant(_)
+        | Message::EnrichedAssistant(_)
+        | Message::AbortedAssistant(_) => false,
+    }
 }
 
-/// Replaces user-role images with [`IMAGE_UNSUPPORTED_TEXT`].
+/// Replaces user and tool-result images with [`IMAGE_UNSUPPORTED_TEXT`].
 ///
-/// Only user-role images are touched: assistant images already degrade to
-/// text inside each protocol converter.
-fn strip_user_images(messages: &[Message]) -> Vec<Message> {
+/// Assistant images already degrade to text inside each protocol converter.
+fn strip_input_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
         .map(|message| match message {
@@ -55,6 +64,14 @@ fn strip_user_images(messages: &[Message]) -> Vec<Message> {
                     })
                     .collect(),
             ),
+            Message::ToolResult(result) if !result.images.is_empty() => {
+                let mut content = result.content.clone();
+                for _ in &result.images {
+                    content.push('\n');
+                    content.push_str(IMAGE_UNSUPPORTED_TEXT);
+                }
+                Message::ToolResult(ToolResult::new(result.id.clone(), result.status, content))
+            }
             other => other.clone(),
         })
         .collect()

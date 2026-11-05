@@ -80,7 +80,7 @@ fn tool_progress(params: ProgressNotificationParam) -> ToolProgress {
     let message = params
         .message
         .unwrap_or_else(|| "MCP server reported progress".into());
-    let progress = ToolProgress::message(message);
+    let progress = ToolProgress::new(message);
     match params.total {
         Some(total) if total.is_finite() && total > 0.0 => {
             progress.units(whole_units(params.progress), whole_units(total))

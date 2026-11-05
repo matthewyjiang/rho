@@ -131,7 +131,7 @@ pub(crate) fn split_system_and_messages(
                 vec![AnthropicContentBlock::ToolResult {
                     tool_use_id: result.id.clone(),
                     content: result.content.clone(),
-                    is_error: !result.ok,
+                    is_error: result.is_failure(),
                     cache_control: None,
                 }],
             ),
@@ -305,11 +305,7 @@ mod tests {
     #[test]
     fn marks_failed_tool_results_as_errors() {
         let (_system, messages) = split_system_and_messages(
-            &[Message::ToolResult(ToolResult {
-                id: "toolu_1".into(),
-                ok: false,
-                content: "failed".into(),
-            })],
+            &[Message::ToolResult(ToolResult::failed("toolu_1", "failed"))],
             &target(),
             ProviderContextReplay::Enabled,
         )

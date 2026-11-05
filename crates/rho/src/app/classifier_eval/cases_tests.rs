@@ -51,11 +51,7 @@ fn fixture_cases_build_production_shaped_requests() {
                 "read_file",
                 serde_json::json!({"path": "Cargo.toml"})
             )]),
-            Message::ToolResult(ToolResult {
-                id: "c1".into(),
-                ok: true,
-                content: "[package]".into(),
-            }),
+            Message::ToolResult(ToolResult::succeeded("c1", "[package]")),
             Message::Assistant(vec![call(
                 "pending",
                 "bash",
@@ -118,11 +114,7 @@ fn replay_ends_each_history_at_its_unanswered_call() {
             "bash",
             serde_json::json!({"command": "ls"}),
         )]),
-        Message::ToolResult(ToolResult {
-            id: "call_0".into(),
-            ok: true,
-            content: "a b".into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded("call_0", "a b")),
         Message::AbortedAssistant(Box::new(AbortedAssistant {
             content: vec![call(
                 "call_0",

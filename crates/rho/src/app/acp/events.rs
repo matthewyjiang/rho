@@ -139,6 +139,7 @@ impl EventMapper {
                 call_id,
                 name,
                 metadata,
+                execution: _,
             } => {
                 let proposed = self
                     .proposed
@@ -156,13 +157,13 @@ impl EventMapper {
                 )))
             }
             RunEvent::ToolUpdated { call_id, progress } => {
-                if let Some(terminal) = progress.presentation().host_terminal_id() {
+                if let Some(terminal) = progress.metadata().host_terminal_id() {
                     self.terminals
                         .insert(call_id.as_str().to_owned(), terminal.to_owned());
                 }
                 let content = match self.terminals.get(call_id.as_str()) {
                     Some(terminal) => vec![terminal_content(terminal)],
-                    None => vec![ToolCallContent::from(progress.text())],
+                    None => vec![ToolCallContent::from(progress.message())],
                 };
                 self.tool_update(
                     call_id,
@@ -525,10 +526,10 @@ fn tool_title(
 
 fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallContent>) {
     match result {
-        ToolCompletion::CompletedFailure(output) => {
+        ToolCompletion::Completed(output) if output.is_failure() => {
             (ToolCallStatus::Failed, success_content(output))
         }
-        ToolCompletion::Success(output) => (ToolCallStatus::Completed, success_content(output)),
+        ToolCompletion::Completed(output) => (ToolCallStatus::Completed, success_content(output)),
         ToolCompletion::Failure(failure) => (
             ToolCallStatus::Failed,
             vec![ToolCallContent::from(failure.message())],

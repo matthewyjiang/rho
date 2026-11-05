@@ -22,11 +22,7 @@ fn turn(call: ToolCall, content: &str) -> [Message; 2] {
     let id = call.id.clone();
     [
         Message::Assistant(vec![ContentBlock::ToolCall(call)]),
-        Message::ToolResult(ToolResult {
-            id,
-            ok: true,
-            content: content.into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded(id, content)),
     ]
 }
 

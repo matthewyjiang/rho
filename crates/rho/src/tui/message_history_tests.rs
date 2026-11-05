@@ -52,20 +52,26 @@ fn notification_display_preserves_ownership() {
 // Covers: restored tool screenshots must not be presented as human messages.
 // Owner: pure history-to-transcript projection; the SDK owns image transport.
 #[test]
-fn tool_image_supplement_preserves_tool_ownership() {
-    let message = Message::tool_image_supplement(
-        "computer",
-        "capture",
-        vec![rho_sdk::model::ImageContent {
-            data: "image-data".into(),
-            mime_type: "image/png".into(),
-        }],
-    )
-    .unwrap();
+fn tool_result_images_preserve_tool_ownership() {
+    let messages = [
+        call("capture", "computer"),
+        Message::ToolResult(ToolResult::succeeded("capture", "ok").with_images(vec![
+            rho_sdk::model::ImageContent {
+                data: "image-data".into(),
+                mime_type: "image/png".into(),
+            },
+        ])),
+    ];
     let entries =
-        transcript_entries_from_messages(&[message], std::path::Path::new("."), Default::default());
-    assert!(matches!(entries.as_slice(), [Entry::Tool(_)]));
-    assert_eq!(tool_names(&entries), vec!["computer"]);
+        transcript_entries_from_messages(&messages, std::path::Path::new("."), Default::default());
+    assert!(matches!(
+        entries.as_slice(),
+        [Entry::Tool(_), Entry::Tool(_)]
+    ));
+    assert_eq!(
+        tool_names(&entries).last().map(String::as_str),
+        Some("computer")
+    );
 }
 
 fn call(id: &str, name: &str) -> Message {
@@ -92,11 +98,7 @@ fn calls(entries: &[(&str, &str)]) -> Message {
 }
 
 fn result(id: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: id.into(),
-        ok: true,
-        content: "ok".into(),
-    })
+    Message::ToolResult(ToolResult::succeeded(id, "ok"))
 }
 
 fn tool_names(entries: &[Entry]) -> Vec<String> {
@@ -187,11 +189,7 @@ fn transcript_restores_message_receipts() {
                 name: "agents".into(),
                 arguments: json!({"action": "message", "id": "abc123", "message": body}),
             })]),
-            Message::ToolResult(ToolResult {
-                id: "message-call".into(),
-                ok: true,
-                content,
-            }),
+            Message::ToolResult(ToolResult::succeeded("message-call", content)),
         ];
         let entries = transcript_entries_from_messages(
             &messages,

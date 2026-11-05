@@ -20,7 +20,7 @@ pub use contract::AbortedAssistant;
 pub use contract::{
     AssistantMessage, ContentBlock, ImageContent, Message, ModelError, ModelEvent, ModelIdentity,
     ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
-    ProviderReportedErrorKind, ToolCall, ToolResult, ToolSpec,
+    ProviderReportedErrorKind, ToolCall, ToolResult, ToolResultStatus, ToolSpec,
 };
 pub use display_name::{
     ensure_model_catalog_names, model_display_name, model_reference_with_display_name,

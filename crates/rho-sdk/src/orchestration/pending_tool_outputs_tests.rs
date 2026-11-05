@@ -7,7 +7,7 @@ use super::*;
 // Covers: a completed failure retains text pairing but must not deliver images.
 // Owner: SDK output commitment; successful images are covered by tool_output_images.
 #[test]
-fn completed_failures_drop_image_supplements() {
+fn completed_failures_drop_images() {
     let completion = ToolCompletion::from_result(Ok(ToolOutput::text("result")
         .with_images(vec![ImageContent {
             data: "aW1hZ2U=".into(),
@@ -21,10 +21,6 @@ fn completed_failures_drop_image_supplements() {
     );
     assert_eq!(
         history,
-        vec![Message::ToolResult(ToolResult {
-            id: "call".into(),
-            ok: false,
-            content: "result".into(),
-        })]
+        vec![Message::ToolResult(ToolResult::failed("call", "result"))]
     );
 }

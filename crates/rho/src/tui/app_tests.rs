@@ -334,11 +334,10 @@ fn recovered_session_messages_become_transcript_entries() {
                 name: "read_file".into(),
                 arguments: serde_json::json!({"path": "src/main.rs"}),
             })]),
-            Message::ToolResult(rho_tools::tool::ToolResult {
-                id: "call_1".into(),
-                ok: false,
-                content: "missing file".into(),
-            }),
+            Message::ToolResult(rho_tools::tool::ToolResult::failed(
+                "call_1",
+                "missing file",
+            )),
         ],
         std::path::Path::new(""),
         Default::default(),

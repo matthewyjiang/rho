@@ -439,8 +439,8 @@ async fn send_advisor_progress(progress: &ToolProgressSender, update: &OneShotUp
 }
 
 fn advisor_progress_message(update: &OneShotUpdate) -> ToolProgress {
-    ToolProgress::message(update.text.to_string())
-        .metadata(ToolMetadata::new().command_summary(update.phase.label()))
+    ToolProgress::new(update.text.to_string())
+        .with_metadata(ToolMetadata::new().command_summary(update.phase.label()))
 }
 
 fn execution_error(message: impl Into<String>) -> ToolError {

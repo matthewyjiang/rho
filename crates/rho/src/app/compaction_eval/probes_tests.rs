@@ -15,11 +15,12 @@ fn call(id: &str, name: &str, arguments: serde_json::Value) -> Message {
 }
 
 fn result(id: &str, ok: bool, content: &str) -> Message {
-    Message::ToolResult(ToolResult {
-        id: id.into(),
-        ok,
-        content: content.into(),
-    })
+    let status = if ok {
+        rho_sdk::model::ToolResultStatus::Succeeded
+    } else {
+        rho_sdk::model::ToolResultStatus::Failed
+    };
+    Message::ToolResult(ToolResult::new(id, status, content))
 }
 
 // Covers: references cover every edit format, pick the latest check command

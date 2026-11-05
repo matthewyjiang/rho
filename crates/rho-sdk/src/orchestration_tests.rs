@@ -281,11 +281,7 @@ impl Tool for CompletingProgressTool {
 
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            if !context
-                .progress()
-                .send(ToolProgress::message("progress"))
-                .await
-            {
+            if !context.progress().send(ToolProgress::new("progress")).await {
                 return Err(ToolError::cancelled());
             }
             self.progress_sent.store(true, Ordering::Release);
@@ -350,11 +346,7 @@ async fn wait_for_flag(flag: &AtomicBool) {
 }
 
 fn interrupted_result(id: &str) -> ToolResult {
-    ToolResult {
-        id: id.into(),
-        ok: false,
-        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-    }
+    ToolResult::failed(id, INTERRUPTED_TOOL_RESULT_CONTENT)
 }
 
 fn session_tool_results(session: &Session) -> Vec<ToolResult> {
@@ -509,11 +501,7 @@ async fn cancellation_between_tools_preserves_completed_results() {
         &session,
         &mut run,
         vec![
-            ToolResult {
-                id: "completed".into(),
-                ok: true,
-                content: "completed".into(),
-            },
+            ToolResult::succeeded("completed", "completed"),
             interrupted_result("unresolved"),
         ],
     )
@@ -563,11 +551,7 @@ async fn cancellation_during_progress_preserves_a_completed_tool_and_interrupts_
         &session,
         &mut run,
         vec![
-            ToolResult {
-                id: "progress".into(),
-                ok: true,
-                content: "progress-complete".into(),
-            },
+            ToolResult::succeeded("progress", "progress-complete"),
             interrupted_result("later"),
         ],
     )

@@ -44,11 +44,10 @@ fn warmup_plan_uses_tool_call_path_not_result_body() {
             arguments: json!({"file_path": "foo.ts", "old_string": "bar.py"}),
         })]),
         tool_call_path("README.md"),
-        Message::ToolResult(ToolResult {
-            id: "call".into(),
-            ok: true,
-            content: r#"also ignored.ts and {"path":"leaked.go"}"#.into(),
-        }),
+        Message::ToolResult(ToolResult::succeeded(
+            "call",
+            r#"also ignored.ts and {"path":"leaked.go"}"#,
+        )),
     ]);
     assert_eq!(
         plan,

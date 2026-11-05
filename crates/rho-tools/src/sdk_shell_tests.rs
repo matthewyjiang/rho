@@ -91,7 +91,7 @@ mod unix {
         }
         run.outcome().await.unwrap();
 
-        assert!(matches!(completion, Some(ToolCompletion::Success(_))));
+        assert!(matches!(completion, Some(ToolCompletion::Completed(_))));
         assert_eq!(
             std::fs::read_to_string(root.path().join("exact-output.txt")).unwrap(),
             "$TOKEN; && | $(touch must-not-exist)"

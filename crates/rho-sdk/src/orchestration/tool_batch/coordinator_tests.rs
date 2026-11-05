@@ -6,14 +6,14 @@ use super::*;
 async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() {
     let cancellation = CancellationToken::new();
     let (progress, progress_receiver) = tool_progress_channel(NonZeroUsize::new(2).unwrap());
-    assert!(progress.send(ToolProgress::message("first")).await);
-    assert!(progress.send(ToolProgress::message("second")).await);
+    assert!(progress.send(ToolProgress::new("first")).await);
+    assert!(progress.send(ToolProgress::new("second")).await);
     let (_host_input, host_input_receiver) = mpsc::channel(1);
     let (worker_tx, mut worker_rx) = mpsc::channel(1);
     worker_tx
         .send(WorkerEvent::Progress {
             index: 1,
-            progress: ToolProgress::message("channel full"),
+            progress: ToolProgress::new("channel full"),
         })
         .await
         .unwrap();
@@ -63,10 +63,9 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
     interrupt_batch(&cancellation, &mut batch, &mut history);
     pretty_assertions::assert_eq!(
         history,
-        vec![Message::ToolResult(ToolResult {
-            id: "completed".into(),
-            ok: false,
-            content: "completed side effect".into(),
-        })]
+        vec![Message::ToolResult(ToolResult::failed(
+            "completed",
+            "completed side effect"
+        ))]
     );
 }

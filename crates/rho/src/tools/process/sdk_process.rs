@@ -140,7 +140,7 @@ impl SdkProcess {
         for lines in updates {
             if !context
                 .progress()
-                .send(ToolProgress::message(lines.join("\n")))
+                .send(ToolProgress::new(lines.join("\n")))
                 .await
             {
                 break;
@@ -266,7 +266,7 @@ async fn execute_prepared(
     }
     .map_err(map_legacy_error)?;
     for lines in updates {
-        if !progress.send(ToolProgress::message(lines.join("\n"))).await {
+        if !progress.send(ToolProgress::new(lines.join("\n"))).await {
             break;
         }
     }

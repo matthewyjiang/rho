@@ -202,7 +202,7 @@ fn successful_native_list(history: &[Message]) -> Option<TodoList> {
         if let Message::ToolResult(result) = message {
             let list = calls
                 .remove(&result.id)
-                .filter(|_| result.ok)
+                .filter(|_| !result.is_failure())
                 .and_then(|arguments| TodoList::parse(arguments).ok());
             if let Some(list) = list {
                 latest = Some(list);

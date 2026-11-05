@@ -25,7 +25,7 @@ impl SdkGetSearchContent {
             .inner
             .execute(args, self.max_output_bytes, String::new())
             .map_err(map_legacy_error)?;
-        if !result.ok {
+        if result.is_failure() {
             return Err(ToolError::new(ToolErrorKind::Execution, result.content));
         }
         Ok(ToolOutput::text(result.content).metadata(metadata()))

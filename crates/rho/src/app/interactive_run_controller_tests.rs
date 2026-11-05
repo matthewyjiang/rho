@@ -125,11 +125,7 @@ fn compaction_checkpoints_preserve_accepted_prefix_and_later_tail() {
         let tail = vec![
             Message::user_text("steering"),
             second_receipt,
-            Message::ToolResult(rho_sdk::model::ToolResult {
-                id: "call".into(),
-                content: "tool output".into(),
-                ok: true,
-            }),
+            Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "tool output")),
             Message::assistant_text("done"),
         ];
         history.extend_from_slice(&tail[2..]);

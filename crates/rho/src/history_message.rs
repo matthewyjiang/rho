@@ -15,7 +15,7 @@
 
 use rho_sdk::model::{
     AbortedAssistant, AssistantMessage, CompactionSummary, ContentBlock, Message, SemanticMessage,
-    ToolImageSupplement, ToolResult,
+    ToolResult,
 };
 
 #[derive(Debug)]
@@ -31,7 +31,6 @@ pub(crate) enum HistoryMessage<'a> {
     EnrichedAssistant(&'a AssistantMessage),
     AbortedAssistant(&'a AbortedAssistant),
     ToolResult(&'a ToolResult),
-    ToolImageSupplement(ToolImageSupplement<'a>),
 }
 
 impl<'a> HistoryMessage<'a> {
@@ -49,7 +48,6 @@ impl<'a> HistoryMessage<'a> {
             SemanticMessage::EnrichedAssistant(message) => Self::EnrichedAssistant(message),
             SemanticMessage::AbortedAssistant(message) => Self::AbortedAssistant(message),
             SemanticMessage::ToolResult(result) => Self::ToolResult(result),
-            SemanticMessage::ToolImageSupplement(images) => Self::ToolImageSupplement(images),
         }
     }
 }

@@ -127,7 +127,8 @@ fn generation_rate_divides_tokens_by_generation_time() {
     }
 }
 
-// Covers: inconsistent legacy variants cannot disagree with hook or model status.
+// Covers: model results and hook status follow the output failure flag for
+// completed calls and fail for errors and unavailable tools.
 // Owner: SDK completion projections, including non-output completions.
 #[test]
 fn completion_status_uses_output_flag_for_model_and_hooks() {
@@ -136,43 +137,37 @@ fn completion_status_uses_output_flag_for_model_and_hooks() {
             HookToolStatus::{Failed, Succeeded, Unavailable as UnavailableStatus},
             ToolOutcomeRef,
         },
+        model::ToolResultStatus,
         tool::{ToolError, ToolErrorKind, ToolOutput},
-        ToolCompletion::{self, CompletedFailure, Success},
+        ToolCompletion::{self, Completed},
     };
 
     let successful = ToolOutput::text("result");
     let failed = successful.clone().failed();
     let error = ToolCompletion::from_result(Err(ToolError::new(ToolErrorKind::Execution, "error")));
     for (completion, expected) in [
-        (Success(successful.clone()), (false, true, Succeeded)),
-        (Success(failed.clone()), (true, false, Failed)),
         (
-            CompletedFailure(successful.clone()),
-            (false, true, Succeeded),
+            Completed(successful),
+            (false, ToolResultStatus::Succeeded, Succeeded),
         ),
-        (CompletedFailure(failed.clone()), (true, false, Failed)),
-        (
-            ToolCompletion::from_output(successful),
-            (false, true, Succeeded),
-        ),
-        (ToolCompletion::from_output(failed), (true, false, Failed)),
-        (error, (true, false, Failed)),
+        (Completed(failed), (true, ToolResultStatus::Failed, Failed)),
+        (error, (true, ToolResultStatus::Failed, Failed)),
         (
             ToolCompletion::Unavailable,
-            (true, false, UnavailableStatus),
+            (true, ToolResultStatus::Failed, UnavailableStatus),
         ),
     ] {
         let result = completion.model_result("test", "call");
         assert_eq!(
             (
                 completion.is_failure(),
-                result.ok,
+                result.status,
                 ToolOutcomeRef::from(&completion).status().0,
             ),
             expected
         );
         let (output, content) = match &completion {
-            Success(output) | CompletedFailure(output) => (Some(output), "result"),
+            Completed(output) => (Some(output), "result"),
             ToolCompletion::Failure(_) => (None, "error"),
             ToolCompletion::Unavailable => (None, "tool 'test' is unavailable"),
         };

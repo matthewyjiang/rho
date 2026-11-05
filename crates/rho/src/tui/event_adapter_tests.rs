@@ -209,6 +209,7 @@ fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
         call_id: call_id.clone(),
         name: "write".into(),
         metadata: ToolMetadata::new().operation(OperationKind::Write),
+        execution: rho_sdk::ToolExecution::Attached,
     }));
     let output = ToolOutput::text("updated").metadata(
         ToolMetadata::new()
@@ -222,7 +223,7 @@ fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id,
-        result: ToolCompletion::Success(output),
+        result: ToolCompletion::Completed(output),
     }))
     else {
         panic!("expected translated tool completion");
@@ -249,6 +250,7 @@ fn forwards_image_asset_on_tool_completion() {
         call_id: call_id.clone(),
         name: "read_file".into(),
         metadata: ToolMetadata::new(),
+        execution: rho_sdk::ToolExecution::Attached,
     }));
     let asset = ToolAsset::new("image/png", vec![1, 2, 3, 4]);
     let output = ToolOutput::text("image/png image (4 bytes)").metadata(
@@ -264,7 +266,7 @@ fn forwards_image_asset_on_tool_completion() {
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
-        result: ToolCompletion::Success(output),
+        result: ToolCompletion::Completed(output),
     }))
     else {
         panic!("expected translated tool completion");

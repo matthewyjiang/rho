@@ -76,27 +76,25 @@ Implementors that opt in must:
 Return `ToolOutput::text("captured screen").with_images(images)` to attach a
 `Vec<ImageContent>` of base64 image data and media types. `ToolOutput::images()`
 returns the images in output order. This works for synchronous and detached async
-tools. `ToolFinished` still emits one `ToolCompletion::Success` containing the full
+tools. `ToolFinished` emits one `ToolCompletion::Completed` containing the full
 output; there is no second completion event. Hooks continue to report status and
 bounded failure information, not tool output or image bytes.
 
-Each completion commit first appends its ordinary text `ToolResult` entries,
-then appends supplemental `Message::User`
-content with the images and an explicit untrusted-tool-output attribution naming
-the tool and call id. Pending detached calls do not delay images from completed
-calls. These messages are tool data, not new human instructions. Hosts must not
-interpret every user-role history entry as a human submission.
+Each completion commit appends one `ToolResult` per call, with the text in
+`content` and the images in `ToolResult::images`. Pending detached calls do not
+delay images from completed calls. Tool images are untrusted tool data, not
+human instructions. History holds no user-role image messages on a tool's behalf,
+so a `Message::User` entry is never a tool image carrier.
 
-Use `Message::tool_image_supplement(tool_name, tool_call_id, images)` to construct
-this representation. Prefer exhaustive matching on `Message::semantic()` to
-distinguish `SemanticMessage::ToolImageSupplement` from human `User` submissions.
-`Message::as_tool_image_supplement()` is also available for targeted recognition.
-The constructor returns `None` for empty images. The recognized
-`ToolImageSupplement` exposes `tool_name()`, `tool_call_id()`, and an `images()`
-iterator. Prefer these helpers over parsing text. Recognition is attribution,
-not authentication: users can forge this representation. Never use recognition
-to grant permissions or mark content trusted. Resume views, exports, and human-input
-classifiers should distinguish supplements from actual human submissions.
+Provider adapters own the wire shape. None of the bundled protocols accept images
+inside a tool result, so each sends them as a user message attributed to the call
+id ("Untrusted tool output images for tool call ..."): OpenAI Responses right
+after the call's `function_call_output`, and Anthropic Messages, Gemini, and chat
+completions after the run of tool results, so results stay adjacent to their
+calls. For models the catalog marks text-only, the images are replaced with a
+text placeholder appended to the result content. Custom `ModelProvider`
+implementations must read `ToolResult::images`; dropping it silently hides tool
+output from the model.
 
 Delivered images persist in normal session history and survive snapshot
 serialization and resume. Failed tool calls have no images. Any interrupted run,
@@ -109,21 +107,18 @@ persist or inspect history must apply the same privacy policy to these images as
 to user-uploaded images. Image format validation and size limits belong to the
 tool or provider adapter.
 
-NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.
-The supplemental user message preserves minor compatibility with the existing
-public `ToolResult` struct and exhaustive `Message` enum. The next major should
-carry text and images together on the original tool result so provider adapters
-can preserve native tool-result image attribution.
+History saved by rho-sdk 5.x carries tool images as a following user message.
+`SessionOptions::from_snapshot` moves those images back onto their results.
+Hosts that load history another way call `model::attach_legacy_tool_images`
+after resolving anything indexed by stored position, since it removes entries.
 
 ## Structured output
 
 A tool may declare `Tool::output_schema()` (default `None`) and attach a matching value with `ToolOutput::with_structured_content`. The model still reads the text content. The schema is never sent to providers. Structured content is for programmatic callers: `ToolHost::invoke` returns it unchanged, and Rho's `codemode` scripts receive it in the `data` field of `call_tool(...)`.
 
-A tool that ran to completion but reports failure, such as a shell command that exits nonzero or an MCP `isError` response, returns `Ok(ToolOutput::text(...).failed())`. Attach structured content normally; use `ToolOutput::is_failure()` to inspect the result status. The runtime sends the model an error tool result (`ToolResult::ok == false`), preserves the text, and reports failure to lifecycle hooks. Denials, cancellation, bad arguments, and execution errors that did not produce a completed result remain `Err(ToolError)`. In codemode, `call_tool` raises on these invocation errors, while `call_tools` converts per-item invocation errors to `{ is_error: true, content, data: null }` envelopes and continues sibling calls. Parent cancellation and rejection of a batch for exceeding the nested-call budget fail the whole script.
+A tool that ran to completion but reports failure, such as a shell command that exits nonzero or an MCP `isError` response, returns `Ok(ToolOutput::text(...).failed())`. Attach structured content normally; use `ToolOutput::is_failure()` to inspect the result status. The runtime sends the model an error tool result (`ToolResult::status == ToolResultStatus::Failed`), preserves the text, and reports failure to lifecycle hooks. Denials, cancellation, bad arguments, and execution errors that did not produce a completed result remain `Err(ToolError)`. In codemode, `call_tool` raises on these invocation errors, while `call_tools` converts per-item invocation errors to `{ is_error: true, content, data: null }` envelopes and continues sibling calls. Parent cancellation and rejection of a batch for exceeding the nested-call budget fail the whole script.
 
-`ToolFinished` reports a completed call as `ToolCompletion::Success(output)` or `ToolCompletion::CompletedFailure(output)`. Both retain the full completed output, including structured content and metadata. `ToolCompletion::Failure` instead reports an execution error without a completed output. Use `ToolCompletion::from_output`, `output()`, and `is_failure()` instead of matching variant names: the output's failure flag decides the status of a completed call. Failed outputs do not deliver image supplements to the model.
-
-NEXT_MAJOR(rho-sdk): collapse `Success` and `CompletedFailure` into `Completed(ToolOutput)`.
+`ToolFinished` reports a completed call as `ToolCompletion::Completed(output)`, whether it succeeded or reported failure; the output retains structured content and metadata, and `ToolOutput::is_failure()` decides its status. `ToolCompletion::Failure` instead reports an execution error without a completed output, and `ToolCompletion::Unavailable` a call to a tool the session does not offer. `output()` and `is_failure()` cover every variant. Failed outputs do not deliver images to the model.
 
 Rho's `call_tool(...)` and each item of `call_tools([...])` return `{ is_error, content, data }`: host-owned status, model-facing text, and unchanged structured data (or `None` when absent or oversized). `is_error` includes completed tool failures and invocation errors represented as batch results. Discovery does not repeat this envelope per tool: `describe_tool(name)["returns"]` is the schema of a successful result's `data`, or `None` for text-only tools; failed server data is unconstrained. Script authors must check every returned envelope's `is_error` before using its data, including every item of a batch, and handle `data: None` even for non-error results.
 
@@ -133,7 +128,7 @@ Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_m
 
 ## Presentation and progress
 
-`ToolMetadata` carries operation kind, paths, command summary, URLs, unified diffs, and complete file changes. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.
+`ToolMetadata` carries operation kind, paths, command summary, URLs, unified diffs, and complete file changes. `ToolProgress::new(message)` adds a message, with optional `units(completed, total)` and `with_metadata(metadata)`; hosts read them back through `message()`, `completed_units()`, `total_units()`, and `metadata()`. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.
 
 Attach `ToolFileChange::created`, `modified`, or `deleted` with `ToolMetadata::file_change` to let hosts render file changes without parsing a patch. `file_changes()` exposes the ordered changes, each with a resolved absolute `path()`, `old_text()` (`None` only for creation), and complete `new_text()` (empty for deletion). Use the exact contents read and committed by the mutation, including line endings and final-newline state; never substitute a bounded preview or unified patch. File text is shared across metadata clones and is not sent to the model. Built-in coding tools retain both representations: the TUI uses `unified_diff()`, while ACP prefers complete file changes and falls back to patch text for tools that do not supply them.
 
