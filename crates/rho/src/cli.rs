@@ -288,7 +288,7 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
     },
     /// Serve the Agent Client Protocol over stdio for editor/host integration.
     Acp(AcpArgs),
-    /// Run or control the per-user rho daemon.
+    /// Run or control the rho daemon for this rho home.
     ///
     /// Without a subcommand, runs the daemon in the foreground.
     Daemon {

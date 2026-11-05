@@ -1,6 +1,6 @@
 # Daemon
 
-The rho daemon is one long-lived background process per user. It owns agent work so that frontends (the interactive TUI, `rho acp`, and other clients) can come and go without stopping it. Frontends talk to it over a private Unix socket using rho's versioned JSON-RPC protocol, published as the [`rho-protocol`](https://crates.io/crates/rho-protocol) crate.
+The rho daemon is one long-lived background process per user and rho home (`~/.rho`, or `$RHO_HOME`). It owns agent work so that frontends (the interactive TUI, `rho acp`, and other clients) can come and go without stopping it. Frontends talk to it over a private Unix socket using rho's versioned JSON-RPC protocol, published as the [`rho-protocol`](https://crates.io/crates/rho-protocol) crate.
 
 ## Commands
 
@@ -12,7 +12,7 @@ The rho daemon is one long-lived background process per user. It owns agent work
 
 `status` and `stop` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
 
-Only one daemon runs per user. A second `rho daemon run` fails with the pid and version of the one already running.
+Only one daemon runs per rho home. A second `rho daemon run` fails with the pid and version of the one already running.
 
 The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it stops accepting connections, finishes responses it is already sending, removes its socket, and exits with status 0.
 

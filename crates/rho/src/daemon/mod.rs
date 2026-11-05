@@ -1,4 +1,4 @@
-//! The per-user rho daemon: one long-lived process per user that frontends
+//! The rho daemon: one long-lived process per user and rho home that frontends
 //! reach over a private Unix socket using the `rho-protocol` JSON-RPC
 //! protocol.
 //!
