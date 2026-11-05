@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.3](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.2...rho-agent-tools-v1.16.3) (2026-11-05)
+
+
+### Bug Fixes
+
+* **tools:** turn rtk rewriting back on, off since the sdk shell move ([#1646](https://github.com/matthewyjiang/rho/issues/1646)) ([7ceb773](https://github.com/matthewyjiang/rho/commit/7ceb773032d3cc3caaf29cf248ca77eb34bdecd7))
+
 ## [1.16.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.16.1...rho-agent-tools-v1.16.2) (2026-10-31)
 
 
