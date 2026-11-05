@@ -123,7 +123,7 @@ impl<'a> KeyLogin<'a> {
 }
 
 /// Saves `key` unless the provider refuses it. A key the provider cannot be
-/// asked about (no models endpoint, an outage, a gateway without `/models`)
+/// asked about (no model listing in Rho, an outage, a gateway without `/models`)
 /// is saved as the terminal login saves it, and the page says it went
 /// unchecked, so such a provider can still be signed in to.
 async fn check_and_save(
@@ -150,7 +150,7 @@ async fn check_and_save(
         }
     } else {
         Some(format!(
-            "{provider} has no models endpoint to check keys with, so Rho saved the key unchecked."
+            "Rho could not check the key with {provider}, so it saved the key unchecked."
         ))
     };
     match ProviderAuthentication::save_api_key(store, auth, key) {

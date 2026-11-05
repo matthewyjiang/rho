@@ -353,7 +353,7 @@ pub async fn refresh_provider_models_with_store(
 ///
 /// The provider's environment variable still wins over `key`, as it does for
 /// every request, so check `ProviderAuthentication::has_environment_override`
-/// first. A provider without a models endpoint fails with
+/// first. A provider whose models Rho does not list fails with
 /// [`ModelError::UnsupportedProvider`].
 pub async fn check_api_key(
     auth: &str,
