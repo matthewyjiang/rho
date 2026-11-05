@@ -5,6 +5,7 @@
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -79,7 +80,12 @@ async fn rewrite_with(rtk: &mut Command, command: &str) -> Option<String> {
 
     let output = tokio::time::timeout(
         REWRITE_TIMEOUT,
-        rtk.arg("rewrite").arg(command).kill_on_drop(true).output(),
+        rtk.arg("rewrite")
+            .arg(command)
+            // tokio inherits stdin; keep `rtk` off the TUI's terminal.
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
     )
     .await
     .ok()?
@@ -203,7 +209,11 @@ impl Rtk {
                 };
                 let version = tokio::time::timeout(
                     REWRITE_TIMEOUT,
-                    command.arg("--version").kill_on_drop(true).output(),
+                    command
+                        .arg("--version")
+                        .stdin(Stdio::null())
+                        .kill_on_drop(true)
+                        .output(),
                 )
                 .await;
                 matches!(version, Ok(Ok(output)) if output.status.success()
