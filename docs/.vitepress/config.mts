@@ -162,7 +162,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: 'Overview', link: '/tools-workspace' },
-          { text: 'Edit format', link: '/tools-workspace/edit-format' },
+          { text: 'Edit formats', link: '/tools-workspace/edit-format' },
           { text: 'Search tools', link: '/tools-workspace/search' },
           { text: 'Documents and images', link: '/tools-workspace/documents-and-images' },
           { text: 'Web access', link: '/tools-workspace/web-access' },

@@ -27,7 +27,7 @@ pub(super) fn sdk_bundle(
     max_output_bytes: usize,
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
-    file_view: rho_tools::FileViewPolicy,
+    edit_format: rho_tools::EditFormat,
     rtk_enabled: bool,
     host_io: &HostIo,
 ) -> super::sdk_registry::StaticToolBundle {
@@ -36,7 +36,7 @@ pub(super) fn sdk_bundle(
     let options = host_io.coding_options(
         rho_tools::CodingToolOptions::new()
             .max_output_bytes(max_output_bytes)
-            .file_view(file_view)
+            .edit_tool(edit_format)
             .mutation_observer(Arc::clone(&mutation_observer)),
     );
     let mut tools = Vec::new();

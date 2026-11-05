@@ -10,8 +10,7 @@ fn preview(key: &str, detail: &str) -> AttachmentEvent {
             ToolStatus::Running,
             ToolFamily::Default,
             ToolHeader::call("write", Some(detail.into())),
-        )
-        .into(),
+        ),
     }
 }
 

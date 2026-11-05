@@ -42,7 +42,7 @@ fn session_updates_render_as_artifacts() {
     }
     let running = AttachmentEvent::ToolStarted {
         key: Some("read-1".into()),
-        card: read_card(ToolStatus::Running).into(),
+        card: read_card(ToolStatus::Running),
     };
     let failed = read_card(ToolStatus::Error)
         .with_facts(vec![ToolFact::Error {
@@ -158,8 +158,7 @@ fn session_updates_render_as_artifacts() {
                         ToolStatus::Running,
                         ToolFamily::FileCommand,
                         ToolHeader::call("Read", Some("Inspect".into())),
-                    )
-                    .into(),
+                    ),
                 }),
                 vec![attachment(AttachmentEvent::ToolFinished {
                     key: Some("unknown".into()),
@@ -179,11 +178,11 @@ fn session_updates_render_as_artifacts() {
             expected: vec![
                 first_step(AttachmentEvent::ToolStarted {
                     key: Some("acp-plan".into()),
-                    card: plan_card.clone().into(),
+                    card: plan_card.clone(),
                 }),
                 vec![attachment(AttachmentEvent::ToolUpdated {
                     key: Some("acp-plan".into()),
-                    card: plan_card.into(),
+                    card: plan_card,
                 })],
             ],
             result: "",
@@ -240,7 +239,7 @@ fn turn_end_restarts_the_presentation_step() {
     let mut renderer = EventRenderer::new("/workspace".into());
     let running = AttachmentEvent::ToolStarted {
         key: Some("read-1".into()),
-        card: read_card(ToolStatus::Running).into(),
+        card: read_card(ToolStatus::Running),
     };
     let effects = [
         AgentEvent::from(SessionUpdate::ToolCall(read_call())),
@@ -283,7 +282,7 @@ fn saturated_state_remains_bounded_and_unknown_completion_renders() {
         (MAX_ACTIVE_TOOLS, vec![
             attachment(AttachmentEvent::ToolStarted {
                 key: Some("overflow".into()),
-                card: ToolCard::new(ToolStatus::Running, ToolFamily::Default, ToolHeader::call("Tool", /*primary*/ None)).into(),
+                card: ToolCard::new(ToolStatus::Running, ToolFamily::Default, ToolHeader::call("Tool", /*primary*/ None)),
             }),
             attachment(AttachmentEvent::Notice(format!(
                 "acp: active tool budget {MAX_ACTIVE_TOOLS}, requested {}; card renders without retained update state",

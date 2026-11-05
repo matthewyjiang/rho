@@ -307,7 +307,9 @@ fn add_error_summary(card: &mut ToolCard) {
         return;
     }
     let summary = match &card.body {
-        ToolBody::Lines(lines) => lines.first().map(String::as_str),
+        ToolBody::Lines(lines) | ToolBody::Code { lines, .. } | ToolBody::Search { lines, .. } => {
+            lines.first().map(String::as_str)
+        }
         ToolBody::Diff(_) | ToolBody::None => None,
     }
     .unwrap_or("tool failed");

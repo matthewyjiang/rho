@@ -11,6 +11,7 @@ use crate::{
     },
     host_files::{HostTextFiles, TextRoute},
     image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES},
+    text_view::{format_numbered_view, read_text_window},
     tool::*,
 };
 
@@ -26,7 +27,7 @@ impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files return numbered N:line rows. When the selected edit tool is hashline, the header is [path#TAG] and TAG fingerprints the full file (trailing whitespace ignored). offset/limit select which rows are shown. Files larger than 256 KiB keep only the selected window in memory. offset and limit apply to UTF-8 text files only.".into(),
+            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files return a path header plus numbered N:line rows. offset/limit select which rows are shown. Files larger than 256 KiB keep only the selected window in memory. offset and limit apply to UTF-8 text files only.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -54,7 +55,6 @@ impl Tool for ReadFile {
                 &display_path,
                 args.offset,
                 args.limit,
-                crate::FileViewStyle::Hashline,
                 /*host_files*/ None,
             )
             .await?;
@@ -112,25 +112,23 @@ pub(super) async fn read_file_content(
     display_path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
-    style: crate::FileViewStyle,
     host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<ReadFileContent, ToolError> {
     let route = TextRoute::for_path(host_files, path);
     let mut file = tokio::fs::File::open(path).await?;
     let source_len = file.metadata().await?.len();
 
-    // Range reads are always hashline text views of the UTF-8 body. The
-    // header tag covers the whole file, so the document size limit still applies.
-    // Files larger than one chunk are scanned once; only the selected window is kept.
+    // Range reads are always numbered text views of the UTF-8 body. The
+    // footer reports the whole-file line count, so the document size limit
+    // still applies. Files larger than one chunk are scanned once; only the
+    // selected window is kept.
     // A host-served range read checks the file on disk like a whole read,
     // below, and then windows the host's text.
     let ranged = offset.is_some() || limit.is_some();
     if ranged && !route.is_host() {
         check_document_size(path, source_len)?;
         if source_len > crate::text_view::CHUNK_SIZE as u64 {
-            let content = style
-                .read_window(path, display_path, source_len, offset, limit)
-                .await?;
+            let content = read_text_window(path, display_path, source_len, offset, limit).await?;
             return Ok(ReadFileContent {
                 content,
                 image: None,
@@ -155,9 +153,8 @@ pub(super) async fn read_file_content(
                 path.display()
             ))
         })?;
-        let content = style
-            .format_view(display_path, &text, offset, limit)
-            .map_err(ToolError::Message)?;
+        let content =
+            format_numbered_view(display_path, &text, offset, limit).map_err(ToolError::Message)?;
         return Ok(ReadFileContent {
             content,
             image: None,
@@ -175,7 +172,6 @@ pub(super) async fn read_file_content(
             mime_type,
             header,
             header_len,
-            style,
         )
         .await;
     }
@@ -187,9 +183,8 @@ pub(super) async fn read_file_content(
         .take(MAX_DOCUMENT_INPUT_BYTES as u64 + 1 - header_len as u64)
         .read_to_end(&mut bytes)
         .await?;
-    // Plain UTF-8 sources tag the text edits read from the same route (disk
-    // or host), so edit validates against the same snapshot. Rich documents keep
-    // the extractor path and are not hashline-editable.
+    // Plain UTF-8 sources show the text edits read from the same route (disk
+    // or host). Rich documents keep the extractor path.
     if ranged || !is_rich_document_path(path, &bytes) {
         let disk_text = String::from_utf8(bytes).map_err(|error| {
             ToolError::Message(format!(
@@ -201,9 +196,8 @@ pub(super) async fn read_file_content(
             TextRoute::Disk => disk_text,
             TextRoute::Host(_) => route.read(path, display_path).await?,
         };
-        let content = style
-            .format_view(display_path, &text, offset, limit)
-            .map_err(ToolError::Message)?;
+        let content =
+            format_numbered_view(display_path, &text, offset, limit).map_err(ToolError::Message)?;
         return Ok(ReadFileContent {
             content,
             image: None,
@@ -242,7 +236,6 @@ async fn read_image_content(
     mime_type: &'static str,
     header: [u8; 12],
     header_len: usize,
-    style: crate::FileViewStyle,
 ) -> Result<ReadFileContent, ToolError> {
     let content = format!("{mime_type} image ({source_len} bytes)");
     if source_len > MAX_IMAGE_FILE_BYTES {
@@ -283,8 +276,7 @@ async fn read_image_content(
         }),
         Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
             Ok(text) => {
-                let content = style
-                    .format_view(&display_path, &text, None, None)
+                let content = format_numbered_view(&display_path, &text, None, None)
                     .map_err(ToolError::Message)?;
                 Ok(ReadFileContent {
                     content,

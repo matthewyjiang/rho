@@ -10,7 +10,6 @@ use std::{
     time::Duration,
 };
 
-use crate::tool::ToolResult;
 use rho_sdk::ProcessEnvironment;
 use serde_json::json;
 use tokio::{io::AsyncWriteExt, process::Command, sync::OnceCell};
@@ -20,20 +19,6 @@ use tokio::{io::AsyncWriteExt, process::Command, sync::OnceCell};
 const REWRITE_TIMEOUT: Duration = Duration::from_secs(2);
 static DISCOVER_LOG_NAME: LazyLock<String> =
     LazyLock::new(|| format!("rho-{}-{}.jsonl", std::process::id(), uuid::Uuid::new_v4()));
-
-/// Whether an `rtk` 0.23+ binary is on `PATH`. Blocks on `rtk --version`.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-agent-tools): make the `rtk` module private and remove `is_available` and `rewrite`; enable RTK only through `ShellToolOptions::rtk`.
-///
-/// They stay public for semver and serve the legacy `Bash`/`PowerShell` `rtk_enabled` path.
-pub fn is_available() -> bool {
-    let Ok(output) = std::process::Command::new("rtk").arg("--version").output() else {
-        return false;
-    };
-    output.status.success() && supports_rewrite(&String::from_utf8_lossy(&output.stdout))
-}
 
 fn supports_rewrite(version: &str) -> bool {
     let Some((major, minor, _patch)) = parse_version(version) else {
@@ -55,23 +40,12 @@ fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
     ))
 }
 
-/// The `rtk rewrite` form of `command`, or `None` to run it unchanged.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-agent-tools): make the `rtk` module private and remove `is_available` and `rewrite`; enable RTK only through `ShellToolOptions::rtk`.
-pub async fn rewrite(command: &str) -> Option<String> {
-    if disabled_by_env() {
-        return None;
-    }
-    rewrite_with(&mut Command::new("rtk"), command).await
-}
-
 /// `rtk rewrite` ignores a process-level `RTK_DISABLED`, so Rho honors it.
 fn disabled_by_env() -> bool {
     std::env::var("RTK_DISABLED").ok().as_deref() == Some("1")
 }
 
+/// The `rtk rewrite` form of `command`, or `None` to run it unchanged.
 async fn rewrite_with(rtk: &mut Command, command: &str) -> Option<String> {
     let command = command.trim();
     if command.is_empty() || command.starts_with("rtk ") {
@@ -228,22 +202,6 @@ impl Rtk {
 pub(crate) struct CommandRun {
     pub(crate) output_len: usize,
     pub(crate) failed: bool,
-}
-
-impl From<&ToolResult> for CommandRun {
-    fn from(result: &ToolResult) -> Self {
-        Self {
-            output_len: result.content.len(),
-            failed: !result.ok,
-        }
-    }
-}
-
-pub(super) async fn log_execution(cwd: &Path, command: &str, result: &ToolResult) {
-    let Some(projects_dir) = discover_projects_dir() else {
-        return;
-    };
-    let _ = log_execution_in_projects_dir(&projects_dir, cwd, command, result.into()).await;
 }
 
 fn discover_projects_dir() -> Option<PathBuf> {

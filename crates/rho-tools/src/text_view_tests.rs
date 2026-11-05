@@ -31,7 +31,7 @@ fn split_content_lines_handles_empty_and_trailing_newline() {
     );
 }
 
-// Covers: numbered reads keep absolute line numbers without a snapshot tag
+// Covers: numbered reads keep absolute line numbers under a path header
 // Owner: text view
 #[test]
 fn numbered_view_uses_absolute_lines_and_path_header() {

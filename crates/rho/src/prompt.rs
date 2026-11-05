@@ -176,7 +176,7 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
         );
     }
     // Format-agnostic: mid-session edit-tool switches keep this system prompt
-    // fixed, so do not name a concrete edit surface or embed hashline policy.
+    // fixed, so do not name a concrete edit surface or embed its policy.
     // Concrete contracts live on the live tool description/schema.
     if tools
         .iter()
@@ -726,7 +726,6 @@ mod tests {
         for (tools, expected) in [
             (&[][..], &[][..]),
             (&["grep"][..], &["grep"][..]),
-            (&["edit"][..], &["edit"][..]),
             (&["apply_patch"][..], &["edit"][..]),
             (&["str_replace"][..], &["edit"][..]),
             (&["agent"][..], &["agent"][..]),

@@ -46,21 +46,14 @@ pub(crate) fn format_results(
 fn content_body(hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let path = &hit.path;
-        if let Some(tag) = &hit.file_tag {
-            // Sole hashline wire emitter owns header shape. Path must be the
-            // workspace-relative form edit resolves, not walk-root-relative.
-            let _ = writeln!(body, "{}", crate::hashline::format_header(path, tag));
-        } else {
-            let _ = writeln!(body, "{path}");
-        }
+        let _ = writeln!(body, "{}", hit.path);
         for crate::grep::MatchLine {
             line: line_no,
             text,
         } in &hit.lines
         {
-            // Preview shape uses `N | text`, not hashline `N:text`, so truncated
-            // match bodies are not copy-pasteable into edit PUT rows.
+            // Preview shape uses `N | text`, not read_file `N:text`, so truncated
+            // match bodies are not mistaken for exact line text.
             let _ = writeln!(body, "{line_no} | {text}");
         }
         if hit.suppressed() > 0 {

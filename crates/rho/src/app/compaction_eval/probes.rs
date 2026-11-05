@@ -208,7 +208,8 @@ fn changed_paths(call: &ToolCall) -> Vec<String> {
     let string = |key: &str| call.arguments.get(key).and_then(|value| value.as_str());
     match call.name.as_str() {
         "write" | "str_replace" => string("path").map(str::to_owned).into_iter().collect(),
-        // Hashline sections start with `[path#TAG]`.
+        // Saved sessions may hold calls to the removed hashline `edit` tool,
+        // whose sections start with `[path#TAG]`.
         "edit" => string("input")
             .into_iter()
             .flat_map(str::lines)

@@ -130,7 +130,7 @@ impl EventRenderer {
                 let mut effects = notices.into_iter().flat_map(notice).collect::<Vec<_>>();
                 effects.push(StreamEffect::Attachment(AttachmentEvent::ToolStarted {
                     key: Some(key.to_string()),
-                    card: tool.card.clone().into(),
+                    card: tool.card.clone(),
                 }));
                 // Terminal initial snapshots still render as ToolStarted, but
                 // need no retained state unless an update follows.
@@ -172,7 +172,7 @@ impl EventRenderer {
                     }
                     AttachmentEvent::ToolUpdated {
                         key: Some(key.to_string()),
-                        card: card.into(),
+                        card,
                     }
                 };
                 effects.push(StreamEffect::Attachment(event));
@@ -214,16 +214,10 @@ impl EventRenderer {
         set_lines_body(&mut card, &lines.join("\n"));
         let key = Some("acp-plan".into());
         let event = if self.plan_started {
-            AttachmentEvent::ToolUpdated {
-                key,
-                card: card.into(),
-            }
+            AttachmentEvent::ToolUpdated { key, card }
         } else {
             self.plan_started = true;
-            AttachmentEvent::ToolStarted {
-                key,
-                card: card.into(),
-            }
+            AttachmentEvent::ToolStarted { key, card }
         };
         effects.push(StreamEffect::Attachment(event));
         self.with_step_started(effects)

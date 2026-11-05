@@ -223,29 +223,70 @@ pub fn format_diff_stat_plain(added: u64, removed: u64, path: Option<&str>) -> S
     }
 }
 
+/// Which end of a [`ToolBody::Code`] stays visible when its card is
+/// collapsed. The full body remains available on expansion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWindow {
+    /// Show the opening rows, for finished or replayed source.
+    #[default]
+    Head,
+    /// Show the newest rows, for source the model is still generating.
+    Tail,
+}
+
+impl CodeWindow {
+    fn is_head(&self) -> bool {
+        matches!(self, Self::Head)
+    }
+}
+
 /// Optional expandable body content.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-agent-tools): add a code body variant to ToolBody (or make tool_card crate-internal).
-///
-/// Source code uses `Lines` until the next major to preserve exhaustive matches
-/// in minor releases; hosts carry syntax metadata alongside the card.
+/// Every variant except [`Self::Diff`] carries plain text lines; [`Self::Code`]
+/// and [`Self::Search`] add the metadata renderers need to highlight them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", content = "lines", rename_all = "snake_case")]
 pub enum ToolBody {
     #[default]
     None,
     Lines(Vec<String>),
+    /// Source code highlighted as `language`, a syntax name or file
+    /// extension such as `python` or `rs`.
+    Code {
+        language: String,
+        #[serde(default, skip_serializing_if = "CodeWindow::is_head")]
+        window: CodeWindow,
+        lines: Vec<String>,
+    },
+    /// Search result previews with the query that produced them, so
+    /// renderers can highlight matches with the search tool's semantics.
+    Search {
+        pattern: String,
+        /// The pattern is a literal substring rather than a regex.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        literal: bool,
+        #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        case_sensitive: bool,
+        lines: Vec<String>,
+    },
     /// Compact diff body with per-row line numbers and change kinds.
     Diff(Vec<DiffRow>),
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl ToolBody {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
-            Self::Lines(lines) => {
+            Self::Lines(lines) | Self::Code { lines, .. } | Self::Search { lines, .. } => {
                 lines.is_empty() || lines.iter().all(|line| line.trim().is_empty())
             }
             Self::Diff(rows) => rows.is_empty(),
@@ -255,7 +296,9 @@ impl ToolBody {
     pub fn line_count(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Lines(lines) => lines.iter().map(|line| line.lines().count().max(1)).sum(),
+            Self::Lines(lines) | Self::Code { lines, .. } | Self::Search { lines, .. } => {
+                lines.iter().map(|line| line.lines().count().max(1)).sum()
+            }
             Self::Diff(rows) => rows.len(),
         }
     }
@@ -268,7 +311,9 @@ impl ToolBody {
     pub fn plain_lines(&self) -> Vec<String> {
         match self {
             Self::None => Vec::new(),
-            Self::Lines(lines) => lines.clone(),
+            Self::Lines(lines) | Self::Code { lines, .. } | Self::Search { lines, .. } => {
+                lines.clone()
+            }
             Self::Diff(rows) => rows.iter().map(DiffRow::plain_text).collect(),
         }
     }
@@ -290,16 +335,6 @@ pub struct ToolCardDisplayPlan {
 }
 
 /// Structured tool presentation for Call + Children rendering.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-agent-tools): move `match_pattern`, `match_literal`, and
-/// `match_case_sensitive` into a `ToolBody::Search` variant.
-///
-/// They only describe grep `Lines` bodies but sit on the card, so a pattern
-/// can pair with a diff or code body. Removing public fields is breaking, so
-/// they stay here until the next major; set them through
-/// [`Self::with_match_pattern`] and [`Self::with_match_semantics`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCard {
     pub status: ToolStatus,
@@ -309,26 +344,6 @@ pub struct ToolCard {
     pub facts: Vec<ToolFact>,
     #[serde(default, skip_serializing_if = "ToolBody::is_empty")]
     pub body: ToolBody,
-    /// Optional search pattern for match highlighting (grep content bodies).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub match_pattern: Option<String>,
-    /// When true, [`Self::match_pattern`] is a literal substring (grep `literal`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub match_literal: bool,
-    /// Case-sensitive match overlay. Defaults to true to match grep.
-    #[serde(
-        default = "default_match_case_sensitive",
-        skip_serializing_if = "is_true"
-    )]
-    pub match_case_sensitive: bool,
-}
-
-fn default_match_case_sensitive() -> bool {
-    true
-}
-
-fn is_true(value: &bool) -> bool {
-    *value
 }
 
 impl ToolCard {
@@ -339,9 +354,6 @@ impl ToolCard {
             header,
             facts: Vec::new(),
             body: ToolBody::None,
-            match_pattern: None,
-            match_literal: false,
-            match_case_sensitive: true,
         }
     }
 
@@ -352,19 +364,6 @@ impl ToolCard {
 
     pub fn with_body(mut self, body: ToolBody) -> Self {
         self.body = body;
-        self
-    }
-
-    pub fn with_match_pattern(mut self, pattern: impl Into<String>) -> Self {
-        let pattern = pattern.into();
-        self.match_pattern = (!pattern.is_empty()).then_some(pattern);
-        self
-    }
-
-    /// Carry the grep tool's literal/case options into the match overlay.
-    pub fn with_match_semantics(mut self, literal: bool, case_sensitive: bool) -> Self {
-        self.match_literal = literal;
-        self.match_case_sensitive = case_sensitive;
         self
     }
 

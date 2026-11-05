@@ -90,7 +90,7 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
         started,
         vec![AttachmentEvent::ToolStarted {
             key: key.clone(),
-            card: running.into()
+            card: running,
         }]
     );
 
@@ -179,7 +179,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         ViewModelEvent::ToolCallUpdated {
             index: 0,
             call_id: None,
-            card: Some(preview.clone().into()),
+            card: Some(preview.clone()),
         },
     );
     let second = attachment_update(
@@ -187,7 +187,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         ViewModelEvent::ToolCallUpdated {
             index: 0,
             call_id: Some(call_id.clone()),
-            card: Some(with_id.clone().into()),
+            card: Some(with_id.clone()),
         },
     );
     let finished = attachment_update(
@@ -203,14 +203,14 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         first,
         Some(AttachmentEvent::ToolPreview {
             key: "preview:0".into(),
-            card: preview.into(),
+            card: preview,
         })
     );
     assert_eq!(
         second,
         Some(AttachmentEvent::ToolPreview {
             key: "preview:0".into(),
-            card: with_id.clone().into(),
+            card: with_id.clone(),
         })
     );
     assert_eq!(

@@ -1,23 +1,21 @@
-//! Numbered file views shared by every edit surface.
+//! Numbered file views shared by read, write, grep, and every edit surface.
 //!
-//! Callers supply the header. Hashline wraps that header as `[path#TAG]`;
-//! apply_patch and str_replace keep the bare path. Line splitting, window
-//! selection, and chain snapshots live here so hashline is not the generic
-//! renderer.
+//! Callers supply the header, normally the display path. Line splitting,
+//! window selection, and chain snapshots live here.
 
 use std::fmt::Write;
 
 mod line_split;
 mod window;
 
-pub(crate) use line_split::{read_searchable_lines, LineFingerprint};
+pub(crate) use line_split::read_searchable_lines;
 pub(crate) use window::{read_text_window, validate_window, CHUNK_SIZE};
 
 #[cfg(test)]
 pub(crate) use window::{format_window_bytes, ScanError};
 
 /// Separator between a 1-indexed line number and the line body.
-pub(crate) const LINE_BODY_SEP: char = ':';
+const LINE_BODY_SEP: char = ':';
 
 /// Soft cap on numbered body rows in write/failure chain snapshots.
 const CHAIN_SNAPSHOT_MAX_BODY_LINES: usize = 40;
@@ -26,16 +24,15 @@ const CHAIN_SNAPSHOT_MAX_BODY_LINES: usize = 40;
 const CHAIN_SNAPSHOT_CONTEXT_LINES: usize = 2;
 
 /// Head lines kept when a chain snapshot has no focus anchors.
-pub(crate) const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
+const CHAIN_SNAPSHOT_HEAD_LINES: usize = 28;
 
 /// Tail lines kept after the head so EOF anchors stay chainable on large files.
-pub(crate) const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
+const CHAIN_SNAPSHOT_TAIL_LINES: usize = 8;
 
 /// Render a numbered view of `text`.
 ///
-/// `offset`/`limit` select a 1-indexed inclusive window of lines. Callers that
-/// need a snapshot tag pass a `[path#TAG]` header; everyone else passes the
-/// display path.
+/// `offset`/`limit` select a 1-indexed inclusive window of lines. `header` is
+/// normally the display path.
 pub(crate) fn format_numbered_view(
     header: &str,
     text: &str,
@@ -69,7 +66,7 @@ pub(crate) fn format_numbered_view(
     ))
 }
 
-pub(crate) fn window_footer(start: usize, end: usize, total: usize) -> Option<String> {
+fn window_footer(start: usize, end: usize, total: usize) -> Option<String> {
     if start > 1 || end < total {
         Some(format!(
             "[lines {start}-{end} of {total} shown; re-read with a different offset or limit for the rest]"
@@ -79,14 +76,14 @@ pub(crate) fn window_footer(start: usize, end: usize, total: usize) -> Option<St
     }
 }
 
-pub(crate) fn offset_past_end(start: usize, total: usize) -> String {
+fn offset_past_end(start: usize, total: usize) -> String {
     format!("offset {start} is past the end of the file ({total} line(s))")
 }
 
 /// Bounded numbered snapshot after `write` or a failed `edit`.
 ///
 /// Body rows are capped: focus anchors expand locally; otherwise a short
-/// head+tail window is used. Pass a tagged header or the display path.
+/// head+tail window is used. `header` is normally the display path.
 pub(crate) fn format_chain_snapshot(header: &str, text: &str, focus_lines: &[usize]) -> String {
     let lines = split_content_lines(text);
     if lines.is_empty() {
@@ -105,11 +102,11 @@ pub(crate) fn format_chain_snapshot(header: &str, text: &str, focus_lines: &[usi
 }
 
 /// Build the chain truncation footer for a selected/total line count pair.
-pub(crate) fn chain_truncation_footer(selected: usize, total: usize) -> String {
+fn chain_truncation_footer(selected: usize, total: usize) -> String {
     format!("[showing {selected} of {total} lines; re-read with offset/limit for other lines]")
 }
 
-pub(crate) fn emit_numbered_body(
+fn emit_numbered_body(
     header: &str,
     lines: &[&str],
     selected: &[usize],
@@ -168,11 +165,7 @@ fn head_tail_lines(total: usize, head: usize, tail: usize) -> Vec<usize> {
     selected
 }
 
-pub(crate) fn expand_focus_lines(
-    focus: &[usize],
-    total_lines: usize,
-    context: usize,
-) -> Vec<usize> {
+fn expand_focus_lines(focus: &[usize], total_lines: usize, context: usize) -> Vec<usize> {
     if total_lines == 0 || focus.is_empty() {
         return Vec::new();
     }
@@ -189,7 +182,7 @@ pub(crate) fn expand_focus_lines(
 
 /// Keep at most `max_lines` rows. Each contiguous hunk gets an equal floor of
 /// the budget so a late edit is not starved by an early one.
-pub(crate) fn cap_selected_by_hunk(selected: &[usize], max_lines: usize) -> Vec<usize> {
+fn cap_selected_by_hunk(selected: &[usize], max_lines: usize) -> Vec<usize> {
     if selected.len() <= max_lines {
         return selected.to_vec();
     }
@@ -252,7 +245,7 @@ fn chain_footer(selected: &[usize], total: usize) -> Option<String> {
 /// A trailing newline does not create an extra blank line. An empty file has
 /// zero lines. A file whose sole content is a blank line (single `\n`) has one
 /// empty line.
-pub(crate) fn iter_content_lines(text: &str) -> impl Iterator<Item = &str> {
+fn iter_content_lines(text: &str) -> impl Iterator<Item = &str> {
     let opt_body = (!text.is_empty()).then(|| text.strip_suffix('\n').unwrap_or(text));
     opt_body
         .into_iter()
@@ -265,7 +258,7 @@ pub(crate) fn iter_content_lines(text: &str) -> impl Iterator<Item = &str> {
 /// A trailing newline does not create an extra blank line. An empty file has
 /// zero lines. A file whose sole content is a blank line (single `\n`) has one
 /// empty line.
-pub(crate) fn split_content_lines(text: &str) -> Vec<&str> {
+fn split_content_lines(text: &str) -> Vec<&str> {
     iter_content_lines(text).collect()
 }
 

@@ -6,7 +6,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::app::interactive_presenter::PresentedToolCard;
 use crate::tui::DefaultTerminal;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
@@ -17,6 +16,7 @@ use ratatui::{
     Frame,
 };
 use rho_sdk::model::ContextUsage;
+use rho_tools::tool_card::ToolCard;
 
 use crate::{
     herdr::{HerdrReporter, HerdrSession, HerdrState},
@@ -481,7 +481,7 @@ impl AttachmentApp {
         }
     }
 
-    fn upsert_pending_tool(&mut self, key: Option<String>, card: PresentedToolCard) {
+    fn upsert_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
         let key = attachment_tool_key(key);
         let previous = self.pending_tools.get(&key);
         let expanded = previous.is_some_and(|entry| entry.expanded);

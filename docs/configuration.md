@@ -253,7 +253,6 @@ The same table sets the model of a read-only [plugin agent](/integrations/plugin
 | Value | Exposed tool | Format |
 | --- | --- | --- |
 | `auto` | preferred for the active provider | Built-in catalog. Switches when the provider changes |
-| `hashline` | `edit` | Legacy. Snapshot-tagged, line-anchored `PUT` and `CUT`. Will be removed in a future release |
 | `apply_patch` | `apply_patch` | Codex-style, multi-file patch documents |
 | `str_replace` | `str_replace` | Exact `old_string` to `new_string` replacement in one file |
 
@@ -279,7 +278,7 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. Built-in `auto` never picks the legacy `hashline` format; pin it, or set it as a custom provider's `edit_tool`, to keep using it. Format details: [Hash-line edit format](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. Rho 3.0 removed the legacy `hashline` format: a config that still sets `edit_tool = "hashline"`, globally or on a custom provider, loads as `str_replace` with a warning. Format details: [Edit formats](/tools-workspace/edit-format).
 
 ## Behavior
 

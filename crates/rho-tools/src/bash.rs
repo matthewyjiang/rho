@@ -4,22 +4,15 @@ use crate::tool::*;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use tokio::process::Command;
 
-pub struct Bash {
-    rtk_enabled: bool,
-}
+/// The application bash tool. It runs commands unchanged; agent hosts use
+/// [`crate::shell_tool`], which adds authorization and the optional RTK rewrite
+/// configured through [`crate::ShellToolOptions::rtk`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bash;
 
 impl Bash {
-    /// Builds the application tool. `rtk_enabled` rewrites commands through
-    /// RTK inside [`Tool::call`], after any caller has seen the original.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-agent-tools): drop `rtk_enabled` and take no arguments; RTK belongs to [`crate::ShellToolOptions::rtk`] only.
-    ///
-    /// Agent hosts use [`crate::shell_tool`], which rewrites before authorization.
-    /// The parameter stays because this constructor is public.
-    pub const fn new(rtk_enabled: bool) -> Self {
-        Self { rtk_enabled }
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -65,27 +58,17 @@ impl Tool for Bash {
         on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
-            let mut args = ShellArgs::parse(args)?;
-            // Validate before RTK rewrite so invalid timeouts never launch `rtk`.
+            let args = ShellArgs::parse(args)?;
             let timeout = args.timeout()?;
-            if self.rtk_enabled {
-                if let Some(command) = super::rtk::rewrite(&args.command).await {
-                    args.command = command;
-                }
-            }
             let execution = ProcessExecution::new(
                 &ctx.cwd,
                 ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], &args.command),
                 ProcessEnvironment::InheritAll,
                 ProcessOutputLimits::new(ctx.max_output_bytes, timeout),
             );
-            let result = execute_process(execution, cancellation, on_update)
+            Ok(execute_process(execution, cancellation, on_update)
                 .await?
-                .into_result(id);
-            if self.rtk_enabled {
-                super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
-            }
-            Ok(result)
+                .into_result(id))
         })
     }
 }
@@ -149,7 +132,7 @@ mod tests {
         // `read -t` bounds a bad inherited stdin so the test fails fast, while the
         // tool timeout stays loose enough for slow `bash -lc` startup under CI load.
         // Null stdin should make `read` return EOF immediately (not the timeout path).
-        let result = Bash::new(false)
+        let result = Bash::new()
             .call(
                 json!({
                     "command": "if read -r -t 2 value; then printf 'input:%s' \"$value\"; elif [ $? -gt 128 ]; then printf 'timeout'; else printf 'eof'; fi",
@@ -184,7 +167,7 @@ mod tests {
     async fn command_runs_in_its_own_session() {
         // The command's process group equals its session only when the tool
         // started a new session, so it cannot reach the host's terminal.
-        let result = Bash::new(false)
+        let result = Bash::new()
             .call(
                 json!({"command": "python3 -c 'import os; print(\"own-session\" if os.getsid(0) == os.getpgid(0) else \"host-session\")'"}),
                 test_context(),
@@ -203,7 +186,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_lossy_output_for_non_utf8_bytes() {
-        let result = Bash::new(false)
+        let result = Bash::new()
             .call(
                 json!({"command": "printf 'ok\\xff'"}),
                 test_context(),
@@ -256,7 +239,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(8),
-            Bash::new(false).call(
+            Bash::new().call(
                 json!({
                     "command": command,
                     // Leave enough startup time for Python to fork on loaded

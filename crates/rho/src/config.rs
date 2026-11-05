@@ -377,15 +377,17 @@ impl EditTool {
             Self::Pinned(format) => format.detail(),
         }
     }
-
-    /// Whether this preference pins a format slated for removal.
-    ///
-    /// Lives here rather than on `rho_tools::EditFormat` so this crate keeps
-    /// building against the published `rho-agent-tools`.
-    pub const fn is_legacy(self) -> bool {
-        matches!(self, Self::Pinned(rho_tools::EditFormat::Hashline))
-    }
 }
+
+/// Whether a configured edit tool names the hashline format Rho 3.0 removed.
+/// Loaders replace it with `str_replace` and a [`ConfigWarning::Migrated`]
+/// carrying [`REMOVED_HASHLINE_REPLACEMENT`], so saved configs keep starting.
+fn is_removed_hashline_edit_tool(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("hashline")
+}
+
+/// Migration target text for a removed hashline edit tool setting.
+const REMOVED_HASHLINE_REPLACEMENT: &str = "\"str_replace\" (the hashline edit format was removed)";
 
 impl Config {
     /// Resolves the edit preference for the configured provider.
@@ -423,8 +425,7 @@ impl Config {
 /// Product defaults, not user config. Many models train inside a first-party
 /// harness that supplies one edit tool, so Auto picks that familiar surface.
 /// Pin a concrete [`EditTool`] when a session should ignore this table.
-/// Unknown providers fall back to str_replace. Hashline is legacy and is only
-/// reachable by pinning it or through a custom provider override.
+/// Unknown providers fall back to str_replace.
 pub fn preferred_edit_format_for_provider(provider: &str) -> rho_tools::EditFormat {
     match provider {
         // Codex harness trains on apply_patch documents.

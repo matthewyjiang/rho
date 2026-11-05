@@ -6,13 +6,12 @@ fn call_id(value: &str) -> ToolCallId {
     ToolCallId::from_string(value).unwrap()
 }
 
-fn card(label: &str) -> PresentedToolCard {
+fn card(label: &str) -> ToolCard {
     ToolCard::new(
         ToolStatus::Running,
         ToolFamily::Default,
         ToolHeader::call(label, None),
     )
-    .into()
 }
 
 fn live_labels(batch: &ToolCallBatch) -> Vec<String> {

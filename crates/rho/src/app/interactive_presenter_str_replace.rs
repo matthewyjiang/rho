@@ -14,7 +14,7 @@ use rho_tools::tool_card::{
 
 use super::{diff_card, display_path, EmptyDiffState};
 
-/// Same cap as the hashline and apply_patch proposed diffs.
+/// Same cap as the apply_patch proposed diffs.
 const MAX_PROPOSED_DIFF_ROWS: usize = 1_000;
 /// Same cap as the result diff `str_replace` itself records (old plus new
 /// bytes), so the exact preview never costs more than the finished card.

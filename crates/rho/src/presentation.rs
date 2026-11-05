@@ -9,9 +9,9 @@ pub(crate) mod workflow;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Presentation {
-    Card(crate::app::interactive_presenter::PresentedToolCard),
+    Card(rho_tools::tool_card::ToolCard),
     /// Facts-only receipt when collapsed; expansion reveals the full body.
-    SummaryCard(crate::app::interactive_presenter::PresentedToolCard),
+    SummaryCard(rho_tools::tool_card::ToolCard),
     /// Saved as `message`; the name predates non-agent notifications.
     #[serde(rename = "message")]
     Notification(Box<NotificationCard>),
@@ -19,12 +19,6 @@ pub(crate) enum Presentation {
 
 impl From<rho_tools::tool_card::ToolCard> for Presentation {
     fn from(card: rho_tools::tool_card::ToolCard) -> Self {
-        Self::Card(card.into())
-    }
-}
-
-impl From<crate::app::interactive_presenter::PresentedToolCard> for Presentation {
-    fn from(card: crate::app::interactive_presenter::PresentedToolCard) -> Self {
         Self::Card(card)
     }
 }

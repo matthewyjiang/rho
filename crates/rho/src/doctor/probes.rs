@@ -135,7 +135,7 @@ pub(crate) async fn run_probe(
     }
 }
 
-/// Same budget as `rho_tools` rewrite probes. A hung `--version` must not
+/// Same budget as the `rho-agent-tools` RTK probe. A hung `--version` must not
 /// consume the whole `rho doctor` deadline.
 const RTK_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -176,8 +176,8 @@ async fn probe_rtk_command(mut command: tokio::process::Command, budget: Duratio
     }
 }
 
-/// Keep in sync with `rho_tools::rtk` version gating. Lives here so doctor
-/// does not need a new published tools crate just to abort a hung child.
+/// Keep in sync with the RTK version gate behind `ShellToolOptions::rtk` in
+/// `rho-agent-tools`, whose `rtk` module is private.
 fn rtk_version_supports_rewrite(version: &str) -> bool {
     let version = version
         .trim()

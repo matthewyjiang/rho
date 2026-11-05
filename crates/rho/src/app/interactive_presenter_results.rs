@@ -309,26 +309,31 @@ pub(super) fn search_result_card(
             detail: None,
         });
     }
-    card.body = ToolBody::Lines(split_body_lines(content));
+    let lines = split_body_lines(content);
     // Grep content bodies paint language + match overlay from this pattern,
     // using the same literal/case semantics as the grep tool request.
-    if view.kind == ToolKind::Grep {
-        if let Some(pattern) = string_arg(&view.arguments, "pattern") {
-            let literal = view
+    let pattern = if view.kind == ToolKind::Grep {
+        string_arg(&view.arguments, "pattern").filter(|pattern| !pattern.is_empty())
+    } else {
+        None
+    };
+    card.body = match pattern {
+        Some(pattern) => ToolBody::Search {
+            pattern,
+            literal: view
                 .arguments
                 .get("literal")
                 .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            let case_sensitive = view
+                .unwrap_or(false),
+            case_sensitive: view
                 .arguments
                 .get("case_sensitive")
                 .and_then(|value| value.as_bool())
-                .unwrap_or(true);
-            card = card
-                .with_match_pattern(pattern)
-                .with_match_semantics(literal, case_sensitive);
-        }
-    }
+                .unwrap_or(true),
+            lines,
+        },
+        None => ToolBody::Lines(lines),
+    };
     card
 }
 

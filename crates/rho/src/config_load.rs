@@ -241,8 +241,19 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.permission_mode {
             cfg.permission_mode = value;
         }
-        if let Some(value) = group.edit_tool {
-            cfg.edit_tool = value;
+        if let Some(value) = group.edit_tool.as_deref() {
+            cfg.edit_tool = if super::is_removed_hashline_edit_tool(value) {
+                warnings.push(ConfigWarning::Migrated {
+                    key: "behavior.edit_tool",
+                    from: format!("{value:?}"),
+                    to: super::REMOVED_HASHLINE_REPLACEMENT.into(),
+                });
+                EditTool::Pinned(rho_tools::EditFormat::StrReplace)
+            } else {
+                value
+                    .parse::<EditTool>()
+                    .map_err(|error| anyhow::anyhow!("behavior.edit_tool {error}"))?
+            };
         }
         if let Some(value) = group.credential_store.as_deref() {
             cfg.credential_store = Some(
@@ -761,7 +772,8 @@ struct PartialBehaviorConfig {
     _legacy_workspace_rewind: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,
-    edit_tool: Option<EditTool>,
+    /// Parsed by the loader so the removed `hashline` value can migrate.
+    edit_tool: Option<String>,
     credential_store: Option<String>,
     rtk: Option<bool>,
     inline_shell: Option<String>,

@@ -6,14 +6,12 @@ agent and adapters for registering them with `rho-sdk`. The crate is imported as
 
 The built-in tools cover `read_file`, `write`, one selectable edit surface,
 `list_dir`, `grep`, and `glob`, with shared diff generation and output limiting.
-`CodingToolOptions::edit_tool` selects `hashline` (`edit`), Codex-style
-`apply_patch`, or `str_replace`; only that tool is registered.
-`read_file` returns UTF-8 sources as numbered line views. When the selected
-edit tool is `hashline`, those views and `grep` content mode also mint
-`[path#TAG]` headers. `grep` match previews stay `N | text`.
-These snapshots let the default hashline `edit` chain tags and line numbers;
-preview bodies are not exact source text. Successful mutations return bounded
-post-edit snapshots, while full unified diffs stay in result metadata.
+`CodingToolOptions::edit_tool` selects `str_replace` (the default) or
+Codex-style `apply_patch`; only that tool is registered.
+`read_file` returns UTF-8 sources as numbered line views under a path header.
+`grep` match previews stay `N | text`; preview bodies are not exact source
+text. Successful mutations return bounded post-edit snapshots, while full
+unified diffs stay in result metadata.
 `coding_tools` constructs the SDK adapters, while `shell_tool` constructs the
 platform shell adapter (`bash` on Linux and macOS, PowerShell on Windows).
 
@@ -42,7 +40,7 @@ workspace and opt in to each required capability with a workspace policy.
 use std::{error::Error, sync::Arc};
 
 use rho_sdk::{provider::ModelProvider, Rho, ScopedWorkspacePolicy, Workspace};
-use rho_agent_tools::{coding_tools, shell_tool, CodingToolOptions};
+use rho_agent_tools::{coding_tools, shell_tool, CodingToolOptions, ShellToolOptions};
 
 fn build_runtime(provider: Arc<dyn ModelProvider>) -> Result<Rho, Box<dyn Error>> {
     let workspace = Workspace::new(std::env::current_dir()?)?;
@@ -59,7 +57,7 @@ fn build_runtime(provider: Arc<dyn ModelProvider>) -> Result<Rho, Box<dyn Error>
     for tool in coding_tools(CodingToolOptions::default()) {
         builder = builder.tool_shared(tool);
     }
-    builder = builder.tool_shared(shell_tool(12_000));
+    builder = builder.tool_shared(shell_tool(ShellToolOptions::new().max_output_bytes(12_000)));
 
     Ok(builder.build()?)
 }
