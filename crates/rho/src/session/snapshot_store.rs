@@ -457,6 +457,7 @@ impl rho_sdk::SessionStore for Session {
 fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {
     rho_sdk::Error::Persistence {
         message: error.to_string(),
+        source: None,
     }
 }
 

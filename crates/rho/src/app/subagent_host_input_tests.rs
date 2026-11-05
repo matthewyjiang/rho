@@ -91,7 +91,7 @@ async fn responder_adapter_reports_parent_send_failure() {
 
     assert!(matches!(
         error,
-        rho_sdk::Error::Interrupted { message }
+        rho_sdk::Error::Interrupted { message, .. }
             if message.contains("stopped accepting delegated questionnaires")
     ));
 }
@@ -126,7 +126,7 @@ async fn responder_adapter_reports_dropped_queued_request() {
         .unwrap_err();
     assert!(matches!(
         error,
-        rho_sdk::Error::Interrupted { message }
+        rho_sdk::Error::Interrupted { message, .. }
             if message.contains("dropped without a response")
     ));
 }

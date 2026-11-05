@@ -593,6 +593,7 @@ impl App {
                             if request.parent_session_id != *agent.session_id() {
                                 let _ = request.response.send(Err(rho_sdk::Error::Interrupted {
                                     message: "parent session changed before the delegated questionnaire was shown".into(),
+                                    source: None,
                                 }));
                                 false
                             } else {

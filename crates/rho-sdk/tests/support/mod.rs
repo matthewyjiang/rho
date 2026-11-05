@@ -13,7 +13,7 @@ use rho_sdk::{
     model::{
         ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall, ToolSpec,
     },
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     tool::{Tool, ToolContext, ToolFuture, ToolInvocation, ToolOutput},
     ProviderError, Rho, Session, SessionOptions,
 };
@@ -131,8 +131,9 @@ impl ModelProvider for FloodProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             let _guard = DropGuard::new(&self.probe);
             self.probe.started.store(true, Ordering::Release);

@@ -198,8 +198,8 @@ async fn ask_questionnaire(
         SelectionMode::One,
     )
     .map_err(host_error)?
-    .header("Decision")
-    .help("Review the plan in the tool card above. Approval lasts until Rho exits; it is not saved, and the next launch starts in your saved mode.");
+    .with_header("Decision")
+    .with_help("Review the plan in the tool card above. Approval lasts until Rho exits; it is not saved, and the next launch starts in your saved mode.");
     // Feedback can contain arbitrary text, including reserved decision values.
     // Only the closed decision question authorizes a permission change.
     let feedback = HostQuestion::new(
@@ -209,7 +209,7 @@ async fn ask_questionnaire(
         SelectionMode::One,
     )
     .map_err(host_error)?
-    .header("Feedback")
+    .with_header("Feedback")
     .allow_other()
     .optional();
     let request = HostInputRequest::questionnaire("Plan approval", vec![question, feedback])

@@ -399,9 +399,9 @@ async fn context_snapshot_revalidates_dynamic_request_context() {
         fn send_turn_stream<'a>(
             &'a self,
             request: crate::model::ModelRequest<'a>,
-            events: crate::provider::ProviderEventSender,
+            context: crate::provider::ProviderTurnContext,
         ) -> crate::provider::ProviderFuture<'a> {
-            self.scripted.send_turn_stream(request, events)
+            self.scripted.send_turn_stream(request, context)
         }
     }
     enum Change {
@@ -587,8 +587,9 @@ impl crate::provider::ModelProvider for CancelledUsageProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: crate::model::ModelRequest<'a>,
-        events: crate::provider::ProviderEventSender,
+        context: crate::provider::ProviderTurnContext,
     ) -> crate::provider::ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             let first = request.messages.len() == 1;
             events

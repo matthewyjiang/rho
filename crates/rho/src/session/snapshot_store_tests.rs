@@ -86,15 +86,9 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
 #[test]
 fn sequential_saves_match_fresh_reload() {
     let (_root, _cwd, session) = create_session();
-    let compacted = CompactionState::from_accounting(
-        1,
-        3,
-        30,
-        0,
-        Some(40),
-        Some(10),
-        Some(Revision::from_u64(6)),
-    );
+    let compacted = CompactionState::from_parts(1, 3, Some(Revision::from_u64(6)))
+        .with_removed_tokens(30)
+        .with_last_compaction_tokens(40, 10);
     let at = |revision: u64, history: &[&str], compaction: &CompactionState| {
         let history = history.iter().copied().map(Message::user_text).collect();
         compacted_snapshot(&session, revision, history, compaction.clone())

@@ -377,11 +377,11 @@ async fn usage_is_bound_to_the_source_sampled_before_the_provider_request() {
         fn send_turn_stream<'a>(
             &'a self,
             request: crate::model::ModelRequest<'a>,
-            events: crate::provider::ProviderEventSender,
+            context: crate::provider::ProviderTurnContext,
         ) -> crate::provider::ProviderFuture<'a> {
             Box::pin(async move {
                 *self.source.0.lock().unwrap() = vec![Message::model_context("new context")];
-                self.scripted.send_turn_stream(request, events).await
+                self.scripted.send_turn_stream(request, context).await
             })
         }
     }

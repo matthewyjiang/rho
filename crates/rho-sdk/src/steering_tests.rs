@@ -82,12 +82,12 @@ fn retraction_table_offered_claimed_and_delivered() {
                 assert!(!requests[0].claim(), "a request is claimed at most once");
                 let retraction = queue.retract(&id);
                 requests.pop().unwrap().release();
-                (retraction, SteeringRetraction::AlreadyApplied)
+                (retraction, SteeringRetraction::Delivered)
             }
             "delivered" => {
                 let id = queue.accept(UserInput::text("s"));
                 queue.mark_delivered(&id);
-                (queue.retract(&id), SteeringRetraction::AlreadyApplied)
+                (queue.retract(&id), SteeringRetraction::Delivered)
             }
             "unknown" => (
                 queue.retract(&crate::SteeringId::new()),

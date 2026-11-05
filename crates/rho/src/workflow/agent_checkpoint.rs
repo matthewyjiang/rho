@@ -85,5 +85,6 @@ impl SessionStore for AttemptCheckpoint {
 fn persistence_error(error: WorkflowError) -> rho_sdk::Error {
     rho_sdk::Error::Persistence {
         message: error.to_string(),
+        source: Some(Box::new(error)),
     }
 }

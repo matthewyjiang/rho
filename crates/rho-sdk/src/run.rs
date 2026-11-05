@@ -359,6 +359,7 @@ impl Run {
         self.finished = true;
         joined.map_err(|error| Error::Interrupted {
             message: format!("run task failed: {error}"),
+            source: Some(Box::new(error)),
         })?
     }
 }

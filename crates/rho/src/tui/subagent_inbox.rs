@@ -134,6 +134,7 @@ impl SubagentInbox {
                 let _ = pending.response.send(Err(rho_sdk::Error::Interrupted {
                     message: "parent session changed before the delegated questionnaire was shown"
                         .into(),
+                    source: None,
                 }));
                 changed = true;
                 continue;

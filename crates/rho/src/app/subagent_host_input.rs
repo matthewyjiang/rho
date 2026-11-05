@@ -109,6 +109,7 @@ impl SubagentHostInputBridge {
             .ok_or_else(|| Error::InvalidConfiguration {
                 message: "delegated agent questionnaires require an interactive parent session"
                     .into(),
+                source: None,
             })?;
         let (response_tx, response_rx) = oneshot::channel();
         let pending = SubagentHostInputRequest {
@@ -121,12 +122,14 @@ impl SubagentHostInputBridge {
         tokio::select! {
             result = sender.send(pending) => result.map_err(|_| Error::Interrupted {
                 message: "parent session stopped accepting delegated questionnaires".into(),
+                source: None,
             })?,
             () = cancellation.cancelled() => return Err(Error::Cancelled),
         }
         tokio::select! {
             result = response_rx => result.map_err(|_| Error::Interrupted {
                 message: "delegated questionnaire was dropped without a response".into(),
+                source: None,
             })?,
             () = cancellation.cancelled() => Err(Error::Cancelled),
         }

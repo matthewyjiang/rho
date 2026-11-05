@@ -9,7 +9,7 @@ use rho_sdk::{
         ModelIdentity, ModelRequest, ModelUsage, PartialToolCall, ProviderContextBlock, ToolCall,
         ToolResult,
     },
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     Error, RunEvent, SessionSnapshot, Workspace, SESSION_SNAPSHOT_SCHEMA_VERSION,
 };
 use serde_json::{json, Value};
@@ -210,8 +210,9 @@ impl ModelProvider for FragmentProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             for (index, id, name, arguments) in &self.fragments {
                 events

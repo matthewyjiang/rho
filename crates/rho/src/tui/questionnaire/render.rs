@@ -125,7 +125,7 @@ fn push_tab_lines(
         .enumerate()
         .map(|(index, (question, field))| {
             let answered = field_answer_summary(question, field).is_some();
-            let label = question.header_text().unwrap_or(question.prompt());
+            let label = question.header().unwrap_or(question.prompt());
             format!(
                 "{} {}{}",
                 index + 1,
@@ -236,7 +236,7 @@ fn push_active_question(
     if !question.is_required() {
         meta.push("optional".to_string());
     }
-    if let Some(help) = question.help_text() {
+    if let Some(help) = question.help() {
         meta.push(help.to_string());
     }
     if !meta.is_empty() {
@@ -291,7 +291,7 @@ fn push_active_question(
                 .choices()
                 .get(choice_index)
                 .filter(|_| !is_other)
-                .and_then(|choice| choice.description_text())
+                .and_then(|choice| choice.description())
             {
                 push_hanging_text(lines, "        ", description, width, Theme::dim());
             }

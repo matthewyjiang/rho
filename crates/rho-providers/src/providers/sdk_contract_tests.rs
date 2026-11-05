@@ -12,7 +12,10 @@ use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
     },
-    provider::{provider_event_channel, ModelProvider as SdkModelProvider},
+    provider::{
+        provider_event_channel, ModelProvider as SdkModelProvider, ModelRequestOptions,
+        ProviderTurnContext,
+    },
     CancellationToken, ProviderErrorKind, ReasoningLevel,
 };
 
@@ -314,7 +317,7 @@ async fn callback_events_accepted_before_cancellation_are_forwarded() {
     let (sender, mut receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
     let mut provider_future = provider.send_turn_stream(
         request(&messages, cancellation, ReasoningLevel::Off),
-        sender,
+        ProviderTurnContext::new(sender),
     );
 
     let (result, event) = tokio::join!(&mut provider_future, receiver.recv());
@@ -362,7 +365,7 @@ async fn cancels_a_streaming_turn_that_never_completes() {
     let (sender, _receiver) = provider_event_channel(NonZeroUsize::new(1).unwrap());
     let turn = provider.send_turn_stream(
         request(&messages, cancellation.clone(), ReasoningLevel::Off),
-        sender,
+        ProviderTurnContext::new(sender),
     );
 
     let (result, ()) = tokio::join!(turn, async move { cancellation.cancel() });
@@ -690,7 +693,7 @@ async fn callback_stream_bridge_forwards_events_in_order() {
                 CancellationToken::new(),
                 ReasoningLevel::default()
             ),
-            events
+            ProviderTurnContext::new(events)
         ),
         async {
             let mut received = Vec::new();
@@ -734,7 +737,7 @@ async fn callback_stream_bridge_handles_bursts_larger_than_host_capacity() {
                 CancellationToken::new(),
                 ReasoningLevel::default()
             ),
-            events
+            ProviderTurnContext::new(events)
         ),
         async {
             let mut received = Vec::new();
@@ -779,7 +782,7 @@ async fn callback_stream_bridge_applies_host_backpressure_across_awaits() {
                         CancellationToken::new(),
                         ReasoningLevel::default(),
                     ),
-                    events,
+                    ProviderTurnContext::new(events),
                 )
                 .await
         }
@@ -830,7 +833,7 @@ async fn callback_stream_bridge_observes_cancellation_between_events() {
 
     let turn = provider.send_turn_stream(
         request(&messages, cancellation.clone(), ReasoningLevel::default()),
-        events,
+        ProviderTurnContext::new(events),
     );
     let consumer = async {
         let first = receiver.recv().await;
@@ -870,11 +873,14 @@ async fn fake_native_compact_provider_returns_compaction_output_through_sdk() {
     let sdk: Arc<dyn SdkModelProvider> = Arc::new(provider);
     let messages = [Message::user_text("compact me")];
     let response = sdk
-        .native_compact(request(
-            &messages,
-            CancellationToken::new(),
-            ReasoningLevel::default(),
-        ))
+        .native_compact(
+            request(
+                &messages,
+                CancellationToken::new(),
+                ReasoningLevel::default(),
+            ),
+            ModelRequestOptions::default(),
+        )
         .expect("native compact advertised")
         .await;
     let (result, failed_attempts) = response.into_parts();

@@ -287,30 +287,18 @@ pub struct BeforeToolUsePayload {
 }
 
 /// Outcome of a tool call delivered to observational hooks.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` and
-/// `process: Option<HookProcessResult>` as public fields on this struct and stop
-/// carrying them on [`super::HookEnvelope`].
-///
-/// This minor keeps the existing constructor fields so downstream struct
-/// literals stay valid.
-///
-/// Read the first authorized capability from
-/// [`super::HookEnvelope::after_tool_use_capability`] or the envelope JSON
-/// `payload.capability` key. `None` / JSON `null` means the call never
-/// authorized. Multi-capability calls still emit one `before_tool_use` per
-/// request; the after payload reports only the first. Policy denials still
-/// include the request.
-///
-/// Read the process result from
-/// [`super::HookEnvelope::after_tool_use_process`] or `payload.process`.
-/// `None` / JSON `null` means the call ran no process to completion: the tool
-/// runs none, or the call was denied, timed out, or was cancelled.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AfterToolUsePayload {
     pub tool: HookTool,
+    /// First capability the call passed to authorize; `None` (JSON `null`)
+    /// when it never authorized. Multi-capability calls still emit one
+    /// `before_tool_use` per request; this reports only the first. Policy
+    /// denials still include the request.
+    pub capability: Option<HookCapability>,
+    /// How the process the call ran exited; `None` (JSON `null`) when it ran
+    /// no process to completion: the tool runs none, or the call was denied,
+    /// timed out, or was cancelled.
+    pub process: Option<HookProcessResult>,
     pub status: HookToolStatus,
     pub failure: Option<HookFailure>,
     pub duration_ms: Option<u64>,

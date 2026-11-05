@@ -694,6 +694,7 @@ async fn emit_progress_while_servicing_commands(
             result = &mut delivery => {
                 return result.map_err(|_| Error::Interrupted {
                     message: "run event consumer was dropped".into(),
+                    source: None,
                 });
             }
             () = cancellation.cancelled() => return Err(Error::Cancelled),

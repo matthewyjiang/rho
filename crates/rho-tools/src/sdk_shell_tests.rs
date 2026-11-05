@@ -424,8 +424,9 @@ mod unix {
             let HookPayload::AfterToolUse(payload) = after.payload() else {
                 panic!("an after_tool_use event carries its payload");
             };
-            let process = after
-                .after_tool_use_process()
+            let process = payload
+                .process
+                .as_ref()
                 .expect("a finished command reports its process");
             assert_eq!(
                 (

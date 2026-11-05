@@ -50,26 +50,32 @@ impl SessionSignals {
     /// The update a run event triggers, if any. A new step or a compaction
     /// moves context fill, and the requests before it moved cost; a finished
     /// tool may have replaced the checklist, whether it ran directly or inside
-    /// code mode.
+    /// code mode. A step reports the estimate of its own request.
     pub(super) async fn observe(&mut self, event: &RunEvent) -> Option<SessionUpdate> {
         match event {
-            RunEvent::StepStarted { .. } | RunEvent::CompactionCompleted { .. } => {
-                Some(self.usage().await)
-            }
+            RunEvent::StepStarted {
+                context_estimate, ..
+            } => Some(self.usage_for(*context_estimate).await),
+            RunEvent::CompactionCompleted { .. } => Some(self.usage().await),
             RunEvent::ToolFinished { .. } => self.plan_change(),
             _ => None,
         }
     }
 
-    /// Current context fill and cumulative cost. ACP's `size` is required; 0
-    /// means the window is unknown, which clients render as no maximum.
+    /// Current context fill and cumulative cost; see [`Self::usage_for`].
+    pub(super) async fn usage(&self) -> SessionUpdate {
+        self.usage_for(self.session.context_estimate()).await
+    }
+
+    /// Context fill from `estimate` and cumulative cost. ACP's `size` is
+    /// required; 0 means the window is unknown, which clients render as no
+    /// maximum.
     ///
     /// `cost` is the session's whole ledger total, so it already includes
     /// turns from before a restart or `session/load` and never double counts
     /// them. It is omitted, never sent as 0, while no request has a price;
     /// an all-local session omits it too, as the TUI statusline does.
-    pub(super) async fn usage(&self) -> SessionUpdate {
-        let estimate = self.session.context_estimate();
+    async fn usage_for(&self, estimate: rho_sdk::ContextEstimate) -> SessionUpdate {
         let size = self
             .context_window
             .or(estimate.reported_context_window())

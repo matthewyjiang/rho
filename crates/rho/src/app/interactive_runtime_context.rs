@@ -31,7 +31,11 @@ impl InteractiveRuntime {
     }
 
     pub(super) fn refresh_context_usage(&mut self) {
-        let estimate = self.sessions.session().context_estimate();
+        self.note_context_estimate(self.sessions.session().context_estimate());
+    }
+
+    /// Publishes `estimate` to the context meter and diagnostics.
+    pub(super) fn note_context_estimate(&mut self, estimate: ContextEstimate) {
         self.runs.note_context_usage(self.context_usage(estimate));
         self.record_context_estimate(estimate);
     }

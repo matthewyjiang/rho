@@ -17,7 +17,7 @@ use crate::{
 
 pub use crate::provider_steering::{
     provider_steering_channel, ProviderSteeringOutcome, ProviderSteeringReceiver,
-    ProviderSteeringRequest,
+    ProviderSteeringRequest, ProviderSteeringSender,
 };
 
 /// Future returned by [`ModelProvider`] operations.
@@ -342,6 +342,48 @@ impl ModelRequestOptions {
     }
 }
 
+/// Per-turn inputs for [`ModelProvider::send_turn_stream`] besides the request snapshot.
+///
+/// Fields are public so providers can destructure the context; the
+/// non-exhaustive marker reserves space for future per-turn ports. Hosts build
+/// it with [`Self::new`] and the `with_*` setters.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ProviderTurnContext {
+    /// Ordered semantic event sink for this turn.
+    pub events: ProviderEventSender,
+    /// Additive per-request settings such as the service tier and output cap.
+    pub options: ModelRequestOptions,
+    /// Mid-turn steering port, when the host offers steering for this turn.
+    ///
+    /// Dropping it releases every outstanding and future steering request, so
+    /// providers that cannot steer should drop it before streaming.
+    pub steering: Option<ProviderSteeringReceiver>,
+}
+
+impl ProviderTurnContext {
+    /// Context with default options and no steering port.
+    pub fn new(events: ProviderEventSender) -> Self {
+        Self {
+            events,
+            options: ModelRequestOptions::default(),
+            steering: None,
+        }
+    }
+
+    /// Sets the per-request options.
+    pub fn with_options(mut self, options: ModelRequestOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Offers mid-turn steering through `steering`.
+    pub fn with_steering(mut self, steering: ProviderSteeringReceiver) -> Self {
+        self.steering = Some(steering);
+        self
+    }
+}
+
 /// Extension point for provider-neutral model backends.
 ///
 /// Implementors must not mutate session history. They receive an immutable
@@ -374,38 +416,30 @@ pub trait ModelProvider: Send + Sync {
     /// Returns `None` when the provider has no native compaction path. When
     /// `Some`, the future must return complete replacement history suitable for
     /// session commit, and must cooperate with the request cancellation token.
-    ///
-    /// This is [`Self::native_compact_with_options`] with default options.
-    /// Hosts that have a session service tier should call that method.
+    /// `options` carries the same per-request settings as streaming turns, such
+    /// as the session service tier; providers ignore settings they do not support.
     fn native_compact<'a>(
         &'a self,
         _request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
     ) -> Option<NativeCompactionFuture<'a>> {
         None
     }
 
-    /// Provider-native compaction with the same per-turn options as streaming.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): give native_compact a ModelRequestOptions argument and remove native_compact_with_options.
-    ///
-    /// Changing [`Self::native_compact`]'s signature would break 1.x implementors.
-    /// Hosts pass the session service tier here until that collapse.
-    fn native_compact_with_options<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
-        _options: ModelRequestOptions,
-    ) -> Option<NativeCompactionFuture<'a>> {
-        self.native_compact(request)
-    }
-
     /// Completes one model turn while sending semantic events in order.
+    ///
+    /// `context` carries the event sink, per-request options, and the optional
+    /// mid-turn steering port. Providers that support any option or steering
+    /// override this method. The default ignores options, releases all
+    /// steering, and invokes [`Self::send_turn`] while observing cancellation.
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        // Dropping the steering port releases every offered request now, so
+        // the runtime applies them at the turn boundary.
+        let ProviderTurnContext { events, .. } = context;
         Box::pin(async move {
             let cancellation = request.cancellation.clone();
             let response = tokio::select! {
@@ -424,39 +458,6 @@ pub trait ModelProvider: Send + Sync {
             }
             Ok(response)
         })
-    }
-
-    /// Completes one streaming turn with additive request settings.
-    ///
-    /// The default preserves existing provider behavior. Providers that support
-    /// any option should override this method.
-    fn send_turn_stream_with_options<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
-        _options: ModelRequestOptions,
-        events: ProviderEventSender,
-    ) -> ProviderFuture<'a> {
-        self.send_turn_stream(request, events)
-    }
-
-    /// Streams one turn while accepting mid-turn steering.
-    ///
-    /// The default releases all steering and delegates to
-    /// [`Self::send_turn_stream_with_options`].
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): collapse send_turn_stream, send_turn_stream_with_options and
-    /// send_turn_stream_steerable into one method taking a request context that carries options and the steering port.
-    fn send_turn_stream_steerable<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
-        options: ModelRequestOptions,
-        events: ProviderEventSender,
-        steering: ProviderSteeringReceiver,
-    ) -> ProviderFuture<'a> {
-        drop(steering);
-        self.send_turn_stream_with_options(request, options, events)
     }
 }
 
@@ -673,13 +674,6 @@ impl ModelProvider for ScriptedProvider {
     fn native_compact<'a>(
         &'a self,
         request: ModelRequest<'a>,
-    ) -> Option<NativeCompactionFuture<'a>> {
-        self.native_compact_with_options(request, ModelRequestOptions::default())
-    }
-
-    fn native_compact_with_options<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
         options: ModelRequestOptions,
     ) -> Option<NativeCompactionFuture<'a>> {
         let response = self.take_native_compaction(&request, options.service_tier())?;
@@ -705,17 +699,11 @@ impl ModelProvider for ScriptedProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
-        self.stream_turn(request, None, events)
-    }
-
-    fn send_turn_stream_with_options<'a>(
-        &'a self,
-        request: ModelRequest<'a>,
-        options: ModelRequestOptions,
-        events: ProviderEventSender,
-    ) -> ProviderFuture<'a> {
+        let ProviderTurnContext {
+            events, options, ..
+        } = context;
         self.stream_turn(request, options.service_tier(), events)
     }
 }

@@ -149,12 +149,14 @@ impl SessionSnapshot {
     pub fn to_json(&self) -> Result<String, Error> {
         serde_json::to_string_pretty(self).map_err(|error| Error::Persistence {
             message: format!("failed to serialize session snapshot: {error}"),
+            source: Some(Box::new(error)),
         })
     }
 
     pub fn from_json(json: &str) -> Result<Self, Error> {
         serde_json::from_str(json).map_err(|error| Error::Persistence {
             message: format!("failed to deserialize session snapshot: {error}"),
+            source: Some(Box::new(error)),
         })
     }
 }

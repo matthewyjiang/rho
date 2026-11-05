@@ -538,6 +538,7 @@ impl HostInputResponder for GatedHostInputResponder {
                     permit
                         .map_err(|_| rho_sdk::Error::Interrupted {
                             message: "host input gate closed".into(),
+                            source: None,
                         })?
                         .forget();
                     Ok(HostInputResponse::new().answer("answer", ["yes"]))

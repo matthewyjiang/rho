@@ -2,7 +2,7 @@ use std::fmt;
 
 use rho_sdk::{
     model::{ContentBlock, ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
     Error, ProviderError, ProviderErrorKind, Retryability, Rho, RunEvent, SessionOptions,
     SystemPrompt, UserInput,
 };
@@ -58,8 +58,9 @@ impl ModelProvider for CanaryProvider {
     fn send_turn_stream<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        events: ProviderEventSender,
+        context: ProviderTurnContext,
     ) -> ProviderFuture<'a> {
+        let events = context.events;
         Box::pin(async move {
             if self.fail {
                 return self.send_turn(request).await;

@@ -11,7 +11,7 @@ use crate::{
     },
     provider::{
         provider_event_channel, provider_steering_channel, ModelRequestOptions,
-        ProviderCancellationMode,
+        ProviderCancellationMode, ProviderTurnContext,
     },
     run::RunCommand,
     session::{RunStart, SessionCore, SessionState},
@@ -300,13 +300,12 @@ async fn execute_turn_loop(
         // the end of the OpenAI-compatible stream).
         let context_estimate =
             compaction_estimate.unwrap_or_else(|| core.advance_context(&history, &tool_specs));
-        let estimated_context_tokens = context_estimate.estimated_tokens();
         match emit(
             &events,
             &cancellation,
             RunEvent::StepStarted {
                 step,
-                estimated_context_tokens,
+                context_estimate,
             },
         )
         .await
@@ -675,8 +674,12 @@ async fn provider_turn(
     let (offer_tx, steering_rx) = provider_steering_channel();
     let mut offer_tx = Some(offer_tx);
     let (outcomes_tx, mut outcomes_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut future =
-        provider.send_turn_stream_steerable(request, request_options, provider_events, steering_rx);
+    let mut future = provider.send_turn_stream(
+        request,
+        ProviderTurnContext::new(provider_events)
+            .with_options(request_options)
+            .with_steering(steering_rx),
+    );
     control.steering.offer_into(&mut offer_tx, &outcomes_tx);
     let mut capture = StreamCapture::default();
     let mut timer = ModelCallTimer::start(Instant::now());
@@ -913,6 +916,7 @@ pub(super) async fn emit(
         biased;
         result = events.send(event) => result.map_err(|_| Error::Interrupted {
             message: "run event consumer was dropped".into(),
+            source: None,
         }),
         () = cancellation.cancelled() => Err(Error::Cancelled),
     }

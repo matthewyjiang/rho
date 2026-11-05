@@ -145,8 +145,9 @@ fn state_for_rebuilds_each_nodes_own_history() {
     pretty_assertions::assert_eq!(linear.active_state().unwrap().model, second.history());
 
     session.set_leaf(&first_id).unwrap();
-    let compaction =
-        CompactionState::from_accounting(1, 0, 4, 0, Some(8), Some(4), Some(Revision::from_u64(3)));
+    let compaction = CompactionState::from_parts(1, 0, Some(Revision::from_u64(3)))
+        .with_removed_tokens(4)
+        .with_last_compaction_tokens(8, 4);
     let compact = snapshot(&session, 3, vec![Message::user_text("summary")], compaction);
     session.save_snapshot(&compact, compact.history()).unwrap();
     let compact_id = session
@@ -247,15 +248,9 @@ fn compaction_state_change_writes_a_full_compaction_node() {
         CompactionState::default(),
     );
     session.save_snapshot(&first, &[]).unwrap();
-    let compaction = CompactionState::from_accounting(
-        1,
-        1,
-        10,
-        0,
-        Some(20),
-        Some(10),
-        Some(Revision::from_u64(2)),
-    );
+    let compaction = CompactionState::from_parts(1, 1, Some(Revision::from_u64(2)))
+        .with_removed_tokens(10)
+        .with_last_compaction_tokens(20, 10);
     let compacted = snapshot(&session, 2, vec![Message::user_text("summary")], compaction);
     session.save_snapshot(&compacted, &[]).unwrap();
 
@@ -295,15 +290,9 @@ fn multiple_compactions_restore_in_ancestry_order() {
         .unwrap()
         .clone();
 
-    let first_compaction = CompactionState::from_accounting(
-        1,
-        1,
-        10,
-        0,
-        Some(20),
-        Some(10),
-        Some(Revision::from_u64(2)),
-    );
+    let first_compaction = CompactionState::from_parts(1, 1, Some(Revision::from_u64(2)))
+        .with_removed_tokens(10)
+        .with_last_compaction_tokens(20, 10);
     let first = snapshot(
         &session,
         2,
@@ -328,15 +317,9 @@ fn multiple_compactions_restore_in_ancestry_order() {
         first.compaction().clone(),
     );
     session.save_snapshot(&descendant, &[]).unwrap();
-    let second_compaction = CompactionState::from_accounting(
-        2,
-        2,
-        20,
-        0,
-        Some(30),
-        Some(8),
-        Some(Revision::from_u64(4)),
-    );
+    let second_compaction = CompactionState::from_parts(2, 2, Some(Revision::from_u64(4)))
+        .with_removed_tokens(20)
+        .with_last_compaction_tokens(30, 8);
     let second = snapshot(
         &session,
         4,
@@ -733,15 +716,9 @@ fn mirrored_tree_index_record_equals_reloaded_file_summary() {
     assert_mirrored_record_matches_file(&session, &second_record);
 
     // Turn 3: Compaction turn
-    let compaction_state = CompactionState::from_accounting(
-        1,
-        2,
-        100,
-        0,
-        Some(150),
-        Some(50),
-        Some(Revision::from_u64(3)),
-    );
+    let compaction_state = CompactionState::from_parts(1, 2, Some(Revision::from_u64(3)))
+        .with_removed_tokens(100)
+        .with_last_compaction_tokens(150, 50);
     let third = snapshot(
         &session,
         3,

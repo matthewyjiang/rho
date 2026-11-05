@@ -390,7 +390,7 @@ async fn cancelled_applied_event_keeps_steering_out_of_history() {
     events
         .send(RunEvent::StepStarted {
             step: 1,
-            estimated_context_tokens: 0,
+            context_estimate: crate::ContextEstimate::from_estimated_tokens(0),
         })
         .await
         .unwrap();
@@ -430,7 +430,7 @@ async fn cancellation_before_the_first_tool_interrupts_every_unresolved_call() {
     ));
     assert!(matches!(
         next_event(&mut run).await,
-        RunEvent::StepStarted { estimated_context_tokens, .. } if estimated_context_tokens > 0
+        RunEvent::StepStarted { context_estimate, .. } if context_estimate.estimated_tokens() > 0
     ));
     assert!(matches!(
         next_event(&mut run).await,
@@ -943,7 +943,8 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     ));
     assert!(matches!(
         event_receiver.recv().await,
-        Some(RunEvent::StepStarted { estimated_context_tokens, .. }) if estimated_context_tokens > 0
+        Some(RunEvent::StepStarted { context_estimate, .. })
+            if context_estimate.estimated_tokens() > 0
     ));
     assert!(matches!(
         event_receiver.recv().await,

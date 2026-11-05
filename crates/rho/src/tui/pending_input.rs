@@ -233,9 +233,13 @@ impl App {
                     self.notify_status("steer discarded");
                 }
             }
+            Ok(rho_sdk::SteeringRetraction::Delivered) => {
+                // The provider already received it mid-turn. It stays pending until
+                // the SDK emits SteeringApplied, the authority for transcript insertion.
+                self.notify_status("steer was already sent to the model");
+            }
             Ok(rho_sdk::SteeringRetraction::AlreadyApplied) => {
-                // Claimed or delivered steering still remains staged until the SDK emits
-                // SteeringApplied. That event is the authority for transcript insertion.
+                // SteeringApplied, not this receipt, inserts the steer into the transcript.
                 self.notify_status("steer can no longer be changed");
             }
             Ok(rho_sdk::SteeringRetraction::NotFound) => {

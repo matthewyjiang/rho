@@ -254,6 +254,8 @@ fn externally_supplied_capability_fields_are_bounded() {
 fn matchers_read_tool_name_and_status_from_the_payload() {
     let after = HookPayload::AfterToolUse(AfterToolUsePayload {
         tool: tool("bash", Some("c1")),
+        capability: None,
+        process: None,
         status: HookToolStatus::Failed,
         failure: None,
         duration_ms: Some(12),

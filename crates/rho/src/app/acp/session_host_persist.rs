@@ -385,6 +385,7 @@ impl SessionStore for CheckpointStore {
             self.save_now(snapshot)
                 .map_err(|error| rho_sdk::Error::Persistence {
                     message: format!("{error:#}"),
+                    source: None,
                 })
         })
     }

@@ -276,6 +276,7 @@ async fn failed_notice_restores_prompt_provider_and_history() {
     let mut fail_notice = |_: String, _: String| {
         Err(rho_sdk::Error::Persistence {
             message: "injected write failure".into(),
+            source: None,
         })
     };
     assert!(apply_conversation_switch(

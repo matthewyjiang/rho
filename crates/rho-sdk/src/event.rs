@@ -293,17 +293,11 @@ pub enum RunEvent {
     },
     StepStarted {
         step: usize,
-        /// Provider-neutral estimate of request history and tool schemas.
-        /// This remains raw; [`crate::Session::context_estimate`] supplies the
-        /// calibrated count at the latest published history boundary.
-        ///
-        /// # Next major
-        ///
-        /// NEXT_MAJOR(rho-sdk): carry ContextEstimate on StepStarted instead of estimated_context_tokens.
-        /// Changing this existing variant's field would break minor-compatible
-        /// hosts. A session query currently exposes the richer latest snapshot;
-        /// an event-owned value would associate it with this exact step.
-        estimated_context_tokens: u64,
+        /// Context accounting for this step's request: history, request-only
+        /// context, and tool schemas. [`crate::ContextEstimate::tokens`] is
+        /// calibrated against the latest applicable provider report;
+        /// [`crate::ContextEstimate::estimated_tokens`] stays provider-neutral.
+        context_estimate: crate::ContextEstimate,
     },
     AssistantTextDelta {
         text: String,

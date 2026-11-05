@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{Message, ModelRequest},
-    provider::provider_event_channel,
+    provider::{provider_event_channel, ProviderTurnContext},
 };
 use tokio::{io::AsyncWriteExt, net::TcpListener};
 use url::Url;
@@ -65,7 +65,7 @@ async fn configured_compression_reaches_every_custom_host_api() {
                 reasoning_level: ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
-            sender,
+            ProviderTurnContext::new(sender),
         );
         let server = async {
             let (mut stream, _) = listener.accept().await.unwrap();

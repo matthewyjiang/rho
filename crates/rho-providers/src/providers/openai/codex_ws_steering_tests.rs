@@ -74,7 +74,7 @@ fn steer_receiver(
     text: &str,
 ) -> (
     Option<rho_sdk::provider::ProviderSteeringReceiver>,
-    tokio::sync::mpsc::UnboundedSender<rho_sdk::provider::ProviderSteeringRequest>,
+    rho_sdk::provider::ProviderSteeringSender,
 ) {
     let (tx, rx) = rho_sdk::provider::provider_steering_channel();
     let _ = text;

@@ -68,14 +68,14 @@ fn choice_hits_tile_each_choice_block_in_order() {
             "Pick one?",
             vec![
                 HostChoice::new("short", "short"),
-                HostChoice::new("desc", "described").description("with a description row"),
+                HostChoice::new("desc", "described").with_description("with a description row"),
                 HostChoice::new("long", long),
             ],
             selection,
         )
         .unwrap()
-        .default_value(serde_json::json!("long"))
-        .default_selection(DefaultSelection::Focused)
+        .with_default_value(serde_json::json!("long"))
+        .with_default_selection(DefaultSelection::Focused)
         .allow_other()
     };
     let width = 30;

@@ -180,7 +180,9 @@ fn native_compact_is_advertised_only_for_first_party_hosts() {
         };
 
         assert_eq!(
-            provider.native_compact(request).is_some(),
+            provider
+                .native_compact(request, ModelRequestOptions::default())
+                .is_some(),
             expected,
             "identity_provider={identity_provider}"
         );

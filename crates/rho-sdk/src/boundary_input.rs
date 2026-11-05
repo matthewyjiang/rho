@@ -128,6 +128,7 @@ impl BoundaryInputSource {
 fn disconnected() -> Error {
     Error::Interrupted {
         message: "boundary input host disconnected before acknowledging the checkpoint".into(),
+        source: None,
     }
 }
 

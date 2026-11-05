@@ -69,8 +69,8 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
     ));
     assert!(matches!(
         run.next_event().await,
-        Some(RunEvent::StepStarted { step: 1, estimated_context_tokens })
-            if estimated_context_tokens > 0
+        Some(RunEvent::StepStarted { step: 1, context_estimate })
+            if context_estimate.estimated_tokens() > 0
     ));
     assert!(matches!(
         run.next_event().await,
@@ -123,8 +123,8 @@ async fn failed_terminal_backpressure_keeps_the_run_owner_active() {
     ));
     assert!(matches!(
         run.next_event().await,
-        Some(RunEvent::StepStarted { step: 1, estimated_context_tokens })
-            if estimated_context_tokens > 0
+        Some(RunEvent::StepStarted { step: 1, context_estimate })
+            if context_estimate.estimated_tokens() > 0
     ));
     assert!(matches!(
         run.next_event().await,

@@ -109,6 +109,9 @@ let id = run
     .await?;
 match run.retract_steering(id).await? {
     SteeringRetraction::Retracted => {}
+    SteeringRetraction::Delivered => {
+        // The provider already received it mid-turn; it still reaches history.
+    }
     SteeringRetraction::AlreadyApplied => {
         // The runtime had already atomically appended it to history.
     }
@@ -302,7 +305,7 @@ and returns `Error::Cancelled`. Dropping a `Run` cancels and aborts its worker.
 ```rust
 # use rho_sdk::{
 #     model::{ModelEvent, ModelIdentity, ModelRequest, ModelResponse},
-#     provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+#     provider::{ModelProvider, ProviderFuture, ProviderTurnContext},
 #     Error, Rho, RunEvent, SessionOptions, UserInput,
 # };
 # struct WaitProvider;
@@ -319,8 +322,9 @@ and returns `Error::Cancelled`. Dropping a `Run` cancels and aborts its worker.
 #     fn send_turn_stream<'a>(
 #         &'a self,
 #         request: ModelRequest<'a>,
-#         events: ProviderEventSender,
+#         context: ProviderTurnContext,
 #     ) -> ProviderFuture<'a> {
+#         let events = context.events;
 #         Box::pin(async move {
 #             events.send(ModelEvent::OutputDelta("partial".into())).await?;
 #             request.cancellation.cancelled().await;

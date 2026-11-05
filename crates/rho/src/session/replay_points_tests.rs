@@ -14,8 +14,9 @@ fn segments_split_the_active_path_at_each_compaction() {
     let cwd = tempfile::tempdir().unwrap();
     let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
     let id = SessionId::from_string(session.id().to_owned()).unwrap();
-    let compacted =
-        CompactionState::from_accounting(1, 0, 4, 0, Some(8), Some(4), Some(Revision::from_u64(3)));
+    let compacted = CompactionState::from_parts(1, 0, Some(Revision::from_u64(3)))
+        .with_removed_tokens(4)
+        .with_last_compaction_tokens(8, 4);
     let before = vec![Message::user_text("one"), Message::assistant_text("two")];
     let summary = vec![
         Message::user_text("summary"),

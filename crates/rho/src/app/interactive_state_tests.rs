@@ -42,7 +42,7 @@ fn cancellation_wins_over_tool_questionnaire_and_compaction_events() {
             cancelling,
             &RunEvent::StepStarted {
                 step: 2,
-                estimated_context_tokens: 0,
+                context_estimate: rho_sdk::ContextEstimate::from_estimated_tokens(0),
             },
         ),
         cancelling
@@ -75,7 +75,7 @@ fn compaction_provider_switch_and_failure_are_explicit_states() {
             InteractiveState::Run(RunState::Compacting),
             &RunEvent::StepStarted {
                 step: 2,
-                estimated_context_tokens: 0,
+                context_estimate: rho_sdk::ContextEstimate::from_estimated_tokens(0),
             },
         ),
         InteractiveState::Run(RunState::Running(RunPhase::Model))

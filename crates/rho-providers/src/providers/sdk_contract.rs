@@ -424,7 +424,7 @@ where
 /// advertisement per instance (a transport type can serve hosts without the
 /// compact endpoint).
 ///
-/// Pass `request_options` when the transport also exposes an inherent
+/// Pass `request_options` when the transport streams through an inherent
 /// `stream_turn_with_options` method with [`rho_sdk::provider::ModelRequestOptions`]
 /// before the event callbacks. To advertise output caps, explicitly pass
 /// `request_options(max_output_tokens = Self::applies_max_output_tokens)` with
@@ -432,7 +432,12 @@ where
 ///
 /// Pass `native_compact_options` instead of `native_compact` when
 /// `native_compact_turn` also takes [`rho_sdk::provider::ModelRequestOptions`].
-/// The generated `native_compact` forwards default options.
+///
+/// Pass `steerable` when the transport streams through an inherent
+/// `stream_turn_steerable` method taking the options and the optional
+/// [`rho_sdk::provider::ProviderSteeringReceiver`] before the event callbacks.
+/// Without it the generated `send_turn_stream` drops the steering port before
+/// streaming, which releases every offered request to the turn boundary.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
@@ -481,95 +486,46 @@ macro_rules! impl_sdk_model_provider {
                 })
             }
 
-            $crate::impl_sdk_model_provider!(@request_options_methods $($options)*);
-
-            $crate::impl_sdk_model_provider!(@steerable_methods $($steer)*);
+            $crate::impl_sdk_model_provider!(@max_output_tokens_method $($options)*);
 
             $crate::impl_sdk_model_provider!(@native_compact_method $($native)*);
 
             fn send_turn_stream<'a>(
                 &'a self,
                 request: ::rho_sdk::model::ModelRequest<'a>,
-                events: ::rho_sdk::provider::ProviderEventSender,
+                context: ::rho_sdk::provider::ProviderTurnContext,
             ) -> ::rho_sdk::provider::ProviderFuture<'a> {
                 $crate::impl_sdk_model_provider!(
-                    @stream_turn self,
-                    request,
-                    events,
-                    stream_turn,
-                    []
+                    @send_turn_stream self, request, context, [$($options)*], [$($steer)*]
                 )
             }
         }
     };
-    (@steerable_methods) => {};
-    (@steerable_methods @steerable) => {
-        fn send_turn_stream_steerable<'a>(
-            &'a self,
-            request: ::rho_sdk::model::ModelRequest<'a>,
-            options: ::rho_sdk::provider::ModelRequestOptions,
-            events: ::rho_sdk::provider::ProviderEventSender,
-            steering: ::rho_sdk::provider::ProviderSteeringReceiver,
-        ) -> ::rho_sdk::provider::ProviderFuture<'a> {
-            ::std::boxed::Box::pin(async move {
-                $crate::impl_sdk_model_provider!(@gate_images self, request, gated_messages);
-                let cancellation = request.cancellation.clone();
-                let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
-                    ::std::collections::VecDeque::new(),
-                ));
-                let notify = ::std::sync::Arc::new(::tokio::sync::Notify::new());
-                let mut on_event = $crate::providers::sdk_contract::callback_event_sink(
-                    cancellation.clone(),
-                    ::std::sync::Arc::clone(&pending),
-                    ::std::sync::Arc::clone(&notify),
-                );
-                let mut on_request_event =
-                    $crate::providers::sdk_contract::callback_request_event_sink(
-                        cancellation.clone(),
-                        ::std::sync::Arc::clone(&pending),
-                        ::std::sync::Arc::clone(&notify),
-                    );
-                let provider = self.stream_turn_steerable(
-                    request,
-                    options,
-                    steering,
-                    &mut on_event,
-                    &mut on_request_event,
-                );
-                $crate::providers::sdk_contract::drive_callback_stream(
-                    cancellation,
-                    events,
-                    pending,
-                    notify,
-                    provider,
-                )
-                .await
-            })
-        }
-    };
-    (@request_options_methods) => {};
     (@max_output_tokens_method) => {};
-    (@max_output_tokens_method @max_output_tokens($cap:path)) => {
+    (@max_output_tokens_method @request_options) => {};
+    (@max_output_tokens_method @request_options @max_output_tokens($cap:path)) => {
         fn honors_max_output_tokens(&self) -> bool { ($cap)(self) }
     };
-    (@request_options_methods @request_options $($cap:tt)*) => {
-        $crate::impl_sdk_model_provider!(@max_output_tokens_method $($cap)*);
-
-        fn send_turn_stream_with_options<'a>(
-            &'a self,
-            request: ::rho_sdk::model::ModelRequest<'a>,
-            options: ::rho_sdk::provider::ModelRequestOptions,
-            events: ::rho_sdk::provider::ProviderEventSender,
-        ) -> ::rho_sdk::provider::ProviderFuture<'a> {
-            $crate::impl_sdk_model_provider!(
-                @stream_turn self,
-                request,
-                events,
-                stream_turn_with_options,
-                [options]
-            )
-        }
-    };
+    // Unbound context fields, including the steering port, drop before the
+    // returned future first polls.
+    (@send_turn_stream $self:ident, $request:ident, $context:ident, [$($options:tt)*], [@steerable]) => {{
+        let ::rho_sdk::provider::ProviderTurnContext {
+            events, options, steering, ..
+        } = $context;
+        $crate::impl_sdk_model_provider!(
+            @stream_turn $self, $request, events, stream_turn_steerable, [options, steering]
+        )
+    }};
+    (@send_turn_stream $self:ident, $request:ident, $context:ident, [@request_options $($cap:tt)*], []) => {{
+        let ::rho_sdk::provider::ProviderTurnContext { events, options, .. } = $context;
+        $crate::impl_sdk_model_provider!(
+            @stream_turn $self, $request, events, stream_turn_with_options, [options]
+        )
+    }};
+    (@send_turn_stream $self:ident, $request:ident, $context:ident, [], []) => {{
+        let ::rho_sdk::provider::ProviderTurnContext { events, .. } = $context;
+        $crate::impl_sdk_model_provider!(@stream_turn $self, $request, events, stream_turn, [])
+    }};
     (@stream_turn $self:ident, $request:ident, $events:ident, $method:ident, [$($arg:ident),*]) => {
         ::std::boxed::Box::pin(async move {
             $crate::impl_sdk_model_provider!(@gate_images $self, $request, gated_messages);
@@ -623,16 +579,6 @@ macro_rules! impl_sdk_model_provider {
         fn native_compact<'a>(
             &'a self,
             request: ::rho_sdk::model::ModelRequest<'a>,
-        ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
-            self.native_compact_with_options(
-                request,
-                ::rho_sdk::provider::ModelRequestOptions::default(),
-            )
-        }
-
-        fn native_compact_with_options<'a>(
-            &'a self,
-            request: ::rho_sdk::model::ModelRequest<'a>,
             options: ::rho_sdk::provider::ModelRequestOptions,
         ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
             if !self.native_compact_available() {
@@ -655,6 +601,7 @@ macro_rules! impl_sdk_model_provider {
         fn native_compact<'a>(
             &'a self,
             request: ::rho_sdk::model::ModelRequest<'a>,
+            _options: ::rho_sdk::provider::ModelRequestOptions,
         ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
             if !self.native_compact_available() {
                 return ::std::option::Option::None;
