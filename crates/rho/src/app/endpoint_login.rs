@@ -30,7 +30,9 @@ pub(crate) fn record(
 
 /// Forgets a login to a host logged in through its endpoint and drops its
 /// cached models, so pickers stop listing it at once. Returns whether a
-/// login was recorded; other providers are left untouched.
+/// login was recorded; other providers are left untouched. Dropping the
+/// cache is best-effort once the login is gone: a leftover list is purged
+/// at the next start, so it only logs.
 pub(crate) fn forget(
     repository: &ConfigRepository,
     descriptor: ProviderDescriptor,
@@ -44,6 +46,10 @@ pub(crate) fn forget(
         return Ok(false);
     }
     repository.update(|config| config.providers.forget_login(descriptor))?;
-    rho_providers::model::provider_models::forget_provider_models(descriptor.name)?;
+    if let Err(error) =
+        rho_providers::model::provider_models::forget_provider_models(descriptor.name)
+    {
+        tracing::warn!(provider = descriptor.name, %error, "could not drop cached models");
+    }
     Ok(true)
 }
