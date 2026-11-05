@@ -13,7 +13,9 @@ use std::{
 
 use crate::{
     app::workflow_runtime::RuntimeEvent,
-    workflow::{NodeState, RunLifecycle, StoredRun, WorkflowOutcome, WorkflowValue},
+    workflow::{
+        NodeState, RunLifecycle, StoredRun, TaskInstanceId, WorkflowOutcome, WorkflowValue,
+    },
 };
 
 const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
@@ -255,7 +257,10 @@ impl WorkflowRunTracker {
                     .count(),
                 total_tasks: entry.tasks.len(),
                 active_task: entry.tasks.iter().find_map(|(id, state)| {
-                    matches!(state, NodeState::Running { .. }).then(|| id.clone())
+                    matches!(state, NodeState::Running { .. }).then(|| {
+                        id.parse::<TaskInstanceId>()
+                            .map_or_else(|_| id.clone(), |task| task.label())
+                    })
                 }),
                 elapsed_seconds: entry
                     .finished_at

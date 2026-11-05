@@ -103,31 +103,35 @@ fn plan_and_run_inventory_skips_journal_replay() {
     std::fs::remove_file(store.layout.run_graph(run.manifest.run_id)).unwrap();
     assert_eq!(
         store.list_plan_inventory().unwrap(),
-        vec![PlanInventoryItem {
-            plan_id: plan.manifest.plan_id,
-            access: RecordAccess::Executable,
-            created_at_unix_nanos: plan.manifest.created_at_unix_nanos,
-            workspace_identity: plan.manifest.workspace_identity.clone(),
-            name: plan.manifest.name.clone(),
-            step_count: plan.manifest.step_count,
-        }]
+        PlanInventory {
+            items: vec![PlanInventoryItem {
+                plan_id: plan.manifest.plan_id,
+                created_at_unix_nanos: plan.manifest.created_at_unix_nanos,
+                workspace_identity: plan.manifest.workspace_identity.clone(),
+                name: plan.manifest.name.clone(),
+                step_count: plan.manifest.step_count,
+            }],
+            unsupported: Vec::new(),
+        }
     );
     assert_eq!(
         store.list_run_inventory().unwrap(),
-        vec![RunInventoryItem {
-            run_id: run.manifest.run_id,
-            access: RecordAccess::Executable,
-            created_at_unix_nanos: run.manifest.created_at_unix_nanos,
-            workspace_identity: run.manifest.workspace_identity.clone(),
-            name: run.manifest.name.clone(),
-            lifecycle: RunLifecycle::Planned,
-            outcome: None,
-            done_steps: 0,
-            total_steps: run.manifest.step_count,
-        }]
+        RunInventory {
+            items: vec![RunInventoryItem {
+                run_id: run.manifest.run_id,
+                created_at_unix_nanos: run.manifest.created_at_unix_nanos,
+                workspace_identity: run.manifest.workspace_identity.clone(),
+                name: run.manifest.name.clone(),
+                lifecycle: RunLifecycle::Planned,
+                outcome: None,
+                done_steps: 0,
+                total_steps: run.manifest.step_count,
+            }],
+            unsupported: Vec::new(),
+        }
     );
     store.delete_run(run.manifest.run_id).unwrap();
-    assert!(store.read_run_inventory(run.manifest.run_id).is_err());
+    assert_eq!(store.list_run_inventory().unwrap(), RunInventory::default());
 }
 
 // Covers: an unreadable UUID entry must not vanish into an empty hub.
@@ -139,4 +143,107 @@ fn list_plan_inventory_fails_closed_on_corrupt_uuid_entry() {
     let plan = plan(&store);
     std::fs::write(store.layout.plan_manifest(plan.manifest.plan_id), b"{").unwrap();
     assert!(store.list_plan_inventory().is_err());
+}
+
+// Covers: plans and runs saved before scoped programs (version 1 manifests)
+// fail to open with an error naming the record instead of vanishing, stay
+// listed as unsupported rows, and can still be deleted.
+// Owner: workflow durable store generation policy.
+#[test]
+fn version_1_records_fail_to_open_but_stay_listed_and_deletable() {
+    const PLAN_ID: &str = "018f0000-0000-7000-8000-000000000001";
+    const RUN_ID: &str = "018f0000-0000-7000-8000-000000000002";
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    let plan_id: PlanId = PLAN_ID.parse().unwrap();
+    let run_id: RunId = RUN_ID.parse().unwrap();
+    for (relative, manifest) in [
+        (
+            plan_relative(plan_id, Path::new("manifest.json")),
+            serde_json::json!({
+                "schema_version": 1, "plan_id": PLAN_ID, "created_at_unix_nanos": 7,
+                "graph_digest": "sha256:old", "workspace_identity": "workspace-id",
+                "source_digests": {}, "name": "review", "step_count": 1,
+            }),
+        ),
+        (
+            run_relative(run_id, Path::new("manifest.json")),
+            serde_json::json!({
+                "schema_version": 1, "run_id": RUN_ID, "created_at_unix_nanos": 8,
+                "plan_id": PLAN_ID, "graph_digest": "sha256:old",
+                "workspace_identity": "workspace-id",
+                "consent": {"graph_digest": "sha256:old", "confirmed": true},
+                "name": "review", "step_count": 1,
+            }),
+        ),
+    ] {
+        store
+            .root
+            .ensure_directory(relative.parent().unwrap())
+            .unwrap();
+        write_json_beneath(&store.root, &relative, &manifest).unwrap();
+    }
+    store
+        .root
+        .write_file(&run_relative(run_id, Path::new("mutation.lock")), b"")
+        .unwrap();
+
+    for (error, kind, id) in [
+        (store.load_plan(plan_id).unwrap_err(), "plan", PLAN_ID),
+        (store.load_run(run_id).unwrap_err(), "run", RUN_ID),
+        (
+            store.lock_run(run_id).err().expect("writer refused"),
+            "run",
+            RUN_ID,
+        ),
+        (
+            store
+                .install_cancellation_request(run_id, b"request")
+                .unwrap_err(),
+            "run",
+            RUN_ID,
+        ),
+    ] {
+        assert!(
+            matches!(
+                &error,
+                WorkflowError::UnsupportedRecord { kind: actual_kind, id: actual_id }
+                    if (*actual_kind, actual_id.as_str()) == (kind, id)
+            ),
+            "{error:?}"
+        );
+    }
+
+    assert_eq!(
+        store.list_plan_inventory().unwrap(),
+        PlanInventory {
+            items: Vec::new(),
+            unsupported: vec![UnsupportedRecord {
+                id: plan_id,
+                created_at_unix_nanos: 7,
+                workspace_identity: "workspace-id".to_owned(),
+                name: "review".to_owned(),
+            }],
+        }
+    );
+    assert_eq!(
+        store.list_run_inventory().unwrap(),
+        RunInventory {
+            items: Vec::new(),
+            unsupported: vec![UnsupportedRecord {
+                id: run_id,
+                created_at_unix_nanos: 8,
+                workspace_identity: "workspace-id".to_owned(),
+                name: "review".to_owned(),
+            }],
+        }
+    );
+
+    store.delete_run(run_id).unwrap();
+    store.delete_plan(plan_id).unwrap();
+    assert_eq!(store.list_run_inventory().unwrap(), RunInventory::default());
+    assert_eq!(
+        store.list_plan_inventory().unwrap(),
+        PlanInventory::default()
+    );
 }

@@ -83,6 +83,7 @@ session-boundary events only.
 `host_labels` contains bounded, non-secret labels from the embedding host. It
 is empty for standard session events. Tool events from workflow command and
 agent nodes include `workflow_run_id`, `plan_digest`, `node_id`, and `attempt`.
+`node_id` is the task instance ID, such as `s0.review` for a root task.
 SDK hosts can supply other labels, so handlers must allow unknown keys. A label
 that exceeds a bound is shortened and named in `bounds.fields`.
 

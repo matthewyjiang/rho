@@ -47,11 +47,13 @@ impl FromStr for ScopeInstanceId {
 
 /// A task invocation, distinct from its scope-local definition identity.
 ///
-/// Root-scope instances use the bare definition name (`review`) as their string
-/// form, which keeps CLI JSONL, hook labels, status, and artifact paths identical
-/// to single-graph releases. Other scopes use `s<ordinal>.<definition>`; node IDs
-/// cannot contain `.`, so the two forms never collide.
-// NEXT_MAJOR(rho-coding-agent): qualify root task instances as `s0.<definition>` like other scopes and bump the workflow JSONL wire version.
+/// The string form is `s<ordinal>.<definition>` in every scope, including the
+/// root (`s0.review`). It names tasks in CLI JSONL, hook labels, status, and
+/// artifact paths. Node IDs cannot contain `.`, so it never collides with a
+/// definition name.
+///
+/// Parsing also accepts a bare definition name as a root task: run journals
+/// written before root tasks were qualified store that form.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub(crate) struct TaskInstanceId {
@@ -72,20 +74,25 @@ impl TaskInstanceId {
     pub(crate) fn definition(&self) -> &NodeId {
         &self.definition
     }
+    /// Short name for people: a root task shows as its definition (`review`),
+    /// a nested one keeps its scope (`s2.review`) to tell repeats apart.
+    pub(crate) fn label(&self) -> String {
+        if self.scope == ScopeInstanceId::ROOT {
+            self.definition.as_str().to_owned()
+        } else {
+            self.to_string()
+        }
+    }
 }
 
 impl fmt::Display for TaskInstanceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.scope == ScopeInstanceId::ROOT {
-            f.write_str(self.definition.as_str())
-        } else {
-            write!(
-                f,
-                "{}{SCOPE_SEPARATOR}{}",
-                self.scope,
-                self.definition.as_str()
-            )
-        }
+        write!(
+            f,
+            "{}{SCOPE_SEPARATOR}{}",
+            self.scope,
+            self.definition.as_str()
+        )
     }
 }
 
@@ -95,15 +102,7 @@ impl FromStr for TaskInstanceId {
         let Some((scope, definition)) = value.split_once(SCOPE_SEPARATOR) else {
             return Ok(Self::root(NodeId::new(value)?));
         };
-        let scope: ScopeInstanceId = scope.parse()?;
-        if scope == ScopeInstanceId::ROOT {
-            return Err(WorkflowError::InvalidId {
-                kind: "task instance ID",
-                value: value.to_owned(),
-                grammar: "a bare node ID for root tasks, or s<ordinal>.<node ID> for other scopes",
-            });
-        }
-        Ok(Self::new(scope, NodeId::new(definition)?))
+        Ok(Self::new(scope.parse()?, NodeId::new(definition)?))
     }
 }
 

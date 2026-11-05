@@ -1,7 +1,9 @@
 use std::str::FromStr;
 
 use super::{hub_picker, test_source};
-use crate::workflow::{RecordAccess, RunId, RunInventoryItem, RunLifecycle, WorkflowOutcome};
+use crate::workflow::{
+    PlanInventory, RunId, RunInventory, RunInventoryItem, RunLifecycle, WorkflowOutcome,
+};
 use pretty_assertions::assert_eq;
 
 // Covers: a discovered source is startable from the hub (action identity, not chrome copy).
@@ -9,7 +11,11 @@ use pretty_assertions::assert_eq;
 #[test]
 fn hub_picker_exposes_startable_source_action() {
     let sources = vec![test_source("review", ".rho/workflows/review/workflow.star")];
-    let picker = hub_picker(&sources, &[], &[]);
+    let picker = hub_picker(
+        &sources,
+        &PlanInventory::default(),
+        &RunInventory::default(),
+    );
     assert!(picker.is_overlay());
     let start = picker
         .items
@@ -23,7 +29,7 @@ fn hub_picker_exposes_startable_source_action() {
 // Owner: workflow hub inventory projection.
 #[test]
 fn hub_picker_marks_empty_start_when_no_sources() {
-    let picker = hub_picker(&[], &[], &[]);
+    let picker = hub_picker(&[], &PlanInventory::default(), &RunInventory::default());
     assert_eq!(picker.items[0].value, "noop:empty_sources");
     // Placeholder closes the hub; it must not start a run.
     assert_ne!(picker.items[0].selection_verb, Some("start"));
@@ -32,7 +38,6 @@ fn hub_picker_marks_empty_start_when_no_sources() {
 fn finished_run(id: &str, created_at_unix_nanos: u64) -> RunInventoryItem {
     RunInventoryItem {
         run_id: RunId::from_str(id).unwrap(),
-        access: RecordAccess::Executable,
         created_at_unix_nanos,
         workspace_identity: "workspace".into(),
         name: "review".into(),
@@ -44,7 +49,7 @@ fn finished_run(id: &str, created_at_unix_nanos: u64) -> RunInventoryItem {
 }
 
 // Covers: the hub lists the newest finished run first even when UUID order
-// differs, and legacy runs without a timestamp keep a stable order across refreshes.
+// differs, and runs without a timestamp keep a stable order across refreshes.
 // Owner: workflow hub inventory projection.
 #[test]
 fn hub_picker_orders_runs_by_creation_time_then_run_id() {
@@ -57,12 +62,16 @@ fn hub_picker_orders_runs_by_creation_time_then_run_id() {
             [LOW, HIGH],
         ),
         (
-            "legacy zero timestamps by run id",
+            "zero timestamps by run id",
             vec![finished_run(LOW, 0), finished_run(HIGH, 0)],
             [HIGH, LOW],
         ),
     ] {
-        let picker = hub_picker(&[], &[], &runs);
+        let runs = RunInventory {
+            items: runs,
+            unsupported: Vec::new(),
+        };
+        let picker = hub_picker(&[], &PlanInventory::default(), &runs);
         let run_values = picker
             .items
             .iter()

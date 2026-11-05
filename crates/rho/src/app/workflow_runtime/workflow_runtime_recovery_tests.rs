@@ -657,7 +657,7 @@ async fn checkpointed_agent_attempt_continues() {
         serde_json::json!({
             "run_id": run.manifest.run_id,
             "needs_confirmation": true,
-            "attempts": [{"node": "inspect", "attempt": 1, "action": "continue"}],
+            "attempts": [{"node": "s0.inspect", "attempt": 1, "action": "continue"}],
         })
     );
     assert_eq!(std::fs::read(&events).unwrap(), events_before);
@@ -716,7 +716,7 @@ async fn uncertain_agent_attempt_resets_when_it_cannot_continue() {
         assert_eq!(
             preview_json(home.path(), &run)["attempts"],
             serde_json::json!([
-                {"node": "inspect", "attempt": 1, "action": "reset", "reason": reason},
+                {"node": "s0.inspect", "attempt": 1, "action": "reset", "reason": reason},
             ]),
             "{reason}"
         );
