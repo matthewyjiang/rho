@@ -67,7 +67,7 @@ Reasoning: offer inherit (omit) plus the levels models.dev lists for the target 
 
 | Runtime | Presets (do not extend) | Reasoning |
 | --- | --- | --- |
-| `claude-cli` | `claude-opus-5` (default), `claude-sonnet-5`, `claude-fable-5-1` | optional `low`, `medium`, `high`, `xhigh`, `max` (`--effort`) |
+| `claude-cli` | `claude-opus-5` (default), `claude-sonnet-5`, `claude-fable-5-1` | optional `low`, `medium`, `high`, `xhigh`, `max` (Claude effort) |
 | `cursor` | ids from `cursor-agent models`; bracket overrides allowed, e.g. `gpt-5.3-codex[effort=high,fast=false]` | none |
 | `antigravity` | `gemini-3.8-flash` (recommended), `gemini-4-argon` | none |
 

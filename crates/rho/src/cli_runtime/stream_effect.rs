@@ -1,11 +1,9 @@
-//! Stream-json effect types shared by CLI mappers and the session sink.
+//! Effect types shared by the ACP event renderer and the session sink.
 //!
-//! Protocol-neutral presentation and terminal contracts. Claude-shaped mapping
-//! and rate-limit display policy stay with the Claude stream mapper.
+//! Protocol-neutral presentation and terminal contracts. Rate-limit display
+//! policy stays with the runtime that observes the limits.
 
 use serde::{Deserialize, Serialize};
-
-use rho_sdk::model::{ContextUsage, ModelUsage};
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
@@ -18,20 +16,16 @@ pub(crate) const MAX_RESULT_CHARS: usize = 64 * 1024;
 /// Soft cap for tool input/result payload text shown in display lines.
 pub(crate) const MAX_TOOL_PAYLOAD_CHARS: usize = 16 * 1024;
 
-/// One presentation or status update produced from a stream-json line.
+/// One presentation or status update produced from an agent event.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum StreamEffect {
     Attachment(AttachmentEvent),
     Status(StatusPatch),
     RateLimit(RateLimitInfo),
-    /// Parsed terminal `result` message. Does **not** set run state or emit
-    /// Completed/Failed by itself; session combines with process exit.
-    Terminal(TerminalResult),
 }
 
-/// Incremental status fields. Terminal Ok/Error is not applied here from a
-/// `result` message; session combines [`TerminalResult`] with process exit.
-/// `last_activity` may say "result received" while the run is still pending.
+/// Incremental status fields. The terminal state comes from the sink's finish
+/// methods, never from a patch.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct StatusPatch {
     pub(crate) state: Option<RunState>,
@@ -44,62 +38,20 @@ pub(crate) struct StatusPatch {
     pub(crate) error: Option<String>,
     // NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
     pub(crate) claude_session_id: Option<String>,
-    /// Concrete model Claude reported running, from the `init` frame. Rho
-    /// passes `--model` through untouched, so this is the only report of what
+    /// Concrete model Claude reported running, from usage updates. Rho
+    /// passes the model through untouched, so this is the only report of what
     /// an alias such as `opus` actually resolved to.
     // NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
     pub(crate) claude_model: Option<String>,
     pub(crate) total_cost_usd: Option<f64>,
 }
 
-/// Explicit terminal classification. Missing `subtype` / `is_error` is never
-/// treated as success.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TerminalClassification {
-    Success {
-        subtype: String,
-    },
-    Failure {
-        subtype: String,
-        is_error: bool,
-    },
-    /// Schema drift or incomplete terminal fields.
-    Invalid {
-        reason: String,
-    },
-}
-
-#[cfg(test)]
-impl TerminalClassification {
-    pub(crate) fn is_success(&self) -> bool {
-        matches!(self, Self::Success { .. })
-    }
-
-    pub(crate) fn is_failure(&self) -> bool {
-        matches!(self, Self::Failure { .. })
-    }
-
-    pub(crate) fn is_invalid(&self) -> bool {
-        matches!(self, Self::Invalid { .. })
-    }
-}
-
-/// Terminal `result` payload for the session layer to combine with child exit.
-///
-/// Session must still combine this with process exit and must not treat stream
-/// success alone as final run success when exit fails.
+/// What a finished turn hands the sink alongside its terminal state.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TerminalResult {
-    pub(crate) classification: TerminalClassification,
-    pub(crate) result_text: Option<String>,
-    pub(crate) error: Option<String>,
+    pub(crate) result_text: String,
     pub(crate) session_id: Option<String>,
-    pub(crate) num_turns: Option<u64>,
-    pub(crate) usage: Option<ModelUsage>,
-    pub(crate) context: Option<ContextUsage>,
-    pub(crate) total_cost_usd: Option<f64>,
-    pub(crate) permission_denials: Vec<String>,
-    pub(crate) stop_reason: Option<String>,
+    pub(crate) turns: u64,
 }
 
 /// Latest subscription rate-limit observation from a CLI stream.
@@ -143,42 +95,5 @@ impl RateLimitInfo {
             return None;
         }
         Some(((1.0 - used) * 100.0).clamp(0.0, 100.0))
-    }
-}
-
-/// Classify a terminal result from required `subtype` + `is_error` fields.
-///
-/// Matrix:
-/// - `success` + `is_error=false` → Success
-/// - `success` + `is_error=true` → Failure (contradiction treated as failure)
-/// - non-success subtype + any `is_error` → Failure
-/// - missing subtype and/or missing `is_error` → Invalid (never default success)
-pub(crate) fn classify_terminal_result(
-    subtype: Option<&str>,
-    is_error: Option<bool>,
-) -> TerminalClassification {
-    let Some(subtype) = subtype.filter(|value| !value.is_empty()) else {
-        return TerminalClassification::Invalid {
-            reason: match is_error {
-                Some(true) => "result missing subtype (is_error=true)".into(),
-                Some(false) => "result missing subtype (is_error=false)".into(),
-                None => "result missing subtype and is_error".into(),
-            },
-        };
-    };
-    let Some(is_error) = is_error else {
-        return TerminalClassification::Invalid {
-            reason: format!("result subtype `{subtype}` missing is_error"),
-        };
-    };
-    if subtype == "success" && !is_error {
-        TerminalClassification::Success {
-            subtype: subtype.to_string(),
-        }
-    } else {
-        TerminalClassification::Failure {
-            subtype: subtype.to_string(),
-            is_error,
-        }
     }
 }

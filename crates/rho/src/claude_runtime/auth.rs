@@ -1,7 +1,8 @@
 //! Read Claude Code authentication and binary state.
 //!
-//! Source of truth is `claude auth status` JSON. Rho never stores these
-//! credentials; it only reports what the `claude` binary reports.
+//! Source of truth is `claude auth status` JSON from the Claude CLI bundled in
+//! `claude-agent-acp` (run with `--cli`). Rho never stores these credentials;
+//! it only reports what that CLI reports.
 //!
 //! All probes are bounded: short timeout, capped stdout/stderr, and the child
 //! is killed and awaited on timeout when the host allows it.
@@ -16,10 +17,7 @@ use crate::cli_runtime::{run_bounded_probe, BoundedOutput, CliExecutable, ProbeE
 #[cfg(all(test, unix))]
 pub(crate) use crate::cli_runtime::{run_bounded_command_with_timeout, PROBE_OUTPUT_CAP_BYTES};
 
-use super::executable;
-
-/// Program name resolved on `PATH` for Claude Code.
-pub(crate) const CLAUDE_PROGRAM: &str = "claude";
+use super::executable::{self, CLI};
 
 /// Default wall-clock budget for status/version/logout probes.
 ///
@@ -54,7 +52,11 @@ pub(crate) struct ClaudeAuthStatus {
 /// Failures when probing the Claude Code binary or its auth state.
 #[derive(Debug, Error)]
 pub(crate) enum ClaudeAuthError {
-    #[error("claude code: binary not found on PATH")]
+    #[error(
+        "claude code: {} not found on PATH; {}",
+        executable::ADAPTER_PROGRAM,
+        executable::INSTALL_HINT
+    )]
     BinaryMissing,
     #[error("claude code: {0}")]
     Probe(ProbeError),
@@ -138,14 +140,14 @@ impl ClaudeAuthStatus {
             return "claude code: not signed in - run /login claude-code".into();
         }
         let mut summary = self.signed_in_summary();
-        summary.push_str(" - managed by the claude binary");
+        summary.push_str(" - managed by Claude Code");
         summary
     }
 
     /// Post-login success copy that keeps ownership with Claude Code.
     pub(crate) fn describe_login_success(&self) -> String {
         format!(
-            "{}\nManaged by the claude binary. Rho reads this state with `claude auth status`.",
+            "{}\nManaged by Claude Code. Rho reads this state with `claude-agent-acp --cli auth status`.",
             self.signed_in_summary()
         )
     }
@@ -178,7 +180,7 @@ impl ClaudeProbeSnapshot {
     }
 }
 
-/// Run `claude auth status` and parse its JSON.
+/// Run `claude auth status` (bundled CLI) and parse its JSON.
 pub(crate) async fn query() -> Result<ClaudeAuthStatus, ClaudeAuthError> {
     let executable = executable::resolve()?;
     query_executable(&executable).await
@@ -187,7 +189,7 @@ pub(crate) async fn query() -> Result<ClaudeAuthStatus, ClaudeAuthError> {
 pub(crate) async fn query_executable(
     executable: &CliExecutable,
 ) -> Result<ClaudeAuthStatus, ClaudeAuthError> {
-    let output = run_bounded_probe(executable, &["auth", "status"], PROBE_TIMEOUT).await?;
+    let output = run_bounded_probe(executable, &[CLI, "auth", "status"], PROBE_TIMEOUT).await?;
     parse_auth_status_output(&executable.display(), &output)
 }
 
@@ -201,7 +203,7 @@ pub(crate) async fn logout() -> Result<(), ClaudeAuthError> {
 }
 
 pub(crate) async fn logout_executable(executable: &CliExecutable) -> Result<(), ClaudeAuthError> {
-    let output = run_bounded_probe(executable, &["auth", "logout"], PROBE_TIMEOUT).await?;
+    let output = run_bounded_probe(executable, &[CLI, "auth", "logout"], PROBE_TIMEOUT).await?;
     if output.status.success() {
         Ok(())
     } else {
@@ -213,7 +215,7 @@ pub(crate) async fn logout_executable(executable: &CliExecutable) -> Result<(), 
     }
 }
 
-/// Probe `claude --version` for doctor diagnostics.
+/// Probe the bundled CLI's `--version` for doctor diagnostics.
 pub(crate) async fn version() -> Result<String, ClaudeAuthError> {
     let executable = executable::resolve()?;
     version_executable(&executable).await
@@ -222,7 +224,7 @@ pub(crate) async fn version() -> Result<String, ClaudeAuthError> {
 pub(crate) async fn version_executable(
     executable: &CliExecutable,
 ) -> Result<String, ClaudeAuthError> {
-    let output = run_bounded_probe(executable, &["--version"], PROBE_TIMEOUT).await?;
+    let output = run_bounded_probe(executable, &[CLI, "--version"], PROBE_TIMEOUT).await?;
     if !output.status.success() {
         return Err(ClaudeAuthError::ExitStatus {
             program: executable.display(),
@@ -237,16 +239,6 @@ pub(crate) async fn version_executable(
         .unwrap_or("unknown version")
         .to_string();
     Ok(version)
-}
-
-#[cfg(all(test, unix))]
-impl ClaudeAuthError {
-    pub(crate) fn is_binary_missing(&self) -> bool {
-        matches!(
-            self,
-            Self::BinaryMissing | Self::Probe(ProbeError::BinaryMissing)
-        )
-    }
 }
 
 /// Run status and version probes concurrently for idle `/info` and `/doctor`.
@@ -294,10 +286,10 @@ fn first_nonempty_line(text: &str) -> Option<&str> {
 
 /// Notice shown before Rho hands the terminal to `claude auth login`.
 pub(crate) fn login_handoff_notice() -> &'static str {
-    "Rho is handing the terminal to the claude binary to sign in.\n\n\
+    "Rho is handing the terminal to Claude Code to sign in.\n\n\
 Claude Code runs the sign-in and stores the credential. Rho never sees or \
 stores your token. To sign out later, run `/logout claude-code` or \
-`claude auth logout` yourself.\n\n\
+`claude-agent-acp --cli auth logout` yourself.\n\n\
 If you did not mean to sign in, stop the claude process from another \
 terminal or close this prompt. Rho resumes when that process exits. \
 There is no cancel key inside the Claude sign-in prompt."
@@ -310,14 +302,15 @@ pub(crate) fn login_handoff_status() -> String {
 
 /// Notice shown in the logout confirmation choice.
 pub(crate) fn logout_confirm_description() -> &'static str {
-    "This signs you out of Claude Code everywhere the claude binary is used, \
+    "This signs you out of Claude Code everywhere it is used, \
 not only inside Rho. Rho does not store this credential and cannot delete a \
 Rho token for it."
 }
 
-/// Login argv for suspended interactive handoff (fixed tokens only).
+/// Login argv for suspended interactive handoff (fixed tokens only). These
+/// are the adapter's own `claude-ai-login` terminal auth method.
 pub(crate) fn login_args() -> &'static [&'static str] {
-    &["auth", "login", "--claudeai"]
+    &[CLI, "auth", "login", "--claudeai"]
 }
 
 #[cfg(test)]

@@ -41,11 +41,10 @@ pub struct RhoInternalAgentModel {
 pub enum InternalAgentTarget {
     /// Rho's own provider stack, with an explicit provider, model, and auth.
     Rho(RhoInternalAgentModel),
-    /// The installed `claude` binary under the user's Claude Code sign-in.
-    /// Rho holds no credential for it and resolves no model name.
+    /// Claude Code through `claude-agent-acp`, under the user's Claude Code
+    /// sign-in. Rho holds no credential for it and resolves no model name.
     ClaudeCli {
-        /// Pass-through `--model`. `None` omits the flag and lets Claude Code
-        /// pick.
+        /// Pass-through Claude model. `None` lets Claude Code pick.
         model: Option<String>,
     },
 }
@@ -74,7 +73,7 @@ impl InternalAgentModelConfig {
     }
 
     /// A selection that delegates to the Claude Code CLI. `model` is passed
-    /// through as `--model`; `None` lets Claude Code choose.
+    /// through as the Claude session `model`; `None` lets Claude Code choose.
     pub fn claude_cli(model: Option<String>) -> Self {
         Self {
             target: InternalAgentTarget::ClaudeCli { model },

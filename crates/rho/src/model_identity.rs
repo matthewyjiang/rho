@@ -39,10 +39,10 @@ pub(crate) enum PromptModel {
     /// An external CLI runtime (Claude Code, Cursor Agent, or Antigravity).
     ///
     /// `runtime` is any runtime but [`AgentRuntime::Rho`].
-    /// `requested` is the `--model` value Rho passes through, or `None` when Rho
-    /// omits the flag and the CLI chooses. `resolved` is the concrete id a run
-    /// reported, when one has. Config and bind paths leave `resolved` empty;
-    /// run status fills it from the init frame (`claude_model` for both CLIs).
+    /// `requested` is the model Rho passes through, or `None` when the runtime
+    /// chooses. `resolved` is the concrete id a run reported, when one has.
+    /// Config and bind paths leave `resolved` empty; run status fills it from
+    /// `claude_model`.
     ExternalCli {
         runtime: AgentRuntime,
         requested: Option<String>,

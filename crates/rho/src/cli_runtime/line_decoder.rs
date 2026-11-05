@@ -1,4 +1,4 @@
-//! CLI stream-json NDJSON line bound and re-export of the shared decoder.
+//! NDJSON line bound for agent stdout and re-export of the shared decoder.
 //!
 //! Decoding lives in `rho_providers::provider_backend::line_decoder`. This
 //! module only owns the 4 MiB anti-runaway budget.
@@ -28,6 +28,18 @@
 pub(crate) const MAX_NDJSON_LINE_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) use rho_providers::provider_backend::line_decoder::LineDecodeError;
+
+/// Run-failure text for a stdout line the decoder refused.
+pub(crate) fn format_line_error(error: &LineDecodeError, program_label: &str) -> String {
+    match error {
+        LineDecodeError::InvalidUtf8(_) => {
+            format!("{program_label}: malformed UTF-8 on stdout: {error}")
+        }
+        LineDecodeError::LineTooLong { .. } => {
+            format!("{program_label}: oversize stdout line: {error}")
+        }
+    }
+}
 
 #[cfg(test)]
 #[path = "line_decoder_tests.rs"]

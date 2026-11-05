@@ -1,0 +1,13 @@
+{
+  "modes": ["default", "acceptEdits", "plan", "auto", "bypassPermissions"],
+  "steering": true,
+  "turns": [
+    [
+      {
+        "step": "update",
+        "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "partial plan"}}
+      },
+      {"step": "stop", "reason": "max_turn_requests"}
+    ]
+  ]
+}

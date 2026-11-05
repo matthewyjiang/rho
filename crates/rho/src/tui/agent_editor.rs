@@ -72,7 +72,7 @@ pub(super) enum AgentChoiceField {
     PromptPolicy,
     Runtime,
     ModelPolicy,
-    /// Claude `--model`, chosen from the offered aliases rather than typed.
+    /// Claude model, chosen from the offered aliases rather than typed.
     ClaudeModel,
     Auth,
     Reasoning,
@@ -362,13 +362,13 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AgentRuntime::ClaudeCli => {
             items.push(field_item(
                 "Model",
-                "Claude model alias passed as --model. Default lets Claude Code choose.",
+                "Claude model alias. Default lets Claude Code choose.",
                 Some(claude_model_badge(draft)),
                 AGENT_FIELD_MODEL,
             ));
             items.push(field_item(
                 "Reasoning",
-                "Claude --effort level. Claude does not accept off or minimal.",
+                "Claude effort level. Claude does not accept off or minimal.",
                 draft.reasoning().map(|level| level.to_string()),
                 AGENT_FIELD_REASONING,
             ));
@@ -462,7 +462,7 @@ fn claude_model_badge(draft: &AgentDefinition) -> String {
     }
 }
 
-/// Rows for the Claude `--model` choice: the default, every offered alias, and
+/// Rows for the Claude model choice: the default, every offered alias, and
 /// the configured value when it is neither. Claude accepts full model ids that
 /// Rho does not offer, so a hand-written definition keeps its model and stays
 /// editable instead of being silently rewritten.
@@ -548,7 +548,7 @@ fn agent_choice_picker(
                         ),
                         (
                             AgentRuntime::ClaudeCli.as_str(),
-                            "Delegate the loop to the claude binary.",
+                            "Delegate the loop to Claude Code (claude-agent-acp).",
                         ),
                         (
                             AgentRuntime::Cursor.as_str(),
@@ -599,7 +599,7 @@ fn agent_choice_picker(
                 PickerItem {
                     detail: Some(
                         match draft.runtime.runtime() {
-                            AgentRuntime::ClaudeCli => "Claude --effort level.",
+                            AgentRuntime::ClaudeCli => "Claude effort level.",
                             AgentRuntime::Rho
                             | AgentRuntime::Cursor
                             | AgentRuntime::Antigravity => "Reasoning level for this agent.",
@@ -718,7 +718,7 @@ fn selectable_agent_reasoning_levels(
     let (capabilities, fallback) = match draft.runtime.runtime() {
         AgentRuntime::ClaudeCli => (
             ReasoningCapabilities::Unknown,
-            crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.levels(),
+            crate::claude_runtime::fence::CLAUDE_EFFORT_LEVELS.levels(),
         ),
         AgentRuntime::Cursor | AgentRuntime::Antigravity => {
             (ReasoningCapabilities::Unknown, &[] as &[ReasoningLevel])

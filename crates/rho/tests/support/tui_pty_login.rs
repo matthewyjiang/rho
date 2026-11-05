@@ -28,7 +28,7 @@ fn wait_for_claude_code_login_complete(harness: &mut PtyHarness) {
         .unwrap();
     harness
         .wait_for_text(
-            "Managed by the claude binary",
+            "Managed by Claude Code",
             WaitTimeout::secs(10, "ownership copy"),
         )
         .unwrap();
@@ -214,7 +214,7 @@ web_search.mode = "off"
     confirm_claude_code_login(&mut harness);
     harness
         .wait_for_text(
-            "handing the terminal to the claude binary",
+            "handing the terminal to Claude Code",
             WaitTimeout::secs(10, "handoff notice"),
         )
         .unwrap();

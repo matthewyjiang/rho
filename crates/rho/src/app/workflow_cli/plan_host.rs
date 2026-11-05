@@ -276,26 +276,13 @@ fn resolve_agent(
             max_turns,
             reasoning,
         } => {
-            let (executable, executable_identity) = host.resolve_executable("claude")?;
-            let permission_mode = crate::claude_runtime::spawn::map_permission_mode(
+            let (executable, executable_identity) =
+                host.resolve_executable(crate::claude_runtime::executable::ADAPTER_PROGRAM)?;
+            crate::claude_runtime::fence::ClaudeFence::new(
                 *permission_mode,
                 tools,
                 *inherit_claude_config,
             )?;
-            let plan = crate::claude_runtime::spawn::build_spawn_plan(
-                &crate::claude_runtime::spawn::ClaudeSpawnRequest {
-                    system_prompt: entry.definition.prompt.clone(),
-                    model: model.clone(),
-                    tools: tools.clone(),
-                    inherit_claude_config: *inherit_claude_config,
-                    permission_mode,
-                    cwd: host.workspace().to_path_buf(),
-                    max_turns: *max_turns,
-                    reasoning: *reasoning,
-                    session_persistence: crate::claude_runtime::spawn::SessionPersistence::Keep,
-                    input_format: crate::claude_runtime::spawn::ClaudeInputFormat::StreamJson,
-                },
-            );
             ResolvedAgent {
                 model: model.clone(),
                 reasoning: reasoning.map(|level| level.to_string()),
@@ -303,7 +290,8 @@ fn resolve_agent(
                 capabilities: tools.iter().cloned().collect(),
                 executable: Some(crate::paths::display(&executable)),
                 executable_identity: Some(executable_identity),
-                arguments: plan.args,
+                // The adapter takes no arguments; the session carries identity.
+                arguments: Vec::new(),
                 ..common
             }
         }

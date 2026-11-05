@@ -30,7 +30,7 @@ pub(crate) enum DoctorProbeId {
         provider: String,
         endpoint: Url,
     },
-    /// `claude auth status` and `claude --version`.
+    /// `claude auth status` and `--version` through `claude-agent-acp --cli`.
     Claude,
     /// `cursor-agent status --format json` and `cursor-agent --version`.
     Cursor,

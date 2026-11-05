@@ -14,15 +14,18 @@ use crate::{
         parent_messages::ParentMessageInbox,
         read_log_tail,
         status_sink::StatusSink,
-        stream_effect::{TerminalClassification, TerminalResult},
-        CliSessionOverrides, OwnedChild,
+        stream_effect::TerminalResult,
+        BeforeSpawn, CliExecutable, CliSessionOverrides, OwnedChild,
     },
     run_artifacts::RunArtifactIdentity,
     subagent::RunStatus,
 };
 use rho_tools::cancellation::RunCancellation;
 use std::{path::PathBuf, process::Stdio};
-use tokio::sync::watch;
+use tokio::{
+    process::{ChildStdin, ChildStdout},
+    sync::watch,
+};
 
 /// Executor-facing inputs. ACP session ids are protocol metadata, not resume ids.
 pub(crate) struct AcpSessionRequest {
@@ -49,7 +52,7 @@ pub(super) fn open_sink<P: AcpAgentPolicy>(
             &request.prompt,
             request.status_tx.take(),
             request.overrides.live_title.clone(),
-            None,
+            policy.rate_limit_recorder(),
             policy.label(),
         ),
         None => StatusSink::new(
@@ -57,7 +60,7 @@ pub(super) fn open_sink<P: AcpAgentPolicy>(
             &request.identity,
             &request.prompt,
             request.status_tx.take(),
-            None,
+            policy.rate_limit_recorder(),
             policy.label(),
         ),
     }
@@ -101,8 +104,7 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
         Some(executable) => executable,
         None => policy.resolve_executable()?,
     };
-    let AcpSpawnPlan { argv, cwd, env } =
-        policy.spawn_plan(request.overrides.frozen_argv.take())?;
+    let plan = policy.spawn_plan(request.overrides.frozen_argv.take())?;
     let log_path = policy.log_path(&request.output_file);
     let program = policy.label().program;
     let log = tokio::fs::OpenOptions::new()
@@ -113,33 +115,13 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
         .map_err(|source| format!("{program}: could not open log file: {source}"))?
         .into_std()
         .await;
-    let mut command = executable
-        .try_command(&argv)
-        .map_err(|source| format!("{program}: {source}"))?;
-    command
-        .current_dir(cwd)
-        .envs(env)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(log)
-        .kill_on_drop(true);
-    if let Some(before_spawn) = request.overrides.before_spawn.as_ref() {
-        before_spawn(&mut command).map_err(|source| {
-            format!("{program}: frozen executable changed before spawn: {source}")
-        })?;
-    }
-    let mut child = OwnedChild::spawn(command).map_err(|source| {
-        format!(
-            "{program}: failed to spawn `{}`: {source}",
-            executable.display()
-        )
-    })?;
-    let stdin = child
-        .stdin()
-        .ok_or_else(|| format!("{program}: missing child stdin"))?;
-    let stdout = child
-        .stdout()
-        .ok_or_else(|| format!("{program}: missing child stdout"))?;
+    let (mut child, stdin, stdout) = spawn_agent(
+        program,
+        &executable,
+        plan,
+        log.into(),
+        request.overrides.before_spawn.as_ref(),
+    )?;
     // Move policy into the connection after setup; callers keep no mutable
     // policy while the agent is running.
     let driver = driver::run(
@@ -184,6 +166,46 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
     })
 }
 
+/// Spawn the agent from its plan with piped protocol stdio, returning the
+/// child and its taken stdin/stdout. `stderr` is where the agent's log goes.
+pub(super) fn spawn_agent(
+    program: &str,
+    executable: &CliExecutable,
+    plan: AcpSpawnPlan,
+    stderr: Stdio,
+    before_spawn: Option<&BeforeSpawn>,
+) -> Result<(OwnedChild, ChildStdin, ChildStdout), String> {
+    let AcpSpawnPlan { argv, cwd, env } = plan;
+    let mut command = executable
+        .try_command(&argv)
+        .map_err(|source| format!("{program}: {source}"))?;
+    command
+        .current_dir(cwd)
+        .envs(env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(stderr)
+        .kill_on_drop(true);
+    if let Some(before_spawn) = before_spawn {
+        before_spawn(&mut command).map_err(|source| {
+            format!("{program}: frozen executable changed before spawn: {source}")
+        })?;
+    }
+    let mut child = OwnedChild::spawn(command).map_err(|source| {
+        format!(
+            "{program}: failed to spawn `{}`: {source}",
+            executable.display()
+        )
+    })?;
+    let stdin = child
+        .stdin()
+        .ok_or_else(|| format!("{program}: missing child stdin"))?;
+    let stdout = child
+        .stdout()
+        .ok_or_else(|| format!("{program}: missing child stdout"))?;
+    Ok((child, stdin, stdout))
+}
+
 fn stopped() -> DriverOutcome {
     DriverOutcome {
         classification: TurnClassification::Stopped,
@@ -203,60 +225,20 @@ pub(super) async fn settle(mut sink: StatusSink, outcome: Result<DriverOutcome, 
             return;
         }
     };
-    let (classification, error) = match &outcome.classification {
-        TurnClassification::Success => (
-            TerminalClassification::Success {
-                subtype: "end_turn".into(),
-            },
-            None,
-        ),
-        TurnClassification::Failure { subtype } => (
-            TerminalClassification::Failure {
-                subtype: (*subtype).into(),
-                is_error: true,
-            },
-            Some(if *subtype == "cancelled" {
-                "acp: agent cancelled the turn".into()
-            } else {
-                format!("acp: turn ended with {subtype}")
-            }),
-        ),
-        TurnClassification::Stopped => (
-            TerminalClassification::Failure {
-                subtype: "cancelled".into(),
-                is_error: true,
-            },
-            None,
-        ),
-        TurnClassification::Invalid => (
-            TerminalClassification::Invalid {
-                reason: "acp: invalid stop reason".into(),
-            },
-            Some("acp: invalid stop reason".into()),
-        ),
-    };
     let terminal = TerminalResult {
-        classification,
-        result_text: Some(outcome.result_text),
-        error: error.clone(),
+        result_text: outcome.result_text,
         session_id: outcome.session_id,
-        num_turns: Some(outcome.turns),
-        usage: None,
-        context: None,
-        total_cost_usd: None,
-        permission_denials: Vec::new(),
-        stop_reason: None,
+        turns: outcome.turns,
     };
-    match outcome.classification {
-        TurnClassification::Success => sink.finalize_success_from_stream(&terminal).await,
-        TurnClassification::Stopped => sink.stop("cancelled", Some(&terminal)).await,
-        TurnClassification::Failure { .. } | TurnClassification::Invalid => {
-            sink.finalize_failure_from_stream(
-                Some(&terminal),
-                error.expect("failure detail"),
-                /*prefer_detail*/ true,
-            )
-            .await
+    match (
+        &outcome.classification,
+        outcome.classification.failure_detail(),
+    ) {
+        (TurnClassification::Success, _) => sink.succeed(&terminal).await,
+        (TurnClassification::Stopped, _) => sink.stop("cancelled", &terminal).await,
+        (TurnClassification::Failure { .. } | TurnClassification::Invalid, detail) => {
+            let detail = detail.expect("a failed turn has a detail");
+            sink.fail_turn(&terminal, detail).await;
         }
     }
 }

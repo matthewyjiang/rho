@@ -1,6 +1,6 @@
 //! Adapt supervised Tokio child pipes to ACP's line transport.
 
-use crate::cli_runtime::{drain::format_line_error, line_decoder::MAX_NDJSON_LINE_BYTES};
+use crate::cli_runtime::line_decoder::{format_line_error, MAX_NDJSON_LINE_BYTES};
 use agent_client_protocol::Lines;
 use futures_util::{sink, stream, Sink, Stream};
 use rho_providers::provider_backend::line_decoder::LineDecoder;

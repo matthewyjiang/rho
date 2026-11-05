@@ -1,10 +1,9 @@
-//! External CLI session adapter over the shared run-artifact sink.
+//! External agent session adapter over the shared run-artifact sink.
 //!
-//! Shared by Claude Code and Cursor. Labels and stream mappers differ per CLI.
-//!
-//! Translates stream-json effects into the generic status/attachment contract.
-//! Rate-limit persistence is a pluggable [`RateLimitRecorder`]: Claude records
-//! subscription windows; Cursor leaves the recorder unset.
+//! Shared by every ACP runtime; labels differ per agent. Translates rendered
+//! effects into the generic status/attachment contract. Rate-limit
+//! persistence is a pluggable [`RateLimitRecorder`]: Claude records
+//! subscription windows; other agents leave the recorder unset.
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -83,10 +82,6 @@ impl StatusSink {
         Ok(Self { inner, rate_limits })
     }
 
-    pub(crate) fn status(&self) -> &RunStatus {
-        &self.inner.status
-    }
-
     pub(crate) fn mark_running(&mut self) {
         self.inner.mark_running("running");
     }
@@ -116,11 +111,6 @@ impl StatusSink {
                     self.inner.publish();
                 }
             }
-            // Terminal payloads are pending metadata until process exit.
-            StreamEffect::Terminal(terminal) => {
-                apply_terminal_metadata(&mut self.inner.status, &terminal);
-                self.inner.publish();
-            }
         }
     }
 
@@ -129,42 +119,21 @@ impl StatusSink {
         self.flush_rate_limits().await;
     }
 
-    pub(crate) async fn stop(&mut self, reason: &str, pending: Option<&TerminalResult>) {
-        if let Some(terminal) = pending {
-            apply_terminal_metadata(&mut self.inner.status, terminal);
-        }
+    pub(crate) async fn stop(&mut self, reason: &str, terminal: &TerminalResult) {
+        apply_terminal_metadata(&mut self.inner.status, terminal);
         self.inner.finish_stopped(reason);
         self.flush_rate_limits().await;
     }
 
-    pub(crate) async fn finalize_success_from_stream(&mut self, terminal: &TerminalResult) {
+    pub(crate) async fn succeed(&mut self, terminal: &TerminalResult) {
         apply_terminal_metadata(&mut self.inner.status, terminal);
-        self.inner.finish_ok(terminal.result_text.clone());
+        self.inner.finish_ok(Some(terminal.result_text.clone()));
         self.flush_rate_limits().await;
     }
 
-    pub(crate) async fn finalize_failure_from_stream(
-        &mut self,
-        terminal: Option<&TerminalResult>,
-        detail: String,
-        prefer_detail: bool,
-    ) {
-        if let Some(terminal) = terminal {
-            apply_terminal_metadata(&mut self.inner.status, terminal);
-        }
-        let error = if prefer_detail {
-            detail
-        } else {
-            terminal
-                .and_then(|terminal| {
-                    terminal
-                        .error
-                        .clone()
-                        .filter(|text| !text.is_empty())
-                        .or_else(|| terminal.result_text.clone())
-                })
-                .unwrap_or(detail)
-        };
+    /// A turn that ended without success; `error` is what the run reports.
+    pub(crate) async fn fail_turn(&mut self, terminal: &TerminalResult, error: String) {
+        apply_terminal_metadata(&mut self.inner.status, terminal);
         self.inner.finish_error(error);
         self.flush_rate_limits().await;
     }
@@ -180,26 +149,8 @@ fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
     if let Some(session_id) = terminal.session_id.clone() {
         status.claude_session_id = Some(session_id);
     }
-    if let Some(turns) = terminal.num_turns {
-        status.turns = turns;
-    }
-    if let Some(usage) = &terminal.usage {
-        if let Some(tokens) = usage.inclusive_prompt_tokens() {
-            status.input_tokens = Some(tokens);
-        }
-        if let Some(tokens) = usage.output_tokens {
-            status.output_tokens = Some(tokens);
-        }
-    }
-    if let Some(cost) = terminal.total_cost_usd {
-        status.total_cost_usd = Some(cost);
-    }
-    if let Some(result) = terminal.result_text.clone() {
-        status.result = Some(result);
-    }
-    if let Some(error) = terminal.error.clone() {
-        status.error = Some(error);
-    }
+    status.turns = terminal.turns;
+    status.result = Some(terminal.result_text.clone());
 }
 
 #[cfg(test)]

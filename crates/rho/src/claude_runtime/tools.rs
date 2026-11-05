@@ -1,6 +1,6 @@
 //! The Claude Code tool names Rho offers when a surface picks them.
 //!
-//! Claude accepts any `Tool` or `Tool(specifier)` string on `--tools`, so this
+//! Claude accepts any `Tool` or `Tool(specifier)` string in its `tools` option, so this
 //! list is not a validator: it is the set of rows a picker shows. Names Rho
 //! does not offer (MCP tools, specifiers such as `Bash(git *)`) stay valid and
 //! keep their own row when a definition already carries them.
@@ -8,7 +8,7 @@
 /// One offered Claude Code tool.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ClaudeTool {
-    /// Exact name passed through on `--tools`.
+    /// Exact name passed through in the `tools` option.
     pub(crate) name: &'static str,
     /// Row detail text, phrased for a picker.
     pub(crate) detail: &'static str,

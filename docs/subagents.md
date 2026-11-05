@@ -75,10 +75,10 @@ For the full value set, constraints, and defaults, see [Agent definition schema]
 | `runtime` | no | Execution harness: `rho` (default), `claude-cli`, or `cursor` |
 | `prompt` | no | `extend` (default) or `replace` |
 | `model-policy` | no | For `runtime: rho`: `inherit`, `prefer`, `require`, or `select`. For `runtime: claude-cli`: omit, `inherit`, or `select` |
-| `model` | policy-dependent | Model selected by non-inherit policies. On `runtime: rho`, use `@name` to reference a [model alias](/configuration#model-aliases). On `runtime: claude-cli`, the value is passed through as Claude's `--model` and must be a Claude model name or Claude alias such as `claude-opus-5` (Rho `@alias` references are rejected) |
+| `model` | policy-dependent | Model selected by non-inherit policies. On `runtime: rho`, use `@name` to reference a [model alias](/configuration#model-aliases). On `runtime: claude-cli`, the value is passed through as the Claude session `model` option and must be a Claude model name or Claude alias such as `claude-opus-5` (Rho `@alias` references are rejected) |
 | `provider` | no | Provider selected with the model. Valid only for `runtime: rho`; rejected on `runtime: claude-cli` |
 | `fast` | no | `runtime: rho` with a pinned model only. `true` turns on fast serving for this agent at a higher credit rate. Subagents never inherit the parent's `/fast`; without `fast: true` they run at standard speed. Launch fails when the bound model cannot use fast mode |
-| `reasoning` | no | For `runtime: rho`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. For `runtime: claude-cli`: maps to Claude `--effort` as `low`, `medium`, `high`, `xhigh`, or `max`. Omit to inherit Claude's default. `off` and `minimal` are rejected on `claude-cli` |
+| `reasoning` | no | For `runtime: rho`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. For `runtime: claude-cli`: maps to Claude `effort` as `low`, `medium`, `high`, `xhigh`, or `max`. Omit to inherit Claude's default. `off` and `minimal` are rejected on `claude-cli` |
 | `tools` | no | Tool allowlist. Vocabulary depends on `runtime` (see [definition schema](/subagents/definition-schema)) |
 | `inherit_claude_config` | no | `true` or `false` (default). Opt in only with `runtime: claude-cli` to load the user's full Claude settings (`user,project,local`). Default stays closed |
 
@@ -140,24 +140,24 @@ Completions reach the parent automatically at safe provider boundaries. The pare
 
 Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. A CLI run then stops its remaining children; their saved status and artifacts remain available for inspection. An ACP session keeps them running, as the TUI does across cancelled turns, because hosts such as T3 Code cancel the open prompt to send each mid-turn message. The next prompt waits for the children Rho runs and delivers their results. Children that run as T3 threads under `rho acp --t3code` report to the parent through T3 instead and never hold a prompt open. Stop children with the `agents` tool, or by closing or reloading the session.
 
-Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude` binary and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in an interactive parent session; approvals still cannot.
+Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude-agent-acp` adapter and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in an interactive parent session; approvals still cannot.
 
 After `/new`, newly delegated runs belong to the new session, including their
 completion notifications and artifacts. Existing runs keep their original parent
 session; switching sessions does not transfer their notifications to the new one.
 
-Parents can steer a running Rho-runtime child with `agents` action `message`, applied at the child's next provider turn. The same action works for Claude-cli children: Rho keeps the child's stdin open with `--input-format stream-json` and writes each parent body as a queued user turn, applied when the current Claude turn ends. Claude children have neither `message_parent` nor `request_parent_action`.
+Parents can steer a running Rho-runtime child with `agents` action `message`, applied at the child's next provider turn. Claude children have neither `message_parent` nor `request_parent_action`.
 
-ACP children (Cursor, Antigravity) take parent messages the same way. An ACP agent that advertises steering (`_session/steering` in `initialize`) receives each message inside the turn that is running, and the attach view shows it as received. Otherwise, or when the agent declines because no turn is running, Rho sends the message as the child's next turn.
+ACP children (Claude Code, Cursor, Antigravity) take parent messages the same way. An ACP agent that advertises steering (`_session/steering` in `initialize`) receives each message inside the turn that is running, and the attach view shows it as received. Otherwise, or when the agent declines because no turn is running, Rho sends the message as the child's next turn.
 
-In Supervised mode, Rho-runtime-delegated Write and Process operations fail closed. Claude-cli agents refuse to spawn under Supervised mode because `claude -p` cannot prompt for approval. Auto and Allow edits spawn with Claude `dontAsk` only when `tools:` are bare names and `inherit_claude_config` is false. Claude `dontAsk` also auto-approves read-only Bash and PreToolUse hooks, so a specifier such as `Bash(git *)` (which exposes the Bash base tool) or inherited Claude settings would run actions outside the bound set and is refused. Those bound `dontAsk` runs pass an empty `--setting-sources` list so project hooks cannot widen the child. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
+In Supervised mode, Rho-runtime-delegated Write and Process operations fail closed. Claude-cli agents refuse to spawn under Supervised mode because Rho cannot ask a human to approve a Claude tool call. Auto and Allow edits spawn only when `tools:` are bare names and `inherit_claude_config` is false. Claude auto-approves read-only Bash and `allowedTools` entries, so a specifier such as `Bash(git *)` (which exposes the Bash base tool) or inherited Claude settings would run actions outside the bound set and is refused. Those runs load no Claude settings (`settingSources: []`) so project hooks cannot widen the child, and Rho rejects every permission request. See [Claude permission modes](/subagents/claude-cli#permission-modes). Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 
 The child's attach view shows parent messages as incoming cards. For Rho children,
 a card appears when the correction enters conversation history, not merely when
-the parent queues it. Claude-cli cards appear after the stdin write succeeds and
-remain labeled queued because stdin delivery does not confirm model consumption.
+the parent queues it. ACP cards are labeled received when the agent accepts a
+steer, and queued when the message waits for the next turn.
 The cards are saved in the attachment journal and survive reattachment.
 
 ### Child-to-parent messages
@@ -232,9 +232,9 @@ Details: [Binding and security](/subagents/binding-and-security).
 
 ## Claude Code as a delegated runtime
 
-Rho can hand a **delegated** agent to the installed `claude` binary so a child run can use a Claude subscription while the parent stays in Rho. This is not Anthropic API-key access and is not available as the root session runtime.
+Rho can hand a **delegated** agent to Claude Code, through the `claude-agent-acp` adapter, so a child run can use a Claude subscription while the parent stays in Rho. This is not Anthropic API-key access and is not available as the root session runtime.
 
-Quick path: install `claude`, run `/login claude-code`, define an agent with `runtime: claude-cli`, then launch it through the `agent` tool under Plan or Bypass. Auto and Allow edits work only for proven no-prompt `tools:` with `inherit_claude_config: false`; unknown Claude, plugin, and MCP names fail closed.
+Quick path: install `claude-agent-acp`, run `/login claude-code`, define an agent with `runtime: claude-cli`, then launch it through the `agent` tool under Plan or Bypass. Auto and Allow edits work only for proven no-prompt `tools:` with `inherit_claude_config: false`; unknown Claude, plugin, and MCP names fail closed.
 
 Full guide: [Claude Code as a delegated runtime](/subagents/claude-cli).
 

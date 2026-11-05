@@ -428,7 +428,7 @@ impl App {
     }
 
     /// Points an internal agent at the Claude Code CLI. `model` is passed
-    /// through as `--model`; `None` lets Claude Code choose.
+    /// through as the Claude session `model`; `None` lets Claude Code choose.
     pub(super) fn select_internal_agent_claude_model(
         &mut self,
         id: &str,

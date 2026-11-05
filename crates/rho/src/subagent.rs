@@ -118,7 +118,7 @@ pub struct RunStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_error: Option<String>,
     /// Claude Code session id from a `runtime: claude-cli` run. Resume with
-    /// `claude --resume <id>`. Absent for Rho runtime runs.
+    /// `claude-agent-acp --cli --resume <id>`. Absent for Rho runtime runs.
     ///
     /// # Next major
     ///
@@ -128,9 +128,9 @@ pub struct RunStatus {
     /// minor-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
-    /// Model a `runtime: claude-cli` run reported binding. Rho passes `--model`
+    /// Model a `runtime: claude-cli` run reported binding. Rho passes the model
     /// through untouched, so this is what an alias such as `opus` resolved to.
-    /// Absent for Rho runtime runs and until the run reports its init frame.
+    /// Absent for Rho runtime runs and until the run reports its model.
     ///
     /// # Next major
     ///

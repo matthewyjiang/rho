@@ -464,7 +464,7 @@ pub(super) fn prompt_policy_parts(prompt: &PromptPolicy) -> (&'static str, &str)
 /// Whether this agent's picker offers Claude Code.
 ///
 /// Both halves must hold: the agent has to accept a delegated run, and the
-/// `claude` binary has to be installed. Offering rows Rho cannot run would
+/// `claude-agent-acp` adapter has to be installed. Offering rows Rho cannot run would
 /// move the failure to the first advisor call.
 fn claude_code_rows_for(id: &str) -> ClaudeCodeRows {
     if internal_agent_accepts_claude_runtime(id)

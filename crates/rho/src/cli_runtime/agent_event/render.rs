@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, Plan, PlanEntryStatus, SessionUpdate, StopReason, ToolCallId, UsageUpdate,
+    ContentBlock, Cost, Plan, PlanEntryStatus, SessionUpdate, StopReason, ToolCallId, UsageUpdate,
 };
 use rho_sdk::model::ContextUsage;
 use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
@@ -26,6 +26,18 @@ use super::{
 /// fan-out inside one turn is the only way to exceed this. Overflow only loses
 /// update enrichment and is announced with a notice.
 const MAX_ACTIVE_TOOLS: usize = 256;
+
+/// A reported session cost in US dollars, or why Rho cannot record it.
+/// Status can represent USD only; never silently relabel another currency.
+pub(crate) fn usd_cost(cost: &Cost) -> Result<f64, String> {
+    if !cost.currency.eq_ignore_ascii_case("USD") {
+        Err(format!("acp: unsupported cost currency {}", cost.currency))
+    } else if !cost.amount.is_finite() || cost.amount < 0.0 {
+        Err("acp: invalid session cost".into())
+    } else {
+        Ok(cost.amount)
+    }
+}
 
 /// Renders one external-agent session, retaining only bounded tool snapshots
 /// and final assistant text. The cwd is used for display paths, never I/O.
@@ -221,21 +233,13 @@ impl EventRenderer {
         let mut effects = vec![StreamEffect::Attachment(AttachmentEvent::ContextUsage(
             ContextUsage::provider_reported(usage.used, Some(usage.size)),
         ))];
-        if let Some(cost) = usage.cost {
-            // Status can represent USD only; never silently relabel another currency.
-            if !cost.currency.eq_ignore_ascii_case("USD") {
-                effects.extend(notice(format!(
-                    "acp: unsupported cost currency {}",
-                    cost.currency
-                )));
-            } else if !cost.amount.is_finite() || cost.amount < 0.0 {
-                effects.extend(notice("acp: invalid session cost".into()));
-            } else {
-                effects.push(StreamEffect::Status(StatusPatch {
-                    total_cost_usd: Some(cost.amount),
-                    ..StatusPatch::default()
-                }));
-            }
+        match usage.cost.as_ref().map(usd_cost) {
+            Some(Ok(amount)) => effects.push(StreamEffect::Status(StatusPatch {
+                total_cost_usd: Some(amount),
+                ..StatusPatch::default()
+            })),
+            Some(Err(problem)) => effects.extend(notice(problem)),
+            None => {}
         }
         effects
     }

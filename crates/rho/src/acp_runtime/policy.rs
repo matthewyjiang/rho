@@ -1,10 +1,15 @@
 //! Agent-owned decisions consumed by the generic ACP driver.
 
 use super::permission::PermissionDecision;
-use crate::cli_runtime::{agent_event::AgentEvent, status_sink::RuntimeLabel, CliExecutable};
+use crate::cli_runtime::{
+    agent_event::AgentEvent,
+    status_sink::{RateLimitRecorder, RuntimeLabel},
+    stream_effect::StreamEffect,
+    CliExecutable,
+};
 use agent_client_protocol::schema::v1::{
-    AuthMethod, AuthMethodId, RequestPermissionRequest, SessionConfigId, SessionConfigValueId,
-    SessionModeId, SessionUpdate,
+    AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionConfigId,
+    SessionConfigValueId, SessionModeId, SessionUpdate,
 };
 use serde_json::Value;
 use std::{
@@ -33,6 +38,11 @@ pub(crate) trait AcpAgentPolicy: Send + 'static {
     /// and the agent must stay in it: a `current_mode_update` to another mode
     /// fails the run.
     fn session_mode(&self) -> Option<SessionModeId>;
+    /// `_meta` sent with `session/new`, for vendor session parameters such as
+    /// tool filters.
+    fn session_meta(&self) -> Option<Meta> {
+        None
+    }
     /// Select options to set, in order, after `session/new` and the mode.
     /// Each must be advertised with the asked value, or the run fails before
     /// prompting.
@@ -45,6 +55,16 @@ pub(crate) trait AcpAgentPolicy: Send + 'static {
     fn answer_extension(&self, method: &str, params: &Value) -> Option<ExtensionAnswer>;
     fn normalize_update(&self, update: SessionUpdate) -> SessionUpdate {
         update
+    }
+    /// Where this agent's subscription rate-limit observations are kept.
+    /// `None` records nothing.
+    fn rate_limit_recorder(&self) -> Option<Box<dyn RateLimitRecorder>> {
+        None
+    }
+    /// Agent-specific status an update carries in its `_meta`, such as a
+    /// rate-limit observation for the recorder or the resolved model.
+    fn status_effects(&self, _update: &SessionUpdate) -> Vec<StreamEffect> {
+        Vec::new()
     }
 }
 

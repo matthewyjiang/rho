@@ -393,8 +393,8 @@ impl Config {
             None,
         )?;
         ensure_serves_chat(&self.provider)?;
-        // Delegating selections have no Rho provider or auth to normalize; the
-        // claude binary owns both.
+        // Delegating selections have no Rho provider or auth to normalize;
+        // Claude Code owns both.
         for (id, selection) in &mut self.internal_agents {
             match &mut selection.target {
                 crate::config::InternalAgentTarget::Rho(rho) => {

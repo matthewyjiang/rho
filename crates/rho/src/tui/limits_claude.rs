@@ -243,9 +243,11 @@ fn claude_windows_from_state(
         .filter(|window| probed_at.is_none_or(|at| window.observed_at_unix >= at))
         .map(|window| {
             let mut note_parts = Vec::new();
-            if let Some(status) = crate::claude_runtime::stream::notable_rate_limit_status(
-                window.info.status.as_deref(),
-            ) {
+            if let Some(status) =
+                crate::claude_runtime::rate_limit_display::notable_rate_limit_status(
+                    window.info.status.as_deref(),
+                )
+            {
                 note_parts.push(status);
             }
             if window.info.is_using_overage == Some(true) {
@@ -268,7 +270,7 @@ fn claude_windows_from_state(
                 }
             }
             UsageLimitWindow {
-                label: crate::claude_runtime::stream::window_label(&window.info),
+                label: crate::claude_runtime::rate_limit_display::window_label(&window.info),
                 remaining_percent: window.info.remaining_percent(),
                 resets_at_unix: window.info.resets_at,
                 note: (!note_parts.is_empty()).then(|| note_parts.join(", ")),

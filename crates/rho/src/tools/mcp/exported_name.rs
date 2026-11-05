@@ -1,8 +1,6 @@
 //! MCP tool-name encoding and parsing.
 //!
-//! Rho owns a private component codec for native exported tools. Other MCP
-//! producers may use the same `mcp__server__tool` shape without that codec, so
-//! callers must state which wire dialect they are parsing.
+//! Rho owns a private component codec for native exported tools.
 //!
 //! Exported names are capped at the provider limit, and a capped name no longer
 //! encodes its identity. [`McpToolNames`] maps the names a session registered to
@@ -11,15 +9,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::tools::tool_name::{cap_tool_name, is_capped_tool_name};
-
-/// The producer of an exported MCP tool name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExportedNameDialect {
-    /// A name produced by Rho's [`namespaced_tool_name`] encoder.
-    Rho,
-    /// The conventional shape used by another producer, such as Claude CLI.
-    Conventional,
-}
 
 /// Parsed `server` + `tool` components from one exported MCP tool name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,7 +34,7 @@ impl McpToolNames {
     pub(crate) fn identify(&self, name: &str) -> Option<McpToolIdentity> {
         match self.registered.get(name) {
             Some(identity) => Some(identity.clone()),
-            None => parse_exported_name(name, ExportedNameDialect::Rho),
+            None => parse_exported_name(name),
         }
     }
 }
@@ -103,26 +92,21 @@ fn encode_component(value: &str) -> String {
     encoded
 }
 
-/// Parse `mcp__<server>__<tool>` according to its producer's wire dialect.
+/// Parse a `mcp__<server>__<tool>` name from Rho's [`namespaced_tool_name`].
 ///
-/// A capped Rho name is refused rather than decoded into a truncated identity.
-pub(crate) fn parse_exported_name(
-    name: &str,
-    dialect: ExportedNameDialect,
-) -> Option<McpToolIdentity> {
+/// A capped name is refused rather than decoded into a truncated identity.
+pub(crate) fn parse_exported_name(name: &str) -> Option<McpToolIdentity> {
+    if is_capped_tool_name(name) {
+        return None;
+    }
     let rest = name.strip_prefix("mcp__")?;
     let (server, tool) = rest.split_once("__")?;
     if server.is_empty() || tool.is_empty() {
         return None;
     }
-    let component = match dialect {
-        ExportedNameDialect::Rho if is_capped_tool_name(name) => return None,
-        ExportedNameDialect::Rho => decode_rho_component,
-        ExportedNameDialect::Conventional => str::to_string,
-    };
     Some(McpToolIdentity {
-        server: component(server),
-        tool: component(tool),
+        server: decode_rho_component(server),
+        tool: decode_rho_component(tool),
     })
 }
 
@@ -162,7 +146,7 @@ pub(crate) fn resolve_foreign_spelling<'a>(
 }
 
 fn spelling_key(name: &str) -> Option<String> {
-    let McpToolIdentity { server, tool } = parse_exported_name(name, ExportedNameDialect::Rho)?;
+    let McpToolIdentity { server, tool } = parse_exported_name(name)?;
     Some(
         format!("mcp__{server}__{tool}")
             .replace(|character: char| !character.is_ascii_alphanumeric(), "_"),

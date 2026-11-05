@@ -923,7 +923,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
     }
 }
 
-// Covers: a claude-cli agent reports its pass-through `--model`, not a Rho one.
+// Covers: a claude-cli agent reports its pass-through model, not a Rho one.
 // Owner: agent binding.
 #[test]
 fn bound_claude_agent_prompt_model_is_the_pass_through_value() {

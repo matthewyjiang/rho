@@ -65,8 +65,8 @@ pub(crate) struct FrozenAgentLaunchRequest {
 enum MessagingSupport {
     /// Rho runtime: steering port is published once the session starts.
     Rho { steering: SteeringSlot },
-    /// External CLI runtimes: queued text delivered as the child's next turn
-    /// (Claude stream-json stdin turn, ACP `session/prompt`).
+    /// ACP runtimes: steered into the running turn when the agent supports
+    /// `_session/steering`, otherwise delivered as the next `session/prompt`.
     Queued {
         messages: crate::cli_runtime::parent_messages::ParentMessageHandle,
     },

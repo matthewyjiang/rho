@@ -32,6 +32,21 @@ pub(super) fn classify_stop(stop: &StopReason, cancelled_by_us: bool) -> TurnCla
     }
 }
 
+impl TurnClassification {
+    /// What a run reports for a turn that ended without success; `None` for
+    /// success and for a cancel Rho asked for.
+    pub(super) fn failure_detail(&self) -> Option<String> {
+        match self {
+            Self::Success | Self::Stopped => None,
+            Self::Failure {
+                subtype: "cancelled",
+            } => Some("acp: agent cancelled the turn".into()),
+            Self::Failure { subtype } => Some(format!("acp: turn ended with {subtype}")),
+            Self::Invalid => Some("acp: invalid stop reason".into()),
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "turn_tests.rs"]
 mod tests;
