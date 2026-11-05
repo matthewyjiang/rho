@@ -464,13 +464,8 @@ pub type CompactionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<CompactionOutput, Error>> + Send + 'a>>;
 
 /// Defines who cancels an in-flight compaction future.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): mark `CompactorCancellationMode` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompactorCancellationMode {
     /// The SDK must drop the future when cancellation is requested.
     #[default]

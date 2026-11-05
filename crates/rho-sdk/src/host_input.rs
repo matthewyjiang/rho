@@ -59,13 +59,8 @@ pub enum SelectionMode {
 }
 
 /// How a host should apply a question's default value.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): mark `DefaultSelection` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DefaultSelection {
     /// Pre-select the default answer.
     #[default]
@@ -372,14 +367,9 @@ impl HostInputRequest {
 }
 
 /// Origin of host answers. A timeout fallback is not user authorization.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): mark `HostInputSource` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum HostInputSource {
     #[default]
     User,

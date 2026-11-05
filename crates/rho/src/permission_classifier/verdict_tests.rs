@@ -9,7 +9,7 @@ use rho_sdk::decision::{Answer, ChoiceAnswer, ChoiceOption, Question, QuestionKi
 fn options(question: &Question<'static>) -> &'static [ChoiceOption<'static>] {
     match question.kind {
         QuestionKind::Choice(options) => options,
-        QuestionKind::Noul(_) | QuestionKind::Score(_) => panic!("not a choice question"),
+        _ => panic!("not a choice question"),
     }
 }
 

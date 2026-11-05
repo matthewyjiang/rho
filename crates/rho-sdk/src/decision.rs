@@ -178,13 +178,8 @@ pub struct Question<'a> {
 }
 
 /// What a question asks for, with the descriptions that define its answers.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): mark `QuestionKind` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum QuestionKind<'a> {
     /// Yes or no, with optional descriptions of each.
     Noul(Option<NoulCriteria<'a>>),
@@ -318,6 +313,9 @@ pub enum InvalidRequest {
     DuplicateOptionId,
     #[error("a score question needs 2 to {MAX_SCORE_LEVELS} levels")]
     LevelCount,
+    /// The adapter predates a question kind added to [`QuestionKind`].
+    #[error("this decision model does not support one of the question kinds")]
+    UnsupportedQuestionKind,
 }
 
 /// 1 to [`MAX_ID_LEN`] ASCII letters, digits, `_`, `.`, or `-`, the ID

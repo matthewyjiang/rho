@@ -355,10 +355,9 @@ impl<'de> Deserialize<'de> for AssistantMessage {
 /// [`Self::semantic`] for exhaustive classification that distinguishes tool data
 /// from human submissions without changing the serialized variants.
 ///
-/// NEXT_MAJOR(rho-sdk): mark `Message` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in
-/// host code.
+/// Exhaustive on purpose, like [`ContentBlock`]: every provider converter must
+/// decide how to send each variant, so a new one is a breaking change rather
+/// than a silently dropped history entry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     System(String),
@@ -398,12 +397,9 @@ impl Message {
 
 /// One provider-neutral content item.
 ///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): mark `ContentBlock` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in
-/// host code.
+/// Exhaustive on purpose: every provider converter must decide how to send
+/// each block, so a new one is a breaking change rather than silently dropped
+/// request content.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ContentBlock {
     Text(String),
