@@ -212,12 +212,11 @@ fn authenticate_shows_the_login_url_and_abandons_it_when_the_host_does() {
             .unwrap_or_else(|| panic!("{id} is advertised"))
             .clone()
     };
-    // An untagged method is ACP's default, agent-run sign-in.
-    let (oauth, api_key) = (method("openrouter-oauth"), method("openrouter-api-key"));
-    assert_eq!(
-        (oauth.get("type"), oauth.get("args"), &api_key["type"]),
-        (None, None, &json!("terminal"))
-    );
+    // An untagged method is ACP's default, agent-run sign-in. Whether API
+    // keys are agent methods too depends on whether a browser can reach this
+    // machine, which the auth policy unit table covers with injected facts.
+    let oauth = method("openrouter-oauth");
+    assert_eq!((oauth.get("type"), oauth.get("args")), (None, None));
 
     /// How the host leaves the sign-in.
     #[derive(Clone, Copy, Debug)]

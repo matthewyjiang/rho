@@ -17,9 +17,11 @@ use futures_util::{
     FutureExt,
 };
 
+use rho_providers::auth::browser::BrowserAvailability;
+
 use super::{
     agent::RhoAcpAgent,
-    auth::{self, CredentialFailure, CredentialStoreChoice, OAuthSignIn},
+    auth::{self, CredentialFailure, CredentialStoreChoice, SignIn},
     auth_login::LoginFlight,
     host_features::NegotiatedFeatures,
     AcpClientPort,
@@ -93,6 +95,7 @@ struct LoginSetup {
     /// store.
     config: Option<std::path::PathBuf>,
     /// Read once at launch, before `initialize` advertises sign-in.
+    /// `authenticate` rereads it, since a login may choose the store.
     store: CredentialStoreChoice,
 }
 
@@ -144,9 +147,13 @@ impl LazyAgent {
         }
     }
 
-    /// Where OAuth logins run, from the features `initialize` recorded.
-    pub(super) fn oauth_sign_in(&self) -> OAuthSignIn {
-        auth::oauth_sign_in(self.host_features.get(), self.login.store)
+    /// Where logins run, from the features `initialize` recorded.
+    pub(super) fn sign_in(&self) -> SignIn {
+        auth::sign_in(
+            self.host_features.get(),
+            self.login.store,
+            BrowserAvailability::from_process(),
+        )
     }
 
     /// Runs an `authenticate` login in this process, one at a time. It needs
@@ -162,7 +169,8 @@ impl LazyAgent {
         self.flight
             .run(super::auth_login::authenticate(
                 &request.method_id.0,
-                self.oauth_sign_in(),
+                self.sign_in(),
+                self.host_features.get().forms,
                 self.login.config.clone(),
                 request_id,
                 port,

@@ -17,7 +17,7 @@ use crate::{
         auth_material_with_store, force_refresh_auth_material_with_store,
         GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
     },
-    credentials::{load_provider_api_key, CredentialStore},
+    credentials::{load_provider_api_key, CredentialError, CredentialResult, CredentialStore},
     model::{registry::missing_credential_error, ModelError, ReasoningCapabilities},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
@@ -338,6 +338,74 @@ pub async fn refresh_provider_models_with_store(
     store: &dyn CredentialStore,
     endpoint: ProviderModelEndpoint<'_>,
 ) -> Result<ProviderModelRefresh, ModelError> {
+    let (provider, records) = fetch_model_records(provider, auth, store, endpoint).await?;
+    replace_cached_provider_model_records(provider, &records)?;
+    Ok(ProviderModelRefresh {
+        provider: provider.to_string(),
+        models: records.into_iter().map(|record| record.model).collect(),
+    })
+}
+
+/// Asks API-key auth profile `auth`'s provider to list its models with `key`
+/// in place of a saved credential, so a login can refuse a key the provider
+/// rejects before saving it. Nothing is cached or saved. A provider whose
+/// model list needs no key accepts any key here.
+///
+/// The provider's environment variable still wins over `key`, as it does for
+/// every request, so check `ProviderAuthentication::has_environment_override`
+/// first. A provider whose models Rho does not list fails with
+/// [`ModelError::UnsupportedProvider`].
+pub async fn check_api_key(
+    auth: &str,
+    key: &str,
+    endpoint: ProviderModelEndpoint<'_>,
+) -> Result<(), ModelError> {
+    let (descriptor, _) = provider::resolve_auth_mode(auth)
+        .ok_or_else(|| ModelError::UnsupportedProvider(auth.to_string()))?;
+    let store = CandidateKey { descriptor, key };
+    fetch_model_records(descriptor.name, auth, &store, endpoint)
+        .await
+        .map(drop)
+}
+
+/// A read-only store that answers `key` for every API-key account of
+/// `descriptor`. Model listing reads the provider's default API-key account,
+/// which may not be the checked auth profile's own, so the candidate stands
+/// in for each of them. Writes fail, so a check can never save anything.
+struct CandidateKey<'a> {
+    descriptor: &'static provider::ProviderDescriptor,
+    key: &'a str,
+}
+
+impl CredentialStore for CandidateKey<'_> {
+    fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
+        let ours = self.descriptor.auth_modes().any(|mode| {
+            matches!(mode.auth_kind, ProviderAuthKind::ApiKey { account: own, .. } if own == account)
+        });
+        Ok(ours.then(|| self.key.to_owned()))
+    }
+
+    fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
+        Err(CredentialError::StoreUnavailable(
+            "checking a key saves nothing".into(),
+        ))
+    }
+
+    fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
+        Err(CredentialError::StoreUnavailable(
+            "checking a key deletes nothing".into(),
+        ))
+    }
+}
+
+/// Lists `provider`'s models through `auth`, returning the canonical
+/// provider name with them.
+async fn fetch_model_records(
+    provider: &str,
+    auth: &str,
+    store: &dyn CredentialStore,
+    endpoint: ProviderModelEndpoint<'_>,
+) -> Result<(&'static str, Vec<ProviderModelRecord>), ModelError> {
     let profile = provider::resolve_profile(provider, auth)
         .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
     let descriptor = profile.provider;
@@ -376,11 +444,7 @@ pub async fn refresh_provider_models_with_store(
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
-    replace_cached_provider_model_records(provider, &records)?;
-    Ok(ProviderModelRefresh {
-        provider: provider.to_string(),
-        models: records.into_iter().map(|record| record.model).collect(),
-    })
+    Ok((provider, records))
 }
 
 fn discovery_api_base<'a>(

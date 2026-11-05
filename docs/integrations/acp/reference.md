@@ -33,8 +33,8 @@ Rho reads these host capabilities:
 | `clientCapabilities.session.compaction` | `compaction_update` cards. |
 | `clientCapabilities.session.notices` | Non-conversation information as `notice`. |
 | `clientCapabilities.session.configOptions.boolean` | `fast_mode` as a boolean switch. See [Fast mode](#fast-mode). |
-| `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation. See [Questions](#questions). |
-| `clientCapabilities.elicitation.url` | OAuth sign-in through `authenticate`. See [Authentication](#authentication). |
+| `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation, and the credential store question before a first sign-in. See [Questions](#questions) and [Authentication](#authentication). |
+| `clientCapabilities.elicitation.url` | OAuth and API-key sign-in through `authenticate`. See [Authentication](#authentication). |
 | `clientCapabilities.fs.readTextFile` and `.writeTextFile` | File text through `fs/*`, when both are advertised. See [Host files](#host-files). |
 | `clientCapabilities.terminal` | `bash` calls in host terminals through `terminal/*`. See [Host terminals](#host-terminals). |
 | `clientInfo.name` `t3-code` | T3 Code's [question form shape](#t3-code-forms). |
@@ -57,24 +57,29 @@ A host that sends `"protocolVersion": 2` gets the [ACP v2 draft](https://agentcl
 
 Rho advertises one authentication method per provider auth profile. Where it runs depends on the host:
 
-| Auth profile | Host advertises `elicitation.url` and a credential store is chosen | Otherwise |
+| Auth profile | Host advertises `elicitation.url`, and either a credential store is chosen or the host advertises `elicitation.form` | Otherwise |
 | --- | --- | --- |
 | OAuth (Codex, GitHub Copilot, SpaceXAI, Kimi, Meta, OpenRouter) | Agent method, run by `authenticate` | Terminal method, if the host advertises `auth.terminal` |
-| API key | Terminal method, if the host advertises `auth.terminal` | Terminal method, if the host advertises `auth.terminal` |
+| API key | Agent method, run by `authenticate`, unless Rho runs headless or over SSH | Terminal method, if the host advertises `auth.terminal` |
 
-A host that can run neither kind gets no methods. Ollama Cloud device-key setup is never advertised because it cannot confirm browser authorization.
+The API-key page is served on the machine running `rho acp`, so when Rho runs headless or over SSH, as it does on a remote host or in a container, the host's browser cannot reach it. API keys are then terminal methods, the same rule `rho login` uses to choose device code over a browser callback. A host that can run neither kind gets no methods. Ollama Cloud device-key setup is never advertised because it cannot confirm browser authorization.
 
 ### Agent methods
 
-An agent method has no `type`, which is ACP's default, and its ID is the auth profile. On `authenticate`, Rho starts the same login as `rho login <auth-profile>`. That is a browser callback where a browser can appear, and device code over SSH or headless. Rho does not open a browser itself. It sends one URL-mode `elicitation/create` scoped to the `authenticate` request (`requestId`). The URL is the authorize URL or, for device code, the verification URL with the code filled in when the provider supplies one. The message names the provider and includes any device code.
+An agent method has no `type`, which is ACP's default, and its ID is the auth profile. Rho does not open a browser itself. For each login it sends one URL-mode `elicitation/create` scoped to the `authenticate` request (`requestId`):
 
-When the provider confirms, Rho saves the credentials, sends `elicitation/complete` for that elicitation, and answers `authenticate` with an empty result. A declined or dismissed elicitation, or `$/cancel_request` for `authenticate`, abandons the login and frees its callback port. The request then fails with `request_cancelled` (`-32800`). A failed login answers `internal_error` with a reason that does not include the credential. If the host rejects the elicitation, the reason names the `rho login <auth-profile>` command to run instead. One login runs at a time: a new `authenticate` cancels one still waiting, which then fails with `request_cancelled`, so a host that leaves sign-in without `$/cancel_request` does not keep a callback port busy.
+- **OAuth.** Rho starts the same login as `rho login <auth-profile>`. That is a browser callback where a browser can appear, and device code over SSH or headless. The URL is the authorize URL or, for device code, the verification URL with the code filled in when the provider supplies one. The message names the provider and includes any device code.
+- **API key.** The URL is a one-time key page Rho serves on `http://127.0.0.1:<port>/<token>`, and the message names the key to enter. The key goes from the browser to Rho, never through ACP. Rho checks it against the provider's models endpoint before saving it. A key the provider refuses (HTTP 400, 401, or 403) is not saved: the page says so and asks again, and `authenticate` keeps waiting. When the provider cannot be asked, because Rho does not list its models (TypeSafe and SpaceXAI), the endpoint fails another way, or it cannot be reached, Rho saves the key unchecked, as the terminal login does, and the page says so. A provider whose models endpoint needs no key accepts any key. A profile whose key is set in its environment variable, such as `OPENAI_API_KEY`, fails with `invalid_request` (`-32600`) naming the variable, since a saved key would not be used.
 
-Agent methods need a chosen credential store, because only the terminal login asks where to store credentials. Until one is chosen through config, `RHO_CREDENTIAL_STORE`, or an earlier login, OAuth is offered as a terminal method, and not at all to a host without `auth.terminal`. The choice is read when `rho acp` starts.
+The key page answers only on `127.0.0.1`, and only requests whose `Host` header is its own `127.0.0.1:<port>`, which blocks DNS rebinding. Its token is random and opens the page once; reopening the link is refused, so a copy read from host logs is useless once the page is open. The form posts to a second token that is never sent over ACP. The page expires after 15 minutes, which fails `authenticate` with `internal_error`. The key never appears in an ACP message, a log, or an error.
+
+When the provider confirms the login, or accepts the key, Rho saves the credentials, sends `elicitation/complete` for that elicitation, and answers `authenticate` with an empty result. A declined or dismissed elicitation, or `$/cancel_request` for `authenticate`, abandons the login and frees its callback or key page port. The request then fails with `request_cancelled` (`-32800`). A failed login answers `internal_error` with a reason that does not include the credential. If the host rejects the elicitation, the reason names the `rho login <auth-profile>` command to run instead. One login runs at a time: a new `authenticate` cancels one still waiting, which then fails with `request_cancelled`, so a host that leaves sign-in without `$/cancel_request` does not keep a port busy.
+
+A login needs a credential store to save to. When none is chosen through config, `RHO_CREDENTIAL_STORE`, or an earlier login, `authenticate` first asks where to store credentials as a form-mode `elicitation/create` scoped to the `authenticate` request. Its one required property, `store`, offers `os` and `file`, leaving out a store that cannot be opened on this machine; T3 Code gets their labels instead. Rho saves the answer to config as the terminal login does, then runs the login in the same `authenticate` call. Declining or dismissing the form fails with `request_cancelled`. A host that does not advertise `elicitation.form` gets terminal methods until a store is chosen, and none at all without `auth.terminal`. Whether a store is chosen is read when `rho acp` starts.
 
 ### Terminal methods
 
-Each terminal method appends `--login <auth-profile>` to the configured agent invocation; for example, T3 Code launches `rho acp --t3code --login codex` in its sign-in terminal. This runs login instead of the ACP server and needs neither a working model nor a T3 MCP connection. API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Rho asks where to store credentials when no credential backend has been selected. Cancelled, failed, and unconfirmed terminal logins exit nonzero. `authenticate` accepts only OAuth auth profiles; an API-key ID fails with invalid params.
+Each terminal method appends `--login <auth-profile>` to the configured agent invocation; for example, T3 Code launches `rho acp --t3code --login codex` in its sign-in terminal. This runs login instead of the ACP server and needs neither a working model nor a T3 MCP connection. API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Rho asks where to store credentials when no credential backend has been selected. Cancelled, failed, and unconfirmed terminal logins exit nonzero. `authenticate` accepts only auth profiles advertised as agent methods; a terminal method's ID fails with invalid params.
 
 Credentials stay in Rho's configured store, not in ACP messages.
 

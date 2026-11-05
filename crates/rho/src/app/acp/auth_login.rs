@@ -1,14 +1,17 @@
 //! `authenticate` for hosts that draw URL elicitations.
 //!
-//! The login starts as `rho login <auth>` starts it: a browser callback where
-//! a browser can appear, device-code over SSH or headless. Instead of printing
-//! the URL, Rho sends it (and any device code) to the host as a URL-mode
+//! With no credential store chosen, Rho first asks where to store
+//! credentials as a form (see [`super::auth_store`]). An API key is then
+//! typed into Rho's local key page (see [`super::auth_key`]). OAuth starts as
+//! `rho login <auth>` starts it: a browser callback where a browser can
+//! appear, device-code over SSH or headless. Instead of printing the URL,
+//! Rho sends it (and any device code) to the host as a URL-mode
 //! `elicitation/create` scoped to the `authenticate` request, so the host
 //! shows it in its own sign-in UI and opens it. Rho waits for the provider,
 //! saves the credentials, sends `elicitation/complete`, and answers.
 //!
 //! Declining the elicitation or cancelling `authenticate` drops the login,
-//! which also releases a browser login's callback port.
+//! which also releases a browser login's callback port or the key page's.
 
 use std::{future::Future, path::PathBuf};
 
@@ -19,35 +22,70 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::auth::{
-    browser::BrowserAvailability,
-    login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
-    login_prompt::LoginPrompt,
+use rho_providers::{
+    auth::{
+        browser::BrowserAvailability,
+        login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
+        login_prompt::LoginPrompt,
+    },
+    provider,
 };
 use tokio::sync::watch;
 
-use super::{auth::OAuthSignIn, AcpClientPort};
+use super::{
+    auth::{AgentLogin, SignIn},
+    auth_key::KeyLogin,
+    host_features::Forms,
+    AcpClientPort,
+};
 use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
+    config::Config,
     credential_store::{self, AppCredentialStore},
 };
 
 /// Signs in to auth profile `auth` for the `authenticate` request
-/// `request_id`. `config` is the `--config` override the process started with.
+/// `request_id`. `config` is the `--config` override the process started
+/// with; `forms` is how the host draws the credential store question.
 pub(super) async fn authenticate(
     auth: &str,
-    sign_in: OAuthSignIn,
+    sign_in: SignIn,
+    forms: Forms,
     config: Option<PathBuf>,
     request_id: RequestId,
     port: &dyn AcpClientPort,
 ) -> Result<AuthenticateResponse, AcpError> {
-    if !super::auth::runs_in_process(auth, sign_in) {
+    let Some(login) = super::auth::agent_login(auth, sign_in) else {
         return Err(AcpError::invalid_params().data(format!(
             "'{auth}' is not an authenticate method this connection advertised"
         )));
-    }
-    open_credential_store(config, UnchosenStore::Refuse)
+    };
+    let key_login = match login {
+        AgentLogin::OAuth => None,
+        AgentLogin::ApiKey => Some(KeyLogin::prepare(auth)?),
+    };
+    super::auth_store::choose_if_unset(config.clone(), forms, &request_id, port).await?;
+    let config = open_credential_store(config)
         .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
+    match key_login {
+        None => sign_in_with_oauth(auth, request_id, port).await?,
+        Some(key_login) => {
+            let endpoint = provider::resolve_auth_mode(auth)
+                .and_then(|(descriptor, _)| config.resolved_provider_endpoint(descriptor.name));
+            key_login
+                .sign_in(endpoint.as_ref(), &AppCredentialStore, request_id, port)
+                .await?;
+        }
+    }
+    Ok(AuthenticateResponse::new())
+}
+
+/// Runs OAuth login `auth`, showing its URL in the host.
+async fn sign_in_with_oauth(
+    auth: &str,
+    request_id: RequestId,
+    port: &dyn AcpClientPort,
+) -> Result<(), AcpError> {
     // The host opens the URL, so nothing is launched here; availability
     // only picks the grant, as it does for `rho login`.
     let mode = ProviderAuthentication::preferred_mode(auth, BrowserAvailability::from_process());
@@ -61,7 +99,7 @@ pub(super) async fn authenticate(
     let label = login.provider_label;
     let completion = match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => completion,
-        // `runs_in_process` admits only logins that confirm.
+        // `agent_login` admits only logins that confirm.
         InteractiveLoginCompletion::Unconfirmed { .. } => {
             return Err(
                 AcpError::internal_error().data(format!("{label} sign-in cannot be confirmed"))
@@ -81,10 +119,10 @@ pub(super) async fn authenticate(
     let shown = ShownLogin {
         auth,
         provider_label: label,
-        prompt: &login.prompt,
+        url: login.prompt.copyable_url(),
+        message: message(label, &login.prompt),
     };
-    show_until_signed_in(port, request_id, shown, signed_in).await?;
-    Ok(AuthenticateResponse::new())
+    show_until_signed_in(port, request_id, shown, signed_in).await
 }
 
 /// One login or logout at a time per connection. A new `authenticate` or
@@ -139,48 +177,29 @@ impl LoginFlight {
     }
 }
 
-/// What [`open_credential_store`] does when no credential store is chosen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum UnchosenStore {
-    /// A login must not pick where credentials are saved. Neither does
-    /// [`super::auth::methods`], which advertises no `authenticate` method
-    /// while the store is unchosen; this refuses if that changed since.
-    Refuse,
-    /// Logout saves nothing; it clears the OS store sessions read by default.
-    UseDefault,
-}
-
 /// Activates the credential store as configured now, from the `--config`
-/// override `config`, so the store a terminal login chose after launch is
-/// the one used.
-pub(super) fn open_credential_store(
-    config: Option<PathBuf>,
-    unchosen: UnchosenStore,
-) -> anyhow::Result<()> {
+/// override `config`, and returns that config, so the store a login chose
+/// after launch is the one used. With no store chosen that is the OS store,
+/// which sessions read by default.
+pub(super) fn open_credential_store(config: Option<PathBuf>) -> anyhow::Result<Config> {
     let repository = ConfigRepository::new(config);
     let config = repository.load()?;
-    match unchosen {
-        UnchosenStore::Refuse if credential_store::needs_explicit_choice(&config) => {
-            anyhow::bail!(
-                "credential store is unset; choose one with `rho credential-store set os|file`"
-            );
-        }
-        UnchosenStore::Refuse | UnchosenStore::UseDefault => {}
-    }
-    credential_store::activate_for_login(&config, &bootstrap::absolute_config_path(&repository)?)
+    credential_store::activate_for_login(&config, &bootstrap::absolute_config_path(&repository)?)?;
+    Ok(config)
 }
 
 /// A started login as the host shows it.
-#[derive(Clone, Copy)]
-struct ShownLogin<'a> {
-    auth: &'a str,
-    provider_label: &'a str,
-    prompt: &'a LoginPrompt,
+pub(super) struct ShownLogin<'a> {
+    pub(super) auth: &'a str,
+    pub(super) provider_label: &'a str,
+    /// The page the user opens: the provider's sign-in page or Rho's key page.
+    pub(super) url: &'a str,
+    pub(super) message: String,
 }
 
 /// Shows `login` in the host until `signed_in` finishes. A host that
 /// declines or dismisses the elicitation abandons the login.
-async fn show_until_signed_in(
+pub(super) async fn show_until_signed_in(
     port: &dyn AcpClientPort,
     request_id: RequestId,
     login: ShownLogin<'_>,
@@ -191,16 +210,16 @@ async fn show_until_signed_in(
         ElicitationUrlMode::new(
             ElicitationRequestScope::new(request_id),
             elicitation_id.clone(),
-            login.prompt.copyable_url(),
+            login.url,
         ),
-        message(login),
+        login.message.clone(),
     ));
     let mut signed_in = std::pin::pin!(signed_in);
     // The host answers once the user chooses to open the URL, which may be
     // after the provider already finished (a code approved on a phone).
     tokio::select! {
         result = &mut signed_in => result?,
-        answer = &mut shown => match answer.map_err(|error| unshown(login, &error))?.action {
+        answer = &mut shown => match answer.map_err(|error| unshown(&login, &error))?.action {
             ElicitationAction::Accept(_) => signed_in.await?,
             ElicitationAction::Decline | ElicitationAction::Cancel => {
                 return Err(AcpError::request_cancelled());
@@ -222,9 +241,8 @@ async fn show_until_signed_in(
     Ok(())
 }
 
-fn message(login: ShownLogin<'_>) -> String {
-    let label = login.provider_label;
-    match &login.prompt.user_code {
+fn message(label: &str, prompt: &LoginPrompt) -> String {
+    match &prompt.user_code {
         Some(code) => format!("Sign in to {label} with code {code}."),
         None => format!("Sign in to {label} in your browser."),
     }
@@ -232,7 +250,7 @@ fn message(login: ShownLogin<'_>) -> String {
 
 /// The host refused to show the sign-in link, so the login cannot finish
 /// here; the terminal login still can.
-fn unshown(login: ShownLogin<'_>, error: &AcpError) -> AcpError {
+fn unshown(login: &ShownLogin<'_>, error: &AcpError) -> AcpError {
     AcpError::internal_error().data(format!(
         "could not show the {} sign-in link: {error}; run `rho login {}` in a terminal instead",
         login.provider_label, login.auth

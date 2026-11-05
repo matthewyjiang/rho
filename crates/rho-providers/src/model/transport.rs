@@ -24,6 +24,9 @@ pub enum TransportFailureKind {
 pub struct TransportError {
     kind: TransportFailureKind,
     message: String,
+    /// The status of a response the client turned into an error, such as
+    /// `error_for_status` does.
+    status: Option<http::StatusCode>,
 }
 
 impl TransportError {
@@ -39,6 +42,12 @@ impl TransportError {
         self.kind == TransportFailureKind::Connect
     }
 
+    /// The HTTP status behind this failure, when the client failed a
+    /// response it received rather than the connection.
+    pub fn status(&self) -> Option<http::StatusCode> {
+        self.status
+    }
+
     pub(crate) fn from_reqwest(error: reqwest::Error) -> Self {
         let kind = if error.is_timeout() {
             TransportFailureKind::Timeout
@@ -52,6 +61,7 @@ impl TransportError {
         Self {
             kind,
             message: error.to_string(),
+            status: error.status(),
         }
     }
 }

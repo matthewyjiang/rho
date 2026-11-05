@@ -105,7 +105,7 @@ fn initialize_response_wire_shape() {
     );
     let response = serde_json::to_value(RhoAcpAgent::initialize(
         &request,
-        crate::app::acp::auth::OAuthSignIn::Terminal,
+        crate::app::acp::auth::SignIn::TERMINAL,
     ))
     .expect("serialize initialize");
 

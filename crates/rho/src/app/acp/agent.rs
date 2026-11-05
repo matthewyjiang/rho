@@ -146,7 +146,7 @@ impl RhoAcpAgent {
     /// the v2 adapter reuses these capabilities and translates the response.
     pub(super) fn initialize(
         request: &InitializeRequest,
-        sign_in: super::auth::OAuthSignIn,
+        sign_in: super::auth::SignIn,
     ) -> InitializeResponse {
         InitializeResponse::new(ProtocolVersion::V1)
             .agent_capabilities(

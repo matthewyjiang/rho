@@ -2,10 +2,9 @@
 //! Requests that fail for want of usable credentials answer `auth_required`,
 //! so hosts offer these login methods instead of a generic failure.
 //!
-//! OAuth logins run in this process ([`AuthMethod::Agent`], see
-//! [`super::auth_login`]) when [`oauth_sign_in`] says so; otherwise, and
-//! always for API keys, the host runs `rho acp --login <auth>` in a terminal
-//! ([`AuthMethod::Terminal`]).
+//! OAuth and API-key logins run in this process ([`AuthMethod::Agent`], see
+//! [`super::auth_login`]) when [`sign_in`] says so; otherwise the host runs
+//! `rho acp --login <auth>` in a terminal ([`AuthMethod::Terminal`]).
 
 use agent_client_protocol::{
     schema::v1::{
@@ -14,42 +13,89 @@ use agent_client_protocol::{
     Error as AcpError, ErrorCode,
 };
 use rho_providers::{
+    auth::browser::BrowserAvailability,
     model::ModelError,
     provider::{self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind},
 };
 
-use super::host_features::HostFeatures;
+use super::host_features::{Forms, HostFeatures};
 
-/// Whether a credential store has been chosen. Only the terminal login asks
-/// for that choice, so until it is made every login runs in a terminal.
+/// Whether a credential store has been chosen. A login must know where to
+/// save, so until the choice is made `authenticate` asks it as a form, and
+/// hosts without forms sign in through the terminal login, which asks too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CredentialStoreChoice {
     Made,
     Pending,
 }
 
-/// Where this connection's OAuth logins run, fixed at `initialize`.
-/// `initialize` advertises from it and `authenticate` accepts from it, so
-/// the two cannot disagree.
+/// Where this connection's logins run, fixed at `initialize`. `initialize`
+/// advertises from it and `authenticate` accepts from it, so the two cannot
+/// disagree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OAuthSignIn {
-    /// `authenticate` runs the login and shows its URL as an elicitation.
+pub(super) struct SignIn {
+    oauth: LoginSite,
+    keys: LoginSite,
+}
+
+/// Where one kind of login runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoginSite {
+    /// `authenticate` runs the login and shows its URL as an elicitation,
+    /// after asking where to store credentials if no store is chosen.
     InProcess,
     /// The host's terminal runs `rho acp --login <auth>`, if it has one.
     Terminal,
 }
 
-pub(super) fn oauth_sign_in(host: HostFeatures, store: CredentialStoreChoice) -> OAuthSignIn {
-    match (host.urls, store) {
-        (true, CredentialStoreChoice::Made) => OAuthSignIn::InProcess,
-        (true, CredentialStoreChoice::Pending) | (false, _) => OAuthSignIn::Terminal,
+impl SignIn {
+    /// Every login in the host's terminal.
+    #[cfg(test)]
+    pub(super) const TERMINAL: Self = Self {
+        oauth: LoginSite::Terminal,
+        keys: LoginSite::Terminal,
+    };
+
+    /// Where a login that needs `needs` runs, if anywhere.
+    fn site(self, needs: LoginNeeds) -> Option<LoginSite> {
+        match needs {
+            LoginNeeds::UrlThenWait => Some(self.oauth),
+            LoginNeeds::KeyEntry => Some(self.keys),
+            LoginNeeds::Unconfirmable => None,
+        }
     }
+}
+
+/// `browser` says whether the user's browser runs where Rho does.
+pub(super) fn sign_in(
+    host: HostFeatures,
+    store: CredentialStoreChoice,
+    browser: BrowserAvailability,
+) -> SignIn {
+    let oauth = match (host.urls, store, host.forms) {
+        (true, CredentialStoreChoice::Made, _)
+        | (true, CredentialStoreChoice::Pending, Forms::Available(_)) => LoginSite::InProcess,
+        (true, CredentialStoreChoice::Pending, Forms::Unavailable) | (false, _, _) => {
+            LoginSite::Terminal
+        }
+    };
+    // The key page listens on this machine's loopback. Over SSH or in a
+    // container the host's browser cannot reach it, unlike a provider's
+    // sign-in page, so keys stay with the terminal's hidden entry.
+    let keys = match (oauth, browser) {
+        (LoginSite::InProcess, BrowserAvailability::Graphical) => LoginSite::InProcess,
+        (LoginSite::InProcess, BrowserAvailability::Headless) | (LoginSite::Terminal, _) => {
+            LoginSite::Terminal
+        }
+    };
+    SignIn { oauth, keys }
 }
 
 /// What finishing one auth mode's login takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LoginNeeds {
-    /// Typing a secret, which only the terminal's hidden entry may take.
+    /// Typing a secret, which must never travel in an ACP message: hosts log
+    /// them. The terminal's hidden entry or Rho's local key page takes it.
     KeyEntry,
     /// Opening a URL (with a device code, for device grants), then a wait for
     /// the provider to confirm.
@@ -79,30 +125,47 @@ fn login_needs(kind: ProviderAuthKind) -> LoginNeeds {
     }
 }
 
-/// Whether `auth` is a login `authenticate` can run, given `sign_in`.
-pub(super) fn runs_in_process(auth: &str, sign_in: OAuthSignIn) -> bool {
-    sign_in == OAuthSignIn::InProcess
-        && provider::resolve_auth_mode(auth)
-            .is_some_and(|(_, mode)| login_needs(mode.auth_kind) == LoginNeeds::UrlThenWait)
+/// A login `authenticate` runs in this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentLogin {
+    /// OAuth or a device grant, shown as the provider's URL.
+    OAuth,
+    /// An API key, typed into Rho's local key page.
+    ApiKey,
 }
 
-pub(super) fn methods(request: &InitializeRequest, sign_in: OAuthSignIn) -> Vec<AuthMethod> {
+/// The login `authenticate` runs for `auth`, given `sign_in`, or `None` when
+/// `auth` was not advertised as an agent method.
+pub(super) fn agent_login(auth: &str, sign_in: SignIn) -> Option<AgentLogin> {
+    let (_, mode) = provider::resolve_auth_mode(auth)?;
+    let needs = login_needs(mode.auth_kind);
+    match sign_in.site(needs)? {
+        LoginSite::InProcess => {}
+        LoginSite::Terminal => return None,
+    }
+    match needs {
+        LoginNeeds::UrlThenWait => Some(AgentLogin::OAuth),
+        LoginNeeds::KeyEntry => Some(AgentLogin::ApiKey),
+        LoginNeeds::Unconfirmable => None,
+    }
+}
+
+pub(super) fn methods(request: &InitializeRequest, sign_in: SignIn) -> Vec<AuthMethod> {
     let capabilities: &ClientCapabilities = &request.client_capabilities;
     let terminal = capabilities.auth.terminal;
     provider::providers()
         .into_iter()
         .flat_map(|provider| provider.auth_modes())
-        .filter_map(|mode| match (login_needs(mode.auth_kind), sign_in) {
-            (LoginNeeds::UrlThenWait, OAuthSignIn::InProcess) => Some(AuthMethod::Agent(
-                AuthMethodAgent::new(mode.id, mode.login_label),
+        .filter_map(|mode| match sign_in.site(login_needs(mode.auth_kind))? {
+            LoginSite::InProcess => Some(AuthMethod::Agent(AuthMethodAgent::new(
+                mode.id,
+                mode.login_label,
+            ))),
+            LoginSite::Terminal if terminal => Some(AuthMethod::Terminal(
+                AuthMethodTerminal::new(mode.id, mode.login_label)
+                    .args(vec!["--login".into(), mode.id.into()]),
             )),
-            (LoginNeeds::UrlThenWait | LoginNeeds::KeyEntry, _) if terminal => {
-                Some(AuthMethod::Terminal(
-                    AuthMethodTerminal::new(mode.id, mode.login_label)
-                        .args(vec!["--login".into(), mode.id.into()]),
-                ))
-            }
-            (LoginNeeds::UrlThenWait | LoginNeeds::KeyEntry | LoginNeeds::Unconfirmable, _) => None,
+            LoginSite::Terminal => None,
         })
         .collect()
 }

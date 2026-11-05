@@ -13,8 +13,9 @@ use std::collections::BTreeMap;
 
 use agent_client_protocol::schema::v1::{
     BooleanPropertySchema, CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
-    ElicitationContentValue, ElicitationFormMode, ElicitationSchema, ElicitationSessionScope,
-    EnumOption, MultiSelectPropertySchema, SessionId, StringPropertySchema, ToolCallId,
+    ElicitationContentValue, ElicitationFormMode, ElicitationSchema, ElicitationScope,
+    ElicitationSessionScope, EnumOption, MultiSelectPropertySchema, SessionId,
+    StringPropertySchema, ToolCallId,
 };
 use rho_sdk::{
     DefaultSelection, HostChoice, HostInputRefusal, HostInputRequest, HostInputResponse,
@@ -75,6 +76,18 @@ pub(super) fn elicitation_request(
     call_id: Option<&rho_sdk::ToolCallId>,
     dialect: FormDialect,
 ) -> CreateElicitationRequest {
+    let scope = ElicitationSessionScope::new(session_id.clone())
+        .tool_call_id(call_id.map(|id| ToolCallId::new(id.as_str())));
+    form(request, scope, dialect)
+}
+
+/// The form for `request`, tied to `scope`, such as the `authenticate`
+/// request that asks where to store credentials.
+pub(super) fn form(
+    request: &HostInputRequest,
+    scope: impl Into<ElicitationScope>,
+    dialect: FormDialect,
+) -> CreateElicitationRequest {
     let mut schema = ElicitationSchema::new();
     for question in request.questions() {
         schema = match dialect {
@@ -82,8 +95,6 @@ pub(super) fn elicitation_request(
             FormDialect::T3Code => add_t3_question(schema, question),
         };
     }
-    let scope = ElicitationSessionScope::new(session_id.clone())
-        .tool_call_id(call_id.map(|id| ToolCallId::new(id.as_str())));
     let message = match request.title() {
         "" => "Rho needs your input",
         title => title,

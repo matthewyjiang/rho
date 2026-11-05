@@ -1,7 +1,9 @@
 mod agent;
 mod auth;
+mod auth_key;
 mod auth_login;
 mod auth_logout;
+mod auth_store;
 mod client_files;
 mod client_io;
 mod client_terminals;
@@ -301,7 +303,7 @@ fn v1_agent(agent: Arc<startup::LazyAgent>) -> impl ConnectTo<Client> {
                 let agent = Arc::clone(&agent);
                 async move |request: InitializeRequest, responder, cx| {
                     agent.record_client(&request, Arc::new(ConnectionPort::new(cx)));
-                    responder.respond(RhoAcpAgent::initialize(&request, agent.oauth_sign_in()))
+                    responder.respond(RhoAcpAgent::initialize(&request, agent.sign_in()))
                 }
             },
             agent_client_protocol::on_receive_request!(),
