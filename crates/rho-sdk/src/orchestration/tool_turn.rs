@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
@@ -59,7 +59,6 @@ impl StagedCall {
 /// Resolve against the advertisement snapshot, before choosing a scheduler.
 pub(super) fn split_tool_calls(
     calls: Vec<ToolCall>,
-    async_ids: &BTreeSet<String>,
     runtime: &Rho,
     advertised: &[crate::model::ToolSpec],
 ) -> (Vec<AsyncToolCall>, Vec<StagedCall>) {
@@ -78,7 +77,7 @@ pub(super) fn split_tool_calls(
                 id,
                 tool: Some(tool),
                 ..
-            } if async_ids.contains(&call.id)
+            } if call.execution == crate::tool::ToolExecutionMode::Async
                 && tool.execution_mode() == crate::tool::ToolExecutionMode::Async =>
             {
                 async_calls.push(AsyncToolCall { call, id, tool });

@@ -278,11 +278,11 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "shell-1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command": command, "timeout_seconds": 9}),
-                },
+                ToolCall::new(
+                    "shell-1".into(),
+                    "bash".into(),
+                    json!({"command": command, "timeout_seconds": 9}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "denial handled".into(),
@@ -403,11 +403,11 @@ async fn sdk_shell_tools_stream_live_output_as_progress_events() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "shell-1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command": "printf 'live-marker\\n'; sleep 0.3"}),
-                },
+                ToolCall::new(
+                    "shell-1".into(),
+                    "bash".into(),
+                    json!({"command": "printf 'live-marker\\n'; sleep 0.3"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -458,11 +458,11 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "skill-1".into(),
-                    name: "skill".into(),
-                    arguments: json!({"name": "ancestor-skill"}),
-                },
+                ToolCall::new(
+                    "skill-1".into(),
+                    "skill".into(),
+                    json!({"name": "ancestor-skill"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -528,11 +528,11 @@ async fn sdk_skill_tool_rejects_model_invocation_of_user_only_skill() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "skill-1".into(),
-                    name: "skill".into(),
-                    arguments: json!({"name": "manual-skill"}),
-                },
+                ToolCall::new(
+                    "skill-1".into(),
+                    "skill".into(),
+                    json!({"name": "manual-skill"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -609,11 +609,11 @@ async fn sdk_skill_tool_loads_embedded_agent_creator_without_workspace() {
     let mut run = session
         .start_with_tool_call(
             UserInput::text("/skill:rho-agent-creator"),
-            ToolCall {
-                id: "skill-creator-1".into(),
-                name: "skill".into(),
-                arguments: json!({"name": "rho-agent-creator"}),
-            },
+            ToolCall::new(
+                "skill-creator-1".into(),
+                "skill".into(),
+                json!({"name": "rho-agent-creator"}),
+            ),
         )
         .await
         .unwrap();

@@ -97,7 +97,12 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
     );
     assert_eq!(completed, vec!["incorporated"]);
     assert_eq!(run.outcome().await.unwrap().text(), "incorporated");
-    let expected = inputs.map(|text| vec![summary.clone(), Message::user_text(text)]);
+    let expected = inputs.map(|text| {
+        vec![
+            summary.clone(),
+            Message::BoundaryInput(vec![ContentBlock::Text(text.into())]),
+        ]
+    });
     assert_eq!(compacted, expected);
     let requests_seen = provider.recorded_requests();
     assert_eq!(requests_seen.len(), 3);
@@ -231,7 +236,7 @@ async fn accepted_input_survives_event_consumer_loss() {
     );
     let expected = vec![
         Message::user_text("work"),
-        Message::user_text("unseen failure"),
+        Message::BoundaryInput(vec![ContentBlock::Text("unseen failure".into())]),
     ];
     assert_eq!(core.committed_history(), expected);
     assert_eq!(core.revision(), Revision::INITIAL.checked_next().unwrap());

@@ -120,12 +120,16 @@ pub(super) fn transcript_entries_from_messages(
                     entries.extend(transcript_entries(transcript));
                 }
             }
-            SemanticMessage::User(blocks) => {
+            SemanticMessage::User(blocks) | SemanticMessage::BoundaryInput(blocks) => {
                 let text = render_message_blocks(blocks);
                 if !text.is_empty() {
                     entries.push(Entry::User(text));
                 }
             }
+            // Display rows never hold model-only entries.
+            SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::ReasoningShift(_) => {}
             SemanticMessage::Assistant(blocks) => {
                 let text = text_blocks(blocks);
                 if !text.is_empty() {
@@ -168,13 +172,13 @@ pub(super) fn transcript_entries_from_messages(
                 entries.push(Entry::Notice("model interrupted".into()));
             }
             SemanticMessage::ToolResult(result) => {
-                let call = pending_tools
-                    .remove(&result.id)
-                    .unwrap_or_else(|| ToolCall {
-                        id: result.id.clone(),
-                        name: "tool".into(),
-                        arguments: serde_json::Value::Object(Default::default()),
-                    });
+                let call = pending_tools.remove(&result.id).unwrap_or_else(|| {
+                    ToolCall::new(
+                        result.id.clone(),
+                        "tool".into(),
+                        serde_json::Value::Object(Default::default()),
+                    )
+                });
                 let presented = presenter.historical(&call, !result.is_failure(), &result.content);
                 entries.push(Entry::Tool(ToolEntry::new(
                     presented.presentation,

@@ -1,5 +1,5 @@
 use crate::{
-    model::handoff::prepare_assistant,
+    model::{handoff::prepare_assistant, ReasoningShift, WireMessage},
     provider_backend::{
         ContentBlock, Message, ModelError, ModelResponse, ModelUsage, ToolCall, ToolSpec,
     },
@@ -37,29 +37,51 @@ pub(crate) enum ProviderContextReplay {
     Disabled,
 }
 
+/// A history reasoning shift, to be sent before `messages[at]` of the
+/// converted conversation (or after the last message when `at` is its length).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlacedReasoningShift {
+    pub(crate) at: usize,
+    pub(crate) shift: ReasoningShift,
+}
+
+/// History lowered for the Messages API. Reasoning shifts are not inserted;
+/// the provider decides whether and how to send them.
+#[derive(Debug)]
+pub(crate) struct AnthropicConversation {
+    pub(crate) system: Option<String>,
+    pub(crate) messages: Vec<AnthropicMessage>,
+    pub(crate) reasoning_shifts: Vec<PlacedReasoningShift>,
+}
+
 pub(crate) fn split_system_and_messages(
     messages: &[Message],
     target: &crate::model::ModelIdentity,
     provider_context_replay: ProviderContextReplay,
-) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
+) -> Result<AnthropicConversation, ModelError> {
     let messages = crate::protocol::late_tool_results::normalize_late_tool_results(messages);
     let mut system = Vec::new();
     let mut converted = Vec::new();
+    let mut reasoning_shifts = Vec::new();
     for message in messages.iter().map(std::borrow::Cow::as_ref) {
-        match message {
-            Message::System(content) => system.push(content.as_str()),
-            Message::User(blocks) => push_message(
+        match message.wire() {
+            WireMessage::System(content) => system.push(content),
+            WireMessage::User(blocks) => push_message(
                 &mut converted,
                 AnthropicRole::User,
                 blocks.iter().map(user_block).collect(),
             ),
-            Message::Assistant(blocks) => push_message(
+            WireMessage::Assistant(blocks) => push_message(
                 &mut converted,
                 AnthropicRole::Assistant,
                 blocks.iter().map(assistant_block).collect(),
             ),
-            Message::EnrichedAssistant(message) => {
-                let mut message = (**message).clone();
+            WireMessage::ReasoningShift(shift) => reasoning_shifts.push(PlacedReasoningShift {
+                at: converted.len(),
+                shift: *shift,
+            }),
+            WireMessage::EnrichedAssistant(message) => {
+                let mut message = message.clone();
                 if provider_context_replay == ProviderContextReplay::Disabled {
                     message.retain_portable_context();
                 }
@@ -84,7 +106,7 @@ pub(crate) fn split_system_and_messages(
                 }
                 push_message(&mut converted, AnthropicRole::Assistant, content);
             }
-            Message::AbortedAssistant(message) => {
+            WireMessage::AbortedAssistant(message) => {
                 let content = message
                     .content
                     .iter()
@@ -125,7 +147,7 @@ pub(crate) fn split_system_and_messages(
                 }
                 push_message(&mut converted, AnthropicRole::Assistant, content);
             }
-            Message::ToolResult(result) => push_message(
+            WireMessage::ToolResult(result) => push_message(
                 &mut converted,
                 AnthropicRole::User,
                 vec![AnthropicContentBlock::ToolResult {
@@ -138,7 +160,11 @@ pub(crate) fn split_system_and_messages(
         }
     }
     let system = (!system.is_empty()).then(|| system.join("\n\n"));
-    Ok((system, converted))
+    Ok(AnthropicConversation {
+        system,
+        messages: converted,
+        reasoning_shifts,
+    })
 }
 
 fn push_message(
@@ -245,11 +271,7 @@ pub(crate) fn convert_content_blocks(
             | AnthropicContentBlock::RedactedThinking { .. } => {}
             AnthropicContentBlock::Image { .. } => {}
             AnthropicContentBlock::ToolUse { id, name, input } => {
-                blocks.push(ContentBlock::ToolCall(ToolCall {
-                    id,
-                    name,
-                    arguments: input,
-                }));
+                blocks.push(ContentBlock::ToolCall(ToolCall::new(id, name, input)));
             }
             AnthropicContentBlock::ToolResult { .. } => {
                 return Err(ModelError::InvalidResponse(
@@ -304,7 +326,7 @@ mod tests {
 
     #[test]
     fn marks_failed_tool_results_as_errors() {
-        let (_system, messages) = split_system_and_messages(
+        let AnthropicConversation { messages, .. } = split_system_and_messages(
             &[Message::ToolResult(ToolResult::failed("toolu_1", "failed"))],
             &target(),
             ProviderContextReplay::Enabled,
@@ -324,7 +346,7 @@ mod tests {
 
     #[test]
     fn merges_consecutive_same_role_messages() {
-        let (_system, messages) = split_system_and_messages(
+        let AnthropicConversation { messages, .. } = split_system_and_messages(
             &[
                 Message::user_text("one"),
                 Message::user_text("two"),
@@ -344,7 +366,7 @@ mod tests {
     fn converts_foreign_summary_and_omits_foreign_provider_context() {
         let source =
             crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
-        let (_, messages) = split_system_and_messages(
+        let AnthropicConversation { messages, .. } = split_system_and_messages(
             &[Message::assistant(crate::model::AssistantMessage {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(source.clone()),
@@ -354,6 +376,7 @@ mod tests {
                     kind: "openai_response_output_item".into(),
                     position: None,
                     data: json!({"type": "reasoning", "encrypted_content": "signed"}),
+                    replay: crate::model::ReplayScope::ExactModel,
                 }],
             })],
             &target(),
@@ -380,12 +403,13 @@ mod tests {
                 kind: "openai_response_output_item".into(),
                 position: Some(0),
                 data: json!({"type": "compaction", "encrypted_content": "signed"}),
+                replay: crate::model::ReplayScope::ExactModel,
             }],
             ..crate::model::AssistantMessage::default()
         }
         .with_portable_fallback("portable notice");
 
-        let (_, messages) = split_system_and_messages(
+        let AnthropicConversation { messages, .. } = split_system_and_messages(
             &[Message::assistant(message)],
             &target(),
             ProviderContextReplay::Disabled,
@@ -401,7 +425,7 @@ mod tests {
     #[test]
     fn exact_anthropic_handoff_replays_signed_thinking_in_original_position() {
         let target = target();
-        let (_, messages) = split_system_and_messages(
+        let AnthropicConversation { messages, .. } = split_system_and_messages(
             &[Message::assistant(crate::model::AssistantMessage {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
@@ -415,6 +439,7 @@ mod tests {
                         "thinking": "private",
                         "signature": "signed"
                     }),
+                    replay: crate::model::ReplayScope::ExactModel,
                 }],
             })],
             &target,
@@ -432,7 +457,7 @@ mod tests {
     #[test]
     fn exact_anthropic_handoff_omits_thinking_when_reasoning_is_disabled() {
         let target = target();
-        let (_, messages) = split_system_and_messages(
+        let AnthropicConversation { messages, .. } = split_system_and_messages(
             &[Message::assistant(crate::model::AssistantMessage {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
@@ -446,6 +471,7 @@ mod tests {
                         "thinking": "private",
                         "signature": "signed"
                     }),
+                    replay: crate::model::ReplayScope::ExactModel,
                 }],
             })],
             &target,

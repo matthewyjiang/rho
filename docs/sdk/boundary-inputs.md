@@ -71,8 +71,8 @@ questionnaires. Hosts should retain each background source's identity and order
 inside the notification body, and label it as runtime context rather than a new
 user request.
 
-`NEXT_MAJOR(rho-sdk): represent internal boundary input with a typed history message instead of User blocks.`
-The public `Message` enum is exhaustive, so adding a persisted message kind would
-break existing hosts. For now, boundary inputs use framed user-role blocks for
-provider and persistence compatibility. Match the distinct runtime event to
-identify their source rather than inferring human input from the wire role.
+Accepted boundary input is stored as `Message::BoundaryInput`, which
+`Message::semantic()` reports as `SemanticMessage::BoundaryInput`, never `User`.
+Providers still receive it as user-role content, exactly as before. Sessions
+saved by rho-sdk 5.x stored boundary input as plain `User` blocks; those load
+unchanged because nothing in them marks their source.

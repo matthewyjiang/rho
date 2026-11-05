@@ -82,11 +82,11 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
                 messages: &[
                     Message::System("system prompt".into()),
                     Message::User(vec![ContentBlock::Text("hello".into())]),
-                    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                        id: "toolu_1".into(),
-                        name: "bash".into(),
-                        arguments: json!({"command":"pwd"}),
-                    })]),
+                    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+                        "toolu_1".into(),
+                        "bash".into(),
+                        json!({"command":"pwd"}),
+                    ))]),
                 ],
                 tools: &[ToolSpec {
                     name: "bash".into(),
@@ -150,39 +150,22 @@ fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
     assert!(value["thinking"].get("budget_tokens").is_none());
 }
 
-// Covers: a mid-conversation effort change on Fable 5.1 must keep the
-// prefix output_config and send an effort-only system message
+// Covers: a history reasoning shift on Fable 5.1 keeps the prefix
+// output_config and sends an effort-only system message before the next turn
 // Owner: anthropic request body cache breakpoints
 #[test]
-fn fable_5_1_mid_conversation_effort_change_keeps_prefix_output_config() {
+fn fable_5_1_history_reasoning_shift_keeps_prefix_output_config() {
     let provider = test_provider_with_capabilities("claude-fable-5-1", &adaptive_capabilities());
-    let first = provider
-        .request_body(
-            ModelRequest {
-                messages: &[Message::user_text("plan this")],
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: ReasoningLevel::High,
-                prompt_cache_key: Some("rho:session"),
-            },
-            false,
-        )
-        .unwrap();
-    assert_eq!(
-        first.output_config,
-        Some(AnthropicOutputConfig { effort: "high" })
-    );
-    assert!(first
-        .messages
-        .iter()
-        .all(|message| message.output_config.is_none()));
-
-    let second = provider
+    let body = provider
         .request_body(
             ModelRequest {
                 messages: &[
                     Message::user_text("plan this"),
                     Message::assistant_text("1. export"),
+                    Message::ReasoningShift(crate::model::ReasoningShift {
+                        from: ReasoningLevel::High,
+                        to: ReasoningLevel::Low,
+                    }),
                     Message::user_text("summarize"),
                 ],
                 tools: &[],
@@ -194,10 +177,10 @@ fn fable_5_1_mid_conversation_effort_change_keeps_prefix_output_config() {
         )
         .unwrap();
     assert_eq!(
-        second.output_config,
+        body.output_config,
         Some(AnthropicOutputConfig { effort: "high" })
     );
-    let value = serde_json::to_value(&second).unwrap();
+    let value = serde_json::to_value(&body).unwrap();
     assert_eq!(
         value["messages"][2],
         json!({

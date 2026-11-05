@@ -28,11 +28,7 @@ async fn complete_policy_timeout_aborts_worker() {
     });
     started_rx.await.expect("worker started");
 
-    let call = ToolCall {
-        id: "call-a".into(),
-        name: "slow".into(),
-        arguments: serde_json::json!({}),
-    };
+    let call = ToolCall::new("call-a".into(), "slow".into(), serde_json::json!({}));
     let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
     let result = settle_job(AsyncJob {
         call: call.clone(),
@@ -83,11 +79,7 @@ async fn settled_jobs_preserve_completion_metadata() {
         let worker = tokio::spawn(async move { outcome });
         let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
         let (result, completion) = settle_job(AsyncJob {
-            call: ToolCall {
-                id: "capture-1".into(),
-                name: "capture".into(),
-                arguments: serde_json::json!({}),
-            },
+            call: ToolCall::new("capture-1".into(), "capture".into(), serde_json::json!({})),
             name: "capture".into(),
             cancellation: CancellationToken::new(),
             cancellation_policy: ToolCancellationPolicy::Complete {
@@ -119,11 +111,7 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
     let mut jobs = AsyncJobSet::new(NonZeroUsize::MIN);
     let mut expected = Vec::new();
     for id in ["call-a", "call-b"] {
-        let call = ToolCall {
-            id: id.into(),
-            name: "ready".into(),
-            arguments: serde_json::json!({}),
-        };
+        let call = ToolCall::new(id.into(), "ready".into(), serde_json::json!({}));
         let output = ToolOutput::text(id);
         let result = Ok(output.clone());
         let worker = tokio::spawn(async move { Ok(output) });

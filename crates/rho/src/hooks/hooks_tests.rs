@@ -117,11 +117,7 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                rho_sdk::model::ToolCall {
-                    id: "call-1".into(),
-                    name: tool.into(),
-                    arguments: serde_json::json!({}),
-                },
+                rho_sdk::model::ToolCall::new("call-1".into(), tool.into(), serde_json::json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

@@ -24,9 +24,10 @@ fn identity_for(model: &str) -> ModelIdentity {
 fn effort_block(identity: &ModelIdentity, effort: &str) -> ProviderContextBlock {
     ProviderContextBlock {
         identity: identity.clone(),
-        kind: reasoning_effort_kind(),
+        kind: REASONING_EFFORT_NOTE.into(),
         position: None,
         data: json!(effort),
+        replay: crate::model::ReplayScope::Never,
     }
 }
 
@@ -43,11 +44,11 @@ fn assistant_text(identity: &ModelIdentity, text: &str, effort: Option<&str>) ->
 
 fn assistant_tool_call(identity: &ModelIdentity, effort: &str) -> Message {
     Message::assistant(AssistantMessage {
-        content: vec![ContentBlock::ToolCall(ToolCall {
-            id: "call_1".into(),
-            name: "read".into(),
-            arguments: json!({}),
-        })],
+        content: vec![ContentBlock::ToolCall(ToolCall::new(
+            "call_1".into(),
+            "read".into(),
+            json!({}),
+        ))],
         provenance: Some(identity.clone()),
         reasoning_summary: None,
         provider_context: vec![effort_block(identity, effort)],
@@ -151,6 +152,7 @@ fn gpt6_create_bodies_preserve_prefix_effort() {
                         kind: "openai_reasoning_effort".into(),
                         position: None,
                         data: json!("low"),
+                        replay: crate::model::ReplayScope::ExactModel,
                     }],
                 }),
                 Message::user_text("three"),
@@ -402,9 +404,10 @@ fn effort_context_precedes_first_retainable_stream_event() {
         vec![
             ModelEvent::ReasoningDelta("hidden".into()),
             ModelEvent::ProviderContext {
-                kind: reasoning_effort_kind(),
+                kind: REASONING_EFFORT_NOTE.into(),
                 position: None,
                 data: json!("high"),
+                replay: crate::model::ReplayScope::Never,
             },
             ModelEvent::OutputDelta("partial".into()),
             ModelEvent::OutputDelta(" tail".into()),

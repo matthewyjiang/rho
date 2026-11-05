@@ -105,9 +105,13 @@ impl Replay<'_> {
                 }));
                 notifications.push(notify(session_id, self.tool_update(call)));
             }
-            SemanticMessage::User(blocks) => {
+            SemanticMessage::User(blocks) | SemanticMessage::BoundaryInput(blocks) => {
                 self.blocks(session_id, ReplayRole::User, blocks, notifications)
             }
+            // Display rows never hold model-only entries.
+            SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::ReasoningShift(_) => {}
             SemanticMessage::Assistant(blocks) => {
                 self.blocks(session_id, ReplayRole::Agent, blocks, notifications)
             }

@@ -202,6 +202,8 @@ impl OneShotStream {
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::GenerationOutputTokens(_)
                 | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ToolCallAccepted { .. }
+                | ModelEvent::Stopped(_)
                 | ModelEvent::ServiceTierFallback { .. },
             ) => {}
         }

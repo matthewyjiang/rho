@@ -96,11 +96,7 @@ async fn call(tool: Arc<dyn Tool>, arguments: Value, policy: RecordingPolicy) ->
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: tool.spec().name,
-                    arguments,
-                },
+                ToolCall::new("call-1".into(), tool.spec().name, arguments),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

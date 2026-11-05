@@ -109,18 +109,10 @@ async fn main() -> Result<(), rho_sdk::Error> {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "q-1".into(),
-                    name: "ask_mode".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("q-1".into(), "ask_mode".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "p-1".into(),
-                    name: "run_process".into(),
-                    arguments: json!({}),
-                },
+                ToolCall::new("p-1".into(), "run_process".into(), json!({})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "configured".into(),

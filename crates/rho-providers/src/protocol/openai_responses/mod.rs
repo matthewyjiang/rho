@@ -9,9 +9,9 @@ pub(crate) use super::openai_shared::{
         is_codex_turn_complete, CodexSseResponse, CodexSseState, CodexTransport,
     },
     compact::{
-        parse_compact_response, replacement_from_compact_output,
+        output_item_replay_scope, parse_compact_response, replacement_from_compact_output,
         retained_system_and_recent_user_messages, retained_system_messages, CompactUserRetention,
-        RETAINED_USER_MESSAGE_TOKEN_BUDGET,
+        COMPACTION_OUTPUT_ITEM_KIND, RETAINED_USER_MESSAGE_TOKEN_BUDGET,
     },
     convert::{
         codex_input_items, codex_input_items_for_target, codex_reasoning_param,

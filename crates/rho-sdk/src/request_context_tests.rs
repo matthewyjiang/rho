@@ -106,11 +106,11 @@ async fn preparation_tracks_actual_request_boundaries_and_calibration() {
                 ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
             ),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "echo-call".into(),
-                    name: spec.name.clone(),
-                    arguments: serde_json::json!({"text": "tool input"}),
-                },
+                ToolCall::new(
+                    "echo-call".into(),
+                    spec.name.clone(),
+                    serde_json::json!({"text": "tool input"}),
+                ),
             )])),
             reply(),
             reply(),
@@ -260,7 +260,7 @@ async fn live_context_tracks_requests_without_polluting_history_or_calibration()
         snapshot
             .history()
             .iter()
-            .filter(|message| message.as_model_context().is_some())
+            .filter(|message| matches!(message, Message::ModelContext(_)))
             .count(),
         0
     );
@@ -279,14 +279,14 @@ async fn live_context_tracks_requests_without_polluting_history_or_calibration()
     ];
     for (request, expected) in requests.iter().zip(expected) {
         assert_eq!(
-            request.messages.last().and_then(Message::as_model_context),
-            Some(expected)
+            request.messages.last(),
+            Some(&Message::model_context(expected))
         );
         assert_eq!(
             request
                 .messages
                 .iter()
-                .filter(|message| message.as_model_context().is_some())
+                .filter(|message| matches!(message, Message::ModelContext(_)))
                 .count(),
             1
         );

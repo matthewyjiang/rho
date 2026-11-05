@@ -85,7 +85,7 @@ impl App {
             request.run_id(),
             delivery.model,
         ));
-        let model_message = rho_sdk::model::Message::User(input.blocks().to_vec());
+        let model_message = rho_sdk::model::Message::BoundaryInput(input.blocks().to_vec());
         if request.respond(Some(input)).await {
             if let Some(notice) = &delivery.batch.runtime_context {
                 agent.acknowledge_computer_context(notice.state);

@@ -11,11 +11,11 @@ use super::history;
 use crate::session::tree::{DisplayRowOrigin, NodeId, ProjectedMessage};
 
 fn call_block(id: &str) -> model::ContentBlock {
-    model::ContentBlock::ToolCall(model::ToolCall {
-        id: id.into(),
-        name: "read".into(),
-        arguments: json!({"path": "a.png"}),
-    })
+    model::ContentBlock::ToolCall(model::ToolCall::new(
+        id.into(),
+        "read".into(),
+        json!({"path": "a.png"}),
+    ))
 }
 
 /// Replays `messages` as if each was saved as its own display row.

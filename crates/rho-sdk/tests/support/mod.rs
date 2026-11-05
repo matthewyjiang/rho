@@ -30,11 +30,11 @@ pub fn text_response(text: impl Into<String>) -> ModelResponse {
 }
 
 pub fn tool_call_response(id: &str, name: &str) -> ModelResponse {
-    ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    })])
+    ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
+        json!({}),
+    ))])
 }
 
 pub async fn session_with<P>(provider: P) -> Session

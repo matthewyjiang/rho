@@ -176,10 +176,7 @@ async fn native_compaction_failure_falls_back_to_summary_path() {
     assert!(output.messages().iter().any(|message| {
         matches!(
             message,
-            Message::User(blocks) if blocks.iter().any(|block| matches!(
-                block,
-                ContentBlock::Text(text) if text.contains("summary text")
-            ))
+            Message::CompactionSummary(summary) if summary.text.contains("summary text")
         )
     }));
     let events = usage.events();
@@ -235,10 +232,7 @@ async fn instructions_skip_native_compaction_and_reach_the_summarizer() {
         .unwrap();
 
     let summarized = output.messages().iter().any(|message| {
-        matches!(message, Message::User(blocks) if blocks.iter().any(|block| matches!(
-            block,
-            ContentBlock::Text(text) if text.contains("summary text")
-        )))
+        matches!(message, Message::CompactionSummary(summary) if summary.text.contains("summary text"))
     });
     assert!(summarized, "{:?}", output.messages());
     let requests = provider.recorded_requests();
@@ -295,10 +289,7 @@ async fn native_compaction_auth_retry_keeps_monotonic_attempt_indexes() {
     assert!(output.messages().iter().any(|message| {
         matches!(
             message,
-            Message::User(blocks) if blocks.iter().any(|block| matches!(
-                block,
-                ContentBlock::Text(text) if text.contains("summary text")
-            ))
+            Message::CompactionSummary(summary) if summary.text.contains("summary text")
         )
     }));
 
@@ -340,10 +331,7 @@ async fn manual_trigger_summarizes_below_automatic_target() {
         messages.iter().any(|message| {
             matches!(
                 message,
-                Message::User(blocks) if blocks.iter().any(|block| matches!(
-                    block,
-                    ContentBlock::Text(text) if text.contains("summary text")
-                ))
+                Message::CompactionSummary(summary) if summary.text.contains("summary text")
             )
         })
     };
@@ -407,11 +395,11 @@ fn elision_history() -> (rho_sdk::model::ToolResult, Vec<Message>) {
     let history = vec![
         Message::System("system".into()),
         Message::user_text("read it"),
-        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-            id: "old".into(),
-            name: "read_file".into(),
-            arguments: serde_json::json!({"path": "big.rs"}),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+            "old".into(),
+            "read_file".into(),
+            serde_json::json!({"path": "big.rs"}),
+        ))]),
         Message::ToolResult(old.clone()),
         Message::user_text("recent"),
         Message::assistant_text("ok"),
@@ -469,11 +457,11 @@ async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
     history.splice(
         4..4,
         [
-            Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-                id: "recent-tool".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "recent.rs"}),
-            })]),
+            Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                "recent-tool".into(),
+                "read_file".into(),
+                serde_json::json!({"path": "recent.rs"}),
+            ))]),
             Message::ToolResult(rho_sdk::model::ToolResult::succeeded(
                 "recent-tool",
                 old.content[..old.content.len() / 10].to_owned(),

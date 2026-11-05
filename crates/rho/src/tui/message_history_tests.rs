@@ -75,11 +75,11 @@ fn tool_result_images_preserve_tool_ownership() {
 }
 
 fn call(id: &str, name: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
+        json!({}),
+    ))])
 }
 
 fn calls(entries: &[(&str, &str)]) -> Message {
@@ -87,11 +87,7 @@ fn calls(entries: &[(&str, &str)]) -> Message {
         entries
             .iter()
             .map(|(id, name)| {
-                ContentBlock::ToolCall(ToolCall {
-                    id: (*id).into(),
-                    name: (*name).into(),
-                    arguments: json!({}),
-                })
+                ContentBlock::ToolCall(ToolCall::new((*id).into(), (*name).into(), json!({})))
             })
             .collect(),
     )
@@ -184,11 +180,11 @@ fn transcript_restores_message_receipts() {
         ),
     ] {
         let messages = vec![
-            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                id: "message-call".into(),
-                name: "agents".into(),
-                arguments: json!({"action": "message", "id": "abc123", "message": body}),
-            })]),
+            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+                "message-call".into(),
+                "agents".into(),
+                json!({"action": "message", "id": "abc123", "message": body}),
+            ))]),
             Message::ToolResult(ToolResult::succeeded("message-call", content)),
         ];
         let entries = transcript_entries_from_messages(

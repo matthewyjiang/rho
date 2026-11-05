@@ -121,11 +121,7 @@ async fn invalid_regex_fails_prepare_without_capability_requests() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "grep".into(),
-                    arguments: json!({"pattern": "("}),
-                },
+                ToolCall::new("call-1".into(), "grep".into(), json!({"pattern": "("})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
@@ -167,18 +163,10 @@ async fn allowed_policy_runs_grep_and_glob_with_search_metadata() {
         ModelIdentity::new("scripted", "test", "model"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "grep".into(),
-                    arguments: json!({"pattern": "hello"}),
-                },
+                ToolCall::new("call-1".into(), "grep".into(), json!({"pattern": "hello"})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-2".into(),
-                    name: "glob".into(),
-                    arguments: json!({"pattern": "*.rs"}),
-                },
+                ToolCall::new("call-2".into(), "glob".into(), json!({"pattern": "*.rs"})),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

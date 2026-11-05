@@ -15,7 +15,9 @@ fn chat_handoff_keeps_foreign_reasoning_summary_as_tagged_text() {
         provider_context: Vec::new(),
     });
 
-    let converted = to_openai_message_for_target(&message, Some(&target)).unwrap();
+    let converted = to_openai_message_for_target(&message, Some(&target))
+        .unwrap()
+        .unwrap();
     let content = converted.content.unwrap().as_str().unwrap().to_string();
 
     assert!(content.contains("answer"));
@@ -33,11 +35,11 @@ fn chat_handoff_replays_reasoning_content_for_exact_model() {
         "qwen3.8-max",
     );
     let message = Message::assistant(crate::model::AssistantMessage {
-        content: vec![ContentBlock::ToolCall(ToolCall {
-            id: "call_1".into(),
-            name: "bash".into(),
-            arguments: json!({"command": "pwd"}),
-        })],
+        content: vec![ContentBlock::ToolCall(ToolCall::new(
+            "call_1".into(),
+            "bash".into(),
+            json!({"command": "pwd"}),
+        ))],
         provenance: Some(identity.clone()),
         reasoning_summary: None,
         provider_context: vec![crate::model::ProviderContextBlock {
@@ -45,10 +47,13 @@ fn chat_handoff_replays_reasoning_content_for_exact_model() {
             kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
             position: Some(0),
             data: json!("need to inspect the workspace first"),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     });
 
-    let converted = to_openai_message_for_target(&message, Some(&identity)).unwrap();
+    let converted = to_openai_message_for_target(&message, Some(&identity))
+        .unwrap()
+        .unwrap();
     assert_eq!(
         converted.reasoning_content.as_deref(),
         Some("need to inspect the workspace first")
@@ -79,10 +84,13 @@ fn chat_handoff_omits_reasoning_content_for_foreign_model() {
             kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
             position: Some(0),
             data: json!("private thoughts"),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     });
 
-    let converted = to_openai_message_for_target(&message, Some(&target)).unwrap();
+    let converted = to_openai_message_for_target(&message, Some(&target))
+        .unwrap()
+        .unwrap();
     assert!(converted.reasoning_content.is_none());
     assert_eq!(converted.content.unwrap().as_str().unwrap(), "answer");
 }
@@ -105,6 +113,7 @@ fn chat_handoff_rejects_unknown_replay_context_kinds() {
             kind: "future_chat_kind".into(),
             position: Some(0),
             data: json!({"x": 1}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     });
 
@@ -131,11 +140,11 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         "deepseek-v4-pro",
     );
     let tool_call = || {
-        vec![ContentBlock::ToolCall(ToolCall {
-            id: "call_1".into(),
-            name: "bash".into(),
-            arguments: json!({"command": "pwd"}),
-        })]
+        vec![ContentBlock::ToolCall(ToolCall::new(
+            "call_1".into(),
+            "bash".into(),
+            json!({"command": "pwd"}),
+        ))]
     };
 
     let same_model_tool_turn = Message::assistant(crate::model::AssistantMessage {
@@ -144,7 +153,9 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(&same_model_tool_turn, Some(&identity)).unwrap();
+    let converted = to_openai_message_for_target(&same_model_tool_turn, Some(&identity))
+        .unwrap()
+        .unwrap();
     assert_eq!(converted.reasoning_content.as_deref(), Some(""));
 
     let same_model_text_turn = Message::assistant(crate::model::AssistantMessage {
@@ -153,7 +164,9 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(&same_model_text_turn, Some(&identity)).unwrap();
+    let converted = to_openai_message_for_target(&same_model_text_turn, Some(&identity))
+        .unwrap()
+        .unwrap();
     assert!(converted.reasoning_content.is_none());
 
     let non_deepseek =
@@ -164,8 +177,9 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted =
-        to_openai_message_for_target(&non_deepseek_tool_turn, Some(&non_deepseek)).unwrap();
+    let converted = to_openai_message_for_target(&non_deepseek_tool_turn, Some(&non_deepseek))
+        .unwrap()
+        .unwrap();
     assert!(converted.reasoning_content.is_none());
 
     let foreign_target =
@@ -176,8 +190,9 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted =
-        to_openai_message_for_target(&foreign_tool_turn, Some(&foreign_target)).unwrap();
+    let converted = to_openai_message_for_target(&foreign_tool_turn, Some(&foreign_target))
+        .unwrap()
+        .unwrap();
     assert!(converted.reasoning_content.is_none());
 }
 
@@ -209,11 +224,11 @@ fn codex_handoff_restores_replay_item_position() {
     let message = Message::assistant(crate::model::AssistantMessage {
         content: vec![
             ContentBlock::Text("answer".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call_1".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "pwd"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call_1".into(),
+                "bash".into(),
+                json!({"command": "pwd"}),
+            )),
         ],
         provenance: Some(source.clone()),
         reasoning_summary: None,
@@ -222,6 +237,7 @@ fn codex_handoff_restores_replay_item_position() {
             kind: "openai_response_output_item".into(),
             position: Some(0),
             data: json!({"type": "reasoning", "encrypted_content": "signed"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     });
 
@@ -245,13 +261,14 @@ fn codex_handoff_restores_original_order_for_multiple_replay_items() {
         kind: "openai_response_output_item".into(),
         position: Some(position),
         data: json!({"type": "reasoning", "id": id, "encrypted_content": "signed"}),
+        replay: crate::model::ReplayScope::ExactModel,
     };
     let tool_call = |id: &str| {
-        ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "fetch_content".into(),
-            arguments: json!({"urls": ["https://example.com"]}),
-        })
+        ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "fetch_content".into(),
+            json!({"urls": ["https://example.com"]}),
+        ))
     };
 
     struct Case {
@@ -325,6 +342,7 @@ fn codex_remote_compaction_marker_replays_item_without_portable_text() {
                 kind: "openai_response_output_item".into(),
                 position: Some(0),
                 data: json!({"type": "compaction", "encrypted_content": "blob"}),
+                replay: crate::model::ReplayScope::ExactModel,
             }],
         }
         .with_portable_fallback("portable summary"),
@@ -370,6 +388,7 @@ fn codex_handoff_keeps_reasoning_native_or_uses_foreign_summary() {
             kind: "openai_response_output_item".into(),
             position: None,
             data: json!({"type": "reasoning", "encrypted_content": "signed"}),
+            replay: crate::model::ReplayScope::ExactModel,
         }],
     });
 
@@ -403,8 +422,9 @@ fn codex_handoff_keeps_reasoning_native_or_uses_foreign_summary() {
     }));
 }
 
-// Covers: async-call markers stamp `"async": true` on replayed function_call
-// input items for the matching target and drop it for a foreign target.
+// Covers: async-accepted tool calls stamp `"async": true` on replayed
+// function_call input items for the matching target and drop it for a foreign
+// target.
 // Owner: OpenAI Responses history conversion
 #[test]
 fn codex_handoff_replays_async_true_only_for_matching_target() {
@@ -412,16 +432,12 @@ fn codex_handoff_replays_async_true_only_for_matching_target() {
         crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-6-astra");
     let message = Message::assistant(crate::model::AssistantMessage {
         content: vec![ContentBlock::ToolCall(ToolCall {
-            id: "call_1".into(),
-            name: "one_agent".into(),
-            arguments: json!({}),
+            execution: rho_sdk::tool::ToolExecutionMode::Async,
+            ..ToolCall::new("call_1".into(), "one_agent".into(), json!({}))
         })],
         provenance: Some(source.clone()),
         reasoning_summary: None,
-        provider_context: vec![crate::model::ProviderContextBlock::async_tool_call(
-            source.clone(),
-            "call_1",
-        )],
+        provider_context: Vec::new(),
     });
 
     let exact = codex_input_items_for_target(

@@ -114,11 +114,11 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
                 900,
             ))],
-            ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-                id: "call".into(),
-                name: "read".into(),
-                arguments: serde_json::json!({}),
-            })]),
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall::new(
+                "call".into(),
+                "read".into(),
+                serde_json::json!({}),
+            ))]),
         )
     };
     let summary = || {

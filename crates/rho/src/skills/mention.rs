@@ -61,11 +61,11 @@ fn mentions<'a>(texts: &[&'a str], discover: impl FnOnce() -> Vec<Skill>) -> Vec
 
 /// Host-requested call that loads skill `name`.
 pub(crate) fn load_call(name: &str) -> ToolCall {
-    ToolCall {
-        id: rho_sdk::ToolCallId::new().into_string(),
-        name: SKILL_TOOL.into(),
-        arguments: serde_json::json!({ "name": name }),
-    }
+    ToolCall::new(
+        rho_sdk::ToolCallId::new().into_string(),
+        SKILL_TOOL.into(),
+        serde_json::json!({ "name": name }),
+    )
 }
 
 /// T3 keeps `$20`, `$20k`, `$1e6`, and other amounts as prose, so a name

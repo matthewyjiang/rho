@@ -118,7 +118,11 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
             }
             SemanticMessage::System(_)
             | SemanticMessage::User(_)
-            | SemanticMessage::AbortedAssistant(_) => {}
+            | SemanticMessage::AbortedAssistant(_)
+            | SemanticMessage::BoundaryInput(_)
+            | SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::ReasoningShift(_) => {}
         }
     }
 
@@ -134,10 +138,14 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
                     push_fenced(out, None, text);
                 }
             }
-            SemanticMessage::User(blocks) => {
+            SemanticMessage::User(blocks) | SemanticMessage::BoundaryInput(blocks) => {
                 out.push_str("## You\n\n");
                 push_blocks_markdown(out, blocks, &results_by_id, /*pair_tools*/ false);
             }
+            // Display rows never hold model-only entries.
+            SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::ReasoningShift(_) => {}
             SemanticMessage::Assistant(blocks) => {
                 out.push_str("## Rho\n\n");
                 push_blocks_markdown(out, blocks, &results_by_id, /*pair_tools*/ true);

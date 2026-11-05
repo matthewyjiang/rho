@@ -37,33 +37,40 @@ pub fn gate_images<'a>(identity: &ModelIdentity, messages: &'a [Message]) -> Cow
 
 fn has_input_image(message: &Message) -> bool {
     match message {
-        Message::User(blocks) => blocks
+        Message::User(blocks) | Message::BoundaryInput(blocks) => blocks
             .iter()
             .any(|block| matches!(block, ContentBlock::Image(_))),
         Message::ToolResult(result) => !result.images.is_empty(),
         Message::System(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
         | Message::Assistant(_)
         | Message::EnrichedAssistant(_)
-        | Message::AbortedAssistant(_) => false,
+        | Message::AbortedAssistant(_)
+        | Message::ReasoningShift(_) => false,
     }
 }
 
-/// Replaces user and tool-result images with [`IMAGE_UNSUPPORTED_TEXT`].
+fn strip_block_images(blocks: &[ContentBlock]) -> Vec<ContentBlock> {
+    blocks
+        .iter()
+        .map(|block| match block {
+            ContentBlock::Image(_) => ContentBlock::Text(IMAGE_UNSUPPORTED_TEXT.into()),
+            ContentBlock::Text(_) | ContentBlock::ToolCall(_) => block.clone(),
+        })
+        .collect()
+}
+
+/// Replaces user, boundary-input, and tool-result images with
+/// [`IMAGE_UNSUPPORTED_TEXT`].
 ///
 /// Assistant images already degrade to text inside each protocol converter.
 fn strip_input_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
         .map(|message| match message {
-            Message::User(blocks) => Message::User(
-                blocks
-                    .iter()
-                    .map(|block| match block {
-                        ContentBlock::Image(_) => ContentBlock::Text(IMAGE_UNSUPPORTED_TEXT.into()),
-                        ContentBlock::Text(_) | ContentBlock::ToolCall(_) => block.clone(),
-                    })
-                    .collect(),
-            ),
+            Message::User(blocks) => Message::User(strip_block_images(blocks)),
+            Message::BoundaryInput(blocks) => Message::BoundaryInput(strip_block_images(blocks)),
             Message::ToolResult(result) if !result.images.is_empty() => {
                 let mut content = result.content.clone();
                 for _ in &result.images {

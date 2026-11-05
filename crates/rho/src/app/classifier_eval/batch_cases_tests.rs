@@ -10,11 +10,7 @@ use super::{
 use crate::session::replay_points::HistorySegment;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ContentBlock {
-    ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    })
+    ContentBlock::ToolCall(ToolCall::new(id.into(), name.into(), arguments))
 }
 
 /// Each member's ID, label, and call ID.

@@ -29,11 +29,11 @@ fn write(path: &str) -> ApprovalRequest {
 
 fn history() -> Vec<Message> {
     let call = |id: &str, path: &str| {
-        ContentBlock::ToolCall(ToolCall {
-            id: id.into(),
-            name: "write".into(),
-            arguments: serde_json::json!({"path": path, "content": ""}),
-        })
+        ContentBlock::ToolCall(ToolCall::new(
+            id.into(),
+            "write".into(),
+            serde_json::json!({"path": path, "content": ""}),
+        ))
     };
     vec![
         Message::User(vec![ContentBlock::Text("update a and c".into())]),

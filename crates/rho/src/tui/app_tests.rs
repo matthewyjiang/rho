@@ -329,11 +329,13 @@ fn recovered_session_messages_become_transcript_entries() {
                 }),
             ]),
             Message::Assistant(vec![ContentBlock::Text("hi".into())]),
-            Message::Assistant(vec![ContentBlock::ToolCall(rho_tools::tool::ToolCall {
-                id: "call_1".into(),
-                name: "read_file".into(),
-                arguments: serde_json::json!({"path": "src/main.rs"}),
-            })]),
+            Message::Assistant(vec![ContentBlock::ToolCall(
+                rho_tools::tool::ToolCall::new(
+                    "call_1".into(),
+                    "read_file".into(),
+                    serde_json::json!({"path": "src/main.rs"}),
+                ),
+            )]),
             Message::ToolResult(rho_tools::tool::ToolResult::failed(
                 "call_1",
                 "missing file",

@@ -9,11 +9,11 @@ fn user_text(text: &str) -> Message {
 }
 
 fn tool_call_path(path: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: "call".into(),
-        name: "read_file".into(),
-        arguments: json!({"path": path}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        "call".into(),
+        "read_file".into(),
+        json!({"path": path}),
+    ))])
 }
 
 // Covers: resume warmup collects fence languages and skips markdown
@@ -38,11 +38,11 @@ fn warmup_plan_collects_fences_and_skips_markdown() {
 fn warmup_plan_uses_tool_call_path_not_result_body() {
     let plan = SyntaxWarmupPlan::from_messages(&[
         tool_call_path("src/lib.rs"),
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "edit".into(),
-            name: "edit".into(),
-            arguments: json!({"file_path": "foo.ts", "old_string": "bar.py"}),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "edit".into(),
+            "edit".into(),
+            json!({"file_path": "foo.ts", "old_string": "bar.py"}),
+        ))]),
         tool_call_path("README.md"),
         Message::ToolResult(ToolResult::succeeded(
             "call",

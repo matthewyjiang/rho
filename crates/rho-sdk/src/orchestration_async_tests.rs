@@ -14,8 +14,8 @@ use tokio::sync::Notify;
 
 use crate::{
     model::{
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse,
-        ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
+        ToolResult, ToolSpec,
     },
     provider::{ModelProvider, ProviderFuture, ScriptedProvider, ScriptedTurn},
     tool::{
@@ -30,10 +30,14 @@ use super::tool_settlement::INTERRUPTED_TOOL_RESULT_CONTENT;
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn tool_call(id: &str, name: &str) -> ToolCall {
+    ToolCall::new(id.into(), name.into(), json!({}))
+}
+
+/// A call as history stores it after the provider accepted it as async.
+fn accepted_async_call(id: &str, name: &str) -> ToolCall {
     ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
+        execution: ToolExecutionMode::Async,
+        ..tool_call(id, name)
     }
 }
 
@@ -45,15 +49,10 @@ fn tool_spec(name: &str) -> ToolSpec {
     }
 }
 
-fn async_marker(call_id: &str) -> ModelEvent {
-    let block = ProviderContextBlock::async_tool_call(
-        ModelIdentity::new("scripted", "test", "async"),
-        call_id,
-    );
-    ModelEvent::ProviderContext {
-        kind: block.kind,
-        position: block.position,
-        data: block.data,
+fn async_accepted(call_id: &str) -> ModelEvent {
+    ModelEvent::ToolCallAccepted {
+        id: call_id.into(),
+        execution: ToolExecutionMode::Async,
     }
 }
 
@@ -241,7 +240,7 @@ fn text_turn(text: &str) -> ScriptedTurn {
 
 fn async_call_turn(id: &str, name: &str) -> ScriptedTurn {
     ScriptedTurn::streaming(
-        vec![async_marker(id)],
+        vec![async_accepted(id)],
         ModelResponse::Assistant(vec![ContentBlock::ToolCall(tool_call(id, name))]),
     )
 }
@@ -281,7 +280,7 @@ impl ModelProvider for GatedSecondTurnProvider {
                 .push(request.messages.to_vec());
             match self.calls.fetch_add(1, Ordering::AcqRel) {
                 0 => {
-                    events.send(async_marker("call-a")).await?;
+                    events.send(async_accepted("call-a")).await?;
                     Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
                         tool_call("call-a", "slow"),
                     )]))
@@ -401,7 +400,7 @@ async fn results_deliver_in_completion_order_before_next_request() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-a"), async_marker("call-b")],
+                vec![async_accepted("call-a"), async_accepted("call-b")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-a", "alpha")),
                     ContentBlock::ToolCall(tool_call("call-b", "beta")),
@@ -464,7 +463,7 @@ async fn detached_jobs_respect_max_parallel_tools() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-a"), async_marker("call-b")],
+                vec![async_accepted("call-a"), async_accepted("call-b")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-a", "alpha")),
                     ContentBlock::ToolCall(tool_call("call-b", "beta")),
@@ -535,7 +534,7 @@ async fn queued_async_start_drains_running_job_progress() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-a"), async_marker("call-b")],
+                vec![async_accepted("call-a"), async_accepted("call-b")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-a", "progress")),
                     ContentBlock::ToolCall(tool_call("call-b", "immediate")),
@@ -575,7 +574,7 @@ async fn sync_batch_waits_for_detached_jobs() {
         identity(),
         [
             ScriptedTurn::streaming(
-                vec![async_marker("call-async")],
+                vec![async_accepted("call-async")],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(tool_call("call-async", "async_tool")),
                     ContentBlock::ToolCall(tool_call("call-sync", "sync_tool")),
@@ -741,7 +740,7 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
         [ScriptedTurn::streaming(
             calls[..3]
                 .iter()
-                .map(|call| async_marker(&call.id))
+                .map(|call| async_accepted(&call.id))
                 .collect(),
             ModelResponse::Assistant(calls.iter().cloned().map(ContentBlock::ToolCall).collect()),
         )],
@@ -805,7 +804,7 @@ async fn cancel_before_sync_batch_pairs_calls_for_next_prompt() {
         let sync_call = tool_call("call-sync", "sync_tool");
         let mut turns = if same_response {
             vec![ScriptedTurn::streaming(
-                vec![async_marker(&async_call.id)],
+                vec![async_accepted(&async_call.id)],
                 ModelResponse::Assistant(vec![
                     ContentBlock::ToolCall(async_call.clone()),
                     ContentBlock::ToolCall(sync_call.clone()),
@@ -945,7 +944,7 @@ async fn provider_mark_without_async_declaration_runs_sync() {
             [
                 if marked {
                     ScriptedTurn::streaming(
-                        vec![async_marker("call-1")],
+                        vec![async_accepted("call-1")],
                         ModelResponse::Assistant(vec![ContentBlock::ToolCall(tool_call(
                             "call-1", tool_name,
                         ))]),
@@ -1211,7 +1210,11 @@ async fn pending_jobs_compact_prefix_once_and_keep_calls_paired() {
         .into_iter()
         .find(|message| {
             message.completed_assistant_content()
-                == Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow_a"))][..])
+                == Some(
+                    &[ContentBlock::ToolCall(accepted_async_call(
+                        "call-a", "slow_a",
+                    ))][..],
+                )
         })
         .unwrap();
     assert_eq!(
@@ -1305,7 +1308,11 @@ async fn overflow_with_pending_job_compacts_prefix_and_retries() {
     );
     assert_eq!(
         history[1].completed_assistant_content(),
-        Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow"))][..])
+        Some(
+            &[ContentBlock::ToolCall(accepted_async_call(
+                "call-a", "slow"
+            ))][..]
+        )
     );
     assert_eq!(requests[4].messages[1..], history[1..4]);
     assert_eq!(

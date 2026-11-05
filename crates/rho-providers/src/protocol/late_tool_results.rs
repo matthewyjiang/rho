@@ -78,8 +78,12 @@ fn assistant_tool_calls(message: &Message) -> Vec<(&str, &str)> {
         Message::EnrichedAssistant(message) => message.content.as_slice(),
         Message::System(_)
         | Message::User(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
+        | Message::BoundaryInput(_)
         | Message::AbortedAssistant(_)
-        | Message::ToolResult(_) => return Vec::new(),
+        | Message::ToolResult(_)
+        | Message::ReasoningShift(_) => return Vec::new(),
     };
     blocks
         .iter()

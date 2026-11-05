@@ -8,15 +8,15 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     use crate::presentation::Presentation;
     use rho_tools::tool_card::{ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
-    let call = ToolCall {
-        id: "todo-1".into(),
-        name: "todo".into(),
-        arguments: serde_json::json!({"todos": [
+    let call = ToolCall::new(
+        "todo-1".into(),
+        "todo".into(),
+        serde_json::json!({"todos": [
             {"content": "inspect", "status": "completed"},
             {"content": "implement", "status": "in_progress"},
             {"content": "verify", "status": "pending"}
         ]}),
-    };
+    );
     let expected = ToolCard::new(
         ToolStatus::Ok,
         ToolFamily::Form,
@@ -130,15 +130,15 @@ fn selected_edit_tool_names_share_the_edit_presentation_kind() {
 fn started_keeps_str_replace_kind_from_tool_name() {
     let mut presenter =
         InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
-    let call = ToolCall {
-        id: "call-1".into(),
-        name: "str_replace".into(),
-        arguments: serde_json::json!({
+    let call = ToolCall::new(
+        "call-1".into(),
+        "str_replace".into(),
+        serde_json::json!({
             "path": "a.rs",
             "old_string": "a",
             "new_string": "b"
         }),
-    };
+    );
     let _ = presenter.proposed(call);
     let presented = presenter.started(
         ToolCallId::from_string("call-1").unwrap(),
@@ -283,11 +283,11 @@ fn generic_tool_summary_metadata_fills_the_header() {
     let mut presenter =
         InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
     let start = |presenter: &mut InteractiveToolPresenter, id: &str| {
-        presenter.proposed(ToolCall {
-            id: id.into(),
-            name: "desk".into(),
-            arguments: serde_json::json!({"action": "call"}),
-        });
+        presenter.proposed(ToolCall::new(
+            id.into(),
+            "desk".into(),
+            serde_json::json!({"action": "call"}),
+        ));
         presenter.started(
             ToolCallId::from_string(id).unwrap(),
             "desk".into(),
@@ -342,11 +342,11 @@ fn failed_skill_load_keeps_reason_visible() {
 
     let presenter =
         InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
-    let call = ToolCall {
-        id: "call-skill".into(),
-        name: "skill".into(),
-        arguments: serde_json::json!({ "name": "missing" }),
-    };
+    let call = ToolCall::new(
+        "call-skill".into(),
+        "skill".into(),
+        serde_json::json!({ "name": "missing" }),
+    );
     let finished = presenter.historical(&call, /*ok*/ false, "unknown skill: missing");
     assert_eq!(
         finished.presentation,
@@ -415,15 +415,15 @@ fn mcp_proposed_and_started_cards_use_remote_verb_and_argument_facts() {
     ] {
         let mut presenter =
             InteractiveToolPresenter::new(std::path::PathBuf::from("."), mcp_tools.clone());
-        let call = ToolCall {
-            id: "call-mcp".into(),
-            name: name.into(),
-            arguments: serde_json::json!({
+        let call = ToolCall::new(
+            "call-mcp".into(),
+            name.into(),
+            serde_json::json!({
                 "path": "crates",
                 "output_mode": "files_with_matches",
                 "max_results": 50
             }),
-        };
+        );
         let expected = ToolCard::new(
             ToolStatus::Running,
             ToolFamily::Default,

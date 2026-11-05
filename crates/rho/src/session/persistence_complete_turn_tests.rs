@@ -5,11 +5,11 @@ use super::insert_interrupted_tool_placeholders;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: "agent".into(),
-        arguments: json!({}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        "agent".into(),
+        json!({}),
+    ))])
 }
 
 fn result(id: &str) -> Message {

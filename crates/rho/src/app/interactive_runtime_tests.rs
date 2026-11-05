@@ -1336,11 +1336,11 @@ fn completed_compaction() -> CompactionRecord {
 #[tokio::test]
 async fn shutdown_saves_a_partial_reread_window_inline() {
     let mut interactive = test_runtime(Vec::new()).await;
-    let reread = rho_sdk::model::ToolCall {
-        id: "read".into(),
-        name: "read_file".into(),
-        arguments: serde_json::json!({ "path": "src/lib.rs" }),
-    };
+    let reread = rho_sdk::model::ToolCall::new(
+        "read".into(),
+        "read_file".into(),
+        serde_json::json!({ "path": "src/lib.rs" }),
+    );
     let removed = ToolFingerprint::of(&reread).expect("read_file path");
     interactive.diagnostics.record_compaction(
         completed_compaction(),

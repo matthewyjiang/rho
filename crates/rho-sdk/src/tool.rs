@@ -1,5 +1,6 @@
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -33,7 +34,11 @@ pub use preparation::{
 pub(crate) use worker::{begin_cancellation_cleanup, ToolHostWorker, ToolWorkerServices};
 
 /// How the runtime delivers a tool's result to the model.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// Tools declare it with [`Tool::execution_mode`]; providers report how they
+/// accepted each call with [`crate::model::ModelEvent::ToolCallAccepted`], and
+/// history keeps it on [`crate::model::ToolCall::execution`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ToolExecutionMode {
     /// The loop waits for this call to finish before the next model request.
@@ -46,6 +51,12 @@ pub enum ToolExecutionMode {
     /// (`tracing` warns with the pending count). Compacting with dangling
     /// tool calls is not supported.
     Async,
+}
+
+impl ToolExecutionMode {
+    pub(crate) fn is_sync(&self) -> bool {
+        *self == Self::Sync
+    }
 }
 
 /// Future returned by [`Tool`] implementations.

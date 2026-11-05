@@ -61,6 +61,8 @@ impl ModelCallTimer {
             ModelEvent::ToolCallDelta { .. } => true,
             ModelEvent::WebSearch(_)
             | ModelEvent::ProviderContext { .. }
+            | ModelEvent::ToolCallAccepted { .. }
+            | ModelEvent::Stopped(_)
             | ModelEvent::Usage(_)
             | ModelEvent::GenerationOutputTokens(_)
             | ModelEvent::HostedToolActivity { .. }

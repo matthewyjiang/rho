@@ -12,23 +12,18 @@
 
 use serde_json::{json, Value};
 
-use crate::model::{Message, ModelError, ModelEvent, ModelIdentity, ProviderContextBlock};
+use crate::model::{
+    Message, ModelError, ModelEvent, ModelIdentity, ProviderContextBlock, ReplayScope,
+};
 use crate::protocol::openai_responses::lower_codex_history_message;
 
-/// Provider-note name for the effort that was in force for an assistant turn.
+/// Provider-context kind for the effort that was in force for an assistant
+/// turn.
 ///
-/// The note never reaches the wire and never counts as a handoff omission;
-/// only this provider reads it back, for the exact recording model.
-const REASONING_EFFORT_NOTE: &str = "openai_reasoning_effort";
-
-/// Kind sessions recorded before the effort became a provider note. Still read
-/// so resumed sessions keep their cache anchor.
-const LEGACY_REASONING_EFFORT_KIND: &str = REASONING_EFFORT_NOTE;
-
-/// Provider-context kind for recorded reasoning effort.
-pub(super) fn reasoning_effort_kind() -> String {
-    ProviderContextBlock::provider_note_kind(REASONING_EFFORT_NOTE)
-}
+/// Recorded with [`ReplayScope::Never`]: the note never reaches the wire and
+/// never counts as a handoff omission; only this provider reads it back, for
+/// the exact recording model.
+pub(super) const REASONING_EFFORT_NOTE: &str = "openai_reasoning_effort";
 
 const CONFIGURATION_UPDATE_TYPE: &str = "configuration_update";
 
@@ -54,9 +49,10 @@ pub(super) fn reasoning_effort_context(
 ) -> Option<ProviderContextBlock> {
     (preserves_prefix_for(&identity.model) && !effort.is_empty()).then(|| ProviderContextBlock {
         identity: identity.clone(),
-        kind: reasoning_effort_kind(),
+        kind: REASONING_EFFORT_NOTE.into(),
         position: None,
         data: Value::String(effort.to_owned()),
+        replay: ReplayScope::Never,
     })
 }
 
@@ -73,9 +69,14 @@ fn assistant_context(message: &Message) -> Option<&[ProviderContextBlock]> {
     match message {
         Message::EnrichedAssistant(message) => Some(&message.provider_context),
         Message::AbortedAssistant(message) => Some(&message.provider_context),
-        Message::System(_) | Message::User(_) | Message::Assistant(_) | Message::ToolResult(_) => {
-            None
-        }
+        Message::System(_)
+        | Message::User(_)
+        | Message::CompactionSummary(_)
+        | Message::ModelContext(_)
+        | Message::BoundaryInput(_)
+        | Message::Assistant(_)
+        | Message::ToolResult(_)
+        | Message::ReasoningShift(_) => None,
     }
 }
 
@@ -83,9 +84,9 @@ fn effort_from_block<'a>(
     block: &'a ProviderContextBlock,
     identity: &ModelIdentity,
 ) -> Option<&'a str> {
-    let is_effort = block.provider_note_name() == Some(REASONING_EFFORT_NOTE)
-        || block.kind == LEGACY_REASONING_EFFORT_KIND;
-    (is_effort && block.identity == *identity)
+    // Sessions recorded before the effort became a note carry the same kind
+    // with the default scope; both keep their cache anchor.
+    (block.kind == REASONING_EFFORT_NOTE && block.identity == *identity)
         .then(|| block.data.as_str())
         .flatten()
         .filter(|effort| !effort.is_empty())
@@ -308,9 +309,10 @@ pub(super) fn emit_reasoning_effort(
         return Ok(());
     };
     on_event(ModelEvent::ProviderContext {
-        kind: reasoning_effort_kind(),
+        kind: REASONING_EFFORT_NOTE.into(),
         position: None,
         data: Value::String(effort.to_owned()),
+        replay: ReplayScope::Never,
     })
 }
 

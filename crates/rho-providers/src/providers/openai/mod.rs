@@ -301,6 +301,7 @@ impl OpenAiProvider {
         reasoning_effort_emitted: &mut bool,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<(), ModelError> {
+        let event = self.scope_output_item_replay(event);
         if configuration_update::preserves_prefix_for(self.profile.model()) {
             configuration_update::forward_with_reasoning_effort(
                 event,
@@ -312,6 +313,31 @@ impl OpenAiProvider {
             on_event(event)
         } else {
             Ok(())
+        }
+    }
+
+    /// Sets the replay scope this provider grants a streamed Responses output
+    /// item; the shared stream parser cannot know the producing provider.
+    fn scope_output_item_replay(&self, event: ModelEvent) -> ModelEvent {
+        match event {
+            ModelEvent::ProviderContext {
+                kind,
+                position,
+                data,
+                replay: _,
+            } if kind == crate::protocol::openai_responses::COMPACTION_OUTPUT_ITEM_KIND => {
+                let replay = crate::protocol::openai_responses::output_item_replay_scope(
+                    self.profile.provider(),
+                    &data,
+                );
+                ModelEvent::ProviderContext {
+                    kind,
+                    position,
+                    data,
+                    replay,
+                }
+            }
+            event => event,
         }
     }
 

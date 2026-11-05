@@ -238,11 +238,7 @@ fn completed_tool_call(
     arguments: serde_json::Value,
 ) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        },
+        ToolCall::new(id.into(), name.into(), arguments),
     )]))
 }
 

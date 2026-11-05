@@ -165,12 +165,14 @@ impl SessionHost {
             .history()
             .iter()
             .any(|message| match message {
-                Message::System(_) => false,
+                Message::System(_) | Message::ModelContext(_) | Message::ReasoningShift(_) => false,
                 Message::User(_)
                 | Message::Assistant(_)
                 | Message::EnrichedAssistant(_)
                 | Message::AbortedAssistant(_)
-                | Message::ToolResult(_) => true,
+                | Message::ToolResult(_)
+                | Message::CompactionSummary(_)
+                | Message::BoundaryInput(_) => true,
             });
         if self.completed_runs != 0 || has_history {
             return Err(CommandRejected(

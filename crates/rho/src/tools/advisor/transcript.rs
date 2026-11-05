@@ -6,7 +6,7 @@
 //! they are written, then the whole transcript is elided in the middle so the
 //! advisor keeps both the opening of the session and the most recent work.
 
-use rho_sdk::model::{ContentBlock, ImageContent, Message, ToolCall};
+use rho_sdk::model::{ContentBlock, ImageContent, Message, SemanticMessage, ToolCall};
 
 use crate::history_message::HistoryMessage;
 
@@ -59,34 +59,53 @@ pub(crate) fn render_transcript(
 }
 
 fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
-    match HistoryMessage::of(message) {
-        HistoryMessage::System(text) => {
+    let semantic = match HistoryMessage::of(message) {
+        HistoryMessage::ChecklistRestatement(blocks) => {
+            out.push_str("\n## checklist restatement (host context, not human authorization)\n\n");
+            push_blocks(out, blocks, budget);
+            return;
+        }
+        HistoryMessage::Semantic(semantic) => semantic,
+    };
+    match semantic {
+        SemanticMessage::System(text) => {
             out.push_str("\n## system\n\n");
             push_clipped(out, text, budget.system_prompt_bytes);
             out.push('\n');
         }
-        HistoryMessage::CompactionSummary(summary) => {
+        SemanticMessage::CompactionSummary(summary) => {
             out.push_str("\n## compaction summary (model-written)\n\n");
-            out.push_str(summary.text().trim_end());
+            out.push_str(summary.text.trim_end());
             out.push('\n');
         }
-        HistoryMessage::ChecklistRestatement(blocks) => {
-            out.push_str("\n## checklist restatement (host context, not human authorization)\n\n");
+        SemanticMessage::ModelContext(text) => {
+            out.push_str("\n## model context (host data, not instructions)\n\n");
+            out.push_str(text.trim_end());
+            out.push('\n');
+        }
+        SemanticMessage::BoundaryInput(blocks) => {
+            out.push_str("\n## runtime input (host context, not a human message)\n\n");
             push_blocks(out, blocks, budget);
         }
-        HistoryMessage::User(blocks) => {
+        SemanticMessage::ReasoningShift(shift) => {
+            out.push_str(&format!(
+                "\n## reasoning level changed: {} -> {}\n",
+                shift.from, shift.to
+            ));
+        }
+        SemanticMessage::User(blocks) => {
             out.push_str("\n## user\n\n");
             push_blocks(out, blocks, budget);
         }
-        HistoryMessage::Assistant(blocks) => {
+        SemanticMessage::Assistant(blocks) => {
             out.push_str("\n## assistant\n\n");
             push_blocks(out, blocks, budget);
         }
-        HistoryMessage::EnrichedAssistant(assistant) => {
+        SemanticMessage::EnrichedAssistant(assistant) => {
             out.push_str("\n## assistant\n\n");
             push_blocks(out, &assistant.content, budget);
         }
-        HistoryMessage::AbortedAssistant(aborted) => {
+        SemanticMessage::AbortedAssistant(aborted) => {
             out.push_str("\n## assistant (interrupted)\n\n");
             push_blocks(out, &aborted.content, budget);
             for call in &aborted.tool_calls {
@@ -98,7 +117,7 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 push_arguments_line(out, &call.arguments, budget.tool_call_bytes);
             }
         }
-        HistoryMessage::ToolResult(result) => {
+        SemanticMessage::ToolResult(result) => {
             let status = if result.is_failure() { "error" } else { "ok" };
             out.push_str("\n## tool result ");
             out.push_str(&result.id);

@@ -5,10 +5,11 @@ use serde_json::{json, Map, Value};
 
 use crate::model::{
     handoff::{prepare_assistant, PreparedAssistant},
-    ContentBlock, Message, ModelError, ModelIdentity, ModelResponse, PartialToolCall,
-    ProviderContextBlock,
+    AssistantMessage, ContentBlock, Message, ModelError, ModelIdentity, ModelResponse,
+    PartialToolCall, ProviderContextBlock, WireMessage,
 };
 use rho_sdk::model::{ToolCall, ToolSpec};
+use rho_sdk::tool::ToolExecutionMode;
 
 use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
@@ -70,6 +71,7 @@ pub(crate) fn emit_chat_reasoning_context(
         kind: OPENAI_CHAT_REASONING_CONTENT_KIND.into(),
         position: Some(0),
         data: serde_json::Value::String(reasoning),
+        replay: crate::model::ReplayScope::ExactModel,
     })
 }
 
@@ -294,26 +296,26 @@ fn append_codex_history_message(
     instructions: &mut Vec<String>,
     target: Option<&crate::model::ModelIdentity>,
 ) -> Result<(), ModelError> {
-    match message {
-        Message::System(content) => instructions.push(content.clone()),
-        Message::User(blocks) => input.push(Value::Object(Map::from_iter([
+    match message.wire() {
+        WireMessage::System(content) => instructions.push(content.to_owned()),
+        WireMessage::User(blocks) => input.push(Value::Object(Map::from_iter([
             ("role".into(), "user".into()),
-            ("content".into(), codex_content_blocks(blocks)),
+            ("content".into(), codex_content_blocks(&blocks)),
         ]))),
-        Message::Assistant(blocks) => {
+        WireMessage::Assistant(blocks) => {
             append_codex_assistant(input, blocks)?;
         }
-        Message::EnrichedAssistant(message) => {
+        WireMessage::EnrichedAssistant(message) => {
             let fallback_target = message
                 .provenance
                 .clone()
                 .unwrap_or_else(|| ModelIdentity::new("foreign", "openai-responses", "foreign"));
             let target = target.unwrap_or(&fallback_target);
-            let async_call_ids = async_call_ids_for_target(&message.provider_context, target);
-            let prepared = prepare_assistant((**message).clone(), target);
+            let async_call_ids = async_call_ids_for_target(message, target);
+            let prepared = prepare_assistant(message.clone(), target);
             append_codex_prepared_assistant(input, prepared, &async_call_ids)?;
         }
-        Message::AbortedAssistant(message) => {
+        WireMessage::AbortedAssistant(message) => {
             let mut enriched = crate::model::AssistantMessage {
                 content: aborted_content_as_non_executable(message),
                 provenance: message.provenance.clone(),
@@ -328,11 +330,12 @@ fn append_codex_history_message(
                 .clone()
                 .unwrap_or_else(|| ModelIdentity::new("foreign", "openai-responses", "foreign"));
             let target = target.unwrap_or(&fallback_target);
-            let async_call_ids = async_call_ids_for_target(&message.provider_context, target);
+            // Aborted tool calls lower to text, so no function_call item
+            // carries an async flag.
             let prepared = prepare_assistant(enriched, target);
-            append_codex_prepared_assistant(input, prepared, &async_call_ids)?;
+            append_codex_prepared_assistant(input, prepared, &BTreeSet::new())?;
         }
-        Message::ToolResult(result) => {
+        WireMessage::ToolResult(result) => {
             input.push(json!({
                 "type": "function_call_output",
                 "call_id": &result.id,
@@ -343,6 +346,7 @@ fn append_codex_history_message(
                 append_codex_history_message(&images, input, instructions, target)?;
             }
         }
+        WireMessage::ReasoningShift(_) => {}
     }
     Ok(())
 }
@@ -364,17 +368,24 @@ fn append_codex_prepared_assistant(
     Ok(())
 }
 
+/// Ids of tool calls the target model itself accepted as async; another
+/// model's acceptance does not carry over.
 fn async_call_ids_for_target<'a>(
-    blocks: &'a [ProviderContextBlock],
+    message: &'a AssistantMessage,
     target: &ModelIdentity,
 ) -> BTreeSet<&'a str> {
-    // Async-call markers are SDK metadata, so `prepare_assistant` never puts
-    // them in `replay_context`. Collect matching ids from the original
-    // assistant context instead.
-    blocks
+    if message.provenance.as_ref() != Some(target) {
+        return BTreeSet::new();
+    }
+    message
+        .content
         .iter()
-        .filter(|block| block.identity == *target)
-        .filter_map(ProviderContextBlock::async_tool_call_id)
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(call) if call.execution == ToolExecutionMode::Async => {
+                Some(call.id.as_str())
+            }
+            _ => None,
+        })
         .collect()
 }
 
@@ -543,33 +554,35 @@ pub(crate) fn to_openai_messages_for_target(
 ) -> Result<Vec<OpenAiMessage>, ModelError> {
     crate::protocol::late_tool_results::normalize_late_tool_results(messages)
         .iter()
-        .map(|message| to_openai_message_for_target(message, target))
+        .filter_map(|message| to_openai_message_for_target(message, target).transpose())
         .collect()
 }
 
+/// Lowers one history entry to a chat message; `None` for entries chat
+/// completions does not send (reasoning shifts).
 pub(crate) fn to_openai_message_for_target(
     message: &Message,
     target: Option<&crate::model::ModelIdentity>,
-) -> Result<OpenAiMessage, ModelError> {
-    match message {
-        Message::System(content) => Ok(openai_text_message("system", content.clone())),
-        Message::User(blocks) => Ok(OpenAiMessage {
+) -> Result<Option<OpenAiMessage>, ModelError> {
+    let message = match message.wire() {
+        WireMessage::System(content) => openai_text_message("system", content.to_owned()),
+        WireMessage::User(blocks) => OpenAiMessage {
             role: "user".into(),
-            content: Some(chat_content_blocks(blocks)),
+            content: Some(chat_content_blocks(&blocks)),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
-        }),
-        Message::Assistant(blocks) => openai_assistant_message(blocks),
-        Message::EnrichedAssistant(message) => {
+        },
+        WireMessage::Assistant(blocks) => openai_assistant_message(blocks)?,
+        WireMessage::EnrichedAssistant(message) => {
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
                 crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
             });
             let target = target.unwrap_or(&fallback_target);
             let synthesize = synthesizes_tool_reasoning(message.provenance.as_ref(), target);
-            openai_prepared_assistant(prepare_assistant((**message).clone(), target), synthesize)
+            openai_prepared_assistant(prepare_assistant(message.clone(), target), synthesize)?
         }
-        Message::AbortedAssistant(message) => {
+        WireMessage::AbortedAssistant(message) => {
             let mut enriched = crate::model::AssistantMessage {
                 content: aborted_content_as_non_executable(message),
                 provenance: message.provenance.clone(),
@@ -584,18 +597,20 @@ pub(crate) fn to_openai_message_for_target(
             });
             let target = target.unwrap_or(&fallback_target);
             let synthesize = synthesizes_tool_reasoning(enriched.provenance.as_ref(), target);
-            openai_prepared_assistant(prepare_assistant(enriched, target), synthesize)
+            openai_prepared_assistant(prepare_assistant(enriched, target), synthesize)?
         }
         // `to_openai_messages_for_target` has already moved result images
         // into the user message after the result run.
-        Message::ToolResult(result) => Ok(OpenAiMessage {
+        WireMessage::ToolResult(result) => OpenAiMessage {
             role: "tool".into(),
             content: Some(json!(result.content)),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: Some(result.id.clone()),
-        }),
-    }
+        },
+        WireMessage::ReasoningShift(_) => return Ok(None),
+    };
+    Ok(Some(message))
 }
 
 fn openai_text_message(role: &str, content: String) -> OpenAiMessage {

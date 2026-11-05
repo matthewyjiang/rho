@@ -70,6 +70,7 @@ impl ModelProvider for CanaryProvider {
                     kind: "opaque_replay".into(),
                     position: Some(0),
                     data: json!({"opaque": PROVIDER_CONTEXT_CANARY}),
+                    replay: rho_sdk::model::ReplayScope::ExactModel,
                 })
                 .await?;
             events

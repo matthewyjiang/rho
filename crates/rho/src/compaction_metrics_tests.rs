@@ -7,11 +7,7 @@ use serde_json::json;
 use super::*;
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments,
-    }
+    ToolCall::new(id.into(), name.into(), arguments)
 }
 
 fn read(id: &str, path: &str) -> ToolCall {

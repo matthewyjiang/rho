@@ -7,11 +7,11 @@ use super::{normalize_late_tool_results, LATE_PLACEHOLDER};
 use crate::model::{ContentBlock, ImageContent, Message, ModelIdentity, ToolCall, ToolResult};
 
 fn call(id: &str, name: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: name.into(),
-        arguments: json!({}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        name.into(),
+        json!({}),
+    ))])
 }
 
 fn calls(entries: &[(&str, &str)]) -> Message {
@@ -19,11 +19,7 @@ fn calls(entries: &[(&str, &str)]) -> Message {
         entries
             .iter()
             .map(|(id, name)| {
-                ContentBlock::ToolCall(ToolCall {
-                    id: (*id).into(),
-                    name: (*name).into(),
-                    arguments: json!({}),
-                })
+                ContentBlock::ToolCall(ToolCall::new((*id).into(), (*name).into(), json!({})))
             })
             .collect(),
     )
@@ -196,12 +192,13 @@ fn tool_result_images_allow_late_results_in_every_provider_protocol() {
         );
 
         let target = ModelIdentity::new("test", "test", "test");
-        let (_, anthropic) = anthropic_messages::split_system_and_messages(
+        let anthropic = anthropic_messages::split_system_and_messages(
             &history,
             &target,
             anthropic_messages::ProviderContextReplay::Disabled,
         )
-        .unwrap();
+        .unwrap()
+        .messages;
         let anthropic = serde_json::to_value(anthropic).unwrap();
         let mut expected = vec![
             json!({"type":"tool_result", "tool_use_id":"a", "content":"captured"}),

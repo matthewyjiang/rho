@@ -73,11 +73,7 @@ fn text_turn() -> ScriptedTurn {
 
 fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        },
+        ToolCall::new(id.into(), name.into(), arguments),
     )]))
 }
 
@@ -273,11 +269,11 @@ result = call_tool(hit["name"], {"threadId": "thread"})"#}),
                     [("after_search", &found), ("unsearched", &deferred)]
                         .into_iter()
                         .map(|(id, name)| {
-                            ContentBlock::ToolCall(ToolCall {
-                                id: id.into(),
-                                name: name.clone(),
-                                arguments: json!({"threadId": "thread"}),
-                            })
+                            ContentBlock::ToolCall(ToolCall::new(
+                                id.into(),
+                                name.clone(),
+                                json!({"threadId": "thread"}),
+                            ))
                         })
                         .collect(),
                 )),

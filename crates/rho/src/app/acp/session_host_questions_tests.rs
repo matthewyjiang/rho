@@ -200,11 +200,7 @@ impl super::AcpClientPort for AskingPort {
 
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn {
     ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments,
-        },
+        ToolCall::new(id.into(), name.into(), arguments),
     )]))
 }
 

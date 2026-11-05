@@ -140,7 +140,7 @@ pub(super) fn intercept(
     let prompt = last_user_text(request).unwrap_or_default();
     if prompt == "fixture computer context" {
         let context = request.messages.iter().rev().find_map(|message| {
-            let Message::User(blocks) = message else {
+            let (Message::User(blocks) | Message::BoundaryInput(blocks)) = message else {
                 return None;
             };
             blocks.iter().find_map(|block| match block {
@@ -229,7 +229,8 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         .filter(|message| {
             matches!(
                 message.semantic(),
-                SemanticMessage::User(content) if content.iter().any(|block| matches!(
+                SemanticMessage::User(content) | SemanticMessage::BoundaryInput(content)
+                    if content.iter().any(|block| matches!(
                     block,
                     ContentBlock::Text(text) if is_agent_notification(text)
                 ))

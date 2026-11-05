@@ -24,11 +24,11 @@ fn renders_every_role_in_session_order() {
         Message::user_text("fix the failing test"),
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::Text("Looking at the suite.".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: json!({ "command": "cargo test" }),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                json!({ "command": "cargo test" }),
+            )),
         ])),
         Message::ToolResult(ToolResult::failed("call-1", "1 failed")),
         Message::Assistant(vec![ContentBlock::Image(ImageContent {
@@ -82,31 +82,27 @@ fn keeps_empty_object_args_on_the_call_line() {
     let messages = vec![
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::Text("Checking with the advisor.".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-a".into(),
-                name: "advisor".into(),
-                arguments: json!({}),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-b".into(),
-                name: "rho".into(),
-                arguments: json!({ "action": "info" }),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-null".into(),
-                name: "broken".into(),
-                arguments: json!(null),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-array".into(),
-                name: "broken".into(),
-                arguments: json!([]),
-            }),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-string".into(),
-                name: "broken".into(),
-                arguments: json!(""),
-            }),
+            ContentBlock::ToolCall(ToolCall::new("call-a".into(), "advisor".into(), json!({}))),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-b".into(),
+                "rho".into(),
+                json!({ "action": "info" }),
+            )),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-null".into(),
+                "broken".into(),
+                json!(null),
+            )),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-array".into(),
+                "broken".into(),
+                json!([]),
+            )),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-string".into(),
+                "broken".into(),
+                json!(""),
+            )),
         ])),
         Message::AbortedAssistant(Box::new(AbortedAssistant {
             content: vec![ContentBlock::Text("Interrupted mid-call.".into())],
@@ -169,11 +165,11 @@ fn clips_oversized_items_to_their_own_budgets() {
         tool_result_bytes: 8,
     };
     let messages = vec![
-        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-1".into(),
-            name: "bash".into(),
-            arguments: json!({ "command": "echo a very long command line" }),
-        })]),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            json!({ "command": "echo a very long command line" }),
+        ))]),
         Message::ToolResult(ToolResult::succeeded("call-1", "a very long tool result")),
     ];
 

@@ -132,8 +132,8 @@ async fn completed_responses_turn_emits_reasoning_effort_context() {
 
     assert!(events.iter().any(|event| matches!(
         event,
-        ModelEvent::ProviderContext { kind, position: None, data }
-            if *kind == super::configuration_update::reasoning_effort_kind()
+        ModelEvent::ProviderContext { kind, position: None, data, .. }
+            if kind == super::configuration_update::REASONING_EFFORT_NOTE
                 && data.as_str() == Some("low")
     )));
 }

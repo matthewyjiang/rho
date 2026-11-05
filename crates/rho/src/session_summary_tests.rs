@@ -203,11 +203,11 @@ fn summarize_counts_incomplete_active_display() {
             },
             SessionEntry::Message {
                 timestamp: "302".into(),
-                message: Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-                    id: "call-1".into(),
-                    name: "bash".into(),
-                    arguments: serde_json::json!({}),
-                })]),
+                message: Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+                    "call-1".into(),
+                    "bash".into(),
+                    serde_json::json!({}),
+                ))]),
                 display_message: None,
             },
             // Incomplete: tool result missing.

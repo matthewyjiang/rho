@@ -2,9 +2,8 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::{
-    handoff::{prepare_assistant, report_omissions},
-    AssistantMessage, ContentBlock, ImageContent, InclusivePromptUsage, Message, ModelIdentity,
-    ModelUsage, ProviderContextBlock,
+    AssistantMessage, ImageContent, InclusivePromptUsage, Message, ModelIdentity, ModelUsage,
+    ProviderContextBlock,
 };
 
 #[test]
@@ -61,158 +60,38 @@ fn malformed_portable_metadata_remains_provider_context() {
     assert!(message.provider_context[0].is_replayable_to(&identity));
 }
 
-#[test]
-fn native_replay_keeps_provider_api_and_unknown_format_boundaries() {
-    let source = ModelIdentity::new("openai-codex", "openai-responses", "source");
-    let block = ProviderContextBlock {
-        identity: source.clone(),
-        kind: "openai_response_output_item".into(),
-        position: None,
-        data: json!({"type": "compaction"}),
-    };
-    // Explicit expectations avoid repeating the implementation as a test oracle.
-    for data in [
-        json!({"type": "compaction"}),
-        json!({"type": "reasoning", "encrypted_content": "signed"}),
-    ] {
-        let block = ProviderContextBlock {
-            data,
-            ..block.clone()
-        };
-        for (provider, api, model, expected) in [
-            ("openai-codex", "openai-responses", "source", true),
-            ("openai-codex", "openai-responses", "target", true),
-            ("openai", "openai-responses", "source", false),
-            ("openai-codex", "another-api", "source", false),
-        ] {
-            let target = ModelIdentity::new(provider, api, model);
-            assert_eq!(block.is_replayable_to(&target), expected, "{target:?}");
-        }
-    }
-    for (provider, api, kind, data) in [
-        (
-            "openai",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({"type": "reasoning", "encrypted_content": "signed"}),
-        ),
-        (
-            "openai-codex",
-            "another-api",
-            "openai_response_output_item",
-            json!({"type": "reasoning", "encrypted_content": "signed"}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "unknown-format",
-            json!({"type": "reasoning", "encrypted_content": "signed"}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({"type": "reasoning", "encrypted_content": ""}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({"type": "reasoning", "encrypted_content": 42}),
-        ),
-        (
-            "openai",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({"type": "compaction"}),
-        ),
-        (
-            "openai-codex",
-            "another-api",
-            "openai_response_output_item",
-            json!({"type": "compaction"}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "unknown-format",
-            json!({"type": "compaction"}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({"type": "reasoning"}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({"type": "unknown"}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "openai_response_output_item",
-            json!({}),
-        ),
-        (
-            "openai-codex",
-            "openai-responses",
-            "openai_reasoning_effort",
-            json!("high"),
-        ),
-    ] {
-        let block = ProviderContextBlock {
-            identity: ModelIdentity::new(provider, api, "source"),
-            kind: kind.into(),
-            data,
-            ..block.clone()
-        };
-        let target = ModelIdentity::new(provider, api, "target");
-        assert_eq!(
-            (
-                block.is_replayable_to(&block.identity),
-                block.is_replayable_to(&target)
-            ),
-            (true, false),
-            "{block:?}"
-        );
-    }
-}
-
-// Covers: async-call markers round-trip the call id, never replay as provider
-// context, and never count as a handoff omission.
+// Covers: the producing adapter's replay scope decides which targets receive
+// a block; provider and API boundaries always hold.
 // Owner: sdk model
 #[test]
-fn async_tool_call_marker_round_trips_and_is_not_a_handoff_omission() {
-    let identity = ModelIdentity::new("openai", "responses", "gpt-6-astra");
-    let foreign = ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
-    let cases = [("same identity", &identity), ("foreign identity", &foreign)];
+fn replay_scope_bounds_native_replay_targets() {
+    use super::ReplayScope;
 
-    for (name, target) in cases {
-        let block = ProviderContextBlock::async_tool_call(identity.clone(), "call-a");
-        assert_eq!(block.async_tool_call_id(), Some("call-a"), "{name}");
-        assert!(!block.is_replayable_to(target), "{name}");
-        assert!(block.is_sdk_metadata(), "{name}");
-
-        let message = AssistantMessage {
-            content: vec![ContentBlock::Text("answer".into())],
-            provenance: Some(identity.clone()),
-            reasoning_summary: Some("should stay off content".into()),
-            provider_context: vec![block],
+    let source = ModelIdentity::new("openai-codex", "openai-responses", "source");
+    let targets = [
+        ModelIdentity::new("openai-codex", "openai-responses", "source"),
+        ModelIdentity::new("openai-codex", "openai-responses", "target"),
+        ModelIdentity::new("openai", "openai-responses", "source"),
+        ModelIdentity::new("openai-codex", "another-api", "source"),
+    ];
+    let cases = [
+        (ReplayScope::ExactModel, [true, false, false, false]),
+        (ReplayScope::ProviderApi, [true, true, false, false]),
+        (ReplayScope::Never, [false, false, false, false]),
+    ];
+    for (replay, expected) in cases {
+        let block = ProviderContextBlock {
+            identity: source.clone(),
+            kind: "openai_response_output_item".into(),
+            position: None,
+            data: json!({"type": "compaction"}),
+            replay,
         };
-        let report = report_omissions(std::iter::once(&message), target);
-        assert_eq!(report.omitted_provider_context, 0, "{name}");
-        assert!(report.omitted_kinds.is_empty(), "{name}");
-
-        let prepared = prepare_assistant(message, target);
-        assert!(prepared.replay_context.is_empty(), "{name}");
-        assert_eq!(
-            prepared.content,
-            vec![ContentBlock::Text("answer".into())],
-            "{name}"
-        );
+        let replayable = targets
+            .iter()
+            .map(|target| block.is_replayable_to(target))
+            .collect::<Vec<_>>();
+        assert_eq!(replayable, expected, "{replay:?}");
     }
 }
 

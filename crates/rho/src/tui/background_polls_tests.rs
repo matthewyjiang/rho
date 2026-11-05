@@ -4,8 +4,8 @@ use pretty_assertions::assert_eq;
 use rho_providers::model::{ModelMetadata, ReasoningRequestSource};
 use rho_sdk::{
     model::{
-        context::estimate_context_tokens, ContentBlock, ContextUsage, ModelEvent, ModelIdentity,
-        ModelResponse, ModelUsage,
+        context::estimate_context_tokens, ContentBlock, ContextUsage, Message, ModelEvent,
+        ModelIdentity, ModelResponse, ModelUsage, ReasoningShift,
     },
     provider::{ScriptedProvider, ScriptedTurn},
     ReasoningLevel, UserInput,
@@ -106,6 +106,14 @@ async fn deferred_metadata_preserves_context_unless_reasoning_changes() {
 
         apply_finished_model_metadata(&mut app, &mut agent).await;
 
+        // Raising the level after a run records the shift in history.
+        let mut expected_history = history.clone();
+        if effective != ReasoningLevel::Low {
+            expected_history.push(Message::ReasoningShift(ReasoningShift {
+                from: ReasoningLevel::Low,
+                to: effective,
+            }));
+        }
         let expected_context = if effective == ReasoningLevel::Low {
             calibrated
         } else {
@@ -119,14 +127,14 @@ async fn deferred_metadata_preserves_context_unless_reasoning_changes() {
                 effective
             );
             ContextUsage::estimated(
-                estimate_context_tokens(&history, &[]),
+                estimate_context_tokens(&expected_history, &[]),
                 calibrated.context_window,
             )
         };
         assert!(!app.tasks.has_pending());
         assert_eq!(app.model_metadata, Some(metadata));
         assert_eq!(app.info.runtime.reasoning, effective);
-        assert_eq!(agent.history(), history);
+        assert_eq!(agent.history(), expected_history);
         assert_eq!(agent.take_context_usage(), Some(expected_context));
     }
 }

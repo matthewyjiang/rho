@@ -64,11 +64,9 @@ fn continuation_retains_tool_result_after_server_function_call() {
         json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}),
         json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
     ]);
-    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
-        id: "call_1".into(),
-        name: "read".into(),
-        arguments: json!({}),
-    })]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+        crate::model::ToolCall::new("call_1".into(), "read".into(), json!({})),
+    )]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         first,
@@ -100,11 +98,12 @@ fn continuation_accepts_semantically_equivalent_function_call_arguments() {
         json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{\"line_end\":10,\"path\":\"README.md\"}"}),
         json!({"type":"function_call_output","call_id":"call_1","output":"contents"}),
     ]);
-    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
-        id: "call_1".into(),
-        name: "read".into(),
-        arguments: json!({"line_end": 10, "path": "README.md"}),
-    })]);
+    let response =
+        ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall::new(
+            "call_1".into(),
+            "read".into(),
+            json!({"line_end": 10, "path": "README.md"}),
+        ))]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         first,
@@ -222,7 +221,7 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
     use super::super::codex_request::{
         build_responses_create_body, codex_test_auth, ResponsesProfile,
     };
-    use super::super::configuration_update::reasoning_effort_kind;
+    use super::super::configuration_update::REASONING_EFFORT_NOTE;
     use super::super::reasoning::OpenAiReasoningProfile;
 
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-6-astra");
@@ -252,9 +251,10 @@ fn gpt6_reasoning_change_keeps_request_properties_and_deltas_update_item() {
             reasoning_summary: None,
             provider_context: vec![ProviderContextBlock {
                 identity,
-                kind: reasoning_effort_kind(),
+                kind: REASONING_EFFORT_NOTE.into(),
                 position: None,
                 data: json!("low"),
+                replay: crate::model::ReplayScope::Never,
             }],
         }),
         Message::user_text("three"),
@@ -322,11 +322,9 @@ fn continuation_matches_function_call_when_server_item_is_async() {
         json!({"type":"function_call","call_id":"call_1","name":"one_agent","arguments":"{}","async":true}),
         json!({"type":"function_call_output","call_id":"call_1","output":"done"}),
     ]);
-    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
-        id: "call_1".into(),
-        name: "one_agent".into(),
-        arguments: json!({}),
-    })]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+        crate::model::ToolCall::new("call_1".into(), "one_agent".into(), json!({})),
+    )]);
     let mut state = CodexContinuationState::default();
     state.record_success(
         first,

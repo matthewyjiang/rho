@@ -25,8 +25,15 @@ pub fn estimate_messages_tokens(messages: &[Message]) -> u64 {
 pub fn estimate_message_tokens(message: &Message) -> u64 {
     match message {
         Message::System(text) => MESSAGE_OVERHEAD_TOKENS.saturating_add(text_tokens(text)),
-        Message::User(blocks) | Message::Assistant(blocks) => MESSAGE_OVERHEAD_TOKENS
-            .saturating_add(blocks.iter().map(content_block_tokens).sum::<u64>()),
+        Message::User(blocks) | Message::Assistant(blocks) | Message::BoundaryInput(blocks) => {
+            blocks_message_tokens(blocks)
+        }
+        Message::CompactionSummary(summary) => blocks_message_tokens(&summary.user_role_content()),
+        Message::ModelContext(text) => {
+            blocks_message_tokens(&super::model_context::user_role_content(text))
+        }
+        // Sends nothing to most providers and an empty marker to the rest.
+        Message::ReasoningShift(_) => 0,
         Message::EnrichedAssistant(message) => assistant_message_tokens(
             &message.content,
             message.reasoning_summary.as_deref(),
@@ -53,6 +60,10 @@ pub fn estimate_message_tokens(message: &Message) -> u64 {
                     .sum::<u64>(),
             ),
     }
+}
+
+fn blocks_message_tokens(blocks: &[ContentBlock]) -> u64 {
+    MESSAGE_OVERHEAD_TOKENS.saturating_add(blocks.iter().map(content_block_tokens).sum::<u64>())
 }
 
 fn assistant_message_tokens(

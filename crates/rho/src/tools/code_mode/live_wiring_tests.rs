@@ -659,11 +659,11 @@ async fn nested_events_reach_parent_and_finish() {
         ModelIdentity::new("test", "test", "test"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "script".into(),
-                    name: CODEMODE_TOOL_NAME.into(),
-                    arguments: json!({"script": "for _ in range(12):\n    answer = call_tool(\"probe\")\nresult = answer"}),
-                },
+                ToolCall::new(
+                    "script".into(),
+                    CODEMODE_TOOL_NAME.into(),
+                    json!({"script": "for _ in range(12):\n    answer = call_tool(\"probe\")\nresult = answer"}),
+                ),
             )])),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),

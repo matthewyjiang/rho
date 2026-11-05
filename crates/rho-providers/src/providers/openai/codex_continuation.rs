@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
 
-use crate::model::{ContentBlock, Message, ModelError, ModelResponse};
+use crate::model::{ContentBlock, Message, ModelError, ModelResponse, WireMessage};
 
 use crate::protocol::openai_responses::codex_input_items;
 
@@ -109,12 +109,11 @@ fn is_request_context_item(item: &Value) -> bool {
     };
     // Recognition depends on the SDK attribution header, not the payload. Do
     // not duplicate its literal or copy potentially large checklist data.
-    Message::User(vec![
-        ContentBlock::Text(header.to_owned()),
-        ContentBlock::Text(String::new()),
-    ])
-    .as_model_context()
-    .is_some()
+    let probe = Message::model_context(String::new());
+    let WireMessage::User(attributed) = probe.wire() else {
+        return false;
+    };
+    matches!(attributed.first(), Some(ContentBlock::Text(expected)) if expected == header)
 }
 
 impl CodexContinuationResponse {

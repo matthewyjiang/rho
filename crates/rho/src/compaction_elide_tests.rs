@@ -5,11 +5,11 @@ use serde_json::json;
 use super::*;
 
 fn call(id: &str, path: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: "read_file".into(),
-        arguments: json!({"path": path}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        "read_file".into(),
+        json!({"path": path}),
+    ))])
 }
 
 fn result(id: &str, status: ToolResultStatus, bytes: usize) -> ToolResult {

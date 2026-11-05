@@ -85,12 +85,10 @@ impl BoundaryInputRequest {
     /// For `BeforeCompletion`, sending `None` is the finalization handoff. The
     /// host must leave arrivals after its collection snapshot for the next run.
     ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): represent internal boundary input with a typed history message instead of User blocks.
-    /// The exhaustive public `Message` enum currently requires wire-compatible
-    /// user-role blocks. Frame internal origin in the body and use
-    /// `RunEvent::BoundaryInputApplied` rather than treating this as human input.
+    /// Accepted input enters history as
+    /// [`crate::model::Message::BoundaryInput`], not human input, and the run
+    /// emits `RunEvent::BoundaryInputApplied`. Providers send its blocks as
+    /// user-role content, so frame the internal origin in the body.
     pub fn respond(
         self,
         input: Option<UserInput>,

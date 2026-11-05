@@ -128,8 +128,10 @@ impl<'a> CompactionPartition<'a> {
 
     /// Text of the summary an earlier compaction wrote.
     pub(crate) fn previous_summary(&self) -> Option<&'a str> {
-        let summary = self.messages[self.previous_summary?].as_compaction_summary()?;
-        Some(summary.text())
+        match &self.messages[self.previous_summary?] {
+            Message::CompactionSummary(summary) => Some(&summary.text),
+            _ => None,
+        }
     }
 
     /// Messages the new summary covers, oldest first. The kept latest user
@@ -214,7 +216,7 @@ fn partition<'a>(
     // summary anywhere else is summarized like any other message.
     let previous_summary = messages
         .get(natural_first_turn_end)
-        .is_some_and(|message| message.as_compaction_summary().is_some())
+        .is_some_and(|message| matches!(message, Message::CompactionSummary(_)))
         .then_some(natural_first_turn_end);
     let first_turn_end = if keep_user_turns {
         natural_first_turn_end
@@ -261,10 +263,13 @@ fn partition<'a>(
         })
 }
 
-/// Input a person sent, as opposed to tool images, compaction summaries, or
-/// a checklist restatement an earlier compaction appended.
+/// Input a person sent, as opposed to tool images, compaction summaries,
+/// runtime notices, or a checklist restatement an earlier compaction appended.
 fn is_user_input(message: &Message) -> bool {
-    matches!(HistoryMessage::of(message), HistoryMessage::User(_))
+    matches!(
+        HistoryMessage::of(message),
+        HistoryMessage::Semantic(SemanticMessage::User(_))
+    )
 }
 
 /// End of the contiguous user messages at `start`, or `start` when together
@@ -356,7 +361,11 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
                 | SemanticMessage::Assistant(_)
                 | SemanticMessage::EnrichedAssistant(_)
                 | SemanticMessage::AbortedAssistant(_)
-                | SemanticMessage::ToolResult(_) => None,
+                | SemanticMessage::ToolResult(_)
+                | SemanticMessage::CompactionSummary(_)
+                | SemanticMessage::ModelContext(_)
+                | SemanticMessage::BoundaryInput(_)
+                | SemanticMessage::ReasoningShift(_) => None,
             })
             .next_back()
         else {
@@ -576,11 +585,11 @@ mod tests {
     #[test]
     fn partition_does_not_split_assistant_tool_call_group() {
         let tool_call = || {
-            ContentBlock::ToolCall(ToolCall {
-                id: "call_1".into(),
-                name: "bash".into(),
-                arguments: json!({"command": "echo hi"}),
-            })
+            ContentBlock::ToolCall(ToolCall::new(
+                "call_1".into(),
+                "bash".into(),
+                json!({"command": "echo hi"}),
+            ))
         };
         let enriched = Message::assistant(rho_providers::model::AssistantMessage {
             content: vec![tool_call()],

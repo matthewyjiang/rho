@@ -227,11 +227,11 @@ async fn stream_turn_parses_sse_and_uses_stream_endpoint() {
         response,
         ModelResponse::Assistant(vec![
             ContentBlock::Text("hello".into()),
-            ContentBlock::ToolCall(ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: serde_json::json!({"command":"pwd"}),
-            }),
+            ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                serde_json::json!({"command":"pwd"})
+            )),
         ])
     );
     assert_eq!(

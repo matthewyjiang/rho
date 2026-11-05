@@ -44,6 +44,7 @@ fn enriched_assistant_context_round_trips_for_resume() {
                 kind: "openai_response_output_item".into(),
                 position: None,
                 data: serde_json::json!({"type": "reasoning", "encrypted_content": "signed"}),
+                replay: rho_sdk::model::ReplayScope::ExactModel,
             }],
         }))
         .unwrap();
@@ -255,17 +256,17 @@ fn workspace_key_avoids_separator_collisions() {
 
 #[test]
 fn inserts_interrupted_tool_results_on_load() {
-    let plain = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: "call-1".into(),
-        name: "bash".into(),
-        arguments: serde_json::json!({"command": "echo hi"}),
-    })]);
+    let plain = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        "call-1".into(),
+        "bash".into(),
+        serde_json::json!({"command": "echo hi"}),
+    ))]);
     let enriched = Message::assistant(AssistantMessage {
-        content: vec![ContentBlock::ToolCall(ToolCall {
-            id: "call-1".into(),
-            name: "bash".into(),
-            arguments: serde_json::json!({"command": "echo hi"}),
-        })],
+        content: vec![ContentBlock::ToolCall(ToolCall::new(
+            "call-1".into(),
+            "bash".into(),
+            serde_json::json!({"command": "echo hi"}),
+        ))],
         provenance: Some(ModelIdentity::new(
             "openai-codex",
             "openai-responses",
@@ -443,11 +444,11 @@ fn export_by_id_normalizes_incomplete_display_tool_calls() {
         .unwrap();
     session
         .append_message(&Message::Assistant(vec![ContentBlock::ToolCall(
-            ToolCall {
-                id: "call-1".into(),
-                name: "bash".into(),
-                arguments: serde_json::json!({"command": "echo hi"}),
-            },
+            ToolCall::new(
+                "call-1".into(),
+                "bash".into(),
+                serde_json::json!({"command": "echo hi"}),
+            ),
         )]))
         .unwrap();
 

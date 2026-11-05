@@ -39,22 +39,22 @@ pub(super) async fn intercept(
                 && tool_result(request, SECOND_RAIL_AGENT_CALL_ID).is_none() =>
         {
             Some(Ok(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: super::SUBAGENT_RAIL_AGENT_CALL_ID.into(),
-                    name: "agent".into(),
-                    arguments: serde_json::json!({
+                ContentBlock::ToolCall(ToolCall::new(
+                    super::SUBAGENT_RAIL_AGENT_CALL_ID.into(),
+                    "agent".into(),
+                    serde_json::json!({
                         "agent_id": "worker",
                         "prompt": "fixture delay",
                     }),
-                }),
-                ContentBlock::ToolCall(ToolCall {
-                    id: SECOND_RAIL_AGENT_CALL_ID.into(),
-                    name: "agent".into(),
-                    arguments: serde_json::json!({
+                )),
+                ContentBlock::ToolCall(ToolCall::new(
+                    SECOND_RAIL_AGENT_CALL_ID.into(),
+                    "agent".into(),
+                    serde_json::json!({
                         "agent_id": "explorer",
                         "prompt": "fixture delay",
                     }),
-                }),
+                )),
             ])))
         }
         "fixture attach then approval"
@@ -62,14 +62,14 @@ pub(super) async fn intercept(
         {
             Some(Ok(ModelResponse::Assistant(vec![
                 ContentBlock::Text("attach approval agent dispatched".into()),
-                ContentBlock::ToolCall(ToolCall {
-                    id: ATTACH_THEN_APPROVAL_AGENT_CALL_ID.into(),
-                    name: "agent".into(),
-                    arguments: serde_json::json!({
+                ContentBlock::ToolCall(ToolCall::new(
+                    ATTACH_THEN_APPROVAL_AGENT_CALL_ID.into(),
+                    "agent".into(),
+                    serde_json::json!({
                         "agent_id": "worker",
                         "prompt": "fixture delay",
                     }),
-                }),
+                )),
             ])))
         }
         "fixture attach then approval"

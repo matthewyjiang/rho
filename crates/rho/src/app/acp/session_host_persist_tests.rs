@@ -184,11 +184,7 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
         ModelIdentity::new("test", "test", "model"),
         vec![
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "missing".into(),
-                    arguments: serde_json::json!({}),
-                },
+                ToolCall::new("call-1".into(), "missing".into(), serde_json::json!({})),
             )])),
             provider_failure("host went away"),
         ],
@@ -363,11 +359,11 @@ fn only_a_prompt_answered_by_replies_alone_rolls_back() {
     let earlier = Message::user_text("earlier");
     let input = Message::user_text("input");
     let reply = Message::assistant_text("refused");
-    let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: "call".into(),
-        name: "read_file".into(),
-        arguments: serde_json::json!({}),
-    })]);
+    let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        "call".into(),
+        "read_file".into(),
+        serde_json::json!({}),
+    ))]);
     let result = Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "file"));
     let steer = Message::user_text("steer");
     let display = TurnDisplay::new(input.clone(), input.clone(), 1);
@@ -401,7 +397,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
         ModelIdentity::new("test", "test", "model"),
         vec![
             ScriptedTurn::streaming(
-                vec![rho_sdk::model::ModelEvent::stop_reason(
+                vec![rho_sdk::model::ModelEvent::Stopped(
                     rho_sdk::model::ModelStopReason::Refusal,
                 )],
                 reply("refused"),
@@ -561,16 +557,12 @@ async fn accepted_user_message_ids_survive_replay() {
         ModelIdentity::new("test", "test", "model"),
         vec![
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "call-1".into(),
-                    name: "missing".into(),
-                    arguments: serde_json::json!({}),
-                },
+                ToolCall::new("call-1".into(), "missing".into(), serde_json::json!({})),
             )])),
             reply("first"),
             reply("second"),
             ScriptedTurn::streaming(
-                vec![rho_sdk::model::ModelEvent::stop_reason(
+                vec![rho_sdk::model::ModelEvent::Stopped(
                     rho_sdk::model::ModelStopReason::Refusal,
                 )],
                 ModelResponse::Assistant(vec![ContentBlock::Text("refused".into())]),

@@ -331,7 +331,7 @@ impl TurnCheckpoint {
         self.0
             .lock_display()
             .applied
-            .push_back((Message::User(input.blocks().to_vec()), shown));
+            .push_back((Message::BoundaryInput(input.blocks().to_vec()), shown));
     }
 }
 
@@ -473,8 +473,14 @@ impl TurnDisplay {
         for row in appended {
             if let Some((_, shown)) = applied.next_if(|(model, _)| model == row) {
                 rows.push(shown.clone());
-            } else if scope == SaveScope::Step && matches!(row.semantic(), SemanticMessage::User(_))
+            } else if scope == SaveScope::Step
+                && matches!(
+                    row.semantic(),
+                    SemanticMessage::User(_) | SemanticMessage::BoundaryInput(_)
+                )
             {
+                // Its display row may not be recorded yet; a later save
+                // writes it.
                 break;
             } else {
                 rows.push(row.clone());

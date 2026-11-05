@@ -471,7 +471,7 @@ pub trait Compactor: Send + Sync {
 }
 
 /// Cause of a compaction operation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum CompactionTrigger {
     Automatic,

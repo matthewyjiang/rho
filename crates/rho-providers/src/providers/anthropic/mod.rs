@@ -1,11 +1,11 @@
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use crate::{
     model::ModelIdentity,
     protocol::anthropic_messages::{
         collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
-        to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage,
-        AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+        to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicConversation,
+        AnthropicMessage, AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
         AnthropicThinkingConfig, ProviderContextReplay,
     },
     provider_backend::{ModelError, ModelEvent, ModelRequest, ModelResponse},
@@ -50,9 +50,6 @@ pub struct AnthropicProvider {
     /// a hydrate cannot rewrite thinking params and bust the message cache. See
     /// [`Self::thinking_budget_ceiling`] for a hydrate that lowers it.
     thinking_budget_ceiling: OnceLock<u32>,
-    /// Per-conversation prefix effort and later shifts, keyed by prompt cache
-    /// key, so a mid-session change does not rewrite top-level effort.
-    per_message_effort: Mutex<per_message_effort::PerMessageEffortState>,
     session_headers: super::opencode::SessionHeaders,
     compression: super::request_body::EndpointCompression,
 }
@@ -76,7 +73,6 @@ impl AnthropicProvider {
             session_headers: super::opencode::SessionHeaders::new("anthropic"),
             compression: super::request_body::EndpointCompression::Verified,
             thinking_budget_ceiling: OnceLock::new(),
-            per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
     }
 
@@ -155,7 +151,6 @@ impl AnthropicProvider {
             session_headers: super::opencode::SessionHeaders::new(identity_provider),
             compression: super::request_body::EndpointCompression::Verified,
             thinking_budget_ceiling: OnceLock::new(),
-            per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
     }
 
@@ -197,29 +192,34 @@ impl AnthropicProvider {
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
         let max_tokens = self.max_tokens();
+        let thinking_source = self.thinking_source();
+        let budget_ceiling = self.thinking_budget_ceiling(max_tokens);
         let (thinking, output_config) = thinking::thinking_config_for(
-            &self.thinking_source(),
+            &thinking_source,
             request.reasoning_level,
-            self.thinking_budget_ceiling(max_tokens),
+            budget_ceiling,
         )?;
-        let (system, mut messages) = split_system_and_messages(
+        let AnthropicConversation {
+            system,
+            mut messages,
+            reasoning_shifts,
+        } = split_system_and_messages(
             request.messages,
             &target,
             provider_context_replay(thinking.as_ref()),
         )?;
-        let output_config = {
-            let mut state = self
-                .per_message_effort
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            per_message_effort::apply(
-                &self.model,
-                &mut state,
-                request.prompt_cache_key,
-                output_config,
-                &mut messages,
-            )
-        };
+        let output_config = per_message_effort::apply(
+            &self.model,
+            output_config,
+            &reasoning_shifts,
+            |level| {
+                thinking::thinking_config_for(&thinking_source, level, budget_ceiling)
+                    .ok()
+                    .and_then(|(_, config)| config)
+                    .map(|config| config.effort)
+            },
+            &mut messages,
+        );
         mark_cache_control_points(&mut messages);
         let mut tools = request
             .tools

@@ -7,11 +7,11 @@ use super::CompactionLimit;
 use crate::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
-    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
-        id: id.into(),
-        name: "tool".into(),
-        arguments: json!({}),
-    })])
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+        id.into(),
+        "tool".into(),
+        json!({}),
+    ))])
 }
 
 fn result(id: &str) -> Message {

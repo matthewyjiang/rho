@@ -124,11 +124,11 @@ async fn context_usage_drives_compaction_across_steps_and_runs() {
     for tool_steps in [false, true] {
         let response = |index| {
             if tool_steps && index < 2 {
-                vec![ContentBlock::ToolCall(ToolCall {
-                    id: format!("call-{index}"),
-                    name: "read".into(),
-                    arguments: json!({}),
-                })]
+                vec![ContentBlock::ToolCall(ToolCall::new(
+                    format!("call-{index}"),
+                    "read".into(),
+                    json!({}),
+                ))]
             } else {
                 vec![ContentBlock::Text("done".into())]
             }
@@ -320,7 +320,7 @@ async fn context_compaction_estimate_excludes_protected_boundary_input() {
     let (source, mut requests) = crate::boundary_input_channel();
     session.set_boundary_inputs(Some(source)).unwrap();
     let mut pending = Some(crate::UserInput::text("protected input".repeat(100)));
-    let fresh = Message::User(pending.as_ref().unwrap().blocks().to_vec());
+    let fresh = Message::BoundaryInput(pending.as_ref().unwrap().blocks().to_vec());
     let mut run = session.start(crate::UserInput::text("work")).await.unwrap();
     loop {
         tokio::select! {

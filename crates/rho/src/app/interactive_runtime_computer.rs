@@ -50,8 +50,9 @@ impl ComputerNoticeState {
     }
 
     /// The state a recorded notice announced, if the message carries one.
+    /// Notices arrive appended as user context or inside runtime boundary input.
     fn from_message(message: &Message) -> Option<Self> {
-        let Message::User(blocks) = message else {
+        let (Message::User(blocks) | Message::BoundaryInput(blocks)) = message else {
             return None;
         };
         blocks.iter().find_map(|block| match block {

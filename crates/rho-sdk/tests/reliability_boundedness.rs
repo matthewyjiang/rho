@@ -170,8 +170,8 @@ async fn max_steps_completes_with_a_distinct_resumable_stop_reason() {
 // Owner: sdk orchestration
 #[tokio::test]
 async fn final_model_turn_stop_reason_completes_the_run_outside_history() {
-    let max_tokens = ModelEvent::stop_reason(ModelStopReason::MaxTokens);
-    let refusal = ModelEvent::stop_reason(ModelStopReason::Refusal);
+    let max_tokens = ModelEvent::Stopped(ModelStopReason::MaxTokens);
+    let refusal = ModelEvent::Stopped(ModelStopReason::Refusal);
     let cases = [
         (
             "truncated answer",

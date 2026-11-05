@@ -381,8 +381,13 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                     }
                 }
             }
-            SemanticMessage::AbortedAssistant(_) => {}
-            SemanticMessage::System(_) | SemanticMessage::User(_) => {}
+            SemanticMessage::AbortedAssistant(_)
+            | SemanticMessage::System(_)
+            | SemanticMessage::User(_)
+            | SemanticMessage::BoundaryInput(_)
+            | SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::ReasoningShift(_) => {}
         }
     }
 
@@ -401,11 +406,15 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                 }
                 previous_role = None;
             }
-            SemanticMessage::User(blocks) => {
+            SemanticMessage::User(blocks) | SemanticMessage::BoundaryInput(blocks) => {
                 let continuation = previous_role == Some("user");
                 push_user(html, entry.timestamp, blocks, continuation);
                 previous_role = Some("user");
             }
+            // Display rows never hold model-only entries.
+            SemanticMessage::CompactionSummary(_)
+            | SemanticMessage::ModelContext(_)
+            | SemanticMessage::ReasoningShift(_) => {}
             SemanticMessage::Assistant(blocks) => {
                 let continuation = previous_role == Some("assistant");
                 push_assistant(html, entry.timestamp, blocks, &results_by_id, continuation);

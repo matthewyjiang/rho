@@ -35,11 +35,7 @@ async fn breakdown_parts_sum_to_session_estimate_and_attribute_tool_results() {
         ModelIdentity::new("test", "test", "test"),
         [
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall {
-                    id: "echo-call".into(),
-                    name: spec.name.clone(),
-                    arguments: serde_json::json!({}),
-                },
+                ToolCall::new("echo-call".into(), spec.name.clone(), serde_json::json!({})),
             )])),
             ScriptedTurn::streaming(
                 vec![ModelEvent::Usage(ModelUsage {
