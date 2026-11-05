@@ -135,22 +135,24 @@ async fn check_and_save(
 ) -> KeyVerdict {
     let key = key.expose();
     let provider = descriptor.display_name;
-    let mut notice = None;
-    if descriptor.supports_model_refresh() {
-        if let Err(error) = check_api_key(auth, key, endpoint).await {
-            match unchecked_reason(&error) {
+    let notice = if descriptor.supports_model_refresh() {
+        match check_api_key(auth, key, endpoint).await {
+            Ok(()) => None,
+            Err(error) => match unchecked_reason(&error) {
                 None => return KeyVerdict::Rejected(format!("{provider} refused this key.")),
-                Some(reason) => {
-                    notice = Some(redacted(
-                        format!(
-                            "Rho could not check the key with {provider} ({reason}), so it saved the key unchecked."
-                        ),
-                        key,
-                    ));
-                }
-            }
+                Some(reason) => Some(redacted(
+                    format!(
+                        "Rho could not check the key with {provider} ({reason}), so it saved the key unchecked."
+                    ),
+                    key,
+                )),
+            },
         }
-    }
+    } else {
+        Some(format!(
+            "{provider} has no models endpoint to check keys with, so Rho saved the key unchecked."
+        ))
+    };
     match ProviderAuthentication::save_api_key(store, auth, key) {
         Ok(()) => KeyVerdict::Accepted { notice },
         Err(error) => {
