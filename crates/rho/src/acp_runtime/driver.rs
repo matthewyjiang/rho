@@ -1,9 +1,10 @@
 //! Foreground ACP driver. All terminal writes remain in session::settle.
 
 use super::{
-    handshake::{self, error, HANDSHAKE_STEP_BUDGET},
+    handshake::{self, error, AgentFeatures, HANDSHAKE_STEP_BUDGET},
     permission::{choose_option, is_allowed},
     policy::AcpAgentPolicy,
+    steering,
     turn::{classify_stop, TurnClassification},
     ExtensionAnswer,
 };
@@ -28,9 +29,12 @@ use agent_client_protocol::{
     UntypedMessage,
 };
 use rho_tools::cancellation::RunCancellation;
+use serde_json::Value;
 use std::{
     collections::HashSet,
+    future::Future,
     path::Path,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -132,11 +136,11 @@ pub(super) async fn run<P: AcpAgentPolicy>(
         }, agent_client_protocol::on_receive_request!())
         .connect_with(transport, async move |cx| {
             let (renderer, sink) = (session_renderer, session_sink);
-            tokio::select! {
+            let features = tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, None)),
                 result = handshake::initialize(&cx, &policy) => result?,
-            }
+            };
             let (started_tx, started_rx) = oneshot::channel();
             let started = std::sync::atomic::AtomicBool::new(false);
             // run_until preserves session/new's actual JSON-RPC error (unlike
@@ -160,7 +164,7 @@ pub(super) async fn run<P: AcpAgentPolicy>(
                         _ = cancellation.cancelled() => return Ok(DriverOutcome::stopped(renderer, Some(session.session_id().to_string()))),
                         result = handshake::require_config(&session, &policy) => result?,
                     }
-                    turns(session, &policy, DriverContext { prompt, cwd, cancellation, inbox, renderer, sink }, &events_tx, &mut events_rx).await
+                    turns(session, &policy, features, DriverContext { prompt, cwd, cancellation, inbox, renderer, sink }, &events_tx, &mut events_rx).await
                 });
             tokio::pin!(session_run);
             tokio::select! {
@@ -193,9 +197,49 @@ pub(super) async fn run<P: AcpAgentPolicy>(
     }
 }
 
+type SteerReply = Pin<Box<dyn Future<Output = Result<Value, Error>> + Send>>;
+
+/// Steering for one session. It takes one parent message at a time from the
+/// inbox while a turn runs. A message the agent does not inject waits for the
+/// next turn, ahead of anything still queued, and pauses steering to keep the
+/// order.
+enum Steering {
+    /// The agent does not steer, or the inbox closed.
+    Off,
+    /// Ready for the next parent message.
+    Idle,
+    /// A `_session/steering` request in flight, with the text it carries.
+    InFlight(String, SteerReply),
+    /// Not injected; sent as the next turn.
+    Declined(String),
+}
+
+impl Steering {
+    fn take_in_flight(&mut self) -> Option<(String, SteerReply)> {
+        match std::mem::replace(self, Self::Idle) {
+            Self::InFlight(text, reply) => Some((text, reply)),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    fn take_declined(&mut self) -> Option<String> {
+        match std::mem::replace(self, Self::Idle) {
+            Self::Declined(text) => Some(text),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+}
+
 async fn turns<P: AcpAgentPolicy>(
     mut session: ActiveSession<'_, Agent>,
     policy: &Mutex<P>,
+    features: AgentFeatures,
     context: DriverContext<'_>,
     events_tx: &mpsc::UnboundedSender<AgentEvent>,
     events_rx: &mut mpsc::UnboundedReceiver<AgentEvent>,
@@ -217,6 +261,11 @@ async fn turns<P: AcpAgentPolicy>(
     // Keep only ids, for the session lifetime: duplicate completed snapshots
     // must not turn a previously rejected tool back into a successful card.
     let mut rejected = HashSet::new();
+    let mut steering = if features.steering && inbox.is_some() {
+        Steering::Idle
+    } else {
+        Steering::Off
+    };
     loop {
         tokio::select! {
             biased;
@@ -230,17 +279,39 @@ async fn turns<P: AcpAgentPolicy>(
                 render(renderer, sink, AgentEvent::Notice("acp: session/cancel response exceeded shutdown grace budget 200 ms; terminating agent".into()));
                 return Ok(DriverOutcome::stopped(renderer, Some(session_id)));
             }
+            reply = async { match &mut steering { Steering::InFlight(_, reply) => reply.as_mut().await, _ => std::future::pending().await } }, if matches!(steering, Steering::InFlight(..)) => {
+                if let Some((text, _)) = steering.take_in_flight() {
+                    steering = settle_steer(text, reply, renderer, sink);
+                }
+            }
+            text = async { inbox.as_mut().expect("steering needs an inbox").recv().await }, if matches!(steering, Steering::Idle) && !cancelled_by_us => match text {
+                Some(text) => {
+                    let request = steering::request(session.session_id(), &frame_parent_message(&text))?;
+                    steering = Steering::InFlight(text, Box::pin(connection.send_request(request).block_task()));
+                }
+                None => steering = Steering::Off,
+            },
             message = session.read_update() => match message? {
                 SessionMessage::SessionMessage(dispatch) => dispatch_update(dispatch, policy, renderer, sink, &mut rejected, cancelled_by_us, events_tx).await?,
                 SessionMessage::StopReason(stop) => {
+                    let classification = classify_stop(&stop, cancelled_by_us);
+                    // A steer racing the end of a successful turn is settled
+                    // first, so a declined message still becomes the next
+                    // turn. Any other ending sends no next turn, and must not
+                    // wait out the steer's budget after a cancel.
+                    if let Some((text, reply)) = steering.take_in_flight() {
+                        if classification == TurnClassification::Success {
+                            let reply = handshake::bounded(steering::METHOD, reply).await;
+                            steering = settle_steer(text, reply, renderer, sink);
+                        }
+                    }
                     while let Ok(event) = events_rx.try_recv() { render(renderer, sink, event); }
                     render(renderer, sink, AgentEvent::TurnEnded(stop));
-                    let classification = classify_stop(&stop, cancelled_by_us);
                     // classify_stop already reports Stopped once we cancelled.
                     if classification == TurnClassification::Success {
                         // Atomic with sends: a racing message either becomes
                         // the next turn (port stays open) or is rejected.
-                        if let Some(text) = inbox.as_mut().and_then(ParentMessageInbox::take_next_or_close) {
+                        if let Some(text) = steering.take_declined().or_else(|| inbox.as_mut().and_then(ParentMessageInbox::take_next_or_close)) {
                             session.send_prompt(frame_parent_message(&text))?;
                             sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::Message(Box::new(parent_message_card(text, NotificationDelivery::Queued, "sent as the next agent turn".into())))));
                             continue;
@@ -253,6 +324,39 @@ async fn turns<P: AcpAgentPolicy>(
             },
             Some(event) = events_rx.recv() => render(renderer, sink, event),
             _ = connection.incoming_closed() => return Err(error("acp: connection closed before session/prompt response")),
+        }
+    }
+}
+
+/// Journal an injected message, or keep it for the next turn.
+fn settle_steer(
+    text: String,
+    reply: Result<Value, Error>,
+    renderer: &mut EventRenderer,
+    sink: &mut StatusSink,
+) -> Steering {
+    match reply.as_ref().map(steering::delivery) {
+        Ok(steering::Delivery::Injected) => {
+            sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::Message(
+                Box::new(parent_message_card(
+                    text,
+                    NotificationDelivery::Received,
+                    "steered into the running turn".into(),
+                )),
+            )));
+            Steering::Idle
+        }
+        Ok(steering::Delivery::NextTurn) => Steering::Declined(text),
+        Err(source) => {
+            render(
+                renderer,
+                sink,
+                AgentEvent::Notice(format!(
+                    "acp: {}: {source}; sending the message as the next turn",
+                    steering::METHOD
+                )),
+            );
+            Steering::Declined(text)
         }
     }
 }

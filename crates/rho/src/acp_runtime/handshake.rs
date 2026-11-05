@@ -43,10 +43,16 @@ pub(super) fn initialize_request() -> InitializeRequest {
         .client_info(Implementation::new("rho", env!("CARGO_PKG_VERSION")).title("Rho"))
 }
 
+/// Optional agent extensions the driver uses, read from `initialize`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct AgentFeatures {
+    pub(super) steering: bool,
+}
+
 pub(super) async fn initialize<P: AcpAgentPolicy>(
     cx: &ConnectionTo<Agent>,
     policy: &Mutex<P>,
-) -> Result<(), Error> {
+) -> Result<AgentFeatures, Error> {
     let response = bounded(
         "initialize",
         cx.send_request(initialize_request()).block_task(),
@@ -70,7 +76,9 @@ pub(super) async fn initialize<P: AcpAgentPolicy>(
         )
         .await?;
     }
-    Ok(())
+    Ok(AgentFeatures {
+        steering: super::steering::supported(response.meta.as_ref()),
+    })
 }
 
 pub(super) async fn require_mode<P: AcpAgentPolicy>(
