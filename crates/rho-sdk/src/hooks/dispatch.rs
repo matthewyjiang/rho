@@ -206,13 +206,8 @@ pub struct HookDispatcher {
 /// Stable classification for a host-reported session failure.
 ///
 /// Values compare by wire name, so `Other("provider")` equals `Provider`.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): mark `HookSessionFailureKind` `#[non_exhaustive]`.
-///
-/// Adding `#[non_exhaustive]` to a public enum breaks exhaustive matches in host code.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum HookSessionFailureKind {
     RunFailed,
     Provider,

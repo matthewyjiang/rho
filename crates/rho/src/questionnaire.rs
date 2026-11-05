@@ -118,7 +118,9 @@ impl From<rho_sdk::DefaultSelection> for QuestionnaireDefaultSelection {
     fn from(value: rho_sdk::DefaultSelection) -> Self {
         match value {
             rho_sdk::DefaultSelection::Selected => Self::Selected,
-            rho_sdk::DefaultSelection::Focused => Self::Focused,
+            // A selection mode newer than this host only focuses, so an
+            // unknown mode never answers on the user's behalf.
+            _ => Self::Focused,
         }
     }
 }

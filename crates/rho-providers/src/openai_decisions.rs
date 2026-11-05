@@ -14,7 +14,7 @@ use std::{collections::HashMap, hash::Hash, time::Duration};
 use rho_sdk::{
     decision::{
         Answer, ChoiceAnswer, DecisionError, DecisionFuture, DecisionModel, DecisionRequest,
-        NoulAnswer, Question, QuestionKind, ScoreAnswer,
+        InvalidRequest, NoulAnswer, Question, QuestionKind, ScoreAnswer,
     },
     model::context::estimate_text_tokens,
     CancellationToken, SecretString,
@@ -99,7 +99,7 @@ impl OpenAiDecisionsModel {
                 budget: STATE_BUDGET,
             });
         }
-        let body = serde_json::to_vec(&request_body(&self.model, request))
+        let body = serde_json::to_vec(&request_body(&self.model, request)?)
             .map_err(|error| DecisionError::Model(Box::new(error)))?;
         let text = crate::decision_http::post_json(
             &self.client,
@@ -145,7 +145,10 @@ fn invalid(message: String) -> DecisionError {
     DecisionError::InvalidResponse(message)
 }
 
-fn request_body<'a>(model: &'a str, request: DecisionRequest<'a>) -> RequestBody<'a> {
+fn request_body<'a>(
+    model: &'a str,
+    request: DecisionRequest<'a>,
+) -> Result<RequestBody<'a>, DecisionError> {
     let questions = request
         .questions
         .iter()
@@ -160,9 +163,9 @@ fn request_body<'a>(model: &'a str, request: DecisionRequest<'a>) -> RequestBody
                             criteria.when_true, criteria.when_false
                         ));
                     }
-                    QuestionBody::Predicate { name, instructions }
+                    Ok(QuestionBody::Predicate { name, instructions })
                 }
-                QuestionKind::Choice(options) => QuestionBody::Choice {
+                QuestionKind::Choice(options) => Ok(QuestionBody::Choice {
                     name,
                     instructions,
                     choices: options
@@ -172,10 +175,10 @@ fn request_body<'a>(model: &'a str, request: DecisionRequest<'a>) -> RequestBody
                             description: option.description,
                         })
                         .collect(),
-                },
+                }),
                 // A level is a description; its index labels it, as in the
                 // text adapter's prompt.
-                QuestionKind::Score(levels) => QuestionBody::Score {
+                QuestionKind::Score(levels) => Ok(QuestionBody::Score {
                     name,
                     instructions,
                     levels: levels
@@ -186,15 +189,18 @@ fn request_body<'a>(model: &'a str, request: DecisionRequest<'a>) -> RequestBody
                             description,
                         })
                         .collect(),
-                },
+                }),
+                _ => Err(DecisionError::InvalidRequest(
+                    InvalidRequest::UnsupportedQuestionKind,
+                )),
             }
         })
-        .collect();
-    RequestBody {
+        .collect::<Result<_, _>>()?;
+    Ok(RequestBody {
         model,
         input: request.state,
         questions,
-    }
+    })
 }
 
 /// One answer per question, in question order, and no answer to anything
@@ -254,9 +260,7 @@ fn answers(
                     })
                     .and_then(ScoreAnswer::from_probabilities)
                     .map(Answer::Score),
-                (QuestionKind::Noul(_) | QuestionKind::Choice(_) | QuestionKind::Score(_), _) => {
-                    None
-                }
+                _ => None,
             }
             .ok_or_else(|| invalid(format!("the answer to `{id}` is unusable")))
         })

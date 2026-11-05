@@ -569,14 +569,14 @@ fn default_choice_selection(question: &HostQuestion) -> (FieldSelection, usize, 
     {
         let selection = match question.default_selection_mode() {
             DefaultSelection::Selected => FieldSelection::Single(index),
-            DefaultSelection::Focused => FieldSelection::None,
+            _ => FieldSelection::None,
         };
         return (selection, index, String::new());
     }
     if question.permits_other() {
         let selection = match question.default_selection_mode() {
             DefaultSelection::Selected => FieldSelection::Other,
-            DefaultSelection::Focused => FieldSelection::None,
+            _ => FieldSelection::None,
         };
         return (selection, question.choices().len(), default);
     }
@@ -638,7 +638,7 @@ fn default_confirm_selection(question: &HostQuestion) -> (FieldSelection, usize,
     };
     let selection = match question.default_selection_mode() {
         DefaultSelection::Selected => FieldSelection::Single(index),
-        DefaultSelection::Focused => FieldSelection::None,
+        _ => FieldSelection::None,
     };
     (selection, index, String::new())
 }
