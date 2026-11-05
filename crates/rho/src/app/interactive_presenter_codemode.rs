@@ -4,20 +4,15 @@
 //! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
 //! the automation protocol still forward them).
 
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{
+    CodeWindow, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 use serde_json::Value;
 
-use super::{format::string_arg, ToolBodySyntax, ToolBodyWindow};
+use super::format::string_arg;
 
 /// Starlark is Python-shaped, and the bundled syntax set has no Starlark grammar.
 const SCRIPT_LANGUAGE: &str = "python";
-
-pub(super) fn body_syntax(window: ToolBodyWindow) -> ToolBodySyntax {
-    ToolBodySyntax::Code {
-        language: SCRIPT_LANGUAGE.into(),
-        window,
-    }
-}
 
 /// Every codemode card: the script as source, with an optional header detail.
 /// Streaming, started, running, and interrupted cards pass no detail.
@@ -29,21 +24,31 @@ pub(super) fn preview_card(
     let lines = string_arg(arguments, "script")
         .map(|script| script.trim_end().lines().map(str::to_string).collect())
         .unwrap_or_default();
-    script_card(lines, status, primary)
+    script_card(lines, CodeWindow::Head, status, primary)
 }
 
 /// The source decoder already assembled these rows; retain the full history.
+/// Collapsed, the card follows the newest generated rows.
 pub(super) fn streaming_card(lines: Vec<String>) -> ToolCard {
-    script_card(lines, ToolStatus::Running, None)
+    script_card(lines, CodeWindow::Tail, ToolStatus::Running, None)
 }
 
-fn script_card(lines: Vec<String>, status: ToolStatus, primary: Option<String>) -> ToolCard {
+fn script_card(
+    lines: Vec<String>,
+    window: CodeWindow,
+    status: ToolStatus,
+    primary: Option<String>,
+) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::Default,
         ToolHeader::call(crate::tools::code_mode::CODEMODE_TOOL_NAME, primary),
     )
-    .with_body(ToolBody::Lines(lines))
+    .with_body(ToolBody::Code {
+        language: SCRIPT_LANGUAGE.into(),
+        window,
+        lines,
+    })
 }
 
 /// Finished card: the call count, the failure reason when the script failed,

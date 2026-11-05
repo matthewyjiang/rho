@@ -442,9 +442,7 @@ fn toggle_check_does_not_highlight() {
     let card = large_rust_diff_card(120);
     reset_highlight_line_calls();
     assert!(card_is_toggleable(
-        &card.clone().into(),
-        /*width*/ 100,
-        /*max_tool_output_lines*/ 10,
+        &card, /*width*/ 100, /*max_tool_output_lines*/ 10,
     ));
     assert_eq!(
         take_highlight_line_calls(),
@@ -453,7 +451,7 @@ fn toggle_check_does_not_highlight() {
     );
 }
 
-// Covers: grep body gets language roles and match overlay from match_pattern
+// Covers: grep body gets language roles and match overlay from its search query
 // Owner: pure TUI (grep search highlight)
 #[test]
 fn grep_body_highlights_language_and_match() {
@@ -465,12 +463,16 @@ fn grep_body_highlights_language_and_match() {
         ToolFamily::FileCommand,
         ToolHeader::call("grep", Some("answer, src".into())),
     )
-    .with_match_pattern("answer")
-    .with_body(ToolBody::Lines(vec![
-        "src/lib.rs".into(),
-        "1 | let answer = 42;".into(),
-        "1 matches in 1 file".into(),
-    ]));
+    .with_body(ToolBody::Search {
+        pattern: "answer".into(),
+        literal: false,
+        case_sensitive: true,
+        lines: vec![
+            "src/lib.rs".into(),
+            "1 | let answer = 42;".into(),
+            "1 matches in 1 file".into(),
+        ],
+    });
 
     let mut lines = Vec::new();
     push_tool_card(

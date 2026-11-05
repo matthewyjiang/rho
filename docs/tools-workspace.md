@@ -94,15 +94,14 @@ Added directories belong to the session. They are saved with it and restored by 
 
 ## File edits and writes
 
-Rho supports three edit formats and registers only the selected tool:
+Rho supports two edit formats and registers only the selected tool:
 
-- `edit` (config/selector `hashline`, legacy) applies snapshot-tagged, line-anchored `PUT` and `CUT` operations to existing files. `auto` only selects it for a custom provider that sets it; otherwise pin it to keep using it. It will be removed in a future release.
 - `apply_patch` applies Codex-style add, delete, update, and move sections across one or more files. Paths may be absolute or relative to the working directory, including `..` where workspace policy permits it. The selected permission mode governs access to every affected path, including both ends of a move, before any file is changed. In `bypass`, absolute paths outside the workspace are allowed. `Add File` targets must not exist.
 - `str_replace` replaces an exact string in one existing file, with an optional `replace_all` flag.
 
 Use `write` for a complete create-or-replace operation. Successful file mutations return model-facing snapshots for chaining, while unified diffs stay in tool metadata for UI cards. In the interactive TUI, added and removed lines wash toward the theme's green/red when RGB is available. Unhighlighted tokens sit on that wash, or use the add/remove color if there is no wash. Signs stay theme-colored, syntax roles keep their colors, and diff headers use the accent color.
 
-Details for the legacy hashline format: [Hash-line edit format](/tools-workspace/edit-format).
+Details: [Edit formats](/tools-workspace/edit-format).
 
 ## Search tools
 

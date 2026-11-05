@@ -53,11 +53,11 @@ fn parallel_pending_tools_keep_independent_slots() {
     );
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("call-a".into()),
-        card: card_a.clone().into(),
+        card: card_a.clone(),
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("call-b".into()),
-        card: card_b.clone().into(),
+        card: card_b.clone(),
     });
     app.apply_event(AttachmentEvent::ToolUpdated {
         key: Some("call-a".into()),
@@ -65,8 +65,7 @@ fn parallel_pending_tools_keep_independent_slots() {
             .clone()
             .with_facts(vec![rho_tools::tool_card::ToolFact::Meta {
                 text: "reading".into(),
-            }])
-            .into(),
+            }]),
     });
     assert_eq!(
         app.pending_order,
@@ -860,11 +859,11 @@ fn pending_finish_during_click_still_toggles_with_sibling_pending() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("first".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("second".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     sync_view(&mut app, 80, 40);
     let first_height = HistoryItem::Pending {
@@ -899,7 +898,7 @@ fn pending_finish_then_reset_still_toggles_pressed_card() {
     app.apply_event(AttachmentEvent::AssistantTextDelta("retry this".into()));
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("live".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     sync_view(&mut app, 80, 40);
     let pending_row = {
@@ -961,7 +960,7 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("live".into()),
-        card: long_body_card().into(),
+        card: long_body_card(),
     });
     sync_view(&mut app, 80, 40);
 

@@ -67,7 +67,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
                     .clone()
                     .with_facts(expected.facts[..count].to_vec())
             });
-            pretty_assertions::assert_eq!(preview.map(|value| value.card.card), expected_update);
+            pretty_assertions::assert_eq!(preview.map(|value| value.card), expected_update);
         }
     }
 
@@ -100,12 +100,13 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
         let (_, live) = presenter.finished(&ToolCallId::from_string("todo-1").unwrap(), completion);
         let replay = presenter.historical(&call, ok, content);
         for actual in [live.presentation, replay.presentation] {
-            pretty_assertions::assert_eq!(actual, Presentation::Card(expected.clone().into()));
+            pretty_assertions::assert_eq!(actual, Presentation::Card(expected.clone()));
         }
     }
 }
 
-// Covers: every selectable edit schema routes through file-diff presentation
+// Covers: every selectable edit schema routes through file-diff presentation,
+// while saved calls to the removed hashline `edit` tool replay as generic cards
 // Owner: interactive presenter
 #[test]
 fn selected_edit_tool_names_share_the_edit_presentation_kind() {
@@ -115,7 +116,7 @@ fn selected_edit_tool_names_share_the_edit_presentation_kind() {
     );
     assert_eq!(
         ToolKind::from_name("edit", &McpToolNames::default()),
-        ToolKind::Edit(rho_tools::EditFormat::Hashline)
+        ToolKind::Other
     );
     assert_eq!(
         ToolKind::from_name("str_replace", &McpToolNames::default()),
@@ -158,7 +159,7 @@ fn started_keeps_str_replace_kind_from_tool_name() {
 // Owner: interactive presenter
 #[test]
 fn edit_preview_stride_follows_generic_cadence_then_grows() {
-    let edit = ToolKind::Edit(rho_tools::EditFormat::Hashline);
+    let edit = ToolKind::Edit(rho_tools::EditFormat::ApplyPatch);
     for (size, expected) in [
         (0, 0),
         (PREVIEW_FULL_PARSE_LIMIT - 1, 0),
@@ -178,52 +179,6 @@ fn edit_preview_stride_follows_generic_cadence_then_grows() {
         previous_stride = stride;
         size = size.saturating_add(stride);
     }
-}
-
-// Covers: approval cards must flag document-only fallback and keep pure CUT as
-// content stats, never file-delete
-// Owner: interactive presenter
-#[test]
-fn edit_planned_card_surfaces_unverified_document_fallback() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let view = ToolView {
-        kind: ToolKind::Edit(rho_tools::EditFormat::Hashline),
-        name: "edit".into(),
-        arguments: serde_json::json!({
-            "input": "[missing.txt#AAAA]\nCUT 1.=2\n"
-        }),
-        metadata: Default::default(),
-    };
-    let card = start_card(&view, dir.path());
-    assert!(
-        card.facts.iter().any(|fact| matches!(
-            fact,
-            rho_tools::tool_card::ToolFact::Meta { text }
-                if text.as_str() == rho_tools::hashline::EDIT_DOCUMENT_ONLY_NOTICE
-        )),
-        "expected unverified notice in facts: {:?}",
-        card.facts
-    );
-    assert!(
-        card.facts.iter().any(|fact| matches!(
-            fact,
-            rho_tools::tool_card::ToolFact::DiffStat {
-                added: 0,
-                removed: 2,
-                ..
-            }
-        )),
-        "pure CUT must keep DiffStat, not file-delete: {:?}",
-        card.facts
-    );
-    assert!(
-        !card.facts.iter().any(|fact| matches!(
-            fact,
-            rho_tools::tool_card::ToolFact::Meta { text } if text.starts_with("delete")
-        )),
-        "must not render file-delete meta for line CUT: {:?}",
-        card.facts
-    );
 }
 
 // Covers: advisor cards keep phase on the header and body as plain guidance
@@ -341,7 +296,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
     };
 
     assert_eq!(
-        start(&mut presenter, "ok").card.card,
+        start(&mut presenter, "ok").card,
         ToolCard::new(ToolStatus::Running, ToolFamily::Default, header())
     );
     let (_, finished) = presenter.finished(
@@ -404,7 +359,6 @@ fn failed_skill_load_keeps_reason_visible() {
             .with_facts(vec![ToolFact::Error {
                 text: "unknown skill: missing".into(),
             }])
-            .into()
         )
     );
 }
@@ -491,7 +445,7 @@ fn mcp_proposed_and_started_cards_use_remote_verb_and_argument_facts() {
             ToolMetadata::default(),
         );
         assert_eq!(
-            (proposed.card.card, started.card.card),
+            (proposed.card, started.card),
             (expected.clone(), expected),
             "{name}"
         );

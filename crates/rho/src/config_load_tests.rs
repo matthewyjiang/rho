@@ -187,30 +187,40 @@ provider = "unknown"
     );
 }
 
-// Covers: each configured edit preference selects its distinct model-facing tool
+// Covers: each configured edit preference selects its distinct model-facing
+// tool, and the removed hashline format migrates to str_replace with a warning
+// instead of failing startup.
 // Owner: config load
 #[test]
 fn edit_tool_preferences_load_from_behavior_config() {
-    for (value, expected) in [
-        ("auto", super::super::EditTool::Auto),
-        (
-            "hashline",
-            super::super::EditTool::Pinned(rho_tools::EditFormat::Hashline),
-        ),
+    let no_warnings = Vec::<ConfigWarning>::new;
+    for (value, expected, expected_warnings) in [
+        ("auto", super::super::EditTool::Auto, no_warnings()),
         (
             "apply_patch",
             super::super::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
+            no_warnings(),
         ),
         (
             "str_replace",
             super::super::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
+            no_warnings(),
+        ),
+        (
+            "hashline",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
+            vec![ConfigWarning::Migrated {
+                key: "behavior.edit_tool",
+                from: "\"hashline\"".into(),
+                to: "\"str_replace\" (the hashline edit format was removed)".into(),
+            }],
         ),
     ] {
         let (config, warnings) =
             parse_settings(&format!("[behavior]\nedit_tool = {value:?}\n")).unwrap();
 
         assert_eq!(config.edit_tool, expected);
-        assert_eq!(warnings, Vec::<ConfigWarning>::new());
+        assert_eq!(warnings, expected_warnings);
     }
 }
 

@@ -24,8 +24,9 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
     repository.fail_next_save_for_tests();
     app.info.services.config_repository = repository;
 
-    let mut agent = test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
-    assert!(agent.has_tool("edit"));
+    let mut agent =
+        test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::ApplyPatch)).await;
+    assert!(agent.has_tool("apply_patch"));
     assert!(!agent.has_tool("str_replace"));
     let history_before = agent.history().len();
     let diagnostics_before = app
@@ -45,7 +46,10 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
     result.expect("save failure should stay Ok after successful runtime rollback");
 
     // Live runtime restored.
-    assert!(agent.has_tool("edit"), "runtime must roll back to hashline");
+    assert!(
+        agent.has_tool("apply_patch"),
+        "runtime must roll back to apply_patch"
+    );
     assert!(!agent.has_tool("str_replace"));
 
     // Model history recorded both transitions.
@@ -70,7 +74,7 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
         notices[0]
     );
     assert!(
-        notices[1].contains("[edit tool switched]") && notices[1].contains("`edit`"),
+        notices[1].contains("[edit tool switched]") && notices[1].contains("`apply_patch`"),
         "rollback model notice missing: {}",
         notices[1]
     );
@@ -86,7 +90,7 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
     ));
     assert!(matches!(
         &entries[1],
-        Entry::Notice(text) if text == "edit tool switched to hashline"
+        Entry::Notice(text) if text == "edit tool switched to apply_patch"
     ));
     match &entries[2] {
         Entry::Error(text) => {

@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{
+    CodeWindow, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 use serde_json::json;
 
 use super::finished_card;
@@ -10,9 +12,11 @@ fn expected(status: ToolStatus, primary: Option<&str>, script: &[&str]) -> ToolC
         ToolFamily::Default,
         ToolHeader::call("codemode", primary.map(str::to_string)),
     )
-    .with_body(ToolBody::Lines(
-        script.iter().map(|line| line.to_string()).collect(),
-    ))
+    .with_body(ToolBody::Code {
+        language: "python".into(),
+        window: CodeWindow::Head,
+        lines: script.iter().map(|line| line.to_string()).collect(),
+    })
 }
 
 // Covers: bridge progress rows never reach the running card, so it keeps the
@@ -40,7 +44,7 @@ fn running_card_ignores_call_rows() {
 // Owner: codemode presenter.
 #[test]
 fn finished_card_is_the_script() {
-    use crate::app::interactive_presenter::{InteractiveToolPresenter, PresentedToolCard};
+    use crate::app::interactive_presenter::InteractiveToolPresenter;
     use rho_sdk::{model::ToolCall, tool::ToolOutput, ToolCallId, ToolCompletion};
 
     let call = ToolCall {
@@ -57,17 +61,11 @@ fn finished_card_is_the_script() {
         ToolCompletion::from_output(output),
     );
     assert!(ok);
-    let want = PresentedToolCard {
-        card: expected(ToolStatus::Ok, Some("3 calls"), &script),
-        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
-    };
+    let want = expected(ToolStatus::Ok, Some("3 calls"), &script);
     assert_eq!(live.presentation, want.into());
 
     let replayed = presenter.historical(&call, /*ok*/ true, "printed line");
-    let want = PresentedToolCard {
-        card: expected(ToolStatus::Ok, None, &script),
-        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
-    };
+    let want = expected(ToolStatus::Ok, None, &script);
     assert_eq!(replayed.presentation, want.into());
 
     presenter.proposed(call.clone());
@@ -83,11 +81,7 @@ fn finished_card_is_the_script() {
     card.push_fact(ToolFact::Error {
         text: "script failed: x".into(),
     });
-    let want = PresentedToolCard {
-        card,
-        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
-    };
-    assert_eq!(failed.presentation, want.into());
+    assert_eq!(failed.presentation, card.into());
 }
 
 // Covers: traceback tails survive live structured output and historical text;

@@ -3,11 +3,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use super::{grep_search, truncate_chars, GrepRequest, MAX_FILE_BYTES};
-use crate::{
-    file_view::FileViewStyle,
-    hashline::compute_file_hash,
-    tool::{compact_display_path, resolve_path, ToolError},
-};
+use crate::tool::{compact_display_path, resolve_path, ToolError};
 
 /// Runs grep the way the SDK adapter does: parse, resolve the root against the
 /// workspace, then walk.
@@ -15,14 +11,7 @@ fn call_grep(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError
     let request = GrepRequest::from_arguments(args)?;
     let root = resolve_path(dir.path(), &request.path);
     let display = compact_display_path(dir.path(), &request.path);
-    grep_search(
-        &root,
-        &display,
-        &request,
-        &|| false,
-        FileViewStyle::Hashline,
-    )
-    .map(|output| output.text().to_owned())
+    grep_search(&root, &display, &request, &|| false).map(|output| output.text().to_owned())
 }
 
 fn write(dir: &TempDir, relative: &str, content: &str) {
@@ -38,22 +27,18 @@ fn write(dir: &TempDir, relative: &str, content: &str) {
 #[test]
 fn max_per_file_suppresses_extra_hits() {
     let dir = TempDir::new().unwrap();
-    let body = "hit\nhit\nhit\n";
-    write(&dir, "hits.rs", body);
-    let tag = compute_file_hash(body);
+    write(&dir, "hits.rs", "hit\nhit\nhit\n");
 
     let content = call_grep(&dir, json!({"pattern": "hit", "max_per_file": 1})).unwrap();
 
     assert_eq!(
         content,
-        format!(
-            "\
-[hits.rs#{tag}]
+        "\
+hits.rs
 1 | hit
 ... +2 more in this file
 
 1 matches shown (3 total) in 1 files (1 files truncated by max_per_file; raise max_per_file or narrow the pattern)"
-        )
     );
 }
 
@@ -78,22 +63,18 @@ fn invalid_regex_and_output_mode_error() {
 #[test]
 fn max_results_splits_a_file_and_reports_the_remainder() {
     let dir = TempDir::new().unwrap();
-    let body = "hit\nhit\nhit\n";
-    write(&dir, "a.txt", body);
-    let tag = compute_file_hash(body);
+    write(&dir, "a.txt", "hit\nhit\nhit\n");
 
     let content = call_grep(&dir, json!({"pattern": "hit", "max_results": 2})).unwrap();
     assert_eq!(
         content,
-        format!(
-            "\
-[a.txt#{tag}]
+        "\
+a.txt
 1 | hit
 2 | hit
 ... +1 more in this file
 
 2 matches shown (3 total) in 1 files (result limit reached; narrow the pattern, path, or glob)"
-        )
     );
 }
 
@@ -165,7 +146,7 @@ fn cancellation_stops_the_walk_and_is_reported() {
     let dir = TempDir::new().unwrap();
     write(&dir, "a.txt", "needle\n");
     let request = GrepRequest::from_arguments(json!({"pattern": "needle"})).unwrap();
-    let out = grep_search(dir.path(), ".", &request, &|| true, FileViewStyle::Hashline)
+    let out = grep_search(dir.path(), ".", &request, &|| true)
         .unwrap()
         .text()
         .to_owned();
@@ -179,16 +160,13 @@ fn cancellation_stops_the_walk_and_is_reported() {
 fn file_path_searches_the_named_file() {
     let dir = TempDir::new().unwrap();
     write(&dir, "src/other.rs", "needle other\n");
-    let body = "needle nested\n";
-    write(&dir, "src/lib.rs", body);
-    let tag = compute_file_hash(body);
-    let matched = format!(
-        "\
-[src/lib.rs#{tag}]
+    write(&dir, "src/lib.rs", "needle nested\n");
+    let matched = "\
+src/lib.rs
 1 | needle nested
 
 1 matches in 1 files"
-    );
+        .to_string();
 
     for (case, args, expected) in [
         (
@@ -209,31 +187,6 @@ fn file_path_searches_the_named_file() {
     ] {
         assert_eq!(call_grep(&dir, args).unwrap(), expected, "{case}");
     }
-}
-
-// Covers: non-hashline grep content mode must not mint full-file tags
-// Owner: pure unit (grep hashline)
-#[test]
-fn content_mode_omits_file_tags_when_disabled() {
-    let dir = TempDir::new().unwrap();
-    let body = "find me\n";
-    write(&dir, "src/lib.rs", body);
-    let request = GrepRequest::from_arguments(json!({"pattern": "find me"})).unwrap();
-    let root = resolve_path(dir.path(), &request.path);
-    let display = compact_display_path(dir.path(), &request.path);
-    let content = grep_search(
-        &root,
-        &display,
-        &request,
-        &|| false,
-        FileViewStyle::Numbered,
-    )
-    .unwrap()
-    .text()
-    .to_owned();
-    assert!(content.contains("src/lib.rs"), "{content}");
-    assert!(!content.contains("[src/lib.rs#"), "{content}");
-    assert!(content.contains("1 | find me"), "{content}");
 }
 
 // Covers: truncate_chars bounds multibyte UTF-8 strings at character boundaries
@@ -262,28 +215,6 @@ fn early_exit_modes_skip_binary_and_gitignore() {
         assert!(content.contains("visible.txt"), "{mode}: {content}");
         assert!(!content.contains("secret.txt"), "{mode}: {content}");
         assert!(!content.contains("bin.dat"), "{mode}: {content}");
-    }
-}
-
-// Covers: streaming content scan must mint the same tag as full-file hashing
-// Owner: pure unit (grep hashline)
-#[test]
-fn streaming_content_tags_match_full_file_hash() {
-    let dir = TempDir::new().unwrap();
-    let cases = [
-        ("crlf.txt", "hit\r\nmiss\r\n"),
-        ("trailing.txt", "hit\n"),
-        ("no_nl.txt", "hit"),
-        ("blank_then_hit.txt", "\nhit\n"),
-    ];
-    for (name, body) in cases {
-        write(&dir, name, body);
-        let tag = compute_file_hash(body);
-        let content = call_grep(&dir, json!({"pattern": "hit", "glob": name})).unwrap();
-        assert!(
-            content.contains(&format!("[{name}#{tag}]")),
-            "{name}: {content}"
-        );
     }
 }
 

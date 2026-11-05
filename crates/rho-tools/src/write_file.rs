@@ -4,6 +4,7 @@ use crate::{
     diff::{unified_diff, UNREADABLE_FILE_DIFF_MESSAGE},
     file_mutation::FileMutationOutcome,
     host_files::{HostTextFiles, TextRoute},
+    text_view::format_chain_snapshot,
     tool::*,
 };
 use serde::Deserialize;
@@ -21,7 +22,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write".into(),
-            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer the selected edit tool for targeted changes. Successful writes return a bounded numbered snapshot for follow-up work without an extra `read_file`. When the selected edit tool is hashline, that snapshot is `[path#TAG]` plus numbered lines. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
+            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer the selected edit tool for targeted changes. Successful writes return a bounded numbered snapshot for follow-up work without an extra `read_file`. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
     }
@@ -40,7 +41,6 @@ impl Tool for WriteFile {
                 &compact_display_path(&ctx.cwd, &args.path),
                 &args.content,
                 ctx.max_output_bytes,
-                crate::FileViewStyle::Hashline,
                 /*host_files*/ None,
             )
             .await?;
@@ -62,7 +62,6 @@ pub(super) async fn write_file_content(
     display_path: &str,
     content: &str,
     max_output_bytes: usize,
-    style: crate::FileViewStyle,
     host_files: Option<&Arc<dyn HostTextFiles>>,
 ) -> Result<FileMutationOutcome, ToolError> {
     let route = TextRoute::for_path(host_files, path);
@@ -116,9 +115,9 @@ pub(super) async fn write_file_content(
         }]
     };
     let action = if created { "created" } else { "wrote" };
-    // Model-facing chain contract: action line + bounded hashline snapshot.
+    // Model-facing chain contract: action line + bounded numbered snapshot.
     // Unified diff stays on metadata for UI cards.
-    let snapshot = style.format_chain_snapshot(display_path, content, &[]);
+    let snapshot = format_chain_snapshot(display_path, content, &[]);
     let content = if existing_file_is_unreadable {
         format!("{action} {display_path}\n\n{UNREADABLE_FILE_DIFF_MESSAGE}\n\n{snapshot}")
     } else {
@@ -148,7 +147,7 @@ mod tests {
     }
 
     // Covers: a host that formats on save: the result's snapshot and file
-    // change show the text the host holds, so the model's next edit tags it.
+    // change show the text the host holds, so the model's next edit matches it.
     // Owner: write, through host_files
     #[tokio::test]
     async fn shows_the_text_a_formatting_host_saved() {
@@ -160,23 +159,16 @@ mod tests {
         host.format = str::to_uppercase;
         let host: Arc<dyn HostTextFiles> = Arc::new(host);
 
-        let outcome = write_file_content(
-            &path,
-            "a.txt",
-            "draft\n",
-            12_000,
-            crate::FileViewStyle::Hashline,
-            Some(&host),
-        )
-        .await
-        .unwrap();
+        let outcome = write_file_content(&path, "a.txt", "draft\n", 12_000, Some(&host))
+            .await
+            .unwrap();
 
         assert_eq!(
             (outcome.content, outcome.file_changes),
             (
                 format!(
                     "created a.txt\n\n{}",
-                    crate::FileViewStyle::Hashline.format_chain_snapshot("a.txt", "DRAFT\n", &[])
+                    format_chain_snapshot("a.txt", "DRAFT\n", &[])
                 ),
                 vec![rho_sdk::tool::ToolFileChange::created(&path, "DRAFT\n")],
             )
@@ -195,16 +187,9 @@ mod tests {
         let host: Arc<dyn HostTextFiles> =
             Arc::new(MemoryHost::new(root.path(), &[(&path, "unsaved\n")]));
 
-        let outcome = write_file_content(
-            &path,
-            "a.txt",
-            "next\n",
-            12_000,
-            crate::FileViewStyle::Hashline,
-            Some(&host),
-        )
-        .await
-        .unwrap();
+        let outcome = write_file_content(&path, "a.txt", "next\n", 12_000, Some(&host))
+            .await
+            .unwrap();
 
         assert_eq!(
             outcome.file_changes,
@@ -236,7 +221,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "replacement");
         assert!(result.content.contains(UNREADABLE_FILE_DIFF_MESSAGE));
         assert!(
-            result.content.contains("[binary.bin#"),
+            result.content.contains("binary.bin\n1:replacement"),
             "{}",
             result.content
         );

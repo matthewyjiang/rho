@@ -12,41 +12,27 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// crates.io package verification path-patches the unpublished cut.
 ///
 /// Config identity, selector label, and model-facing tool name share one
-/// vocabulary per format: `hashline` exposes `edit`, `apply_patch` exposes
-/// `apply_patch`, and `str_replace` exposes `str_replace`.
+/// vocabulary per format: `apply_patch` exposes `apply_patch`, and
+/// `str_replace` exposes `str_replace`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditFormat {
-    /// Legacy snapshot-tagged, line-anchored `edit` tool.
-    ///
-    /// Models struggle with this format, so hosts should prefer
-    /// [`Self::StrReplace`] or [`Self::ApplyPatch`]. It stays available for
-    /// explicit selection until removal.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-agent-tools): remove the legacy `Hashline` edit format and its `edit` tool, and make `StrReplace` the `Default`.
-    ///
-    /// Removing a variant and changing the SDK default edit surface would break
-    /// hosts, so the format stays registered and remains the `Default` until then.
-    #[default]
-    Hashline,
     /// Codex-compatible `apply_patch` tool.
     ApplyPatch,
     /// Exact string replacement through the `str_replace` tool.
+    #[default]
     StrReplace,
 }
 
 impl EditFormat {
-    /// Every supported edit format, in UI display order. The legacy [`Self::Hashline`] sorts last.
-    pub const ALL: &'static [Self] = &[Self::StrReplace, Self::ApplyPatch, Self::Hashline];
+    /// Every supported edit format, in UI display order.
+    pub const ALL: &'static [Self] = &[Self::StrReplace, Self::ApplyPatch];
 
     /// The canonical model-facing tool name.
     ///
     /// Each format has a unique name so hosts classify by name alone.
     pub const fn tool_name(self) -> &'static str {
         match self {
-            Self::Hashline => "edit",
             Self::ApplyPatch => "apply_patch",
             Self::StrReplace => "str_replace",
         }
@@ -55,7 +41,6 @@ impl EditFormat {
     /// The canonical configured value and selector label (`behavior.edit_tool`).
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Hashline => "hashline",
             Self::ApplyPatch => "apply_patch",
             Self::StrReplace => "str_replace",
         }
@@ -68,20 +53,9 @@ impl EditFormat {
         self.as_str()
     }
 
-    /// Whether read, grep, and write mint full-file `[path#TAG]` snapshots.
-    ///
-    /// Only [`Self::Hashline`] consumes those tags. The other formats still
-    /// return numbered lines, but they skip the whole-file fingerprint.
-    pub const fn mints_snapshot_tags(self) -> bool {
-        matches!(self, Self::Hashline)
-    }
-
     /// The format detail shown when selecting an edit surface.
     pub const fn detail(self) -> &'static str {
         match self {
-            Self::Hashline => {
-                "Expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
-            }
             Self::ApplyPatch => {
                 "Expose `apply_patch` with a Codex-style multi-file patch document."
             }
@@ -94,7 +68,6 @@ impl EditFormat {
     /// Resolves a configured `behavior.edit_tool` value.
     pub fn from_config_value(value: &str) -> Option<Self> {
         match value {
-            "hashline" => Some(Self::Hashline),
             "apply_patch" => Some(Self::ApplyPatch),
             "str_replace" => Some(Self::StrReplace),
             _ => None,
@@ -108,7 +81,7 @@ impl EditFormat {
 
     /// Resolves a model-facing edit tool name.
     ///
-    /// Names are unique per format (`edit`, `apply_patch`, `str_replace`).
+    /// Names are unique per format (`apply_patch`, `str_replace`).
     pub fn from_tool_name(name: &str) -> Option<Self> {
         Self::ALL
             .iter()

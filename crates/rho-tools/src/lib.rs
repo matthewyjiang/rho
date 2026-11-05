@@ -14,7 +14,6 @@
 pub mod cancellation;
 pub mod document;
 mod edit_format;
-mod file_view;
 mod host;
 mod host_files;
 mod host_terminals;
@@ -48,13 +47,12 @@ pub mod diff;
 mod glob;
 mod grep;
 mod grep_format;
-pub mod hashline;
 pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
 pub mod read_file;
 mod rendered;
-pub mod rtk;
+mod rtk;
 pub use rendered::{json_len, output_schema, Rendered};
 pub mod sdk_adapter;
 mod sdk_search;
@@ -67,7 +65,6 @@ pub mod write_file;
 
 pub use cancellation::RunCancellation;
 pub use edit_format::EditFormat;
-pub use file_view::{FileViewPolicy, FileViewStyle};
 pub use host::{HostError, HostFuture};
 pub use host_files::HostTextFiles;
 pub use host_terminals::{

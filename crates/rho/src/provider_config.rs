@@ -38,6 +38,7 @@ impl ProviderEndpointConfig {
     fn from_custom_partial(
         provider: &str,
         endpoint: PartialEndpointConfig,
+        warnings: &mut Vec<crate::config::ConfigWarning>,
     ) -> anyhow::Result<Self> {
         rho_providers::provider::validate_custom_provider_name(provider)?;
         let base_url_field = format!("providers.custom.{provider}.base_url");
@@ -76,6 +77,24 @@ impl ProviderEndpointConfig {
             .map(|ttl| parse_prompt_cache_ttl(&ttl_field, &ttl))
             .transpose()?;
 
+        let edit_tool_field = format!("providers.custom.{provider}.edit_tool");
+        let edit_tool = endpoint
+            .edit_tool
+            .map(|value| {
+                if super::is_removed_hashline_edit_tool(&value) {
+                    warnings.push(crate::config::ConfigWarning::Migrated {
+                        key: "providers.custom.edit_tool",
+                        from: format!("{value:?} for {provider}"),
+                        to: super::REMOVED_HASHLINE_REPLACEMENT.into(),
+                    });
+                    return Ok(rho_tools::EditFormat::StrReplace);
+                }
+                value
+                    .parse::<rho_tools::EditFormat>()
+                    .map_err(|error| anyhow::anyhow!("{edit_tool_field} {error}"))
+            })
+            .transpose()?;
+
         let compression_field = format!("providers.custom.{provider}.request_compression");
         let request_compression = endpoint
             .request_compression
@@ -91,7 +110,7 @@ impl ProviderEndpointConfig {
             catalog,
             catalog_lookup,
             api,
-            edit_tool: endpoint.edit_tool,
+            edit_tool,
             prompt_cache_ttl,
             request_compression,
         })
@@ -279,7 +298,8 @@ impl ProviderConfigs {
                     warnings.push(crate::config::ConfigWarning::ShadowedCustomProvider { name });
                     continue;
                 }
-                let endpoint = ProviderEndpointConfig::from_custom_partial(&name, endpoint)?;
+                let endpoint =
+                    ProviderEndpointConfig::from_custom_partial(&name, endpoint, warnings)?;
                 hosts.insert(name, endpoint);
             }
             self.custom = hosts;
@@ -660,7 +680,8 @@ pub(super) struct PartialEndpointConfig {
     pub(super) catalog: Option<String>,
     pub(super) catalog_mode: Option<String>,
     pub(super) api: Option<String>,
-    pub(super) edit_tool: Option<rho_tools::EditFormat>,
+    /// Parsed per host so the removed `hashline` value can migrate.
+    pub(super) edit_tool: Option<String>,
     pub(super) prompt_cache_ttl: Option<String>,
     pub(super) request_compression: Option<String>,
 }

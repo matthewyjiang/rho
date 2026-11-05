@@ -75,14 +75,12 @@ pub(super) struct ListDirTool {
 
 pub(super) struct ReadFileTool {
     pub(super) max_output_bytes: usize,
-    pub(super) file_view: crate::FileViewPolicy,
     pub(super) host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
 pub(super) struct WriteFileTool {
     pub(super) max_output_bytes: usize,
     pub(super) mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    pub(super) file_view: crate::FileViewPolicy,
     pub(super) host_files: Option<Arc<dyn crate::HostTextFiles>>,
 }
 
@@ -207,7 +205,6 @@ impl Tool for ReadFileTool {
                             &display_path,
                             args.offset,
                             args.limit,
-                            self.file_view.style(),
                             self.host_files.as_ref(),
                         )
                         .await
@@ -301,7 +298,6 @@ fn execute_prepared_write(
 ) -> ToolFuture<'static> {
     let max_output_bytes = tool.max_output_bytes;
     let mutation_observer = tool.mutation_observer.clone();
-    let file_view = tool.file_view.clone();
     let host_files = tool.host_files.clone();
     Box::pin(async move {
         let display = compact_display_path(workspace.root(), &args.path);
@@ -322,7 +318,6 @@ fn execute_prepared_write(
                 &display,
                 &args.content,
                 max_output_bytes,
-                file_view.style(),
                 host_files.as_ref(),
             ),
         )

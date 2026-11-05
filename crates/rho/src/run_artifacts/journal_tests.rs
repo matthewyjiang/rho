@@ -31,7 +31,7 @@ fn finished_presentations_preserve_journal_shape() {
     });
     for (presentation, data) in [
         (
-            Presentation::Card(card.clone().into()),
+            Presentation::Card(card.clone()),
             serde_json::json!({"card": card}),
         ),
         (

@@ -163,7 +163,7 @@ async fn failed_codemode_save_keeps_compensation_histories_aligned() {
     repository.fail_next_save_for_tests();
     app.info.services.config_repository = repository;
     let mut runtime =
-        test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
+        test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::ApplyPatch)).await;
     runtime.resume(storage.clone()).await.unwrap();
     assert_eq!(runtime.session_id().as_str(), storage.id());
     let specs_before = runtime.tool_specs();

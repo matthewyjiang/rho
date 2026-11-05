@@ -235,7 +235,7 @@ async fn grep_structured_paths_chain_into_read_file() {
     // Grep displays paths with forward slashes on every platform.
     let shown = |path: &std::path::Path| crate::paths::display(path);
     let ws = workspace(&dir).with_granted_root(&outside_root).unwrap();
-    let options = CodingToolOptions::new().edit_tool(crate::EditFormat::Hashline);
+    let options = CodingToolOptions::new();
     let host = ToolHost::builder()
         .workspace(ws)
         .workspace_policy(
@@ -247,7 +247,6 @@ async fn grep_structured_paths_chain_into_read_file() {
         .tool_shared(coding_tool(CodingToolKind::ReadFile, options))
         .build()
         .unwrap();
-    let tag = crate::hashline::compute_file_hash(body);
 
     for (case, root, expected_path) in [
         ("workspace", ".".to_owned(), "src/lib.rs".to_owned()),
@@ -291,7 +290,7 @@ async fn grep_structured_paths_chain_into_read_file() {
         );
         assert_eq!(
             output.content(),
-            format!("[{expected_path}#{tag}]\n1 | needle\n\n1 matches in 1 files"),
+            format!("{expected_path}\n1 | needle\n\n1 matches in 1 files"),
             "{case}"
         );
         let read = host

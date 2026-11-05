@@ -1,9 +1,7 @@
 //! Request-local line window for large UTF-8 reads.
 //!
 //! The scan walks the file once in 256 KiB chunks and keeps only the selected
-//! window. Callers that need a full-file fingerprint supply a
-//! [`LineFingerprint`]; untagged reads still finish the file so the footer can
-//! report `of {total}`.
+//! window. Reads still finish the file so the footer can report `of {total}`.
 
 use std::fmt::Write;
 use std::path::Path;
@@ -11,12 +9,10 @@ use std::path::Path;
 use tokio::io::AsyncReadExt;
 
 use super::{
-    line_split::{decode_content_line, LineFingerprint, LineSplit},
+    line_split::{decode_content_line, LineSplit},
     offset_past_end, window_footer, LINE_BODY_SEP,
 };
 
-#[cfg(test)]
-use super::format_numbered_view;
 use crate::document::MAX_DOCUMENT_INPUT_BYTES;
 use crate::tool::ToolError;
 
@@ -179,18 +175,18 @@ pub(crate) fn render_window(
     Ok(emit_window(header, start, lines, footer.as_deref()))
 }
 
-struct WindowScan<F> {
-    split: LineSplit<F>,
+struct WindowScan {
+    split: LineSplit,
     utf8: Utf8Check,
     start: usize,
     want: Option<usize>,
     selected: Vec<String>,
 }
 
-impl<F: LineFingerprint> WindowScan<F> {
-    fn new(start: usize, limit: Option<usize>, fingerprint: Option<F>) -> Self {
+impl WindowScan {
+    fn new(start: usize, limit: Option<usize>) -> Self {
         Self {
-            split: LineSplit::new(fingerprint),
+            split: LineSplit::new(),
             utf8: Utf8Check::new(),
             start,
             want: limit,
@@ -220,17 +216,13 @@ impl<F: LineFingerprint> WindowScan<F> {
         let mut selected = self.selected;
         let start = self.start;
         let want = self.want;
-        let (fingerprint, total) = self.split.finish(|line_number, line| {
+        let total = self.split.finish(|line_number, line| {
             if in_window(line_number, start, want, selected.len()) {
                 selected.push(decode_line(line)?);
             }
             Ok::<(), ScanError>(())
         })?;
-        Ok(ScannedWindow {
-            tag: fingerprint.map(LineFingerprint::finish),
-            total,
-            selected,
-        })
+        Ok(ScannedWindow { total, selected })
     }
 }
 
@@ -243,41 +235,26 @@ fn in_window(line_number: usize, start: usize, want: Option<usize>, selected: us
 }
 
 pub(crate) struct ScannedWindow {
-    pub(crate) tag: Option<String>,
     pub(crate) total: usize,
     pub(crate) selected: Vec<String>,
 }
 
-/// In-memory scan used by tests and the large-file oracle comparison.
+/// In-memory chunked scan, compared against the split view in tests.
 #[cfg(test)]
-pub(crate) fn format_window_bytes<F, H>(
+pub(crate) fn format_window_bytes(
     bytes: &[u8],
     offset: Option<usize>,
     limit: Option<usize>,
-    fingerprint: Option<F>,
-    header: H,
-) -> Result<String, ScanError>
-where
-    F: LineFingerprint,
-    H: FnOnce(Option<&str>) -> String,
-{
+    header: &str,
+) -> Result<String, ScanError> {
     let (start, limit) = validate_window(offset, limit)?;
-    if bytes.len() <= CHUNK_SIZE && fingerprint.is_none() {
-        let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
-        return Ok(format_numbered_view(
-            &header(None),
-            text,
-            Some(start),
-            limit,
-        )?);
-    }
-    let mut scan = WindowScan::new(start, limit, fingerprint);
+    let mut scan = WindowScan::new(start, limit);
     for chunk in bytes.chunks(CHUNK_SIZE) {
         scan.push(chunk)?;
     }
     let scanned = scan.finish()?;
     Ok(render_window(
-        &header(scanned.tag.as_deref()),
+        header,
         scanned.total,
         start,
         limit,
@@ -286,18 +263,15 @@ where
 }
 
 /// Paginate a large on-disk UTF-8 file without retaining every prefix.
-pub(crate) async fn read_text_window<F, H>(
+///
+/// `header` is the display path printed above the numbered rows.
+pub(crate) async fn read_text_window(
     path: &Path,
+    header: &str,
     source_len: u64,
     offset: Option<usize>,
     limit: Option<usize>,
-    fingerprint: Option<F>,
-    header: H,
-) -> Result<String, ToolError>
-where
-    F: LineFingerprint,
-    H: FnOnce(Option<&str>) -> String,
-{
+) -> Result<String, ToolError> {
     let (start, limit) = validate_window(offset, limit).map_err(ToolError::Message)?;
     if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
         return Err(ToolError::Message(format!(
@@ -306,7 +280,7 @@ where
         )));
     }
     let mut file = tokio::fs::File::open(path).await?;
-    let mut scan = WindowScan::new(start, limit, fingerprint);
+    let mut scan = WindowScan::new(start, limit);
     let mut buf = vec![0_u8; CHUNK_SIZE];
     loop {
         let read = file.read(&mut buf).await?;
@@ -324,12 +298,6 @@ where
             .map_err(|error| error.into_tool_error(path))?;
     }
     let scanned = scan.finish().map_err(|error| error.into_tool_error(path))?;
-    render_window(
-        &header(scanned.tag.as_deref()),
-        scanned.total,
-        start,
-        limit,
-        &scanned.selected,
-    )
-    .map_err(ToolError::Message)
+    render_window(header, scanned.total, start, limit, &scanned.selected)
+        .map_err(ToolError::Message)
 }

@@ -394,7 +394,7 @@ impl App {
                                 | crate::presentation::Presentation::SummaryCard(card) =
                                     &mut presentation
                                 {
-                                    card.card.push_fact(rho_tools::tool_card::ToolFact::Error {
+                                    card.push_fact(rho_tools::tool_card::ToolFact::Error {
                                         text: format!("image preview unavailable: {error}"),
                                     });
                                 }

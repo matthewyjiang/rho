@@ -32,12 +32,11 @@ async fn logs_rtk_discover_compatible_tool_pairs() {
     let root = tempfile::tempdir().unwrap();
     let cwd = Path::new("/home/rho/project");
 
-    let result = ToolResult {
-        id: "call_1".into(),
-        ok: true,
-        content: "stdout:\nclean".into(),
+    let run = CommandRun {
+        output_len: "stdout:\nclean".len(),
+        failed: false,
     };
-    log_execution_in_projects_dir(root.path(), cwd, "rtk git status", (&result).into())
+    log_execution_in_projects_dir(root.path(), cwd, "rtk git status", run)
         .await
         .unwrap();
 

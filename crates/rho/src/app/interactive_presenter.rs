@@ -10,10 +10,6 @@ use rho_tools::tool_card::ToolCard;
 
 use crate::tools::mcp::exported_name::{McpToolIdentity, McpToolNames};
 
-#[path = "interactive_presenter_tool_card.rs"]
-mod tool_card;
-pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax, ToolBodyWindow};
-
 #[path = "interactive_presenter_script_stream.rs"]
 mod script_stream;
 
@@ -36,7 +32,7 @@ use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
-    pub(crate) card: PresentedToolCard,
+    pub(crate) card: ToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -115,6 +111,8 @@ impl ToolKind {
             "workflow" => Self::Workflow,
             crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
             crate::tools::code_mode::TOOL_SEARCH_NAME => Self::ToolSearch,
+            // Includes saved calls to the removed hashline `edit` tool, which
+            // replay as generic cards.
             _ => Self::Other,
         }
     }
@@ -268,10 +266,7 @@ impl InteractiveToolPresenter {
             }
             preview.last_card = Some(card.clone());
             return Some(ToolPresentation {
-                card: PresentedToolCard {
-                    card,
-                    body_syntax: codemode_format::body_syntax(ToolBodyWindow::Tail),
-                },
+                card,
                 image_asset: None,
             });
         }
@@ -302,10 +297,7 @@ impl InteractiveToolPresenter {
         // Streaming previews carry no notices or image assets; skip a second
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {
-            card: PresentedToolCard {
-                card,
-                body_syntax: body_syntax(&kind),
-            },
+            card,
             image_asset: None,
         })
     }
@@ -453,7 +445,7 @@ impl InteractiveToolPresenter {
             if let Some(mut card) = sessions_format::finished_card(&view.arguments, content, ok) {
                 card.push_notice_facts(view.metadata.presentation_notices());
                 return FinishedToolPresentation {
-                    presentation: crate::presentation::Presentation::SummaryCard(card.into()),
+                    presentation: crate::presentation::Presentation::SummaryCard(card),
                     image_asset: None,
                 };
             }

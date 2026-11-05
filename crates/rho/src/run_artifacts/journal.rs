@@ -7,7 +7,9 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use crate::{app::interactive_presenter::PresentedToolCard, subagent};
+use rho_tools::tool_card::ToolCard;
+
+use crate::subagent;
 
 use super::previews::{PreviewReader, ToolPreviews};
 
@@ -22,18 +24,18 @@ pub(crate) enum AttachmentEvent {
     #[serde(skip)]
     ToolPreview {
         key: String,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolStarted {
         /// Stable tool identity for concurrent live cards. Absent on legacy journals.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolUpdated {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: PresentedToolCard,
+        card: ToolCard,
     },
     ToolFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]

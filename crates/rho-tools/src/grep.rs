@@ -5,9 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    file_view::{FileViewPolicy, FileViewStyle},
     grep_format::format_results,
-    hashline::FileHash,
     path_glob::PathGlob,
     search::{
         clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
@@ -33,16 +31,8 @@ const REGEX_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 /// Cap DFA heap during regex compile.
 const REGEX_DFA_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
-#[derive(Clone)]
-pub(crate) struct GrepSearch {
-    file_view: FileViewPolicy,
-}
-
-impl GrepSearch {
-    pub(crate) fn new(file_view: FileViewPolicy) -> Self {
-        Self { file_view }
-    }
-}
+#[derive(Clone, Copy)]
+pub(crate) struct GrepSearch;
 
 #[derive(Deserialize)]
 struct Args {
@@ -160,7 +150,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory or in a single file with a regular expression. Directory walks skip ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode shows matches as `N | text`. When the selected edit tool is hashline, each file is prefixed with a [path#TAG] snapshot header. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
+            description: "Searches file contents under a directory or in a single file with a regular expression. Directory walks skip ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode shows matches as `N | text`. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -197,13 +187,7 @@ impl WorkspaceSearch for GrepSearch {
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<crate::Rendered<GrepOutput>, ToolError> {
-        grep_search(
-            root,
-            display_root,
-            request,
-            cancelled,
-            self.file_view.style(),
-        )
+        grep_search(root, display_root, request, cancelled)
     }
 }
 
@@ -230,13 +214,10 @@ impl MatchCount {
 pub(crate) struct FileHit {
     /// Workspace-relative file identity, or an absolute path outside the workspace.
     pub(crate) path: String,
-    /// Full-file snapshot tag when content mode computed one for edit anchors.
-    #[serde(skip)]
-    pub(crate) file_tag: Option<String>,
     /// Matching lines, including unretained previews; null in files_with_matches
     /// mode because that mode only checks existence and stops at the first hit.
     pub(crate) count: MatchCount,
-    /// Retained previews, not hashline body text; empty outside content mode.
+    /// Retained previews, not exact line text; empty outside content mode.
     pub(crate) lines: Vec<MatchLine>,
 }
 
@@ -280,7 +261,6 @@ pub(crate) fn grep_search(
     display_root: &str,
     request: &GrepRequest,
     cancelled: &dyn Fn() -> bool,
-    style: FileViewStyle,
 ) -> Result<crate::Rendered<GrepOutput>, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
@@ -306,8 +286,7 @@ pub(crate) fn grep_search(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(mut hit) = scan_file(request, &file, display_root, retained_per_file, style)
-        else {
+        let Some(mut hit) = scan_file(request, &file, display_root, retained_per_file) else {
             return ControlFlow::Continue(());
         };
         // Count max_per_file cuts before the result-budget trim, so a file
@@ -370,34 +349,31 @@ pub(crate) fn grep_search(
 /// Size is gated by `metadata().len()` up front and by bytes read, so a
 /// `files_with_matches` hit on line 1 of a huge file is still excluded.
 /// Encoding is per-line: invalid UTF-8 drops the file only if the scan
-/// visits that line. `content` still reads the whole file to mint a tag;
-/// `files_with_matches` may list a file whose later bytes are not UTF-8.
+/// visits that line, so `files_with_matches` may list a file whose later
+/// bytes are not UTF-8.
 fn scan_file(
     request: &GrepRequest,
     file: &WalkedFile,
     display_root: &str,
     retain: usize,
-    style: FileViewStyle,
 ) -> Option<FileHit> {
     let metadata = std::fs::metadata(&file.absolute).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
         return None;
     }
     let reader = std::fs::File::open(&file.absolute).ok()?;
-    let mint_tag = request.output_mode == GrepOutputMode::Content && style.mints_snapshot_tags();
     let stop_early = request.output_mode.stops_at_first_match();
     let mut total = 0usize;
     let mut lines = Vec::new();
-    let file_tag = read_searchable_lines(
+    read_searchable_lines(
         reader,
-        mint_tag.then(FileHash::new),
         MAX_FILE_BYTES,
         BINARY_SNIFF_BYTES,
         |line_no, line| {
             if request.regex.is_match(line) {
                 total = total.saturating_add(1);
                 if lines.len() < retain {
-                    // Search preview only - may truncate. Not hashline `N:text`.
+                    // Search preview only - may truncate. Not read_file `N:text`.
                     lines.push(MatchLine {
                         line: line_no,
                         text: truncate_chars(line, MAX_LINE_CHARS),
@@ -428,12 +404,7 @@ fn scan_file(
         GrepOutputMode::FilesWithMatches => MatchCount::ExistenceOnly,
         GrepOutputMode::Content | GrepOutputMode::Count => MatchCount::Counted(total),
     };
-    Some(FileHit {
-        path,
-        file_tag,
-        count,
-        lines,
-    })
+    Some(FileHit { path, count, lines })
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {

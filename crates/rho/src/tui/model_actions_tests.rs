@@ -228,7 +228,7 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
     }
 
     fn advertised_edit_name(agent: &InteractiveRuntime) -> Option<&'static str> {
-        ["edit", "apply_patch", "str_replace"]
+        ["apply_patch", "str_replace"]
             .into_iter()
             .find(|name| agent.has_tool(name))
     }
@@ -285,17 +285,17 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
     );
 
     // --- Pinned does not follow ---
-    let pinned = EditTool::Pinned(rho_tools::EditFormat::Hashline);
+    let pinned = EditTool::Pinned(rho_tools::EditFormat::StrReplace);
     let mut app = app_on_openai(pinned);
     let mut agent = test_edit_tool_runtime(pinned).await;
-    assert_eq!(advertised_edit_name(&agent), Some("edit"));
+    assert_eq!(advertised_edit_name(&agent), Some("str_replace"));
 
     switch_to_codex(&mut app, &mut agent).await;
     assert_eq!(app.info.runtime.provider, "openai-codex");
     assert_eq!(
         advertised_edit_name(&agent),
-        Some("edit"),
-        "pinned hashline must not follow the openai-codex provider change"
+        Some("str_replace"),
+        "pinned str_replace must not follow the openai-codex provider change"
     );
     assert!(!agent.has_tool("apply_patch"));
 }

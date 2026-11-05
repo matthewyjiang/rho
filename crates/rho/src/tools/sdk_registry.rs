@@ -226,7 +226,6 @@ pub struct AppToolSet {
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
     openapi_report: super::openapi::report::OpenApiReport,
-    file_view: rho_tools::FileViewPolicy,
     /// Kept so a mid-session edit-tool switch uses the same host I/O.
     host_io: crate::tools::host_io::HostIo,
     session_search: super::sessions::SessionBinding,
@@ -256,7 +255,6 @@ impl AppToolSet {
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
             openapi_report: super::openapi::report::OpenApiReport::default(),
-            file_view: rho_tools::FileViewPolicy::default(),
             host_io: Default::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
@@ -288,14 +286,12 @@ impl AppToolSet {
         let process_environment =
             rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
 
-        let edit_format = config.resolved_edit_tool();
-        tool_set.file_view.set(edit_format);
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
-            tool_set.file_view.clone(),
+            config.resolved_edit_tool(),
             config.rtk,
             &tool_set.host_io,
         ));
@@ -661,7 +657,7 @@ impl AppToolSet {
     /// callers can rebuild the runtime and tell the model. No-ops when this
     /// run has no edit tool or the selection is already active.
     ///
-    /// Matches built-in edit tool names (`edit`, `apply_patch`, `str_replace`).
+    /// Matches built-in edit tool names (`apply_patch`, `str_replace`).
     pub fn set_edit_tool(
         &mut self,
         edit_tool: rho_tools::EditFormat,
@@ -684,13 +680,7 @@ impl AppToolSet {
             &self.host_io,
         );
         self.inventory.mutate(|tools| tools[position] = replacement);
-        self.file_view.set(edit_tool);
         Some(previous)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn file_view_style(&self) -> rho_tools::FileViewStyle {
-        self.file_view.style()
     }
 
     /// The currently advertised built-in edit format, when this run exposes one.

@@ -1160,7 +1160,7 @@ async fn advisor_mode_rejects_change_while_a_run_is_active() {
 
 async fn edit_tool_test_runtime() -> InteractiveRuntime {
     edit_tool_runtime(crate::config::EditTool::Pinned(
-        rho_tools::EditFormat::Hashline,
+        rho_tools::EditFormat::ApplyPatch,
     ))
     .await
 }
@@ -1204,7 +1204,7 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
             .any(|tool| tool.name() == name)
     };
 
-    assert!(interactive.tools.contains("edit"));
+    assert!(interactive.tools.contains("apply_patch"));
     assert!(!interactive.tools.contains("str_replace"));
 
     let change = interactive
@@ -1215,13 +1215,13 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
         .await
         .unwrap()
         .expect("edit tool should change");
-    assert_eq!(change.previous, rho_tools::EditFormat::Hashline);
+    assert_eq!(change.previous, rho_tools::EditFormat::ApplyPatch);
     assert_eq!(change.display, "edit tool switched to str_replace");
     assert_eq!(interactive.active_system_prompt(), system_before);
     assert!(interactive.tools.contains("str_replace"));
-    assert!(!interactive.tools.contains("edit"));
+    assert!(!interactive.tools.contains("apply_patch"));
     assert!(advertised(&interactive, "str_replace"));
-    assert!(!advertised(&interactive, "edit"));
+    assert!(!advertised(&interactive, "apply_patch"));
     assert_eq!(interactive.sessions.session().id(), &session_id);
     assert_eq!(interactive.history().len(), history_before + 1);
     let notice = interactive.history().last().expect("switch notice").clone();

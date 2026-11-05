@@ -313,11 +313,9 @@ impl Tool for SdkShellTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         match self.kind {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
-            ShellKind::Bash => super::bash::Bash::new(/*rtk_enabled*/ false).spec(),
+            ShellKind::Bash => super::bash::Bash::new().spec(),
             #[cfg(windows)]
-            ShellKind::PowerShell => {
-                super::powershell::PowerShell::new(/*rtk_enabled*/ false).spec()
-            }
+            ShellKind::PowerShell => super::powershell::PowerShell::new().spec(),
         }
     }
 

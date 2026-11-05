@@ -146,7 +146,6 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     let root = tempfile::tempdir().unwrap();
     let mut model_names = Vec::new();
     for edit_tool in [
-        crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
         crate::config::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
         crate::config::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
     ] {
@@ -174,7 +173,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         tools.set_advisor_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();
         let selected = config.resolved_edit_tool().tool_name();
-        for name in ["edit", "apply_patch", "str_replace"] {
+        for name in ["apply_patch", "str_replace"] {
             assert_eq!(
                 names.iter().any(|candidate| candidate == name),
                 name == selected,
@@ -741,7 +740,7 @@ fn computer_registration_preserves_other_handles_with_the_same_name() {
 #[test]
 fn edit_tool_selection_swaps_the_advertised_edit_surface() {
     let config = Config {
-        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
+        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
         ..Config::default()
     };
     let mut tools = AppToolSet::new(
@@ -750,20 +749,20 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
         ToolSetOptions::new(capabilities(&["edit", "read_file"])),
     );
     let before = tools.unfiltered_names().collect::<Vec<_>>();
-    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::Hashline));
-    assert!(tools.contains("edit"));
+    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::ApplyPatch));
+    assert!(tools.contains("apply_patch"));
     assert!(!tools.contains("str_replace"));
 
     assert_eq!(
-        tools.set_edit_tool(rho_tools::EditFormat::Hashline, config.max_output_bytes),
+        tools.set_edit_tool(rho_tools::EditFormat::ApplyPatch, config.max_output_bytes),
         None
     );
     assert_eq!(
         tools.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
-        Some(rho_tools::EditFormat::Hashline)
+        Some(rho_tools::EditFormat::ApplyPatch)
     );
     assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
-    assert!(!tools.contains("edit"));
+    assert!(!tools.contains("apply_patch"));
     assert!(tools.contains("str_replace"));
 
     let after = tools.unfiltered_names().collect::<Vec<_>>();
@@ -774,7 +773,6 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
         1,
         "edit-tool switch must keep one read_file"
     );
-    assert_eq!(tools.file_view_style(), rho_tools::FileViewStyle::Numbered);
 
     let mut without_edit = AppToolSet::new(
         &config,
@@ -782,7 +780,7 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
         ToolSetOptions::new(capabilities(&["read_file"])),
     );
     assert_eq!(
-        without_edit.set_edit_tool(rho_tools::EditFormat::ApplyPatch, config.max_output_bytes),
+        without_edit.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
         None
     );
 }

@@ -644,9 +644,10 @@ const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     // The Tools row already reads `auto (str_replace)`, so wait for the
-    // picker-only legacy badge to prove the edit tool picker opened.
+    // picker-only detail of the highlighted `auto` row to prove the edit tool
+    // picker opened.
     Step::WaitText {
-        text: "legacy",
+        text: "Pick the preferred format",
         timeout: SETTLE,
     },
     Step::TypeIntoField("apply_patch"),

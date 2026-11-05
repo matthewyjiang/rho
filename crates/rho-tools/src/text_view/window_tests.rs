@@ -1,8 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::{format_numbered_view, format_window_bytes, ScanError, CHUNK_SIZE};
-use crate::file_view::FileViewStyle;
-use crate::hashline::{format_hashline_view, FileHash};
+use super::{format_numbered_view, format_window_bytes, read_text_window, ScanError, CHUNK_SIZE};
 
 fn numbered_log(lines: usize, pad: usize) -> String {
     let filler = "x".repeat(pad);
@@ -26,13 +24,6 @@ fn crossing_chunk_text() -> (String, usize) {
     (text, line)
 }
 
-fn hashline_header<'a>(path: &'a str) -> impl FnOnce(Option<&str>) -> String + 'a {
-    move |tag| match tag {
-        Some(tag) => crate::hashline::format_header(path, tag),
-        None => path.to_string(),
-    }
-}
-
 // Covers: both numbered renderers preserve content bytes and output newline boundaries
 // Owner: text view
 #[test]
@@ -48,12 +39,7 @@ fn numbered_renderers_preserve_line_boundaries() {
     ];
     for (text, expected) in cases {
         let split = format_numbered_view("file.txt", text, None, None).unwrap();
-        // A fingerprint forces the scan path even for these small inputs.
-        let scanned =
-            format_window_bytes(text.as_bytes(), None, None, Some(FileHash::new()), |_| {
-                "file.txt".to_string()
-            })
-            .unwrap();
+        let scanned = format_window_bytes(text.as_bytes(), None, None, "file.txt").unwrap();
         assert_eq!(split, expected, "split input={text:?}");
         assert_eq!(scanned, expected, "scanned input={text:?}");
     }
@@ -86,15 +72,8 @@ fn window_matches_split_across_chunk_windows() {
         (wide.as_str(), Some(1), Some(2)),
     ];
     for (text, offset, limit) in cases {
-        let expected = format_hashline_view("log.txt", text, offset, limit).unwrap();
-        let actual = format_window_bytes(
-            text.as_bytes(),
-            offset,
-            limit,
-            Some(FileHash::new()),
-            hashline_header("log.txt"),
-        )
-        .unwrap();
+        let expected = format_numbered_view("log.txt", text, offset, limit).unwrap();
+        let actual = format_window_bytes(text.as_bytes(), offset, limit, "log.txt").unwrap();
         assert_eq!(actual, expected, "offset={offset:?} limit={limit:?}");
     }
 }
@@ -106,18 +85,11 @@ fn window_rejects_invalid_utf8_before_selected_window() {
     let mut bytes = vec![b'a'; CHUNK_SIZE];
     bytes[10] = 0xFF;
     bytes.extend_from_slice(b"ok\nmore\n");
-    let error = format_window_bytes(
-        &bytes,
-        Some(2),
-        Some(1),
-        Some(FileHash::new()),
-        hashline_header("bad.txt"),
-    )
-    .unwrap_err();
+    let error = format_window_bytes(&bytes, Some(2), Some(1), "bad.txt").unwrap_err();
     assert_eq!(error, ScanError::InvalidUtf8);
 }
 
-// Covers: untagged large ranged reads must match the in-memory numbered view
+// Covers: large ranged disk reads must match the in-memory numbered view
 // Owner: text view window
 #[tokio::test]
 async fn numbered_disk_window_matches_split_view() {
@@ -135,8 +107,7 @@ async fn numbered_disk_window_matches_split_view() {
     ];
     for (offset, limit) in cases {
         let expected = format_numbered_view("log.txt", &text, offset, limit).unwrap();
-        let actual = FileViewStyle::Numbered
-            .read_window(&path, "log.txt", source_len, offset, limit)
+        let actual = read_text_window(&path, "log.txt", source_len, offset, limit)
             .await
             .unwrap();
         assert_eq!(actual, expected, "offset={offset:?} limit={limit:?}");
