@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    rtk::{CommandRun, Rtk},
+    rtk::{CommandRun, DiscoverRecord, Prepared, Rtk},
     sdk_support::{map_app_error, map_invalid_app_error},
 };
 
@@ -79,16 +79,17 @@ impl ShellToolOptions {
     /// `rtk` 0.23+ binary is on `PATH`. Off by default, and off when the
     /// process has `RTK_DISABLED=1`.
     ///
-    /// The rewrite happens before authorization, so approval sees the command
-    /// that runs (`rtk git status`), while start metadata keeps the command the
-    /// model wrote. Each run is also recorded under the Claude Code projects
+    /// The rewrite happens before authorization, so approval and hooks see the
+    /// command that runs (`rtk git status`), while start metadata keeps the
+    /// command the model wrote. Nothing is rewritten or recorded while `rtk`
+    /// is unavailable. Each run is also recorded under the Claude Code projects
     /// directory (`$CLAUDE_CONFIG_DIR` or `~/.claude`) for `rtk discover`.
     pub fn rtk(mut self, enabled: bool) -> Self {
         self.rtk = enabled.then(Rtk::system).flatten();
         self
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn rtk_with(mut self, rtk: Rtk) -> Self {
         self.rtk = Some(rtk);
         self
@@ -142,8 +143,8 @@ impl SdkShellTool {
 struct ShellPlan {
     execution: ProcessExecution,
     resolved_cwd: ResolvedWorkspacePath,
-    /// Records the run for `rtk discover` once it finishes.
-    rtk_log: Option<(Rtk, String)>,
+    /// Written for `rtk discover` once the command finishes.
+    discover_record: Option<DiscoverRecord>,
 }
 
 impl ShellPlan {
@@ -157,7 +158,7 @@ impl ShellPlan {
         environment: ProcessEnvironment,
         rtk: Option<&Rtk>,
     ) -> Result<Self, ToolError> {
-        let mut arguments = ShellArgs::parse(arguments).map_err(map_invalid_app_error)?;
+        let arguments = ShellArgs::parse(arguments).map_err(map_invalid_app_error)?;
         let timeout = arguments.timeout().map_err(map_invalid_app_error)?;
         let workspace = workspace.ok_or_else(|| {
             ToolError::new(
@@ -168,23 +169,23 @@ impl ShellPlan {
         let resolved_cwd = workspace
             .resolve_for_read(workspace.root())
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-        let mut rtk_log = None;
-        if let Some(rtk) = rtk {
-            if let Some(command) = rtk.rewrite(&arguments.command).await {
-                arguments.command = command;
+        let Prepared { command, record } = match rtk {
+            Some(rtk) => {
+                rtk.prepare(arguments.command, resolved_cwd.path(), &environment)
+                    .await
             }
-            rtk_log = Some((rtk.clone(), arguments.command.clone()));
-        }
+            None => Prepared::unchanged(arguments.command),
+        };
         let execution = ProcessExecution::new(
             resolved_cwd.path(),
-            kind.invocation(arguments.command),
+            kind.invocation(command),
             environment,
             ProcessOutputLimits::new(max_output_bytes, timeout),
         );
         Ok(Self {
             execution,
             resolved_cwd,
-            rtk_log,
+            discover_record: record,
         })
     }
 
@@ -204,6 +205,11 @@ impl ShellPlan {
         host_terminals: Option<&dyn crate::HostTerminals>,
         context: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
+        let Self {
+            execution,
+            resolved_cwd,
+            discover_record,
+        } = self;
         let workspace = context.workspace().ok_or_else(|| {
             ToolError::new(
                 ToolErrorKind::Execution,
@@ -211,16 +217,16 @@ impl ShellPlan {
             )
         })?;
         workspace
-            .revalidate(&self.resolved_cwd)
+            .revalidate(&resolved_cwd)
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-        let max_output_bytes = self.execution.output_limits().max_output_bytes();
+        let max_output_bytes = execution.output_limits().max_output_bytes();
         let mut metadata = ToolMetadata::new().operation(OperationKind::Execute);
         // Only `bash` runs in host terminals; there it must, see `host_command`.
         let hosted = match (kind, host_terminals) {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             (ShellKind::Bash, Some(terminals)) => Some((
                 terminals,
-                crate::host_terminals::host_command(&self.execution).map_err(map_app_error)?,
+                crate::host_terminals::host_command(&execution).map_err(map_app_error)?,
             )),
             _ => None,
         };
@@ -229,7 +235,7 @@ impl ShellPlan {
                 let (run, terminal) = crate::host_terminals::run(
                     terminals,
                     command,
-                    self.execution.output_limits().timeout(),
+                    execution.output_limits().timeout(),
                     context.cancellation(),
                     context.progress(),
                 )
@@ -238,14 +244,14 @@ impl ShellPlan {
                 metadata = metadata.host_terminal(terminal);
                 run
             }
-            None => execute_with_progress(kind, self.execution, context).await?,
+            None => execute_with_progress(kind, execution, context).await?,
         };
-        if let Some((rtk, command)) = &self.rtk_log {
+        if let Some(record) = discover_record {
             let run = CommandRun {
                 output_len: run.text().len(),
                 failed: run.is_failure(),
             };
-            rtk.log(self.resolved_cwd.path(), command, run).await;
+            record.write(resolved_cwd.path(), run).await;
         }
         // Taken before `limit_data`, which may drop the structured view.
         let process = run.data().map(|outcome| outcome.process.clone());

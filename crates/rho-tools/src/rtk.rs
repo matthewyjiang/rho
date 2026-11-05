@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::tool::ToolResult;
+use rho_sdk::ProcessEnvironment;
 use serde_json::json;
 use tokio::{io::AsyncWriteExt, process::Command, sync::OnceCell};
 
@@ -19,6 +20,13 @@ const REWRITE_TIMEOUT: Duration = Duration::from_secs(2);
 static DISCOVER_LOG_NAME: LazyLock<String> =
     LazyLock::new(|| format!("rho-{}-{}.jsonl", std::process::id(), uuid::Uuid::new_v4()));
 
+/// Whether an `rtk` 0.23+ binary is on `PATH`. Blocks on `rtk --version`.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-agent-tools): make the `rtk` module private and remove `is_available` and `rewrite`; enable RTK only through `ShellToolOptions::rtk`.
+///
+/// They stay public for semver and serve the legacy `Bash`/`PowerShell` `rtk_enabled` path.
 pub fn is_available() -> bool {
     let Ok(output) = std::process::Command::new("rtk").arg("--version").output() else {
         return false;
@@ -46,6 +54,11 @@ fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
     ))
 }
 
+/// The `rtk rewrite` form of `command`, or `None` to run it unchanged.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-agent-tools): make the `rtk` module private and remove `is_available` and `rewrite`; enable RTK only through `ShellToolOptions::rtk`.
 pub async fn rewrite(command: &str) -> Option<String> {
     if disabled_by_env() {
         return None;
@@ -88,58 +101,104 @@ async fn rewrite_with(rtk: &mut Command, command: &str) -> Option<String> {
 /// authorized and records each run for `rtk discover`.
 ///
 /// Availability (`rtk --version` at 0.23 or newer) is probed once, on the first
-/// command, so building a tool set never blocks on spawning `rtk`.
+/// command, so building a tool set never blocks on spawning `rtk`. Nothing is
+/// rewritten or recorded while RTK is unavailable.
 #[derive(Clone, Debug)]
 pub(crate) struct Rtk {
-    /// `rtk` and any leading arguments, e.g. `sh fake-rtk.sh` in tests.
-    program: Vec<OsString>,
+    program: OsString,
+    /// Leading arguments, e.g. a fake-rtk script run through `sh` in tests.
+    program_args: Vec<OsString>,
     projects_dir: Option<PathBuf>,
     available: Arc<OnceCell<bool>>,
+}
+
+/// A command ready to authorize, and its pending discover record.
+pub(crate) struct Prepared {
+    pub(crate) command: String,
+    pub(crate) record: Option<DiscoverRecord>,
+}
+
+impl Prepared {
+    pub(crate) fn unchanged(command: String) -> Self {
+        Self {
+            command,
+            record: None,
+        }
+    }
+}
+
+/// One `rtk discover` record, written after the command it names finishes.
+pub(crate) struct DiscoverRecord {
+    projects_dir: PathBuf,
+    command: String,
+}
+
+impl DiscoverRecord {
+    /// Best effort: analytics never fail the command.
+    pub(crate) async fn write(self, cwd: &Path, run: CommandRun) {
+        let _ = log_execution_in_projects_dir(&self.projects_dir, cwd, &self.command, run).await;
+    }
 }
 
 impl Rtk {
     /// `rtk` from `PATH`, logging under the Claude Code projects directory.
     /// `None` when `RTK_DISABLED=1` is set.
     pub(crate) fn system() -> Option<Self> {
-        (!disabled_by_env()).then(|| Self::new(vec!["rtk".into()], discover_projects_dir()))
+        (!disabled_by_env()).then(|| Self::new("rtk".into(), Vec::new(), discover_projects_dir()))
     }
 
-    pub(crate) fn new(program: Vec<OsString>, projects_dir: Option<PathBuf>) -> Self {
+    pub(crate) fn new(
+        program: OsString,
+        program_args: Vec<OsString>,
+        projects_dir: Option<PathBuf>,
+    ) -> Self {
         Self {
             program,
+            program_args,
             projects_dir,
             available: Arc::new(OnceCell::new()),
         }
     }
 
-    /// The rewritten command, or `None` to run `command` unchanged.
-    pub(crate) async fn rewrite(&self, command: &str) -> Option<String> {
-        if !self.is_available().await {
-            return None;
+    /// Rewrites `command` when RTK has a better form, and plans its record.
+    /// `rtk` runs in the command's directory with its environment, so it
+    /// reads the same project config and never sees scrubbed credentials.
+    pub(crate) async fn prepare(
+        &self,
+        command: String,
+        cwd: &Path,
+        environment: &ProcessEnvironment,
+    ) -> Prepared {
+        let Some(mut rtk) = self.command(cwd, environment) else {
+            return Prepared::unchanged(command);
+        };
+        if !self.is_available(cwd, environment).await {
+            return Prepared::unchanged(command);
         }
-        rewrite_with(&mut self.command()?, command).await
+        let command = rewrite_with(&mut rtk, &command).await.unwrap_or(command);
+        let record = self
+            .projects_dir
+            .clone()
+            .map(|projects_dir| DiscoverRecord {
+                projects_dir,
+                command: command.clone(),
+            });
+        Prepared { command, record }
     }
 
-    fn command(&self) -> Option<Command> {
-        let (program, arguments) = self.program.split_first()?;
-        let mut command = Command::new(program);
-        command.args(arguments);
+    /// `None` when `environment` cannot be applied; RTK then stays out of the way.
+    fn command(&self, cwd: &Path, environment: &ProcessEnvironment) -> Option<Command> {
+        let mut command = Command::new(&self.program);
+        command.args(&self.program_args).current_dir(cwd);
+        crate::apply_process_environment(&mut command, environment).ok()?;
         Some(command)
     }
 
-    /// Best effort: analytics never fail the command.
-    pub(crate) async fn log(&self, cwd: &Path, command: &str, run: CommandRun) {
-        let Some(projects_dir) = &self.projects_dir else {
-            return;
-        };
-        let _ = log_execution_in_projects_dir(projects_dir, cwd, command, run).await;
-    }
-
-    async fn is_available(&self) -> bool {
+    async fn is_available(&self, cwd: &Path, environment: &ProcessEnvironment) -> bool {
         *self
             .available
             .get_or_init(|| async {
-                let Some(mut command) = self.command() else {
+                let Some(mut command) = self.command(cwd, environment) else {
                     return false;
                 };
                 let version = tokio::time::timeout(

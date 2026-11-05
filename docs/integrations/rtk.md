@@ -14,6 +14,8 @@ rtk --version
 
 Rho needs RTK **0.23 or newer** so `rtk rewrite` is available. Older versions are treated as unavailable.
 
+Rewritten commands run in `bash -lc`, so `rtk` must also be on your login shell's `PATH`, not only one set by `.bashrc` or an interactive-only activation.
+
 ## What Rho does
 
 When RTK is available and enabled:
@@ -22,7 +24,7 @@ When RTK is available and enabled:
 2. If rewrite returns a different non-empty command, that rewritten form is what the [permission mode](/configuration/permissions) checks and what runs. An approval prompt shows `rtk git status`, not `git status`.
 3. After the command finishes, Rho writes RTK-compatible analytics records so `rtk gain` and `rtk discover` can account for Rho shell use.
 
-The tool card and the transcript keep the command the agent wrote.
+The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) and the Auto classifier see the rewritten command, so a deny hook that anchors on `^git push` misses `rtk git push`. Match the command anywhere in `shell_command`, or strip a leading `rtk ` first.
 
 Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the process environment sets `RTK_DISABLED=1`.
 
