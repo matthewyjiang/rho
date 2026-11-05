@@ -89,7 +89,7 @@ After a restart, or immediately after `/login` onboarding, Rho fetches `/v1/mode
 
 ## Models
 
-Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent. Proxies such as CLIProxyAPI, and many local servers, omit tool-call ids, use sparse indexes, or skip `{}` for zero-argument tools. Rho fills those in so the tool loop can continue. First-party OpenAI-compatible providers stay strict.
+Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. `rho run` and `rho acp` wait only for the host the session uses, and only when its cached list is over a day old or lacks the selected model; in ACP, a host that answers late shows up in the model picker of the next session. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent. Proxies such as CLIProxyAPI, and many local servers, omit tool-call ids, use sparse indexes, or skip `{}` for zero-argument tools. Rho fills those in so the tool loop can continue. First-party OpenAI-compatible providers stay strict.
 
 Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
 
