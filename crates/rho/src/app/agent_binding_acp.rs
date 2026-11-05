@@ -8,6 +8,7 @@ use crate::{
         AgentDefinition, AgentRuntime, AntigravityAgentConfig, AntigravityTool, CursorAgentConfig,
         CursorTool,
     },
+    antigravity_runtime::fence::AntigravityFence,
     config::Config,
     permission::PermissionMode,
     workflow::ResolvedAgent,
@@ -48,13 +49,10 @@ pub(super) fn bind_antigravity_runtime(
         AgentRuntime::Antigravity,
         config.model.as_deref(),
         invocation,
-        "gemini-3.8-flash-high",
+        "gemini-3.8-flash",
     )?;
-    crate::antigravity_runtime::fence::map_permission_mode(
-        host_config.permission_mode,
-        &config.tools,
-    )
-    .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
+    AntigravityFence::new(host_config.permission_mode, &config.tools)
+        .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
     Ok(BoundRuntime::Antigravity {
         model: config.model.clone(),
         tools: config.tools.clone(),
@@ -108,8 +106,11 @@ pub(super) fn frozen_antigravity_runtime(
     frozen: &ResolvedAgent,
     permission_mode: PermissionMode,
 ) -> anyhow::Result<BoundRuntime> {
+    // Plans frozen for agy_acp_server may name its retired tools
+    // (`view_file`, `create_file`, `read_url_content`); those fail to parse,
+    // so the plan must be made again.
     let tools = frozen_tools::<AntigravityTool>(frozen)?;
-    crate::antigravity_runtime::fence::map_permission_mode(permission_mode, &tools)
+    AntigravityFence::new(permission_mode, &tools)
         .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?;
     Ok(BoundRuntime::Antigravity {
         model: frozen.model.clone(),

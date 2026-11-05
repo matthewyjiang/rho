@@ -34,7 +34,7 @@ Runtime (harness) and model are separate axes. Do not pick an external runtime j
 | `rho` (default) | Rho's own loop and tools, any configured provider | none |
 | `claude-cli` | child should run on Claude Code and spend a Claude.ai subscription | `claude` on `PATH`, `/login claude-code` |
 | `cursor` | child should run on Cursor Agent with the Cursor sign-in | `cursor-agent` on `PATH`, `/login cursor` |
-| `antigravity` | child should run on Google Antigravity (Gemini) with its Google sign-in | `agy_acp_server.par` + `localharness_external` on `PATH`, `/login antigravity` |
+| `antigravity` | child should run on Google Antigravity (Gemini) with its Google sign-in | `agy` 1.5.0+ on `PATH`, `/login antigravity` |
 
 Explain before confirming any external runtime:
 
@@ -42,7 +42,7 @@ Explain before confirming any external runtime:
 - Rho never sees or stores the external credential. For Claude this is the supported way to use a subscription, since Rho's Anthropic provider is API-key billing only.
 - Permission modes: launch in Plan or Bypass. Supervised always refuses. Cursor and Antigravity also refuse Auto and Allow edits. Claude allows Auto and Allow edits only when every `tools:` entry is a proven no-prompt Claude built-in for that approval class (for example `Read`, `Glob`, `Grep`) and `inherit_claude_config` is false; specifiers like `Bash(git *)`, write/process tools, and plugin/MCP names refuse spawn.
 - `provider`, `auth`, `fast`, and `@alias` models are Rho only.
-- Cursor and Antigravity reject `prompt: replace` and `reasoning`; effort lives in the model id.
+- Cursor and Antigravity reject `prompt: replace` and `reasoning`; Cursor effort lives in the model id, Antigravity uses agy's default thinking level.
 
 Emit `runtime` for external runtimes; omit it for `rho` unless the user wants it explicit.
 
@@ -55,7 +55,7 @@ Vocabularies never mix.
 - `rho`: `tools: all` (default) or a focused multi-select from `agent`, `agents`, `bash`, `edit`, `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`, `process`, `questionnaire`, `read_file`, `rho`, `shell`, `skill`, `todo`, `web_search`, `write`. Prefer focused lists for narrow roles.
 - `claude-cli`: Claude Code entries like `Read`, `Edit`, `Glob`, `Grep`, `Bash(git *)`. No commas inside specifiers. Omitted means no tools; `all` is invalid. Presets: read-only `[Read, Glob, Grep]`; git-aware adds `Bash(git *)`; add `Edit`/`Write` only if the user wants workspace changes.
 - `cursor`: required, nonempty, closed set: `read_tool_call`, `grep_tool_call`, `glob_tool_call`, `ls_tool_call`, `sem_search_tool_call`, `read_lints_tool_call`, `edit_tool_call`, `delete_tool_call`, `shell_tool_call`, `write_shell_stdin_tool_call`, `web_search_tool_call`, `web_fetch_tool_call`, `fetch_tool_call`, `mcp_tool_call`, `list_mcp_resources_tool_call`, `read_mcp_resource_tool_call`, `update_todos_tool_call`, `read_todos_tool_call`, `create_plan_tool_call`, `apply_agent_diff_tool_call`. This is the accepted vocabulary, not an exact fence. Before confirming, tell the user that Cursor fences by category: search tools (`grep`, `glob`, `ls`, `sem_search`, `read_lints`) always run, todo and plan tools are never fenced, and declaring one write, shell, fetch, or MCP name enables that whole category in Bypass (for example `edit_tool_call` also allows delete and apply-diff).
-- `antigravity`: required, nonempty, closed set: `view_file` (read), `create_file`, `edit_file` (write), `run_command` (shell), `search_web`, `read_url_content` (network). Plan mode needs `view_file`. In Bypass, `run_command` runs anything the model asks.
+- `antigravity`: required nonempty closed list from `read_file`, `write_file`, `edit_file`, `run_command`, `search_web`. agy builds the child with only those built-ins. Plan keeps only `read_file` (a list without it refuses in Plan); Bypass keeps every listed tool and approves a command only with `run_command`.
 
 ## 5. Model and reasoning
 
@@ -69,9 +69,9 @@ Reasoning: offer inherit (omit) plus the levels models.dev lists for the target 
 | --- | --- | --- |
 | `claude-cli` | `claude-opus-5` (default), `claude-sonnet-5`, `claude-fable-5-1` | optional `low`, `medium`, `high`, `xhigh`, `max` (`--effort`) |
 | `cursor` | ids from `cursor-agent models`; bracket overrides allowed, e.g. `gpt-5.3-codex[effort=high,fast=false]` | none |
-| `antigravity` | `gemini-3.8-flash-high` (recommended), `gemini-pro-agent` | none |
+| `antigravity` | `gemini-3.8-flash` (recommended), `gemini-4-argon` | none |
 
-An Antigravity model the server does not offer fails the run before the prompt and lists the offered ids.
+An Antigravity model the server does not offer fails the run before the prompt and lists the offered values.
 
 ## 6. Prompt
 
@@ -100,8 +100,8 @@ You are ...
 id: agy-reviewer
 description: Reviews changes with Antigravity on Gemini. Requires /login antigravity. Not for root sessions.
 runtime: antigravity
-model: gemini-3.8-flash-high
-tools: [view_file, run_command]
+model: gemini-3.8-flash
+tools: [read_file, run_command]
 ---
 
 You are a code reviewer running under Antigravity for a Rho parent.

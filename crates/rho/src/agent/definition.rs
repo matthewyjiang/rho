@@ -256,7 +256,7 @@ pub enum ToolPolicy {
 /// tool vocabulary. `ClaudeCli` delegates the loop to the `claude` binary and
 /// uses Claude Code tool names. `Cursor` delegates the loop to `cursor-agent`
 /// and uses the closed Cursor tool vocabulary. `Antigravity` delegates the
-/// loop to `agy_acp_server` and uses the closed Antigravity tool vocabulary.
+/// loop to `agy acp` and uses the closed Antigravity tool vocabulary.
 #[derive(
     Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -380,9 +380,9 @@ pub struct CursorAgentConfig {
 
 /// Settings that only the Antigravity runtime understands.
 ///
-/// Built at parse time with a nonempty closed tool allow list. Each run sends
-/// `tools` as the session's built-in allowlist and answers permissions from
-/// it. Antigravity has no reasoning setting outside the model id.
+/// Built at parse time with a nonempty closed tool allow list. Each run
+/// writes `tools` into an agy custom agent and answers permissions from it
+/// (see `antigravity_runtime::fence`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AntigravityAgentConfig {
     /// Nonempty closed allow list. Enforced at parse and edit validation.

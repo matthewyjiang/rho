@@ -10,7 +10,7 @@ use super::{acp_e2e::FakeAcpAgent, claude_e2e};
 const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
     program: "cursor-agent",
     fixtures: "cursor_acp",
-    recorded_env: "CURSOR_CONFIG_DIR",
+    recorded_env: Some("CURSOR_CONFIG_DIR"),
     acp_subcommand: Some("acp"),
 };
 

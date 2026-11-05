@@ -150,7 +150,7 @@ pub(super) async fn intercept(
             if tool_result(request, ANTIGRAVITY_AGENT_CALL_ID).is_none() =>
         {
             // Delegation into a runtime: antigravity agent. The PTY E2E installs
-            // the definition and an `agy_acp_server.par` shim running the
+            // the definition and an `agy` shim running the
             // scripted ACP agent.
             Some(completed_tool_call(
                 ANTIGRAVITY_AGENT_CALL_ID,

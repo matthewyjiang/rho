@@ -2,15 +2,15 @@
 
 Parent: [Agents and delegation](/subagents).
 
-Rho can hand a delegated agent to Google Antigravity's ACP server instead of running Rho's own loop. The parent stays in Rho. The child uses Antigravity's harness, Gemini models, and the server's own Google sign-in. Model choice and runtime choice stay separate: `runtime: antigravity` is not a Rho provider.
+Rho can hand a delegated agent to Google Antigravity's `agy` CLI instead of running Rho's own loop. The parent stays in Rho. The child uses Antigravity's harness, Gemini models, and agy's own Google sign-in. Model choice and runtime choice stay separate: `runtime: antigravity` is not a Rho provider.
 
-Verified against `agy_acp_server 1.3.0`. Rho speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) to it over stdio.
+Requires agy 1.5.0 or later. Rho speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) to `agy acp` over stdio.
 
 ```mermaid
 flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
-    agentTool --> agy[agy_acp_server child]
-    agy --> sub[Antigravity sign-in]
+    agentTool --> agy[agy acp child]
+    agy --> sub[agy Google sign-in]
     agy --> attach[rho attach / completion]
 ```
 
@@ -19,7 +19,7 @@ flowchart LR
 Use `runtime: antigravity` when you want a Gemini-backed Antigravity child while the main session stays on Rho:
 
 - Keep Rho as the orchestrator (fan-out, attach, cancel, session tree) while Antigravity owns the child loop and sign-in
-- Fence the child to an explicit `tools:` list of Antigravity built-ins
+- Give the child a closed tool allow list that agy itself enforces, and run it as a read-and-plan child (Plan) or a worker (Bypass)
 - Steer a running child with follow-up messages, delivered as its next turn
 
 Antigravity agents are **delegated only**. The interactive root and `rho run` root cannot bind `runtime: antigravity`; a Rho parent launches them through the `agent` tool.
@@ -28,12 +28,15 @@ Antigravity agents are **delegated only**. The interactive root and `rho run` ro
 
 ```mermaid
 flowchart TD
-    login["/login antigravity (installs the server if missing)"] --> def[Write runtime antigravity agent]
+    install[Install agy 1.5.0+] --> login["/login antigravity"]
+    login --> def[Write runtime antigravity agent]
     def --> launch[Parent agent tool launch]
     launch --> watch[attach cancel]
 ```
 
-1. **Install and sign in** from the TUI or the shell:
+1. **Install agy** from [Google's releases](https://github.com/google-antigravity/antigravity-cli/releases) and put it on `PATH`. Update an older copy with `agy update`. Rho does not ship or install it.
+
+2. **Sign in** from the TUI or the shell:
 
    ```text
    /login antigravity
@@ -43,76 +46,58 @@ flowchart TD
    rho login antigravity
    ```
 
-   If the server is not installed, Rho offers to install it first: it shows the download size and destination and waits for `y`. The server is a separate download from the `agy` CLI (the `agy` CLI has no ACP mode). Rho downloads the `antigravity-acp` 1.3.0 archive for your platform from `dl.google.com` (111–334 MB; 0.2–1.1 GB unpacked), checks it against the size and SHA-256 pinned in Rho (Google publishes no checksums), and unpacks it into `$RHO_HOME/runtimes/antigravity-acp/1.3.0/` (default `~/.rho`). It never touches `PATH` or shell profiles. When a Rho release pins a newer server, the next `/login antigravity` installs it and removes the old one. Non-interactive `rho login antigravity` refuses to install; run it in a terminal.
+   Both hand the terminal to `agy acp --login`, which prints a Google sign-in link and asks for the code or the address of the page the browser lands on, so it also works over SSH. The sign-in is agy's own and is shared with the agy CLI: if you already use `agy`, you are already signed in. Rho never stores or reads the token. To sign out, use `/logout` in agy.
 
-   To use your own copy instead, get the archive from the [ACP registry](https://agentclientprotocol.com), unpack it, and put `agy_acp_server.par` (`agy_acp_server.exe` on Windows) on `PATH` next to its `localharness_external` (a symlink on `PATH` is fine, Rho resolves it). A server on `PATH` always wins over Rho's copy. Platforms without a pinned archive need this manual install.
+   Confirm with `/doctor` (or `rho doctor`): the `agy` row under Runtimes shows the version and sign-in state, and warns when agy is older than 1.5.0. `/info` shows the same under External runtimes. Both run `agy --version` and `agy models`.
 
-   Rho then starts the server, which prints a Google sign-in link and waits up to 300 s for the browser to come back to `http://127.0.0.1:<port>/`. Over SSH the browser cannot reach that address and its last page fails to load: copy that page's address, paste it into the login prompt, and press Enter. Rho only accepts that exact loopback address and replays it locally.
-
-   Confirm with `/doctor` (or `rho doctor`): the `agy_acp_server` row under Runtimes shows the sign-in method, and warns when `localharness_external` is missing next to the server, or when `ANTIGRAVITY_HARNESS_PATH` names a file that does not exist (the server does not fall back to searching beside itself). `/info` shows the same state under External runtimes. Neither starts the server, so neither reports its version or checks that the token is still valid.
-
-   The server records the method in `$GEMINI_HOME/antigravity-acp/settings.json` (default `~/.gemini`) and keeps the token in `acp_token.json` beside it; on macOS it uses the Keychain (service `gemini`) instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. This sign-in is separate from the `agy` CLI's. Rho never stores or reads the token. To sign out, delete that `settings.json` (runs then report signed out) and the token file or Keychain item.
-
-2. **Write a delegated agent definition**, for example `~/.rho/agents/agy-reviewer.md`:
+3. **Write a delegated agent definition**, for example `~/.rho/agents/agy-reviewer.md`:
 
    ```markdown
    ---
    id: agy-reviewer
    description: Review changes with Antigravity on Gemini
    runtime: antigravity
-   model: gemini-3.8-flash-high
-   tools: [view_file, run_command]
+   model: gemini-3.8-flash
+   tools: [read_file, run_command]
    ---
    Review the requested changes. Prefer reading before editing.
    ```
 
    Notes:
 
-   - `tools:` is required and nonempty. There is no `tools: all`. Names are Antigravity's built-ins: `view_file`, `create_file`, `edit_file`, `run_command`, `search_web`, `read_url_content`. Unknown names fail parse and frozen resume.
-   - `model:` is an Antigravity model id (for example `gemini-3.8-flash-high` or `gemini-pro-agent`). Rho sets it as the session's `model` option; a value the server does not offer fails the run before the prompt, listing the offered ids. Omit it to keep the server default.
-   - There is no `reasoning:` field. Effort is part of the model id.
+   - `tools:` is required: a nonempty list of `read_file`, `write_file`, `edit_file`, `run_command`, and `search_web` ([vocabulary](/subagents/definition-schema#tool-vocabulary-by-runtime)). agy builds the child with only those built-ins, plus `manage_task` (which agy always adds). Subagent, scheduling, and question built-ins are not available.
+   - `model:` is an Antigravity model (for example `gemini-4-argon` or `gemini-3.8-flash`). Rho sets it as the session's `model` option; a value the server does not offer fails the run before the prompt, listing the offered values. Omit it to keep agy's default.
+   - There is no `reasoning:` field. Runs use agy's default thinking level.
    - `prompt: replace` is rejected (ACP has no system-prompt override). Use `extend`: the body is prepended to the first prompt.
 
-3. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
+4. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
-4. **Watch and cancel** with `rho attach <run-id>`. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
+5. **Watch and cancel** with `rho attach <run-id>`. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
 
 ## Permission modes
 
-For every run Rho:
+Each run writes an agy custom agent whose `tools:` is the run's allow list, and starts agy with it. agy enforces the list: a tool outside it does not exist for the model.
 
-1. Sends `tools:` (narrowed by the mode) as `_meta.agy.enabledTools` on `session/new`. Built-ins outside the list are not offered to the model.
-2. Sets session mode `default`, whatever the user's Antigravity settings say, so the server asks before every non-read tool. Its `auto_edit` and `yolo` modes would approve tools without Rho.
-3. Answers every `session/request_permission` itself, choosing only the one-shot allow or deny option.
+| Rho mode | Tools kept | agy session |
+| --- | --- | --- |
+| Plan | read-only (`read_file`); a list without one is refused | mode `plan`, where the agent reads and writes a plan; Rho rejects every permission request agy sends |
+| Bypass | every declared tool | mode `default`; a permission request is approved once when a kept tool covers it (a command needs `run_command`), otherwise rejected |
+| Auto, Allow edits, Supervised | - | refused (`antigravity agents run only in Plan or Bypass`): Rho cannot ask a human to approve an Antigravity tool call |
 
-| Rho mode | Antigravity session |
-| --- | --- |
-| Plan | allowlist keeps read-only built-ins (`view_file`); every permission request rejected |
-| Bypass | declared built-ins allowed; permission requests allowed only for a declared category |
-| Auto, Allow edits, Supervised | refused (`antigravity agents run only in Plan or Bypass`): Rho cannot ask a human to approve an Antigravity tool call |
+Bypass runs whatever the kept tools allow, inside or outside the workspace, just like a shell tool on any other runtime. In agy 1.5.0, agy asks before every command, while workspace edits and web search run without asking. If agy leaves the mode Rho set, Rho fails the run.
 
-Plan with no read-only tool declared is refused.
+agy falls back to its default agent, with every built-in, when it cannot find the named agent, and says so only in its log. Rho writes the agent before starting agy, and a command still needs `run_command` in the list to be approved, but a workspace edit would not be stopped in that case.
 
-| Permission kind | Approved in Bypass when `tools:` declares |
-| --- | --- |
-| `read` | `view_file` (it normally does not ask) |
-| `edit`, `delete`, `move` | `create_file` or `edit_file` |
-| `execute` | `run_command` |
-| `search` | `search_web` |
-| `fetch` | `read_url_content` |
-| anything else | never |
-
-`run_command` in Bypass runs whatever the model asks, inside or outside the workspace, just like a shell tool on any other runtime.
-
-Rho does not offer Antigravity's `ask_question`, `start_subagent`, `schedule`, `generate_image`, or `finish` built-ins, or its directory search built-ins.
+agy's `default` mode also honors your agy `toolPermission` setting, which can approve every tool without asking Rho. So Rho runs `agy acp --cli_dir_name rho`, which reads settings from `~/.gemini/antigravity-cli/rho/` instead of your `~/.gemini/antigravity-cli/settings.json`, while keeping your sign-in. Project and shared Antigravity configuration under `~/.gemini/config/` still applies: hooks and MCP servers run, and a command a project permission already allows never reaches Rho as a request, even in Plan.
 
 ## Quick checklist
 
 | Step | Command or field |
 | --- | --- |
-| Install and sign in | `/login antigravity` or `rho login antigravity` (or your own server on `PATH`) |
-| Check | `/doctor` or `rho doctor` (`agy_acp_server` row), `/info` |
-| Define | `runtime: antigravity` + nonempty Antigravity `tools:` / optional `model:` |
+| Install | agy 1.5.0+ on `PATH` (`agy update`) |
+| Sign in | `/login antigravity` or `rho login antigravity` |
+| Check | `/doctor` or `rho doctor` (`agy` row), `/info` |
+| Define | `runtime: antigravity` + `tools:` + optional `model:` |
 | Permission mode | Plan or Bypass only |
 | Launch | Rho parent `agent` tool, delegated only |
 | Messaging | `agents` action `message`; delivered as the next turn |
@@ -120,10 +105,10 @@ Rho does not offer Antigravity's `ask_question`, `start_subagent`, `schedule`, `
 
 ## Execution details
 
-Rho runs `agy_acp_server.par --uid=` on Linux (without `--uid=` the 1.3.0 server aborts looking up group `nobody`) and `agy_acp_server.par` elsewhere, in the workspace, with `ANTIGRAVITY_HARNESS_PATH` pointing at the `localharness_external` next to the resolved server (the one on `PATH`, else Rho's copy) unless you already set it. Rho's `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured warm `initialize` took 1.4–2.1 s and `session/new` 2.7 s.
+Rho runs `agy acp --cli_dir_name rho --add-dir <run>/agy --agent rho-run` in the workspace. agy 1.5.0 finds custom agents only in `.agents/agents/` under a workspace root, its global config, or a plugin, so each run writes `<run>/agy/.agents/agents/rho-run.md` under its own run directory and adds that folder to the workspace. Your project and agy configuration are untouched; the child can see the added folder, which holds only that file. Its `initialize` identifies it as `rho` in `clientInfo` and advertises no client filesystem or terminal capabilities. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`, `session/set_config_option`) has a 10 s budget; measured with agy 1.5.0, `initialize` took under 0.1 s and `session/new` about 1.5 s.
 
-Before spawning, Rho checks that `$GEMINI_HOME/antigravity-acp/settings.json` (read as plain JSON) names a sign-in method and, for Google sign-in with file storage, that its token file exists. With a method but no token the server starts an interactive browser sign-in at `session/new`, so the run fails at once with a pointer to `/login antigravity` instead. Rho does not query the macOS Keychain; a missing Keychain item, or an expired or revoked token, surfaces at `session/new` as the server's error or the 10 s step budget. Rho never calls ACP `authenticate` during a run.
+Rho never calls ACP `authenticate` during a run. A signed-out agy fails `session/new` with `Authentication required`; run `/login antigravity`.
 
-Cancel sends `session/cancel`; the server answers with stop reason `cancelled` and stops the running tool. Rho always terminates the server after the last turn. The ACP session id is recorded but there is no resume command.
+Cancel sends `session/cancel`. Rho always terminates `agy acp` after the last turn. The ACP session id is recorded but there is no resume command.
 
-Antigravity 1.3.0 sometimes reports a `run_command` call as failed immediately and retries it under a new call (and a new permission request). That is server behavior; both cards appear in the transcript.
+Workflow plans freeze the resolved `agy` executable and the kept tools. Plans made for the earlier `agy_acp_server` runtime may name its retired tools (`view_file`, `create_file`, `read_url_content`); those refuse to resume, so plan them again.

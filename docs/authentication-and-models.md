@@ -127,12 +127,12 @@ Cursor Agent is a **runtime**, not a Rho provider. Agent definitions with `runti
 
 ### Antigravity runtime sign-in
 
-Google Antigravity is a **runtime**, not a Rho provider. Agent definitions with `runtime: antigravity` delegate to `agy_acp_server`, which `/login antigravity` offers to install when it is missing ([installation](/installation#antigravity-acp-server-optional)).
+Google Antigravity is a **runtime**, not a Rho provider. Agent definitions with `runtime: antigravity` delegate to `agy acp`, which needs the `agy` CLI 1.5.0 or later on `PATH` ([installation](/installation#antigravity-cli-optional)).
 
-- `/login antigravity` (or **Google** → **Antigravity (delegation only)** in the picker) suspends the TUI and runs `rho login antigravity`, which starts the server's Google sign-in, prints the link, and accepts the pasted address of the browser's final page when the browser runs on another machine (SSH). The server waits up to 300 s.
-- The server stores the token in `$GEMINI_HOME/antigravity-acp/acp_token.json` (default `~/.gemini`), separate from the `agy` CLI sign-in. On macOS it uses the Keychain instead unless `AGY_ACP_FORCE_FILE_STORAGE` is `1`, `true`, or `yes`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
-- `/doctor` and `/info` read the sign-in method from `settings.json` without starting the server.
-- `/logout antigravity` is not available from Rho. Delete `settings.json` in that directory and the token to sign out ([details](/subagents/antigravity#how-to-use-it)).
+- `/login antigravity` (or **Google** → **Antigravity (delegation only)** in the picker) suspends the TUI and runs `agy acp --login`, agy's own Google sign-in. It prints a link and accepts the pasted code or final page address, so it also works over SSH. `rho login antigravity` runs the same command.
+- The sign-in is agy's and is shared with the agy CLI. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
+- `/doctor` and `/info` run `agy --version` and `agy models` to report the version and sign-in state.
+- `/logout antigravity` is not available from Rho. Sign out with `/logout` in agy.
 - Bare `/login` lists Antigravity under the Google group next to the Gemini API key method. Choosing it skips the Rho credential-store chooser.
 
 ## Selecting models

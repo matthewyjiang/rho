@@ -15,7 +15,7 @@ const MAX_DESCRIPTION_LEN: usize = 1024;
 const RHO_TOOLS_EXAMPLE: &str = "tools: [read_file, shell]";
 const CLAUDE_TOOLS_EXAMPLE: &str = "tools: [Read, Edit, \"Bash(git *)\"]";
 const CURSOR_TOOLS_EXAMPLE: &str = "tools: [read_tool_call]";
-const ANTIGRAVITY_TOOLS_EXAMPLE: &str = "tools: [view_file]";
+const ANTIGRAVITY_TOOLS_EXAMPLE: &str = "tools: [read_file]";
 
 #[derive(Default)]
 struct RawDefinition {
@@ -134,19 +134,21 @@ fn parse_reasoning(
     runtime: AgentRuntime,
     reasoning: Option<String>,
 ) -> Result<Option<ReasoningLevel>, AgentCatalogError> {
-    let effort_example = match runtime {
-        AgentRuntime::Cursor => Some("gpt-5.3-codex-high or name[effort=high]"),
-        AgentRuntime::Antigravity => Some("gemini-3.8-flash-high"),
+    let unsupported = match runtime {
+        AgentRuntime::Cursor => Some(
+            "cursor has no reasoning flag; put effort in `model` (for example gpt-5.3-codex-high or name[effort=high])",
+        ),
+        AgentRuntime::Antigravity => {
+            Some("antigravity has no reasoning setting; it uses agy's default thinking level")
+        }
         AgentRuntime::Rho | AgentRuntime::ClaudeCli => None,
     };
-    if let Some(example) = effort_example {
+    if let Some(message) = unsupported {
         if reasoning.is_some() {
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "reasoning",
-                format!(
-                    "{runtime} has no reasoning flag; put effort in `model` (for example {example})"
-                ),
+                message,
             ));
         }
         return Ok(None);

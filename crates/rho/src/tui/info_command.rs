@@ -16,7 +16,6 @@ use super::{
     App,
 };
 use crate::agent::AgentRuntime;
-use crate::antigravity_runtime::setup::AntigravitySetup;
 use crate::claude_runtime::auth;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,11 +80,8 @@ pub(super) struct RuntimeInfo {
     /// Session tree is read off the open path so a large file cannot delay the overlay.
     tree_loading: bool,
     /// Probed auth summaries for runtimes outside provider credentials
-    /// (Claude, Cursor).
+    /// (Claude, Cursor, Antigravity).
     external_runtimes: Vec<String>,
-    /// Antigravity install and sign-in, read from disk when the overlay opens;
-    /// no probe, so it never shows as checking.
-    antigravity: String,
     /// Non-main spend for this conversation.
     extra: super::types::ExtraCosts,
 }
@@ -181,8 +177,6 @@ impl App {
             tree_error,
             tree_loading,
             external_runtimes: checking_external_runtimes(),
-            antigravity: AntigravitySetup::from_env(&crate::paths::home_dir().unwrap_or_default())
-                .description(),
             extra: self.usage.extra,
         };
         self.show_info_overlay(info);
@@ -191,21 +185,34 @@ impl App {
     }
 }
 
-/// Placeholder rows painted before Claude and Cursor probes return.
+/// Placeholder rows painted before the Claude, Cursor, and Antigravity
+/// probes return.
 pub(super) fn checking_external_runtimes() -> Vec<String> {
     vec![
         "claude code: checking…".into(),
         format!("{}: checking…", AgentRuntime::Cursor.as_str()),
+        format!("{}: checking…", AgentRuntime::Antigravity.as_str()),
     ]
 }
 
 pub(super) async fn load_external_runtimes() -> Vec<String> {
-    let (claude, cursor) =
-        tokio::join!(auth::probe_snapshot(), crate::cursor_runtime::auth::query(),);
+    let (claude, cursor, antigravity) = tokio::join!(
+        auth::probe_snapshot(),
+        crate::cursor_runtime::auth::query(),
+        crate::antigravity_runtime::auth::query(),
+    );
     vec![
         claude.auth_description(),
         match cursor {
             Ok(status) => status.auth_description(),
+            Err(error) => error.to_string(),
+        },
+        match antigravity {
+            Ok(status) => format!(
+                "{}: {}",
+                AgentRuntime::Antigravity.as_str(),
+                status.description()
+            ),
             Err(error) => error.to_string(),
         },
     ]
@@ -227,7 +234,6 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     for line in &info.external_runtimes {
         block.push_note(line);
     }
-    block.push_note(&info.antigravity);
 
     block.push_section("Session");
     if info.tree_loading {

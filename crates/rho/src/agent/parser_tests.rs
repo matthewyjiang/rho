@@ -302,10 +302,10 @@ fn closed_tool_runtime_frontmatter_rules() {
         ),
         (
             "antigravity",
-            "view_file",
-            "start_subagent",
+            "read_file",
+            "invoke_subagent",
             AgentRuntimeSpec::Antigravity(AntigravityAgentConfig {
-                tools: vec![AntigravityTool::ViewFile],
+                tools: vec![AntigravityTool::ReadFile],
                 model: Some("gpt-5.3-codex[effort=high,fast=false]".into()),
             }),
         ),

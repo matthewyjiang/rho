@@ -19,6 +19,7 @@ fn plan_follows_gate_and_selected_or_configured_hosts() {
         vec![
             DoctorProbeId::Claude,
             DoctorProbeId::Cursor,
+            DoctorProbeId::Antigravity,
             DoctorProbeId::Rtk,
         ]
     );
@@ -64,6 +65,7 @@ fn assert_endpoint_then_binaries(config: &Config, active_provider: &str, provide
         &[
             DoctorProbeId::Claude,
             DoctorProbeId::Cursor,
+            DoctorProbeId::Antigravity,
             DoctorProbeId::Rtk
         ]
     );

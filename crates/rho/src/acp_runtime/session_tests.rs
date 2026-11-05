@@ -13,9 +13,9 @@ use crate::{
 };
 use agent_client_protocol::{
     schema::v1::{
-        ContentChunk, PermissionOption, PermissionOptionKind, SessionConfigOption,
-        SessionConfigSelectOption, SessionUpdate, StopReason, ToolCall, ToolCallStatus,
-        ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+        ContentChunk, CurrentModeUpdate, PermissionOption, PermissionOptionKind,
+        SessionConfigOption, SessionConfigSelectOption, SessionUpdate, StopReason, ToolCall,
+        ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
     },
     Channel, Error,
 };
@@ -136,8 +136,8 @@ async fn successful_turn_has_one_terminal_write() {
     );
 }
 
-// Covers: vendor session parameters (tool filters in `_meta`, select options
-// such as the model) reach the agent before the first prompt; an
+// Covers: vendor select options (such as the model) reach the agent before
+// the first prompt; an
 // already-current option is not re-sent, judged by the latest option set (a
 // change that moves another option makes it due again).
 // Owner: ACP handshake. Unadvertised options fail in the setup table below.
@@ -145,9 +145,6 @@ async fn successful_turn_has_one_terminal_write() {
 async fn session_parameters_reach_the_agent_before_the_prompt() {
     let dir = tempfile::tempdir().unwrap();
     let mut policy = TestPolicy::new(dir.path());
-    policy.meta = json!({"agy": {"enabledTools": ["view_file"]}})
-        .as_object()
-        .cloned();
     policy.config = vec![
         choice("model", "fast"),
         choice("effort", "high"),
@@ -178,36 +175,23 @@ async fn session_parameters_reach_the_agent_before_the_prompt() {
             .iter()
             .map(|request| (
                 request["method"].clone(),
-                request["params"]["_meta"].clone(),
                 request["params"]["configId"].clone(),
                 request["params"]["value"].clone()
             ))
             .collect::<Vec<_>>(),
         vec![
-            (
-                json!("session/new"),
-                json!({"agy": {"enabledTools": ["view_file"]}}),
-                json!(null),
-                json!(null)
-            ),
+            (json!("session/new"), json!(null), json!(null)),
             (
                 json!("session/set_config_option"),
-                json!(null),
                 json!("model"),
                 json!("fast")
             ),
             (
                 json!("session/set_config_option"),
-                json!(null),
                 json!("effort"),
                 json!("high")
             ),
-            (
-                json!("session/prompt"),
-                json!(null),
-                json!(null),
-                json!(null)
-            ),
+            (json!("session/prompt"), json!(null), json!(null)),
         ]
     );
 }
@@ -457,8 +441,8 @@ async fn cancellation_is_a_protocol_notification_and_stopped_terminal() {
 }
 
 // Covers: setup failures name the wire step, unavailable modes or select
-// options never prompt,
-// and EOF mid-turn fails instead of hanging or inventing a stop reason.
+// options never prompt, an agent leaving its required mode mid-turn fails the
+// run, and EOF mid-turn fails instead of hanging or inventing a stop reason.
 // Owner: ACP runtime error boundaries. Only required diagnostic context is checked.
 #[tokio::test]
 async fn setup_and_connection_failures_are_terminal_errors() {
@@ -515,6 +499,23 @@ async fn setup_and_connection_failures_are_terminal_errors() {
             "authenticate",
             "bad auth",
             false,
+        ),
+        (
+            Script {
+                modes: vec!["plan".into(), "default".into()],
+                ..script(vec![vec![
+                    update(SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(
+                        "default",
+                    ))),
+                    text("edited anyway"),
+                    stop(),
+                ]])
+            },
+            Some("plan"),
+            None,
+            "acp",
+            "leaving required mode `plan`",
+            true,
         ),
         (
             script(vec![vec![Step::Disconnect]]),

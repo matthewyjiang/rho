@@ -1,97 +1,100 @@
+use agent_client_protocol::schema::v1::{
+    PermissionOption, PermissionOptionKind, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+};
 use pretty_assertions::assert_eq;
-use serde_json::json;
 
 use super::*;
-use crate::agent::AntigravityTool as T;
-use crate::antigravity_runtime::home::TokenStore;
 
-fn signed_in_home(root: &Path) -> AntigravityHome {
-    let home = AntigravityHome::resolve(Some(root.into()), Path::new("/unused"), TokenStore::File);
-    std::fs::create_dir_all(home.acp_dir()).unwrap();
-    std::fs::write(
-        home.settings_path(),
-        r#"{"auth":{"type":"oauth-personal"}}"#,
-    )
-    .unwrap();
-    std::fs::write(home.acp_dir().join("acp_token.json"), "{}").unwrap();
-    home
-}
-
-fn policy(
-    mode: PermissionMode,
-    model: Option<&str>,
-    home: AntigravityHome,
-) -> AntigravityAcpPolicy {
-    AntigravityAcpPolicy::new(
-        model.map(str::to_owned),
-        mode,
-        vec![T::ViewFile, T::RunCommand],
-        PathBuf::from("/work"),
-        home,
-        vec![],
+fn permission_request(kind: ToolKind) -> RequestPermissionRequest {
+    RequestPermissionRequest::new(
+        "session",
+        ToolCallUpdate::new("call", ToolCallUpdateFields::new().kind(kind)),
+        vec![PermissionOption::new(
+            "allow",
+            "Allow",
+            PermissionOptionKind::AllowOnce,
+        )],
     )
 }
 
-// Covers: a prepared run pins mode `default` (never a configured `yolo`),
-// allowlists the mode-narrowed built-ins, sets a pinned model as the
-// session option, and never authenticates.
+// Covers: Plan pins agy's `plan` mode and rejects every permission request;
+// Bypass pins `default` and approves a declared command; both spawn agy on
+// the run's own agent; a pinned model becomes the session option; runs never
+// authenticate; nothing is approved or spawned before `prepare`.
 // Owner: Antigravity policy wiring; the driver applying these is covered in
-// `acp_runtime` session tests, the narrowing itself in `fence_tests`.
+// `acp_runtime` session tests, the fence table in `fence` tests.
 #[test]
-fn prepared_run_pins_mode_tools_and_model() {
-    let root = tempfile::tempdir().unwrap();
-    let mut policy = policy(
-        PermissionMode::Plan,
-        Some("gemini-3.8-flash-high"),
-        signed_in_home(root.path()),
-    );
-    assert_eq!(policy.session_meta(), None, "no allowlist before prepare");
-    assert_eq!(policy.prepare(root.path()), Ok(vec![]));
-    assert_eq!(
-        (
-            policy.session_mode(),
-            policy.session_meta().map(serde_json::Value::Object),
-            policy.session_config(),
-            policy.auth_method(&[]),
-        ),
-        (
-            Some(SessionModeId::new("default")),
-            Some(json!({"agy": {"enabledTools": ["view_file"]}})),
-            vec![SessionConfigChoice {
-                id: "model".into(),
-                value: "gemini-3.8-flash-high".into(),
-            }],
-            None,
-        )
-    );
-}
-
-// Covers: a run fails before spawning when signed out (it would otherwise
-// hang in the server's browser flow) or in a mode Rho cannot answer for.
-// Owner: Antigravity preflight; message wording is not locked.
-#[test]
-fn prepare_refuses_unanswerable_runs() {
-    let signed_out = tempfile::tempdir().unwrap();
-    let signed_in = tempfile::tempdir().unwrap();
-    for (mode, home, hint) in [
+fn prepared_run_pins_agent_mode_permissions_and_model() {
+    let run_dir = tempfile::tempdir().unwrap();
+    let agent_root = run_dir.path().join("agy");
+    let execute = permission_request(ToolKind::Execute);
+    for (mode, expected_mode, expected_decision) in [
+        (PermissionMode::Plan, "plan", PermissionDecision::Reject),
         (
             PermissionMode::Bypass,
-            AntigravityHome::resolve(
-                Some(signed_out.path().into()),
-                Path::new("/unused"),
-                TokenStore::File,
-            ),
-            "login antigravity",
-        ),
-        (
-            PermissionMode::Auto,
-            signed_in_home(signed_in.path()),
-            "Plan or Bypass",
+            "default",
+            PermissionDecision::AllowOnce,
         ),
     ] {
-        let error = policy(mode, None, home)
-            .prepare(signed_in.path())
-            .unwrap_err();
-        assert!(error.contains(hint), "{mode}: {error}");
+        let mut policy = AntigravityAcpPolicy::new(
+            Some("gemini-3.8-flash".into()),
+            vec![AntigravityTool::ReadFile, AntigravityTool::RunCommand],
+            mode,
+            PathBuf::from("/work"),
+        );
+        assert_eq!(
+            policy.decide_permission(&execute),
+            PermissionDecision::Reject,
+            "{mode}: before prepare"
+        );
+        assert!(policy.spawn_plan(None).is_err(), "{mode}: before prepare");
+        assert_eq!(policy.prepare(run_dir.path()), Ok(vec![]));
+        let argv = policy.spawn_plan(None).unwrap().argv;
+        assert_eq!(
+            (
+                argv,
+                policy.session_mode(),
+                policy.session_config(),
+                policy.auth_method(&[]),
+                policy.decide_permission(&execute),
+            ),
+            (
+                vec![
+                    "acp".into(),
+                    "--cli_dir_name".into(),
+                    "rho".into(),
+                    "--add-dir".into(),
+                    agent_root.clone().into_os_string(),
+                    "--agent".into(),
+                    "rho-run".into(),
+                ],
+                Some(SessionModeId::new(expected_mode)),
+                vec![SessionConfigChoice {
+                    id: "model".into(),
+                    value: "gemini-3.8-flash".into(),
+                }],
+                None,
+                expected_decision,
+            ),
+            "{mode}"
+        );
+    }
+}
+
+// Covers: a run fails before spawning in a mode Rho cannot answer for, or
+// when Plan leaves no read-only tool.
+// Owner: Antigravity preflight; message wording is not locked.
+#[test]
+fn prepare_refuses_runs_the_fence_cannot_hold() {
+    let run_dir = tempfile::tempdir().unwrap();
+    for (mode, tools) in [
+        (PermissionMode::Auto, vec![AntigravityTool::ReadFile]),
+        (PermissionMode::AllowEdits, vec![AntigravityTool::ReadFile]),
+        (PermissionMode::Supervised, vec![AntigravityTool::ReadFile]),
+        (PermissionMode::Plan, vec![AntigravityTool::RunCommand]),
+    ] {
+        let prepared = AntigravityAcpPolicy::new(None, tools, mode, PathBuf::from("/work"))
+            .prepare(run_dir.path());
+        assert!(prepared.is_err(), "{mode}");
     }
 }

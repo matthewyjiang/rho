@@ -209,8 +209,9 @@ impl AppWorkflowToolService {
                                 .insert(crate::cursor_runtime::models::CURSOR_PROGRAM.to_owned());
                         }
                         crate::agent::AgentRuntimeSpec::Antigravity(_) => {
-                            executables
-                                .insert(crate::antigravity_runtime::executable::workflow_program()?);
+                            executables.insert(
+                                crate::antigravity_runtime::executable::AGY_PROGRAM.to_owned(),
+                            );
                         }
                         crate::agent::AgentRuntimeSpec::Rho { .. } => {}
                     }

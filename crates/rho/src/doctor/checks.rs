@@ -21,11 +21,7 @@ use super::{
     report::{DoctorCheck, DoctorCheckId, DoctorStatus},
 };
 use crate::{
-    antigravity_runtime::{
-        executable::{HarnessLocation, HARNESS_PATH_ENV},
-        home::AntigravityAuthStatus,
-        setup::{AntigravitySetup, ServerInstall},
-    },
+    antigravity_runtime::auth::{AntigravityProbeError, AntigravityStatus},
     claude_runtime::auth::ClaudeProbeSnapshot,
     clipboard::ClipboardDoctorReport,
     config::{InternalAgentModelConfig, ModelKind},
@@ -38,7 +34,7 @@ use crate::{
 pub(super) const CLAUDE_AUTH_LABEL: &str = "Claude Code authentication";
 pub(super) const CLAUDE_BINARY_LABEL: &str = "Claude Code binary";
 pub(super) const CURSOR_LABEL: &str = "cursor-agent";
-const ANTIGRAVITY_LABEL: &str = "agy_acp_server";
+pub(super) const ANTIGRAVITY_LABEL: &str = "agy";
 pub(super) const RTK_LABEL: &str = "rtk";
 
 /// One row per signed-in auth mode, plus the active mode so a missing key
@@ -189,63 +185,31 @@ pub(super) fn cursor_check(snapshot: &CursorProbeSnapshot) -> DoctorCheck {
     }
 }
 
-/// Informational like Cursor when not installed or signed out; warns when
-/// an installed server cannot run (harness missing, settings unreadable).
-pub(super) fn antigravity_check(setup: &AntigravitySetup) -> DoctorCheck {
+/// Informational like Cursor when not installed or signed out; warns when an
+/// installed agy cannot serve runs (too old, or the probe failed).
+pub(super) fn antigravity_check(
+    status: &Result<AntigravityStatus, AntigravityProbeError>,
+) -> DoctorCheck {
     let id = DoctorCheckId::Antigravity;
-    let (path, harness) = match &setup.server {
-        ServerInstall::Missing => {
-            return DoctorCheck::new(id, ANTIGRAVITY_LABEL, DoctorStatus::Info, "not installed")
-                .with_hint("run /login antigravity to install it")
+    match status {
+        Err(AntigravityProbeError::Missing(_)) => {
+            DoctorCheck::new(id, ANTIGRAVITY_LABEL, DoctorStatus::Info, "not installed")
         }
-        ServerInstall::Found { path, harness } => (path, harness),
-    };
-    let harness_problem = match harness {
-        HarnessLocation::Missing { expected } => Some(format!(
-            "runs fail without {}; keep it next to the server or set {HARNESS_PATH_ENV}",
-            crate::paths::display(expected)
-        )),
-        HarnessLocation::OverrideMissing(path) => Some(format!(
-            "runs fail: {HARNESS_PATH_ENV} names {}, which is not a file",
-            crate::paths::display(path)
-        )),
-        HarnessLocation::Override(_) | HarnessLocation::Beside(_) => None,
-    };
-    if let Some(hint) = harness_problem {
-        return DoctorCheck::new(
-            id,
-            ANTIGRAVITY_LABEL,
-            DoctorStatus::Warn,
-            "localharness_external missing",
-        )
-        .with_hint(hint);
-    }
-    // Every state but `Configured` refuses runs; its error is the hint.
-    let refusal = || setup.auth.require_signed_in().err().unwrap_or_default();
-    match &setup.auth {
-        AntigravityAuthStatus::Configured { method } => DoctorCheck::new(
+        Err(error) => DoctorCheck::new(id, ANTIGRAVITY_LABEL, DoctorStatus::Warn, "unavailable")
+            .with_hint(error.to_string()),
+        Ok(status) if status.signed_in => DoctorCheck::new(
             id,
             ANTIGRAVITY_LABEL,
             DoctorStatus::Ok,
-            format!("signed in ({method})"),
-        )
-        .with_hint(format!("server: {}", crate::paths::display(path))),
-        AntigravityAuthStatus::SignedOut { .. } | AntigravityAuthStatus::MissingToken { .. } => {
-            DoctorCheck::new(
-                id,
-                ANTIGRAVITY_LABEL,
-                DoctorStatus::Info,
-                "not signed in (run /login antigravity)",
-            )
-            .with_hint(refusal())
-        }
-        AntigravityAuthStatus::Unreadable { .. } => DoctorCheck::new(
+            status.description(),
+        ),
+        Ok(status) => DoctorCheck::new(
             id,
             ANTIGRAVITY_LABEL,
-            DoctorStatus::Warn,
-            "settings unreadable",
+            DoctorStatus::Info,
+            "not signed in (run /login antigravity)",
         )
-        .with_hint(refusal()),
+        .with_hint(format!("agy {}", status.version)),
     }
 }
 

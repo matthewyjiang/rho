@@ -8,9 +8,8 @@ use rho_providers::{
 use super::*;
 use crate::{
     antigravity_runtime::{
-        executable::HarnessLocation,
-        home::AntigravityAuthStatus,
-        setup::{AntigravitySetup, ServerInstall},
+        auth::{AntigravityProbeError, AntigravityStatus},
+        executable::AntigravityExecutableError,
     },
     claude_runtime::auth::ClaudeProbeSnapshot,
     cursor_runtime::auth::{
@@ -304,84 +303,41 @@ fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
     }
 }
 
-// Covers: Antigravity is informational when absent or signed out, warns when
-// an installed server cannot run, and an install problem outranks sign-in.
+// Covers: Antigravity is informational when absent or signed out, warns
+// when an installed agy cannot serve runs, and is healthy when signed in.
 // Owner: pure unit
 #[test]
-fn antigravity_row_ranks_install_problems_above_sign_in() {
-    let signed_in = || AntigravityAuthStatus::Configured {
-        method: "oauth".into(),
-    };
-    let found = |harness| ServerInstall::Found {
-        path: "/opt/agy/agy_acp_server.par".into(),
-        harness,
-    };
-    let beside = || {
-        found(HarnessLocation::Beside(
-            "/opt/agy/localharness_external".into(),
-        ))
+fn antigravity_row_reports_install_and_sign_in() {
+    let status = |signed_in| {
+        Ok(AntigravityStatus {
+            version: "1.5.0".into(),
+            signed_in,
+        })
     };
     let cases = [
         (
-            ServerInstall::Missing,
-            signed_in(),
+            Err(AntigravityProbeError::Missing(
+                AntigravityExecutableError::BinaryMissing,
+            )),
             DoctorStatus::Info,
             "not installed",
         ),
         (
-            found(HarnessLocation::Missing {
-                expected: "/opt/agy/localharness_external".into(),
+            Err(AntigravityProbeError::TooOld {
+                version: "1.4.12".into(),
             }),
-            signed_in(),
             DoctorStatus::Warn,
-            "localharness_external missing",
+            "unavailable",
         ),
-        (beside(), signed_in(), DoctorStatus::Ok, "signed in (oauth)"),
+        (status(true), DoctorStatus::Ok, "agy 1.5.0 signed in"),
         (
-            found(HarnessLocation::Override(
-                "/srv/agy/localharness_external".into(),
-            )),
-            signed_in(),
-            DoctorStatus::Ok,
-            "signed in (oauth)",
-        ),
-        (
-            found(HarnessLocation::OverrideMissing(
-                "/srv/agy/localharness_externa".into(),
-            )),
-            signed_in(),
-            DoctorStatus::Warn,
-            "localharness_external missing",
-        ),
-        (
-            beside(),
-            AntigravityAuthStatus::SignedOut {
-                settings: "/home/rho/.gemini/antigravity-acp/settings.json".into(),
-            },
+            status(false),
             DoctorStatus::Info,
             "not signed in (run /login antigravity)",
-        ),
-        (
-            beside(),
-            AntigravityAuthStatus::MissingToken {
-                method: "oauth".into(),
-                token: "/home/rho/.gemini/antigravity-acp/acp_token.json".into(),
-            },
-            DoctorStatus::Info,
-            "not signed in (run /login antigravity)",
-        ),
-        (
-            beside(),
-            AntigravityAuthStatus::Unreadable {
-                settings: "/home/rho/.gemini/antigravity-acp/settings.json".into(),
-                detail: "expected value at line 1 column 1".into(),
-            },
-            DoctorStatus::Warn,
-            "settings unreadable",
         ),
     ];
-    for (server, auth, status, summary) in cases {
-        let check = antigravity_check(&AntigravitySetup { server, auth });
+    for (probe, status, summary) in cases {
+        let check = antigravity_check(&probe);
         assert_eq!(check.id, DoctorCheckId::Antigravity);
         assert_eq!((check.status, check.summary.as_str()), (status, summary));
     }

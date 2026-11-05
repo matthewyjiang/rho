@@ -18,7 +18,9 @@ use super::{
     report::{DoctorCheck, DoctorCheckId, DoctorStatus},
 };
 use crate::{
-    claude_runtime::auth::ClaudeProbeSnapshot, config::Config,
+    antigravity_runtime::auth::{AntigravityProbeError, AntigravityStatus},
+    claude_runtime::auth::ClaudeProbeSnapshot,
+    config::Config,
     cursor_runtime::auth::CursorProbeSnapshot,
 };
 
@@ -32,6 +34,8 @@ pub(crate) enum DoctorProbeId {
     Claude,
     /// `cursor-agent status --format json` and `cursor-agent --version`.
     Cursor,
+    /// `agy --version` and `agy models`.
+    Antigravity,
     /// `rtk --version`.
     Rtk,
 }
@@ -44,6 +48,7 @@ pub(crate) enum DoctorProbeOutcome {
     },
     Claude(ClaudeProbeSnapshot),
     Cursor(CursorProbeSnapshot),
+    Antigravity(Result<AntigravityStatus, AntigravityProbeError>),
     Rtk {
         available: bool,
     },
@@ -99,6 +104,7 @@ pub(crate) fn plan_probes(
         .collect::<Vec<_>>();
     probes.push(DoctorProbeId::Claude);
     probes.push(DoctorProbeId::Cursor);
+    probes.push(DoctorProbeId::Antigravity);
     probes.push(DoctorProbeId::Rtk);
     probes
 }
@@ -117,6 +123,9 @@ pub(crate) async fn run_probe(
         }
         DoctorProbeId::Cursor => {
             DoctorProbeOutcome::Cursor(crate::cursor_runtime::auth::probe_snapshot().await)
+        }
+        DoctorProbeId::Antigravity => {
+            DoctorProbeOutcome::Antigravity(crate::antigravity_runtime::auth::query().await)
         }
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
             available: probe_rtk().await,
@@ -207,6 +216,7 @@ pub(crate) fn probe_checks(
         }
         DoctorProbeOutcome::Claude(snapshot) => checks::claude_checks(snapshot),
         DoctorProbeOutcome::Cursor(snapshot) => vec![checks::cursor_check(snapshot)],
+        DoctorProbeOutcome::Antigravity(status) => vec![checks::antigravity_check(status)],
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],
         DoctorProbeOutcome::Failed(id) => failed_rows(
             id,
@@ -238,7 +248,7 @@ fn failed_rows(
         }
         DoctorProbeId::ProviderEndpoint { .. } => DoctorStatus::Info,
         DoctorProbeId::Claude | DoctorProbeId::Rtk => DoctorStatus::Warn,
-        DoctorProbeId::Cursor => DoctorStatus::Info,
+        DoctorProbeId::Cursor | DoctorProbeId::Antigravity => DoctorStatus::Info,
     };
     probe_rows(id)
         .into_iter()
@@ -262,6 +272,9 @@ fn probe_rows(id: &DoctorProbeId) -> Vec<(DoctorCheckId, String)> {
             ),
         ],
         DoctorProbeId::Cursor => vec![(DoctorCheckId::Cursor, checks::CURSOR_LABEL.into())],
+        DoctorProbeId::Antigravity => {
+            vec![(DoctorCheckId::Antigravity, checks::ANTIGRAVITY_LABEL.into())]
+        }
         DoctorProbeId::Rtk => vec![(DoctorCheckId::Rtk, checks::RTK_LABEL.into())],
     }
 }

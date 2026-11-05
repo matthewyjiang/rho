@@ -1,4 +1,4 @@
-//! Execute a `runtime: antigravity` delegated run via `agy_acp_server`.
+//! Execute a `runtime: antigravity` delegated run via `agy acp`.
 
 use std::path::PathBuf;
 
@@ -15,7 +15,7 @@ use crate::{
     subagent::RunStatus,
 };
 
-use super::{executable, home::AntigravityHome, policy::AntigravityAcpPolicy};
+use super::policy::AntigravityAcpPolicy;
 
 /// Inputs for one Antigravity subagent run, including bound runtime values.
 pub(crate) struct AntigravitySessionRequest {
@@ -24,6 +24,7 @@ pub(crate) struct AntigravitySessionRequest {
     pub(crate) system_prompt: PromptPolicy,
     /// Bound snapshot stamped onto `result.json`; the model comes from here.
     pub(crate) identity: RunArtifactIdentity,
+    /// Declared tools; the fence narrows them for the permission mode.
     pub(crate) tools: Vec<AntigravityTool>,
     pub(crate) prompt: String,
     pub(crate) output_file: PathBuf,
@@ -35,7 +36,6 @@ pub(crate) struct AntigravitySessionRequest {
     pub(crate) started_status: Option<RunStatus>,
     /// Parent messages become the next `session/prompt` after a turn ends.
     pub(crate) parent_messages: Option<ParentMessageInbox>,
-    pub(crate) home: AntigravityHome,
     pub(crate) overrides: CliSessionOverrides,
 }
 
@@ -53,17 +53,10 @@ pub(crate) async fn run_session(request: AntigravitySessionRequest) -> anyhow::R
         status_tx,
         started_status,
         parent_messages,
-        home,
         overrides,
     } = request;
-    let policy = AntigravityAcpPolicy::new(
-        identity.model.clone(),
-        permission_mode,
-        tools,
-        cwd.clone(),
-        home,
-        executable::harness_env_for_launch(overrides.executable.as_ref()),
-    );
+    let policy =
+        AntigravityAcpPolicy::new(identity.model.clone(), tools, permission_mode, cwd.clone());
     let request = AcpSessionRequest {
         identity,
         prompt,
