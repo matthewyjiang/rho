@@ -101,7 +101,7 @@ async fn successful_turn_has_one_terminal_write() {
     assert_eq!(
         (
             status.state,
-            status.claude_session_id,
+            status.runtime_session_id,
             status.result,
             status.turns,
             terminal_events(&events)
@@ -679,7 +679,7 @@ async fn cancellation_is_a_protocol_notification_and_stopped_terminal() {
             (
                 status.state,
                 status.result,
-                status.claude_session_id,
+                status.runtime_session_id,
                 terminal_events(&events)
             ),
             (

@@ -188,7 +188,7 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
             runtime: Some(AgentRuntime::ClaudeCli),
             provider: Some("claude-code".into()),
             model: Some("opus".into()),
-            claude_model: Some("claude-opus-4-6".into()),
+            runtime_model: Some("claude-opus-4-6".into()),
             ..RunStatus::default()
         }),
         Some(PromptModel::ExternalCli {
@@ -203,7 +203,7 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
         runtime: Some(AgentRuntime::ClaudeCli),
         provider: Some("claude-code".into()),
         model: None,
-        claude_model: None,
+        runtime_model: None,
         ..RunStatus::default()
     };
     assert_eq!(

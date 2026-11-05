@@ -286,7 +286,7 @@ fn candidate_detail(candidate: &AttachCandidate, now: u64) -> DetailSheet {
 /// the runtime as a note.
 fn model_field(status: &RunStatus) -> DetailField {
     let model = status
-        .claude_model
+        .runtime_model
         .as_deref()
         .or(status.model.as_deref())
         .filter(|model| !model.is_empty());

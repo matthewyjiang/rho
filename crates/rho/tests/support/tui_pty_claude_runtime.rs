@@ -89,8 +89,8 @@ fn fake_claude_runtime_end_to_end_success() {
             "provider": status["provider"],
             "model": status["model"],
             "result": status["result"],
-            "claude_session_id": status["claude_session_id"],
-            "claude_model": status["claude_model"],
+            "runtime_session_id": status["runtime_session_id"],
+            "runtime_model": status["runtime_model"],
             "cost_micros": status["total_cost_usd"]
                 .as_f64()
                 .map(|cost| (cost * 1_000_000.0).round() as u64),
@@ -101,8 +101,8 @@ fn fake_claude_runtime_end_to_end_success() {
             "provider": "claude-code",
             "model": "claude-opus-demo",
             "result": "rho-claude-e2e-ok",
-            "claude_session_id": "scripted-session",
-            "claude_model": "claude-sonnet-5",
+            "runtime_session_id": "scripted-session",
+            "runtime_model": "claude-sonnet-5",
             "cost_micros": 34_271,
         })
     );

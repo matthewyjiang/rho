@@ -38,4 +38,4 @@ rho attach abc123
 
 In the in-place view, Up, Down, Page Up, Page Down, Home, and End scroll. Tab, Shift-Tab, Left, and Right cycle other running subagents. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. `q` or Escape returns to the composer. Ctrl-C quits Rho. If the parent hits an approval, questionnaire, or turn completion while you are attached, the footer notes it. The view does not yank you back.
 
-`rho attach` and `rho attach <id>` open that same view in a separate process, for another terminal. For Claude-cli runs, attach also shows `claude_session_id` when present so you can open the Claude transcript with `claude-agent-acp --cli --resume <session-id>`. Storage and lifecycle: [Attachment and artifacts](/subagents/attachment-and-artifacts).
+`rho attach` and `rho attach <id>` open that same view in a separate process, for another terminal. For external runtime runs, attach also shows `runtime_session_id` when present; for `claude-cli` runs you can open the Claude transcript with `claude-agent-acp --cli --resume <session-id>`. Storage and lifecycle: [Attachment and artifacts](/subagents/attachment-and-artifacts).

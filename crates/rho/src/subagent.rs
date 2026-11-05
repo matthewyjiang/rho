@@ -117,26 +117,30 @@ pub struct RunStatus {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_error: Option<String>,
-    /// Claude Code session id from a `runtime: claude-cli` run. Resume with
-    /// `claude-agent-acp --cli --resume <id>`. Absent for Rho runtime runs.
+    /// Session id the external runtime reported (the ACP session id). What it
+    /// means depends on [`Self::runtime`]: a `claude-cli` id resumes with
+    /// `claude-agent-acp --cli --resume <id>`; Cursor and Antigravity ids are
+    /// protocol metadata only. Absent for Rho runtime runs.
     ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
-    ///
-    /// Cursor reuses these Claude-named fields so the status contract stays
-    /// minor-compatible.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_session_id: Option<String>,
-    /// Model a `runtime: claude-cli` run reported binding. Rho passes the model
+    /// The alias reads `result.json` files written by rho 2.x; writes only
+    /// use the new name.
+    #[serde(
+        default,
+        alias = "claude_session_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub runtime_session_id: Option<String>,
+    /// Model an external runtime reported binding. Rho passes the model
     /// through untouched, so this is what an alias such as `opus` resolved to.
     /// Absent for Rho runtime runs and until the run reports its model.
     ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_model: Option<String>,
+    /// The alias reads `result.json` files written by rho 2.x.
+    #[serde(
+        default,
+        alias = "claude_model",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub runtime_model: Option<String>,
     /// Terminal `total_cost_usd` from Claude's result message when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_cost_usd: Option<f64>,

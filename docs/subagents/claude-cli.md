@@ -106,7 +106,7 @@ flowchart TD
 
    Attach paints Claude tools with Rho's generic ACP tool cards: the tool kind and title the adapter reports, plus paths and diffs when it sends them.
 
-   `agents` action `message` steers plain text into the running turn; see [Parent messages](#parent-messages). Cancel through the `agents` tool or parent shutdown. When the run finishes, attach and the completion entry may show `claude_session_id`. Reopen the Claude-side transcript with:
+   `agents` action `message` steers plain text into the running turn; see [Parent messages](#parent-messages). Cancel through the `agents` tool or parent shutdown. When the run finishes, attach and the completion entry may show `runtime_session_id`. Reopen the Claude-side transcript with:
 
    ```bash
    claude-agent-acp --cli --resume <session-id>
@@ -174,7 +174,7 @@ Each delegated run is one adapter process (Node.js or Bun) driving the bundled C
 
 ## Usage, limits, and resume
 
-Per-run turns and cost (from ACP `usage_update.cost`) are stored on `result.json`, along with `claude_model`, the concrete model the adapter reported. The adapter does not report token counts, so Claude runs have none.
+Per-run turns and cost (from ACP `usage_update.cost`) are stored on `result.json`, along with `runtime_model`, the concrete model the adapter reported. The adapter does not report token counts, so Claude runs have none.
 
 During a run, Rho records the rate-limit windows the adapter reports into the `/limits` cache. `/limits` also probes the signed-in Claude TUI `/usage` panel (`claude-agent-acp --cli`) over a PTY and shows remaining percentages when the panel includes them. Rho never reads Claude's credential files. If the probe fails, `/limits` keeps last-observed windows from a prior claude-cli run.
 
@@ -182,7 +182,7 @@ The probe forces classic rendering in its child environment so inherited fullscr
 
 Percentages shown while Claude is still refreshing are not treated as live usage. The probe waits for refresh completion and reads the completed panel. A refresh timeout, load error, or last-known/partial-data fallback leaves the previous observations unchanged rather than stamping cached percentages as newly fetched. The probe does not retry a failed refresh automatically.
 
-When a run finishes, `result.json` may include `claude_session_id`; the ACP session id is the Claude session id. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
+When a run finishes, `result.json` may include `runtime_session_id`; for `runtime: claude-cli` the ACP session id is the Claude session id. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
 
 ```bash
 claude-agent-acp --cli --resume <session-id>

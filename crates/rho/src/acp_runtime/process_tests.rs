@@ -153,7 +153,7 @@ exec tail -f /dev/null
     assert_eq!(
         (
             status.state,
-            status.claude_session_id,
+            status.runtime_session_id,
             terminal_events(&events)
         ),
         (
