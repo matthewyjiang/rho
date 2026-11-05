@@ -493,7 +493,11 @@ impl RhoAcpAgent {
         // Synchronous, with no await before `record`: a newer `authenticate`
         // that supersedes this logout drops it at an await, so it either
         // deletes and counts, or does neither.
-        super::auth_logout::sign_out(&self.startup.config.auth, config)?;
+        super::auth_logout::sign_out(
+            &self.startup.config.provider,
+            &self.startup.config.auth,
+            config,
+        )?;
         self.startup.logouts.record();
         Ok(())
     }

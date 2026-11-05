@@ -256,7 +256,7 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
                             |target| rho_providers::provider::provider_descriptor(&target.provider),
                         )
                     {
-                        login::record_login(&config_repository, *descriptor)?;
+                        super::endpoint_login::record(&config_repository, *descriptor)?;
                     }
                     completion.finish(
                         /*require_confirmation*/

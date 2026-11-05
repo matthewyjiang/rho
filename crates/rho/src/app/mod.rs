@@ -17,6 +17,7 @@ pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
 mod doctor_cli;
+pub(crate) mod endpoint_login;
 mod headless_delegation;
 pub(crate) mod headless_run;
 mod interactive;

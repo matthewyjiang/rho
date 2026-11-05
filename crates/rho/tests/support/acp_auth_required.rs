@@ -140,6 +140,12 @@ provider = "disabled"
 
     /// Starts and initializes `rho acp`, returning the `initialize` result.
     fn server(&self) -> (AcpServer, Value) {
+        // An explicit provider makes startup discover its models, so the
+        // missing key fails startup itself rather than the session build.
+        self.server_with_args(&["--provider", "mock", "acp"])
+    }
+
+    fn server_with_args(&self, args: &[&str]) -> (AcpServer, Value) {
         let home = self.home.path();
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
         command
@@ -152,9 +158,7 @@ provider = "disabled"
             .current_dir(&self.project)
             .arg("--config")
             .arg(home.join("config.toml"))
-            // An explicit provider makes startup discover its models, so the
-            // missing key fails startup itself rather than the session build.
-            .args(["--provider", "mock", "acp"]);
+            .args(args);
         // Winsock cannot initialize without SystemRoot, so a cleared Windows
         // environment fails every HTTP request before it reaches the fixture.
         if let Some(root) = std::env::var_os("SystemRoot") {
@@ -270,4 +274,31 @@ fn logout_requires_a_new_sign_in_for_new_and_live_sessions() {
 
     fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
     assert_eq!(server.prompt(&session_id, "signed in again"), "answered");
+}
+
+// Covers: ACP `logout` on a keyless Ollama login signs it out: the
+// `[providers.ollama]` login record goes, not only stored credentials.
+// Owner: ACP logout of an endpoint-recorded login, over real stdio.
+#[test]
+fn logout_forgets_a_keyless_ollama_login() {
+    let fixture = MockProviderHome::new(&Arc::new(Mutex::new(FIRST_KEY.to_owned())));
+    let config_path = fixture.home.path().join("config.toml");
+    // The fixture host refuses keyless requests, so no Ollama models are found.
+    let config = std::fs::read_to_string(&config_path)
+        .unwrap()
+        .replace(
+            "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"",
+            "provider = \"ollama\"\nmodel = \"llama\"\nauth = \"none\"",
+        )
+        .replace("[providers.custom.mock]", "[providers.ollama]");
+    std::fs::write(&config_path, config).unwrap();
+    let (mut server, _) = fixture.server_with_args(&["acp"]);
+
+    let (logged_out, _) = server.request("logout", json!({}));
+    assert_eq!(logged_out.unwrap(), json!({}));
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        !config.contains("[providers.ollama]"),
+        "logout must remove the Ollama login record:\n{config}"
+    );
 }

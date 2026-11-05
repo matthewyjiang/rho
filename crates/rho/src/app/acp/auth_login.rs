@@ -78,7 +78,7 @@ pub(super) async fn authenticate(
                 .sign_in(endpoint.as_ref(), &AppCredentialStore, request_id, port)
                 .await?;
             if let Some(descriptor) = descriptor {
-                crate::app::login::record_login(&repository, *descriptor).map_err(|error| {
+                crate::app::endpoint_login::record(&repository, *descriptor).map_err(|error| {
                     AcpError::internal_error().data(format!(
                         "saved the key, but could not record the login: {error:#}"
                     ))
