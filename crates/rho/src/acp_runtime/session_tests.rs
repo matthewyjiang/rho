@@ -472,9 +472,10 @@ async fn steering_agent_takes_parent_message_into_running_turn() {
     );
 }
 
-// Covers: a parent message already waiting when the prompt goes out is held
-// until the turn is running (the adapter declines an earlier steer, which
-// would push the correction past the turn it was meant for), then steered in.
+// Covers: a parent message already waiting when the prompt goes out reaches
+// that turn. Output the agent sends before queueing the turn (an open task
+// plan) gets the steer declined; Rho retries on the turn's next output instead
+// of pushing the correction past the turn it was meant for.
 // Owner: ACP turn scheduling.
 #[tokio::test]
 async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
@@ -485,6 +486,11 @@ async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
     let (fake, record, _signals) = ScriptedAgent::new(Script {
         steering: true,
         ..script(vec![vec![
+            Step::BeforeQueued {
+                update: Box::new(SessionUpdate::Plan(
+                    agent_client_protocol::schema::v1::Plan::new(Vec::new()),
+                )),
+            },
             text("working"),
             Step::AwaitSteer,
             text(" steered"),
@@ -507,7 +513,7 @@ async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
     .expect("run with a waiting parent message finished");
     assert_eq!(
         prompts_and_steers(&record),
-        vec![task_prompt(), steer_request()]
+        vec![task_prompt(), steer_request(), steer_request()]
     );
     let (status, _) = read_artifacts(dir.path());
     assert_eq!(

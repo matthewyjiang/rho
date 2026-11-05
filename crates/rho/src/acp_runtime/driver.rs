@@ -215,7 +215,11 @@ enum Steering {
     Idle,
     /// A `_session/steering` request in flight, with the text it carries.
     InFlight(String, SteerReply),
-    /// Not injected; sent as the next turn.
+    /// Declined while Rho's prompt was still running, so the agent had not
+    /// queued its turn yet. Steered again on the turn's next output, or sent
+    /// as the next turn if the turn ends first.
+    Held(String),
+    /// The steer failed; sent as the next turn.
     Declined(String),
 }
 
@@ -230,9 +234,19 @@ impl Steering {
         }
     }
 
+    fn take_held(&mut self) -> Option<String> {
+        match std::mem::replace(self, Self::Idle) {
+            Self::Held(text) => Some(text),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
     fn take_declined(&mut self) -> Option<String> {
         match std::mem::replace(self, Self::Idle) {
-            Self::Declined(text) => Some(text),
+            Self::Held(text) | Self::Declined(text) => Some(text),
             other => {
                 *self = other;
                 None
@@ -285,6 +299,10 @@ async fn turns<P: AcpAgentPolicy>(
             reply = async { match &mut steering { Steering::InFlight(_, reply) => reply.as_mut().await, _ => std::future::pending().await } }, if matches!(steering, Steering::InFlight(..)) => {
                 if let Some((text, _)) = steering.take_in_flight() {
                     steering = settle_steer(text, reply, renderer, sink);
+                    if matches!(steering, Steering::Held(_)) {
+                        // Retry only after output that follows the decline.
+                        tracking.turn_live = false;
+                    }
                 }
             }
             text = async { inbox.as_mut().expect("steering needs an inbox").recv().await }, if matches!(steering, Steering::Idle) && tracking.turn_live && !cancelled_by_us => match text {
@@ -295,7 +313,15 @@ async fn turns<P: AcpAgentPolicy>(
                 None => steering = Steering::Off,
             },
             message = session.read_update() => match message? {
-                SessionMessage::SessionMessage(dispatch) => dispatch_update(dispatch, policy, renderer, sink, &mut tracking, cancelled_by_us, events_tx).await?,
+                SessionMessage::SessionMessage(dispatch) => {
+                    dispatch_update(dispatch, policy, renderer, sink, &mut tracking, cancelled_by_us, events_tx).await?;
+                    if tracking.turn_live && !cancelled_by_us {
+                        if let Some(text) = steering.take_held() {
+                            let request = steering::request(session.session_id(), &frame_parent_message(&text))?;
+                            steering = Steering::InFlight(text, Box::pin(connection.send_request(request).block_task()));
+                        }
+                    }
+                }
                 SessionMessage::StopReason(stop) => {
                     let classification = classify_stop(&stop, cancelled_by_us);
                     // A steer racing the end of a successful turn is settled
@@ -361,7 +387,7 @@ fn settle_steer(
             )));
             Steering::Idle
         }
-        Ok(steering::Delivery::NextTurn) => Steering::Declined(text),
+        Ok(steering::Delivery::NextTurn) => Steering::Held(text),
         Err(source) => {
             render(
                 renderer,
@@ -382,9 +408,11 @@ struct UpdateTracking {
     /// Ids only, for the session lifetime: duplicate completed snapshots must
     /// not turn a previously rejected tool back into a successful card.
     rejected: HashSet<ToolCallId>,
-    /// The current prompt's turn has produced output. An agent queues a turn
-    /// only after its own setup, and declines a steer that arrives first
-    /// (claude-agent-acp answers `promptRequired`).
+    /// The current prompt's turn has produced output since it was sent, or
+    /// since the last too-early steer. An agent queues a turn only after its
+    /// own setup, which can itself send updates (claude-agent-acp publishes an
+    /// open task plan first), and declines a steer that arrives before with
+    /// `promptRequired`; [`Steering::Held`] retries it.
     turn_live: bool,
 }
 

@@ -89,6 +89,11 @@ pub(crate) enum Step {
     DisconnectOnCancel,
     /// Signal readiness, then await a `_session/steering` request.
     AwaitSteer,
+    /// Send an update before the turn is queued, as claude-agent-acp does
+    /// with an open task plan, then wait for the steer it declines.
+    BeforeQueued {
+        update: Box<SessionUpdate>,
+    },
 }
 
 /// Whole wire requests/replies, without assertions embedded in the fake.
@@ -188,6 +193,8 @@ impl ScriptedAgent {
         let prompt_signals = signals.clone();
         let steered = Arc::new(Notify::new());
         let prompt_steered = Arc::clone(&steered);
+        let declined = Arc::new(Notify::new());
+        let prompt_declined = Arc::clone(&declined);
         // Like claude-agent-acp, a turn exists for steering only once it is
         // queued, which the fake marks with the turn's first update; until
         // then a steer is declined with `promptRequired`.
@@ -285,6 +292,7 @@ impl ScriptedAgent {
                     let closed = prompt_closed.clone();
                     let steered = Arc::clone(&prompt_steered);
                     let turn_live = Arc::clone(&prompt_turn_live);
+                    let declined = Arc::clone(&prompt_declined);
                     cx.clone().spawn(async move {
                         play_turn(
                             cx,
@@ -298,6 +306,7 @@ impl ScriptedAgent {
                                 closed,
                                 steered,
                                 turn_live,
+                                declined,
                             },
                         )
                         .await
@@ -327,6 +336,7 @@ impl ScriptedAgent {
                         responder.respond(
                             json!({"outcome": "promptRequired", "reason": "noRunningTurn"}),
                         )?;
+                        declined.notify_one();
                         return Ok(Handled::Yes);
                     }
                     steered.notify_one();
@@ -366,6 +376,7 @@ struct TurnControls {
     closed: RunCancellation,
     steered: Arc<Notify>,
     turn_live: Arc<AtomicBool>,
+    declined: Arc<Notify>,
 }
 
 async fn play_turn(
@@ -382,6 +393,7 @@ async fn play_turn(
         closed,
         steered,
         turn_live,
+        declined,
     } = controls;
     for step in steps {
         match step {
@@ -434,6 +446,13 @@ async fn play_turn(
                 cancelled.cancelled().await;
                 closed.cancel();
                 return std::future::pending().await;
+            }
+            Step::BeforeQueued { update } => {
+                cx.send_notification(SessionNotification::new(
+                    request.session_id.clone(),
+                    *update,
+                ))?;
+                declined.notified().await;
             }
             Step::AwaitSteer => {
                 let _ = signals.send(Signal::Waiting);
