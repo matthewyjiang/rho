@@ -3,6 +3,7 @@ pub mod codex_oauth;
 mod device_code;
 pub mod github_copilot_device;
 pub mod github_copilot_token;
+pub mod key_entry;
 pub mod kimi_oauth;
 pub mod kimi_token;
 pub mod login_dispatch;

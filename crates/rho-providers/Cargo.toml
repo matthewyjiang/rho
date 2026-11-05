@@ -55,6 +55,8 @@ windows-sys = { version = "0.61", features = [
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 pretty_assertions = "1"
 tempfile = "3"
+# Paused clocks for timeout tests.
+tokio = { version = "1", features = ["full", "test-util"] }
 
 [features]
 default = ["bundled-sqlite"]

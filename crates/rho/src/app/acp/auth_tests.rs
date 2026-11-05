@@ -76,21 +76,31 @@ fn credential_failures_map_to_auth_required_without_diagnostics() {
     }
 }
 
-// Covers: OAuth runs in this process only for hosts that can show its URL and
-// once a credential store is chosen (only the terminal login asks), and
-// `authenticate` accepts exactly the logins advertised as agent methods; API
-// keys always need the terminal's hidden entry; a host gets no method it
-// cannot complete; device-key setup is never offered.
+// Covers: OAuth and API-key logins run in this process only for hosts that
+// can show a URL, and, until a credential store is chosen, only for hosts
+// that can also ask the store question as a form; API keys stay in the
+// terminal when the user's browser is elsewhere (SSH, containers), since it
+// cannot reach the local key page; `authenticate` accepts exactly the logins
+// advertised as agent methods; a host gets no method it cannot complete;
+// device-key setup is never offered.
 // Owner: ACP auth advertisement and the authenticate gate.
 #[test]
 fn each_login_is_offered_where_the_host_can_finish_it() {
+    use rho_providers::auth::browser::BrowserAvailability::{Graphical, Headless};
     use CredentialStoreChoice::{Made, Pending};
-    let initialize = |terminal: bool, urls: bool| {
+    let initialize = |terminal: bool, urls: bool, forms: bool| {
+        let mut elicitation = serde_json::Map::new();
+        if urls {
+            elicitation.insert("url".into(), serde_json::json!({}));
+        }
+        if forms {
+            elicitation.insert("form".into(), serde_json::json!({}));
+        }
         serde_json::from_value::<InitializeRequest>(serde_json::json!({
             "protocolVersion": 1,
             "clientCapabilities": {
                 "auth": {"terminal": terminal},
-                "elicitation": if urls { serde_json::json!({"url": {}}) } else { serde_json::json!({"form": {}}) },
+                "elicitation": elicitation,
             },
         }))
         .unwrap()
@@ -105,31 +115,46 @@ fn each_login_is_offered_where_the_host_can_finish_it() {
                 _ => "other",
             })
     };
+    let (agent, terminal) = (Some("agent"), Some("terminal"));
     let cases = [
-        // (terminal, url elicitation, store) -> (OAuth, API key)
-        ((true, true, Made), (Some("agent"), Some("terminal"))),
-        ((true, true, Pending), (Some("terminal"), Some("terminal"))),
-        ((true, false, Made), (Some("terminal"), Some("terminal"))),
-        ((false, true, Made), (Some("agent"), None)),
-        ((false, true, Pending), (None, None)),
-        ((false, false, Made), (None, None)),
+        // (terminal, url elicitation, form elicitation, store, browser) -> (OAuth, API key)
+        ((true, true, false, Made, Graphical), (agent, agent)),
+        (
+            (true, true, false, Pending, Graphical),
+            (terminal, terminal),
+        ),
+        ((true, true, true, Pending, Graphical), (agent, agent)),
+        ((true, false, true, Made, Graphical), (terminal, terminal)),
+        ((true, true, true, Made, Headless), (agent, terminal)),
+        ((false, true, false, Made, Graphical), (agent, agent)),
+        ((false, true, false, Pending, Graphical), (None, None)),
+        ((false, true, true, Pending, Graphical), (agent, agent)),
+        ((false, false, true, Made, Graphical), (None, None)),
+        ((false, true, true, Made, Headless), (agent, None)),
     ];
-    for ((terminal, urls, store), expected) in cases {
-        let request = initialize(terminal, urls);
-        let sign_in = oauth_sign_in(HostFeatures::from_initialize(&request), store);
+    for ((terminal, urls, forms, store, browser), expected) in cases {
+        let request = initialize(terminal, urls, forms);
+        let sign_in = sign_in(HostFeatures::from_initialize(&request), store, browser);
         let methods = methods(&request, sign_in);
+        let context =
+            format!("terminal={terminal} urls={urls} forms={forms} store={store:?} {browser:?}");
         assert_eq!(
             (kind(&methods, "xai-oauth"), kind(&methods, "api-key")),
             expected,
-            "terminal={terminal} urls={urls} store={store:?}"
+            "{context}"
         );
         assert_eq!(kind(&methods, "ollama-cloud-device"), None);
-        let accepted = ["xai-oauth", "api-key", "ollama-cloud-device"]
-            .map(|auth| runs_in_process(auth, sign_in).then_some("agent"));
+        let accepted =
+            ["xai-oauth", "api-key", "ollama-cloud-device"].map(|auth| agent_login(auth, sign_in));
+        let advertised = |kind: Option<&str>, login| (kind == agent).then_some(login);
         assert_eq!(
             accepted,
-            [expected.0.filter(|kind| *kind == "agent"), None, None],
-            "authenticate accepts what was advertised as agent methods"
+            [
+                advertised(expected.0, AgentLogin::OAuth),
+                advertised(expected.1, AgentLogin::ApiKey),
+                None
+            ],
+            "authenticate accepts what was advertised as agent methods: {context}"
         );
     }
 }

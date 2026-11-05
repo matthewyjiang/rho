@@ -19,7 +19,7 @@ use std::{
 use agent_client_protocol::Error as AcpError;
 use rho_providers::{auth::login_dispatch::ProviderAuthentication, provider};
 
-use super::auth_login::{open_credential_store, UnchosenStore};
+use super::auth_login::open_credential_store;
 use crate::credential_store::AppCredentialStore;
 
 /// How many logouts this connection has completed. Shared by the agent, which
@@ -67,7 +67,7 @@ pub(super) fn sign_out(auth: &str, config: Option<PathBuf>) -> Result<(), AcpErr
             "'{auth}' reads its credential from {source}; unset it to sign out"
         )));
     }
-    open_credential_store(config, UnchosenStore::UseDefault)
+    open_credential_store(config)
         .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
     ProviderAuthentication::delete_credentials(&AppCredentialStore, auth).map_err(|error| {
         AcpError::internal_error().data(format!("could not delete {auth} credentials: {error}"))

@@ -144,7 +144,8 @@ async fn sign_in_waits_for_the_provider_and_ends_with_the_host() {
                 ShownLogin {
                     auth: "xai-oauth",
                     provider_label: "SpaceXAI",
-                    prompt: &prompt,
+                    url: prompt.copyable_url(),
+                    message: message("SpaceXAI", &prompt),
                 },
                 signed_in,
             ),

@@ -40,7 +40,7 @@ pub(super) fn agent(agent: Arc<LazyAgent>) -> impl ConnectTo<Client> {
                         agent.record_client(&request, Arc::new(V2Port::new(cx)));
                         requests::initialize_response(RhoAcpAgent::initialize(
                             &request,
-                            agent.oauth_sign_in(),
+                            agent.sign_in(),
                         ))
                     });
                     respond(responder, response)

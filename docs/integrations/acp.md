@@ -53,8 +53,11 @@ Point the host at `rho acp`. Rho speaks ACP protocol version 1, and the version 
 
 Hosts offer one sign-in method per Rho provider login, covering API keys and OAuth.
 
-- **OAuth in the host's own sign-in UI.** Hosts that can show a link from the agent, such as Zed, run OAuth logins without a terminal. Rho picks browser or device-code the same way `rho login <provider>` does. You get a browser callback on a desktop. Over SSH or headless you get device code, and the host also shows the code. Open the link, approve, and the host finishes signing in.
-- **A terminal everywhere else.** API keys, hosts without that support, and the first sign-in before a credential store is chosen open a terminal that runs `rho login <provider>`, on hosts that have one. API-key input stays hidden.
+- **In the host's own sign-in UI.** Hosts that can show a link from the agent, such as Zed, sign in without a terminal.
+  - **OAuth.** Rho picks browser or device-code the same way `rho login <provider>` does. You get a browser callback on a desktop. Over SSH or headless you get device code, and the host also shows the code. Open the link, approve, and the host finishes signing in.
+  - **API keys.** The link opens a one-time page that Rho serves on `127.0.0.1`. Paste the key there. Rho checks it with the provider before saving it. A key the provider refuses shows an error on the page so you can try again. The key goes straight from your browser to Rho, so the host never sees it. When Rho runs over SSH or headless, your browser cannot reach that page, so API keys use the terminal instead.
+  - **The first sign-in.** If no credential store is chosen yet, a host that can show forms asks where to store credentials first, as `rho login` does in a terminal. Rho saves the answer to config.
+- **A terminal everywhere else.** Hosts without that support, and the first sign-in on hosts that cannot show forms, open a terminal that runs `rho login <provider>`, on hosts that have one. API-key input stays hidden.
 
 Either way, credentials go to Rho's own credential store and never travel over ACP.
 

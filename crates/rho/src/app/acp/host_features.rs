@@ -9,8 +9,9 @@
 //! advertise `.url`. Other hosts keep the baseline: `/compact` replies with an
 //! agent message, automatic compaction shows only in `usage_update`, notices
 //! are agent messages, on/off options are two-value selects, Rho offers no
-//! questionnaire tool and declines MCP elicitation, and OAuth sign-in runs in
-//! a terminal. A host advertising both `clientCapabilities.fs.readTextFile`
+//! questionnaire tool and declines MCP elicitation, and sign-in runs in a
+//! terminal (as it does on hosts without forms until a credential store is
+//! chosen). A host advertising both `clientCapabilities.fs.readTextFile`
 //! and `.writeTextFile` serves file text through `fs/*` requests, and one
 //! advertising `clientCapabilities.terminal` runs shell commands through
 //! `terminal/*`; others keep Rho on disk and local processes.
@@ -33,7 +34,7 @@ pub(in crate::app) struct HostFeatures {
     /// Form-mode `elicitation/create`: questions put to the user.
     pub(super) forms: Forms,
     /// URL-mode `elicitation/create`: links the user opens, such as an OAuth
-    /// sign-in page.
+    /// sign-in page or Rho's API-key page.
     pub(super) urls: bool,
     /// `fs/read_text_file` and `fs/write_text_file`. Rho needs both: writing
     /// without reading would overwrite unsaved edits it never saw.
