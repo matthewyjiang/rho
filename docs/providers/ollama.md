@@ -29,13 +29,13 @@ In Rho, run `/login ollama`. The first field is the API base, prefilled with the
 /login ollama
 ```
 
-Then open `/config` and choose **Refresh model lists**. The model picker then shows the models returned by Ollama. Startup also refreshes that list when the cache is stale. You can also select one directly:
+Login refreshes the model list right away, and the model picker then shows the models returned by Ollama. You can also select one directly:
 
 ```text
 /model ollama/<tool-capable-model>
 ```
 
-First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand.
+First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. Until then Rho treats Ollama as not set up, even when a local server is running: **Refresh model lists** and `/refresh-models` skip it, and its models stay out of the pickers. Removing the table undoes the login; the next start drops Ollama's cached model list.
 
 ## Use another server
 

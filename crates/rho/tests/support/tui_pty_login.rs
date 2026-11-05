@@ -350,3 +350,119 @@ fn ollama_device_login_needs_enter_and_logout_signs_out() {
         .unwrap();
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
+
+/// Serves one chat model from Ollama's native `/api/tags` on a loopback port.
+/// Returns the `/v1` API base to log in with.
+fn spawn_fake_ollama() -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            let _ = reader.read_line(&mut request_line);
+            // Drain headers; only GET /api/tags is answered with models.
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 0) && line != "\r\n" {
+                line.clear();
+            }
+            let body = if request_line.starts_with("GET /api/tags ") {
+                r#"{"models":[{"name":"llama-pty:latest","details":{"context_length":8192},"capabilities":["completion","tools"]}]}"#
+            } else {
+                "{}"
+            };
+            let _ = write!(
+                reader.get_mut(),
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    base
+}
+
+// Covers: Ollama is refreshed and listed only after /login ollama; a list
+// cached before its table was removed stops showing on the next start.
+// Owner: interactive provider setup.
+#[test]
+fn ollama_is_refreshed_and_listed_only_after_login() {
+    let home = IsolatedHome::new().unwrap();
+    let original_config = std::fs::read_to_string(&home.config_path).unwrap();
+    let ollama_base = spawn_fake_ollama();
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 140,
+        },
+    );
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_only").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    // Refresh-all reports the models.dev failure last (offline proxy), so by
+    // then any Ollama refresh would already be in the transcript.
+    harness.submit_text("/refresh-models").unwrap();
+    harness
+        .wait_for_text(
+            "failed to refresh the models.dev catalog",
+            WaitTimeout::secs(20, "refresh-all finished"),
+        )
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(
+        !screen.contains("ollama"),
+        "refresh-all must not touch Ollama before /login ollama:\n{screen}"
+    );
+
+    harness.submit_text("/login ollama").unwrap();
+    harness
+        .wait_for_text("edit base URL", WaitTimeout::secs(10, "endpoint prompt"))
+        .unwrap();
+    for _ in 0..rho_providers::provider::OLLAMA_API_BASE.len() {
+        harness.inject_key(&Key::Backspace).unwrap();
+    }
+    harness.type_text(&ollama_base).unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "enter API key (optional)",
+            WaitTimeout::secs(10, "key prompt"),
+        )
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "refreshed ollama model list: 1 models",
+            WaitTimeout::secs(20, "login refreshes ollama"),
+        )
+        .unwrap();
+    harness.submit_text("/model").unwrap();
+    harness
+        .wait_for_text(
+            "llama-pty:latest",
+            WaitTimeout::secs(10, "ollama model listed"),
+        )
+        .unwrap();
+    harness.inject_key(&Key::Esc).unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+
+    // Dropping [providers.ollama] undoes the login; its cached list must go.
+    std::fs::write(&home.config_path, original_config).unwrap();
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_removed").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
+        .unwrap();
+    harness.submit_text("/model").unwrap();
+    harness
+        .wait_for_text(
+            "no cached provider models",
+            WaitTimeout::secs(10, "ollama list dropped"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}

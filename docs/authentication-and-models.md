@@ -40,7 +40,7 @@ Rho's implemented providers are:
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
+Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key; Rho does not refresh or list Ollama until you do. Custom hosts can run without a key. OpenAI Codex OAuth and SpaceXAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
 
 ## First run
 

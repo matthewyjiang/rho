@@ -288,6 +288,9 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let mut config = config_repository.load()?;
     // Register every [providers.custom.*] name before refresh, pickers, and /model.
     config.providers.activate()?;
+    // Before any refresh, so a session that explicitly names Ollama before
+    // `/login ollama` can still fetch its list below.
+    config.providers.forget_models_of_hosts_not_set_up();
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
