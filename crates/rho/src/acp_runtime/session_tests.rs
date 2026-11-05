@@ -373,6 +373,258 @@ async fn queued_parent_message_becomes_next_prompt_and_port_seals() {
     );
 }
 
+/// Run `script`, sending one parent message once the fake waits mid-turn.
+async fn run_with_mid_turn_message(dir: &std::path::Path, script: Script) -> Arc<Mutex<Record>> {
+    let (handle, inbox) = message_channel();
+    let (client, agent) = Channel::duplex();
+    let (fake, record, mut signals) = ScriptedAgent::new(script);
+    tokio::time::timeout(TEST_BUDGET, async {
+        let send = async {
+            while let Some(signal) = signals.recv().await {
+                if signal == Signal::Waiting {
+                    handle.send("course correction".into()).unwrap();
+                    break;
+                }
+            }
+        };
+        let (client, agent, ()) = tokio::join!(
+            run_on_channel(request(dir, Some(inbox)), TestPolicy::new(dir), client),
+            fake.run(agent),
+            send
+        );
+        client.unwrap();
+        agent.unwrap();
+    })
+    .await
+    .expect("run with a mid-turn parent message finished");
+    record
+}
+
+fn prompts_and_steers(record: &Mutex<Record>) -> Vec<serde_json::Value> {
+    record
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .filter(|request| {
+            request["method"] == "session/prompt" || request["method"] == "_session/steering"
+        })
+        .cloned()
+        .collect()
+}
+
+fn parent_cards(events: Vec<AttachmentEvent>) -> Vec<AttachmentEvent> {
+    events
+        .into_iter()
+        .filter(|event| matches!(event, AttachmentEvent::Message(_)))
+        .collect()
+}
+
+fn task_prompt() -> serde_json::Value {
+    json!({"method":"session/prompt", "params":{"sessionId":"scripted-session", "prompt":[{"type":"text", "text":"task"}]}})
+}
+
+fn steer_request() -> serde_json::Value {
+    json!({"method":"_session/steering", "params":{
+        "sessionId":"scripted-session",
+        "prompt":[{"type":"text", "text":frame_parent_message("course correction")}],
+        "_meta":{"steering":{"idleBehavior":"promptRequired"}},
+    }})
+}
+
+// Covers: an agent that advertises steering takes a mid-turn parent message
+// through `_session/steering` into the running turn, with no second prompt.
+// Owner: ACP turn scheduling. The fake signals readiness rather than sleeping.
+#[tokio::test]
+async fn steering_agent_takes_parent_message_into_running_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = run_with_mid_turn_message(
+        dir.path(),
+        Script {
+            steering: true,
+            ..script(vec![vec![
+                text("working"),
+                Step::AwaitSteer,
+                text(" steered"),
+                stop(),
+            ]])
+        },
+    )
+    .await;
+    assert_eq!(
+        prompts_and_steers(&record),
+        vec![task_prompt(), steer_request()]
+    );
+    let (status, events) = read_artifacts(dir.path());
+    assert_eq!(
+        (status.state, status.turns, parent_cards(events)),
+        (
+            RunState::Ok,
+            1,
+            vec![AttachmentEvent::Message(Box::new(
+                crate::presentation::parent_message_card(
+                    "course correction".into(),
+                    crate::presentation::NotificationDelivery::Received,
+                    "steered into the running turn".into()
+                )
+            ))]
+        )
+    );
+}
+
+// Covers: a parent message already waiting when the prompt goes out reaches
+// that turn. Output the agent sends before queueing the turn (an open task
+// plan) gets the steer declined; Rho retries on the turn's next output instead
+// of pushing the correction past the turn it was meant for.
+// Owner: ACP turn scheduling.
+#[tokio::test]
+async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, inbox) = message_channel();
+    handle.send("course correction".into()).unwrap();
+    let (client, agent) = Channel::duplex();
+    let (fake, record, _signals) = ScriptedAgent::new(Script {
+        steering: true,
+        ..script(vec![vec![
+            Step::BeforeQueued {
+                update: Box::new(SessionUpdate::Plan(
+                    agent_client_protocol::schema::v1::Plan::new(Vec::new()),
+                )),
+            },
+            text("working"),
+            Step::AwaitSteer,
+            text(" steered"),
+            stop(),
+        ]])
+    });
+    tokio::time::timeout(TEST_BUDGET, async {
+        let (client, agent) = tokio::join!(
+            run_on_channel(
+                request(dir.path(), Some(inbox)),
+                TestPolicy::new(dir.path()),
+                client
+            ),
+            fake.run(agent),
+        );
+        client.unwrap();
+        agent.unwrap();
+    })
+    .await
+    .expect("run with a waiting parent message finished");
+    assert_eq!(
+        prompts_and_steers(&record),
+        vec![task_prompt(), steer_request(), steer_request()]
+    );
+    let (status, _) = read_artifacts(dir.path());
+    assert_eq!(
+        (status.state, status.result),
+        (RunState::Ok, Some("working steered".into()))
+    );
+}
+
+// Covers: a steer the agent declines (no running turn) or fails is not lost:
+// it becomes the next prompt, exactly once.
+// Owner: ACP turn scheduling.
+#[tokio::test]
+async fn declined_or_failed_steer_becomes_next_turn() {
+    let cases = [
+        (
+            Some(json!({"outcome":"promptRequired", "reason":"noRunningTurn"})),
+            None,
+        ),
+        (None, Some("steering exploded".to_owned())),
+    ];
+    for (steer_reply, steer_error) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let record = run_with_mid_turn_message(
+            dir.path(),
+            Script {
+                steering: true,
+                steer_reply,
+                steer_error,
+                ..script(vec![
+                    vec![text("first"), Step::AwaitSteer, stop()],
+                    vec![text("corrected"), stop()],
+                ])
+            },
+        )
+        .await;
+        assert_eq!(
+            prompts_and_steers(&record),
+            vec![
+                task_prompt(),
+                steer_request(),
+                json!({"method":"session/prompt", "params":{"sessionId":"scripted-session", "prompt":[{"type":"text", "text":frame_parent_message("course correction")}]}}),
+            ]
+        );
+        let (status, events) = read_artifacts(dir.path());
+        assert_eq!(
+            (
+                status.state,
+                status.result,
+                status.turns,
+                parent_cards(events)
+            ),
+            (
+                RunState::Ok,
+                Some("corrected".into()),
+                2,
+                vec![AttachmentEvent::Message(Box::new(
+                    crate::presentation::parent_message_card(
+                        "course correction".into(),
+                        crate::presentation::NotificationDelivery::Queued,
+                        "sent as the next agent turn".into()
+                    )
+                ))]
+            )
+        );
+    }
+}
+
+// Covers: a declined steer waiting for a next turn that a failed turn never
+// starts is reported as undelivered, not silently dropped or sent anyway.
+// Owner: ACP turn scheduling.
+#[tokio::test]
+async fn held_message_is_reported_when_the_turn_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = run_with_mid_turn_message(
+        dir.path(),
+        Script {
+            steering: true,
+            steer_reply: Some(json!({"outcome":"promptRequired", "reason":"noRunningTurn"})),
+            ..script(vec![vec![
+                text("first"),
+                Step::AwaitSteer,
+                Step::Stop {
+                    reason: StopReason::Refusal,
+                },
+            ]])
+        },
+    )
+    .await;
+    assert_eq!(
+        prompts_and_steers(&record),
+        vec![task_prompt(), steer_request()]
+    );
+    let (status, events) = read_artifacts(dir.path());
+    assert_eq!(
+        (
+            status.state,
+            events
+                .into_iter()
+                .filter(|event| matches!(event, AttachmentEvent::Notice(text) if text.contains("parent message")))
+                .collect::<Vec<_>>()
+        ),
+        (
+            RunState::Error,
+            vec![AttachmentEvent::Notice(
+                "acp: a parent message was not delivered: the run ended before its next turn"
+                    .into()
+            )]
+        )
+    );
+}
+
 // Covers: cancel mid-turn sends session/cancel and settles Stopped with the
 // partial result whether the agent answers the cancelled prompt or hangs up,
 // without turning it into success/error or writing two terminals.

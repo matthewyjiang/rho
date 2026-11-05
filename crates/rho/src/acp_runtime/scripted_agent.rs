@@ -15,7 +15,7 @@ use agent_client_protocol::{
         },
         ProtocolVersion,
     },
-    Agent, Client, ConnectTo, ConnectionTo, Error, Responder, UntypedMessage,
+    Agent, Client, ConnectTo, ConnectionTo, Error, Handled, Responder, UntypedMessage,
 };
 use rho_tools::cancellation::RunCancellation;
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,12 @@ use std::{
     collections::VecDeque,
     fs::File,
     io::Write,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Script {
@@ -48,6 +51,15 @@ pub(crate) struct Script {
     /// agents where one change moves other options.
     #[serde(default)]
     pub(crate) config_options_after_set: Vec<SessionConfigOption>,
+    /// Advertise `_session/steering` in `initialize`.
+    #[serde(default)]
+    pub(crate) steering: bool,
+    /// The `_session/steering` reply: `injected` when unset. Ignored when
+    /// `steer_error` is set.
+    #[serde(default)]
+    pub(crate) steer_reply: Option<Value>,
+    #[serde(default)]
+    pub(crate) steer_error: Option<String>,
     pub(crate) turns: Vec<Vec<Step>>,
 }
 
@@ -75,6 +87,13 @@ pub(crate) enum Step {
     /// Signal readiness, await session/cancel, then close the transport
     /// instead of answering the prompt.
     DisconnectOnCancel,
+    /// Signal readiness, then await a `_session/steering` request.
+    AwaitSteer,
+    /// Send an update before the turn is queued, as claude-agent-acp does
+    /// with an open task plan, then wait for the steer it declines.
+    BeforeQueued {
+        update: Box<SessionUpdate>,
+    },
 }
 
 /// Whole wire requests/replies, without assertions embedded in the fake.
@@ -172,6 +191,23 @@ impl ScriptedAgent {
         let prompt_closed = closed.clone();
         let prompt_cancelled = cancelled.clone();
         let prompt_signals = signals.clone();
+        let steered = Arc::new(Notify::new());
+        let prompt_steered = Arc::clone(&steered);
+        let declined = Arc::new(Notify::new());
+        let prompt_declined = Arc::clone(&declined);
+        // Like claude-agent-acp, a turn exists for steering only once it is
+        // queued, which the fake marks with the turn's first update; until
+        // then a steer is declined with `promptRequired`.
+        let turn_live = Arc::new(AtomicBool::new(false));
+        let prompt_turn_live = Arc::clone(&turn_live);
+        let steer_record = Arc::clone(&record);
+        let advertise_steering = script.steering;
+        let steer_reply = match script.steer_error {
+            Some(message) => Err(message),
+            None => Ok(script
+                .steer_reply
+                .unwrap_or_else(|| json!({"outcome": "injected"}))),
+        };
         Agent
             .builder()
             .name("rho-scripted-agent")
@@ -180,7 +216,13 @@ impl ScriptedAgent {
                     record_request(&initialize_record, "initialize", &request);
                     match &initialize_error {
                         Some(message) => responder.respond_with_error(fake_error(message)),
-                        None => responder.respond(InitializeResponse::new(ProtocolVersion::V1)),
+                        None => responder.respond(
+                            InitializeResponse::new(ProtocolVersion::V1).meta(
+                                advertise_steering
+                                    .then(|| json!({"steering": {"supported": true}}))
+                                    .and_then(|meta| meta.as_object().cloned()),
+                            ),
+                        ),
                     }
                 },
                 agent_client_protocol::on_receive_request!(),
@@ -248,6 +290,9 @@ impl ScriptedAgent {
                     let signals = prompt_signals.clone();
                     let cancelled = prompt_cancelled.clone();
                     let closed = prompt_closed.clone();
+                    let steered = Arc::clone(&prompt_steered);
+                    let turn_live = Arc::clone(&prompt_turn_live);
+                    let declined = Arc::clone(&prompt_declined);
                     cx.clone().spawn(async move {
                         play_turn(
                             cx,
@@ -259,6 +304,9 @@ impl ScriptedAgent {
                                 signals,
                                 cancelled,
                                 closed,
+                                steered,
+                                turn_live,
+                                declined,
                             },
                         )
                         .await
@@ -274,6 +322,31 @@ impl ScriptedAgent {
                     Ok(())
                 },
                 agent_client_protocol::on_receive_notification!(),
+            )
+            .on_receive_request(
+                async move |request: UntypedMessage, responder: Responder<Value>, _cx| {
+                    if request.method != "_session/steering" {
+                        return Ok(Handled::No {
+                            message: (request, responder),
+                            retry: false,
+                        });
+                    }
+                    record_request(&steer_record, &request.method, &request.params);
+                    if !turn_live.load(Ordering::SeqCst) {
+                        responder.respond(
+                            json!({"outcome": "promptRequired", "reason": "noRunningTurn"}),
+                        )?;
+                        declined.notify_one();
+                        return Ok(Handled::Yes);
+                    }
+                    steered.notify_one();
+                    match &steer_reply {
+                        Ok(reply) => responder.respond(reply.clone())?,
+                        Err(message) => responder.respond_with_error(fake_error(message))?,
+                    }
+                    Ok(Handled::Yes)
+                },
+                agent_client_protocol::on_receive_request!(),
             )
             .connect_with(transport, async move |cx| {
                 tokio::select! { _ = cx.incoming_closed() => {}, _ = closed.cancelled() => {} }
@@ -301,6 +374,9 @@ struct TurnControls {
     signals: mpsc::UnboundedSender<Signal>,
     cancelled: RunCancellation,
     closed: RunCancellation,
+    steered: Arc<Notify>,
+    turn_live: Arc<AtomicBool>,
+    declined: Arc<Notify>,
 }
 
 async fn play_turn(
@@ -315,13 +391,19 @@ async fn play_turn(
         signals,
         cancelled,
         closed,
+        steered,
+        turn_live,
+        declined,
     } = controls;
     for step in steps {
         match step {
-            Step::Update { update } => cx.send_notification(SessionNotification::new(
-                request.session_id.clone(),
-                *update,
-            ))?,
+            Step::Update { update } => {
+                turn_live.store(true, Ordering::SeqCst);
+                cx.send_notification(SessionNotification::new(
+                    request.session_id.clone(),
+                    *update,
+                ))?;
+            }
             Step::Permission { call, options } => {
                 let response = cx
                     .send_request(RequestPermissionRequest::new(
@@ -346,7 +428,10 @@ async fn play_turn(
                 };
                 record.lock().expect("script record").push_reply(reply);
             }
-            Step::Stop { reason } => return responder.respond(PromptResponse::new(reason)),
+            Step::Stop { reason } => {
+                turn_live.store(false, Ordering::SeqCst);
+                return responder.respond(PromptResponse::new(reason));
+            }
             Step::Hang => {
                 let _ = signals.send(Signal::Waiting);
                 cancelled.cancelled().await;
@@ -361,6 +446,17 @@ async fn play_turn(
                 cancelled.cancelled().await;
                 closed.cancel();
                 return std::future::pending().await;
+            }
+            Step::BeforeQueued { update } => {
+                cx.send_notification(SessionNotification::new(
+                    request.session_id.clone(),
+                    *update,
+                ))?;
+                declined.notified().await;
+            }
+            Step::AwaitSteer => {
+                let _ = signals.send(Signal::Waiting);
+                steered.notified().await;
             }
         }
     }
