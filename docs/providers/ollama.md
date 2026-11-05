@@ -35,7 +35,7 @@ Login refreshes the model list right away, and the model picker then shows the m
 /model ollama/<tool-capable-model>
 ```
 
-First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. `rho login ollama` and an ACP sign-in record the same login at the default API base. Until then Rho treats Ollama as not set up, even when a local server is running: **Refresh model lists** and `/refresh-models` skip it, and its models stay out of the pickers. Logging out, or removing the table by hand, drops Ollama's cached model list.
+First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. `rho login ollama` and an ACP sign-in record the same login at the default API base. Until then Rho treats Ollama as not logged in, even when a local server is running: Rho never contacts it, **Refresh model lists** and `/refresh-models` skip it, its models stay out of the pickers, a saved Ollama selection starts signed out, and `--provider ollama` asks you to log in. Logging out, or removing the table by hand, drops Ollama's cached model list.
 
 ## Use another server
 

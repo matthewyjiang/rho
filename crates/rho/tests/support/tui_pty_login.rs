@@ -352,14 +352,17 @@ fn ollama_device_login_needs_enter_and_logout_signs_out() {
 }
 
 /// Serves one chat model from Ollama's native `/api/tags` on a loopback port.
-/// Returns the `/v1` API base to log in with.
-fn spawn_fake_ollama() -> String {
+/// Returns the `/v1` API base to log in with and a count of requests served.
+fn spawn_fake_ollama() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     use std::io::{BufRead, BufReader, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let served = std::sync::Arc::clone(&requests);
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { return };
+            served.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let mut reader = BufReader::new(stream);
             let mut request_line = String::new();
             let _ = reader.read_line(&mut request_line);
@@ -380,7 +383,7 @@ fn spawn_fake_ollama() -> String {
             );
         }
     });
-    base
+    (base, requests)
 }
 
 // Covers: Ollama is refreshed and listed only after /login ollama, key or no
@@ -391,7 +394,7 @@ fn spawn_fake_ollama() -> String {
 fn ollama_is_refreshed_and_listed_only_after_login() {
     let home = IsolatedHome::new().unwrap();
     let original_config = std::fs::read_to_string(&home.config_path).unwrap();
-    let ollama_base = spawn_fake_ollama();
+    let (ollama_base, ollama_requests) = spawn_fake_ollama();
     let plan = RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         &home,
@@ -424,7 +427,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 
     // Dropping [providers.ollama] undoes the login; its cached list must go.
-    std::fs::write(&home.config_path, original_config).unwrap();
+    std::fs::write(&home.config_path, &original_config).unwrap();
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_removed").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
@@ -463,6 +466,32 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     assert!(
         !config.contains("[providers.ollama]"),
         "logout must remove the login record:\n{config}"
+    );
+
+    // A saved Ollama selection without its login starts signed out, and
+    // startup asks nothing of the server.
+    std::fs::write(
+        &home.config_path,
+        original_config.replacen(
+            "provider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"",
+            "provider = \"ollama\"\nmodel = \"llama-pty:latest\"\nauth = \"none\"",
+            1,
+        ),
+    )
+    .unwrap();
+    let served_before = ollama_requests.load(std::sync::atomic::Ordering::SeqCst);
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_saved_without_login").unwrap();
+    harness
+        .wait_for_text(
+            "Not signed in",
+            WaitTimeout::secs(20, "saved ollama starts signed out"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+    assert_eq!(
+        ollama_requests.load(std::sync::atomic::Ordering::SeqCst),
+        served_before,
+        "startup must not probe an Ollama that is not logged in"
     );
 }
 

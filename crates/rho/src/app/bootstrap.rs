@@ -566,10 +566,16 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),
     );
-    let provider_result = rho_providers::providers::build_sdk_provider_with_source(
-        sdk_options.provider,
-        &credentials,
-    );
+    let provider_result = startup
+        .config
+        .providers
+        .require_endpoint_login(&startup.config.provider)
+        .and_then(|()| {
+            rho_providers::providers::build_sdk_provider_with_source(
+                sdk_options.provider,
+                &credentials,
+            )
+        });
     let (missing_auth_error, missing_auth_model_error) = match provider_result {
         Ok(_) => (None, None),
         Err(error) if is_interactive_startup_unavailable_error(&error) => {

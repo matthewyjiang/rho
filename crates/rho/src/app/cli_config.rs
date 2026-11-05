@@ -56,14 +56,21 @@ pub(super) async fn refresh_model_cache(
     config: &Config,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<ProviderRefreshStatus> {
-    // First, so a session that explicitly names Ollama before `/login ollama`
-    // still fetches its list below.
     forget_models_awaiting_endpoint_login(config);
     let CliTarget {
         provider,
         model: selected_model,
     } = cli_target(cli, config)?;
     let provider = provider.as_str();
+    let explicit_selection = cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some();
+    // A host not logged in is never probed: naming it fails with the login
+    // hint, and a saved selection is reported unavailable when it builds.
+    if let Err(error) = config.providers.require_endpoint_login(provider) {
+        if explicit_selection {
+            return Err(error.into());
+        }
+        return Ok(ProviderRefreshStatus::NotAttempted);
+    }
     if cli.provider.is_none()
         && cli.model.is_none()
         && cli.auth.is_none()
@@ -87,8 +94,7 @@ pub(super) async fn refresh_model_cache(
         provider,
         &auth,
         selected_model.as_deref(),
-        /*explicit_selection*/
-        cli.provider.is_some() || cli.model.is_some() || cli.auth.is_some(),
+        explicit_selection,
         store,
         model_endpoint,
     )
@@ -436,6 +442,10 @@ fn needs_startup_capability_refresh(
     provider_refresh: &ProviderRefreshStatus,
 ) -> bool {
     !provider_refresh.was_attempted_for(&config.provider)
+        && config
+            .providers
+            .require_endpoint_login(&config.provider)
+            .is_ok()
         && provider_model_capabilities_need_refresh(&config.provider, &config.model)
 }
 

@@ -141,6 +141,23 @@ impl ProviderConfigs {
         descriptor.collects_login_endpoint() && self.endpoint(descriptor.name).is_none()
     }
 
+    /// Refuses a session on `provider` while it awaits its endpoint login, as
+    /// a missing credential, so startup offers `/login` and ACP answers
+    /// `auth_required` instead of probing a server the user never set up.
+    pub(crate) fn require_endpoint_login(
+        &self,
+        provider: &str,
+    ) -> Result<(), rho_providers::model::ModelError> {
+        match rho_providers::provider::provider_descriptor(provider) {
+            Some(descriptor) if self.awaits_endpoint_login(*descriptor) => {
+                Err(rho_providers::model::ModelError::missing_credentials(
+                    "not logged in to Ollama; run /login ollama in the TUI",
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Records a login to `descriptor` when it is a host logged in through its
     /// endpoint and none is recorded yet, at its default API base. Logins that
     /// collect no URL (`rho login`, ACP sign-in) call this. Returns whether
