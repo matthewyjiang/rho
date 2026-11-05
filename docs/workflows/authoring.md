@@ -62,8 +62,8 @@ The example assumes `review` declares an output schema with a string field
 `summary`. Each export is a typed, required reference to a task output. Planning
 checks its node and schema path. Closing the root resolves the exports and saves
 them with the scope outcome. An unavailable required export cannot produce a
-successful root result. Task definitions keep local source names, and root
-task instances use the same names at runtime.
+successful root result. Task definitions keep local source names. At runtime,
+root task instances are qualified by the root scope, such as `s0.review`.
 Use `output("review", [])` to export the entire typed value.
 
 Planning bounds the serialized export map using each referenced task's declared

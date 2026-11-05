@@ -6,43 +6,61 @@
 //! and skips that validation path.
 //!
 //! Name and step counts come from manifests so the hot path never opens
-//! the frozen program. Records written before scoped programs use version 1
-//! manifests and flat run state; inventory reads both generations.
-//! Lifecycle and progress still come from `state.json`.
+//! the frozen program. Lifecycle and progress come from `state.json`.
+//! Records with version 1 manifests (see `store_generation.rs`) are listed as
+//! [`UnsupportedRecord`] rows read from the manifest alone, so users can see
+//! and delete them.
 //!
-//! This module is projection only. Destructive store mutations live on
-//! [`WorkflowStore`] in `store.rs`.
+//! This module is projection only. Destructive store mutations live in
+//! `store_mutate.rs`.
 
-use std::{collections::BTreeMap, path::Path, str::FromStr};
+use std::{cmp::Reverse, collections::BTreeMap, path::Path, str::FromStr};
 
 use serde::Deserialize;
 
-use super::{plan_relative, read_json, run_relative, WorkflowStore};
+use super::{
+    generation::UNSUPPORTED_MANIFEST_VERSION, plan_relative, read_json, run_relative, WorkflowStore,
+};
 use crate::workflow::{
     check_schema_version, NodeId, NodeState, PlanId, RunId, RunLifecycle, ScopeInstanceId,
-    WorkflowOutcome, WorkflowResult, PLAN_MANIFEST_VERSION, RUN_MANIFEST_VERSION,
+    WorkflowError, WorkflowOutcome, WorkflowResult, PLAN_MANIFEST_VERSION, RUN_MANIFEST_VERSION,
 };
 
-/// Inventory owns generation policy; readers and mutation boundaries consume it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RecordAccess {
-    Executable,
-    ReadOnly,
+/// A plan or run saved before scoped workflow programs (manifest version 1).
+/// This release lists and deletes it but cannot open it; Rho 2.x can.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnsupportedRecord<Id> {
+    pub(crate) id: Id,
+    /// Persisted creation time, zero when the manifest predates it.
+    pub(crate) created_at_unix_nanos: u64,
+    pub(crate) workspace_identity: String,
+    pub(crate) name: String,
 }
 
-impl RecordAccess {
-    pub(super) fn from_version(
-        kind: &'static str,
-        version: u32,
-        current: u32,
-    ) -> WorkflowResult<Self> {
-        if version == super::legacy::LEGACY_MANIFEST_VERSION {
-            Ok(Self::ReadOnly)
-        } else {
-            check_schema_version(kind, version, current)?;
-            Ok(Self::Executable)
+/// Inventory rows this release can open, plus unsupported records kept visible
+/// so users can delete them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Inventory<T, Id> {
+    pub(crate) items: Vec<T>,
+    pub(crate) unsupported: Vec<UnsupportedRecord<Id>>,
+}
+
+impl<T, Id> Default for Inventory<T, Id> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            unsupported: Vec::new(),
         }
     }
+}
+
+pub(crate) type PlanInventory = Inventory<PlanInventoryItem, PlanId>;
+pub(crate) type RunInventory = Inventory<RunInventoryItem, RunId>;
+
+/// One store entry, read by generation.
+pub(super) enum InventoryRow<T, Id> {
+    Current(T),
+    Unsupported(UnsupportedRecord<Id>),
 }
 
 #[derive(Deserialize)]
@@ -55,6 +73,17 @@ struct InventoryManifest {
     name: String,
     #[serde(default)]
     step_count: usize,
+}
+
+impl InventoryManifest {
+    fn unsupported<Id>(self, id: Id) -> UnsupportedRecord<Id> {
+        UnsupportedRecord {
+            id,
+            created_at_unix_nanos: self.created_at_unix_nanos,
+            workspace_identity: self.workspace_identity,
+            name: self.name,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -75,7 +104,6 @@ struct RunSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlanInventoryItem {
     pub(crate) plan_id: PlanId,
-    pub(crate) access: RecordAccess,
     /// Persisted creation time.
     pub(crate) created_at_unix_nanos: u64,
     pub(crate) workspace_identity: String,
@@ -87,8 +115,6 @@ pub(crate) struct PlanInventoryItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RunInventoryItem {
     pub(crate) run_id: RunId,
-    /// Older generations support status and deletion, but not execution or watch.
-    pub(crate) access: RecordAccess,
     /// Persisted creation time.
     pub(crate) created_at_unix_nanos: u64,
     pub(crate) workspace_identity: String,
@@ -146,8 +172,8 @@ impl WorkflowStore {
     ///
     /// Non-UUID directory names are ignored. A valid plan ID directory that
     /// cannot be read fails the list; empty means empty, not broken.
-    pub(crate) fn list_plan_inventory(&self) -> WorkflowResult<Vec<PlanInventoryItem>> {
-        let mut plans = Vec::new();
+    pub(crate) fn list_plan_inventory(&self) -> WorkflowResult<PlanInventory> {
+        let mut inventory = PlanInventory::default();
         for name in self.root.directory_names(Path::new("plans"))? {
             let Ok(name) = name.into_string() else {
                 continue;
@@ -155,18 +181,26 @@ impl WorkflowStore {
             let Ok(id) = PlanId::from_str(&name) else {
                 continue;
             };
-            plans.push(self.read_plan_inventory(id)?);
+            match self.read_plan_row(id)? {
+                InventoryRow::Current(plan) => inventory.items.push(plan),
+                InventoryRow::Unsupported(record) => inventory.unsupported.push(record),
+            }
         }
-        plans.sort_by_key(|plan| std::cmp::Reverse((plan.created_at_unix_nanos, plan.plan_id)));
-        Ok(plans)
+        inventory
+            .items
+            .sort_by_key(|plan| Reverse((plan.created_at_unix_nanos, plan.plan_id)));
+        inventory
+            .unsupported
+            .sort_by_key(|record| Reverse((record.created_at_unix_nanos, record.id)));
+        Ok(inventory)
     }
 
     /// Lists run rows without journal replay or frozen-graph validation.
     ///
     /// Non-UUID directory names (including trash names) are ignored. A valid
     /// run ID directory that cannot be read fails the list.
-    pub(crate) fn list_run_inventory(&self) -> WorkflowResult<Vec<RunInventoryItem>> {
-        let mut runs = Vec::new();
+    pub(crate) fn list_run_inventory(&self) -> WorkflowResult<RunInventory> {
+        let mut inventory = RunInventory::default();
         for name in self.root.directory_names(Path::new("runs"))? {
             let Ok(name) = name.into_string() else {
                 continue;
@@ -174,10 +208,18 @@ impl WorkflowStore {
             let Ok(id) = RunId::from_str(&name) else {
                 continue;
             };
-            runs.push(self.read_run_inventory(id)?);
+            match self.read_run_row(id)? {
+                InventoryRow::Current(run) => inventory.items.push(run),
+                InventoryRow::Unsupported(record) => inventory.unsupported.push(record),
+            }
         }
-        runs.sort_by_key(|run| std::cmp::Reverse((run.created_at_unix_nanos, run.run_id)));
-        Ok(runs)
+        inventory
+            .items
+            .sort_by_key(|run| Reverse((run.created_at_unix_nanos, run.run_id)));
+        inventory
+            .unsupported
+            .sort_by_key(|record| Reverse((record.created_at_unix_nanos, record.id)));
+        Ok(inventory)
     }
 
     /// Reads the durable revision without journal replay or graph validation.
@@ -194,10 +236,28 @@ impl WorkflowStore {
         Ok(state.state.lifecycle)
     }
 
-    /// Reads one run inventory row without journal replay.
-    ///
-    /// Uses manifest metadata without opening the frozen program.
-    pub(crate) fn read_run_inventory(&self, id: RunId) -> WorkflowResult<RunInventoryItem> {
+    /// Workspace that owns a plan of either generation, for delete checks.
+    pub(crate) fn plan_workspace_identity(&self, id: PlanId) -> WorkflowResult<String> {
+        Ok(match self.read_plan_row(id)? {
+            InventoryRow::Current(plan) => plan.workspace_identity,
+            InventoryRow::Unsupported(record) => record.workspace_identity,
+        })
+    }
+
+    /// Workspace that owns a run of either generation, for delete checks.
+    pub(crate) fn run_workspace_identity(&self, id: RunId) -> WorkflowResult<String> {
+        Ok(match self.read_run_row(id)? {
+            InventoryRow::Current(run) => run.workspace_identity,
+            InventoryRow::Unsupported(record) => record.workspace_identity,
+        })
+    }
+
+    /// Reads one run row without journal replay or opening the frozen program.
+    /// Unsupported runs come from the manifest alone; their state is not read.
+    pub(super) fn read_run_row(
+        &self,
+        id: RunId,
+    ) -> WorkflowResult<InventoryRow<RunInventoryItem, RunId>> {
         let summary: RunSummary =
             read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
         if summary.run_id != id {
@@ -207,27 +267,26 @@ impl WorkflowStore {
             );
         }
         let manifest = summary.metadata;
-        let access = RecordAccess::from_version(
+        if manifest.schema_version == UNSUPPORTED_MANIFEST_VERSION {
+            return Ok(InventoryRow::Unsupported(manifest.unsupported(id)));
+        }
+        check_schema_version(
             "run manifest",
             manifest.schema_version,
             RUN_MANIFEST_VERSION,
         )?;
-        if access == RecordAccess::ReadOnly {
-            return self.read_legacy_run_inventory(id, manifest, access);
-        }
         let state: InventoryStateFile =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
         let scope = state
             .state
             .scopes
             .get(&ScopeInstanceId::ROOT)
-            .ok_or_else(|| crate::workflow::WorkflowError::Corrupt {
+            .ok_or_else(|| WorkflowError::Corrupt {
                 path: self.layout.run_state(id),
                 reason: "run has no root scope instance".to_owned(),
             })?;
-        Ok(RunInventoryItem {
+        Ok(InventoryRow::Current(RunInventoryItem {
             run_id: id,
-            access,
             created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name: manifest.name,
@@ -239,38 +298,14 @@ impl WorkflowStore {
             },
             done_steps: terminal_count(scope.nodes.values()),
             total_steps: manifest.step_count,
-        })
+        }))
     }
 
-    // NEXT_MAJOR(rho-coding-agent): remove legacy version 1 run rows from workflow inventory.
-    fn read_legacy_run_inventory(
+    /// Reads one plan row from its manifest.
+    pub(super) fn read_plan_row(
         &self,
-        id: RunId,
-        manifest: InventoryManifest,
-        access: RecordAccess,
-    ) -> WorkflowResult<RunInventoryItem> {
-        let state = self.read_legacy_run_state(id)?.state;
-        Ok(RunInventoryItem {
-            run_id: id,
-            access,
-            created_at_unix_nanos: manifest.created_at_unix_nanos,
-            workspace_identity: manifest.workspace_identity,
-            name: manifest.name,
-            lifecycle: state.lifecycle,
-            outcome: state.outcome,
-            done_steps: state
-                .nodes
-                .values()
-                .filter(|node| {
-                    node.get("state").and_then(serde_json::Value::as_str) == Some("terminal")
-                })
-                .count(),
-            total_steps: manifest.step_count,
-        })
-    }
-
-    /// Reads one plan row. Accepts current and legacy read-only plans.
-    pub(crate) fn read_plan_inventory(&self, id: PlanId) -> WorkflowResult<PlanInventoryItem> {
+        id: PlanId,
+    ) -> WorkflowResult<InventoryRow<PlanInventoryItem, PlanId>> {
         let summary: PlanSummary =
             read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))?;
         if summary.plan_id != id {
@@ -280,39 +315,21 @@ impl WorkflowStore {
             );
         }
         let manifest = summary.metadata;
-        // NEXT_MAJOR(rho-coding-agent): remove legacy version 1 plan rows from workflow inventory.
-        let access = RecordAccess::from_version(
+        if manifest.schema_version == UNSUPPORTED_MANIFEST_VERSION {
+            return Ok(InventoryRow::Unsupported(manifest.unsupported(id)));
+        }
+        check_schema_version(
             "plan manifest",
             manifest.schema_version,
             PLAN_MANIFEST_VERSION,
         )?;
-        Ok(PlanInventoryItem {
+        Ok(InventoryRow::Current(PlanInventoryItem {
             plan_id: id,
-            access,
             created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name: manifest.name,
             step_count: manifest.step_count,
-        })
-    }
-
-    pub(super) fn require_executable_run(&self, id: RunId) -> WorkflowResult<()> {
-        let summary: RunSummary =
-            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
-        if summary.run_id != id {
-            return super::corrupt(
-                &self.layout.run_manifest(id),
-                "run manifest ID differs from its directory ID",
-            );
-        }
-        match RecordAccess::from_version(
-            "run manifest",
-            summary.metadata.schema_version,
-            RUN_MANIFEST_VERSION,
-        )? {
-            RecordAccess::Executable => Ok(()),
-            RecordAccess::ReadOnly => Err(super::legacy::legacy_record("run", id)),
-        }
+        }))
     }
 }
 

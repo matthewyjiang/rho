@@ -240,25 +240,26 @@ Workflow data lives below the Rho data directory:
 symlink store entries, writes state atomically, and appends journal records with
 monotonic sequence numbers.
 
-The `graph.json` filename is retained, but its frozen document now contains
-`program` and `program_digest`. Plan and status JSON also still include
-`graph_digest`, the flat `graph` view of the root scope, and the root scope's
-flat `nodes`, `outputs`, `command_exits`, `completions`, and `outcome` in run
-state. Prefer the program and scope fields in new consumers.
+The `graph.json` filename is retained, but its frozen document contains
+`program` and `program_digest`. Plan and status JSON serialize these stored
+records directly. Task states, outputs, command exits, and completions live in
+each scope under `state.scopes`, not in flat root maps.
 
-Plans and runs saved by earlier releases use version 1 manifests. They stay in
-`plans/` and `runs/`, appear in `list` and the workflow hub, and print through
-`status` in their original shape. They are read-only: run, resume, and cancel
-fail and ask you to create a new plan from source. Delete still removes them,
-including a run an older release left `running`, once no process holds that
+Plans and runs saved by Rho before 2.15 use version 1 manifests. This release
+does not read them. `list` reports them as warnings, and the workflow hub lists
+them as unsupported rows read from the manifest alone. Status, run, resume, and
+cancel fail with an error that names the record and points at Rho 2.x, which can
+still inspect them. Delete in the hub removes them once no process holds the
 run's writer lock. Rho does not migrate them.
 
 Source node names are definition IDs. Runtime events, status rows, selection,
-progress, and artifact paths use task instance IDs. A root-scope task instance
-ID is its definition name, such as `review`, so CLI JSONL output keeps wire
-version `1`. Attempts remain local to that task instance. State stores task
-states, outputs, command exits, completions, and durable attempt records inside
-their owning scope, not in global node maps.
+progress, hooks, and artifact paths use task instance IDs of the form
+`s<scope>.<definition>`, including the root scope (`s0.review`). CLI JSONL
+output is wire version `2`. Run journals written before root tasks were
+qualified name them by bare definition; Rho still reads those as root tasks.
+Attempts remain local to that task instance. State stores task states, outputs,
+command exits, completions, and durable attempt records inside their owning
+scope, not in global node maps.
 
 Scope closure is journaled separately from task completion. A closed root stores
 its outcome and resolved named exports in `scopes.s0.result`; a run completes

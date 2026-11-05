@@ -14,9 +14,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
-        CollectedSources, Diagnostic, InputName, PlanInventoryItem, PlanningLimitValues,
-        PlanningLimits, RunInventoryItem, SourceManifest, StarlarkPlanner, WorkflowError,
-        WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
+        CollectedSources, Diagnostic, InputName, PlanInventory, PlanInventoryItem,
+        PlanningLimitValues, PlanningLimits, RunInventory, RunInventoryItem, SourceManifest,
+        StarlarkPlanner, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore,
+        WorkflowValue,
     },
 };
 
@@ -73,7 +74,7 @@ const PLANNER_STDERR_BYTES: usize = 64 * 1024;
 // ProcessMemoryLimit). Product memory policy is the planning budgets, not this backstop.
 #[cfg(any(all(unix, not(target_os = "macos")), windows))]
 const PLANNER_ADDRESS_SPACE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const WORKFLOW_WIRE_VERSION: u32 = 1;
+const WORKFLOW_WIRE_VERSION: u32 = 2;
 // The workflow freeze-policy test keeps this identity aligned with Cargo.toml.
 const STARLARK_VERSION: &str = "0.14.2";
 
@@ -148,16 +149,37 @@ fn run_list(
     let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
     let include_plans = plans_only || !runs_only;
     let include_runs = runs_only || !plans_only;
-    let mut plans = if include_plans {
+    let plan_inventory = if include_plans {
         ops.list_workspace_plans()?
     } else {
-        Vec::new()
+        PlanInventory::default()
     };
-    let mut runs = if include_runs {
+    let run_inventory = if include_runs {
         ops.list_workspace_runs()?
     } else {
-        Vec::new()
+        RunInventory::default()
     };
+    // Listed on stderr so the JSON document keeps one shape; the hub can delete them.
+    for record in &plan_inventory.unsupported {
+        eprintln!(
+            "warning: {}",
+            WorkflowError::UnsupportedRecord {
+                kind: "plan",
+                id: record.id.to_string(),
+            }
+        );
+    }
+    for record in &run_inventory.unsupported {
+        eprintln!(
+            "warning: {}",
+            WorkflowError::UnsupportedRecord {
+                kind: "run",
+                id: record.id.to_string(),
+            }
+        );
+    }
+    let mut plans = plan_inventory.items;
+    let mut runs = run_inventory.items;
     if let Some(limit) = limit {
         plans.truncate(limit.get());
         runs.truncate(limit.get());
@@ -569,7 +591,7 @@ fn diagnostic_for_error_for(error: &anyhow::Error, audience: DiagnosticAudience)
             WorkflowError::InvalidInput { .. } => "invalid_input",
             WorkflowError::Corrupt { .. } => "corrupt",
             WorkflowError::UnsupportedVersion { .. } => "unsupported_version",
-            WorkflowError::LegacyRecord { .. } => "legacy_record",
+            WorkflowError::UnsupportedRecord { .. } => "unsupported_record",
             WorkflowError::LiveRun { .. } => "live_run",
             WorkflowError::AmbiguousId { .. } => "ambiguous_id",
             WorkflowError::UnknownId(_) => "unknown_id",
@@ -637,7 +659,7 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
             | WorkflowError::MissingWorkflow
             | WorkflowError::UnsupportedVersion { .. }
             | WorkflowError::LiveRun { .. }
-            | WorkflowError::LegacyRecord { .. } => error.to_string(),
+            | WorkflowError::UnsupportedRecord { .. } => error.to_string(),
             WorkflowError::Starlark(_) => "workflow evaluation failed".to_owned(),
             // Keep these cases opaque. Their strings can contain source text,
             // lower-level diagnostics, or local paths.
