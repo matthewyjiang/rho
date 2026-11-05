@@ -4882,6 +4882,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rho-agent-tools",
+ "rho-protocol",
  "rho-providers",
  "rho-sdk",
  "rho-tui-pty",
@@ -4917,6 +4918,17 @@ dependencies = [
  "vt100",
  "windows-sys 0.61.2",
  "winresource",
+]
+
+[[package]]
+name = "rho-protocol"
+version = "1.0.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

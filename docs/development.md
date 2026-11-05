@@ -357,7 +357,7 @@ The script uses only the Python standard library and reads policy from `scripts/
 - Existing oversized production files are listed explicitly in `legacy_file_budgets`. Their ceilings prevent further growth and should be lowered or removed as the files are split.
 - `crates/rho-providers/src/credentials` must remain independent of `model`, keeping credential storage separate from model runtime metadata (`forbidden_dependencies`).
 - `crates/rho/src/main.rs` has a 50-line thin-binary budget so application orchestration remains in the library (`thin_binary_budgets`).
-- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering.
+- Package dependency boundaries are also declared in `forbidden_package_dependencies` so lower-level crates cannot depend on the application or reverse the intended layering. `crates/rho-protocol` depends on no other rho crate, so an SDK or application major release cannot break frontends that only speak the daemon protocol.
 
 Current legacy file budgets are: none.
 

@@ -1,0 +1,24 @@
+[package]
+name = "rho-protocol"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.86"
+description = "Versioned JSON-RPC protocol between the Rho daemon and its frontends"
+license = "MIT"
+repository = "https://github.com/matthewyjiang/rho"
+readme = "README.md"
+keywords = ["agent", "ai", "json-rpc", "protocol"]
+categories = ["asynchronous", "network-programming"]
+
+# Frontends (the TUI, rho-ui, `rho acp`, MCP) depend on this crate, so it must
+# not depend on rho-sdk: an SDK major must never break a frontend build.
+# scripts/architecture.json enforces that boundary.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }

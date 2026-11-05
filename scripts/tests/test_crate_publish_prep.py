@@ -87,7 +87,7 @@ class PathPatchPolicyTests(unittest.TestCase):
         patched = {patch.package_name for patch in patches}
         self.assertEqual(
             patched,
-            {"rho-sdk", "rho-providers", "rho-agent-tools"},
+            {"rho-sdk", "rho-protocol", "rho-providers", "rho-agent-tools"},
         )
 
     def test_select_patches_empty_when_all_direct_deps_published(self) -> None:
@@ -238,6 +238,14 @@ class VerifyCommandTests(unittest.TestCase):
                             "kind": None,
                         }
                     ],
+                },
+                {
+                    "name": "rho-protocol",
+                    "version": "1.0.0",
+                    "manifest_path": str(
+                        ROOT / "crates" / "rho-protocol" / "Cargo.toml"
+                    ),
+                    "dependencies": [],
                 },
                 {
                     "name": "rho-coding-agent",

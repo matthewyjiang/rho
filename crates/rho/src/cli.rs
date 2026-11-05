@@ -288,6 +288,13 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
     },
     /// Serve the Agent Client Protocol over stdio for editor/host integration.
     Acp(AcpArgs),
+    /// Run or control the rho daemon for this rho home.
+    ///
+    /// Without a subcommand, runs the daemon in the foreground.
+    Daemon {
+        #[command(subcommand)]
+        command: Option<DaemonCommand>,
+    },
     /// Internal supervised workflow planner worker. Not a public command.
     #[command(name = "__workflow_planner_worker", hide = true)]
     WorkflowPlannerWorker,
@@ -520,6 +527,24 @@ pub enum WorkflowCommand {
         #[arg(long, value_enum)]
         output: Option<WorkflowRunFormat>,
     },
+}
+
+#[derive(Subcommand, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DaemonCommand {
+    /// Run the daemon in the foreground until stopped. The default.
+    Run,
+    /// Show the running daemon's pid, version, uptime, and socket.
+    ///
+    /// Never starts a daemon. Exits with status 1 when none is running.
+    Status {
+        /// Print one JSON document instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the running daemon and wait for it to exit.
+    ///
+    /// Exits with status 1 when none is running.
+    Stop,
 }
 
 #[derive(Subcommand, Clone, Debug)]
