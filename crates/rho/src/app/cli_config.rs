@@ -11,8 +11,9 @@ use {
         catalog,
         models_dev::{cached_reasoning_capabilities, current_reasoning_capabilities},
         provider_models::{
-            cached_provider_model, provider_model_capabilities_need_refresh,
-            provider_models_are_fresh, refresh_provider_models_with_store, ProviderModelEndpoint,
+            cached_provider_model, forget_provider_models,
+            provider_model_capabilities_need_refresh, provider_models_are_fresh,
+            refresh_provider_models_with_store, ProviderModelEndpoint,
         },
     },
     rho_providers::provider::{self, ProviderAuthKind, ProviderModelSource},
@@ -55,6 +56,9 @@ pub(super) async fn refresh_model_cache(
     config: &Config,
     store: &dyn CredentialStore,
 ) -> anyhow::Result<ProviderRefreshStatus> {
+    // First, so a session that explicitly names Ollama before `/login ollama`
+    // still fetches its list below.
+    forget_models_awaiting_endpoint_login(config);
     let CliTarget {
         provider,
         model: selected_model,
@@ -96,6 +100,20 @@ pub(super) async fn refresh_model_cache(
     } else {
         ProviderRefreshStatus::NotAttempted
     })
+}
+
+/// Drops cached model lists of built-in hosts that await their endpoint login,
+/// so a list fetched before `/login` (or kept after its table was removed)
+/// does not keep them in pickers. Failures only log: a stale list is cosmetic.
+fn forget_models_awaiting_endpoint_login(config: &Config) {
+    for descriptor in provider::builtin_providers() {
+        if !config.providers.awaits_endpoint_login(*descriptor) {
+            continue;
+        }
+        if let Err(error) = forget_provider_models(descriptor.name) {
+            tracing::warn!(provider = descriptor.name, %error, "could not drop cached models");
+        }
+    }
 }
 
 /// Provider and model a CLI session resolves to once `--auth`, `--model`, and

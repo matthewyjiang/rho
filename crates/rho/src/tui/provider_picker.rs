@@ -166,9 +166,9 @@ pub(super) fn auth_mode_picker(
 }
 
 /// Providers that Refresh model lists offers and that "All configured
-/// providers" refreshes: each has a model or decision-model list, an
-/// available auth mode, and is set up. Built-in Ollama is set up only after
-/// `/login ollama`, so a local server is never probed before that.
+/// providers" refreshes: each has a model or decision-model list and an
+/// available auth mode, and none awaits its endpoint login. Built-in Ollama is
+/// skipped until `/login ollama`, so a local server is never probed before that.
 pub(super) fn refreshable_providers(
     available_auths: &[String],
     configs: &ProviderConfigs,
@@ -184,7 +184,7 @@ pub(super) fn refreshable_providers(
                 .auth_modes()
                 .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
         })
-        .filter(|descriptor| configs.is_set_up(descriptor.name))
+        .filter(|descriptor| !configs.awaits_endpoint_login(**descriptor))
         .collect()
 }
 

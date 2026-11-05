@@ -639,7 +639,8 @@ impl ProviderDescriptor {
     /// `/login` collects and persists this host's API base before the optional key.
     ///
     /// Built-in Ollama stores `[providers.ollama]`. Named custom hosts already
-    /// collected a URL when they were created.
+    /// collected a URL when they were created. Rho neither refreshes nor lists
+    /// such a built-in host until that login has run.
     pub fn collects_login_endpoint(self) -> bool {
         self.name == "ollama"
     }

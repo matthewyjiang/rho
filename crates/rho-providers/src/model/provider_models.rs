@@ -548,17 +548,15 @@ fn replace_cached_provider_model_records_with_context(
 pub fn forget_provider_models(provider: &str) -> Result<(), ModelError> {
     with_provider_models_cache(|connection| -> rusqlite::Result<()> {
         let tx = connection.transaction()?;
-        // Decision models share this cache file; see `decision_models`.
-        for table in [
-            "provider_models",
-            "provider_model_refresh",
-            "decision_models",
-        ] {
-            tx.execute(
-                &format!("delete from {table} where provider = ?1"),
-                params![provider],
-            )?;
-        }
+        tx.execute(
+            "delete from provider_models where provider = ?1",
+            params![provider],
+        )?;
+        tx.execute(
+            "delete from provider_model_refresh where provider = ?1",
+            params![provider],
+        )?;
+        super::decision_models::forget_in(&tx, provider)?;
         tx.commit()
     })
     .map_err(model_cache_error)?

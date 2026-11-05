@@ -126,32 +126,17 @@ impl ProviderConfigs {
         }
     }
 
-    /// Whether Rho may list or refresh `provider` without the user naming it.
+    /// A built-in host whose `/login` collects an endpoint (Ollama) that no
+    /// login has written yet.
     ///
-    /// A built-in host whose `/login` collects its endpoint (Ollama) is set up
-    /// only once that login wrote `[providers.<name>]`. Its keyless profile
-    /// needs no credentials, so credential availability alone would probe and
-    /// list any local server.
-    pub(crate) fn is_set_up(&self, provider: &str) -> bool {
-        !rho_providers::provider::provider_descriptor(provider)
-            .is_some_and(|descriptor| descriptor.collects_login_endpoint())
-            || self.endpoint(provider).is_some()
-    }
-
-    /// Drops cached model lists of built-in hosts that are not set up, so a
-    /// list fetched before `/login` (or after its table was removed) does not
-    /// keep them in pickers. Failures only log: a stale list is cosmetic.
-    pub(crate) fn forget_models_of_hosts_not_set_up(&self) {
-        for descriptor in rho_providers::provider::builtin_providers() {
-            if self.is_set_up(descriptor.name) {
-                continue;
-            }
-            if let Err(error) =
-                rho_providers::model::provider_models::forget_provider_models(descriptor.name)
-            {
-                tracing::warn!(provider = descriptor.name, %error, "could not drop cached models");
-            }
-        }
+    /// Such a host is neither refreshed nor listed until `/login` writes
+    /// `[providers.<name>]`. Its keyless profile needs no credentials, so
+    /// credential availability alone would probe and list any local server.
+    pub(crate) fn awaits_endpoint_login(
+        &self,
+        descriptor: rho_providers::provider::ProviderDescriptor,
+    ) -> bool {
+        descriptor.collects_login_endpoint() && self.endpoint(descriptor.name).is_none()
     }
 
     /// Validates and stores a provider base URL. Updating a custom provider
