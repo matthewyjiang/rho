@@ -58,7 +58,7 @@ pub(super) async fn refresh_model_cache(
 ) -> anyhow::Result<ProviderRefreshStatus> {
     // First, so a session that explicitly names Ollama before `/login ollama`
     // still fetches its list below.
-    forget_models_awaiting_endpoint_login(config);
+    forget_models_awaiting_endpoint_login(config, store);
     let CliTarget {
         provider,
         model: selected_model,
@@ -105,9 +105,9 @@ pub(super) async fn refresh_model_cache(
 /// Drops cached model lists of built-in hosts that await their endpoint login,
 /// so a list fetched before `/login` (or kept after its table was removed)
 /// does not keep them in pickers. Failures only log: a stale list is cosmetic.
-fn forget_models_awaiting_endpoint_login(config: &Config) {
+fn forget_models_awaiting_endpoint_login(config: &Config, store: &dyn CredentialStore) {
     for descriptor in provider::builtin_providers() {
-        if !config.providers.awaits_endpoint_login(*descriptor) {
+        if !config.providers.awaits_endpoint_login(*descriptor, store) {
             continue;
         }
         if let Err(error) = forget_provider_models(descriptor.name) {

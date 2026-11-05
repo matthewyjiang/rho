@@ -172,6 +172,7 @@ pub(super) fn auth_mode_picker(
 pub(super) fn refreshable_providers(
     available_auths: &[String],
     configs: &ProviderConfigs,
+    store: &dyn CredentialStore,
 ) -> Vec<&'static provider::ProviderDescriptor> {
     provider::providers()
         .into_iter()
@@ -184,13 +185,14 @@ pub(super) fn refreshable_providers(
                 .auth_modes()
                 .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
         })
-        .filter(|descriptor| !configs.awaits_endpoint_login(**descriptor))
+        .filter(|descriptor| !configs.awaits_endpoint_login(**descriptor, store))
         .collect()
 }
 
 pub(super) fn refresh_model_list_picker(
     available_auths: &[String],
     configs: &ProviderConfigs,
+    store: &dyn CredentialStore,
 ) -> UiPicker {
     let mut items = vec![PickerItem {
         detail: Some("Refresh every available provider with model discovery support.".into()),
@@ -199,7 +201,7 @@ pub(super) fn refresh_model_list_picker(
             ALL_REFRESHABLE_PROVIDERS.into(),
         )
     }];
-    let mut providers = refreshable_providers(available_auths, configs)
+    let mut providers = refreshable_providers(available_auths, configs, store)
         .into_iter()
         .map(|descriptor| PickerItem {
             detail: Some(format!("Refresh cached {} models.", descriptor.display_name).into()),

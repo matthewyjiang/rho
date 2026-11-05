@@ -382,6 +382,17 @@ fn selection_rejections_report_the_failing_rule() {
             },
         ),
         (
+            "ollama/never-listed-model",
+            "openai",
+            "codex",
+            "none",
+            ModelSelectionError::UnavailableModel {
+                provider: "ollama".into(),
+                model: "never-listed-model".into(),
+                hint: "Run /login for this provider to set it up and refresh its models.",
+            },
+        ),
+        (
             "missing/gpt-5.5",
             "openai",
             "codex",

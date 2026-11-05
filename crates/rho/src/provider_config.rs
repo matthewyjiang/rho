@@ -126,17 +126,25 @@ impl ProviderConfigs {
         }
     }
 
-    /// A built-in host whose `/login` collects an endpoint (Ollama) that no
-    /// login has written yet.
+    /// A built-in host whose `/login` collects an endpoint (Ollama) that has
+    /// not been logged in to: no `[providers.<name>]` and no stored key.
     ///
-    /// Such a host is neither refreshed nor listed until `/login` writes
-    /// `[providers.<name>]`. Its keyless profile needs no credentials, so
-    /// credential availability alone would probe and list any local server.
+    /// Such a host is neither refreshed nor listed until it is. Its keyless
+    /// profile needs no credentials, so credential availability alone would
+    /// probe and list any local server. A stored key counts because `rho login`
+    /// and ACP sign-in save only the key; an environment key does not.
     pub(crate) fn awaits_endpoint_login(
         &self,
         descriptor: rho_providers::provider::ProviderDescriptor,
+        store: &dyn rho_providers::credentials::CredentialStore,
     ) -> bool {
-        descriptor.collects_login_endpoint() && self.endpoint(descriptor.name).is_none()
+        descriptor.collects_login_endpoint()
+            && self.endpoint(descriptor.name).is_none()
+            && !descriptor.auth_modes().any(|mode| {
+                mode.auth_kind != rho_providers::provider::ProviderAuthKind::None
+                    && rho_providers::credentials::auth_has_stored_credentials(store, mode.id)
+                        .unwrap_or(false)
+            })
     }
 
     /// Validates and stores a provider base URL. Updating a custom provider

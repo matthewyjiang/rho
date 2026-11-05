@@ -800,8 +800,11 @@ impl App {
                 return;
             }
         };
-        let picker =
-            provider_picker::refresh_model_list_picker(&self.available_auths, &config.providers);
+        let picker = provider_picker::refresh_model_list_picker(
+            &self.available_auths,
+            &config.providers,
+            self.credential_store.as_ref(),
+        );
         self.open_child_picker(picker);
         self.set_status("select provider to refresh");
     }

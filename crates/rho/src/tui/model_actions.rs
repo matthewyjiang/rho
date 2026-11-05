@@ -112,20 +112,24 @@ impl App {
         let config = self.info.services.config_repository.load()?;
         let providers = if selected_provider == provider_picker::ALL_REFRESHABLE_PROVIDERS {
             self.refresh_available_auths();
-            provider_picker::refreshable_providers(&self.available_auths, &config.providers)
-                .into_iter()
-                .map(|descriptor| {
-                    (
-                        descriptor.name.to_string(),
-                        refresh_auth_for_provider(
-                            descriptor,
-                            &self.info.runtime.auth,
-                            &self.available_auths,
-                        )
-                        .to_string(),
+            provider_picker::refreshable_providers(
+                &self.available_auths,
+                &config.providers,
+                self.credential_store.as_ref(),
+            )
+            .into_iter()
+            .map(|descriptor| {
+                (
+                    descriptor.name.to_string(),
+                    refresh_auth_for_provider(
+                        descriptor,
+                        &self.info.runtime.auth,
+                        &self.available_auths,
                     )
-                })
-                .collect()
+                    .to_string(),
+                )
+            })
+            .collect()
         } else {
             let auth = provider::provider_descriptor(selected_provider)
                 .map(|descriptor| {
