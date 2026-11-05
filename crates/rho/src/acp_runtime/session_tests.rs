@@ -472,6 +472,50 @@ async fn steering_agent_takes_parent_message_into_running_turn() {
     );
 }
 
+// Covers: a parent message already waiting when the prompt goes out is held
+// until the turn is running (the adapter declines an earlier steer, which
+// would push the correction past the turn it was meant for), then steered in.
+// Owner: ACP turn scheduling.
+#[tokio::test]
+async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, inbox) = message_channel();
+    handle.send("course correction".into()).unwrap();
+    let (client, agent) = Channel::duplex();
+    let (fake, record, _signals) = ScriptedAgent::new(Script {
+        steering: true,
+        ..script(vec![vec![
+            text("working"),
+            Step::AwaitSteer,
+            text(" steered"),
+            stop(),
+        ]])
+    });
+    tokio::time::timeout(TEST_BUDGET, async {
+        let (client, agent) = tokio::join!(
+            run_on_channel(
+                request(dir.path(), Some(inbox)),
+                TestPolicy::new(dir.path()),
+                client
+            ),
+            fake.run(agent),
+        );
+        client.unwrap();
+        agent.unwrap();
+    })
+    .await
+    .expect("run with a waiting parent message finished");
+    assert_eq!(
+        prompts_and_steers(&record),
+        vec![task_prompt(), steer_request()]
+    );
+    let (status, _) = read_artifacts(dir.path());
+    assert_eq!(
+        (status.state, status.result),
+        (RunState::Ok, Some("working steered".into()))
+    );
+}
+
 // Covers: a steer the agent declines (no running turn) or fails is not lost:
 // it becomes the next prompt, exactly once.
 // Owner: ACP turn scheduling.

@@ -197,6 +197,11 @@ pub(super) async fn run<P: AcpAgentPolicy>(
     }
 }
 
+/// How long a turn that has ended waits on a steer still in flight. Same
+/// 10 s as each ACP setup request; claude-agent-acp answers a steer after one
+/// queue check, without waiting on the model.
+const STEER_REPLY_BUDGET: std::time::Duration = HANDSHAKE_STEP_BUDGET;
+
 type SteerReply = Pin<Box<dyn Future<Output = Result<Value, Error>> + Send>>;
 
 /// Steering for one session. It takes one parent message at a time from the
@@ -258,9 +263,7 @@ async fn turns<P: AcpAgentPolicy>(
     let connection = session.connection().clone();
     let mut cancelled_by_us = false;
     let mut cancel_deadline = None;
-    // Keep only ids, for the session lifetime: duplicate completed snapshots
-    // must not turn a previously rejected tool back into a successful card.
-    let mut rejected = HashSet::new();
+    let mut tracking = UpdateTracking::default();
     let mut steering = if features.steering && inbox.is_some() {
         Steering::Idle
     } else {
@@ -284,7 +287,7 @@ async fn turns<P: AcpAgentPolicy>(
                     steering = settle_steer(text, reply, renderer, sink);
                 }
             }
-            text = async { inbox.as_mut().expect("steering needs an inbox").recv().await }, if matches!(steering, Steering::Idle) && !cancelled_by_us => match text {
+            text = async { inbox.as_mut().expect("steering needs an inbox").recv().await }, if matches!(steering, Steering::Idle) && tracking.turn_live && !cancelled_by_us => match text {
                 Some(text) => {
                     let request = steering::request(session.session_id(), &frame_parent_message(&text))?;
                     steering = Steering::InFlight(text, Box::pin(connection.send_request(request).block_task()));
@@ -292,27 +295,39 @@ async fn turns<P: AcpAgentPolicy>(
                 None => steering = Steering::Off,
             },
             message = session.read_update() => match message? {
-                SessionMessage::SessionMessage(dispatch) => dispatch_update(dispatch, policy, renderer, sink, &mut rejected, cancelled_by_us, events_tx).await?,
+                SessionMessage::SessionMessage(dispatch) => dispatch_update(dispatch, policy, renderer, sink, &mut tracking, cancelled_by_us, events_tx).await?,
                 SessionMessage::StopReason(stop) => {
                     let classification = classify_stop(&stop, cancelled_by_us);
                     // A steer racing the end of a successful turn is settled
                     // first, so a declined message still becomes the next
-                    // turn. Any other ending sends no next turn, and must not
-                    // wait out the steer's budget after a cancel.
+                    // turn. Any other ending sends no next turn, so it does not
+                    // wait. A cancel during the wait stops the run instead.
+                    let mut cancelled_while_settling = false;
                     if let Some((text, reply)) = steering.take_in_flight() {
                         if classification == TurnClassification::Success {
-                            let reply = handshake::bounded(steering::METHOD, reply).await;
-                            steering = settle_steer(text, reply, renderer, sink);
+                            tokio::select! {
+                                biased;
+                                _ = cancellation.cancelled() => cancelled_while_settling = true,
+                                reply = tokio::time::timeout(STEER_REPLY_BUDGET, reply) => {
+                                    let reply = reply.unwrap_or_else(|_| Err(error(format!("{} reply exceeded budget {} s", steering::METHOD, STEER_REPLY_BUDGET.as_secs()))));
+                                    steering = settle_steer(text, reply, renderer, sink);
+                                }
+                            }
                         }
                     }
                     while let Ok(event) = events_rx.try_recv() { render(renderer, sink, event); }
                     render(renderer, sink, AgentEvent::TurnEnded(stop));
+                    if cancelled_while_settling {
+                        if let Some(inbox) = inbox.as_ref() { inbox.seal(); }
+                        return Ok(DriverOutcome::stopped(renderer, Some(session_id)));
+                    }
                     // classify_stop already reports Stopped once we cancelled.
                     if classification == TurnClassification::Success {
                         // Atomic with sends: a racing message either becomes
                         // the next turn (port stays open) or is rejected.
                         if let Some(text) = steering.take_declined().or_else(|| inbox.as_mut().and_then(ParentMessageInbox::take_next_or_close)) {
                             session.send_prompt(frame_parent_message(&text))?;
+                            tracking.turn_live = false;
                             sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::Message(Box::new(parent_message_card(text, NotificationDelivery::Queued, "sent as the next agent turn".into())))));
                             continue;
                         }
@@ -361,12 +376,43 @@ fn settle_steer(
     }
 }
 
+/// What the driver keeps from one session's updates.
+#[derive(Default)]
+struct UpdateTracking {
+    /// Ids only, for the session lifetime: duplicate completed snapshots must
+    /// not turn a previously rejected tool back into a successful card.
+    rejected: HashSet<ToolCallId>,
+    /// The current prompt's turn has produced output. An agent queues a turn
+    /// only after its own setup, and declines a steer that arrives first
+    /// (claude-agent-acp answers `promptRequired`).
+    turn_live: bool,
+}
+
+/// Output only a running turn produces. Session-level updates (commands,
+/// modes, config, session info) can arrive before the agent has queued it.
+fn is_turn_content(update: &SessionUpdate) -> bool {
+    match update {
+        SessionUpdate::UserMessageChunk(_)
+        | SessionUpdate::AgentMessageChunk(_)
+        | SessionUpdate::AgentThoughtChunk(_)
+        | SessionUpdate::ToolCall(_)
+        | SessionUpdate::ToolCallUpdate(_)
+        | SessionUpdate::Plan(_)
+        | SessionUpdate::UsageUpdate(_) => true,
+        SessionUpdate::AvailableCommandsUpdate(_)
+        | SessionUpdate::CurrentModeUpdate(_)
+        | SessionUpdate::ConfigOptionUpdate(_)
+        | SessionUpdate::SessionInfoUpdate(_) => false,
+        _ => false,
+    }
+}
+
 async fn dispatch_update<P: AcpAgentPolicy>(
     dispatch: Dispatch,
     policy: &Mutex<P>,
     renderer: &mut EventRenderer,
     sink: &mut StatusSink,
-    rejected: &mut HashSet<ToolCallId>,
+    tracking: &mut UpdateTracking,
     cancelled_by_us: bool,
     events: &mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<(), Error> {
@@ -392,9 +438,10 @@ async fn dispatch_update<P: AcpAgentPolicy>(
                     )));
                 }
             }
+            tracking.turn_live |= is_turn_content(&update);
             if let SessionUpdate::ToolCallUpdate(call) = &mut update {
                 if call.fields.status == Some(ToolCallStatus::Completed)
-                    && rejected.contains(&call.tool_call_id)
+                    && tracking.rejected.contains(&call.tool_call_id)
                 {
                     call.fields.status = Some(ToolCallStatus::Failed);
                     call.fields.content = Some(vec![ToolCallContent::from(
@@ -419,7 +466,9 @@ async fn dispatch_update<P: AcpAgentPolicy>(
                 )
             };
             if !is_allowed(&outcome, &request.options) {
-                rejected.insert(request.tool_call.tool_call_id.clone());
+                tracking
+                    .rejected
+                    .insert(request.tool_call.tool_call_id.clone());
             }
             responder.respond(RequestPermissionResponse::new(outcome))
         })

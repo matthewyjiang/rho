@@ -24,7 +24,10 @@ use std::{
     collections::VecDeque,
     fs::File,
     io::Write,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::{mpsc, Notify};
 
@@ -185,6 +188,11 @@ impl ScriptedAgent {
         let prompt_signals = signals.clone();
         let steered = Arc::new(Notify::new());
         let prompt_steered = Arc::clone(&steered);
+        // Like claude-agent-acp, a turn exists for steering only once it is
+        // queued, which the fake marks with the turn's first update; until
+        // then a steer is declined with `promptRequired`.
+        let turn_live = Arc::new(AtomicBool::new(false));
+        let prompt_turn_live = Arc::clone(&turn_live);
         let steer_record = Arc::clone(&record);
         let advertise_steering = script.steering;
         let steer_reply = match script.steer_error {
@@ -276,6 +284,7 @@ impl ScriptedAgent {
                     let cancelled = prompt_cancelled.clone();
                     let closed = prompt_closed.clone();
                     let steered = Arc::clone(&prompt_steered);
+                    let turn_live = Arc::clone(&prompt_turn_live);
                     cx.clone().spawn(async move {
                         play_turn(
                             cx,
@@ -288,6 +297,7 @@ impl ScriptedAgent {
                                 cancelled,
                                 closed,
                                 steered,
+                                turn_live,
                             },
                         )
                         .await
@@ -313,6 +323,12 @@ impl ScriptedAgent {
                         });
                     }
                     record_request(&steer_record, &request.method, &request.params);
+                    if !turn_live.load(Ordering::SeqCst) {
+                        responder.respond(
+                            json!({"outcome": "promptRequired", "reason": "noRunningTurn"}),
+                        )?;
+                        return Ok(Handled::Yes);
+                    }
                     steered.notify_one();
                     match &steer_reply {
                         Ok(reply) => responder.respond(reply.clone())?,
@@ -349,6 +365,7 @@ struct TurnControls {
     cancelled: RunCancellation,
     closed: RunCancellation,
     steered: Arc<Notify>,
+    turn_live: Arc<AtomicBool>,
 }
 
 async fn play_turn(
@@ -364,13 +381,17 @@ async fn play_turn(
         cancelled,
         closed,
         steered,
+        turn_live,
     } = controls;
     for step in steps {
         match step {
-            Step::Update { update } => cx.send_notification(SessionNotification::new(
-                request.session_id.clone(),
-                *update,
-            ))?,
+            Step::Update { update } => {
+                turn_live.store(true, Ordering::SeqCst);
+                cx.send_notification(SessionNotification::new(
+                    request.session_id.clone(),
+                    *update,
+                ))?;
+            }
             Step::Permission { call, options } => {
                 let response = cx
                     .send_request(RequestPermissionRequest::new(
@@ -395,7 +416,10 @@ async fn play_turn(
                 };
                 record.lock().expect("script record").push_reply(reply);
             }
-            Step::Stop { reason } => return responder.respond(PromptResponse::new(reason)),
+            Step::Stop { reason } => {
+                turn_live.store(false, Ordering::SeqCst);
+                return responder.respond(PromptResponse::new(reason));
+            }
             Step::Hang => {
                 let _ = signals.send(Signal::Waiting);
                 cancelled.cancelled().await;
