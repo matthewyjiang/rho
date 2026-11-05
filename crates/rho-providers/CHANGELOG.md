@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.27.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.26.2...rho-providers-v2.27.0) (2026-11-05)
+
+
+### Features
+
+* **acp:** sign in with oauth and api keys from the host, no terminal needed ([#1653](https://github.com/matthewyjiang/rho/issues/1653)) ([87913a6](https://github.com/matthewyjiang/rho/commit/87913a685e4c6f6b417a3cc6234357d01bc41c2b))
+* **antigravity:** run delegated agents on agy 1.5's built-in acp server ([#1645](https://github.com/matthewyjiang/rho/issues/1645)) ([c73a5ff](https://github.com/matthewyjiang/rho/commit/c73a5ff2d801649e8b721cbd2850b42287c4e117))
+* **claude:** run claude code through claude-agent-acp, dropping 8k lines of stream-json plumbing ([#1652](https://github.com/matthewyjiang/rho/issues/1652)) ([74a62c0](https://github.com/matthewyjiang/rho/commit/74a62c032069700d74410b2fdeedae6cbc9eabd1))
+
+
+### Bug Fixes
+
+* **providers:** only refresh and list ollama after you log in to it ([#1654](https://github.com/matthewyjiang/rho/issues/1654)) ([4af08af](https://github.com/matthewyjiang/rho/commit/4af08afced8255e37a27d853751d08c777b469c2))
+
 ## [2.26.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.26.1...rho-providers-v2.26.2) (2026-10-31)
 
 

@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.33.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.3...rho-coding-agent-v2.33.0) (2026-11-05)
+
+
+### Features
+
+* **acp:** enable v2 for T3 Code sessions ([#1642](https://github.com/matthewyjiang/rho/issues/1642)) ([8c97a22](https://github.com/matthewyjiang/rho/commit/8c97a22758ae27a5d9f1fd952ceda92e87edfab3))
+* **acp:** sign in with oauth and api keys from the host, no terminal needed ([#1653](https://github.com/matthewyjiang/rho/issues/1653)) ([87913a6](https://github.com/matthewyjiang/rho/commit/87913a685e4c6f6b417a3cc6234357d01bc41c2b))
+* **acp:** steer parent messages into a running acp turn ([#1651](https://github.com/matthewyjiang/rho/issues/1651)) ([b317498](https://github.com/matthewyjiang/rho/commit/b31749888ea814d7712f871fad8160d19193d59c))
+* **antigravity:** run delegated agents on agy 1.5's built-in acp server ([#1645](https://github.com/matthewyjiang/rho/issues/1645)) ([c73a5ff](https://github.com/matthewyjiang/rho/commit/c73a5ff2d801649e8b721cbd2850b42287c4e117))
+* **claude:** run claude code through claude-agent-acp, dropping 8k lines of stream-json plumbing ([#1652](https://github.com/matthewyjiang/rho/issues/1652)) ([74a62c0](https://github.com/matthewyjiang/rho/commit/74a62c032069700d74410b2fdeedae6cbc9eabd1))
+
+
+### Bug Fixes
+
+* **providers:** only refresh and list ollama after you log in to it ([#1654](https://github.com/matthewyjiang/rho/issues/1654)) ([4af08af](https://github.com/matthewyjiang/rho/commit/4af08afced8255e37a27d853751d08c777b469c2))
+* **startup:** stop unreachable custom providers from delaying acp and rho run by 5s ([#1650](https://github.com/matthewyjiang/rho/issues/1650)) ([9d0e325](https://github.com/matthewyjiang/rho/commit/9d0e325e706ef05fd271b502fdbf3a718ef27e55))
+* **tools:** turn rtk rewriting back on, off since the sdk shell move ([#1646](https://github.com/matthewyjiang/rho/issues/1646)) ([7ceb773](https://github.com/matthewyjiang/rho/commit/7ceb773032d3cc3caaf29cf248ca77eb34bdecd7))
+
+
+### Performance Improvements
+
+* cut TUI streaming CPU 10-12% and headless step cost ~10% ([#1644](https://github.com/matthewyjiang/rho/issues/1644)) ([b0ccaf5](https://github.com/matthewyjiang/rho/commit/b0ccaf5f08563f38201c67256391091d4c299897))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.26.2 to 2.27.0
+
 ## [2.32.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.2...rho-coding-agent-v2.32.3) (2026-10-31)
 
 

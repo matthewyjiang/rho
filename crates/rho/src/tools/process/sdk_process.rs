@@ -168,6 +168,10 @@ impl Tool for SdkProcess {
         Some(rho_tools::output_schema::<super::output::ProcessOutput>())
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        process_metadata()
+    }
+
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
