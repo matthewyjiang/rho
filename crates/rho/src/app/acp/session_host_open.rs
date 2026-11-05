@@ -28,7 +28,7 @@ use crate::{
     },
     config::Config,
     session::Session as StoredSession,
-    tools::mcp::exported_name::McpToolNames,
+    tools::sdk_registry::AppToolSet,
 };
 
 impl SessionHost {
@@ -162,14 +162,9 @@ impl SessionHost {
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
         if let History::Replay(client) = history {
-            let replay_result = replay_display_history(
-                &request.session_id,
-                &stored,
-                cwd,
-                &built.tools.mcp_report().tool_names(),
-                client,
-            )
-            .await;
+            let replay_result =
+                replay_display_history(&request.session_id, &stored, cwd, &built.tools, client)
+                    .await;
             if let Err(error) = replay_result {
                 built.teardown().await;
                 return Err(error);
@@ -279,11 +274,11 @@ async fn replay_display_history(
     session_id: &SessionId,
     stored: &StoredSession,
     cwd: &Path,
-    mcp_tools: &McpToolNames,
+    tool_set: &AppToolSet,
     client: &dyn AcpClientPort,
 ) -> anyhow::Result<()> {
     let messages = stored.active_display_history()?;
-    for notification in EventMapper::replay_history(session_id, &messages, cwd, mcp_tools) {
+    for notification in EventMapper::replay_history(session_id, &messages, cwd, tool_set) {
         send_notification(client, notification).await?;
     }
     Ok(())

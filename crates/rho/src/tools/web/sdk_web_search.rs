@@ -53,6 +53,10 @@ impl Tool for SdkWebSearch {
         Some(rho_tools::output_schema::<super::adapters::WebSearchOutput>())
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        metadata()
+    }
+
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,

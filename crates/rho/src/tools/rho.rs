@@ -58,6 +58,10 @@ impl SdkTool for SdkRho {
         ToolSecurity::built_in([])
     }
 
+    fn start_metadata(&self, _arguments: &serde_json::Value) -> ToolMetadata {
+        metadata()
+    }
+
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -70,7 +74,7 @@ impl SdkTool for SdkRho {
             Ok(PreparedToolInvocation::resource_aware(
                 [],
                 [],
-                ToolMetadata::new().operation(OperationKind::Read),
+                metadata(),
                 move |_context| Box::pin(async move { self.execute(args, cwd.as_deref()) }),
             ))
         })
@@ -96,6 +100,10 @@ fn respond(
         &crate::plugins::agent_tiers(cwd, home.as_deref()),
     );
     serde_json::to_string_pretty(&report).map_err(|error| error.to_string())
+}
+
+fn metadata() -> ToolMetadata {
+    ToolMetadata::new().operation(OperationKind::Read)
 }
 
 fn parse_args(arguments: serde_json::Value) -> Result<Args, SdkToolError> {
