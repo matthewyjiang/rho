@@ -40,9 +40,9 @@ use crate::{
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
             model_scoped_config, ApprovalPolicy, ChildAgents, CurrentModel, InsertedMessage,
-            OpenedSession, PromptScope, QuestionSupport, SessionBuild, SessionHandle,
-            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnOutcome,
-            UsageAttribution, WorkflowStart,
+            PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
+            SettingChangeError, TitleJob, Turn, TurnOutcome, UsageAttribution,
+            WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -317,15 +317,14 @@ impl SessionHost {
         let _ = herdr.release().await;
     }
 
-    /// The host for `opened`, talking to its client through `client_io`,
+    /// The host for `runtime`, talking to its client through `client_io`,
     /// with the wake watcher its [`session_build`] came with.
-    fn from_built(
+    fn from_runtime(
         client_io: super::client_io::ClientIo,
         startup: &AcpStartup,
-        opened: OpenedSession,
+        runtime: SessionRuntime,
         t3_wake: Option<T3Wake>,
     ) -> Self {
-        let runtime = SessionRuntime::new(opened, &startup.logouts);
         Self {
             acp_session_id: client_io.session_id.clone(),
             client_io,
@@ -678,22 +677,15 @@ impl SessionHost {
         permission: crate::app::session_runtime::SessionPermission,
     ) -> Self {
         let HostBuild { build, t3_wake } = session_build(startup, &io);
-        Self::from_built(
-            io,
-            startup,
-            OpenedSession {
-                build,
-                built,
-                storage,
-                agent: startup.agent.clone(),
-                auth: startup.config.auth.clone(),
-                host_mcp: Default::default(),
-                added_dirs: Default::default(),
-                permission,
-                reopen_notice: None,
-            },
-            t3_wake,
-        )
+        let runtime = SessionRuntime::from_built_for_tests(
+            build,
+            built,
+            storage,
+            permission,
+            startup.config.auth.clone(),
+            &startup.logouts,
+        );
+        Self::from_runtime(io, startup, runtime, t3_wake)
     }
 }
 

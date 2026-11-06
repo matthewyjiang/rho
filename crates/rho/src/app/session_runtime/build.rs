@@ -123,11 +123,11 @@ pub(crate) enum ChildAgents {
 }
 
 /// Builds a session as `build` says, with the permission state of
-/// `config`'s mode, for an [`super::OpenedSession`] or an agent rebind.
+/// `config`'s mode, for opening a session (see `open.rs`) or an agent rebind.
 /// `config` is the session's config: the process config plus the host's MCP
 /// servers. `added_dirs` is the session's set: launch `--add-dir` values,
 /// plus the host's own roots.
-pub(crate) async fn build_session(
+pub(super) async fn build_session(
     build: &SessionBuild,
     agent: &BoundAgent,
     config: &Config,
