@@ -164,3 +164,38 @@ fn an_attach_reports_the_job_state_its_replay_ends_in() {
     feed.publish(notices(&["a reply"]));
     assert_eq!(feed.attach(None).job, wire::JobState::Running);
 }
+
+// Covers: an event JSON cannot hold, live or saved, never reaches a reset or
+// a subscriber, whose forwarder relies on every event encoding.
+#[cfg(unix)]
+#[test]
+fn events_json_cannot_hold_are_dropped_live_and_saved() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::PathBuf};
+
+    let unencodable = || {
+        wire::SessionEvent::ToolCall(wire::ToolCallUpdate {
+            id: wire::ToolCallId::new("call"),
+            title: None,
+            kind: None,
+            status: None,
+            raw_input: None,
+            content: None,
+            locations: Some(vec![wire::Location {
+                path: PathBuf::from(OsStr::from_bytes(b"/work/\xff")),
+                line: None,
+            }]),
+        })
+    };
+    let feed = Feed::new();
+    feed.publish([unencodable(), notice("live")]);
+    assert_eq!(
+        replay(&feed, None),
+        (Replay::Reset, vec![(1, notice("live"))])
+    );
+
+    feed.end_turn(vec![unencodable(), notice("saved")]);
+    assert_eq!(
+        replay(&feed, None),
+        (Replay::Reset, vec![(1, notice("saved"))])
+    );
+}

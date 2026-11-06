@@ -121,6 +121,9 @@ impl Feed {
     /// replay from the saved rows: it joins the transcript, and resets stop
     /// replaying those turns' live events.
     pub(super) fn end_turn(&self, saved: Vec<wire::SessionEvent>) {
+        let saved = saved
+            .into_iter()
+            .filter(|event| encoded_len(event).is_some());
         let mut state = self.state();
         state.transcript.extend(saved);
         state.turn_start = state.last;
@@ -171,14 +174,8 @@ impl Feed {
 
 impl FeedState {
     fn push(&mut self, event: wire::SessionEvent) {
-        // Measured once here, so an event JSON cannot hold, such as one with
-        // a non-UTF-8 path, never takes a seq or reaches a connection.
-        let bytes = match serde_json::to_vec(&event) {
-            Ok(encoded) => encoded.len(),
-            Err(error) => {
-                tracing::warn!(%error, "dropped a session event JSON cannot hold");
-                return;
-            }
+        let Some(bytes) = encoded_len(&event) else {
+            return;
         };
         if let wire::SessionEvent::State { state, .. } = &event {
             self.job = *state;
@@ -256,6 +253,20 @@ impl FeedState {
         }
         events.extend(self.events_after(self.turn_start));
         events
+    }
+}
+
+/// How many bytes `event` encodes to, or `None`, logged, for one JSON cannot
+/// hold, such as one with a non-UTF-8 path. Every event the feed keeps,
+/// live or transcript, passes this, so none takes a seq or reaches a
+/// connection's forwarder, which relies on it (`Publisher`).
+fn encoded_len(event: &wire::SessionEvent) -> Option<usize> {
+    match serde_json::to_vec(event) {
+        Ok(encoded) => Some(encoded.len()),
+        Err(error) => {
+            tracing::warn!(%error, "dropped a session event JSON cannot hold");
+            None
+        }
     }
 }
 

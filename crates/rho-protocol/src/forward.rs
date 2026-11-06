@@ -201,7 +201,8 @@ async fn forward(
             seq,
             event,
         };
-        // A publisher publishes only events that encode (`Publisher`).
+        // A publisher sends only events that encode (`Publisher`), replayed
+        // or live.
         let message = notification::<SessionEventNotification>(&params)
             .expect("published session events encode");
         forwarders.send(&session, id, message, &outbox).await

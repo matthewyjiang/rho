@@ -44,8 +44,9 @@ pub fn subscription(backlog: usize, replay: Vec<(Seq, SessionEvent)>) -> (Publis
 }
 
 /// The daemon's end of one subscription: publishes one session's live events
-/// to one attached client. Publish only events that encode as JSON; one with
-/// a non-UTF-8 path does not, and its connection would fail on it.
+/// to one attached client. Publish, and replay through [`subscription`],
+/// only events that encode as JSON; one with a non-UTF-8 path does not, and
+/// its connection would fail on it.
 ///
 /// Dropping it ends the subscription once the client has the events already
 /// published, without a [`crate::methods::SESSION_DETACHED`] notification;
