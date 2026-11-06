@@ -87,7 +87,6 @@ fn a_subagent_job_follows_its_run() {
     }
 }
 
-/// Yields until job `id` is in `state`.
 // Covers: a workflow drive that stopped without an end was interrupted
 // when the daemon is stopping, and failed otherwise.
 // Owner: daemon workflow jobs.
@@ -102,6 +101,7 @@ fn a_workflow_drive_without_an_end_is_interrupted_only_by_a_stop() {
     );
 }
 
+/// Yields until job `id` is in `state`.
 async fn wait_for_state(registry: &JobRegistry, id: &JobId, state: JobState) {
     for _ in 0..10_000 {
         if registry.get(id).is_some_and(|record| record.state == state) {

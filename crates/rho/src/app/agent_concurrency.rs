@@ -52,6 +52,16 @@ pub(crate) enum Budget {
     ClaudeAgentConcurrency,
 }
 
+impl Budget {
+    /// The setting that sizes the budget, as a user writes it.
+    pub(crate) fn setting(self) -> &'static str {
+        match self {
+            Self::AgentConcurrency => "behavior.agent_concurrency",
+            Self::ClaudeAgentConcurrency => "RHO_CLAUDE_AGENT_CONCURRENCY",
+        }
+    }
+}
+
 /// Where a waiting run stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct QueuePlace {

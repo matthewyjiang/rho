@@ -27,7 +27,7 @@ use std::{
 use rho_sdk::CancellationToken;
 use tokio::sync::{oneshot, watch};
 
-use super::jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, TurnEnd};
+use super::jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, TurnEnd};
 use crate::{
     app::{
         agent_concurrency::{AgentConcurrency, QueuePlace, QueueWatch},
@@ -107,7 +107,7 @@ impl ChildObserver for ChildJobs {
         let record = JobRecord::new_workflow(self.parent.clone(), workspace, run_id);
         let job = record.id.clone();
         if let Err(error) = self.jobs.register(record) {
-            tracing::error!(parent = %self.parent, run = %run_id, %error, "could not record a workflow run's job; the run goes on unlisted, its agent nodes under the session's job");
+            unlisted(&error, &self.parent, &run_id.to_string(), "workflow");
             return HostedWorkflow {
                 observer: Arc::new(self.clone()),
                 end,
@@ -140,7 +140,7 @@ impl ChildObserver for ChildJobs {
         let record = JobRecord::new_subagent(self.parent.clone(), workspace, session);
         let job = record.id.clone();
         if let Err(error) = self.jobs.register(record) {
-            tracing::error!(parent = %self.parent, run = %run_id, %error, "could not record a subagent run's job; the run goes on unlisted");
+            unlisted(&error, &self.parent, &run_id, "subagent");
             return;
         }
         tracing::info!(parent = %self.parent, %job, run = %run_id, "subagent run started");
@@ -152,6 +152,20 @@ impl ChildObserver for ChildJobs {
             Arc::clone(&self.queues),
             self.stopping.clone(),
         ));
+    }
+}
+
+/// Logs why the `kind` run `run` that job `parent` started goes on with no
+/// job of its own. A workflow run's agent nodes are then listed under
+/// `parent`.
+fn unlisted(error: &RegisterError, parent: &JobId, run: &str, kind: &str) {
+    match error {
+        RegisterError::Closed => {
+            tracing::info!(%parent, run, kind, "daemon stopping; a run started during the stop goes on unlisted");
+        }
+        RegisterError::Io(error) => {
+            tracing::error!(%parent, run, kind, %error, "could not record a run's job; the run goes on unlisted");
+        }
     }
 }
 

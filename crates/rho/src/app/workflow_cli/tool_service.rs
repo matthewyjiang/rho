@@ -619,9 +619,11 @@ fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagno
 }
 
 /// The error the model sees for `error`, with paths and source text
-/// redacted. The full error goes to the log, for whoever runs the host.
+/// redacted. The full error goes to the debug log, for whoever runs the
+/// host: most are the model's own input. A run that fails once started
+/// reports its full error through its workflow job instead.
 fn model_workflow_tool_error(error: anyhow::Error) -> ToolError {
-    tracing::warn!(error = format!("{error:#}"), "workflow tool call failed");
+    tracing::debug!(error = format!("{error:#}"), "workflow tool call failed");
     let diagnostic = diagnostic_for_model_error(&error);
     ToolError::new(ToolErrorKind::Execution, diagnostic.message)
 }
