@@ -167,4 +167,17 @@ fn every_spelling_of_a_home_names_the_same_socket() {
         );
     }
     assert_eq!(socket(missing.join("")), socket(missing.clone()));
+
+    // A home that does not exist yet, under a symlinked parent or reached
+    // through `..`, keeps its socket once it is created.
+    for spelling in [
+        root.path().join("link/new"),
+        root.path().join("home/sub/../new"),
+    ] {
+        let before = socket(spelling.clone());
+        fs::create_dir_all(home.join("new")).unwrap();
+        assert_eq!(before, socket(spelling.clone()), "{spelling:?}");
+        assert_eq!(before, socket(home.join("new")), "{spelling:?}");
+        fs::remove_dir(home.join("new")).unwrap();
+    }
 }

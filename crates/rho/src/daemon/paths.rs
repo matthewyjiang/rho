@@ -190,14 +190,39 @@ fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
 /// Unix socket limit, and stable across rho versions, so clients and daemons
 /// of different versions still find each other.
 ///
-/// Every spelling of one home (a trailing slash, `//`, `.`, a symlink) must
-/// name the same socket, because they all share the home's one lock. So the
-/// path is canonicalized, or, for a home that does not exist yet, cleaned of
-/// redundant separators and `.` components.
+/// Every spelling of one home (a trailing slash, `//`, `.`, `..`, a symlink)
+/// must name the same socket, because they all share the home's one lock.
+/// The id must also not change once the home exists, since a daemon may be
+/// the process that creates it. So it hashes [`real_path`].
 fn home_id(rho_home: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
-    let real = fs::canonicalize(rho_home).unwrap_or_else(|_| rho_home.components().collect());
-    hex::encode(&Sha256::digest(real.as_os_str().as_bytes())[..8])
+    hex::encode(&Sha256::digest(real_path(rho_home).as_os_str().as_bytes())[..8])
+}
+
+/// The path `path` has, or will have once its missing directories are
+/// created: its nearest existing ancestor canonicalized, then the remaining
+/// components applied as plain directories would resolve them.
+fn real_path(path: &Path) -> PathBuf {
+    let components: Vec<_> = path.components().collect();
+    for existing in (1..=components.len()).rev() {
+        let Ok(mut real) = fs::canonicalize(components[..existing].iter().collect::<PathBuf>())
+        else {
+            continue;
+        };
+        for component in &components[existing..] {
+            match component {
+                std::path::Component::ParentDir => {
+                    real.pop();
+                }
+                std::path::Component::Normal(name) => real.push(name),
+                std::path::Component::CurDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_) => {}
+            }
+        }
+        return real;
+    }
+    components.iter().collect()
 }
 
 /// The effective uid of this process.
