@@ -14,7 +14,41 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 
 Only one daemon runs per rho home. A second `rho daemon run` fails with the pid and version of the one already running.
 
-The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it stops accepting connections and reading requests, answers the requests it has already received, removes its socket, and exits with status 0. A request that never finishes holds that shutdown open. A `SIGTERM` or `SIGINT` that arrives once shutdown is under way, whether a second signal or any signal after `rho daemon stop`, makes the daemon exit at once with status 1, and the next daemon to start removes the socket it left behind.
+The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it stops accepting connections and reading requests, answers the requests it has already received, and removes its socket. It then cancels the [turns](#threads-and-jobs) still running, waits up to 4 seconds for them to save, records them `interrupted`, and exits with status 0. A request that never finishes holds that shutdown open. A `SIGTERM` or `SIGINT` that arrives once shutdown is under way, whether a second signal or any signal after `rho daemon stop`, makes the daemon exit at once with status 1; the next daemon to start removes the socket it left behind and records the turns that daemon left open as `interrupted`.
+
+## Threads and jobs
+
+A thread is a conversation the daemon hosts: one saved session, prompted turn by turn. Its turns run in the daemon, so a turn keeps running when the client that started it disconnects, and another client can follow it later. The daemon tracks every unit of work it runs as a job; today every job is a thread.
+
+| Method | Params | What it does |
+| --- | --- | --- |
+| `rho/thread/create` | `cwd` | Opens a thread on a new session in `cwd`, an absolute path. Returns the thread's job id and session id. |
+| `rho/thread/prompt` | `thread`, `text` | Starts a turn and returns once the turn has saved the prompt. A thread runs one turn at a time; a prompt while a turn is under way is refused. |
+| `rho/thread/cancel` | `thread` | Cancels the turn under way, if any. |
+| `rho/thread/steer` | `thread`, `text` | Adds `text` to the running turn's next model request. Refused when no model request is running. |
+| `rho/jobs/list` | | Lists every job the daemon knows, including those earlier daemons ran. |
+
+A thread opens with the configuration, agents, and instructions that `rho` launched in `cwd` would use, read when the thread is created. It runs as the default agent with the configured permission mode. `text` reaches the model as written: slash commands are not expanded yet.
+
+A thread's job state is the state of its current or last turn:
+
+| State | Meaning |
+| --- | --- |
+| `idle` | Created; no turn has started. |
+| `running` | A turn is under way. |
+| `waiting_for_input` | The turn waits for a tool approval, a plan approval, or an answer to a question. |
+| `completed` | The last turn finished. |
+| `failed` | The last turn failed; the job's `error` says why. |
+| `cancelled` | The last turn was cancelled. |
+| `interrupted` | The daemon stopped, or died, before the last turn ended. |
+
+A new prompt moves a thread from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `running` or `waiting_for_input`.
+
+Clients cannot yet watch a turn's events or answer its requests. A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/thread/cancel` ends the wait.
+
+Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet. A daemon lists the threads earlier daemons ran but cannot reopen them yet, so it refuses to prompt them with `thread is not loaded in this daemon`.
+
+Tools in a thread run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment in a later release.
 
 ## Starting automatically
 
@@ -61,7 +95,7 @@ When the daemon runs under systemd with stderr connected to the journal (`JOURNA
 
 ## Configuration changes
 
-The daemon reads [configuration](/configuration) when it creates a session, so edits apply to new sessions without a restart. Daemon-level settings, which are the `RHO_LOG` filter and the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), are read once at startup. Restart the daemon with `rho daemon stop` to change them.
+The daemon reads [configuration](/configuration) when it creates a session, so edits apply to new sessions without a restart. Daemon-level settings, which are the `RHO_LOG` filter, the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), and the credential store, are read once at startup. Restart the daemon with `rho daemon stop` to change them.
 
 ## Running as a service
 
