@@ -5,15 +5,15 @@
 //! exits. Holding the lock therefore proves no other daemon is alive, which
 //! is what makes removing a leftover socket safe.
 //!
-//! The lock lives in the rho home, not the runtime directory, so it guards
-//! the home's daemon state no matter which runtime directory a daemon
-//! resolved. Each home resolves exactly one socket path, so the lock still
-//! covers the socket.
+//! The lock and the info file live in the rho home's state directory, not the
+//! runtime directory, so they guard the home's daemon state whichever runtime
+//! directory a daemon resolved. A home's runtime directory is its own (see
+//! [`DaemonPaths::resolve`]), so the lock also covers the socket.
 
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -22,7 +22,7 @@ use fs2::FileExt;
 use rho_protocol::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 
-use super::paths::DaemonPaths;
+use super::paths::{DaemonPathError, DaemonPaths};
 
 /// Proof that this process is the only daemon for its rho home.
 /// Dropping it releases the lock.
@@ -51,30 +51,29 @@ pub(crate) enum LockError {
     AlreadyRunning { record: Option<DaemonRecord> },
     #[error("could not open rho daemon lock {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
+    #[error(transparent)]
+    StateDir(#[from] DaemonPathError),
 }
 
 fn already_running_message(record: Option<&DaemonRecord>) -> String {
     match record {
-        Some(DaemonRecord { pid, version, .. }) => {
-            format!("rho daemon is already running (pid {pid}, version {version})")
-        }
+        Some(DaemonRecord {
+            pid,
+            version,
+            socket,
+            ..
+        }) => format!(
+            "rho daemon is already running (pid {pid}, version {version}, socket {})",
+            socket.display()
+        ),
         None => "rho daemon is already running (it is still starting)".to_owned(),
     }
 }
 
-/// Takes the daemon lock without blocking, creating its directory (0700)
-/// first.
+/// Takes the daemon lock without blocking, after creating or verifying the
+/// private state directory that holds it.
 pub(crate) fn acquire(paths: &DaemonPaths) -> Result<DaemonLock, LockError> {
-    if let Some(dir) = paths.lock.parent() {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .map_err(|source| LockError::Io {
-                path: dir.to_path_buf(),
-                source,
-            })?;
-    }
+    paths.prepare_state_dir()?;
     let file = open_lock_file(&paths.lock)?;
     match FileExt::try_lock_exclusive(&file) {
         Ok(()) => Ok(DaemonLock { _file: file }),
@@ -133,7 +132,7 @@ const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// Writes the info file atomically (0600) so readers never see a partial one.
 pub(crate) fn write_record(paths: &DaemonPaths, record: &DaemonRecord) -> io::Result<()> {
     // `tempfile` creates the file with mode 0600.
-    let mut file = tempfile::NamedTempFile::new_in(&paths.runtime_dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(&paths.state_dir)?;
     serde_json::to_writer(&mut file, record)?;
     file.write_all(b"\n")?;
     file.persist(&paths.info_file)

@@ -1,4 +1,9 @@
 //! Where the daemon keeps its socket, lock, info file, and log.
+//!
+//! Each rho home has one daemon, and every path below belongs to exactly one
+//! home: the lock and info file live in the home itself, and the socket lives
+//! in a runtime directory named after the home. So two homes never share a
+//! daemon file, and the lock alone decides which daemon owns a home.
 
 use std::{
     ffi::OsString,
@@ -6,6 +11,8 @@ use std::{
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
+
+use sha2::{Digest, Sha256};
 
 /// Bytes in `sockaddr_un.sun_path`, which holds a Unix socket path plus its
 /// NUL terminator.
@@ -19,24 +26,26 @@ const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
 
 /// Every file the daemon and its clients use.
 ///
-/// [`DaemonPaths::resolve`] is pure. The runtime directory holds the
-/// rendezvous files (socket and info file) and must be private:
-/// [`DaemonPaths::prepare_runtime_dir`] creates or verifies it before anything
-/// is created inside. The lock lives in the rho home instead, because the
-/// state it guards (the job records under `<rho home>/daemon/jobs`) belongs to
-/// the home, not to whichever runtime directory a daemon happened to resolve.
+/// [`DaemonPaths::resolve`] is pure. Both directories must be private:
+/// [`DaemonPaths::prepare_runtime_dir`] and [`DaemonPaths::prepare_state_dir`]
+/// create or verify them before anything is created inside.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DaemonPaths {
-    /// `<rho home>/run` for an explicit `RHO_HOME`, else
-    /// `$XDG_RUNTIME_DIR/rho`, else `~/.rho/run`.
+    /// Holds the socket: `$XDG_RUNTIME_DIR/rho/<home id>` when
+    /// `XDG_RUNTIME_DIR` is an absolute path, else `<rho home>/run`.
     pub(crate) runtime_dir: PathBuf,
     pub(crate) socket: PathBuf,
-    /// `<rho home>/daemon/daemon.lock`, held exclusively by the running daemon
-    /// for its whole lifetime. One per rho home, so two daemons that resolve
-    /// different runtime directories for the same home (say, with different
+    /// `<rho home>/daemon`: the lock, the info file, and the daemon's own
+    /// state, such as job records.
+    pub(crate) state_dir: PathBuf,
+    /// `<state dir>/daemon.lock`, held exclusively by the running daemon for
+    /// its whole lifetime. It lives in the home, so daemons that resolve
+    /// different runtime directories for one home (say, with different
     /// `XDG_RUNTIME_DIR`s) still exclude each other.
     pub(crate) lock: PathBuf,
-    /// JSON [`super::lock::DaemonRecord`] written after the socket is bound.
+    /// `<state dir>/daemon.json`: the JSON [`super::lock::DaemonRecord`]
+    /// written after the socket is bound. It names the socket, so a daemon
+    /// refused the lock can say where the running one listens.
     pub(crate) info_file: PathBuf,
     pub(crate) log_file: PathBuf,
 }
@@ -45,21 +54,21 @@ pub(crate) struct DaemonPaths {
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DaemonPathError {
     #[error(
-        "rho daemon socket path {path} is {len} bytes, over the {max}-byte Unix socket path limit on this platform; point RHO_HOME (or XDG_RUNTIME_DIR for the default home) at a shorter directory"
+        "rho daemon socket path {path} is {len} bytes, over the {max}-byte Unix socket path limit on this platform; point RHO_HOME or XDG_RUNTIME_DIR at a shorter directory"
     )]
     SocketPathTooLong {
         path: PathBuf,
         len: usize,
         max: usize,
     },
-    #[error("rho daemon runtime directory {path} is not a directory; remove it and retry")]
+    #[error("rho daemon directory {path} is not a directory; remove it and retry")]
     NotADirectory { path: PathBuf },
     #[error(
-        "rho daemon runtime directory {path} is owned by uid {owner}, not uid {uid}; remove it and retry"
+        "rho daemon directory {path} is owned by uid {owner}, not uid {uid}; remove it and retry"
     )]
     WrongOwner { path: PathBuf, owner: u32, uid: u32 },
     #[error(
-        "rho daemon runtime directory {path} has mode {mode:04o} but must not be accessible to group or others; run `chmod 700 {path}`"
+        "rho daemon directory {path} has mode {mode:04o} but must not be accessible to group or others; run `chmod 700 {path}`"
     )]
     InsecureMode { path: PathBuf, mode: u32 },
     #[error("could not prepare rho daemon directory {path}: {message}")]
@@ -67,25 +76,23 @@ pub(crate) enum DaemonPathError {
 }
 
 impl DaemonPaths {
-    /// Lays out the daemon files for `rho_home`. `env` looks up `RHO_HOME`
-    /// and `XDG_RUNTIME_DIR`; tests inject it instead of reading process env.
+    /// Lays out the daemon files for `rho_home`. `env` looks up
+    /// `XDG_RUNTIME_DIR`; tests inject it instead of reading process env.
     ///
-    /// A daemon serves exactly one rho home, so an explicit `RHO_HOME` keeps
-    /// its socket inside that home. Only the default home uses the shared
-    /// per-user `$XDG_RUNTIME_DIR`; otherwise two homes would reach the same
-    /// daemon and mix their sessions and config.
+    /// The per-user `$XDG_RUNTIME_DIR` is shared by every rho home of that
+    /// user, so the socket goes in a subdirectory named after the home (see
+    /// [`home_id`]); two homes never reach the same daemon.
     pub(crate) fn resolve(
         rho_home: &Path,
         env: impl Fn(&str) -> Option<OsString>,
     ) -> Result<Self, DaemonPathError> {
-        let explicit_home = env("RHO_HOME").is_some_and(|value| !value.is_empty());
         // XDG: a relative value is invalid and must be ignored.
         let xdg_runtime_dir = env("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .filter(|dir| dir.is_absolute());
         let runtime_dir = match xdg_runtime_dir {
-            Some(dir) if !explicit_home => dir.join("rho"),
-            _ => rho_home.join("run"),
+            Some(dir) => dir.join("rho").join(home_id(rho_home)),
+            None => rho_home.join("run"),
         };
         let socket = runtime_dir.join("daemon.sock");
         let len = socket.as_os_str().len();
@@ -96,54 +103,27 @@ impl DaemonPaths {
                 max: MAX_SOCKET_PATH_BYTES,
             });
         }
+        let state_dir = rho_home.join("daemon");
         Ok(Self {
-            lock: rho_home.join("daemon").join("daemon.lock"),
-            info_file: runtime_dir.join("daemon.json"),
+            lock: state_dir.join("daemon.lock"),
+            info_file: state_dir.join("daemon.json"),
             log_file: rho_home.join("logs").join("daemon.log"),
+            state_dir,
             socket,
             runtime_dir,
         })
     }
 
-    /// Creates the runtime directory with mode 0700, or verifies an existing
-    /// one is a real directory owned by this user and closed to everyone else.
-    /// Clients and the daemon both call this before touching files inside.
+    /// Creates or verifies the runtime directory (see [`prepare_private_dir`]).
+    /// Clients and the daemon both call this before touching the socket.
     pub(crate) fn prepare_runtime_dir(&self) -> Result<(), DaemonPathError> {
-        let path = &self.runtime_dir;
-        let io_error = |error: io::Error| DaemonPathError::Io {
-            path: path.clone(),
-            message: error.to_string(),
-        };
-        match fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)
-        {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(io_error(error)),
-        }
-        // Not following symlinks: a link could point anywhere.
-        let metadata = fs::symlink_metadata(path).map_err(io_error)?;
-        if !metadata.is_dir() {
-            return Err(DaemonPathError::NotADirectory { path: path.clone() });
-        }
-        let uid = current_uid();
-        if metadata.uid() != uid {
-            return Err(DaemonPathError::WrongOwner {
-                path: path.clone(),
-                owner: metadata.uid(),
-                uid,
-            });
-        }
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
-            return Err(DaemonPathError::InsecureMode {
-                path: path.clone(),
-                mode,
-            });
-        }
-        Ok(())
+        prepare_private_dir(&self.runtime_dir)
+    }
+
+    /// Creates or verifies the state directory (see [`prepare_private_dir`]).
+    /// Taking the daemon lock calls this first.
+    pub(crate) fn prepare_state_dir(&self) -> Result<(), DaemonPathError> {
+        prepare_private_dir(&self.state_dir)
     }
 
     /// Creates the log directory (0700) and opens the log for appending
@@ -161,6 +141,56 @@ impl DaemonPaths {
             .mode(0o600)
             .open(&self.log_file)
     }
+}
+
+/// Creates `path` with mode 0700, or verifies an existing one is a real
+/// directory owned by this user and closed to everyone else.
+fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
+    let io_error = |error: io::Error| DaemonPathError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    };
+    match fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+    {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(io_error(error)),
+    }
+    // Not following symlinks: a link could point anywhere.
+    let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    if !metadata.is_dir() {
+        return Err(DaemonPathError::NotADirectory {
+            path: path.to_path_buf(),
+        });
+    }
+    let uid = current_uid();
+    if metadata.uid() != uid {
+        return Err(DaemonPathError::WrongOwner {
+            path: path.to_path_buf(),
+            owner: metadata.uid(),
+            uid,
+        });
+    }
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(DaemonPathError::InsecureMode {
+            path: path.to_path_buf(),
+            mode,
+        });
+    }
+    Ok(())
+}
+
+/// Names a rho home's runtime subdirectory: the first 16 hex digits of the
+/// SHA-256 of its path, as given. Short, so the socket path stays far under
+/// the Unix socket limit, and stable across rho versions, so clients and
+/// daemons of different versions still find each other.
+fn home_id(rho_home: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    hex::encode(&Sha256::digest(rho_home.as_os_str().as_bytes())[..8])
 }
 
 /// The effective uid of this process.

@@ -13,9 +13,9 @@ use tempfile::TempDir;
 /// to see it change.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// A temporary directory holding the rho home (`<root>/home`) and the
-/// runtime directory `XDG_RUNTIME_DIR` names (`<root>/run`). An explicit
-/// `RHO_HOME` keeps the daemon's socket in `<home>/run`.
+/// A temporary directory holding the rho home (`<root>/home`). With no
+/// `XDG_RUNTIME_DIR`, the daemon's socket is `<home>/run/daemon.sock`; where
+/// it goes under `XDG_RUNTIME_DIR` is the path unit tests' job.
 pub(crate) struct DaemonSandbox {
     root: TempDir,
 }
@@ -43,7 +43,7 @@ impl DaemonSandbox {
         std::fs::read_to_string(self.home().join("logs/daemon.log")).unwrap_or_default()
     }
 
-    /// `rho` with its data root and runtime directory inside the sandbox and
+    /// `rho` with its data root and socket inside the sandbox and
     /// its daemon logging to the file [`Self::daemon_log`] reads. Only the
     /// child's environment changes.
     pub(crate) fn rho(&self) -> Command {
@@ -51,7 +51,7 @@ impl DaemonSandbox {
         command
             .env("HOME", self.root())
             .env("RHO_HOME", self.home())
-            .env("XDG_RUNTIME_DIR", self.root().join("run"))
+            .env_remove("XDG_RUNTIME_DIR")
             .env_remove("JOURNAL_STREAM")
             .env_remove("RHO_LOG")
             .stdin(Stdio::null());

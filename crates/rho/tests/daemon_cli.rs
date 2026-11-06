@@ -70,9 +70,10 @@ async fn daemon_lifecycle_through_the_cli() {
     assert_eq!(
         stderr(&second),
         format!(
-            "Error: rho daemon is already running (pid {}, version {})\n",
+            "Error: rho daemon is already running (pid {}, version {}, socket {})\n",
             daemon.0.id(),
-            env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION"),
+            sandbox.socket().display()
         )
     );
 

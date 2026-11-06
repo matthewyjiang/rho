@@ -6,55 +6,52 @@ use tempfile::TempDir;
 use super::*;
 
 fn resolve(rho_home: &Path, xdg_runtime_dir: Option<&str>) -> Result<DaemonPaths, DaemonPathError> {
-    resolve_with(rho_home, None, xdg_runtime_dir)
-}
-
-fn resolve_with(
-    rho_home: &Path,
-    rho_home_env: Option<&str>,
-    xdg_runtime_dir: Option<&str>,
-) -> Result<DaemonPaths, DaemonPathError> {
     DaemonPaths::resolve(rho_home, |name| match name {
-        "RHO_HOME" => rho_home_env.map(OsString::from),
         "XDG_RUNTIME_DIR" => xdg_runtime_dir.map(OsString::from),
         other => panic!("unexpected env lookup {other}"),
     })
 }
 
-// Covers: the default home's socket lives under $XDG_RUNTIME_DIR only when it
-// is a usable absolute path; an explicit RHO_HOME always keeps its own socket,
-// so two homes never share one daemon. The lock stays in the home whatever
-// the runtime directory, so daemons started with different XDG_RUNTIME_DIRs
-// for one home still exclude each other.
+// Covers: the socket lives under $XDG_RUNTIME_DIR, in a directory of its own
+// home, only when that variable is a usable absolute path; the lock and info
+// file stay in the home whatever the runtime directory, so daemons started
+// with different XDG_RUNTIME_DIRs for one home still exclude each other.
 // Owner: daemon path policy.
 #[test]
-fn runtime_dir_follows_the_rho_home_and_absolute_xdg_runtime_dir_but_the_lock_stays_home() {
+fn the_socket_follows_an_absolute_xdg_runtime_dir_and_the_lock_stays_home() {
     let home = Path::new("/home/user/.rho");
-    for (rho_home_env, xdg, expected) in [
-        (None, Some("/run/user/1000"), "/run/user/1000/rho"),
-        (None, Some(""), "/home/user/.rho/run"),
-        (None, Some("relative/run"), "/home/user/.rho/run"),
-        (None, None, "/home/user/.rho/run"),
-        (Some(""), Some("/run/user/1000"), "/run/user/1000/rho"),
-        (
-            Some("/home/user/.rho"),
-            Some("/run/user/1000"),
-            "/home/user/.rho/run",
-        ),
+    let in_xdg = PathBuf::from("/run/user/1000/rho").join(home_id(home));
+    for (xdg, expected) in [
+        (Some("/run/user/1000"), in_xdg.as_path()),
+        (Some(""), Path::new("/home/user/.rho/run")),
+        (Some("relative/run"), Path::new("/home/user/.rho/run")),
+        (None, Path::new("/home/user/.rho/run")),
     ] {
-        let paths = resolve_with(home, rho_home_env, xdg).unwrap();
-        assert_eq!(
-            paths.runtime_dir,
-            PathBuf::from(expected),
-            "RHO_HOME={rho_home_env:?} XDG_RUNTIME_DIR={xdg:?}"
-        );
+        let paths = resolve(home, xdg).unwrap();
+        assert_eq!(paths.runtime_dir, expected, "XDG_RUNTIME_DIR={xdg:?}");
         assert_eq!(paths.socket, paths.runtime_dir.join("daemon.sock"));
         assert_eq!(
-            paths.lock,
-            PathBuf::from("/home/user/.rho/daemon/daemon.lock"),
-            "RHO_HOME={rho_home_env:?} XDG_RUNTIME_DIR={xdg:?}"
+            (paths.lock, paths.info_file),
+            (
+                PathBuf::from("/home/user/.rho/daemon/daemon.lock"),
+                PathBuf::from("/home/user/.rho/daemon/daemon.json"),
+            ),
+            "XDG_RUNTIME_DIR={xdg:?}"
         );
     }
+}
+
+// Covers: two rho homes of one user share $XDG_RUNTIME_DIR but never a
+// socket, so neither daemon can reach, or remove, the other's.
+// Owner: daemon path policy.
+#[test]
+fn homes_sharing_an_xdg_runtime_dir_get_their_own_sockets() {
+    let xdg = Some("/run/user/1000");
+    let first = resolve(Path::new("/home/user/.rho"), xdg).unwrap();
+    let second = resolve(Path::new("/home/other/.rho"), xdg).unwrap();
+
+    assert_ne!(first.socket, second.socket);
+    assert_eq!(first.runtime_dir.parent(), second.runtime_dir.parent());
 }
 
 // Covers: a socket path bind(2) would truncate fails up front, naming the
@@ -102,6 +99,7 @@ fn prepare_runtime_dir_creates_private_dir_and_refuses_exposed_ones() {
         fs::create_dir(&xdg).unwrap();
         let paths = resolve(root.path(), xdg.to_str()).unwrap();
         let dir = &paths.runtime_dir;
+        fs::create_dir(dir.parent().unwrap()).unwrap();
         match setup {
             Setup::Missing => {}
             Setup::Dir(mode) => {
