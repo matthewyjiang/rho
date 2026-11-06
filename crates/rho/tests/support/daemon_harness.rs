@@ -17,18 +17,23 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// `XDG_RUNTIME_DIR`, the daemon's socket is `<home>/run/daemon.sock`; where
 /// it goes under `XDG_RUNTIME_DIR` is the path unit tests' job.
 pub(crate) struct DaemonSandbox {
-    root: TempDir,
+    _dir: TempDir,
+    /// The temporary directory's canonical path. `rho daemon` canonicalizes
+    /// the home, so the paths it reports are under this one (on macOS the
+    /// temporary directory is under the `/var` -> `/private/var` symlink).
+    root: PathBuf,
 }
 
 impl DaemonSandbox {
     pub(crate) fn new() -> Self {
-        let root = TempDir::new().unwrap();
-        std::fs::create_dir_all(root.path().join("home")).unwrap();
-        Self { root }
+        let dir = TempDir::new().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        Self { _dir: dir, root }
     }
 
     pub(crate) fn root(&self) -> &Path {
-        self.root.path()
+        &self.root
     }
 
     pub(crate) fn home(&self) -> PathBuf {
