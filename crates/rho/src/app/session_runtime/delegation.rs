@@ -9,12 +9,12 @@
 //! step budget still govern parent continuations.
 //! Host-orchestrated ACP children are not registered here: they outlive the
 //! parent prompt and complete through the host's next prompt instead. Hosts
-//! that show a transcript take [`HeadlessDelegation::offered_displays`] to
+//! that show a transcript take [`Delegation::offered_displays`] to
 //! render what the model was given.
 //!
 //! In-process ACP children also outlive a cancelled prompt, so the ACP host
 //! keeps their notice binding between prompts with
-//! [`HeadlessDelegation::hold_notices`]. `rho run` drops it with the run.
+//! [`Delegation::hold_notices`]. `rho run` drops it with the run.
 //!
 //! A host that can wake its idle session itself, such as T3 Code (see
 //! `acp::t3_wake`), sets [`BackgroundWait::HostWakes`]: running workflows and
@@ -41,7 +41,7 @@ use crate::{
     },
 };
 
-pub(super) struct HeadlessDelegation {
+pub(super) struct Delegation {
     session_id: String,
     requests: mpsc::Receiver<BoundaryInputRequest>,
     subagents: Option<SubagentDelivery>,
@@ -64,7 +64,7 @@ pub(crate) enum BackgroundWait {
     HostWakes,
 }
 
-/// The parent's subagent notice binding for one headless prompt.
+/// The parent's subagent notice binding for one prompt.
 struct SubagentDelivery {
     manager: SubagentManager,
     notices: mpsc::Receiver<SubagentNotice>,
@@ -77,7 +77,7 @@ struct SubagentDelivery {
 /// prompt runs, and notices a cancelled prompt never delivered reach the next.
 pub(super) struct HeldNotices(SubagentDelivery);
 
-/// The background work a headless prompt delivers and waits for.
+/// The background work a prompt delivers and waits for.
 pub(super) struct BackgroundSources<'a> {
     pub(super) subagents: Option<&'a SubagentManager>,
     pub(super) processes: Option<&'a ProcessManager>,
@@ -94,7 +94,7 @@ impl<'a> BackgroundSources<'a> {
     }
 }
 
-impl HeadlessDelegation {
+impl Delegation {
     /// Installs boundary delivery for one prompt on an idle session. A binding
     /// in `held` resumes the previous prompt's notices; without one the prompt
     /// binds afresh, retiring any earlier binding. `held` is taken only once
@@ -347,7 +347,7 @@ impl OfferedDisplays {
     }
 }
 
-impl Drop for HeadlessDelegation {
+impl Drop for Delegation {
     fn drop(&mut self) {
         let Some(subagents) = &mut self.subagents else {
             return;

@@ -11,7 +11,7 @@ use rho_sdk::{model::ToolCall, RunOutcome, UserInput};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::{
-    delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays},
+    delegation::{BackgroundSources, Delegation, OfferedDisplays},
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     prompt_gate::ActiveWork,
@@ -145,7 +145,7 @@ impl SessionRuntime {
         mut io: TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.cloned();
-        let mut delegation = HeadlessDelegation::attach(
+        let mut delegation = Delegation::attach(
             &self.built.session,
             BackgroundSources::of(&self.built.tools),
             stored.as_ref(),
@@ -159,7 +159,7 @@ impl SessionRuntime {
         // mid-turn message. The next prompt waits for and delivers them and
         // their undelivered notices; only closing or replacing the session
         // stops them.
-        let result = HeadlessDelegation::drive(
+        let result = Delegation::drive(
             &mut delegation,
             self.drive_prompt(prompt, start, displays, &mut io),
         )

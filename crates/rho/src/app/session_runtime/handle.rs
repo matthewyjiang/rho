@@ -17,13 +17,15 @@ use super::prompt_gate::{Closing, PromptGate};
 /// Why [`SessionHandle::steer`] staged nothing.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SteerError {
-    /// No model run is going: no prompt runs, it is still starting, or it
-    /// runs a command such as `/compact`.
+    /// No model run takes input: no prompt runs, it is still starting or
+    /// was cancelled, its run already ended, it runs a command such as
+    /// `/compact`, or another runtime replaced this one.
     #[error("session has no running model turn to steer")]
     NotRunning,
-    /// The run refused the input: it ended, or its command queue is full.
+    /// The running model turn refused the input, as when its command queue
+    /// is full.
     #[error(transparent)]
-    Run(#[from] rho_sdk::Error),
+    Refused(rho_sdk::Error),
 }
 
 /// A cloneable handle on one runtime. A host keeps it beside the runtime,
@@ -82,8 +84,16 @@ impl SessionHandle {
         input: UserInput,
     ) -> Result<impl Future<Output = Result<SteeringId, rho_sdk::Error>> + Send + 'static, SteerError>
     {
+        if self.is_replaced() {
+            return Err(SteerError::NotRunning);
+        }
         let steering = self.0.gate.steering().ok_or(SteerError::NotRunning)?;
-        Ok(steering.request_steer_retractable(input)?)
+        steering
+            .request_steer_retractable(input)
+            .map_err(|error| match error {
+                rho_sdk::Error::RunFinished => SteerError::NotRunning,
+                error => SteerError::Refused(error),
+            })
     }
 
     /// Cancels the running prompt because another host takes the session

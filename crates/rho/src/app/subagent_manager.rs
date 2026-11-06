@@ -41,7 +41,7 @@ pub struct SubagentSnapshot {
     pub prior_notices: Vec<String>,
     /// Whether the run saves its own session, as its parent did when it
     /// started. A Claude session it did not save cannot be resumed.
-    pub(crate) persistence: SessionPersistence,
+    pub persistence: SessionPersistence,
 }
 
 /// Stable run identity and its best available task label for host presentation.

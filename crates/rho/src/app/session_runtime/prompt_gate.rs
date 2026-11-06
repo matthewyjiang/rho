@@ -52,9 +52,9 @@ enum PromptGateState {
 
 impl PromptGateState {
     /// The current prompt's cancellation, while one is starting or running.
-    fn prompt_token(&self) -> Option<&CancellationToken> {
+    fn current_token(&self) -> Option<&CancellationToken> {
         match self {
-            Self::Starting(token) | Self::Active(ActiveWork { cancel: token, .. }) => Some(token),
+            Self::Starting(token) | Self::Active(ActiveWork { token, .. }) => Some(token),
             Self::Idle | Self::Closed(_) => None,
         }
     }
@@ -63,7 +63,7 @@ impl PromptGateState {
 /// The work a prompt runs right now, as a cancel or a steer reaches it.
 #[derive(Debug)]
 pub(super) struct ActiveWork {
-    cancel: CancellationToken,
+    token: CancellationToken,
     /// Set for a model run; a command (`/compact`, `/workflow:`) takes no
     /// steering.
     steering: Option<SteeringHandle>,
@@ -73,15 +73,15 @@ impl ActiveWork {
     /// An SDK model run, which a steer reaches.
     pub(super) fn model_run(run: &rho_sdk::Run) -> Self {
         Self {
-            cancel: run.cancellation_handle(),
+            token: run.cancellation_handle(),
             steering: Some(run.steering_handle()),
         }
     }
 
     /// A command that stops on `cancel` and takes no steering.
-    pub(super) fn command(cancel: CancellationToken) -> Self {
+    pub(super) fn command(token: CancellationToken) -> Self {
         Self {
-            cancel,
+            token,
             steering: None,
         }
     }
@@ -127,7 +127,7 @@ impl PromptGate {
     pub(super) fn begin(&self) -> (CancellationToken, PromptGeneration) {
         let token = CancellationToken::new();
         let mut slot = self.slot();
-        if let Some(previous) = slot.state.prompt_token() {
+        if let Some(previous) = slot.state.current_token() {
             previous.cancel();
         }
         let generation = PromptGeneration(slot.generation.0.wrapping_add(1));
@@ -155,10 +155,10 @@ impl PromptGate {
             || !current
             || slot
                 .state
-                .prompt_token()
+                .current_token()
                 .is_some_and(CancellationToken::is_cancelled)
         {
-            work.cancel.cancel();
+            work.token.cancel();
         }
         if !closed && current {
             slot.state = PromptGateState::Active(work);
@@ -174,19 +174,21 @@ impl PromptGate {
     }
 
     pub(super) fn cancel(&self) {
-        if let Some(token) = self.slot().state.prompt_token() {
+        if let Some(token) = self.slot().state.current_token() {
             token.cancel();
         }
     }
 
     /// The steering of the current prompt's model run; `None` while no
-    /// prompt runs, it is still starting, or it runs a command.
+    /// prompt runs, it is still starting, it runs a command, or it was
+    /// cancelled: a cancelling run could accept a steer it never applies.
     pub(super) fn steering(&self) -> Option<SteeringHandle> {
         match &self.slot().state {
-            PromptGateState::Active(work) => work.steering.clone(),
-            PromptGateState::Idle | PromptGateState::Starting(_) | PromptGateState::Closed(_) => {
-                None
-            }
+            PromptGateState::Active(work) if !work.token.is_cancelled() => work.steering.clone(),
+            PromptGateState::Active(_)
+            | PromptGateState::Idle
+            | PromptGateState::Starting(_)
+            | PromptGateState::Closed(_) => None,
         }
     }
 
@@ -194,7 +196,7 @@ impl PromptGate {
     /// over, as an ACP `session/load` of a live session does.
     pub(super) fn suspend(&self) {
         let mut slot = self.slot();
-        if let Some(token) = slot.state.prompt_token() {
+        if let Some(token) = slot.state.current_token() {
             token.cancel();
             slot.suspended = true;
         }
@@ -204,7 +206,7 @@ impl PromptGate {
     /// is being torn down.
     pub(super) fn close(&self, closing: Closing) {
         let mut slot = self.slot();
-        if let Some(token) = slot.state.prompt_token() {
+        if let Some(token) = slot.state.current_token() {
             token.cancel();
         }
         slot.state = PromptGateState::Closed(closing);
@@ -221,7 +223,7 @@ impl PromptGate {
             PromptGateState::Idle => false,
             PromptGateState::Closed(_) => true,
             PromptGateState::Starting(token)
-            | PromptGateState::Active(ActiveWork { cancel: token, .. }) => token.is_cancelled(),
+            | PromptGateState::Active(ActiveWork { token, .. }) => token.is_cancelled(),
         }
     }
 
@@ -248,7 +250,7 @@ impl PromptGate {
         match &self.slot().state {
             PromptGateState::Idle | PromptGateState::Closed(_) => true,
             PromptGateState::Starting(token)
-            | PromptGateState::Active(ActiveWork { cancel: token, .. }) => token.is_cancelled(),
+            | PromptGateState::Active(ActiveWork { token, .. }) => token.is_cancelled(),
         }
     }
 }

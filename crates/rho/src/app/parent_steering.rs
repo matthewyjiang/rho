@@ -65,9 +65,9 @@ impl SteeringSlot {
             let receipt = match state.session.as_ref().map(|session| session.steer(input)) {
                 Some(Ok(receipt)) => receipt,
                 None | Some(Err(SteerError::NotRunning)) => {
-                    anyhow::bail!("delegated run is not accepting messages; wait until status is running, then message again");
+                    anyhow::bail!("delegated run is not accepting messages: it is not running yet, or is finishing; check its status before messaging again");
                 }
-                Some(Err(SteerError::Run(error))) => return Err(error.into()),
+                Some(Err(SteerError::Refused(error))) => return Err(error.into()),
             };
             let pending = Arc::new(PendingMessage {
                 receipt: receipt

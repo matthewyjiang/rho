@@ -63,16 +63,14 @@ impl ModelProvider for HoldFirstRequest {
 enum Steered {
     Staged,
     NotRunning,
-    RunFinished,
-    RunRefused(String),
+    Refused(String),
 }
 
 fn steered<T>(result: &Result<T, SteerError>) -> Steered {
     match result {
         Ok(_) => Steered::Staged,
         Err(SteerError::NotRunning) => Steered::NotRunning,
-        Err(SteerError::Run(rho_sdk::Error::RunFinished)) => Steered::RunFinished,
-        Err(SteerError::Run(error)) => Steered::RunRefused(error.to_string()),
+        Err(SteerError::Refused(error)) => Steered::Refused(error.to_string()),
     }
 }
 
@@ -158,12 +156,57 @@ async fn steering_through_the_handle_reaches_only_a_running_model_turn() {
             [
                 Steered::NotRunning,
                 Steered::NotRunning,
-                Steered::RunFinished,
+                Steered::NotRunning,
                 Steered::NotRunning,
             ],
             vec![accepted],
             true,
         )
     );
+    runtime.shutdown().await;
+}
+
+// Covers: a prompt that was cancelled takes no steer while its run winds
+// down, since the run could accept it and end without applying it
+// Owner: session runtime handle and prompt gate
+#[tokio::test]
+async fn a_cancelled_prompt_takes_no_steering() {
+    let provider = Arc::new(HoldFirstRequest {
+        started: Notify::new(),
+        release: Notify::new(),
+        calls: AtomicUsize::new(0),
+        requests: Mutex::new(Vec::new()),
+    });
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let mut runtime = runtime_on(root.path(), &config, provider.clone()).await;
+    let handle = runtime.handle();
+    let prompt = runtime.begin_prompt(&config).await.unwrap();
+    let input = UserInput::text("go");
+    let turn = Turn {
+        display: input.clone(),
+        model: input,
+        calls: Vec::new(),
+    };
+    let (events, _shown) = mpsc::unbounded_channel();
+    let (_controls, control) = mpsc::unbounded_channel();
+    let parent = async {
+        provider.started.notified().await;
+        handle.cancel();
+        let after_cancel = steered(&handle.steer(UserInput::text("too late")));
+        provider.release.notify_one();
+        after_cancel
+    };
+
+    let (_, after_cancel) = timeout(TEST_BUDGET, async {
+        tokio::join!(
+            runtime.run_turn(&prompt, turn, TurnIo { events, control }, &config),
+            parent
+        )
+    })
+    .await
+    .expect("the turn ends");
+    assert_eq!(after_cancel, Steered::NotRunning);
+    drop(prompt);
     runtime.shutdown().await;
 }
