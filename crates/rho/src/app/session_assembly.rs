@@ -36,7 +36,7 @@ use crate::{
 
 /// Everything a caller must supply to assemble a session, including the three
 /// policy hooks that differ between callers.
-pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
+pub(crate) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub config: &'a Config,
     pub config_path: PathBuf,
     pub cwd: &'a Path,
@@ -69,7 +69,7 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
 }
 
 /// Inputs an approval recipe needs; all are produced during assembly.
-pub(super) struct ApprovalInputs {
+pub(crate) struct ApprovalInputs {
     pub config: Config,
     pub workspace_root: PathBuf,
     pub usage_recording: rho_sdk::ProviderRequestUsageRecording,
@@ -78,13 +78,13 @@ pub(super) struct ApprovalInputs {
 
 /// Approval wiring for one session: the handler the runtime enforces and, for
 /// hosts that answer prompts themselves, the receiving end of the channel.
-pub(super) struct SessionApproval {
+pub(crate) struct SessionApproval {
     pub session: Option<ApprovalSession>,
     pub receiver: Option<ApprovalRequestReceiver>,
 }
 
 /// A live session plus the pieces its owner must shut down.
-pub(super) struct BuiltSession {
+pub(crate) struct BuiltSession {
     pub runtime: rho_sdk::Rho,
     pub session: Session,
     pub provider: Arc<dyn ModelProvider>,
@@ -99,7 +99,7 @@ pub(super) struct BuiltSession {
 impl BuiltSession {
     /// Shuts the runtime down first so in-flight work stops before the hook
     /// pipeline drains and the tool hosts close.
-    pub(super) async fn teardown(self) {
+    pub(crate) async fn teardown(self) {
         let Self {
             runtime,
             session,
@@ -123,7 +123,7 @@ async fn teardown_startup(hooks: Option<crate::hooks::HookPipeline>, tools: AppT
 }
 
 /// An assembled session and the workspace root it resolved to.
-pub(super) struct SessionAssembly {
+pub(crate) struct SessionAssembly {
     pub built: BuiltSession,
     pub workspace_root: PathBuf,
     /// Write grants the session's policy remembers. A host that later swaps
@@ -131,7 +131,7 @@ pub(super) struct SessionAssembly {
     pub session_writes: SessionWriteLog,
 }
 
-pub(super) async fn assemble_session<ExtendTools, Approval, Options>(
+pub(crate) async fn assemble_session<ExtendTools, Approval, Options>(
     options: SessionAssemblyOptions<'_, ExtendTools, Approval, Options>,
 ) -> anyhow::Result<SessionAssembly>
 where

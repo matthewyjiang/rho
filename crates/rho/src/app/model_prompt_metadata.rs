@@ -8,7 +8,7 @@ pub(super) const KEY: &str = "rho.model_prompt";
 /// Persisted identity is not a loaded file: it contains no body and must never
 /// be used to render an overlay. Paths are display strings, including on Unix.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) struct ModelPromptProvenance {
+pub(crate) struct ModelPromptProvenance {
     pub path: String,
     pub mode: crate::prompt::model_prompts::ModelPromptMode,
     pub sha256: String,
@@ -40,7 +40,7 @@ pub(super) fn encode(prompt: Option<&ModelPrompt>) -> String {
 }
 
 /// Old sessions without provenance have no known fingerprint to compare.
-pub(super) fn change_notice(
+pub(crate) fn change_notice(
     previous: &SessionSnapshot,
     current: Option<&ModelPrompt>,
 ) -> Option<String> {

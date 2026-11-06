@@ -1,16 +1,15 @@
-//! Agent binding and restoration for host-created ACP children.
+//! Agent binding and restoration for host-created children: `/agent:<name>`
+//! rebinds a fresh session to a delegated agent, and a reload binds it as
+//! that child again.
 
 use std::{future::Future, sync::Arc};
 
-use agent_client_protocol::schema::v1::PromptResponse;
 use rho_sdk::{model::Message, SessionOptions, UserInput};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    build_session,
-    commands::{AgentTask, CommandRejected},
-    model_scoped_config, session_config, session_options_for_id, split_assembly, AcpClientPort,
-    AcpStartup, SessionHost, StoredSession,
+    build::{build_session, session_config},
+    model_scoped_config, split_assembly, CommandRejected, SessionRuntime,
 };
 use crate::{
     agent::{AgentCatalog, AgentDefinition, AgentRuntimeSpec},
@@ -18,14 +17,26 @@ use crate::{
         agent_binding::{
             AgentBinder, AgentInvocation, AgentRole, BoundAgent, BoundRuntime, ModelOverride,
         },
+        interactive_runtime::startup::session_options_for_id,
         session_assembly::SessionAssembly,
     },
     config::Config,
+    session::Session as StoredSession,
 };
 
 /// Resolved selection, not the alias or definition: alias edits must not move
 /// a resumed call to another provider. Auth is a profile id, never a credential.
-const MODEL_OVERRIDE_METADATA: &str = "rho.acp.agent_model_override";
+/// The key predates the runtime and names ACP, which first hosted children.
+pub(crate) const MODEL_OVERRIDE_METADATA: &str = "rho.acp.agent_model_override";
+
+/// `/agent:<name>`: a task for a delegated agent, whose per-call model
+/// selection stays separate from the definition.
+#[derive(Debug, PartialEq)]
+pub(crate) struct AgentTask {
+    pub(crate) agent_id: String,
+    pub(crate) model_override: Option<String>,
+    pub(crate) input: UserInput,
+}
 
 #[derive(Deserialize, Serialize)]
 struct SavedModelOverride {
@@ -55,7 +66,7 @@ pub(super) fn decorate_model_override(
     )
 }
 
-impl SessionHost {
+impl SessionRuntime {
     /// A host-selected replacement must be bindable on the next load. Validate
     /// through the same definition policy before touching live or saved state.
     pub(super) fn validate_model_override_switch(&self, config: &Config) -> anyhow::Result<()> {
@@ -85,7 +96,7 @@ impl SessionHost {
     }
 
     /// A host model change replaces a call override even without another turn.
-    /// Ordinary ACP roots keep their existing reload policy and deferred files.
+    /// Ordinary roots keep their existing reload policy and deferred files.
     pub(super) fn persist_model_override(&self) -> anyhow::Result<()> {
         let Some(stored) = self.storage.file() else {
             return Ok(());
@@ -97,39 +108,35 @@ impl SessionHost {
         Ok(())
     }
 
-    /// Rebuilds a fresh child with its selected model and definition's prompt/tools,
-    /// then submits only the task to the model. The original command remains
-    /// in display history so the host can show how the child was launched.
-    pub(super) async fn run_as_agent(
+    /// Rebuilds a fresh child for `task` with its selected model and
+    /// definition's prompt and tools. The host then submits only the task to
+    /// the model; the original command remains in display history so the
+    /// host can show how the child was launched.
+    pub(crate) async fn rebind_agent(
         &mut self,
-        display: &UserInput,
-        task: AgentTask,
-        startup: &AcpStartup,
-        client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
+        task: &AgentTask,
+        process_config: &Config,
+    ) -> anyhow::Result<()> {
         let catalog = AgentCatalog::discover(self.storage.cwd())?;
         let definition = catalog.find(&task.agent_id)?.definition.clone();
         let model_override = task.model_override.clone();
         let cwd = self.storage.cwd().to_path_buf();
         let added_dirs = self.added_dirs.clone();
-        let io = self.client_io.clone();
-        self.run_as_agent_with(
-            display,
+        let build = self.build.clone();
+        self.rebind_agent_with(
             task,
-            startup,
-            client,
+            process_config,
             |base| {
                 bind_delegated_agent(
                     definition,
                     model_override.as_deref().map(ModelOverride::Reference),
-                    startup,
+                    &build.launch_agent,
                     base,
                 )
             },
             async |agent, config, id| {
                 Box::pin(build_session(
-                    startup,
-                    &io,
+                    &build,
                     &agent,
                     &config,
                     &cwd,
@@ -144,15 +151,13 @@ impl SessionHost {
 
     /// Keep the rebind transaction independent of credential/provider discovery
     /// so its session and tool restrictions can use a scripted assembly in tests.
-    async fn run_as_agent_with<Build, BuildFuture>(
+    pub(crate) async fn rebind_agent_with<Build, BuildFuture>(
         &mut self,
-        display: &UserInput,
-        task: AgentTask,
-        startup: &AcpStartup,
-        client: &dyn AcpClientPort,
+        task: &AgentTask,
+        process_config: &Config,
         bind: impl FnOnce(&Config) -> anyhow::Result<BoundAgent>,
         build: Build,
-    ) -> anyhow::Result<PromptResponse>
+    ) -> anyhow::Result<()>
     where
         Build: FnOnce(BoundAgent, Config, rho_sdk::SessionId) -> BuildFuture,
         BuildFuture: Future<Output = anyhow::Result<SessionAssembly>>,
@@ -182,12 +187,12 @@ impl SessionHost {
         }
 
         // T3 may select a model, mode and thought level before the first prompt.
-        let mut base = model_scoped_config(&self.current_model(), &startup.config);
+        let mut base = model_scoped_config(&self.current_model(), process_config);
         base.permission_mode = self.permission.mode;
         base.reasoning = self.built.session.reasoning_level();
         let bound = bind(&base)?;
         let config = match bound.runtime() {
-            BoundRuntime::Rho { config, .. } => session_config(config, &self.host_mcp_servers),
+            BoundRuntime::Rho { config, .. } => session_config(config, &self.host_mcp),
             BoundRuntime::ClaudeCli { .. }
             | BoundRuntime::Cursor { .. }
             | BoundRuntime::Antigravity { .. } => {
@@ -261,46 +266,46 @@ impl SessionHost {
         old.teardown().await;
         self.permission = permission;
         self.auth = config.auth.clone();
-        tracing::debug!(previous = %self.agent.id(), agent = %bound.id(), "rebound ACP agent");
+        tracing::debug!(previous = %self.agent.id(), agent = %bound.id(), "rebound session agent");
         self.agent = bound;
         self.built.tools.bind_recall(self.storage.file());
-        self.refresh_advertisements(&startup.config, client).await;
-        self.run_turn(display, task.input, Vec::new(), client).await
+        Ok(())
     }
 }
 
-/// The agent and config a loaded session runs with. ACP roots run as
-/// `startup.agent`; a session `/agent:` rebound is marked delegated, so it binds
-/// as that child again and must match its saved definition. A changed or
-/// missing definition fails the load rather than widening the child to the
-/// root's tools. `catalog` discovers definitions only for delegated sessions.
-pub(super) fn loaded_agent(
-    startup: &AcpStartup,
+/// The agent and config a loaded session runs with. Roots run as
+/// `launch_agent`; a session `/agent:` rebound is marked delegated, so it
+/// binds as that child again and must match its saved definition. A changed
+/// or missing definition fails the load rather than widening the child to
+/// the root's tools. `catalog` discovers definitions only for delegated
+/// sessions.
+pub(crate) fn loaded_agent(
+    launch_agent: &BoundAgent,
     stored: &StoredSession,
     config: Config,
     catalog: impl FnOnce() -> anyhow::Result<AgentCatalog>,
 ) -> anyhow::Result<(BoundAgent, Config)> {
-    loaded_agent_with(startup, stored, config, catalog, bind_delegated_agent)
+    loaded_agent_with(launch_agent, stored, config, catalog, bind_delegated_agent)
 }
 
 /// Keep credential discovery injectable while testing durable selection and
-/// definition-identity checks at the ACP load boundary.
-fn loaded_agent_with(
-    startup: &AcpStartup,
+/// definition-identity checks at the load boundary.
+pub(crate) fn loaded_agent_with(
+    launch_agent: &BoundAgent,
     stored: &StoredSession,
     config: Config,
     catalog: impl FnOnce() -> anyhow::Result<AgentCatalog>,
     bind: impl FnOnce(
         AgentDefinition,
         Option<ModelOverride<'_>>,
-        &AcpStartup,
+        &BoundAgent,
         &Config,
     ) -> anyhow::Result<BoundAgent>,
 ) -> anyhow::Result<(BoundAgent, Config)> {
     // The persisted role, not the id, decides: a child may share the launch
     // agent's id and must still reload with its delegated tool boundary.
     let Some(stored_id) = stored.delegated_agent_id()? else {
-        return Ok((startup.agent.clone(), config));
+        return Ok((launch_agent.clone(), config));
     };
     let definition = catalog()?.find(&stored_id)?.definition.clone();
     stored.validate_agent_definition_identity(&definition)?;
@@ -313,7 +318,7 @@ fn loaded_agent_with(
         model: &saved.model,
         auth: &saved.auth,
     });
-    let bound = bind(definition, selection, startup, &config)?;
+    let bound = bind(definition, selection, launch_agent, &config)?;
     let config = bound
         .rho_config()
         .cloned()
@@ -329,11 +334,12 @@ fn loaded_agent_with(
     Ok((bound, config))
 }
 
-/// Both fresh rebinding and resume must enforce the delegated tool boundary.
-fn bind_delegated_agent(
+/// Both fresh rebinding and resume must enforce the delegated tool boundary:
+/// the child gets at most `launch_agent`'s tools.
+pub(crate) fn bind_delegated_agent(
     definition: AgentDefinition,
     model_override: Option<ModelOverride<'_>>,
-    startup: &AcpStartup,
+    launch_agent: &BoundAgent,
     base: &Config,
 ) -> anyhow::Result<BoundAgent> {
     match &definition.runtime {
@@ -353,17 +359,9 @@ fn bind_delegated_agent(
         Arc::new(definition),
         AgentInvocation {
             role: AgentRole::Delegated,
-            available_tools: startup
-                .agent
-                .rho_capabilities()
-                .cloned()
-                .unwrap_or_default(),
+            available_tools: launch_agent.rho_capabilities().cloned().unwrap_or_default(),
         },
         base,
         model_override,
     )
 }
-
-#[cfg(test)]
-#[path = "session_host_agent_tests.rs"]
-mod tests;

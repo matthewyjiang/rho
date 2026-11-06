@@ -1,13 +1,12 @@
-//! `session/set_mode` for one ACP session: swaps the permission mode by
-//! rebuilding the runtime around the live conversation, the same way the
-//! interactive host does.
+//! Permission mode changes for one session: swaps the mode by rebuilding the
+//! SDK runtime around the live conversation, the same way the interactive
+//! host does.
 
 use std::path::PathBuf;
 
-use agent_client_protocol::Error as AcpError;
 use rho_sdk::{ApprovalSession, SessionOptions};
 
-use super::{host_apply_error, model_context_window, model_scoped_config, SessionHost};
+use super::{model_context_window, model_scoped_config, SessionRuntime};
 use crate::{
     app::{
         automation::ensure_headless_auto_classifier_model,
@@ -21,31 +20,43 @@ use crate::{
     permission::{PermissionMode, SessionWriteLog},
 };
 
-/// Permission state one ACP session owns. Starts from the process config's
-/// mode; `session/set_mode` changes it for this session only.
-pub(in crate::app::acp) struct SessionPermission {
-    pub(in crate::app::acp) mode: PermissionMode,
+/// Permission state one session owns. Starts from the process config's
+/// mode; a host's mode change applies to this session only.
+pub(crate) struct SessionPermission {
+    pub(crate) mode: PermissionMode,
     /// Write grants the current policy remembers.
-    pub(in crate::app::acp) writes: SessionWriteLog,
+    pub(crate) writes: SessionWriteLog,
     /// Primary workspace root the session's tools resolve against.
-    pub(in crate::app::acp) workspace_root: PathBuf,
+    pub(crate) workspace_root: PathBuf,
 }
 
-impl SessionHost {
-    /// Applies `mode` to later prompts. The caller holds the host slot lock,
-    /// so no prompt is in flight. On error the session keeps its old mode.
-    pub(in crate::app::acp) async fn set_permission_mode(
+/// Why a permission mode change did not apply. The session keeps its old
+/// mode either way.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ModeChangeError {
+    /// The mode cannot run with this session's config, such as auto mode
+    /// without a classifier model. The requester can fix it.
+    #[error("{0}")]
+    Unsupported(anyhow::Error),
+    /// Rebuilding the SDK runtime for the mode failed.
+    #[error("{0}")]
+    Rebuild(anyhow::Error),
+}
+
+impl SessionRuntime {
+    /// Applies `mode` to later prompts. The host holds the runtime between
+    /// prompts, so none is in flight. On error the session keeps its old mode.
+    pub(crate) async fn set_permission_mode(
         &mut self,
         mode: PermissionMode,
         process_config: &Config,
-    ) -> Result<(), AcpError> {
+    ) -> Result<(), ModeChangeError> {
         if self.permission.mode == mode {
             return Ok(());
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
-        ensure_headless_auto_classifier_model(&config)
-            .map_err(|error| AcpError::invalid_params().data(error.to_string()))?;
+        ensure_headless_auto_classifier_model(&config).map_err(ModeChangeError::Unsupported)?;
 
         let writes = self
             .permission
@@ -69,7 +80,7 @@ impl SessionHost {
                 root: self.permission.workspace_root.clone(),
             }
             .build_workspace(&self.added_dirs)
-            .map_err(host_apply_error)?;
+            .map_err(|error| ModeChangeError::Rebuild(error.into()))?;
             let runtime = build_runtime(RuntimeBuildOptions {
                 provider: std::sync::Arc::clone(&self.built.provider),
                 tools: &self.built.tools,
@@ -89,7 +100,7 @@ impl SessionHost {
                 diagnostics: self.built.diagnostics.clone(),
                 recall: self.built.tools.recall_store(),
             })
-            .map_err(host_apply_error)?;
+            .map_err(|error| ModeChangeError::Rebuild(error.into()))?;
             match runtime
                 .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
                 .await
@@ -97,7 +108,7 @@ impl SessionHost {
                 Ok(session) => Ok((runtime, session)),
                 Err(error) => {
                     runtime.shutdown();
-                    Err(host_apply_error(error))
+                    Err(ModeChangeError::Rebuild(error.into()))
                 }
             }
         }
@@ -130,7 +141,3 @@ impl SessionHost {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "session_host_mode_tests.rs"]
-mod tests;
