@@ -9,6 +9,7 @@ fn parent_selection_updates_are_shared_with_executor_clones() {
         Config::default(),
         PathBuf::new(),
         PathBuf::new(),
+        crate::app::agent_concurrency::AgentConcurrency::from_config(1),
         SubagentHostInputBridge::new(),
         crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
@@ -64,6 +65,7 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
         },
         PathBuf::new(),
         PathBuf::new(),
+        crate::app::agent_concurrency::AgentConcurrency::from_config(1),
         SubagentHostInputBridge::new(),
         crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );

@@ -6,9 +6,10 @@ fn failed() -> TurnEnd {
     TurnEnd::Failed("provider refused the request".into())
 }
 
-fn all_states() -> [JobState; 7] {
+fn all_states() -> [JobState; 8] {
     [
         JobState::Idle,
+        JobState::Queued,
         JobState::Running,
         JobState::WaitingForInput,
         JobState::Ended(TurnEnd::Completed),
@@ -18,9 +19,10 @@ fn all_states() -> [JobState; 7] {
     ]
 }
 
-fn all_events() -> [JobEvent; 7] {
+fn all_events() -> [JobEvent; 8] {
     [
         JobEvent::TurnStarted,
+        JobEvent::Admitted,
         JobEvent::InputOpened,
         JobEvent::InputSettled,
         JobEvent::TurnEnded(TurnEnd::Completed),
@@ -31,17 +33,20 @@ fn all_events() -> [JobEvent; 7] {
 }
 
 // Covers: every (state, event) pair: a prompt starts a turn from idle or
-// any ended state, a running turn opens and settles input, and ends, with
-// how it ended, from either; everything else is refused with the pair
-// named, including a second prompt on a running session, a turn ending
-// twice, and a turn ending before it started.
+// any ended state, and capacity starts a queued run's, which nothing else
+// takes, so a run admitted after its job ended cannot revive it; a running turn opens
+// and settles input, and ends, with how it ended, from either, as a queued
+// run ends when it is stopped before it starts; everything else is refused
+// with the pair named, including a second prompt on a running session, a
+// turn ending twice, and a session turn ending before it started.
 // Owner: daemon job state machine.
 #[test]
 fn events_move_a_job_through_exactly_the_turn_lifecycle() {
-    use JobEvent::{InputOpened, InputSettled, TurnEnded, TurnStarted};
-    use JobState::{Ended, Idle, Running, WaitingForInput};
+    use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnStarted};
+    use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
     let mut allowed = vec![
         (Idle, TurnStarted, Running),
+        (Queued, Admitted, Running),
         (Running, InputOpened, WaitingForInput),
         (WaitingForInput, InputSettled, Running),
     ];
@@ -52,6 +57,7 @@ fn events_move_a_job_through_exactly_the_turn_lifecycle() {
         failed(),
     ] {
         allowed.push((Ended(end.clone()), TurnStarted, Running));
+        allowed.push((Queued, TurnEnded(end.clone()), Ended(end.clone())));
         allowed.push((Running, TurnEnded(end.clone()), Ended(end.clone())));
         allowed.push((WaitingForInput, TurnEnded(end.clone()), Ended(end)));
     }

@@ -333,6 +333,7 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
             Some(Arc::new(
                 crate::agent::AgentCatalog::from_sources(Default::default()).unwrap(),
             )),
+            crate::app::subagent_pool::SubagentPool::Own,
         )),
     );
     interactive.cached_tool_specs = interactive.tools.specs();

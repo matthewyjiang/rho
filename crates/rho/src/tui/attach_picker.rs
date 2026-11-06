@@ -218,14 +218,17 @@ fn nav_badge(candidate: &AttachCandidate) -> PickerBadge {
             text: activity_label(candidate.status.last_activity.as_deref()).to_owned(),
             tone: PickerBadgeTone::Internal,
         },
-        RunState::Starting | RunState::Ok | RunState::Error | RunState::Stopped => {
-            state_badge(candidate.state())
-        }
+        RunState::Queued
+        | RunState::Starting
+        | RunState::Ok
+        | RunState::Error
+        | RunState::Stopped => state_badge(candidate.state()),
     }
 }
 
 fn state_badge(state: RunState) -> PickerBadge {
     let (text, tone) = match state {
+        RunState::Queued => ("queued", PickerBadgeTone::Muted),
         RunState::Starting => ("starting", PickerBadgeTone::Muted),
         RunState::Running => ("● running", PickerBadgeTone::Internal),
         RunState::Ok => ("✓ done", PickerBadgeTone::Healthy),
@@ -352,7 +355,7 @@ fn output_blocks(status: &RunStatus) -> Vec<DetailBlock> {
             .map(str::to_owned)
     };
     match status.state {
-        RunState::Starting | RunState::Running => vec![
+        RunState::Queued | RunState::Starting | RunState::Running => vec![
             heading("LATEST"),
             match text_of(&status.last_text) {
                 Some(text) => DetailBlock::Excerpt {

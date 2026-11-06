@@ -51,6 +51,7 @@ pub(crate) mod side_chat;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;
+pub(crate) mod subagent_pool;
 mod tools_prompt;
 pub(crate) mod workflow_cli;
 pub(crate) mod workflow_runtime;

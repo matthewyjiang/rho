@@ -18,7 +18,7 @@ The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: i
 
 ## Sessions and jobs
 
-A session is a conversation: its saved transcript and, while the daemon has it loaded, its live runtime. Requests name a session by its session id, the id `rho sessions` and `/resume` show. A loaded session's turns run in the daemon, so a turn keeps running when the client that started it disconnects, and another client can follow it later. The daemon tracks every unit of work it runs as a job with its own id; today every job is the turns of one session.
+A session is a conversation: its saved transcript and, while the daemon has it loaded, its live runtime. Requests name a session by its session id, the id `rho sessions` and `/resume` show. A loaded session's turns run in the daemon, so a turn keeps running when the client that started it disconnects, and another client can follow it later. The daemon tracks every unit of work it runs as a job with its own id: the turns of one session, or one subagent run that a session started.
 
 Clients open, prompt, cancel, steer, and follow sessions with the `rho/session/*` methods, and list jobs with `rho/job/list`; the [protocol reference](/protocol) describes every method, its errors, and the events a client following a session receives.
 
@@ -36,7 +36,13 @@ A session's job state is the state of its current or last turn:
 | `cancelled` | Someone cancelled the last turn. |
 | `interrupted` | The daemon stopped, or died, before the last turn ended. |
 
-A new prompt moves a session's job from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `running` or `waiting_for_input`.
+A new prompt moves a session's job from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `queued`, `running`, or `waiting_for_input`.
+
+### Subagents
+
+Subagents that a session starts run in the daemon, and each run is a job of kind `subagent` whose `parent` is the session's job. Its `session` is the session the subagent writes; a subagent on another runtime (Claude, Cursor, Antigravity) keeps that runtime's own and has none. Its state is that of its one run: `queued` until it gets a slot, then `running`, then `completed`, `failed`, `cancelled`, or `interrupted`.
+
+Every session's subagents share one budget, `agent_concurrency` in your config (10 by default), so at most that many subagents run at once across all your projects. Agent nodes of workflows a session starts still take capacity from a budget of their own run until the daemon hosts workflow runs ([#1658](https://github.com/matthewyjiang/rho/issues/1658)). Claude-cli subagents first take a slot in a nested budget, 2 by default and never more than `agent_concurrency` (`RHO_CLAUDE_AGENT_CONCURRENCY` in the daemon's environment), then wait for a slot in the shared one. Each budget gives its slots in the order runs joined its queue. While a run waits, its job usually lists its `queue` place (it can be briefly absent, for example while a run moves between budgets): the budget it waits on, that budget's limit, and its position in line. The daemon reads `agent_concurrency` each time it opens a session, so an edit applies to every session's subagents from the next session you open; runs already going keep their slots.
 
 Clients cannot yet answer a turn's requests ([#1660](https://github.com/matthewyjiang/rho/issues/1660)). A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/session/cancel` ends the wait.
 

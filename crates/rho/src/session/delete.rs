@@ -359,12 +359,11 @@ impl<'a> BatchDelete<'a> {
                 continue;
             }
             if !self.options.force {
-                let crash_hint =
-                    if matches!(run.state, Some(RunState::Running | RunState::Starting)) {
-                        " (use --force only for stale runs left after a crash)"
-                    } else {
-                        ""
-                    };
+                let crash_hint = if run.state.is_some_and(RunState::is_live) {
+                    " (use --force only for stale runs left after a crash)"
+                } else {
+                    ""
+                };
                 let state = run.state.map(RunState::as_str).unwrap_or("unknown");
                 anyhow::bail!(
                     "refusing to delete session '{}': related run {} is still {state}{crash_hint}; wait for it to finish or pass --force",

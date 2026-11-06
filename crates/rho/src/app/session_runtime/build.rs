@@ -18,6 +18,7 @@ use crate::{
             assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },
         subagent_messaging::NoticePoster,
+        subagent_pool::SubagentPool,
         tools_prompt::McpSamplingSupport,
     },
     config::Config,
@@ -93,7 +94,7 @@ impl HostCapabilities {
     pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
         Self {
             questions: QuestionSupport::Unavailable,
-            children: ChildAgents::InProcess,
+            children: ChildAgents::InProcess(SubagentPool::Own),
             background_wait: BackgroundWait::HoldPrompt,
             host_io: HostIo::default(),
             mcp_authorization: McpAuthorizationMode::from_process(),
@@ -204,10 +205,11 @@ pub(crate) enum QuestionSupport {
 }
 
 /// Who runs the children the `agent` tool starts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) enum ChildAgents {
-    /// Subagents run in this process.
-    InProcess,
+    /// Subagents run in this process, taking capacity and reporting as the
+    /// host says.
+    InProcess(SubagentPool),
     /// The host runs them as its own threads (T3 Code's `--t3code`), so its
     /// UI owns them.
     HostThreads,
@@ -270,12 +272,18 @@ pub(super) async fn build_session(
         hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host.host_io.clone(),
+        subagent_pool: match &build.host.children {
+            ChildAgents::InProcess(pool) => pool.clone(),
+            // Unused: the host's threads replace the in-process tools
+            // (below) before any run starts.
+            ChildAgents::HostThreads => SubagentPool::Own,
+        },
         extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
             }
             match build.host.children {
-                ChildAgents::InProcess => {}
+                ChildAgents::InProcess(_) => {}
                 ChildAgents::HostThreads => {
                     host_tools = crate::tools::agent::install_host_delegation(
                         &mut tools,

@@ -214,7 +214,7 @@ pub(super) fn format_run_cost(
 
 pub(super) fn herdr_status(id: &str, status: &RunStatus) -> (HerdrState, String) {
     let state = match status.state {
-        RunState::Starting | RunState::Running => HerdrState::Working,
+        RunState::Queued | RunState::Starting | RunState::Running => HerdrState::Working,
         RunState::Error => HerdrState::Blocked,
         RunState::Ok | RunState::Stopped => HerdrState::Idle,
     };
@@ -229,6 +229,6 @@ pub(super) fn state_style(status: Option<&RunStatus>) -> ratatui::style::Style {
     match status.map(|status| status.state) {
         Some(RunState::Ok) => Theme::success(),
         Some(RunState::Error | RunState::Stopped) => Theme::error(),
-        Some(RunState::Starting | RunState::Running) | None => Theme::warning(),
+        Some(RunState::Queued | RunState::Starting | RunState::Running) | None => Theme::warning(),
     }
 }

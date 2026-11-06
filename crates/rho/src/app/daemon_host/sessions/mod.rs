@@ -30,6 +30,7 @@ use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::{
     jobs::{JobId, JobRecord, JobRegistry, StartTurnError},
+    subagents::Subagents,
     wire::{session_from_wire, session_to_wire},
 };
 use crate::{
@@ -63,6 +64,8 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
+    /// The daemon-wide budget the sessions' subagents share, and their jobs.
+    subagents: Subagents,
     /// The daemon's logouts, which every session's credentials follow.
     logouts: Logouts,
     /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
@@ -122,12 +125,19 @@ impl LoadedSession {
 impl Sessions {
     /// No sessions yet; their turns are recorded in `jobs`.
     pub(super) fn new(jobs: Arc<JobRegistry>) -> Self {
+        let stopping = CancellationToken::new();
         Self {
+            subagents: Subagents::new(Arc::clone(&jobs), stopping.clone()),
             jobs,
             loaded: Mutex::default(),
             logouts: Logouts::default(),
-            stopping: CancellationToken::new(),
+            stopping,
         }
+    }
+
+    /// The sessions' subagents: the daemon-wide budget and its queue.
+    pub(super) fn subagents(&self) -> &Subagents {
+        &self.subagents
     }
 
     /// Starts the daemon's stop: from now on no session opens, no turn
@@ -152,18 +162,22 @@ impl Sessions {
     ) -> Result<SessionNewResponse, RpcError> {
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&params.cwd)?;
-        let OpenedSession { runtime, config } = open_session(&workspace, &self.logouts)
-            .await
-            .map_err(|error| {
-                RpcError::new(
-                    ErrorCode::SessionOpenFailed,
-                    format!("could not open session: {error:#}"),
-                )
-            })?;
+        let job = JobId::generate();
+        let OpenedSession { runtime, config } =
+            open_session(&workspace, &self.logouts, &self.subagents, &job)
+                .await
+                .map_err(|error| {
+                    RpcError::new(
+                        ErrorCode::SessionOpenFailed,
+                        format!("could not open session: {error:#}"),
+                    )
+                })?;
         let session = runtime.session_id().clone();
-        let record =
-            JobRecord::new_session(runtime.workspace_root().to_path_buf(), session.clone());
-        let job = record.id.clone();
+        let record = JobRecord::new_session(
+            job.clone(),
+            runtime.workspace_root().to_path_buf(),
+            session.clone(),
+        );
         // Checked, recorded, and added under the lock the stop drains the
         // sessions under, so a session opened while the daemon stops is
         // closed here, neither left running nor recorded.

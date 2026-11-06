@@ -99,7 +99,11 @@ fn inserted() -> SessionEvent {
 
 /// A job in `jobs` whose turn has started.
 fn started_job(jobs: &JobRegistry) -> JobId {
-    let record = JobRecord::new_session(PathBuf::from("/work"), rho_sdk::SessionId::new());
+    let record = JobRecord::new_session(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        rho_sdk::SessionId::new(),
+    );
     let job = record.id.clone();
     jobs.register(record).unwrap();
     jobs.start_turn(&job).unwrap();

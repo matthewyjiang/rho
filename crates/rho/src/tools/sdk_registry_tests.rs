@@ -161,6 +161,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
                 Some(Arc::new(
                     crate::agent::AgentCatalog::from_sources(Default::default()).unwrap(),
                 )),
+                crate::app::subagent_pool::SubagentPool::Own,
             ))
             .workflow(Arc::new(RegistryWorkflowService));
         let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options)

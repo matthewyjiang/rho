@@ -9,6 +9,7 @@ use super::*;
 fn unknown_job_kinds_and_states_read_as_unknown() {
     for (json, kind) in [
         ("\"session\"", JobKind::Session),
+        ("\"subagent\"", JobKind::Subagent),
         ("\"workflow\"", JobKind::Unknown),
     ] {
         assert_eq!(
@@ -20,7 +21,8 @@ fn unknown_job_kinds_and_states_read_as_unknown() {
     for (json, state) in [
         ("\"waiting_for_input\"", JobState::WaitingForInput),
         ("\"interrupted\"", JobState::Interrupted),
-        ("\"queued\"", JobState::Unknown),
+        ("\"queued\"", JobState::Queued),
+        ("\"paused\"", JobState::Unknown),
     ] {
         assert_eq!(
             serde_json::from_str::<JobState>(json).unwrap(),

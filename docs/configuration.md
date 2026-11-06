@@ -284,7 +284,7 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `enable_subagents` controls the `agent` and `agents` tools. It defaults to `true`. Set it to `false` to remove both tools and tell the model not to delegate. The change applies to the next session. `--no-subagents` does the same for one run.
 
-`agent_concurrency` is the maximum number of delegated agents that may run at once, including background runs. It defaults to `10` and must stay between `1` and `64`. `/config` applies immediately: in-flight agents keep their slots, and queued agents start as capacity frees. `RHO_AGENT_CONCURRENCY` is no longer read. Claude-cli runs also take a nested cap of 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY`), always `min(total, claude_cap)`. Cursor runs take only the global pool. There is no nested Cursor cap yet.
+`agent_concurrency` is the maximum number of delegated agents that may run at once, including background runs. It defaults to `10` and must stay between `1` and `64`. `/config` applies immediately: in-flight agents keep their slots, and queued agents start as capacity frees, in the order they joined the queue. The daemon shares one such budget across every session it hosts (see [Subagents](/daemon#subagents)). `RHO_AGENT_CONCURRENCY` is no longer read. Claude-cli runs also take a nested cap of 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY`), always `min(total, claude_cap)`. Cursor runs take only the global pool. There is no nested Cursor cap yet.
 
 `inline_shell` selects the shell for `!` and `!!` in the TUI. It defaults to `bash` on macOS and Linux and `powershell` on Windows. See [inline shell](/inline-shell).
 

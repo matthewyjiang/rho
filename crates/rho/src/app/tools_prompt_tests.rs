@@ -87,6 +87,7 @@ async fn assemble_awaiting_catalog(
         added_dirs: &Default::default(),
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         host_io: Default::default(),
+        subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
     })
     .await
     .unwrap();
@@ -161,6 +162,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         added_dirs: &Default::default(),
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         host_io: Default::default(),
+        subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
     })
     .await
     .unwrap();
@@ -283,6 +285,7 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             added_dirs: &Default::default(),
             process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
             host_io: Default::default(),
+            subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
         }),
     )
     .await
@@ -345,6 +348,7 @@ auth = { type = "bearer", token_env = "TOKEN" }"#,
         added_dirs: &Default::default(),
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         host_io: Default::default(),
+        subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
     })
     .await
     .unwrap();

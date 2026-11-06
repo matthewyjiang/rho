@@ -5,9 +5,10 @@
 //!
 //! The session runs as the default agent with the configured permission
 //! mode. Its host answers approvals and questions (both reach the daemon as
-//! turn events), its children run in the daemon, and an MCP server's
-//! browser login is refused rather than left waiting for a terminal nobody
-//! watches.
+//! turn events), its children run in the daemon on the daemon-wide budget,
+//! each a child job of the session's (see `subagents.rs`), and an MCP
+//! server's browser login is refused rather than left waiting for a
+//! terminal nobody watches.
 //!
 //! Until clients send their environment (#1659), the session's tools run
 //! with the daemon's own environment minus provider credentials, as every
@@ -21,6 +22,7 @@ use std::{
 
 use rho_protocol::{ErrorCode, RpcError};
 
+use super::super::{jobs::JobId, subagents::Subagents};
 use crate::{
     added_dirs::AddedDirs,
     agent::{AgentCatalog, DEFAULT_AGENT_ID},
@@ -73,11 +75,13 @@ pub(super) struct OpenedSession {
     pub(super) config: Config,
 }
 
-/// Opens a new, saved session in `workspace`. Its file is written with its
-/// first prompt.
+/// Opens a new, saved session in `workspace`, whose turns are job `job`.
+/// Its file is written with its first prompt.
 pub(super) async fn open_session(
     workspace: &Workspace,
     logouts: &Logouts,
+    subagents: &Subagents,
+    job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let Workspace(cwd) = workspace;
     let repository = ConfigRepository::new(None);
@@ -112,7 +116,7 @@ pub(super) async fn open_session(
         },
         host: HostCapabilities {
             questions: QuestionSupport::Available,
-            children: ChildAgents::InProcess,
+            children: ChildAgents::InProcess(subagents.pool_for(job.clone())),
             // Nothing wakes an idle session yet, so background work holds the
             // turn open, as it does for `rho run`.
             background_wait: BackgroundWait::HoldPrompt,
@@ -142,6 +146,8 @@ pub(super) async fn open_session(
         SessionPersistence::Saved,
     ))
     .await?;
+    // Only a session that opened resizes every session's budget.
+    subagents.set_limit(&config);
     Ok(OpenedSession { runtime, config })
 }
 

@@ -1,9 +1,10 @@
 //! The daemon's job registry: every unit of agent work the daemon knows,
 //! with its state, where it runs, and the session it writes.
 //!
-//! A job today is the turns of a session the daemon hosts (see
-//! `sessions/`). Subagent runs and workflow runs join as jobs with their own
-//! kinds when the daemon hosts them (#1658).
+//! A job is the turns of a session the daemon hosts (see `sessions/`), or a
+//! subagent run one of those sessions started, whose parent is the
+//! session's job (see `subagents.rs`). Workflow runs join as jobs of their
+//! own kind when the daemon hosts them (#1658).
 //! A job's state moves only through the events in `state.rs`, and every
 //! transition rewrites the job's durable record (see `store.rs`), so a
 //! daemon that restarts lists the jobs its predecessor ran and marks the
@@ -79,6 +80,8 @@ impl From<JobId> for String {
 pub(super) enum JobKind {
     /// The turns of a session the daemon hosts, prompted one by one.
     Session,
+    /// One subagent run, started by the session job that is its parent.
+    Subagent,
 }
 
 /// What the daemon knows about one job, as its record file holds it.
@@ -92,8 +95,9 @@ pub(super) struct JobRecord {
     /// The job that started this one, such as a subagent run's parent; `None`
     /// for a job a client started.
     pub(super) parent: Option<JobId>,
-    /// The session the job writes.
-    pub(super) session: rho_sdk::SessionId,
+    /// The Rho session the job writes; `None` for a subagent run on
+    /// another runtime (Claude, Cursor, Antigravity), which keeps its own.
+    pub(super) session: Option<rho_sdk::SessionId>,
     /// Unix time, in seconds, when the job was created.
     pub(super) created_at: u64,
     /// Unix time, in seconds, of the job's last transition.
@@ -101,16 +105,36 @@ pub(super) struct JobRecord {
 }
 
 impl JobRecord {
-    /// A new job for the turns of `session` in `workspace`, before its
+    /// A new job `id` for the turns of `session` in `workspace`, before its
     /// first turn.
-    pub(super) fn new_session(workspace: PathBuf, session: rho_sdk::SessionId) -> Self {
+    pub(super) fn new_session(id: JobId, workspace: PathBuf, session: rho_sdk::SessionId) -> Self {
         let now = unix_now();
         Self {
-            id: JobId::generate(),
+            id,
             kind: JobKind::Session,
             state: JobState::Idle,
             workspace,
             parent: None,
+            session: Some(session),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// A new job for a subagent run that job `parent` started in
+    /// `workspace`, waiting for capacity.
+    pub(super) fn new_subagent(
+        parent: JobId,
+        workspace: PathBuf,
+        session: Option<rho_sdk::SessionId>,
+    ) -> Self {
+        let now = unix_now();
+        Self {
+            id: JobId::generate(),
+            kind: JobKind::Subagent,
+            state: JobState::Queued,
+            workspace,
+            parent: Some(parent),
             session,
             created_at: now,
             updated_at: now,

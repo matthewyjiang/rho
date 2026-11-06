@@ -100,6 +100,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
         config.clone(),
         home.path().join("config.toml"),
         home.path().to_path_buf(),
+        crate::app::subagent_pool::SubagentPool::Own,
     );
     let (status, status_rx) = tokio::sync::watch::channel(RunStatus {
         state: RunState::Running,

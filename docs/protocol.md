@@ -17,7 +17,7 @@ When the client stops sending, the daemon answers every request it has already r
 | Method | Params | Result |
 | --- | --- | --- |
 | `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
-| `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (turns under way), `socket`. |
+| `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
 | `rho/session/new` | `cwd` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id. |
 | `rho/session/prompt` | `session`, `text` | Starts a turn and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. |
@@ -25,7 +25,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
 | `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, the `replay` that follows (`tail` or `reset`), and its job `state`. |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
-| `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, each with its `id`, `kind`, `state`, `workspace`, and `session`. |
+| `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, oldest first. Each has its `id`, `kind` (`session` or `subagent`), `state`, `workspace`, and timestamps; the `session` it writes, absent for a subagent on another runtime; the `parent` job that started it, for a subagent; the `error` when it failed; and, usually while it is `queued`, its `queue` place: the `budget` it waits on, that budget's `limit`, and its `position`, 1 for the next to start. |
 
 A prompt whose turn ends before it saves the prompt returns an error instead of a result:
 

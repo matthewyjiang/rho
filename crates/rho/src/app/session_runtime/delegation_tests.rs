@@ -62,6 +62,7 @@ impl Fixture {
             crate::config::Config::default(),
             root.path().join("config.toml"),
             root.path().to_path_buf(),
+            crate::app::subagent_pool::SubagentPool::Own,
         );
         let runtime = Rho::builder()
             .provider(ScriptedProvider::new(

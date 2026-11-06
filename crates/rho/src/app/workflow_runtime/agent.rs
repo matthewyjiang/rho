@@ -116,7 +116,9 @@ impl WorkflowAgentExecutor {
         let outcome = match status.state {
             RunState::Ok => NodeTerminalState::Success,
             RunState::Stopped => NodeTerminalState::Cancellation,
-            RunState::Error | RunState::Starting | RunState::Running => NodeTerminalState::Failure,
+            RunState::Error | RunState::Queued | RunState::Starting | RunState::Running => {
+                NodeTerminalState::Failure
+            }
         };
         let mut result = NodeExecutionResult::terminal(outcome);
         let Some(answer) = status.result else {

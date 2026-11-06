@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 
 use super::OTHER;
 use crate::methods::{
-    ContentBlock, DetachReason, JobKind, JobState, PlanStatus, SessionEvent, ToolContent, ToolKind,
-    ToolStatus,
+    Budget, ContentBlock, DetachReason, JobKind, JobState, PlanStatus, SessionEvent, ToolContent,
+    ToolKind, ToolStatus,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -47,9 +47,10 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     }
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 9] = [
+    let cases: [(&str, bool); 10] = [
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
+        ("Budget", reads_as(unseen(), Budget::Unknown)),
         ("ToolKind", reads_as(unseen(), ToolKind::Unknown)),
         ("ToolStatus", reads_as(unseen(), ToolStatus::Unknown)),
         ("PlanStatus", reads_as(unseen(), PlanStatus::Unknown)),

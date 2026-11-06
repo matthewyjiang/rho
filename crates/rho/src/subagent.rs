@@ -38,6 +38,9 @@ fn status_write_lock() -> &'static Mutex<()> {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
+    /// Waiting for a slot in the delegated-agent budget.
+    Queued,
+    /// Has its slot and is launching.
     #[default]
     Starting,
     Running,
@@ -52,11 +55,12 @@ impl RunState {
     }
 
     pub fn is_live(self) -> bool {
-        matches!(self, Self::Starting | Self::Running)
+        matches!(self, Self::Queued | Self::Starting | Self::Running)
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Starting => "starting",
             Self::Running => "running",
             Self::Ok => "ok",
@@ -160,6 +164,13 @@ impl RunStatus {
         let started = self.started_at?;
         let end = self.finished_at.unwrap_or(now_unix_secs).max(started);
         Some(Duration::from_secs(end - started))
+    }
+
+    /// Moves a queued run to Starting: it has capacity and is launching.
+    /// [`Self::started_at`] stays the spawn, so elapsed time keeps counting.
+    pub fn start_now(&mut self) {
+        self.state = RunState::Starting;
+        self.last_activity = Some("starting".into());
     }
 
     /// Stamp [`Self::finished_at`] once when entering a terminal state.
