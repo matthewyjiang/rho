@@ -757,6 +757,7 @@ impl Session {
             .into_iter()
             .filter(|session| session.id.starts_with(id_prefix))
             .collect::<Vec<_>>();
+        let local = id_match::prefer_exact(local, id_prefix, |session| Some(session.id.clone()));
         if !local.is_empty() {
             return Ok(local);
         }

@@ -245,10 +245,21 @@ fn opens_session_by_uuid_prefix() {
         ("missing", "missing", None),
         ("whole id that prefixes another", "client", Some("client")),
     ] {
+        // Open, `rho sessions rm`'s lookup and rename resolve alike.
         let opened = Session::open_by_id_in_root(&root, &cwd, prefix).ok();
+        let found = Session::find_by_id_prefix_in_root(&root, &cwd, prefix)
+            .unwrap()
+            .into_iter()
+            .map(|session| session.id)
+            .collect::<Vec<_>>();
+        let renamed = Session::set_title_in_root_for_test(&root, &cwd, prefix, case).is_ok();
         assert_eq!(
-            opened.as_ref().map(|(session, _)| session.id()),
-            opens,
+            (
+                opened.as_ref().map(|(session, _)| session.id()),
+                (found.len() == 1).then(|| found[0].as_str()),
+                renamed,
+            ),
+            (opens, opens, opens.is_some()),
             "{case}"
         );
     }

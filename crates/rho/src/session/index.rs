@@ -6,6 +6,7 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
+use super::id_match::{path_id, prefer_exact};
 use super::persistence::{
     clamp_u64_to_i64, read_session_cwd, session_dir_in_root, session_file_stats,
     session_id_from_path, summarize_session_file, workspace_key, SessionUnit,
@@ -56,14 +57,17 @@ pub(super) fn matching_session_paths(
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
-    query_existing_paths(
+    let paths = query_existing_paths(
         &connection,
         "select path
          from sessions
          where workspace_key = ?1 and substr(id, 1, length(?2)) = ?2
          order by id asc",
         params![workspace_key(cwd), id_prefix],
-    )
+    )?;
+    Ok(prefer_exact(paths, id_prefix, |path| {
+        session_id_from_path(path)
+    }))
 }
 
 /// Resolves a session by id prefix across every workspace, returning each
@@ -103,11 +107,12 @@ pub(super) fn matching_sessions_any_workspace(
         let cwd: String = row.get(1)?;
         Ok((PathBuf::from(path), PathBuf::from(cwd)))
     })?;
-    Ok(rows
+    let matches = rows
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .filter(|(path, _)| path.exists())
-        .collect())
+        .collect();
+    Ok(prefer_exact(matches, id_prefix, path_id))
 }
 
 /// The saved sessions, in any workspace, whose header names `parent` (id
