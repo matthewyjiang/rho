@@ -130,7 +130,8 @@ async fn follow(
             match jobs.record(&job, event) {
                 Ok(next) => state = next,
                 // Only the daemon's stop moves a subagent job on besides
-                // this task, by recording it interrupted.
+                // this task, by recording it interrupted, which no later
+                // event of the run undoes.
                 Err(error) => {
                     tracing::debug!(%job, %error, "subagent job already ended");
                     break;
@@ -165,7 +166,7 @@ fn next_event(state: &JobState, run: &RunStatus, stopping: bool) -> Option<JobEv
     let end = match run.state {
         RunState::Queued => return None,
         RunState::Starting | RunState::Running => {
-            return (*state == JobState::Queued).then_some(JobEvent::TurnStarted);
+            return (*state == JobState::Queued).then_some(JobEvent::Admitted);
         }
         RunState::Ok => TurnEnd::Completed,
         RunState::Error => TurnEnd::Failed(

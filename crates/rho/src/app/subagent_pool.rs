@@ -41,7 +41,8 @@ impl std::fmt::Debug for SubagentPool {
 /// record each run as a child job of the session's job.
 ///
 /// [`Self::started`] is called on the task that spawned the run, right after
-/// the spawn and before the run has capacity. Implementors must return
+/// the spawn, possibly before the run has capacity and possibly after it
+/// already ended. Implementors must return
 /// promptly and follow the run through [`StartedSubagent::status`] on a task
 /// of their own.
 pub(crate) trait SubagentObserver: Send + Sync {

@@ -1,5 +1,7 @@
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
 
+use crate::subagent::RunState;
+
 use super::{format::draft_card, ToolView};
 
 pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
@@ -311,13 +313,19 @@ fn snapshot_card(
     card
 }
 
+/// The run state the `agents` tool printed as `state`, read as `result.json`
+/// writes it, so a new state cannot drift from these renderings.
+fn run_state(state: &str) -> Option<RunState> {
+    serde_json::from_value(serde_json::Value::String(state.to_owned())).ok()
+}
+
 fn snapshot_status(state: &str, fallback: ToolStatus) -> ToolStatus {
-    match state {
-        "starting" | "running" => ToolStatus::Running,
-        "ok" => ToolStatus::Ok,
-        "error" => ToolStatus::Error,
-        "stopped" => ToolStatus::Interrupted,
-        _ => fallback,
+    match run_state(state) {
+        Some(RunState::Queued | RunState::Starting | RunState::Running) => ToolStatus::Running,
+        Some(RunState::Ok) => ToolStatus::Ok,
+        Some(RunState::Error) => ToolStatus::Error,
+        Some(RunState::Stopped) => ToolStatus::Interrupted,
+        None => fallback,
     }
 }
 
@@ -395,12 +403,12 @@ fn tokens_from_metrics(metrics: &str) -> Option<&str> {
 }
 
 fn state_glyph(state: &str) -> &'static str {
-    match state {
-        "starting" | "running" => "●",
-        "ok" => "✓",
-        "error" => "✗",
-        "stopped" => "■",
-        _ => "○",
+    match run_state(state) {
+        Some(RunState::Queued | RunState::Starting | RunState::Running) => "●",
+        Some(RunState::Ok) => "✓",
+        Some(RunState::Error) => "✗",
+        Some(RunState::Stopped) => "■",
+        None => "○",
     }
 }
 

@@ -19,9 +19,10 @@ fn all_states() -> [JobState; 8] {
     ]
 }
 
-fn all_events() -> [JobEvent; 7] {
+fn all_events() -> [JobEvent; 8] {
     [
         JobEvent::TurnStarted,
+        JobEvent::Admitted,
         JobEvent::InputOpened,
         JobEvent::InputSettled,
         JobEvent::TurnEnded(TurnEnd::Completed),
@@ -32,7 +33,8 @@ fn all_events() -> [JobEvent; 7] {
 }
 
 // Covers: every (state, event) pair: a prompt starts a turn from idle or
-// any ended state, and capacity starts a queued run's; a running turn opens
+// any ended state, and capacity starts a queued run's, which nothing else
+// takes, so a run admitted after its job ended cannot revive it; a running turn opens
 // and settles input, and ends, with how it ended, from either, as a queued
 // run ends when it is stopped before it starts; everything else is refused
 // with the pair named, including a second prompt on a running session, a
@@ -40,11 +42,11 @@ fn all_events() -> [JobEvent; 7] {
 // Owner: daemon job state machine.
 #[test]
 fn events_move_a_job_through_exactly_the_turn_lifecycle() {
-    use JobEvent::{InputOpened, InputSettled, TurnEnded, TurnStarted};
+    use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnStarted};
     use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
     let mut allowed = vec![
         (Idle, TurnStarted, Running),
-        (Queued, TurnStarted, Running),
+        (Queued, Admitted, Running),
         (Running, InputOpened, WaitingForInput),
         (WaitingForInput, InputSettled, Running),
     ];

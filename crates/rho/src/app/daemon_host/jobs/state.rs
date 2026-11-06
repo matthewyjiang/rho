@@ -49,8 +49,12 @@ pub(in crate::app::daemon_host) enum TurnEnd {
 /// Something that happened to a job's turn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app::daemon_host) enum JobEvent {
-    /// A prompt started a new turn, or a queued run got capacity.
+    /// A prompt started a new turn.
     TurnStarted,
+    /// A queued subagent run got capacity and started. Only a queued job
+    /// takes it, so a run that starts after the daemon's stop recorded its
+    /// job interrupted cannot revive the job.
+    Admitted,
     /// The turn asked for an approval, a plan approval, or a question while
     /// none was open.
     InputOpened,
@@ -73,16 +77,17 @@ impl JobState {
         &self,
         event: JobEvent,
     ) -> Result<Self, TransitionRefused> {
-        use JobEvent::{InputOpened, InputSettled, TurnEnded, TurnStarted};
+        use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnStarted};
         use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
         match (self, event) {
-            (Idle | Queued | Ended(_), TurnStarted) => Ok(Running),
+            (Idle | Ended(_), TurnStarted) => Ok(Running),
+            (Queued, Admitted) => Ok(Running),
             (Running, InputOpened) => Ok(WaitingForInput),
             (WaitingForInput, InputSettled) => Ok(Running),
             (Queued | Running | WaitingForInput, TurnEnded(end)) => Ok(Ended(end)),
             (
                 Idle | Queued | Running | WaitingForInput | Ended(_),
-                event @ (TurnStarted | InputOpened | InputSettled | TurnEnded(_)),
+                event @ (TurnStarted | Admitted | InputOpened | InputSettled | TurnEnded(_)),
             ) => Err(TransitionRefused {
                 from: self.clone(),
                 event,
@@ -123,6 +128,7 @@ impl std::fmt::Display for JobEvent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::TurnStarted => "turn_started",
+            Self::Admitted => "admitted",
             Self::InputOpened => "input_opened",
             Self::InputSettled => "input_settled",
             Self::TurnEnded(_) => "turn_ended",
