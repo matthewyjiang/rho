@@ -50,7 +50,6 @@ mod events;
 mod handle;
 mod mode;
 mod persist;
-mod plan_exit;
 mod prompt;
 mod prompt_gate;
 mod prompt_turn;
