@@ -25,8 +25,27 @@ pub(crate) struct BoundDaemon {
     listener: UnixListener,
     paths: DaemonPaths,
     started_at: u64,
-    // Held until `serve` returns, after the socket and info file are removed.
-    _lock: DaemonLock,
+    // Handed to the caller in [`Served`] once serving ends.
+    lock: DaemonLock,
+}
+
+/// How [`BoundDaemon::serve`] ended. It still holds the daemon lock, so the
+/// caller can finish its own shutdown, such as saving the turns it hosts,
+/// before another daemon may start and before `rho daemon stop` reports the
+/// daemon gone.
+#[must_use = "dropping Served releases the daemon lock"]
+pub(crate) struct Served {
+    result: io::Result<()>,
+    lock: DaemonLock,
+}
+
+impl Served {
+    /// Releases the daemon lock, and returns whether serving failed.
+    pub(crate) fn release(self) -> io::Result<()> {
+        let Self { result, lock } = self;
+        drop(lock);
+        result
+    }
 }
 
 /// Binds the daemon socket and publishes the info file.
@@ -70,7 +89,7 @@ pub(crate) fn bind(paths: &DaemonPaths, lock: DaemonLock) -> io::Result<BoundDae
         listener,
         paths: paths.clone(),
         started_at,
-        _lock: lock,
+        lock,
     })
 }
 
@@ -86,18 +105,18 @@ impl BoundDaemon {
     /// the caller (for example on a signal).
     ///
     /// Shutdown is graceful: stop accepting, let every connection answer the
-    /// requests it has already read, then remove the socket and info file
-    /// and release the lock.
+    /// requests it has already read, then remove the socket and info file.
+    /// The returned [`Served`] holds the lock until the caller releases it.
     pub(crate) async fn serve<Svc: Service + 'static>(
         self,
         service: Arc<Svc>,
         shutdown: CancellationToken,
-    ) -> io::Result<()> {
+    ) -> Served {
         let Self {
             listener,
             paths,
             started_at: _,
-            _lock,
+            lock,
         } = self;
         let info = Arc::new(ServerInfo {
             daemon: DaemonInfo {
@@ -156,8 +175,8 @@ impl BoundDaemon {
                 }
             }
         }
-        tracing::info!("rho daemon stopped");
-        result
+        tracing::info!("rho daemon stopped serving");
+        Served { result, lock }
     }
 }
 

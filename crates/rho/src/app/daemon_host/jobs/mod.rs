@@ -18,7 +18,7 @@ mod registry;
 mod state;
 mod store;
 
-pub(super) use registry::{JobRegistry, StartTurnError, UnknownJob};
+pub(super) use registry::{JobRegistry, StartTurnError};
 pub(super) use state::JobState;
 pub(super) use store::JobStore;
 

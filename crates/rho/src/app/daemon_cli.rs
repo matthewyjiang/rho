@@ -50,8 +50,10 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 /// acknowledges the request.
 //
 // Tripwire. Measured with the debug binary from `rho daemon stop` to process
-// exit, 15 runs each: median 20 ms idle, max 44 ms with all 24 cores
-// saturated. Turn draining (#1661) will need a separate, explicit budget.
+// exit with no threads, 15 runs each: median 20 ms idle, max 44 ms with all
+// 24 cores saturated. A daemon with turns under way also waits up to
+// `DRAIN_TIMEOUT` (4 s, in `daemon_host::threads`) for them to save, which
+// this covers. Draining that lets turns finish (#1661) needs its own budget.
 #[cfg(unix)]
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -105,8 +107,9 @@ async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyh
     ));
     let on_signal = shutdown.clone();
     // The first signal asks for a graceful shutdown. Shutdown waits for every
-    // request already read, so a signal that arrives once it is under way,
-    // whether a signal or `rho daemon stop` began it, forces the exit instead.
+    // request already read and for the turns under way to save, so a signal
+    // that arrives once it is under way, whether a signal or `rho daemon
+    // stop` began it, forces the exit instead.
     let signal_task = tokio::spawn(async move {
         loop {
             match signals.recv().await {
@@ -125,9 +128,12 @@ async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyh
             }
         }
     });
-    let served = bound.serve(host, shutdown).await;
+    let served = bound.serve(Arc::clone(&host), shutdown).await;
+    // Still holding the lock, so no other daemon starts, and `rho daemon
+    // stop` keeps waiting, until the turns are saved and recorded.
+    host.stop_threads().await;
     signal_task.abort();
-    Ok(served?)
+    Ok(served.release()?)
 }
 
 /// Whether stderr is the journal stream systemd describes in `JOURNAL_STREAM`

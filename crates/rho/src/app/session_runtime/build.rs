@@ -130,6 +130,8 @@ pub(crate) enum SessionRole {
     Interactive,
     /// An ACP client's session, such as Zed's or T3 Code's.
     Acp,
+    /// A thread the rho daemon hosts, which its clients prompt.
+    DaemonThread,
     /// `rho run`'s session.
     Run,
     /// A Rho subagent `parent` started through the `agent` tool. Every host
@@ -151,7 +153,7 @@ impl SessionRole {
     /// The usage purpose the session's requests are recorded under.
     pub(super) fn usage_purpose(&self) -> &'static str {
         match self {
-            Self::Interactive | Self::Acp | Self::Run => "agent",
+            Self::Interactive | Self::Acp | Self::DaemonThread | Self::Run => "agent",
             Self::Subagent { .. } | Self::WorkflowNode => "subagent",
         }
     }
@@ -161,7 +163,9 @@ impl SessionRole {
     pub(crate) fn parent(&self) -> Option<&rho_sdk::SessionId> {
         match self {
             Self::Subagent { parent, .. } => Some(parent),
-            Self::Interactive | Self::Acp | Self::Run | Self::WorkflowNode => None,
+            Self::Interactive | Self::Acp | Self::DaemonThread | Self::Run | Self::WorkflowNode => {
+                None
+            }
         }
     }
 
@@ -174,6 +178,7 @@ impl SessionRole {
         let (origin, parent) = match self {
             Self::Interactive => (SessionOrigin::Interactive, None),
             Self::Acp => (SessionOrigin::Acp, None),
+            Self::DaemonThread => (SessionOrigin::Daemon, None),
             Self::Run => (SessionOrigin::Run, None),
             Self::Subagent {
                 parent,

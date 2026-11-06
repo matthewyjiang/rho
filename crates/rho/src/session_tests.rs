@@ -1065,11 +1065,12 @@ fn person_facing_listings_leave_out_runs_and_child_sessions() {
     // one does not know) writes it.
     const OLDER_RHO: &str = "";
     const LATER_RHO: &str = r#","origin":"something_new""#;
-    use SessionOrigin::{Acp, Interactive, Run, Subagent, Unknown, WorkflowNode};
+    use SessionOrigin::{Acp, Daemon, Interactive, Run, Subagent, Unknown, WorkflowNode};
     // (id, created as, header rewritten to, indexed origin, person-facing)
     let cases = [
         ("interactive", Interactive, None, Some(Interactive), true),
         ("acp", Acp, None, Some(Acp), true),
+        ("daemon", Daemon, None, Some(Daemon), true),
         ("run", Run, None, Some(Run), false),
         ("subagent", Subagent, None, Some(Subagent), false),
         (

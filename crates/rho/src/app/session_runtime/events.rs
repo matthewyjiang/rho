@@ -32,6 +32,15 @@ impl ApprovalId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct PlanApprovalId(pub(super) u64);
 
+#[cfg(test)]
+impl PlanApprovalId {
+    /// The id a turn gives its `n`th plan approval, counting from 0, for
+    /// host tests that play the turn.
+    pub(crate) fn nth_for_tests(n: u64) -> Self {
+        Self(n)
+    }
+}
+
 /// A plan `exit_plan_mode` asks the user to approve.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlanApprovalRequest {
