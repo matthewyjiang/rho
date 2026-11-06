@@ -17,13 +17,15 @@
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
 //!
-//! The daemon sends these notifications; clients send none.
+//! The daemon sends these notifications; clients send none. [`crate::schema`]
+//! publishes every type here as JSON Schema.
 //!
 //! | Notification | Params |
 //! |---|---|
 //! | [`SESSION_EVENT`] | [`SessionEventParams`] |
 //! | [`SESSION_DETACHED`] | [`SessionDetachedParams`] |
 
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 
 mod daemon;
@@ -56,18 +58,20 @@ pub use session::{
 ///
 /// Implemented by zero-sized markers so [`crate::Client::request`] can check
 /// a call's types at compile time. Implementors pair `NAME` with the params
-/// and result types the daemon uses for that method.
+/// and result types the daemon uses for that method, and list the marker in
+/// [`crate::schema`], which publishes both types.
 pub trait Method {
     const NAME: &'static str;
-    type Params: Serialize + DeserializeOwned;
-    type Result: Serialize + DeserializeOwned;
+    type Params: Serialize + DeserializeOwned + JsonSchema;
+    type Result: Serialize + DeserializeOwned + JsonSchema;
 }
 
 /// A notification the daemon sends, typed like [`Method`].
 ///
 /// Implemented by zero-sized markers so the daemon encodes, and
 /// [`crate::Client`] decodes, each notification with one params type.
+/// List each marker in [`crate::schema`].
 pub trait Notification {
     const NAME: &'static str;
-    type Params: Serialize + DeserializeOwned;
+    type Params: Serialize + DeserializeOwned + JsonSchema;
 }

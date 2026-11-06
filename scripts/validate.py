@@ -102,6 +102,10 @@ def full_plan() -> tuple[Step, ...]:
             ),
         ),
         Step(
+            "Check protocol compatibility",
+            ("python3", "scripts/check_protocol_compat.py"),
+        ),
+        Step(
             "Run Clippy",
             (
                 "cargo",

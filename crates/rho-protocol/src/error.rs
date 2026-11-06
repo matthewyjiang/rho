@@ -14,8 +14,9 @@ macro_rules! error_codes {
             $($(#[$meta])* $variant = $code,)+
         }
 
-        /// Every [`ErrorCode`], which [`ErrorCode::from_code`] searches.
-        const ALL: &[ErrorCode] = &[$(ErrorCode::$variant,)+];
+        /// Every [`ErrorCode`], which [`ErrorCode::from_code`] searches and
+        /// [`crate::schema`] publishes.
+        pub(crate) const ALL: &[ErrorCode] = &[$(ErrorCode::$variant,)+];
     };
 }
 

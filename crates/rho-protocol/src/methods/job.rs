@@ -4,6 +4,7 @@
 
 use std::{fmt, path::PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Method, SessionId};
@@ -21,7 +22,9 @@ impl Method for JobList {
 }
 
 /// A job's id. Opaque to clients: send back the string the daemon gave.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct JobId(String);
 
@@ -42,7 +45,7 @@ impl fmt::Display for JobId {
 }
 
 /// What a job runs. Protocol minors may add kinds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobKind {
@@ -58,7 +61,7 @@ pub enum JobKind {
 /// Where a job is. A session job's state is that of its current or last
 /// turn.
 /// Protocol minors may add states.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobState {
@@ -84,7 +87,7 @@ pub enum JobState {
 }
 
 /// One job, as [`JOB_LIST`] reports it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobSummary {
     pub id: JobId,
     pub kind: JobKind,
@@ -104,11 +107,11 @@ pub struct JobSummary {
 }
 
 /// Params of [`JOB_LIST`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobListParams {}
 
 /// Result of [`JOB_LIST`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobListResponse {
     /// Every job, oldest first.
     pub jobs: Vec<JobSummary>,

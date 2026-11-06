@@ -44,14 +44,18 @@
 //! # Versioning
 //!
 //! [`PROTOCOL_VERSION`] is independent of this crate's version. A protocol
-//! minor only adds optional fields, methods, capabilities, and error codes;
-//! receivers ignore fields they do not know.
+//! minor only adds optional fields, methods, notifications, capabilities,
+//! error codes, and values of enums that read unknown values as `Unknown`;
+//! receivers ignore fields they do not know. [`schema::document`] is the
+//! protocol as JSON Schema, committed as `schema/protocol.json`, and CI holds
+//! each release to these rules against the last one's.
 
 mod client;
 mod error;
 mod forward;
 mod jsonrpc;
 pub mod methods;
+pub mod schema;
 mod server;
 mod subscription;
 mod version;

@@ -116,7 +116,14 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         ],
       },
       { text: 'Sessions', link: '/sessions' },
-      { text: 'Daemon', link: '/daemon' },
+      {
+        text: 'Daemon',
+        collapsed: true,
+        items: [
+          { text: 'Overview', link: '/daemon' },
+          { text: 'Protocol', link: '/protocol' },
+        ],
+      },
       {
         text: 'Integrations',
         collapsed: true,

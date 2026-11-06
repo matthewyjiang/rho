@@ -1,0 +1,1246 @@
+{
+  "$defs": {
+    "ClientInfo": {
+      "description": "Who is connecting. Logged by the daemon; never used for authorization.",
+      "properties": {
+        "name": {
+          "description": "Frontend name, for example `rho-cli` or `rho-ui`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Frontend version.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ContentBlock": {
+      "description": "One piece of a user message.",
+      "oneOf": [
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "description": "Base64.",
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "type": {
+              "const": "image",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "mime_type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "properties": {
+            "type": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Cursor": {
+      "description": "Where a client is in a session's stream; send it back to resume.",
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "stream": {
+          "$ref": "#/$defs/StreamId"
+        }
+      },
+      "required": [
+        "stream",
+        "seq"
+      ],
+      "type": "object"
+    },
+    "DaemonInfo": {
+      "description": "The running daemon process.",
+      "properties": {
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The daemon's rho version.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "pid"
+      ],
+      "type": "object"
+    },
+    "DaemonStatus": {
+      "description": "Result of [`DAEMON_STATUS`].",
+      "properties": {
+        "jobs": {
+          "description": "Jobs with a turn in progress: [`crate::JobState::Running`] or\n[`crate::JobState::WaitingForInput`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "socket": {
+          "description": "The socket the daemon listens on.",
+          "type": "string"
+        },
+        "started_at": {
+          "description": "Unix time, in seconds, when the daemon started.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uptime_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "description": "The daemon's rho version.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pid",
+        "version",
+        "protocol",
+        "started_at",
+        "uptime_secs",
+        "jobs",
+        "socket"
+      ],
+      "type": "object"
+    },
+    "DetachReason": {
+      "description": "Why the daemon dropped an attachment.",
+      "oneOf": [
+        {
+          "const": "lagged",
+          "description": "The client fell too far behind; reattach with its cursor.",
+          "type": "string"
+        },
+        {
+          "const": "daemon_stopping",
+          "description": "The daemon is stopping.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "type": "string"
+        }
+      ]
+    },
+    "HelloParams": {
+      "description": "Params of [`HELLO`].",
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ClientInfo"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion",
+          "description": "The protocol the client speaks."
+        }
+      },
+      "required": [
+        "protocol",
+        "client"
+      ],
+      "type": "object"
+    },
+    "HelloResponse": {
+      "description": "Result of [`HELLO`].",
+      "properties": {
+        "capabilities": {
+          "description": "Optional features this daemon supports. Protocol minors add names\nhere; protocol 1.0 defines none.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "daemon": {
+          "$ref": "#/$defs/DaemonInfo"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ProtocolVersion",
+          "description": "The protocol the daemon speaks. Its major equals the client's."
+        }
+      },
+      "required": [
+        "protocol",
+        "daemon",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "JobId": {
+      "description": "A job's id. Opaque to clients: send back the string the daemon gave.",
+      "type": "string"
+    },
+    "JobKind": {
+      "description": "What a job runs. Protocol minors may add kinds.",
+      "oneOf": [
+        {
+          "const": "session",
+          "description": "The turns of a session the daemon hosts; see [`super::SESSION_NEW`].",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A kind a newer daemon sends that this crate does not know. Reading it\nleniently keeps the rest of the job list usable; daemons never send\nit.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobListParams": {
+      "description": "Params of [`JOB_LIST`].",
+      "type": "object"
+    },
+    "JobListResponse": {
+      "description": "Result of [`JOB_LIST`].",
+      "properties": {
+        "jobs": {
+          "description": "Every job, oldest first.",
+          "items": {
+            "$ref": "#/$defs/JobSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "JobState": {
+      "description": "Where a job is. A session job's state is that of its current or last\nturn.\nProtocol minors may add states.",
+      "oneOf": [
+        {
+          "enum": [
+            "running",
+            "completed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "idle",
+          "description": "Created; no turn has started.",
+          "type": "string"
+        },
+        {
+          "const": "waiting_for_input",
+          "description": "The turn waits for an approval, a plan approval, or a question to be\nanswered. Nothing is auto-denied because no client is attached; until\nclients can answer (#1660), only [`super::SESSION_CANCEL`] ends the\nwait.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The turn failed; [`JobSummary::error`] says why.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "The daemon stopped, or died, before the turn ended.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A state a newer daemon sends that this crate does not know. Reading\nit leniently keeps the rest of the job list usable; daemons never\nsend it.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobSummary": {
+      "description": "One job, as [`JOB_LIST`] reports it.",
+      "properties": {
+        "created_at": {
+          "description": "Unix time, in seconds, when the job was created.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "description": "Why the job failed, when its state is [`JobState::Failed`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "kind": {
+          "$ref": "#/$defs/JobKind"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The job that started this one; `None` for a job a client started."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The session the job writes."
+        },
+        "state": {
+          "$ref": "#/$defs/JobState"
+        },
+        "updated_at": {
+          "description": "Unix time, in seconds, of the job's last state change.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workspace": {
+          "description": "The workspace the job runs in.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "state",
+        "workspace",
+        "session",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "Location": {
+      "description": "A file a tool call touches, and the line when one applies.",
+      "properties": {
+        "line": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "MessageId": {
+      "description": "Identifies one message in a session's event stream: chunks with the\nsame id extend one message.",
+      "type": "string"
+    },
+    "PlanEntry": {
+      "description": "One step of the agent's plan.",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanStatus"
+        }
+      },
+      "required": [
+        "content",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PlanStatus": {
+      "description": "Where a plan step is.",
+      "oneOf": [
+        {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProtocolVersion": {
+      "description": "A protocol version. Minors add optional fields, methods, and error codes;\nmajors may change anything.",
+      "properties": {
+        "major": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minor": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "major",
+        "minor"
+      ],
+      "type": "object"
+    },
+    "Replay": {
+      "description": "What the events after a [`SessionAttachResponse`] start with.\n\nClosed on purpose, unlike the event enums: a client cannot follow events\nit does not know how to start from, so a new kind is a protocol major.",
+      "oneOf": [
+        {
+          "const": "tail",
+          "description": "The events after the client's cursor follow.",
+          "type": "string"
+        },
+        {
+          "const": "reset",
+          "description": "Discard what you have for this session, cursor included: its saved\ntranscript follows, then the turn in progress.",
+          "type": "string"
+        }
+      ]
+    },
+    "Seq": {
+      "description": "Position in a stream: the number of live events sent before and\nincluding this one, from 1. `Seq(0)` is not a position: a reset's\ntranscript events carry it (see [`super::SessionEventParams::seq`]), and\na cursor at 0 always resets.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "SessionAttachParams": {
+      "description": "Params of [`SESSION_ATTACH`].",
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last event this client has, to resume after it. Absent, from\nanother stream, or older than the daemon keeps: [`Replay::Reset`]."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionAttachResponse": {
+      "description": "Result of [`SESSION_ATTACH`]. The session's events then arrive as\n[`SESSION_EVENT`] notifications, never before this response. Attaching\nagain on the same connection replaces the earlier attachment.",
+      "properties": {
+        "replay": {
+          "$ref": "#/$defs/Replay"
+        },
+        "state": {
+          "$ref": "#/$defs/JobState",
+          "description": "The session's job state when the attachment began."
+        },
+        "stream": {
+          "$ref": "#/$defs/StreamId",
+          "description": "The stream the events belong to; a cursor names it to resume."
+        }
+      },
+      "required": [
+        "stream",
+        "replay",
+        "state"
+      ],
+      "type": "object"
+    },
+    "SessionCancelParams": {
+      "description": "Params of [`SESSION_CANCEL`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionCancelResponse": {
+      "description": "Result of [`SESSION_CANCEL`]: the turn in progress, if any, has been\nasked to stop. The turn saves what it did and ends\n[`crate::JobState::Cancelled`], or [`crate::JobState::Interrupted`] when\nthe daemon is stopping. A cancel that arrives before a prompted turn\nbegins still cancels it, and that prompt answers\n[`crate::ErrorCode::TurnCancelled`].",
+      "type": "object"
+    },
+    "SessionDetachParams": {
+      "description": "Params of [`SESSION_DETACH`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionDetachResponse": {
+      "description": "Result of [`SESSION_DETACH`]: no events of the session follow. Detaching\na session this connection has not attached also succeeds.",
+      "type": "object"
+    },
+    "SessionDetachedParams": {
+      "description": "Params of the [`SESSION_DETACHED`] notification. No events of the\nsession follow; attach again, with the client's cursor, to resume.",
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/DetachReason"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "SessionEvent": {
+      "description": "One thing that happened in a session.",
+      "oneOf": [
+        {
+          "description": "The session's job changed state: a turn started (`running`), waits\nfor input, or ended.",
+          "properties": {
+            "error": {
+              "description": "Why the turn failed, when `state` is [`JobState::Failed`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "$ref": "#/$defs/JobState"
+            },
+            "type": {
+              "const": "state",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A user message, whole.",
+          "properties": {
+            "content": {
+              "items": {
+                "$ref": "#/$defs/ContentBlock"
+              },
+              "type": "array"
+            },
+            "message": {
+              "$ref": "#/$defs/MessageId"
+            },
+            "type": {
+              "const": "user_message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message",
+            "content"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "More of the agent's reply.",
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/MessageId"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "agent_message_chunk",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "More of the agent's reasoning.",
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/MessageId"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "thought_chunk",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ToolCallUpdate",
+          "description": "Opens or updates a tool call; absent fields are unchanged.",
+          "properties": {
+            "type": {
+              "const": "tool_call",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The agent's plan, replacing any earlier one.",
+          "properties": {
+            "entries": {
+              "items": {
+                "$ref": "#/$defs/PlanEntry"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "plan",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "entries"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "How full the model's context is.",
+          "properties": {
+            "type": {
+              "const": "usage",
+              "type": "string"
+            },
+            "used_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "window_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "used_tokens"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A titled card the session shows outside the conversation, such as a\nbackground result.",
+          "properties": {
+            "markdown": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "const": "card",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "title",
+            "markdown"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Something to tell the user that is not part of the conversation.",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "notice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "properties": {
+            "type": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionEventParams": {
+      "description": "Params of the [`SESSION_EVENT`] notification.",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/SessionEvent"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq",
+          "description": "Rises by one per live event. A reset's transcript events carry 0,\nexcept the last, which carries the seq the turn in progress began\nafter. So the highest seq a client has seen since its attach\nresponse, once above 0, is always a cursor it can resume from: one\nthat detaches partway through a transcript resets again."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "seq",
+        "event"
+      ],
+      "type": "object"
+    },
+    "SessionId": {
+      "description": "A session's id, the one `rho sessions` and `/resume` show. Opaque to\nclients: send back the string the daemon gave.",
+      "type": "string"
+    },
+    "SessionNewParams": {
+      "description": "Params of [`SESSION_NEW`].",
+      "properties": {
+        "cwd": {
+          "description": "The session's workspace, an absolute path to an existing directory.\nThe daemon reads config and agents for it as `rho` started there\nwould.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd"
+      ],
+      "type": "object"
+    },
+    "SessionNewResponse": {
+      "description": "Result of [`SESSION_NEW`]: the session is loaded and its job is\n[`crate::JobState::Idle`]. `rho sessions` lists the session once its\nfirst prompt is saved; [`super::JOB_LIST`] shows its job.",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionPromptParams": {
+      "description": "Params of [`SESSION_PROMPT`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "text": {
+          "description": "The user message, sent to the model as written.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SessionPromptResponse": {
+      "description": "Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is\nrunning. The turn runs on in the daemon; [`super::JOB_LIST`] reports how\nit ends.\n\nA turn that ends before its prompt is saved answers with an error\ninstead: [`crate::ErrorCode::TurnFailed`] with the reason,\n[`crate::ErrorCode::TurnCancelled`] when a cancel stopped it, or\n[`crate::ErrorCode::DaemonStopping`] when the daemon stopped it.",
+      "type": "object"
+    },
+    "SessionSteerParams": {
+      "description": "Params of [`SESSION_STEER`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "text": {
+          "description": "Input for the running turn's next model request.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SessionSteerResponse": {
+      "description": "Result of [`SESSION_STEER`]: the input is queued for the running turn,\nwhich applies it at its next model request. A turn that ends first drops\nit.",
+      "type": "object"
+    },
+    "StatusParams": {
+      "description": "Params of [`DAEMON_STATUS`].",
+      "type": "object"
+    },
+    "StopParams": {
+      "description": "Params of [`DAEMON_STOP`].",
+      "type": "object"
+    },
+    "StopResponse": {
+      "description": "Result of [`DAEMON_STOP`]: the daemon has begun shutting down. It finishes\nin-flight responses, closes connections, interrupts running turns, and\nexits.",
+      "type": "object"
+    },
+    "StreamId": {
+      "description": "One loaded session's event stream. A new daemon, or a reload, starts\na new stream.",
+      "type": "string"
+    },
+    "ToolCallId": {
+      "description": "Identifies one tool call; every [`ToolCallUpdate`] with the same id\nupdates that call.",
+      "type": "string"
+    },
+    "ToolCallUpdate": {
+      "description": "Opens a tool call, or updates the one with the same `id`. Absent fields\nare unchanged.",
+      "properties": {
+        "content": {
+          "description": "Replaces the call's content when present.",
+          "items": {
+            "$ref": "#/$defs/ToolContent"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/ToolCallId"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "locations": {
+          "description": "Files the call touches.",
+          "items": {
+            "$ref": "#/$defs/Location"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "raw_input": {
+          "description": "The tool's input, as the model wrote it."
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ToolContent": {
+      "description": "One piece of what a tool call shows.",
+      "oneOf": [
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "description": "Base64.",
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "type": {
+              "const": "image",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "mime_type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A file change; `old_text` is absent for a new file.",
+          "properties": {
+            "new_text": {
+              "type": "string"
+            },
+            "old_text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "const": "diff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path",
+            "new_text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "properties": {
+            "type": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ToolKind": {
+      "description": "What a tool does, so a client can pick an icon or a layout.",
+      "oneOf": [
+        {
+          "enum": [
+            "read",
+            "edit",
+            "delete",
+            "move",
+            "search",
+            "execute",
+            "think",
+            "fetch",
+            "switch_mode",
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "type": "string"
+        }
+      ]
+    },
+    "ToolStatus": {
+      "description": "Where a tool call is.",
+      "oneOf": [
+        {
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "type": "string"
+        }
+      ]
+    },
+    "VersionFix": {
+      "description": "Which side of an incompatible pair has to change.",
+      "oneOf": [
+        {
+          "const": "restart_daemon",
+          "description": "The running daemon is older than the client. Stopping it lets the next\nconnection start the daemon from the newer installed binary.",
+          "type": "string"
+        },
+        {
+          "const": "update_client",
+          "description": "The client is older than the daemon. Update the client.",
+          "type": "string"
+        }
+      ]
+    },
+    "VersionMismatch": {
+      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.",
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "daemon": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "fix": {
+          "$ref": "#/$defs/VersionFix"
+        }
+      },
+      "required": [
+        "daemon",
+        "client",
+        "fix"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "errors": {
+    "DaemonStopping": {
+      "code": -32007
+    },
+    "HandshakeRequired": {
+      "code": -32000
+    },
+    "InternalError": {
+      "code": -32603
+    },
+    "InvalidParams": {
+      "code": -32602
+    },
+    "InvalidRequest": {
+      "code": -32600
+    },
+    "MethodNotFound": {
+      "code": -32601
+    },
+    "NotSteerable": {
+      "code": -32005
+    },
+    "ParseError": {
+      "code": -32700
+    },
+    "SessionBusy": {
+      "code": -32004
+    },
+    "SessionNotLoaded": {
+      "code": -32003
+    },
+    "SessionOpenFailed": {
+      "code": -32008
+    },
+    "SteerRefused": {
+      "code": -32006
+    },
+    "TurnCancelled": {
+      "code": -32010
+    },
+    "TurnFailed": {
+      "code": -32009
+    },
+    "VersionMismatch": {
+      "code": -32001,
+      "data": {
+        "$ref": "#/$defs/VersionMismatch"
+      }
+    }
+  },
+  "methods": {
+    "rho/daemon/status": {
+      "params": {
+        "$ref": "#/$defs/StatusParams"
+      },
+      "result": {
+        "$ref": "#/$defs/DaemonStatus"
+      }
+    },
+    "rho/daemon/stop": {
+      "params": {
+        "$ref": "#/$defs/StopParams"
+      },
+      "result": {
+        "$ref": "#/$defs/StopResponse"
+      }
+    },
+    "rho/hello": {
+      "params": {
+        "$ref": "#/$defs/HelloParams"
+      },
+      "result": {
+        "$ref": "#/$defs/HelloResponse"
+      }
+    },
+    "rho/job/list": {
+      "params": {
+        "$ref": "#/$defs/JobListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/JobListResponse"
+      }
+    },
+    "rho/session/attach": {
+      "params": {
+        "$ref": "#/$defs/SessionAttachParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionAttachResponse"
+      }
+    },
+    "rho/session/cancel": {
+      "params": {
+        "$ref": "#/$defs/SessionCancelParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionCancelResponse"
+      }
+    },
+    "rho/session/detach": {
+      "params": {
+        "$ref": "#/$defs/SessionDetachParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionDetachResponse"
+      }
+    },
+    "rho/session/new": {
+      "params": {
+        "$ref": "#/$defs/SessionNewParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionNewResponse"
+      }
+    },
+    "rho/session/prompt": {
+      "params": {
+        "$ref": "#/$defs/SessionPromptParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionPromptResponse"
+      }
+    },
+    "rho/session/steer": {
+      "params": {
+        "$ref": "#/$defs/SessionSteerParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionSteerResponse"
+      }
+    }
+  },
+  "notifications": {
+    "rho/session/detached": {
+      "params": {
+        "$ref": "#/$defs/SessionDetachedParams"
+      }
+    },
+    "rho/session/event": {
+      "params": {
+        "$ref": "#/$defs/SessionEventParams"
+      }
+    }
+  },
+  "protocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "title": "rho daemon protocol"
+}

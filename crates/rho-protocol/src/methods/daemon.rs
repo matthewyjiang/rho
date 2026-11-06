@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Method;
@@ -42,7 +43,7 @@ impl Method for Stop {
 }
 
 /// Who is connecting. Logged by the daemon; never used for authorization.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ClientInfo {
     /// Frontend name, for example `rho-cli` or `rho-ui`.
     pub name: String,
@@ -51,7 +52,7 @@ pub struct ClientInfo {
 }
 
 /// Params of [`HELLO`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HelloParams {
     /// The protocol the client speaks.
     pub protocol: ProtocolVersion,
@@ -59,7 +60,7 @@ pub struct HelloParams {
 }
 
 /// The running daemon process.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DaemonInfo {
     /// The daemon's rho version.
     pub version: String,
@@ -67,7 +68,7 @@ pub struct DaemonInfo {
 }
 
 /// Result of [`HELLO`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HelloResponse {
     /// The protocol the daemon speaks. Its major equals the client's.
     pub protocol: ProtocolVersion,
@@ -78,11 +79,11 @@ pub struct HelloResponse {
 }
 
 /// Params of [`DAEMON_STATUS`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StatusParams {}
 
 /// Result of [`DAEMON_STATUS`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DaemonStatus {
     pub pid: u32,
     /// The daemon's rho version.
@@ -99,11 +100,11 @@ pub struct DaemonStatus {
 }
 
 /// Params of [`DAEMON_STOP`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StopParams {}
 
 /// Result of [`DAEMON_STOP`]: the daemon has begun shutting down. It finishes
 /// in-flight responses, closes connections, interrupts running turns, and
 /// exits.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StopResponse {}
