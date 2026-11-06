@@ -136,8 +136,15 @@ def walk(
     unhandled = node.keys() - HANDLED - CONSTRAINTS - ANNOTATIONS
     if unhandled:
         raise ValueError(f"{render(path)}: the check does not model {', '.join(sorted(unhandled))}")
-    if "oneOf" in node and "anyOf" in node:
-        raise ValueError(f"{render(path)}: the check does not model oneOf with anyOf")
+    # The walk reads one kind of value per node: variants, a set of values,
+    # or a type. Narrowing beside variants or values would go unread.
+    kind = node.keys() & {"oneOf", "anyOf", "const", "enum"}
+    beside = node.keys() & (CONSTRAINTS | {"items", "additionalProperties"})
+    if kind & {"const", "enum"}:
+        beside |= node.keys() & {"properties", "required"}
+    if len(kind) > 1 or (kind and beside):
+        together = ", ".join(sorted(kind | beside))
+        raise ValueError(f"{render(path)}: the check does not model {together} together")
     variants = node.get("oneOf", node.get("anyOf"))
     if variants is not None:
         resolved = [resolve(defs, variant, path, refs) for variant in variants]
@@ -222,7 +229,10 @@ def resolve(
         properties = {**part.get("properties", {}), **merged.get("properties", {})}
         required = sorted({*part.get("required", []), *merged.get("required", [])})
         for key, value in part.items():
-            merged.setdefault(key, value)
+            if key in ("properties", "required") or key in ANNOTATIONS:
+                merged.setdefault(key, value)
+            elif merged.setdefault(key, value) != value:
+                raise ValueError(f"{render(path)}: the check does not model two values of {key}")
         merged.pop("properties", None)
         merged.pop("required", None)
         if properties:
@@ -333,11 +343,22 @@ def latest_release(tags: list[str]) -> str | None:
 
 def fetch_latest_release() -> str | None:
     """The newest release tag on the remote, fetched if it is not local.
-    Asks the remote because local tags may be stale."""
-    listing = git("ls-remote", "--tags", "--refs", REMOTE, "rho-coding-agent-v*")
+    Asks the remote because local tags may be stale. Fetches shallowly only
+    into a clone that is already shallow, such as CI's: a shallow fetch
+    makes a full clone, and every worktree sharing it, shallow."""
+    listing = git(
+        "ls-remote",
+        "--tags",
+        "--refs",
+        REMOTE,
+        "rho-coding-agent-v*",
+        hint="offline, pass --baseline-ref with a local release tag",
+    )
     tag = latest_release([line.split("refs/tags/", 1)[1] for line in listing.splitlines()])
     if tag is not None and not exists(f"{tag}^{{commit}}"):
-        git("fetch", "--no-tags", "--depth=1", REMOTE, f"refs/tags/{tag}:refs/tags/{tag}")
+        shallow = git("rev-parse", "--is-shallow-repository").strip() == "true"
+        depth = ["--depth=1"] if shallow else []
+        git("fetch", "--no-tags", *depth, REMOTE, f"refs/tags/{tag}:refs/tags/{tag}")
     return tag
 
 
@@ -350,10 +371,11 @@ def exists(object_name: str) -> bool:
     )
 
 
-def git(*arguments: str) -> str:
+def git(*arguments: str, hint: str | None = None) -> str:
     result = subprocess.run(["git", *arguments], cwd=ROOT, capture_output=True, text=True)
     if result.returncode != 0:
-        raise SystemExit(f"error: git {' '.join(arguments)} failed: {result.stderr.strip()}")
+        message = f"error: git {' '.join(arguments)} failed: {result.stderr.strip()}"
+        raise SystemExit(f"{message}\n{hint}" if hint else message)
     return result.stdout
 
 

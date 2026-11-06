@@ -112,6 +112,18 @@ def recursive_type(document: dict) -> None:
     defs(document)["Cursor"]["properties"]["next"] = {"$ref": "#/$defs/Cursor"}
 
 
+def close_event(document: dict) -> None:
+    defs(document)["SessionEvent"]["additionalProperties"] = False
+
+
+def narrow_through_all_of(document: dict) -> None:
+    defs(document)["Replay"]["allOf"] = [{"enum": ["tail"]}]
+
+
+def cap_twice(document: dict) -> None:
+    text = defs(document)["SessionPromptParams"]["properties"]["text"]
+    text["maxLength"] = 10
+    text["allOf"] = [{"maxLength": 3}]
 
 
 class CompatibilityTests(unittest.TestCase):
@@ -204,6 +216,22 @@ class CompatibilityTests(unittest.TestCase):
                 "an unmodelled keyword",
                 unmodelled_keyword,
                 "method rho/session/prompt params.text: the check does not model if",
+            ),
+            (
+                "a closed tagged enum",
+                close_event,
+                "notification rho/session/event params.event: the check does not model "
+                "additionalProperties, anyOf together",
+            ),
+            (
+                "an enum narrowed through allOf",
+                narrow_through_all_of,
+                "method rho/session/attach result.replay: the check does not model enum, oneOf together",
+            ),
+            (
+                "a constraint given twice",
+                cap_twice,
+                "method rho/session/prompt params.text: the check does not model two values of maxLength",
             ),
             (
                 "a recursive type",

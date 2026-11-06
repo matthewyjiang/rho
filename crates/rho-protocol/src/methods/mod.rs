@@ -19,17 +19,17 @@
 //!
 //! The daemon sends these notifications; clients send none.
 //!
+//! | Notification | Params |
+//! |---|---|
+//! | [`SESSION_EVENT`] | [`SessionEventParams`] |
+//! | [`SESSION_DETACHED`] | [`SessionDetachedParams`] |
+//!
 //! [`crate::schema`] publishes every method and notification as JSON Schema.
 //! Enums that read values they do not know as `Unknown`, so a protocol minor
 //! may add values, have their `Unknown` variant marked `x-rho-other` there,
 //! where it matches every value the enum does not list. Absent optional
 //! fields are omitted, never sent as `null`, so one schema describes both
 //! directions.
-//!
-//! | Notification | Params |
-//! |---|---|
-//! | [`SESSION_EVENT`] | [`SessionEventParams`] |
-//! | [`SESSION_DETACHED`] | [`SessionDetachedParams`] |
 
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};

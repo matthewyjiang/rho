@@ -84,4 +84,30 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             "{name} does not read an unseen value as Unknown"
         );
     }
+    // Marked variants lose their literal `unknown`; one left over is an
+    // `Unknown` variant whose enum the schema would publish as closed.
+    assert_eq!(
+        literal_unknowns(&document["$defs"], "$defs"),
+        Vec::<String>::new(),
+        "mark each #[serde(other)] variant #[schemars(extend(\"x-rho-other\" = true))]"
+    );
+}
+
+/// Where under `schema` a value or tag is the literal `"unknown"`.
+fn literal_unknowns(schema: &Value, path: &str) -> Vec<String> {
+    match schema {
+        Value::Object(fields) if fields.get("const") == Some(&json!("unknown")) => {
+            vec![path.to_owned()]
+        }
+        Value::Object(fields) => fields
+            .iter()
+            .flat_map(|(key, value)| literal_unknowns(value, &format!("{path}/{key}")))
+            .collect(),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .flat_map(|(index, value)| literal_unknowns(value, &format!("{path}/{index}")))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
