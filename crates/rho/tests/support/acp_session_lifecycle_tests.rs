@@ -214,13 +214,12 @@ fn a_session_open_in_another_process_is_refused_until_that_process_closes_it() {
     })
     .collect();
     let invalid_request: Result<Value, Value> = Err(json!(-32600));
-    let internal_error: Result<Value, Value> = Err(json!(-32603));
     assert_eq!(
         refused,
         [
             ("session/load", invalid_request.clone()),
-            ("session/resume", invalid_request),
-            ("session/delete", internal_error),
+            ("session/resume", invalid_request.clone()),
+            ("session/delete", invalid_request),
         ]
     );
 

@@ -73,7 +73,7 @@ pub struct Session {
     cwd: PathBuf,
     workspace_key: String,
     write_lock: Arc<Mutex<AppendCursor>>,
-    _active_lease: Arc<SessionLease>,
+    _active_lease: SessionLease,
 }
 
 #[derive(Clone, Debug)]
@@ -850,7 +850,7 @@ impl Session {
             session_root: session_root.to_path_buf(),
             cwd,
             write_lock: Arc::new(Mutex::new(AppendCursor::default())),
-            _active_lease: Arc::new(active_lease),
+            _active_lease: active_lease,
         }
     }
 

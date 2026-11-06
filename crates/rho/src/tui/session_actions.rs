@@ -166,6 +166,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        self.ensure_resume_saves()?;
         let opened = Session::open_by_id_with_histories(&self.info.runtime.cwd, session_id)?;
         self.resume_opened_session(opened, terminal, agent).await
     }
@@ -176,8 +177,29 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        self.ensure_resume_saves()?;
+        self.ensure_this_project(&target.cwd)?;
         let opened = Session::open_target_with_histories(target)?;
         self.resume_opened_session(opened, terminal, agent).await
+    }
+
+    // Checked before opening, which locks the session against other Rho
+    // processes, so a refused resume never holds that lock.
+    fn ensure_resume_saves(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.info.session.no_save,
+            "resume unavailable with --no-save; start Rho without it to resume"
+        );
+        Ok(())
+    }
+
+    fn ensure_this_project(&self, session_cwd: &std::path::Path) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !is_cross_project(session_cwd, &self.info.runtime.cwd),
+            "start Rho in {} to resume this session",
+            crate::paths::display(session_cwd)
+        );
+        Ok(())
     }
 
     async fn resume_opened_session(
@@ -186,15 +208,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.info.session.no_save,
-            "resume unavailable with --no-save; start Rho without it to resume"
-        );
-        anyhow::ensure!(
-            !is_cross_project(session.cwd(), &self.info.runtime.cwd),
-            "start Rho in {} to resume this session",
-            crate::paths::display(session.cwd())
-        );
+        // An id lookup can find a session saved under another project.
+        self.ensure_this_project(session.cwd())?;
         session.validate_agent_definition_identity(agent.bound_definition())?;
 
         if self.offer_resume_context_handoff(

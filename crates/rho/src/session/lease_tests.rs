@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use rho_providers::model::Message;
 use tempfile::TempDir;
 
-use super::{acquire, lock_path, LeasePurpose, SessionInUse};
+use super::{acquire, lock_path, InUseBy, LeasePurpose, SessionInUse};
 use crate::session::{DeleteOptions, Session};
 
 /// A saved, closed session and the roots it is stored under.
@@ -56,7 +56,7 @@ impl Saved {
             .write(true)
             .open(lock_path(self.root.path(), self.cwd.path(), &self.id))
             .unwrap();
-        file.try_lock().ok().map(|()| file)
+        fs2::FileExt::try_lock_exclusive(&file).ok().map(|()| file)
     }
 }
 
@@ -76,19 +76,15 @@ enum Action {
     Delete,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Outcome {
-    Done,
-    /// Refused as [`SessionInUse`]: open in another process.
-    InUseElsewhere,
-    Refused,
-}
-
-fn outcome<T>(result: anyhow::Result<T>) -> Outcome {
+/// `Ok(())` when the action went through, else what [`SessionInUse`] says
+/// holds the session. Any other error fails the test.
+fn outcome<T>(result: anyhow::Result<T>) -> Result<(), InUseBy> {
     match result {
-        Ok(_) => Outcome::Done,
-        Err(error) if error.is::<SessionInUse>() => Outcome::InUseElsewhere,
-        Err(_) => Outcome::Refused,
+        Ok(_) => Ok(()),
+        Err(error) => Err(error
+            .downcast_ref::<SessionInUse>()
+            .unwrap_or_else(|| panic!("not a SessionInUse refusal: {error:#}"))
+            .by()),
     }
 }
 
@@ -100,13 +96,29 @@ fn outcome<T>(result: anyhow::Result<T>) -> Outcome {
 #[test]
 fn a_session_has_one_writer_process() {
     let cases = [
-        (Holder::Nobody, Action::Open, Outcome::Done),
-        (Holder::ThisProcessOpen, Action::Open, Outcome::Done),
-        (Holder::ThisProcessDeleting, Action::Open, Outcome::Refused),
-        (Holder::OtherProcess, Action::Open, Outcome::InUseElsewhere),
-        (Holder::Nobody, Action::Delete, Outcome::Done),
-        (Holder::ThisProcessOpen, Action::Delete, Outcome::Refused),
-        (Holder::OtherProcess, Action::Delete, Outcome::Refused),
+        (Holder::Nobody, Action::Open, Ok(())),
+        (Holder::ThisProcessOpen, Action::Open, Ok(())),
+        (
+            Holder::ThisProcessDeleting,
+            Action::Open,
+            Err(InUseBy::DeletingHere),
+        ),
+        (
+            Holder::OtherProcess,
+            Action::Open,
+            Err(InUseBy::OtherProcess),
+        ),
+        (Holder::Nobody, Action::Delete, Ok(())),
+        (
+            Holder::ThisProcessOpen,
+            Action::Delete,
+            Err(InUseBy::OpenHere),
+        ),
+        (
+            Holder::OtherProcess,
+            Action::Delete,
+            Err(InUseBy::OtherProcess),
+        ),
     ];
     for (holder, action, expected) in cases {
         let saved = Saved::new();
@@ -137,7 +149,7 @@ fn a_session_has_one_writer_process() {
 // session/load reopens a live session and the replaced runtime closes after.
 // Owner: session lease
 #[test]
-fn another_process_waits_for_the_last_open_in_this_process() {
+fn another_process_is_refused_until_the_last_open_here_closes() {
     let saved = Saved::new();
     let first = saved.open().unwrap();
     let clone = first.clone();

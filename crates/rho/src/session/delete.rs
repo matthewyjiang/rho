@@ -13,6 +13,7 @@ use crate::subagent::RunStatus;
 use crate::subagent::{self, RunIndexCleanup, RunState, RESULT_FILE_NAME};
 
 use super::{
+    id_match::short_id,
     index,
     lease::{self, LeasePurpose},
     persistence::{workspace_key, ResolvedSession, SessionStore, SessionUnit},
@@ -559,10 +560,6 @@ fn find_parent_linked_runs(
         });
     }
     Ok(runs)
-}
-
-pub(super) fn short_id(id: &str) -> String {
-    id.chars().take(8).collect()
 }
 
 /// True when the session belongs to a different workspace than `cwd`.

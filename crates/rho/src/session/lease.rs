@@ -13,17 +13,23 @@
 //! counts its holders in [`HELD`]: another open of a session this process
 //! already has open (an ACP `session/load` replacing its live session, the
 //! TUI's `/resume` of its current session) shares that lock, and the last
-//! holder to close releases it.
+//! holder to close releases it. Sharing the lock does not share the writer:
+//! each open has its own append cursor, so a host retires the session it
+//! replaces before the replacement writes.
+//!
+//! Locks go through fs2 rather than `std::fs::File::try_lock`, which std
+//! does not implement on Android.
 
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     fmt,
-    fs::{File, OpenOptions, TryLockError},
+    fs::{File, OpenOptions},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{Mutex, PoisonError},
 };
 
-use super::{delete::short_id, layout};
+use super::{id_match::short_id, layout};
 
 /// The session locks this process holds, by lock file path.
 static HELD: Mutex<BTreeMap<PathBuf, HeldLock>> = Mutex::new(BTreeMap::new());
@@ -31,9 +37,16 @@ static HELD: Mutex<BTreeMap<PathBuf, HeldLock>> = Mutex::new(BTreeMap::new());
 /// One session lock this process holds.
 struct HeldLock {
     file: File,
-    purpose: LeasePurpose,
-    /// The [`SessionLease`]s sharing the lock. A delete never shares it.
-    holders: usize,
+    hold: Hold,
+}
+
+/// What this process holds a session's lock for.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// Open, shared by `holders` [`SessionLease`]s.
+    Open { holders: NonZeroUsize },
+    /// Being deleted, by the one lease that never shares it.
+    Delete,
 }
 
 /// What a session lease is taken for.
@@ -45,43 +58,74 @@ pub(super) enum LeasePurpose {
     Delete,
 }
 
-/// A held session lease. Dropping the last one of a session unlocks
-/// explicitly before closing the file: a child process spawned elsewhere in
-/// Rho shares the open file description from fork until its exec closes it
-/// (Rust opens every file close-on-exec), so closing the handle alone could
-/// keep the session looking open.
+/// A held session lease. Cloning one shares the lock. Dropping the last one
+/// of a session unlocks explicitly before closing the file: a child process
+/// spawned elsewhere in Rho shares the open file description from fork until
+/// its exec closes it (Rust opens every file close-on-exec), so closing the
+/// handle alone could keep the session looking open.
 #[derive(Debug)]
 pub(crate) struct SessionLease {
     path: PathBuf,
 }
 
-/// Refusal to open a session another Rho process has open: two processes
-/// writing one session file would interleave its records. A process
-/// deleting the session holds the same lock, for as long as that takes.
+/// Refusal to open or delete a session something else holds. Two writers
+/// would interleave the file's records, and a delete would pull the file
+/// out from under an open.
 #[derive(Debug)]
 pub(crate) struct SessionInUse {
     id: String,
+    by: InUseBy,
+}
+
+/// What holds a session a lease was refused for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InUseBy {
+    /// Another Rho process has it open or is deleting it.
+    OtherProcess,
+    /// This process has it open; refuses a delete.
+    OpenHere,
+    /// This process is deleting it.
+    DeletingHere,
+}
+
+impl SessionInUse {
+    #[cfg(test)]
+    pub(crate) fn by(&self) -> InUseBy {
+        self.by
+    }
 }
 
 impl fmt::Display for SessionInUse {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "session '{}' is open in another Rho process; close it there first",
-            short_id(&self.id)
-        )
+        let id = short_id(&self.id);
+        match self.by {
+            InUseBy::OtherProcess => write!(
+                formatter,
+                "session '{id}' is open in another Rho process; close it there first"
+            ),
+            InUseBy::OpenHere => write!(formatter, "session '{id}' is open; close it first"),
+            InUseBy::DeletingHere => write!(
+                formatter,
+                "session '{id}' is being deleted; refresh the session list"
+            ),
+        }
     }
 }
 
 impl std::error::Error for SessionInUse {}
 
-/// The lock file of session `id` saved under `cwd`'s workspace.
-fn lock_path(session_root: &Path, cwd: &Path, id: &str) -> PathBuf {
-    layout::session_dir_in_root(session_root, cwd).join(format!(".{id}.active.lock"))
+fn lock_file_name(id: &str) -> String {
+    format!(".{id}.active.lock")
 }
 
-/// Takes the lease on session `id` for `purpose`, or refuses when another
-/// open or delete holds the session, in this process or another.
+/// The lock file of session `id` saved under `cwd`'s workspace.
+fn lock_path(session_root: &Path, cwd: &Path, id: &str) -> PathBuf {
+    layout::session_dir_in_root(session_root, cwd).join(lock_file_name(id))
+}
+
+/// Takes the lease on session `id` for `purpose`, or refuses with
+/// [`SessionInUse`] when another open or delete holds the session, in this
+/// process or another.
 pub(super) fn acquire(
     session_root: &Path,
     cwd: &Path,
@@ -89,54 +133,49 @@ pub(super) fn acquire(
     purpose: LeasePurpose,
 ) -> anyhow::Result<SessionLease> {
     let path = lock_path(session_root, cwd, id);
+    let in_use = |by| SessionInUse {
+        id: id.to_owned(),
+        by,
+    };
     let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(lock) = held.get_mut(&path) {
-        match (lock.purpose, purpose) {
-            (LeasePurpose::Open, LeasePurpose::Open) => {
-                lock.holders += 1;
-                return Ok(SessionLease { path });
+        return match (lock.hold, purpose) {
+            (Hold::Open { holders }, LeasePurpose::Open) => {
+                lock.hold = Hold::Open {
+                    holders: holders.saturating_add(1),
+                };
+                Ok(SessionLease { path })
             }
-            (LeasePurpose::Open, LeasePurpose::Delete) => anyhow::bail!(
-                "refusing to delete open session '{}'; close it first",
-                short_id(id)
-            ),
-            (LeasePurpose::Delete, _) => anyhow::bail!(
-                "session '{}' is being deleted; refresh the session list",
-                short_id(id)
-            ),
-        }
+            (Hold::Open { .. }, LeasePurpose::Delete) => Err(in_use(InUseBy::OpenHere).into()),
+            (Hold::Delete, _) => Err(in_use(InUseBy::DeletingHere).into()),
+        };
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+    let dir = layout::ensure_session_dir(session_root, cwd)?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(&path)?;
+        .open(dir.join(lock_file_name(id)))?;
     layout::set_private_file_permissions(&file)?;
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => {
-            return Err(match purpose {
-                LeasePurpose::Open => SessionInUse { id: id.to_owned() }.into(),
-                LeasePurpose::Delete => anyhow::anyhow!(
-                    "refusing to delete active session '{}'; close it in the other Rho process first",
-                    short_id(id)
-                ),
-            });
-        }
-        Err(TryLockError::Error(error)) => return Err(error.into()),
+    if let Err(error) = fs2::FileExt::try_lock_exclusive(&file) {
+        // fs2 reports contention as `WouldBlock` on Unix and as the raw
+        // lock-violation error on Windows.
+        let contended = error.kind() == std::io::ErrorKind::WouldBlock
+            || error.raw_os_error() == fs2::lock_contended_error().raw_os_error();
+        return Err(if contended {
+            in_use(InUseBy::OtherProcess).into()
+        } else {
+            error.into()
+        });
     }
-    held.insert(
-        path.clone(),
-        HeldLock {
-            file,
-            purpose,
-            holders: 1,
+    let hold = match purpose {
+        LeasePurpose::Open => Hold::Open {
+            holders: NonZeroUsize::MIN,
         },
-    );
+        LeasePurpose::Delete => Hold::Delete,
+    };
+    held.insert(path.clone(), HeldLock { file, hold });
     Ok(SessionLease { path })
 }
 
@@ -150,15 +189,42 @@ impl SessionLease {
     }
 }
 
+impl Clone for SessionLease {
+    fn clone(&self) -> Self {
+        let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
+        let lock = held
+            .get_mut(&self.path)
+            .expect("a live lease's lock is held");
+        match lock.hold {
+            Hold::Open { holders } => {
+                lock.hold = Hold::Open {
+                    holders: holders.saturating_add(1),
+                };
+            }
+            Hold::Delete => unreachable!("a delete lease is never cloned"),
+        }
+        Self {
+            path: self.path.clone(),
+        }
+    }
+}
+
 impl Drop for SessionLease {
     fn drop(&mut self) {
         let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
         let Entry::Occupied(mut lock) = held.entry(std::mem::take(&mut self.path)) else {
+            debug_assert!(false, "a live lease's lock is held");
             return;
         };
-        lock.get_mut().holders -= 1;
-        if lock.get().holders == 0 {
-            let _ = lock.remove().file.unlock();
+        let remaining = match lock.get().hold {
+            Hold::Open { holders } => NonZeroUsize::new(holders.get() - 1),
+            Hold::Delete => None,
+        };
+        match remaining {
+            Some(holders) => lock.get_mut().hold = Hold::Open { holders },
+            None => {
+                let _ = fs2::FileExt::unlock(&lock.remove().file);
+            }
         }
     }
 }
