@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::daemon::{
     client, lock,
-    test_support::{test_status, StopService},
+    test_support::{test_status, StubHost},
 };
 
 /// Failure bound for the server task to finish after a stop request.
@@ -32,7 +32,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
     fs::write(&paths.socket, "left by a crashed daemon").unwrap();
     let bound = bind(&paths, lock::acquire(&paths).unwrap()).unwrap();
     let shutdown = CancellationToken::new();
-    let server = tokio::spawn(bound.serve(StopService::new(&shutdown), shutdown));
+    let server = tokio::spawn(bound.serve(StubHost::new(&shutdown), shutdown));
 
     let socket_mode = fs::metadata(&paths.socket).unwrap().permissions().mode() & 0o777;
     assert_eq!(socket_mode, 0o600);

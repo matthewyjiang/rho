@@ -39,13 +39,11 @@ fn test_info() -> ServerInfo {
 struct FakeService;
 
 impl Service for FakeService {
-    fn status(&self) -> impl Future<Output = DaemonStatus> + Send {
-        std::future::ready(test_status())
+    async fn status(&self) -> DaemonStatus {
+        test_status()
     }
 
-    fn stop(&self) -> impl Future<Output = ()> + Send {
-        std::future::ready(())
-    }
+    async fn stop(&self) {}
 }
 
 /// Panics in `status`, as a handler bug would.
@@ -60,9 +58,7 @@ impl Service for PanickingService {
         buggy_status()
     }
 
-    fn stop(&self) -> impl Future<Output = ()> + Send {
-        std::future::ready(())
-    }
+    async fn stop(&self) {}
 }
 
 /// `status` answers only once the test releases it. `stop` resolves the
@@ -136,7 +132,10 @@ async fn next_outcome<R: AsyncRead + Unpin>(reader: &mut MessageReader<R>) -> Op
 }
 
 /// Sends `lines` to `service` on one connection, closes the client's write
-/// half, and collects one outcome per response.
+/// half, and collects one outcome per response, in arrival order. Answers the
+/// protocol gives in place arrive in read order, but a service call answers
+/// whenever it completes, so a case that expects a fixed order makes at most
+/// one service call, as its last request.
 async fn exchange<Svc: Service + 'static>(service: Svc, lines: &[String]) -> Vec<Outcome> {
     let (client, server) = duplex(64 * 1024);
     let server = tokio::spawn(async move {

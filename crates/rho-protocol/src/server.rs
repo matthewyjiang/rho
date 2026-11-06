@@ -3,7 +3,7 @@
 
 use std::{future::Future, sync::Arc};
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -12,10 +12,10 @@ use tokio::{
 };
 
 use crate::{
-    methods::{DAEMON_STATUS, DAEMON_STOP, HELLO},
-    DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloParams, HelloResponse, Message,
-    MessageReader, MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams,
-    StopResponse, VersionMismatch, PROTOCOL_VERSION,
+    methods::{Hello, Method, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO},
+    DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
+    MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
+    VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol
@@ -26,11 +26,13 @@ use crate::{
 /// behavior.
 ///
 /// Each call runs in its own task, so calls overlap within a connection and
-/// across connections; implementors synchronize their own state. A call
-/// should resolve once its answer is known. Work that outlives a request
-/// belongs in a task the implementor owns: a connection waits for its
-/// in-flight calls before it closes, even at shutdown, so a call that never
-/// resolves keeps its connection, and a stopping daemon, open.
+/// across connections; implementors synchronize their own state. Every call
+/// the connection has read runs to completion, even after the peer leaves or
+/// a write fails; only its answer may go unheard. A call should resolve once
+/// its answer is known. Work that outlives a request belongs in a task the
+/// implementor owns: a connection waits for its calls before it closes, even
+/// at shutdown, so a call that never resolves keeps its connection, and a
+/// stopping daemon, open.
 pub trait Service: Send + Sync {
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -52,11 +54,16 @@ pub struct ServerInfo {
 /// Messages queued for the connection's writer.
 ///
 /// Unbounded: everything queued answers a request the peer sent, so the
-/// queue only grows while the peer sends requests faster than it reads the
-/// answers, and the peer is the daemon's own user (the socket is private to
-/// it). Notifications the daemon pushes will go through this queue as well;
-/// dropping a subscriber that falls behind is the event fan-out's policy, not
-/// a limit here.
+/// queue grows only while the peer sends requests faster than it reads the
+/// answers. The socket is private to the daemon's user, so only a buggy
+/// frontend does that, and it costs memory rather than correctness.
+///
+/// Pushed events (2c-2) change that premise. Before they reuse this writer,
+/// the connection needs a handle a subscriber holds without keeping the
+/// writer alive (today the writer ends only when every sender is gone),
+/// services need to know which connection is calling, and a subscriber that
+/// falls behind must be visible to the fan-out rather than queued without
+/// end.
 type Outbox = mpsc::UnboundedSender<Message>;
 
 /// Serves one connection until the peer stops sending or `shutdown`
@@ -69,16 +76,23 @@ type Outbox = mpsc::UnboundedSender<Message>;
 /// may arrive out of order, paired with their requests by id. Every outgoing
 /// message goes through one writer, so frames never interleave.
 ///
-/// When the peer stops sending or `shutdown` resolves, the connection stops
-/// reading, lets every request it has already read run to completion, writes
-/// their responses, and closes. That is how the `rho/daemon/stop`
-/// acknowledgement reaches the client although the stop itself resolves
-/// `shutdown`. If a write fails, nobody can receive the answers, so the
-/// requests still running are cancelled.
+/// Requests also *run* concurrently, so a client that needs one request to
+/// take effect before another sends the second only after the first's
+/// response arrives.
+///
+/// When the peer stops sending, a write fails, or `shutdown` resolves, the
+/// connection stops reading, lets every request it has already read run to
+/// completion, writes the responses it still can, and closes. That is how
+/// the `rho/daemon/stop` acknowledgement reaches the client although the stop
+/// itself resolves `shutdown`.
 ///
 /// Recoverable protocol errors (bad JSON, invalid messages, unknown methods)
 /// get an error response and the connection continues; framing errors end it
 /// once the requests already read are answered.
+///
+/// # Panics
+///
+/// Outside a Tokio runtime, because each request runs in a spawned task.
 pub async fn serve_connection<S, Svc>(
     stream: S,
     info: &ServerInfo,
@@ -92,8 +106,9 @@ where
     let (reader, writer) = tokio::io::split(stream);
     let (outbox, inbox) = mpsc::unbounded_channel();
     let mut calls = JoinSet::new();
-    // The writer ends once every sender is gone: the reader's when it stops
-    // reading, and each call's when that call has answered.
+    // The writer ends once every sender is gone (the reader's when it stops
+    // reading, and each call's when that call has answered) or a write
+    // fails.
     let (read, write) = tokio::join!(
         read_requests(
             MessageReader::new(reader),
@@ -105,9 +120,8 @@ where
         ),
         write_messages(MessageWriter::new(writer), inbox),
     );
-    // After a clean write every call has answered; after a failed one these
-    // cancel the calls nobody can hear.
-    calls.abort_all();
+    // After a failed write, calls may still be running; their answers go
+    // nowhere, but they finish.
     while calls.join_next().await.is_some() {}
     read.and(write)
 }
@@ -234,14 +248,14 @@ impl Connection {
     ) -> Result<Route, RpcError> {
         match (*self, method) {
             (Self::AwaitingHello, HELLO) => {
-                let hello: HelloParams = decode_params(params)?;
+                let hello = decode_params::<Hello>(params)?;
                 if let Some(mismatch) = VersionMismatch::between(PROTOCOL_VERSION, hello.protocol) {
                     return Err(
                         RpcError::new(ErrorCode::VersionMismatch, mismatch.to_string())
                             .with_data(encode(&mismatch)?),
                     );
                 }
-                let response = encode(&HelloResponse {
+                let response = encode_result::<Hello>(&HelloResponse {
                     protocol: PROTOCOL_VERSION,
                     daemon: info.daemon.clone(),
                     capabilities: info.capabilities.clone(),
@@ -258,11 +272,11 @@ impl Connection {
                 format!("{HELLO} was already accepted on this connection"),
             )),
             (Self::Ready, DAEMON_STATUS) => {
-                let StatusParams {} = decode_params(params)?;
+                let StatusParams {} = decode_params::<Status>(params)?;
                 Ok(Route::Call(ServiceCall::Status))
             }
             (Self::Ready, DAEMON_STOP) => {
-                let StopParams {} = decode_params(params)?;
+                let StopParams {} = decode_params::<Stop>(params)?;
                 Ok(Route::Call(ServiceCall::Stop))
             }
             (Self::Ready, method) => Err(RpcError::new(
@@ -276,10 +290,10 @@ impl Connection {
 impl ServiceCall {
     async fn run<Svc: Service>(self, service: &Svc) -> Result<Value, RpcError> {
         match self {
-            Self::Status => encode(&service.status().await),
+            Self::Status => encode_result::<Status>(&service.status().await),
             Self::Stop => {
                 service.stop().await;
-                encode(&StopResponse {})
+                encode_result::<Stop>(&StopResponse {})
             }
         }
     }
@@ -321,10 +335,17 @@ impl Drop for Responder {
     }
 }
 
-/// Absent params decode like `{}`, so params-less methods accept both.
-fn decode_params<P: DeserializeOwned>(params: Option<Value>) -> Result<P, RpcError> {
+/// Decodes `M`'s params. Absent params decode like `{}`, so params-less
+/// methods accept both. Typing by [`Method`] keeps the server on the same
+/// params type the client sends.
+fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
     serde_json::from_value(params.unwrap_or_else(|| Value::Object(Map::new())))
         .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
+}
+
+/// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
+fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
+    encode(result)
 }
 
 /// Fails only for values JSON cannot hold, such as a non-UTF-8 path.

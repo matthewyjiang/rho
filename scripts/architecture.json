@@ -61,6 +61,16 @@
       "reason": "reqwest rustls-no-provider panics unless ring is installed; use reqwest_client / reqwest_client_builder"
     },
     {
+      "roots": ["crates/rho/src/daemon"],
+      "sequences": [
+        ["super", "::", "super"],
+        ["super", "::", "app"],
+        ["super", "::", "session"],
+        ["super", "::", "tui"]
+      ],
+      "reason": "the daemon is generic transport; reaching the crate root through super would bypass the forbidden-module rule above"
+    },
+    {
       "roots": ["crates/rho/src"],
       "sequences": [
         ["ratatui", "::", "init"],

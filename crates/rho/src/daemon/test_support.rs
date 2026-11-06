@@ -1,17 +1,17 @@
 //! A stand-in for the daemon host, so transport tests need no app code.
 
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 
 use rho_protocol::{DaemonStatus, Service, PROTOCOL_VERSION};
 use rho_sdk::CancellationToken;
 
 /// Answers `status` with [`test_status`] and, like the real host, stops the
 /// daemon on `rho/daemon/stop` by cancelling its shutdown token.
-pub(super) struct StopService {
+pub(super) struct StubHost {
     shutdown: CancellationToken,
 }
 
-impl StopService {
+impl StubHost {
     pub(super) fn new(shutdown: &CancellationToken) -> Arc<Self> {
         Arc::new(Self {
             shutdown: shutdown.clone(),
@@ -19,7 +19,7 @@ impl StopService {
     }
 }
 
-/// What [`StopService`] reports, distinct from any real daemon's status.
+/// What [`StubHost`] reports, distinct from any real daemon's status.
 pub(super) fn test_status() -> DaemonStatus {
     DaemonStatus {
         pid: 0,
@@ -32,9 +32,9 @@ pub(super) fn test_status() -> DaemonStatus {
     }
 }
 
-impl Service for StopService {
-    fn status(&self) -> impl Future<Output = DaemonStatus> + Send {
-        std::future::ready(test_status())
+impl Service for StubHost {
+    async fn status(&self) -> DaemonStatus {
+        test_status()
     }
 
     async fn stop(&self) {

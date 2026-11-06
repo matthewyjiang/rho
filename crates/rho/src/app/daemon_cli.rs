@@ -74,6 +74,14 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
         LogSink::File(file)
     };
     logging::install(&filter, sink);
+    // A panicking request handler is answered with an internal error, and an
+    // auto-spawned daemon's stderr goes nowhere, so the log is the only place
+    // the panic can surface.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(%info, "daemon panicked");
+        default_hook(info);
+    }));
 
     let lock = daemon::acquire_lock(paths)?;
     // Install handlers before the socket exists so an early SIGTERM still
@@ -95,16 +103,25 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
         shutdown.clone(),
     ));
     let on_signal = shutdown.clone();
+    // The first signal asks for a graceful shutdown. Shutdown waits for every
+    // request already read, so a signal that arrives once it is under way,
+    // whether a signal or `rho daemon stop` began it, forces the exit instead.
     let signal_task = tokio::spawn(async move {
-        tokio::select! {
-            signal = signals.recv() => match signal {
+        loop {
+            match signals.recv().await {
+                Ok(signal) if on_signal.is_cancelled() => {
+                    tracing::warn!(%signal, "exiting without waiting for in-flight requests");
+                    std::process::exit(1);
+                }
                 Ok(signal) => {
                     tracing::info!(%signal, "shutting down on signal");
                     on_signal.cancel();
                 }
-                Err(error) => tracing::warn!(%error, "signal handling failed"),
-            },
-            () = on_signal.cancelled() => {}
+                Err(error) => {
+                    tracing::warn!(%error, "signal handling failed");
+                    return;
+                }
+            }
         }
     });
     let served = bound.serve(host, shutdown).await;

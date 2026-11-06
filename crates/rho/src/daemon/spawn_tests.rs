@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
 use super::*;
-use crate::daemon::{client::cli_client_info, lock, server, test_support::StopService};
+use crate::daemon::{client::cli_client_info, lock, server, test_support::StubHost};
 
 /// Failure bound for every racing caller to connect.
 const RACE_DEADLINE: Duration = Duration::from_secs(30);
@@ -29,7 +29,7 @@ impl DaemonSpawner for InProcessSpawner {
         let lock = lock::acquire(paths).map_err(io::Error::other)?;
         let bound = server::bind(paths, lock)?;
         let served =
-            tokio::spawn(bound.serve(StopService::new(&self.shutdown), self.shutdown.clone()));
+            tokio::spawn(bound.serve(StubHost::new(&self.shutdown), self.shutdown.clone()));
         self.servers.lock().unwrap().push(served);
         Ok(())
     }
