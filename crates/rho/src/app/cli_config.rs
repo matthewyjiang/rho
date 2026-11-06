@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::Instrument;
 
 use {
-    crate::cli::Cli,
+    crate::cli::{Cli, Command},
     crate::config::{Config, ProviderConfigs},
     crate::model_aliases::ResolvedModelReference,
     rho_providers::credentials::{self, CredentialStore},
@@ -32,6 +32,9 @@ impl ProviderRefreshStatus {
 
 pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
     if cli.no_save && cli.command.is_some() {
+        if matches!(cli.command, Some(Command::Run { .. })) {
+            anyhow::bail!("--no-save goes after run: rho run --no-save <PROMPT>");
+        }
         anyhow::bail!("--no-save is only supported for interactive sessions");
     }
     if cli.resume.is_some() && cli.command.is_some() {

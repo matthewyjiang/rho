@@ -15,8 +15,8 @@ use tokio::task::{JoinError, JoinHandle};
 use super::sessions_hub_groups::{hub_groups, HubGroup, Placement};
 use super::{session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry, Session};
 use crate::session::{
-    CleanupOutcome, DeleteOptions, DeleteOutcome, SessionSummary, SessionTarget, Workspace,
-    WorkspaceDeleteOutcome,
+    CleanupOutcome, DeleteOptions, DeleteOutcome, SessionListing, SessionSummary, SessionTarget,
+    Workspace, WorkspaceDeleteOutcome,
 };
 
 /// Sessions a confirmed delete removes.
@@ -121,10 +121,11 @@ pub(super) async fn next_sessions_task(
     output
 }
 
-/// Lists and groups every saved session. Blocking: reconciles the session
-/// index and stats every workspace directory.
+/// Lists and groups every saved session (see [`hub_groups`] for which it
+/// shows). Blocking: reconciles the session index and stats every
+/// workspace directory.
 fn load_hub_groups(current_cwd: &Path) -> anyhow::Result<Vec<HubGroup>> {
-    let sessions = Session::list_all()?;
+    let sessions = Session::list_all(SessionListing::Everything)?;
     let mut missing_directories = HashSet::new();
     for cwd in sessions.iter().map(|session| &session.cwd) {
         if !missing_directories.contains(cwd) && Session::workspace_directory_is_missing(cwd)? {
@@ -196,7 +197,9 @@ impl App {
                 let report = request.run(options);
                 let relisted = match origin {
                     DeleteOrigin::Hub => Relisted::Hub(load_hub_groups(&current_cwd)),
-                    DeleteOrigin::Resume => Relisted::Resume(Session::list(&current_cwd)),
+                    DeleteOrigin::Resume => {
+                        Relisted::Resume(Session::list(&current_cwd, SessionListing::PersonFacing))
+                    }
                 };
                 TaskOutput::Delete { report, relisted }
             }),
@@ -280,11 +283,18 @@ impl App {
             DeleteReport::One { target, result } => {
                 let short = session_picker::short_session_id(&target.id);
                 match result {
-                    Ok(outcome) if outcome.deleted_run_count > 0 => format!(
-                        "deleted session {short} and {}",
-                        plural(outcome.deleted_run_count, "related run")
-                    ),
-                    Ok(_) => format!("deleted session {short}"),
+                    Ok(outcome) => {
+                        let mut notice = format!("deleted session {short}");
+                        for (count, noun) in [
+                            (outcome.deleted_child_session_count, "child session"),
+                            (outcome.deleted_run_count, "related run"),
+                        ] {
+                            if count > 0 {
+                                notice.push_str(&format!(" and {}", plural(count, noun)));
+                            }
+                        }
+                        notice
+                    }
                     Err(error) => {
                         self.insert_entry(&Entry::Error(format!(
                             "could not delete session: {error}"

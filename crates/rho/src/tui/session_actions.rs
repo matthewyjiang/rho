@@ -4,7 +4,9 @@ use super::{
     session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
     InlineChoicePending, InteractiveRuntime, Session,
 };
-use crate::session::{is_cross_project, SessionHistories, SessionSummary, SessionTarget};
+use crate::session::{
+    is_cross_project, SessionHistories, SessionListing, SessionSummary, SessionTarget,
+};
 
 impl App {
     pub(super) async fn execute_resume_command(
@@ -33,7 +35,10 @@ impl App {
             ));
             return Ok(());
         }
-        self.show_resume_picker(Session::list(&self.info.runtime.cwd))
+        self.show_resume_picker(Session::list(
+            &self.info.runtime.cwd,
+            SessionListing::PersonFacing,
+        ))
     }
 
     /// Open the resume picker for a listing of this workspace's sessions.
@@ -219,7 +224,7 @@ impl App {
                 &session_id,
                 agent_id,
                 agent_fingerprint,
-                crate::session::SessionOrigin::Interactive,
+                crate::session::SessionOrigin::Interactive.into(),
             )?;
             self.info.session.session_id = Some(session_id);
             agent.attach_storage(session);

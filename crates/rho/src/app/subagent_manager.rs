@@ -17,6 +17,7 @@ use {
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
         subagent_messaging::{SubagentNotice, SubagentNoticeBridge},
     },
+    crate::session::SessionPersistence,
     crate::subagent::{self, RunStatus},
 };
 
@@ -53,7 +54,8 @@ struct AgentEntry {
     task_fallback: Option<String>,
     started: Instant,
     handle: AgentRunHandle,
-    session_id: Option<String>,
+    /// The parent session the run reports to.
+    session_id: String,
     observed: bool,
     explicitly_observed: bool,
     /// Whether this run's terminal cost has already been folded into a parent
@@ -89,7 +91,21 @@ pub struct SubagentNotification {
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
     executor: AgentExecutor,
-    parent_placement: Arc<Mutex<subagent::RunPlacement>>,
+    parent: Arc<Mutex<ParentBinding>>,
+}
+
+/// The session a manager's subagents report to.
+#[derive(Clone)]
+struct ParentBinding {
+    /// Where the subagents' run artifacts go.
+    placement: subagent::RunPlacement,
+    /// The workspace the parent is saved in, `None` while it has no file.
+    /// Each subagent's session records it with the parent's id.
+    workspace: Option<PathBuf>,
+    /// Whether the subagents' own sessions are saved: not when their
+    /// parent's is not, since a child of nothing on disk could never be
+    /// reached or deleted with it.
+    persistence: SessionPersistence,
 }
 
 impl SubagentManager {
@@ -103,7 +119,11 @@ impl SubagentManager {
                 SubagentHostInputBridge::new(),
                 SubagentNoticeBridge::new(),
             ),
-            parent_placement: Arc::new(Mutex::new(subagent::RunPlacement::parentless())),
+            parent: Arc::new(Mutex::new(ParentBinding {
+                placement: subagent::RunPlacement::parentless(),
+                workspace: None,
+                persistence: SessionPersistence::Saved,
+            })),
         }
     }
 
@@ -138,11 +158,25 @@ impl SubagentManager {
         self.executor.notices().unbind_parent();
     }
 
-    pub fn bind_parent_session(&self, placement: subagent::RunPlacement) {
-        *self
-            .parent_placement
-            .lock()
-            .expect("delegated session lock") = placement;
+    /// Binds session `session_id`, whose file is `storage` once it has one,
+    /// as the session later subagents report to: their artifacts go in that
+    /// file's folder, their sessions record the file's session as their
+    /// parent, and they save those sessions as `persistence` says the
+    /// parent does.
+    pub(crate) fn bind_parent_session(
+        &self,
+        session_id: impl Into<String>,
+        storage: Option<&crate::session::Session>,
+        persistence: SessionPersistence,
+    ) {
+        *self.parent.lock().expect("delegated session lock") = ParentBinding {
+            placement: subagent::RunPlacement::for_parent_session(
+                session_id,
+                storage.and_then(crate::session::Session::subagents_dir),
+            ),
+            workspace: storage.map(|stored| stored.cwd().to_path_buf()),
+            persistence,
+        };
     }
 
     pub fn update_selection(
@@ -206,16 +240,18 @@ impl SubagentManager {
         cwd: &Path,
         model_override: Option<&str>,
     ) -> anyhow::Result<(String, PathBuf)> {
-        let placement = self
-            .parent_placement
-            .lock()
-            .expect("delegated session lock")
-            .clone();
-        let parent_session_id = placement
-            .parent_session_id()
-            .map(str::to_owned)
-            .and_then(|id| rho_sdk::SessionId::from_string(id).ok());
-        let session_id = placement.parent_session_id().map(str::to_owned);
+        let ParentBinding {
+            placement,
+            workspace: parent_workspace,
+            persistence,
+        } = self.parent.lock().expect("delegated session lock").clone();
+        // Every host binds its session before a turn can call the `agent`
+        // tool, so a subagent always has the parent it reports to.
+        let Some(session_id) = placement.parent_session_id().map(str::to_owned) else {
+            anyhow::bail!("could not start subagent: no parent session is bound");
+        };
+        let parent_session_id = rho_sdk::SessionId::from_string(session_id.clone())
+            .map_err(|error| anyhow::anyhow!("could not start subagent: {error}"))?;
         let cwd = cwd.to_path_buf();
         let (id, directory) =
             tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement, &cwd))
@@ -227,6 +263,8 @@ impl SubagentManager {
             prompt: prompt.to_string(),
             run_id: id.clone(),
             parent_session_id,
+            parent_workspace,
+            persistence,
             output_file,
         };
         let handle = match self.executor.spawn(launch) {
@@ -274,7 +312,7 @@ impl SubagentManager {
         let mut entries = self.inner.lock().expect("delegated registry lock");
         let mut total = 0u64;
         for entry in entries.values_mut() {
-            if entry.cost_accounted || entry.session_id.as_deref() != Some(session_id) {
+            if entry.cost_accounted || entry.session_id != session_id {
                 continue;
             }
             let status = entry.handle.status();
@@ -337,7 +375,7 @@ impl SubagentManager {
                 task_fallback: None,
                 started: Instant::now(),
                 handle,
-                session_id: Some(session_id.into()),
+                session_id: session_id.into(),
                 observed: false,
                 explicitly_observed: false,
                 cost_accounted: false,
@@ -389,7 +427,7 @@ impl SubagentManager {
     /// A finished row leaves once its result is observed, so the rail drops it
     /// in the same repaint that lands the result in the transcript. Until then
     /// runs owned by `session_id` keep showing their verdict. Runs it will never
-    /// receive (other or no parent session) keep a recent `finished_at` window.
+    /// receive (another parent session's) keep a recent `finished_at` window.
     ///
     /// Host UI only. `list()` stays the full agent-facing registry.
     pub(crate) fn rail_summaries(&self, session_id: &str) -> Vec<SubagentSnapshot> {
@@ -404,7 +442,7 @@ impl SubagentManager {
                     if entry.observed {
                         return None;
                     }
-                    if entry.session_id.as_deref() == Some(session_id) {
+                    if entry.session_id == session_id {
                         return Some(snapshot);
                     }
                     let finished_at = snapshot.status.finished_at?;
@@ -424,9 +462,7 @@ impl SubagentManager {
             .lock()
             .expect("delegated registry lock")
             .values()
-            .any(|entry| {
-                entry.session_id.as_deref() == Some(session_id) && !entry.handle.is_complete()
-            })
+            .any(|entry| entry.session_id == session_id && !entry.handle.is_complete())
     }
 
     /// True while this session still has an undelivered child.
@@ -435,7 +471,7 @@ impl SubagentManager {
             .lock()
             .expect("delegated registry lock")
             .values()
-            .any(|entry| entry.session_id.as_deref() == Some(session_id) && !entry.observed)
+            .any(|entry| entry.session_id == session_id && !entry.observed)
     }
 
     /// Waits for any current child to finish without marking its result delivered.
@@ -447,7 +483,7 @@ impl SubagentManager {
             // this registry lock is held, and their wait returns immediately.
             entries
                 .values()
-                .filter(|entry| entry.session_id.as_deref() == Some(session_id) && !entry.observed)
+                .filter(|entry| entry.session_id == session_id && !entry.observed)
                 .map(|entry| entry.handle.clone())
                 .collect::<Vec<_>>()
         };
@@ -468,7 +504,7 @@ impl SubagentManager {
         let mut notifications = entries
             .iter_mut()
             .filter_map(|(id, entry)| {
-                if entry.observed || entry.session_id.as_deref() != Some(session_id) {
+                if entry.observed || entry.session_id != session_id {
                     return None;
                 }
                 let snapshot = entry.snapshot(id);

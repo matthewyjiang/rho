@@ -192,10 +192,11 @@ async fn running_queries_are_scoped_to_the_parent_session() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let id = spawn_background_run(&manager, root.path()).await;
 
     assert!(!manager.has_running_for_session("session-2"));
@@ -209,10 +210,11 @@ async fn observed_terminal_run_is_not_redelivered() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let id = spawn_background_run(&manager, root.path()).await;
     let snapshot = manager.wait_done(&id).await.unwrap();
     assert!(snapshot.done);
@@ -228,10 +230,11 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let first = spawn_background_run(&manager, root.path()).await;
     let second = spawn_background_run(&manager, root.path()).await;
     manager.wait_done(&first).await.unwrap();
@@ -253,10 +256,11 @@ async fn restored_notifications_can_drain_again() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+    manager.bind_parent_session(
         "session-1",
-        None,
-    ));
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let id = spawn_background_run(&manager, root.path()).await;
     manager.wait_done(&id).await.unwrap();
     let batch = manager.take_notifications("session-1");
@@ -368,6 +372,11 @@ async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
+    manager.bind_parent_session(
+        "session-1",
+        /*storage*/ None,
+        crate::session::SessionPersistence::Saved,
+    );
     let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
     let first = call_agent(
         &tool,

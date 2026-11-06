@@ -12,7 +12,7 @@ use super::{
     InlineChoice, InlineChoiceOption, InlineChoicePending, InteractiveRuntime, PickerBadge,
     PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
-use crate::session::{is_cross_project, Session, SessionSummary, SessionTarget};
+use crate::session::{is_cross_project, Session, SessionListing, SessionSummary, SessionTarget};
 
 const TARGET_PREFIX: &str = "sessions-target:";
 
@@ -530,7 +530,9 @@ impl App {
     fn prompt_delete_directory_sessions(&mut self, cwd: &Path) -> anyhow::Result<()> {
         // List fresh so "all sessions" includes any saved since the hub
         // loaded. One workspace is an index query, well under a millisecond.
-        let targets = Session::list(cwd)?
+        // Sessions the hub hides (runs, subagents, workflow nodes) go too,
+        // rather than linger unlisted.
+        let targets = Session::list(cwd, SessionListing::Everything)?
             .iter()
             .map(SessionSummary::target)
             .collect::<Vec<_>>();

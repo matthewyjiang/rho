@@ -2,11 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use {
     crate::agent::{AgentCapabilities, AgentDefinition, ToolCapability},
-    crate::cli::OutputFormat,
     crate::config::Config,
-    crate::diagnostics::RuntimeDiagnostics,
-    crate::herdr::HerdrReporter,
-    crate::permission_classifier_handler::ClassifierApprovalHandler,
+    crate::session::SessionPersistence,
     crate::subagent::{self, RunState, RunStatus},
     rho_tools::cancellation::RunCancellation,
 };
@@ -14,8 +11,9 @@ use {
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     agent_concurrency::AgentConcurrency,
-    automation::{self, RunReporter},
-    subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
+    headless_host::{self, ChildRun, ParentQuestions, SessionCheckpoint},
+    session_runtime::{SessionRole, UnattendedApprovals},
+    subagent_host_input::SubagentHostInputBridge,
     subagent_messaging::{
         NoticePostError, NoticePoster, SteeringSlot, SubagentNotice, SubagentNoticeBridge,
         ValidatedMessage,
@@ -31,8 +29,8 @@ pub(crate) struct AgentExecutor {
     concurrency: AgentConcurrency,
     host_input: SubagentHostInputBridge,
     notices: SubagentNoticeBridge,
-    approval_session: Option<rho_sdk::ApprovalSession>,
-    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
+    /// What answers a Rho child's approvals besides the child itself.
+    approvals: UnattendedApprovals,
     /// The parent session's added workspace directories, inherited by future
     /// Rho runtime launches.
     added_dirs: Arc<std::sync::RwLock<crate::added_dirs::AddedDirs>>,
@@ -45,7 +43,13 @@ pub(crate) struct AgentLaunchRequest {
     pub(crate) model_override: Option<String>,
     pub(crate) prompt: String,
     pub(crate) run_id: String,
-    pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
+    /// The session that delegated the run.
+    pub(crate) parent_session_id: rho_sdk::SessionId,
+    /// The workspace the parent is saved in, `None` while it has no file;
+    /// see [`SessionRole::Subagent`].
+    pub(crate) parent_workspace: Option<PathBuf>,
+    /// Whether the run's session is saved, as its parent's is.
+    pub(crate) persistence: SessionPersistence,
     pub(crate) output_file: PathBuf,
 }
 
@@ -57,7 +61,7 @@ pub(crate) struct FrozenAgentLaunchRequest {
     pub(crate) output_file: PathBuf,
     pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
     /// Step checkpoints for a Rho runtime agent. Claude and Cursor runs ignore it.
-    pub(crate) checkpoint: Option<automation::SessionCheckpoint>,
+    pub(crate) checkpoint: Option<SessionCheckpoint>,
 }
 
 /// How a live handle can accept parent plain-text messages.
@@ -225,8 +229,7 @@ impl AgentExecutor {
             concurrency,
             host_input,
             notices,
-            approval_session: None,
-            approval_classifier: None,
+            approvals: UnattendedApprovals::Alone,
             added_dirs: Arc::default(),
             host_io: Default::default(),
         }
@@ -238,21 +241,10 @@ impl AgentExecutor {
         self
     }
 
-    /// Routes workflow-agent capability requests through the workflow run's
-    /// host and exact-request approval memory.
-    pub(crate) fn with_approval_session(mut self, session: rho_sdk::ApprovalSession) -> Self {
-        self.approval_session = Some(session);
-        self
-    }
-
-    /// Supplies a classifier template that each Rho agent run isolates so deny
-    /// streaks stay per-run. History and cancellation arrive on each
-    /// [`rho_sdk::ApprovalRequest::context`].
-    pub(crate) fn with_classifier_template(
-        mut self,
-        classifier: Arc<ClassifierApprovalHandler>,
-    ) -> Self {
-        self.approval_classifier = Some(classifier);
+    /// What answers each Rho child's approvals besides the child itself,
+    /// such as a workflow run's approval session or classifier template.
+    pub(crate) fn with_approvals(mut self, approvals: UnattendedApprovals) -> Self {
+        self.approvals = approvals;
         self
     }
 
@@ -353,19 +345,15 @@ impl AgentExecutor {
         #[cfg(not(windows))]
         capabilities.remove(&ToolCapability::Powershell);
         // Delegated questionnaires require a live parent host-input bridge.
-        let questionnaire_target = if delegated_questionnaire_available(
-            request.parent_session_id.as_ref(),
-            self.host_input.is_bound(),
-        ) {
-            request.parent_session_id.clone()
-        } else {
-            None
-        };
+        let questionnaire_target = self
+            .host_input
+            .is_bound()
+            .then(|| request.parent_session_id.clone());
         // Notices share the parent-session binding, not the questionnaire one.
-        let notice_target = request
-            .parent_session_id
-            .clone()
-            .filter(|_| self.notices.is_bound());
+        let notice_target = self
+            .notices
+            .is_bound()
+            .then(|| request.parent_session_id.clone());
         if questionnaire_target.is_none() {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
@@ -386,7 +374,11 @@ impl AgentExecutor {
             bound,
             prompt: request.prompt,
             run_id: request.run_id,
-            parent_session_id: request.parent_session_id,
+            role: SessionRole::Subagent {
+                parent: request.parent_session_id,
+                parent_workspace: request.parent_workspace,
+            },
+            persistence: request.persistence,
             output_file: request.output_file,
             questionnaire_target,
             notice_target,
@@ -420,7 +412,11 @@ impl AgentExecutor {
             bound,
             prompt: request.prompt,
             run_id: request.run_id,
-            parent_session_id: None,
+            role: SessionRole::WorkflowNode,
+            // Saved even when a `--no-save` run started the workflow: a
+            // workflow run is its own durable record, which its nodes'
+            // sessions are part of and `rho workflow` resumes from.
+            persistence: SessionPersistence::Saved,
             output_file: request.output_file,
             questionnaire_target: None,
             notice_target: None,
@@ -435,7 +431,8 @@ impl AgentExecutor {
             bound,
             prompt,
             run_id,
-            parent_session_id,
+            role,
+            persistence,
             output_file,
             questionnaire_target,
             notice_target,
@@ -452,7 +449,7 @@ impl AgentExecutor {
         } = MessagingSupport::for_runtime(bound.runtime());
 
         let mut initial = bound.artifact_identity().starting_status();
-        initial.parent_session_id = parent_session_id.as_ref().map(ToString::to_string);
+        initial.parent_session_id = role.parent().map(ToString::to_string);
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
         subagent::initialize_status(&output_file, &initial)?;
@@ -474,11 +471,7 @@ impl AgentExecutor {
         let notices = self.notices.clone();
         let persisted_output = output_file.clone();
         let concurrency = self.concurrency.clone();
-        // Auto resolves the classifier template (or builds a fresh one) inside
-        // automation; non-Auto keeps approval_session. Both may be set; Auto
-        // ignores the session.
-        let approval_session = self.approval_session.clone();
-        let approval_classifier = self.approval_classifier.clone();
+        let approvals = self.approvals.clone();
         let task_steering_slot = steering_slot.clone();
 
         let task_status_tx = status_tx.clone();
@@ -533,6 +526,7 @@ impl AgentExecutor {
                 Launch::ClaudeCli(mut session) => {
                     append_child_communication_contract(&mut session.system_prompt);
                     session.parent_messages = parent_rx;
+                    session.persistence = persistence;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
                         apply_frozen(&mut session.overrides, frozen);
@@ -562,26 +556,38 @@ impl AgentExecutor {
                         .rho_config()
                         .expect("Rho launch has bound config")
                         .clone();
-                    run_rho_agent(RhoAgentRun {
+                    let agent_id = bound.id().to_string();
+                    let questions = questionnaire_target.map(|parent| ParentQuestions {
+                        bridge: host_input,
+                        run_id: run_id.clone(),
+                        agent_id: agent_id.clone(),
+                        parent,
+                    });
+                    let notices = notice_target.map(|parent_session_id| {
+                        Arc::new(DelegatedNoticePoster {
+                            run_id,
+                            agent_id,
+                            parent_session_id,
+                            notices,
+                        }) as Arc<dyn NoticePoster>
+                    });
+                    headless_host::run_child(ChildRun {
                         bound,
                         config: bound_config,
                         config_path,
                         cwd,
                         prompt,
                         output_file,
-                        run_id,
-                        parent_session_id,
-                        questionnaire_target,
-                        notice_target,
-                        host_input,
+                        role,
+                        persistence,
+                        questions,
                         notices,
                         steering_slot: task_steering_slot,
                         cancellation: task_cancellation,
                         status_tx: task_status_tx,
                         live_title: task_live_title,
                         hook_host_labels,
-                        approval_session,
-                        approval_classifier,
+                        approvals,
                         checkpoint,
                         added_dirs,
                         host_io,
@@ -633,7 +639,12 @@ struct BoundLaunchRequest {
     bound: super::agent_binding::BoundAgent,
     prompt: String,
     run_id: String,
-    parent_session_id: Option<rho_sdk::SessionId>,
+    /// A subagent with its parent, or a workflow node.
+    role: SessionRole,
+    /// Whether the child's session is saved: a Rho runtime child's session
+    /// file, or a Claude child's Claude session. Cursor and Antigravity have
+    /// no unsaved session, so their children keep theirs either way.
+    persistence: SessionPersistence,
     output_file: PathBuf,
     /// Parent session that can present this child's questionnaires, when one
     /// is listening. `None` removes the capability before bind.
@@ -643,7 +654,7 @@ struct BoundLaunchRequest {
     notice_target: Option<rho_sdk::SessionId>,
     frozen_cli: Option<FrozenCliLaunch>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    checkpoint: Option<automation::SessionCheckpoint>,
+    checkpoint: Option<SessionCheckpoint>,
 }
 
 struct FrozenCliLaunch {
@@ -767,134 +778,7 @@ fn append_child_communication_contract(prompt: &mut crate::agent::PromptPolicy) 
     text.push_str(super::subagent_messaging::CHILD_COMMUNICATION_CONTRACT);
 }
 
-/// One delegated run on the Rho runtime, after binding and permit acquisition.
-struct RhoAgentRun {
-    bound: super::agent_binding::BoundAgent,
-    config: Config,
-    config_path: PathBuf,
-    cwd: PathBuf,
-    prompt: String,
-    output_file: PathBuf,
-    run_id: String,
-    parent_session_id: Option<rho_sdk::SessionId>,
-    questionnaire_target: Option<rho_sdk::SessionId>,
-    notice_target: Option<rho_sdk::SessionId>,
-    host_input: SubagentHostInputBridge,
-    notices: SubagentNoticeBridge,
-    steering_slot: Option<SteeringSlot>,
-    cancellation: RunCancellation,
-    status_tx: tokio::sync::watch::Sender<RunStatus>,
-    live_title: crate::run_artifacts::LiveRunTitle,
-    hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    approval_session: Option<rho_sdk::ApprovalSession>,
-    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
-    checkpoint: Option<automation::SessionCheckpoint>,
-    added_dirs: crate::added_dirs::AddedDirs,
-    host_io: crate::tools::host_io::HostIo,
-}
-
-/// Drive a delegated run through Rho's own automation loop.
-async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
-    let RhoAgentRun {
-        bound,
-        mut config,
-        config_path,
-        cwd,
-        prompt,
-        output_file,
-        run_id,
-        parent_session_id,
-        questionnaire_target,
-        notice_target,
-        host_input,
-        notices,
-        steering_slot,
-        cancellation,
-        status_tx,
-        live_title,
-        hook_host_labels,
-        approval_session,
-        approval_classifier,
-        checkpoint,
-        added_dirs,
-        host_io,
-    } = run;
-
-    super::cli_config::prepare_model_metadata(
-        &config,
-        &crate::credential_store::AppCredentialStore,
-        &super::cli_config::ProviderRefreshStatus::NotAttempted,
-    )
-    .await;
-    super::cli_config::normalize_reasoning(&mut config);
-    let diagnostics = RuntimeDiagnostics::new(&config);
-    diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
-    let started_status = status_tx.borrow().clone();
-    let mut reporter = RunReporter::continue_from(
-        output_file,
-        started_status,
-        cwd.clone(),
-        &prompt,
-        Some(status_tx),
-        Some(live_title),
-        steering_slot.clone(),
-    )?;
-    let agent_id = bound.id().to_string();
-    let max_steps = std::num::NonZeroUsize::new(
-        bound
-            .step_limit()
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("agent step limit does not fit this platform"))?,
-    )
-    .ok_or_else(|| anyhow::anyhow!("agent step limit must be positive"))?;
-    let notice_poster = notice_target.map(|parent_session_id| {
-        Arc::new(DelegatedNoticePoster {
-            run_id: run_id.clone(),
-            agent_id: agent_id.clone(),
-            parent_session_id,
-            notices,
-        }) as Arc<dyn NoticePoster>
-    });
-    let startup = automation::Startup {
-        config: &config,
-        config_path,
-        cwd,
-        no_system_prompt: false,
-        system_prompt_suffix: Some(super::subagent_messaging::CHILD_COMMUNICATION_CONTRACT),
-        no_tools: false,
-        no_subagents: true,
-        usage_purpose: "subagent",
-        parent_session_id: parent_session_id.clone(),
-        agent: bound,
-        output_file: None,
-        output: OutputFormat::Text,
-        max_steps: Some(max_steps),
-        timeout: None,
-        diagnostics,
-        herdr: HerdrReporter::default(),
-        host_input: questionnaire_target.map(|parent_session_id| {
-            Arc::new(SubagentHostInputResponder::new(
-                run_id,
-                agent_id,
-                parent_session_id,
-                host_input,
-            )) as Arc<dyn super::headless_run::HostInputResponder>
-        }),
-        notice_poster,
-        steering_slot,
-        approval_session,
-        approval_classifier,
-        hook_host_labels,
-        checkpoint,
-        added_dirs,
-        host_io,
-    };
-    let result =
-        automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;
-    reporter.finish(&result);
-    result.map(|_| ())
-}
-
+/// Posts a delegated child's notices to the parent session that started it.
 struct DelegatedNoticePoster {
     run_id: String,
     agent_id: String,
@@ -917,17 +801,6 @@ impl NoticePoster for DelegatedNoticePoster {
             delivery,
         })
     }
-}
-
-/// Whether a delegated Rho run may expose the questionnaire tool.
-///
-/// Needs a parent session id and a bound parent host-input bridge. Hosts without
-/// questionnaire support and parentless launches do not qualify.
-fn delegated_questionnaire_available(
-    parent_session_id: Option<&rho_sdk::SessionId>,
-    host_input_bound: bool,
-) -> bool {
-    parent_session_id.is_some() && host_input_bound
 }
 
 struct RunTitleSinks {

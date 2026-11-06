@@ -26,7 +26,7 @@ use rho_sdk::{
 use crate::{
     agent::{AgentCatalog, AgentCatalogError, AgentRuntimeSpec},
     app::{
-        session_runtime::{AgentTask, CommandRejected, SessionTools},
+        session_runtime::{AgentTask, CommandRejected, SessionRuntime, SessionTools},
         workflow_cli::discover::{self as workflows, StartCommand},
     },
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError},
@@ -90,7 +90,23 @@ pub(crate) struct CommandScope<'a> {
     pub(crate) permission_mode: PermissionMode,
 }
 
-impl CommandScope<'_> {
+impl<'a> CommandScope<'a> {
+    /// What commands can see of `runtime`'s session, with the process
+    /// config they read.
+    pub(crate) fn of(
+        runtime: &'a SessionRuntime,
+        home: Option<&'a Path>,
+        process_config: &'a Config,
+    ) -> Self {
+        Self {
+            cwd: runtime.cwd(),
+            home,
+            tools: runtime.tools(),
+            config: process_config,
+            permission_mode: runtime.permission_mode(),
+        }
+    }
+
     /// The prompt templates `/prompt:<name>` expands.
     pub(crate) fn templates(&self) -> prompt_templates::PromptTemplates {
         prompt_templates::load(self.cwd, self.home, self.config.prompt_templates.clone())

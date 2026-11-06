@@ -33,6 +33,7 @@ use super::{
 };
 use crate::{
     display_transcript::DisplayTranscript,
+    session::SessionPersistence,
     tools::{
         process::{ProcessManager, ProcessNotification},
         sdk_registry::AppToolSet,
@@ -98,10 +99,13 @@ impl HeadlessDelegation {
     /// in `held` resumes the previous prompt's notices; without one the prompt
     /// binds afresh, retiring any earlier binding. `held` is taken only once
     /// attach succeeds, so a failed attach keeps it for the next prompt.
+    /// Subagents keep their artifacts in `storage`'s folder when it has one,
+    /// and save their sessions as `persistence` says the session does.
     pub(crate) fn attach(
         session: &Session,
         sources: BackgroundSources<'_>,
         storage: Option<&crate::session::Session>,
+        persistence: SessionPersistence,
         held: &mut Option<HeldNotices>,
     ) -> Result<Self, rho_sdk::Error> {
         let (source, requests) = rho_sdk::boundary_input_channel();
@@ -109,10 +113,7 @@ impl HeadlessDelegation {
         let session_id = session.id().to_string();
         let mut held = held.take().map(|HeldNotices(delivery)| delivery);
         let subagents = sources.subagents.map(|manager| {
-            manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
-                session_id.clone(),
-                storage.and_then(crate::session::Session::subagents_dir),
-            ));
+            manager.bind_parent_session(session_id.clone(), storage, persistence);
             held.take().unwrap_or_else(|| {
                 let binding = manager.rebind_notices(None);
                 SubagentDelivery {

@@ -39,6 +39,9 @@ Options:
       --output <OUTPUT>     Select plain final-answer output or a JSON Lines event stream [default: text] [possible values: text, jsonl]
       --max-steps <N>       Override the model-step budget for this run
       --timeout <DURATION>  Cancel the run after this wall-clock duration
+      --no-save             Do not save the run's session or its Rho and Claude
+                            subagents' sessions, so none is left to export or
+                            resume
       --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
       --agent <ID>          Select the agent definition used for this session or automation run
   -h, --help                Print help (see more with '--help')
@@ -50,6 +53,44 @@ file on stdin without `--stdin` is an error (`rho run "review" < diff.txt` needs
 `rho run` uses the same [tools and workspace](/tools-workspace) behavior as the TUI when tools are enabled. That includes [advisor mode](/configuration/advisor-mode): when `advisor_mode` is on and an advisor model is set, the run gets the `advisor` tool. It starts in the current working directory. Relative file paths resolve from that directory, but they can use parent components such as `../`; absolute paths can also read or modify files outside it when the model chooses those tools.
 
 Use `rho --no-tools run "..."` to remove tool access. That flag does not suppress Rho's system prompt; add `--no-system-prompt` as well when you want only the raw prompt and model response (`rho --no-tools --no-system-prompt run "..."`). `rho run --no-tools` fails because `--no-tools` is not a `run` flag.
+
+### Sessions, commands, and questions
+
+Each `rho run` saves its session like an interactive one, recorded as a `run`
+session. Session lists leave runs out, so a script's runs never crowd the
+sessions you had yourself: `rho sessions list`, the `/resume` picker and
+`/sessions` manager, `-c`, ACP session lists, and the `sessions` tool's
+search scopes skip them. A run opens by its id, which the JSONL stream reports
+as `session_id`: `rho sessions export <ID>` writes its transcript and
+`rho --resume <ID>` continues it in the TUI. A run does not ask a model to
+title its session; `rho sessions rename` names it.
+
+Pass `rho run --no-save` to skip saving. The run's session stays in memory:
+no session folder or index row is written, so nothing is left to export or
+resume. Its Rho subagents don't save their sessions either, and its
+`claude-cli` subagents leave no resumable Claude session. Their run artifacts
+go under `~/.rho/subagents/<id>/`, as for any run with no saved session to hold
+them. Two kinds of child still save:
+
+- `cursor` and `antigravity` subagents keep the sessions their CLIs save,
+  since neither has an unsaved mode.
+- Workflow nodes the run starts save their sessions, because a workflow run is
+  its own durable record that `rho workflow` resumes from.
+
+Like the interactive `rho --no-save`, this is not a privacy mode: providers
+still receive requests, and usage records, logs, and hooks may keep their own
+data.
+
+A prompt that starts with a slash command resolves the way it does in an ACP
+session: prompt templates (`/prompt:<name>`), MCP prompts, `/init`,
+`/agent:<name>`, and `$skill` mentions all work. `rho run` rejects commands it
+cannot run, such as `/compact` (a run's session is new, so there is nothing to
+compact), `/workflow:<name>` (use `rho workflow run`), and TUI-only commands,
+as a configuration error with exit code `2`.
+
+Nobody answers questions during a run, so the run gets no questionnaire tool,
+and a question that arrives anyway, such as an MCP server's elicitation, is
+declined. The run continues with the refusal instead of failing.
 
 ### Automation output
 

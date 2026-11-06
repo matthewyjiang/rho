@@ -1,7 +1,9 @@
-//! Session delete with cascade cleanup of parent-linked subagent runs.
+//! Session delete with cascade cleanup of parent-linked subagent runs and
+//! of the child sessions a session started, recursively.
 
 use std::{
-    fs,
+    collections::HashSet,
+    fmt, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -34,10 +36,15 @@ pub struct DeleteOutcome {
     pub id: String,
     pub cwd: PathBuf,
     pub path: PathBuf,
-    /// Number of nested and global parent-linked run directories removed.
+    /// Number of nested and global parent-linked run directories removed,
+    /// child sessions' included.
     pub deleted_run_count: usize,
-    /// Run ids force-deleted while still non-terminal.
+    /// Run ids force-deleted while still non-terminal, child sessions'
+    /// included.
     pub forced_run_ids: Vec<String>,
+    /// Number of child sessions deleted with this one, such as its
+    /// subagents', grandchildren included.
+    pub deleted_child_session_count: usize,
 }
 
 /// One session that cleanup could not remove.
@@ -64,6 +71,30 @@ pub(crate) struct WorkspaceDeleteOutcome {
     pub(crate) failures: Vec<CleanupFailure>,
     pub(crate) kept_protected: Vec<SessionTarget>,
 }
+
+/// A child session's delete failed, which stops its parent's. Names both,
+/// so a refusal of the child does not read as one of its parent.
+#[derive(Debug)]
+struct ChildSessionNotDeleted {
+    child: SessionTarget,
+    parent: SessionTarget,
+    /// The child's own error, with its causes.
+    detail: String,
+}
+
+impl fmt::Display for ChildSessionNotDeleted {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "could not delete child session '{}' of '{}': {}",
+            short_id(&self.child.id),
+            short_id(&self.parent.id),
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for ChildSessionNotDeleted {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RunCleanup {
@@ -134,6 +165,10 @@ pub(super) fn cleanup_missing_targets_in_roots(
                 continue;
             }
         }
+        // Gone with a parent deleted earlier in the batch.
+        if batch.has_deleted(target) {
+            continue;
+        }
         match batch.delete_target(target) {
             Ok(deleted) => outcome.deleted.push(deleted),
             Err(error) => outcome.failures.push(CleanupFailure {
@@ -168,9 +203,9 @@ pub(super) fn delete_in_roots(
 ) -> anyhow::Result<DeleteOutcome> {
     let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
     let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
-    let outcome = batch.delete_resolved(resolved)?;
+    let outcome = batch.delete_resolved(resolved);
     batch.finish();
-    Ok(outcome)
+    outcome
 }
 
 pub(super) fn delete_target_in_roots(
@@ -180,9 +215,10 @@ pub(super) fn delete_target_in_roots(
     options: &DeleteOptions,
 ) -> anyhow::Result<DeleteOutcome> {
     let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
-    let outcome = batch.delete_target(target)?;
+    let outcome = batch.delete_target(target);
+    // Even after a failure: child sessions deleted before it leave the index.
     batch.finish();
-    Ok(outcome)
+    outcome
 }
 
 pub(super) fn delete_targets_in_roots(
@@ -196,6 +232,10 @@ pub(super) fn delete_targets_in_roots(
     for target in targets {
         if options.protected_session.as_ref() == Some(target) {
             outcome.kept_protected.push(target.clone());
+            continue;
+        }
+        // Gone with a parent deleted earlier in the batch.
+        if batch.has_deleted(target) {
             continue;
         }
         match batch.delete_target(target) {
@@ -227,6 +267,14 @@ struct BatchDelete<'a> {
     options: &'a DeleteOptions,
     /// Index rows of sessions removed from disk.
     removed: Vec<index::IndexKey>,
+    /// Workspaces whose index rows were synced to disk this batch, so child
+    /// sessions are found by their recorded parent.
+    synced_workspaces: HashSet<String>,
+    /// Index rows of the sessions being deleted right now: the innermost
+    /// one and the parents waiting on its delete. A header that names its
+    /// own session or one of these as its parent makes a cycle, which must
+    /// neither recurse forever nor block the delete.
+    deleting: HashSet<index::IndexKey>,
 }
 
 impl<'a> BatchDelete<'a> {
@@ -241,6 +289,8 @@ impl<'a> BatchDelete<'a> {
             runs: RunIndexCleanup::open(subagents_root)?,
             options,
             removed: Vec::new(),
+            synced_workspaces: HashSet::new(),
+            deleting: HashSet::new(),
         })
     }
 
@@ -250,7 +300,92 @@ impl<'a> BatchDelete<'a> {
         self.delete_resolved(resolved)
     }
 
+    /// Whether this batch already deleted `target`, such as a child session
+    /// that went with its parent.
+    fn has_deleted(&self, target: &SessionTarget) -> bool {
+        let key = (workspace_key(&target.cwd), target.id.clone());
+        self.removed.contains(&key)
+    }
+
+    /// The saved child sessions `resolved` started that this batch has not
+    /// deleted and is not deleting. Its workspace's index rows are synced
+    /// first, once a batch, so a child the index has not seen yet is still
+    /// found; a child saved in another workspace is found by the row its
+    /// creation recorded.
+    fn child_sessions(&mut self, resolved: &ResolvedSession) -> anyhow::Result<Vec<SessionTarget>> {
+        if self.synced_workspaces.insert(workspace_key(&resolved.cwd)) {
+            index::sync_workspace(self.session_root, &resolved.cwd)?;
+        }
+        let parent = SessionTarget::new(resolved.id.clone(), resolved.cwd.clone());
+        Ok(index::child_sessions(self.session_root, &parent)?
+            .into_iter()
+            .filter(|child| {
+                let key = (workspace_key(&child.cwd), child.id.clone());
+                !self.deleting.contains(&key) && !self.removed.contains(&key)
+            })
+            .collect())
+    }
+
+    /// Deletes child session `child`, or returns `None` when it is gone
+    /// since [`Self::child_sessions`] found it, as already deleted.
+    fn delete_child(&mut self, child: &SessionTarget) -> anyhow::Result<Option<DeleteOutcome>> {
+        match SessionStore::new(self.session_root, &child.cwd).resolve_local(&child.id)? {
+            Some(resolved) => self.delete_resolved(resolved).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// The runs linked to session `id` stored in `unit`, and the ones
+    /// `--force` must delete while non-terminal. Fails when a non-terminal
+    /// run would be deleted without `--force`.
+    fn linked_runs(
+        &self,
+        unit: &SessionUnit,
+        id: &str,
+    ) -> anyhow::Result<(Vec<LinkedRun>, Vec<String>)> {
+        let mut linked = find_nested_runs(unit)?;
+        linked.extend(find_parent_linked_runs(self.subagents_root, id)?);
+        linked.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.dir.cmp(&right.dir))
+        });
+
+        let mut forced_run_ids = Vec::new();
+        for run in &linked {
+            if run.state.is_some_and(RunState::is_terminal) {
+                continue;
+            }
+            if !self.options.force {
+                let crash_hint =
+                    if matches!(run.state, Some(RunState::Running | RunState::Starting)) {
+                        " (use --force only for stale runs left after a crash)"
+                    } else {
+                        ""
+                    };
+                let state = run.state.map(RunState::as_str).unwrap_or("unknown");
+                anyhow::bail!(
+                    "refusing to delete session '{}': related run {} is still {state}{crash_hint}; wait for it to finish or pass --force",
+                    short_id(id),
+                    run.id,
+                );
+            }
+            forced_run_ids.push(run.id.clone());
+        }
+        Ok((linked, forced_run_ids))
+    }
+
+    /// Deletes `resolved` and its child sessions, marked as being deleted
+    /// until it returns so a cycle back to it is skipped.
     fn delete_resolved(&mut self, resolved: ResolvedSession) -> anyhow::Result<DeleteOutcome> {
+        let key = (workspace_key(&resolved.cwd), resolved.id.clone());
+        self.deleting.insert(key.clone());
+        let outcome = self.delete_marked(resolved);
+        self.deleting.remove(&key);
+        outcome
+    }
+
+    fn delete_marked(&mut self, resolved: ResolvedSession) -> anyhow::Result<DeleteOutcome> {
         let options = self.options;
         if options
             .protected_session
@@ -273,37 +408,37 @@ impl<'a> BatchDelete<'a> {
 
         let _session_lease =
             acquire_delete_session_lease(self.session_root, &resolved.cwd, &resolved.id)?;
-        let cleanup_guard = self.runs.lock_parent(&resolved.id)?;
 
-        let mut linked = find_nested_runs(&unit)?;
-        linked.extend(find_parent_linked_runs(self.subagents_root, &resolved.id)?);
-        linked.sort_by(|left, right| {
-            left.id
-                .cmp(&right.id)
-                .then_with(|| left.dir.cmp(&right.dir))
-        });
-
-        let mut forced_run_ids = Vec::new();
-        for run in &linked {
-            if run.state.is_some_and(RunState::is_terminal) {
-                continue;
-            }
-            if !options.force {
-                let crash_hint =
-                    if matches!(run.state, Some(RunState::Running | RunState::Starting)) {
-                        " (use --force only for stale runs left after a crash)"
-                    } else {
-                        ""
-                    };
-                let state = run.state.map(RunState::as_str).unwrap_or("unknown");
-                anyhow::bail!(
-                    "refusing to delete session '{}': related run {} is still {state}{crash_hint}; wait for it to finish or pass --force",
-                    short_id(&resolved.id),
-                    run.id,
-                );
-            }
-            forced_run_ids.push(run.id.clone());
+        // Child sessions go first, each through this same delete, so a
+        // failed one leaves its parent to retry. Check the parent's own
+        // refusals before any of them, so a refused delete keeps them all.
+        // A child's refusal is found only when its turn comes: the children
+        // before it stay deleted, and deleting the parent again finishes.
+        let children = self.child_sessions(&resolved)?;
+        let mut child_runs = 0;
+        let mut child_forced_run_ids = Vec::new();
+        let mut deleted_child_session_count = 0;
+        if !children.is_empty() {
+            self.linked_runs(&unit, &resolved.id)?;
         }
+        for child in &children {
+            let deleted = self.delete_child(child).map_err(|error| {
+                anyhow::Error::new(ChildSessionNotDeleted {
+                    child: child.clone(),
+                    parent: SessionTarget::new(resolved.id.clone(), resolved.cwd.clone()),
+                    detail: format!("{error:#}"),
+                })
+            })?;
+            let Some(deleted) = deleted else {
+                continue;
+            };
+            child_runs += deleted.deleted_run_count;
+            child_forced_run_ids.extend(deleted.forced_run_ids);
+            deleted_child_session_count += 1 + deleted.deleted_child_session_count;
+        }
+
+        let cleanup_guard = self.runs.lock_parent(&resolved.id)?;
+        let (linked, mut forced_run_ids) = self.linked_runs(&unit, &resolved.id)?;
 
         // Finish every fallible side cleanup while the transcript still exists,
         // so any error leaves an exact target that the caller can retry.
@@ -329,12 +464,14 @@ impl<'a> BatchDelete<'a> {
         self.removed
             .push((workspace_key(&resolved.cwd), resolved.id.clone()));
 
+        forced_run_ids.extend(child_forced_run_ids);
         Ok(DeleteOutcome {
-            deleted_run_count: linked.len(),
+            deleted_run_count: linked.len() + child_runs,
             id: resolved.id,
             cwd: resolved.cwd,
             path: resolved.path,
             forced_run_ids,
+            deleted_child_session_count,
         })
     }
 

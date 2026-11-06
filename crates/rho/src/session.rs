@@ -19,6 +19,7 @@ use rho_sdk::{CompactionState, Revision, SessionId};
 mod agent_identity;
 mod delete;
 mod display_rows;
+mod id_match;
 mod index;
 mod layout;
 mod persistence;
@@ -91,11 +92,14 @@ pub struct SessionSummary {
     pub last_user_message: Option<String>,
     /// Added directories as last saved, some possibly gone since.
     pub added_dirs: Vec<PathBuf>,
+    /// The host that created the session; `None` for a file written before
+    /// origins were recorded.
+    pub origin: Option<SessionOrigin>,
 }
 
 /// Which host created a session, recorded on its header when its file is
-/// created for future listing filters (a person's sessions vs headless
-/// ones).
+/// created so listings can tell the sessions a person had from the ones a
+/// program ran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionOrigin {
@@ -116,8 +120,85 @@ pub(crate) enum SessionOrigin {
     Unknown,
 }
 
-/// Exact identity for a session within its owning workspace.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+impl SessionSummary {
+    /// Whether person-facing listings show this session: its origin is
+    /// person-facing, or the file predates origins.
+    pub(crate) fn is_person_facing(&self) -> bool {
+        self.origin.is_none_or(SessionOrigin::is_person_facing)
+    }
+}
+
+impl SessionOrigin {
+    /// Whether a person had the session, so person-facing listings show
+    /// it. A script's `rho run` and a parent's subagents and workflow nodes
+    /// are left out: whoever ran one already holds what it returned, and
+    /// opening it by id still works. An origin this Rho does not know stays
+    /// listed, like a file written before origins were recorded.
+    pub(crate) fn is_person_facing(self) -> bool {
+        match self {
+            Self::Interactive | Self::Acp | Self::Unknown => true,
+            Self::Run | Self::Subagent | Self::WorkflowNode => false,
+        }
+    }
+}
+
+/// Where a new session came from, as its header records it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionProvenance {
+    /// The host that created it.
+    pub(crate) origin: SessionOrigin,
+    /// The saved session that started it, such as a subagent's parent, by
+    /// its id and workspace: the same id can be saved in two workspaces.
+    /// Deleting that session deletes this one with it.
+    pub(crate) parent: Option<SessionTarget>,
+}
+
+impl From<SessionOrigin> for SessionProvenance {
+    /// A session no other session started.
+    fn from(origin: SessionOrigin) -> Self {
+        Self {
+            origin,
+            parent: None,
+        }
+    }
+}
+
+/// Whether a new session is ever written to the session root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPersistence {
+    /// Written from its first save on, so it can be listed and reopened.
+    Saved,
+    /// Never written: no session file and no index row, so nothing is left
+    /// to reopen. `rho run --no-save` runs this way, and so do the Rho
+    /// subagents such a run starts, since their parent is nowhere on disk;
+    /// its Claude subagents discard their Claude sessions.
+    Ephemeral,
+}
+
+/// Which saved sessions a listing returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionListing {
+    /// The sessions a person picks from: pickers, `rho sessions`,
+    /// `--continue` and ACP lists. Only person-facing origins (see
+    /// [`SessionOrigin::is_person_facing`]) and files older than origins.
+    PersonFacing,
+    /// Every saved session: exact-id lookups and bulk deletes that must not
+    /// strand a hidden session's files.
+    Everything,
+}
+
+impl SessionListing {
+    fn retain(self, sessions: &mut Vec<SessionSummary>) {
+        match self {
+            Self::PersonFacing => sessions.retain(SessionSummary::is_person_facing),
+            Self::Everything => {}
+        }
+    }
+}
+
+/// Exact identity for a session within its owning workspace. A child
+/// session's header records its parent's as `{"id": …, "cwd": …}`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SessionTarget {
     pub id: String,
     pub cwd: PathBuf,
@@ -185,6 +266,9 @@ pub(super) struct SessionIndexRecord {
     pub(super) branch_count: u64,
     pub(super) active_leaf_id: Option<String>,
     pub(super) effective_format_version: u32,
+    /// The session that started this one, from its header; `None` for a
+    /// file written before parents were recorded.
+    pub(super) parent_session: Option<SessionTarget>,
 }
 /// A held session lease. Dropping it unlocks explicitly before closing: a
 /// child process spawned elsewhere in Rho shares the lock until it execs, so
@@ -351,14 +435,10 @@ impl Session {
         let store = SessionStore::new(session_root, cwd);
         let resolved = store.resolve(id_prefix)?;
         let (record, tree) = resolved.summary_with_tree(cwd)?;
-        let title = Self::list_in_root(session_root, cwd)
+        let title = SessionStore::new(session_root, &resolved.cwd)
+            .title(&resolved.id)
             .ok()
-            .and_then(|summaries| {
-                summaries
-                    .into_iter()
-                    .find(|summary| summary.id == resolved.id)
-                    .and_then(|summary| summary.title)
-            });
+            .flatten();
 
         let messages = match tree.active_leaf_id() {
             Some(active_leaf_id) => persistence::insert_interrupted_display_placeholders(
@@ -446,13 +526,15 @@ impl Session {
         Ok(())
     }
 
-    pub fn list(cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_in_root(&session_root()?, cwd)
+    /// Lists `listing`'s sessions in workspace `cwd`, newest first.
+    pub(crate) fn list(cwd: &Path, listing: SessionListing) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_in_root(&session_root()?, cwd, listing)
     }
 
-    /// Lists sessions across every workspace under the session root.
-    pub fn list_all() -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_all_in_root(&session_root()?)
+    /// Lists `listing`'s sessions across every workspace under the session
+    /// root, newest first.
+    pub(crate) fn list_all(listing: SessionListing) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_all_in_root(&session_root()?, listing)
     }
 
     /// Lists sessions whose recorded workspace path is no longer a directory.
@@ -601,16 +683,23 @@ impl Session {
         SessionStore::new(session_root, &resolved.cwd).title(&resolved.id)
     }
 
-    fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        SessionStore::new(session_root, cwd).list()
+    fn list_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        listing: SessionListing,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let mut sessions = SessionStore::new(session_root, cwd).list()?;
+        listing.retain(&mut sessions);
+        Ok(sessions)
     }
 
     #[cfg(test)]
     pub(crate) fn list_in_root_for_test(
         session_root: &Path,
         cwd: &Path,
+        listing: SessionListing,
     ) -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_in_root(session_root, cwd)
+        Self::list_in_root(session_root, cwd, listing)
     }
 
     #[cfg(test)]
@@ -633,8 +722,13 @@ impl Session {
         Self::set_generated_title_in_root(session_root, cwd, id_prefix, title)
     }
 
-    pub(crate) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        index::list_all_sessions(session_root)
+    pub(crate) fn list_all_in_root(
+        session_root: &Path,
+        listing: SessionListing,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let mut sessions = index::list_all_sessions(session_root)?;
+        listing.retain(&mut sessions);
+        Ok(sessions)
     }
 
     #[cfg(test)]
@@ -663,6 +757,7 @@ impl Session {
             .into_iter()
             .filter(|session| session.id.starts_with(id_prefix))
             .collect::<Vec<_>>();
+        let local = id_match::prefer_exact(local, id_prefix, |session| Some(session.id.clone()));
         if !local.is_empty() {
             return Ok(local);
         }
@@ -681,21 +776,21 @@ impl Session {
         delete::delete_in_roots(session_root, subagents_root, cwd, id_prefix, &options)
     }
 
-    /// Creates the file of session `id`, which `origin`'s host started as
+    /// Creates the file of session `id`, which came from `provenance` as
     /// the agent `agent_id` with `agent_fingerprint`.
     pub(crate) fn create_with_id(
         cwd: &Path,
         id: &str,
         agent_id: &str,
         agent_fingerprint: &str,
-        origin: SessionOrigin,
+        provenance: SessionProvenance,
     ) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(
             &session_root()?,
             cwd,
             id,
             Some((agent_id, agent_fingerprint)),
-            origin,
+            provenance,
         )
     }
 
@@ -706,7 +801,7 @@ impl Session {
             cwd,
             &Uuid::new_v4().to_string(),
             None,
-            SessionOrigin::Interactive,
+            SessionOrigin::Interactive.into(),
         )
     }
 
@@ -716,7 +811,13 @@ impl Session {
         cwd: &Path,
         id: &str,
     ) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(session_root, cwd, id, None, SessionOrigin::Interactive)
+        Self::create_with_id_in_root(
+            session_root,
+            cwd,
+            id,
+            None,
+            SessionOrigin::Interactive.into(),
+        )
     }
 
     #[cfg(test)]
@@ -731,7 +832,7 @@ impl Session {
             cwd,
             &Uuid::new_v4().to_string(),
             Some((agent_id, agent_fingerprint)),
-            SessionOrigin::Interactive,
+            SessionOrigin::Interactive.into(),
         )
     }
 
@@ -740,14 +841,14 @@ impl Session {
         cwd: &Path,
         id: &str,
         agent: Option<(&str, &str)>,
-        origin: SessionOrigin,
+        provenance: SessionProvenance,
     ) -> anyhow::Result<Self> {
         let store = SessionStore::new(session_root, cwd);
         let id = id.to_string();
         let created_at = unix_timestamp_secs();
         let path = store.create_path(&id, created_at)?;
         let session = Self::from_parts(session_root, cwd, id.clone(), path)?;
-        session.append_session_metadata(id, created_at, agent, origin)?;
+        session.append_session_metadata(id, created_at, agent, provenance)?;
         Ok(session)
     }
 

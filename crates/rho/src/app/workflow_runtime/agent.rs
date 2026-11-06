@@ -3,7 +3,7 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use crate::{
     app::{
         agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
-        automation::SessionCheckpoint,
+        headless_host::SessionCheckpoint,
     },
     subagent::RunState,
     workflow::{

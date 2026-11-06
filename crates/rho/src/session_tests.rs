@@ -237,9 +237,29 @@ fn opens_session_by_uuid_prefix() {
 
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
-    for (case, prefix) in [("ambiguous", "aaaaaaaa"), ("missing", "missing")] {
-        assert!(
-            Session::open_by_id_in_root(&root, &cwd, prefix).is_err(),
+    // Client-chosen ids can prefix one another; a whole id still names one.
+    write_minimal_session_file(&root, &cwd, "client");
+    write_minimal_session_file(&root, &cwd, "client-2");
+    for (case, prefix, opens) in [
+        ("ambiguous", "aaaaaaaa", None),
+        ("missing", "missing", None),
+        ("whole id that prefixes another", "client", Some("client")),
+    ] {
+        // Open, `rho sessions rm`'s lookup and rename resolve alike.
+        let opened = Session::open_by_id_in_root(&root, &cwd, prefix).ok();
+        let found = Session::find_by_id_prefix_in_root(&root, &cwd, prefix)
+            .unwrap()
+            .into_iter()
+            .map(|session| session.id)
+            .collect::<Vec<_>>();
+        let renamed = Session::set_title_in_root_for_test(&root, &cwd, prefix, case).is_ok();
+        assert_eq!(
+            (
+                opened.as_ref().map(|(session, _)| session.id()),
+                (found.len() == 1).then(|| found[0].as_str()),
+                renamed,
+            ),
+            (opens, opens, opens.is_some()),
             "{case}"
         );
     }
@@ -375,7 +395,7 @@ fn list_backfills_existing_sessions_and_sorts_newest_first() {
     write_session_file(&root, &cwd, older_id, 10, &["older prompt"]);
     write_session_file(&root, &cwd, newer_id, 20, &["newer prompt"]);
 
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
+    let summaries = Session::list_in_root(&root, &cwd, SessionListing::PersonFacing).unwrap();
 
     assert_eq!(summaries.len(), 2);
     assert_eq!(summaries[0].id, newer_id);
@@ -397,10 +417,15 @@ fn list_removes_stale_index_rows() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
-    assert_eq!(Session::list_in_root(&root, &cwd).unwrap().len(), 1);
+    assert_eq!(
+        Session::list_in_root(&root, &cwd, SessionListing::PersonFacing)
+            .unwrap()
+            .len(),
+        1
+    );
     remove_session_storage(session.path());
 
-    let summaries = Session::list_in_root(&root, &cwd).unwrap();
+    let summaries = Session::list_in_root(&root, &cwd, SessionListing::PersonFacing).unwrap();
 
     assert!(summaries.is_empty());
 }
@@ -509,6 +534,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         agent_fingerprint: None,
         agent_role: crate::session::agent_identity::SessionAgentRole::Root,
         origin: None,
+        parent_session: None,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
@@ -604,9 +630,11 @@ fn deletes_folder_session_and_cascades_parent_linked_runs() {
     assert!(!session_dir.exists());
     assert!(!linked.exists());
     assert!(other.exists());
-    assert!(Session::list_in_root_for_test(&root, &cwd)
-        .unwrap()
-        .is_empty());
+    assert!(
+        Session::list_in_root_for_test(&root, &cwd, SessionListing::PersonFacing)
+            .unwrap()
+            .is_empty()
+    );
 
     let err = Session::delete_by_id_in_roots(
         &root,
@@ -699,7 +727,7 @@ fn deletes_legacy_flat_session_and_web_companion() {
     fs::create_dir_all(&web).unwrap();
     fs::write(web.join("page.html"), b"<html></html>").unwrap();
     // Ensure the index knows about the legacy file before delete.
-    let _ = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let _ = Session::list_in_root_for_test(&root, &cwd, SessionListing::PersonFacing).unwrap();
 
     Session::delete_by_id_in_roots(
         &root,
@@ -845,7 +873,7 @@ fn cleans_up_sessions_for_missing_workspaces_only() {
             .collect::<std::collections::HashSet<_>>(),
         stale_ids.iter().map(String::as_str).collect()
     );
-    let remaining = Session::list_all_in_root(&root).unwrap();
+    let remaining = Session::list_all_in_root(&root, SessionListing::PersonFacing).unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, kept_id);
 }
@@ -890,7 +918,7 @@ fn missing_workspace_cleanup_deletes_only_reviewed_targets() {
             .collect::<Vec<_>>(),
         vec![reviewed_id.as_str()]
     );
-    let remaining = Session::list_all_in_root(&root).unwrap();
+    let remaining = Session::list_all_in_root(&root, SessionListing::PersonFacing).unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, late_id);
 }
@@ -909,7 +937,7 @@ fn list_all_includes_other_workspaces() {
         .append_message(&Message::user_text("project b"))
         .unwrap();
 
-    let all = Session::list_all_in_root(&root).unwrap();
+    let all = Session::list_all_in_root(&root, SessionListing::PersonFacing).unwrap();
     let ids = all
         .iter()
         .map(|summary| summary.id.as_str())
@@ -954,7 +982,8 @@ fn set_title_resolves_across_workspaces() {
     assert_eq!(updated.cwd.as_path(), created_cwd.as_ref());
     assert_eq!(updated.title, "cross project title");
 
-    let listed = Session::list_in_root_for_test(&root, &created_cwd).unwrap();
+    let listed =
+        Session::list_in_root_for_test(&root, &created_cwd, SessionListing::PersonFacing).unwrap();
     let summary = listed
         .into_iter()
         .find(|summary| summary.id == id)
@@ -984,7 +1013,7 @@ fn set_generated_title_does_not_overwrite_manual_title() {
         Session::set_generated_title_in_root_for_test(&root, &cwd, &id, "auto name").unwrap();
     assert!(generated.is_none());
 
-    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
+    let listed = Session::list_in_root_for_test(&root, &cwd, SessionListing::PersonFacing).unwrap();
     let summary = listed
         .into_iter()
         .find(|summary| summary.id == id)
@@ -1031,7 +1060,7 @@ fn the_header_keeps_the_origin_the_session_was_created_with() {
             &cwd,
             "acp-session",
             Some(("rho", "fingerprint")),
-            SessionOrigin::Acp,
+            SessionOrigin::Acp.into(),
         )
         .unwrap();
         edit(&session);
@@ -1042,5 +1071,90 @@ fn the_header_keeps_the_origin_the_session_was_created_with() {
             _ => panic!("the file starts with its header"),
         };
         assert_eq!(origin, Some(expected), "{label}");
+    }
+}
+
+// Covers: person-facing listings leave out `rho run`, subagent, and workflow
+// node sessions and keep every other origin, including files written before
+// origins were recorded; the index carries each header's origin; a hidden
+// session still opens by id.
+// Owner: session listing
+#[test]
+fn person_facing_listings_leave_out_runs_and_child_sessions() {
+    // A header as an older Rho (no origin) or a later one (an origin this
+    // one does not know) writes it.
+    const OLDER_RHO: &str = "";
+    const LATER_RHO: &str = r#","origin":"something_new""#;
+    use SessionOrigin::{Acp, Interactive, Run, Subagent, Unknown, WorkflowNode};
+    // (id, created as, header rewritten to, indexed origin, person-facing)
+    let cases = [
+        ("interactive", Interactive, None, Some(Interactive), true),
+        ("acp", Acp, None, Some(Acp), true),
+        ("run", Run, None, Some(Run), false),
+        ("subagent", Subagent, None, Some(Subagent), false),
+        (
+            "workflow-node",
+            WorkflowNode,
+            None,
+            Some(WorkflowNode),
+            false,
+        ),
+        ("older-rho", Interactive, Some(OLDER_RHO), None, true),
+        (
+            "later-rho",
+            Interactive,
+            Some(LATER_RHO),
+            Some(Unknown),
+            true,
+        ),
+    ];
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    for (id, origin, rewritten, ..) in cases {
+        let session =
+            Session::create_with_id_in_root(&root, &cwd, id, None, origin.into()).unwrap();
+        if let Some(rewritten) = rewritten {
+            let header = fs::read_to_string(session.path()).unwrap();
+            let edited = header.replacen(r#","origin":"interactive""#, rewritten, 1);
+            assert_ne!(edited, header, "{id}: the header records its origin");
+            fs::write(session.path(), edited).unwrap();
+        }
+    }
+
+    let by_id = |mut sessions: Vec<(String, Option<SessionOrigin>)>| {
+        sessions.sort_by(|(left, _), (right, _)| left.cmp(right));
+        sessions
+    };
+    let listed = |sessions: anyhow::Result<Vec<SessionSummary>>| {
+        by_id(
+            sessions
+                .unwrap()
+                .into_iter()
+                .map(|session| (session.id, session.origin))
+                .collect(),
+        )
+    };
+    let expected = |listing: SessionListing| {
+        by_id(
+            cases
+                .iter()
+                .filter(|case| case.4 || listing == SessionListing::Everything)
+                .map(|(id, _, _, indexed, _)| (id.to_string(), *indexed))
+                .collect(),
+        )
+    };
+    for listing in [SessionListing::PersonFacing, SessionListing::Everything] {
+        assert_eq!(
+            [
+                listed(Session::list_in_root_for_test(&root, &cwd, listing)),
+                listed(Session::list_all_in_root(&root, listing)),
+            ],
+            [expected(listing), expected(listing)],
+            "{listing:?}"
+        );
+    }
+    for (id, ..) in cases {
+        Session::open_by_id_in_root(&root, &cwd, id)
+            .unwrap_or_else(|error| panic!("{id}: {error:#}"));
     }
 }

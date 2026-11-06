@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::model::Message;
 
 use super::{page, PAGE_SIZE};
-use crate::session::{Session as StoredSession, SessionSummary};
+use crate::session::{Session as StoredSession, SessionListing, SessionSummary};
 
 fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> SessionSummary {
     SessionSummary {
@@ -22,6 +22,7 @@ fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> Session
         first_user_message: None,
         last_user_message: None,
         added_dirs: Vec::new(),
+        origin: None,
     }
 }
 
@@ -148,7 +149,9 @@ fn listed_store_sessions_open_by_their_listed_id() {
     drop(saved);
     drop(StoredSession::create_in_root(root.path(), &cwd).unwrap());
 
-    let store = StoredSession::list_in_root_for_test(root.path(), &cwd).unwrap();
+    let store =
+        StoredSession::list_in_root_for_test(root.path(), &cwd, SessionListing::PersonFacing)
+            .unwrap();
     let listed = page(store, None).unwrap().sessions;
 
     assert_eq!(

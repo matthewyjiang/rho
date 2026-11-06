@@ -70,10 +70,15 @@ mod workflow;
 pub(crate) use agent::AgentTask;
 #[cfg(test)]
 pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
-pub(crate) use approval_policy::ApprovalPolicy;
+pub(crate) use approval_policy::{
+    ensure_auto_classifier_model, ApprovalPolicy, UnattendedApprovals,
+};
 #[cfg(test)]
 pub(in crate::app) use build::session_config;
-pub(crate) use build::{ChildAgents, QuestionSupport, RunShape, SessionBuild, SessionRole};
+pub(crate) use build::{
+    ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
+    SessionRole,
+};
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
 pub(crate) use events::{
@@ -89,9 +94,11 @@ pub(crate) use prompt_gate::Closing;
 pub(crate) use prompt_turn::{PlanReport, TurnView};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
+#[cfg(test)]
+pub(in crate::app) use test_support::{unattended_runtime_on, HangUntilCancel};
 pub(crate) use title::TitleJob;
 use title::TitleState;
-pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
+pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
 pub(crate) use workflow::WorkflowStart;
 
 /// A request the session recognizes but cannot run, such as a TUI-only
@@ -163,6 +170,10 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
+    /// Where step checkpoints are also saved; see
+    /// [`Self::mirror_step_checkpoints`].
+    // Temporary(reopen): goes with `SessionCheckpoint`.
+    step_mirror: Option<std::sync::Arc<dyn rho_sdk::SessionStore>>,
 }
 
 impl SessionRuntime {
@@ -197,6 +208,7 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
+            step_mirror: None,
         }
     }
 
@@ -225,6 +237,12 @@ impl SessionRuntime {
         self.storage.cwd()
     }
 
+    /// The root the session's tools resolve paths against: the workspace
+    /// as the permission layer canonicalized it.
+    pub(crate) fn workspace_root(&self) -> &Path {
+        &self.permission.workspace_root
+    }
+
     pub(crate) fn permission_mode(&self) -> PermissionMode {
         self.permission.mode
     }
@@ -250,6 +268,15 @@ impl SessionRuntime {
     pub(crate) async fn shutdown(self) {
         self.handle.cancel();
         self.built.teardown().await;
+    }
+
+    /// Reports to the session's hooks that it ends with its prompt stopped
+    /// for `reason`, as a failed run. A cancelled turn reports no session
+    /// end, since an attended session goes on after it; a headless host,
+    /// whose session ends with its one prompt, calls this before
+    /// [`Self::shutdown`] when that prompt was cancelled.
+    pub(crate) fn end_stopped(&self, reason: &str) {
+        self.dispatch_failed(&format!("stopped: {reason}"));
     }
 
     fn dispatch_failed(&self, message: &str) {

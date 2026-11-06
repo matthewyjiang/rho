@@ -6,13 +6,14 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
-const INDEX_SCHEMA_VERSION: u32 = 2;
-
+use super::id_match::{path_id, prefer_exact};
 use super::persistence::{
     clamp_u64_to_i64, read_session_cwd, session_dir_in_root, session_file_stats,
     session_id_from_path, summarize_session_file, workspace_key, SessionUnit,
 };
-use super::{Session, SessionIndexRecord, SessionSummary};
+use super::{
+    Session, SessionIndexRecord, SessionOrigin, SessionProvenance, SessionSummary, SessionTarget,
+};
 
 #[path = "index_connection.rs"]
 mod connection;
@@ -20,6 +21,11 @@ pub(super) use connection::{open_index, sync_committed_writes};
 #[path = "index_list.rs"]
 mod list;
 pub(super) use list::{list_all_sessions, summaries_matching_id_prefix};
+#[path = "index_schema.rs"]
+mod schema;
+use schema::migrate_index;
+#[cfg(test)]
+use schema::{migrate_index_with_hook, validate_index_columns, INDEX_SCHEMA_VERSION};
 
 pub(super) fn list_workspace_sessions(
     session_root: &Path,
@@ -33,7 +39,7 @@ pub(super) fn list_workspace_sessions(
     let workspace_key = workspace_key(cwd);
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs
+                title, first_user_message, last_user_message, added_dirs, origin
          from sessions
          where workspace_key = ?1
          order by updated_at desc, created_at desc, id asc",
@@ -51,14 +57,17 @@ pub(super) fn matching_session_paths(
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
-    query_existing_paths(
+    let paths = query_existing_paths(
         &connection,
         "select path
          from sessions
          where workspace_key = ?1 and substr(id, 1, length(?2)) = ?2
          order by id asc",
         params![workspace_key(cwd), id_prefix],
-    )
+    )?;
+    Ok(prefer_exact(paths, id_prefix, |path| {
+        session_id_from_path(path)
+    }))
 }
 
 /// Resolves a session by id prefix across every workspace, returning each
@@ -98,10 +107,42 @@ pub(super) fn matching_sessions_any_workspace(
         let cwd: String = row.get(1)?;
         Ok((PathBuf::from(path), PathBuf::from(cwd)))
     })?;
-    Ok(rows
+    let matches = rows
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .filter(|(path, _)| path.exists())
+        .collect();
+    Ok(prefer_exact(matches, id_prefix, path_id))
+}
+
+/// The saved sessions, in any workspace, whose header names `parent` (id
+/// and workspace) as the session that started them, oldest first. Rows
+/// whose file is gone are skipped.
+pub(super) fn child_sessions(
+    session_root: &Path,
+    parent: &SessionTarget,
+) -> anyhow::Result<Vec<SessionTarget>> {
+    let connection = open_index(session_root)?;
+    let connection = connection
+        .lock()
+        .expect("session index connection poisoned");
+    let mut statement = connection.prepare(
+        "select cwd, id, path
+         from sessions
+         where parent_workspace_key = ?1 and parent_id = ?2
+         order by created_at asc, id asc",
+    )?;
+    let rows = statement.query_map(params![workspace_key(&parent.cwd), parent.id], |row| {
+        let cwd: String = row.get(0)?;
+        let id: String = row.get(1)?;
+        let path: String = row.get(2)?;
+        Ok((SessionTarget::new(id, cwd), PathBuf::from(path)))
+    })?;
+    Ok(rows
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, path)| path.exists())
+        .map(|(target, _)| target)
         .collect())
 }
 
@@ -385,7 +426,11 @@ pub(super) fn sync_session_file(
     Ok(())
 }
 
-pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Result<()> {
+pub(super) fn record_created(
+    session: &Session,
+    created_at: u64,
+    provenance: SessionProvenance,
+) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection
         .lock()
@@ -403,6 +448,7 @@ pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Resu
             first_user_message: None,
             last_user_message: None,
             added_dirs: Vec::new(),
+            origin: Some(provenance.origin),
         },
         file_size,
         file_mtime,
@@ -410,6 +456,7 @@ pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Resu
         branch_count: 0,
         active_leaf_id: None,
         effective_format_version: super::persistence::SESSION_VERSION,
+        parent_session: provenance.parent,
     };
     upsert_record(&connection, &session.workspace_key, &record)
 }
@@ -505,159 +552,6 @@ pub(super) fn record_snapshot_record(
         .lock()
         .expect("session index connection poisoned");
     upsert_record(&connection, &session.workspace_key, record)
-}
-
-fn migrate_index(connection: &mut Connection) -> anyhow::Result<()> {
-    migrate_index_with_hook(connection, |_| Ok(()))
-}
-
-fn migrate_index_with_hook(
-    connection: &mut Connection,
-    before_commit: impl FnOnce(&Transaction<'_>) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    // IMMEDIATE waits on the busy handler for other writers (a deferred
-    // transaction upgrading to a write fails at once with BUSY_SNAPSHOT in
-    // WAL), and reading the version under it serializes the migration decision.
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let version: u32 = transaction.query_row("pragma user_version", [], |row| row.get(0))?;
-    if version > INDEX_SCHEMA_VERSION {
-        anyhow::bail!(
-            "unsupported session index schema {version} (maximum supported: {INDEX_SCHEMA_VERSION})"
-        );
-    }
-    if version > 0 {
-        validate_legacy_index_columns(&transaction)?;
-    }
-    if version == 0 {
-        transaction.execute_batch(
-            "create table if not exists sessions (
-            workspace_key text not null,
-            cwd text not null,
-            id text not null,
-            path text not null,
-            created_at integer not null,
-            updated_at integer not null,
-            message_count integer not null default 0,
-            title text,
-            first_user_message text,
-            last_user_message text,
-            added_dirs text,
-            file_size integer,
-            file_mtime integer,
-            node_count integer not null default 0,
-            branch_count integer not null default 0,
-            active_leaf_id text,
-            effective_format_version integer not null default 1,
-            primary key (workspace_key, id)
-        );",
-        )?;
-        ensure_column(&transaction, "title text")?;
-        ensure_column(&transaction, "first_user_message text")?;
-    }
-    // Added without a version bump: older Rho validates only the columns it
-    // reads, so it keeps using an index that has this one. Rows without it,
-    // or with a stale one, re-summarize; see `StampedDirs`.
-    ensure_column(&transaction, "added_dirs text")?;
-    ensure_column(&transaction, "node_count integer not null default 0")?;
-    ensure_column(&transaction, "branch_count integer not null default 0")?;
-    ensure_column(&transaction, "active_leaf_id text")?;
-    ensure_column(
-        &transaction,
-        "effective_format_version integer not null default 1",
-    )?;
-    if version < 2 {
-        // Force the next workspace sync to backfill tree facts for existing rows.
-        transaction.execute("update sessions set file_size = null", [])?;
-    }
-    validate_index_columns(&transaction)?;
-    transaction.execute_batch(
-        "create index if not exists sessions_workspace_updated_idx
-            on sessions(workspace_key, updated_at desc);
-         create index if not exists sessions_workspace_id_idx
-            on sessions(workspace_key, id);",
-    )?;
-    transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
-    before_commit(&transaction)?;
-    super::search_journal::install(&transaction)?;
-    transaction.commit()?;
-    Ok(())
-}
-
-fn validate_legacy_index_columns(connection: &Connection) -> anyhow::Result<()> {
-    const REQUIRED_COLUMNS: &[&str] = &[
-        "workspace_key",
-        "cwd",
-        "id",
-        "path",
-        "created_at",
-        "updated_at",
-        "message_count",
-        "last_user_message",
-        "file_size",
-        "file_mtime",
-    ];
-    validate_columns(connection, REQUIRED_COLUMNS)
-}
-
-fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
-    const REQUIRED_COLUMNS: &[&str] = &[
-        "workspace_key",
-        "cwd",
-        "id",
-        "path",
-        "created_at",
-        "updated_at",
-        "message_count",
-        "title",
-        "first_user_message",
-        "last_user_message",
-        "added_dirs",
-        "file_size",
-        "file_mtime",
-        "node_count",
-        "branch_count",
-        "active_leaf_id",
-        "effective_format_version",
-    ];
-    validate_columns(connection, REQUIRED_COLUMNS)
-}
-
-fn validate_columns(connection: &Connection, required: &[&str]) -> anyhow::Result<()> {
-    let columns = session_table_columns(connection)?;
-    let missing = required
-        .iter()
-        .filter(|column| !columns.contains(**column))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "malformed session index schema: missing column(s): {}",
-            missing.join(", ")
-        );
-    }
-    Ok(())
-}
-
-fn ensure_column(connection: &Connection, column_definition: &str) -> anyhow::Result<()> {
-    let column_name = column_definition
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("column definition must include a name"))?;
-    if !session_table_columns(connection)?.contains(column_name) {
-        connection.execute(
-            &format!("alter table sessions add column {column_definition}"),
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-fn session_table_columns(connection: &Connection) -> anyhow::Result<HashSet<String>> {
-    let mut statement = connection.prepare("pragma table_info(sessions)")?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<HashSet<_>>>()?;
-    Ok(columns)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -797,6 +691,10 @@ fn upsert_record(
 ) -> anyhow::Result<()> {
     let cwd = record.summary.cwd.to_string_lossy().to_string();
     let path = record.summary.path.to_string_lossy().to_string();
+    let parent_workspace_key = record
+        .parent_session
+        .as_ref()
+        .map(|parent| super::persistence::workspace_key(&parent.cwd));
     connection.execute(
         "insert into sessions (
             workspace_key,
@@ -815,8 +713,12 @@ fn upsert_record(
             node_count,
             branch_count,
             active_leaf_id,
-            effective_format_version
-         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            effective_format_version,
+            origin,
+            parent_workspace_key,
+            parent_id
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                   ?19, ?20)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -832,7 +734,10 @@ fn upsert_record(
             node_count = excluded.node_count,
             branch_count = excluded.branch_count,
             active_leaf_id = excluded.active_leaf_id,
-            effective_format_version = excluded.effective_format_version",
+            effective_format_version = excluded.effective_format_version,
+            origin = excluded.origin,
+            parent_workspace_key = excluded.parent_workspace_key,
+            parent_id = excluded.parent_id",
         params![
             workspace_key,
             cwd,
@@ -851,6 +756,12 @@ fn upsert_record(
             clamp_u64_to_i64(record.branch_count),
             record.active_leaf_id.as_deref(),
             record.effective_format_version,
+            record.summary.origin.map(encode_origin),
+            parent_workspace_key,
+            record
+                .parent_session
+                .as_ref()
+                .map(|parent| parent.id.as_str()),
         ],
     )?;
     Ok(())
@@ -960,7 +871,20 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
         added_dirs: StampedDirs::decode(row.get(9)?)
             .map(|stamped| stamped.dirs)
             .unwrap_or_default(),
+        origin: row.get::<_, Option<String>>(10)?.and_then(decode_origin),
     })
+}
+
+/// The `origin` column holds the header's origin as the header encodes it.
+fn encode_origin(origin: SessionOrigin) -> String {
+    // A fieldless enum always serializes.
+    serde_json::to_string(&origin).unwrap_or_default()
+}
+
+/// Reads the `origin` column; an origin this Rho does not know decodes as
+/// [`SessionOrigin::Unknown`], like it does on the header.
+fn decode_origin(column: String) -> Option<SessionOrigin> {
+    serde_json::from_str(&column).ok()
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ Sessions persist automatically under:
 ~/.rho/sessions/<workspace-key>/
 ```
 
-`<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace). Sessions started through [`rho acp`](/integrations/acp) use this same tree and show up in `rho sessions list` and `rho -R`.
+`<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace). Sessions started through [`rho acp`](/integrations/acp) use this same tree and show up in `rho sessions list` and `rho -R`. [`rho run`](/automation-cli), Rho subagents, and workflow agent nodes save their sessions here too, each recorded with the host that ran it. Session lists, pickers, `-c`, and ACP session lists leave those out, because whoever ran one already holds what it returned. Commands that take a session id, such as `rho sessions export <ID>` and `rho --resume <ID>`, still find one.
 
 ### Layout
 
@@ -63,7 +63,7 @@ running session. The statusline shows `not saved`, and `/new` keeps this mode.
 Exiting or crashing loses the conversation; it won't appear in session history
 and cannot be resumed.
 
-`--no-save` is interactive-only and cannot be combined with `--resume`, `-R`, `--continue`, or `-c`.
+`rho --no-save` is interactive-only and cannot be combined with `--resume`, `-R`, `--continue`, or `-c`. To run a scripted prompt without saving, pass [`rho run --no-save`](/automation-cli#sessions-commands-and-questions).
 Inside the TUI, `/resume`, `/tree`, `/title`, `/export`, and `/rewind`
 are unavailable.
 Use `/copy` to copy an answer, or start Rho without the flag to resume saved work.
@@ -136,6 +136,9 @@ ask for approval or deny that outside-workspace read.
 
 Search and read exclude the current session unless you pass
 `"scope":"current"` (see [Searching the current session](#searching-the-current-session)).
+Every other scope also leaves out the sessions that session lists hide, those
+of `rho run`, subagents, and workflow agent nodes: whoever ran one already
+holds what it returned.
 `action = "recall"` returns the original text of a tool result that
 compaction elided, by the `recall_id` in its stub. Originals are saved in the
 session folder under `recall/`. See
@@ -291,7 +294,7 @@ The picker and `-c` skip sessions with no messages, such as one whose process wa
 
 The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume` to open the saved-session picker or `/resume <id>` to switch directly. Both reject sessions owned by another workspace. In the picker, press `d` or `Delete` to remove the selected session after a confirmation prompt; `escape` cancels.
 
-To work across every directory, use `/sessions` inside the TUI. It opens a full-width session manager that groups saved sessions by directory, with the current directory first. Worktrees of the same Git repository share one section: the current worktree lists its sessions, and each other worktree shows as one row. Directories that no longer exist collect under a final `MISSING DIRECTORIES` section. Press Enter on a session in the current directory to resume it, or on a directory row to narrow the list to that directory. You can inspect and delete sessions from other directories, but Rho asks you to start it in that directory before resuming so tools and project context cannot stay bound to the wrong workspace. Press `d` on a session to delete it, or on a directory row to delete the reviewed saved sessions in that directory; both ask for confirmation. When saved sessions refer to workspace directories that no longer exist, the picker adds a cleanup row that deletes the reviewed sessions after confirmation. The current session is never deleted.
+To work across every directory, use `/sessions` inside the TUI. It opens a full-width session manager that groups saved sessions by directory, with the current directory first. Worktrees of the same Git repository share one section: the current worktree lists its sessions, and each other worktree shows as one row. Directories that no longer exist collect under a final `MISSING DIRECTORIES` section. Press Enter on a session in the current directory to resume it, or on a directory row to narrow the list to that directory. You can inspect and delete sessions from other directories, but Rho asks you to start it in that directory before resuming so tools and project context cannot stay bound to the wrong workspace. Press `d` on a session to delete it, or on a directory row to delete the reviewed saved sessions in that directory, along with the unlisted run, subagent, and workflow node sessions saved there; both ask for confirmation. When saved sessions refer to workspace directories that no longer exist, the picker adds a cleanup row that deletes the reviewed sessions after confirmation. The current session is never deleted.
 
 ## Listing, renaming, exporting, and deleting sessions
 
@@ -321,12 +324,14 @@ rho sessions cleanup --force   # allow stale non-terminal related runs
 
 `rename` sets the stored session title by UUID or unique prefix. Multi-word titles work without quotes (`rho sessions rename abc123 my new title`). Inside the TUI, `/title <name>` renames the current session.
 
-`rm` accepts one or more session ids or unique prefixes. It deletes each session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and its session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
+`rm` accepts one or more session ids or unique prefixes. It resolves every id before deleting any, then keeps going past a session it cannot delete and exits non-zero after reporting it. It deletes each session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and its session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
+
+Deleting a session also deletes the child sessions it started, such as its subagents' sessions, and their children in turn, in any workspace. A child session records its parent's id and workspace in its header, so a session with the same id in another workspace keeps its own children. Children are deleted first, oldest first, each through the same delete and the same refusals below. If one is refused, the error names that child, and it, its parent, and the children not reached yet stay, so deleting the parent again finishes the job. Deleting a child session keeps its parent. Workflow node sessions record no parent, so deleting the session that started a workflow keeps them.
 
 Delete refuses:
 
 - the current interactive session (switch or start a new session first)
-- a session open in another Rho process (close it there first)
+- a session open in another Rho process (close it there first), including a child session it would delete
 - a session with a still-running or starting related run, unless you pass `--force` (intended only for stale artifacts left after a crash)
 - an ambiguous UUID prefix (the error lists matching ids and workspaces)
 

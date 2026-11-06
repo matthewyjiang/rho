@@ -173,17 +173,22 @@ pub(crate) fn execute(
 /// SQL predicate over `files f` binding ?2 to the scope value and ?3 to the
 /// current session id. Only `Current` admits the current session; its search
 /// filters by session handle instead (see `search_current`), reads use this.
+///
+/// The other scopes keep to person-facing sessions (see
+/// [`super::SessionOrigin::is_person_facing`]): whoever ran a `rho run`,
+/// subagent, or workflow node already holds what it returned, and its
+/// intermediate steps would crowd out the conversations a person had.
 fn scoped(scope: Scope, workspace: &Workspace) -> (&'static str, String) {
     match scope {
         Scope::Repo => (
-            "f.repo=?2 and f.id<>?3",
+            "f.repo=?2 and f.id<>?3 and f.person_facing",
             workspace.repo.to_string_lossy().into_owned(),
         ),
         Scope::Worktree => (
-            "f.worktree=?2 and f.id<>?3",
+            "f.worktree=?2 and f.id<>?3 and f.person_facing",
             workspace.worktree.to_string_lossy().into_owned(),
         ),
-        Scope::All => ("?2='' and f.id<>?3", String::new()),
+        Scope::All => ("?2='' and f.id<>?3 and f.person_facing", String::new()),
         Scope::Current => ("?2='' and f.id=?3", String::new()),
     }
 }

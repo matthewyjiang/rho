@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelIdentity, ToolCall, ToolResult},
-    CompactionState, InMemorySessionStore, Revision, SessionId,
+    CompactionState, Revision, SessionId,
 };
 use serde_json::json;
 
@@ -191,27 +191,4 @@ async fn compaction_commits_the_checklist_captured_before_it_ran() {
     let restored = TodoState::default();
     restored.restore(&session.snapshot());
     assert_eq!(restored.list(), Some(old));
-}
-
-// Covers: headless SDK checkpoint saves retain exact nested state even though
-// no native todo call appears in history, and explicit clear remains durable.
-// Owner: host headless checkpoint store adapter.
-#[tokio::test]
-async fn headless_checkpoint_store_persists_latest_exact_state() {
-    let state = TodoState::default();
-    let inner = Arc::new(InMemorySessionStore::new());
-    let store = state.checkpoint_store(inner);
-    let snapshot = snapshot(vec![Message::user_text("no native todo arguments")]);
-    for replacement in [
-        Some(list("nested exact checklist\n  indentation  ")),
-        Some(TodoList { todos: Vec::new() }),
-        None,
-    ] {
-        state.replace(replacement.clone());
-        store.save(snapshot.clone()).await.unwrap();
-        let saved = store.load(snapshot.session_id()).await.unwrap().unwrap();
-        let reader = TodoState::default();
-        reader.restore(&saved);
-        assert_eq!(reader.list(), replacement);
-    }
 }

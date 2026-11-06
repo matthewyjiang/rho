@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use pretty_assertions::assert_eq;
 
 use super::{directory_groups, hub_groups, HubGroup, Placement};
-use crate::session::{SessionSummary, Workspace};
+use crate::session::{SessionOrigin, SessionSummary, Workspace};
 
 fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
     SessionSummary {
@@ -17,6 +17,7 @@ fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
         first_user_message: Some(format!("first {id}")),
         last_user_message: Some(format!("last {id}")),
         added_dirs: Vec::new(),
+        origin: None,
     }
 }
 
@@ -82,10 +83,20 @@ fn place(cwd: &Path) -> Placement {
 // Covers: worktrees of one repo merge under the repo's checkout name with
 // worktree-relative row names, the current directory's repo leads, single
 // directories keep their full path, and missing directories collect last.
+// Hidden sessions (here a script's runs) stay out of existing directories,
+// which a directory with only hidden ones leaves out entirely, but a missing
+// directory keeps them so its cleanup removes them.
 // Owner: sessions hub grouping
 #[test]
 fn hub_groups_merge_worktrees_and_collect_missing_directories() {
+    let run = |id: &str, cwd: &str, updated_at: u64| SessionSummary {
+        origin: Some(SessionOrigin::Run),
+        ..summary(id, cwd, updated_at)
+    };
     let sessions = vec![
+        run("gone-ci", "/gone/ci", 800),
+        run("scripted", "/scripted", 750),
+        run("plain-run", "/plain", 650),
         summary("gone-a", "/gone/wt-x", 700),
         summary("plain", "/plain", 600),
         summary("solo", "/solo", 500),
@@ -135,8 +146,30 @@ fn hub_groups_merge_worktrees_and_collect_missing_directories() {
             (
                 "missing",
                 String::new(),
-                vec!["/gone/wt-x".to_string(), "/gone/wt-y".to_string()]
+                vec![
+                    "/gone/ci".to_string(),
+                    "/gone/wt-x".to_string(),
+                    "/gone/wt-y".to_string()
+                ]
             ),
         ]
+    );
+    let listed = groups
+        .iter()
+        .flat_map(|group| match group {
+            HubGroup::Directory(directory) => vec![directory],
+            HubGroup::Repo { worktrees, .. } => worktrees
+                .iter()
+                .map(|worktree| &worktree.directory)
+                .collect(),
+            HubGroup::Missing(missing) => missing.iter().collect(),
+        })
+        .flat_map(|directory| directory.sessions.iter().map(|session| session.id.as_str()))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        listed,
+        ["a", "a-nested", "b", "gone-a", "gone-b", "gone-ci", "plain", "solo"]
+            .into_iter()
+            .collect()
     );
 }

@@ -195,6 +195,14 @@ pub enum Command {
         /// Cancel the run after this wall-clock duration.
         #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
         timeout: Option<Duration>,
+        /// Do not save the run's session or its Rho and Claude subagents'
+        /// sessions, so none is left to export or resume.
+        ///
+        /// Cursor and Antigravity subagents keep their own CLI sessions, and
+        /// workflow nodes the run starts save theirs as part of the workflow
+        /// run's record.
+        #[arg(long)]
+        no_save: bool,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,

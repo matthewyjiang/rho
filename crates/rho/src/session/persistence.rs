@@ -20,7 +20,13 @@ use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 use super::agent_identity::SessionAgentRole;
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::tree::{NodeId, ProjectedMessage, SessionNode, SessionTree};
-use super::{index, Session, SessionHistories, SessionIndexRecord, SessionOrigin, SessionSummary};
+use super::{
+    index, Session, SessionHistories, SessionIndexRecord, SessionOrigin, SessionProvenance,
+    SessionSummary, SessionTarget,
+};
+
+pub(crate) use super::id_match::NoSessionFound;
+use super::id_match::{matching_session_files, session_id, single_match};
 
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
 pub(super) use super::layout::{
@@ -99,7 +105,7 @@ impl SessionStore {
         })
     }
 
-    fn resolve_local(&self, id_prefix: &str) -> anyhow::Result<Option<ResolvedSession>> {
+    pub(super) fn resolve_local(&self, id_prefix: &str) -> anyhow::Result<Option<ResolvedSession>> {
         let dir = self.ensure_dir()?;
         let local = matching_session_files(&dir, id_prefix)?
             .into_iter()
@@ -308,6 +314,11 @@ pub(super) enum SessionEntry {
         /// before origins were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<SessionOrigin>,
+        /// The saved session that started this one, such as a subagent's
+        /// parent, by id and workspace; `None` for one nothing saved
+        /// started, or in a file written before parents were recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_session: Option<SessionTarget>,
     },
     Message {
         timestamp: String,
@@ -511,7 +522,7 @@ impl Session {
         id: String,
         created_at: u64,
         agent: Option<(&str, &str)>,
-        origin: SessionOrigin,
+        provenance: SessionProvenance,
     ) -> anyhow::Result<()> {
         self.append_entry(&SessionEntry::Session {
             version: SESSION_VERSION,
@@ -521,9 +532,10 @@ impl Session {
             agent_id: agent.map(|(id, _)| id.to_string()),
             agent_fingerprint: agent.map(|(_, fingerprint)| fingerprint.to_string()),
             agent_role: SessionAgentRole::Root,
-            origin: Some(origin),
+            origin: Some(provenance.origin),
+            parent_session: provenance.parent.clone(),
         })?;
-        let _ = index::record_created(self, created_at);
+        let _ = index::record_created(self, created_at, provenance);
         Ok(())
     }
 
@@ -883,40 +895,6 @@ pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
 }
 
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
-/// Returns `None` when nothing matched.
-/// No saved session in any workspace matches the requested id or prefix.
-#[derive(Debug, thiserror::Error)]
-#[error("no session found matching '{id_prefix}'")]
-pub(crate) struct NoSessionFound {
-    id_prefix: String,
-}
-
-fn single_match<'a, T>(matches: &'a [T], id_prefix: &str) -> anyhow::Result<Option<&'a T>> {
-    match matches {
-        [] => Ok(None),
-        [only] => Ok(Some(only)),
-        _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
-    }
-}
-
-fn session_id(path: &Path) -> anyhow::Result<String> {
-    session_id_from_path(path)
-        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))
-}
-
-fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<PathBuf>> {
-    let mut files = fs::read_dir(dir)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let unit = SessionUnit::from_path(&entry.path())?;
-            let id = unit.id()?;
-            id.starts_with(id_prefix).then(|| unit.transcript_path())
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-    Ok(files)
-}
-
 fn list_session_summaries_by_scan(dir: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
     let mut summaries = fs::read_dir(dir)?
         .filter_map(Result::ok)

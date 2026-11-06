@@ -326,10 +326,13 @@ pub(super) fn bind_subagent_parent(
 ) {
     tools.bind_session_search(session_id.as_str());
     if let Some(manager) = tools.subagents() {
-        manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        // Temporary(tui-runtime): `--no-save` children still save until the
+        // TUI runs on the session runtime, which follows the parent's storage.
+        manager.bind_parent_session(
             session_id.to_string(),
-            storage.and_then(StoredSession::subagents_dir),
-        ));
+            storage,
+            crate::session::SessionPersistence::Saved,
+        );
     }
     tools
         .workflow_tracker()
@@ -478,10 +481,6 @@ pub(in crate::app) fn prompt_cache_key(id: &str) -> String {
 pub(in crate::app) fn session_options_for_id(id: SessionId) -> SessionOptions {
     let key = prompt_cache_key(id.as_str());
     SessionOptions::new().id(id).prompt_cache_key(key)
-}
-
-pub(in crate::app) fn fresh_session_options() -> SessionOptions {
-    session_options_for_id(SessionId::new())
 }
 
 pub(super) fn resume_omissions_report(

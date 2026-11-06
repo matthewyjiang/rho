@@ -14,10 +14,10 @@ use rho_sdk::{
 use crate::{
     app::{
         agent_executor::AgentExecutor,
-        automation::ensure_headless_auto_classifier_model,
         bootstrap::absolute_config_path,
         config_repository::ConfigRepository,
         policy::AppPolicy,
+        session_runtime::UnattendedApprovals,
         subagent_host_input::SubagentHostInputBridge,
         workflow_runtime::{
             CommandHostFactory, RecoveryDecision, RuntimeError, RuntimeSecurity,
@@ -168,7 +168,7 @@ fn workflow_approval_channel(
 ) -> anyhow::Result<WorkflowApprovalChannel> {
     let (handler, classifier): (Arc<dyn ApprovalHandler>, _) = match permission_mode {
         PermissionMode::Auto => {
-            ensure_headless_auto_classifier_model(config)?;
+            crate::app::session_runtime::ensure_auto_classifier_model(config)?;
             let human = approval_mode.can_prompt().then(|| {
                 Arc::new(TerminalWorkflowApprovals { interactive: true })
                     as Arc<dyn ApprovalHandler>
@@ -423,24 +423,20 @@ impl WorkflowRuntime {
         });
         let process_environment =
             ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
-        let app_agent_executor = Arc::new(match approvals.classifier.clone() {
-            Some(classifier) => AgentExecutor::new(
+        let agent_approvals = match approvals.classifier.clone() {
+            Some(classifier) => UnattendedApprovals::ClassifierTemplate(classifier),
+            None => UnattendedApprovals::Inherited(approvals.session),
+        };
+        let app_agent_executor = Arc::new(
+            AgentExecutor::new(
                 config.clone(),
                 config_path,
                 cwd.clone(),
                 SubagentHostInputBridge::new(),
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
-            .with_classifier_template(classifier),
-            None => AgentExecutor::new(
-                config.clone(),
-                config_path,
-                cwd.clone(),
-                SubagentHostInputBridge::new(),
-                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
-            )
-            .with_approval_session(approvals.session),
-        });
+            .with_approvals(agent_approvals),
+        );
         let agent_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::AgentInvocation>,
         > = Arc::new(WorkflowAgentExecutor::new(app_agent_executor));

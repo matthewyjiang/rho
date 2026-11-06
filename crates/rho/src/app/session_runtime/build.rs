@@ -6,22 +6,22 @@ use std::{
 
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
-use super::{ApprovalPolicy, SessionPermission};
+use super::{ensure_auto_classifier_model, ApprovalPolicy, SessionPermission, UnattendedApprovals};
 use crate::{
     added_dirs::AddedDirs,
     app::{
         agent_binding::BoundAgent,
-        automation::ensure_headless_auto_classifier_model,
         headless_delegation::BackgroundWait,
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },
+        subagent_messaging::NoticePoster,
         tools_prompt::McpSamplingSupport,
     },
     config::Config,
     credential_store::AppCredentialStore,
     diagnostics::RuntimeDiagnostics,
-    session::SessionOrigin,
+    session::{SessionOrigin, SessionProvenance, SessionTarget},
     tools::{
         host_io::HostIo,
         mcp::{config::McpConfig, McpAuthorizationMode},
@@ -30,16 +30,40 @@ use crate::{
     },
 };
 
-/// What a host gives every session build of one session: process flags,
-/// the agent it launched with, and what it does for the session's tools.
-/// Kept by the runtime, so an agent rebind builds the same way.
+/// What a host gives every session build of one session: how it was
+/// launched, what the host does for the session, and how each run is
+/// shaped. Kept by the runtime, so an agent rebind builds the same way.
 #[derive(Clone)]
 pub(crate) struct SessionBuild {
+    pub(crate) launch: SessionLaunch,
+    pub(crate) host: HostCapabilities,
+    /// What the session is for and how each of its runs is shaped.
+    pub(crate) run: RunShape,
+}
+
+/// How the session was launched: process flags and the agent it launched
+/// as.
+#[derive(Clone)]
+pub(crate) struct SessionLaunch {
     pub(crate) config_path: PathBuf,
     pub(crate) no_system_prompt: bool,
     pub(crate) no_tools: bool,
     pub(crate) no_subagents: bool,
     pub(crate) diagnostics: RuntimeDiagnostics,
+    /// The agent the host launched with. A delegated rebind stays within its
+    /// tools.
+    pub(crate) agent: BoundAgent,
+    /// Instructions appended to the session's system prompt, kept when a
+    /// model prompt replaces the rest, such as a child's contract with its
+    /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
+    /// which a permission mode rebuild reuses.
+    pub(crate) prompt_suffix: Option<&'static str>,
+}
+
+/// What the session's host does for it: whether it asks a person, who runs
+/// its children and answers its approvals, and what it serves its tools.
+#[derive(Clone)]
+pub(crate) struct HostCapabilities {
     /// Whether the host can put questions to a person.
     pub(crate) questions: QuestionSupport,
     /// Who runs the `agent` tool's children.
@@ -47,23 +71,34 @@ pub(crate) struct SessionBuild {
     /// Whether background work that outlives a prompt holds it open, or the
     /// host wakes the idle session when the work finishes.
     pub(crate) background_wait: BackgroundWait,
-    /// The agent the host launched with. A delegated rebind stays within its
-    /// tools.
-    pub(crate) launch_agent: BoundAgent,
     /// What the session's host does for its tools, shared by every tool set
     /// the session builds.
     pub(crate) host_io: HostIo,
-    /// What the session is for and how each of its runs is shaped.
-    pub(crate) run: RunShape,
-    /// Instructions appended to the session's system prompt, kept when a
-    /// model prompt replaces the rest, such as a child's contract with its
-    /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
-    /// which a permission mode rebuild reuses.
-    pub(crate) prompt_suffix: Option<&'static str>,
     /// Whether an MCP server's browser login may wait for a person.
     pub(crate) mcp_authorization: McpAuthorizationMode,
     /// Who answers the session's approval requests.
     pub(crate) approvals: ApprovalPolicy,
+    /// The parent a delegated child posts notices to, which gives the
+    /// session the `message_parent` tools.
+    pub(crate) parent_notices: Option<Arc<dyn NoticePoster>>,
+}
+
+impl HostCapabilities {
+    /// A host nobody watches live (`rho run`, Rho subagents, workflow
+    /// nodes): it asks nobody, the session decides its approvals with
+    /// `approvals`, its children run in this process, and background work
+    /// holds the prompt open, since nothing wakes the session after it.
+    pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
+        Self {
+            questions: QuestionSupport::Unavailable,
+            children: ChildAgents::InProcess,
+            background_wait: BackgroundWait::HoldPrompt,
+            host_io: HostIo::default(),
+            mcp_authorization: McpAuthorizationMode::from_process(),
+            approvals: ApprovalPolicy::Unattended(approvals),
+            parent_notices: None,
+        }
+    }
 }
 
 /// What a session is for and how each of its runs is shaped. Every SDK
@@ -94,22 +129,19 @@ pub(crate) enum SessionRole {
     /// An ACP client's session, such as Zed's or T3 Code's.
     Acp,
     /// `rho run`'s session.
-    #[expect(dead_code, reason = "rho run builds on the runtime in the next PR")]
     Run,
     /// A Rho subagent `parent` started through the `agent` tool. Every host
     /// binds its session as the subagent manager's parent before its first
     /// turn, so a subagent always has one; only workflow nodes run
     /// parentless.
-    #[expect(
-        dead_code,
-        reason = "Rho subagents build on the runtime in the next PR"
-    )]
-    Subagent { parent: rho_sdk::SessionId },
+    Subagent {
+        parent: rho_sdk::SessionId,
+        /// The workspace `parent` is saved in, `None` while it has no file.
+        /// An id is unique only within a workspace, so the subagent's file
+        /// records both to name its parent.
+        parent_workspace: Option<PathBuf>,
+    },
     /// An agent node of a workflow run, which no session started.
-    #[expect(
-        dead_code,
-        reason = "workflow nodes build on the runtime in the next PR"
-    )]
     WorkflowNode,
 }
 
@@ -122,23 +154,37 @@ impl SessionRole {
         }
     }
 
-    /// The session that delegated this one, which its usage names.
-    pub(super) fn usage_parent(&self) -> Option<rho_sdk::SessionId> {
+    /// The session that delegated this one, which its usage and status
+    /// name.
+    pub(crate) fn parent(&self) -> Option<&rho_sdk::SessionId> {
         match self {
-            Self::Subagent { parent } => Some(parent.clone()),
+            Self::Subagent { parent, .. } => Some(parent),
             Self::Interactive | Self::Acp | Self::Run | Self::WorkflowNode => None,
         }
     }
 
-    /// The host a new session's file records it was created by.
-    pub(super) fn origin(&self) -> SessionOrigin {
-        match self {
-            Self::Interactive => SessionOrigin::Interactive,
-            Self::Acp => SessionOrigin::Acp,
-            Self::Run => SessionOrigin::Run,
-            Self::Subagent { .. } => SessionOrigin::Subagent,
-            Self::WorkflowNode => SessionOrigin::WorkflowNode,
-        }
+    /// Where a new session's file records it came from: the host that
+    /// created it and, for a subagent of a saved session, that parent, so
+    /// deleting the parent deletes it too. A workflow node records no
+    /// parent: the workflow runtime does not know the session that started
+    /// its run, if any.
+    pub(super) fn provenance(&self) -> SessionProvenance {
+        let (origin, parent) = match self {
+            Self::Interactive => (SessionOrigin::Interactive, None),
+            Self::Acp => (SessionOrigin::Acp, None),
+            Self::Run => (SessionOrigin::Run, None),
+            Self::Subagent {
+                parent,
+                parent_workspace,
+            } => (
+                SessionOrigin::Subagent,
+                parent_workspace
+                    .as_ref()
+                    .map(|cwd| SessionTarget::new(parent.to_string(), cwd.clone())),
+            ),
+            Self::WorkflowNode => (SessionOrigin::WorkflowNode, None),
+        };
+        SessionProvenance { origin, parent }
     }
 }
 
@@ -175,14 +221,14 @@ pub(super) async fn build_session(
     added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
-    ensure_headless_auto_classifier_model(config)?;
+    ensure_auto_classifier_model(config)?;
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();
     let mut host_tools: anyhow::Result<()> = Ok(());
     // A host that cannot ask a person gets neither the questionnaire tool nor
     // the MCP capability, which Rho would then have to decline every time.
-    let questions = match build.questions {
+    let questions = match build.host.questions {
         QuestionSupport::Available => true,
         QuestionSupport::Unavailable => false,
     };
@@ -197,11 +243,11 @@ pub(super) async fn build_session(
         session_writes,
     } = assemble_session(SessionAssemblyOptions {
         config,
-        config_path: build.config_path.clone(),
+        config_path: build.launch.config_path.clone(),
         cwd: workspace,
-        no_system_prompt: build.no_system_prompt,
-        no_tools: build.no_tools,
-        no_subagents: build.no_subagents,
+        no_system_prompt: build.launch.no_system_prompt,
+        no_tools: build.launch.no_tools,
+        no_subagents: build.launch.no_subagents,
         questionnaire_enabled: questions,
         mcp_elicitation: if questions {
             crate::tools::mcp::McpElicitationSupport::Available
@@ -210,17 +256,20 @@ pub(super) async fn build_session(
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
-        mcp_authorization: build.mcp_authorization,
-        diagnostics: &build.diagnostics,
+        mcp_authorization: build.host.mcp_authorization,
+        diagnostics: &build.launch.diagnostics,
         agent,
         max_steps: *max_steps,
         usage_purpose: role.usage_purpose(),
-        usage_parent_session_id: role.usage_parent(),
+        usage_parent_session_id: role.parent().cloned(),
         hook_host_labels: hook_labels.clone(),
         added_dirs,
-        host_io: build.host_io.clone(),
-        extend_tools: |mut tools| {
-            match build.children {
+        host_io: build.host.host_io.clone(),
+        extend_tools: |mut tools: AppToolSet| {
+            if let Some(poster) = &build.host.parent_notices {
+                tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
+            }
+            match build.host.children {
                 ChildAgents::InProcess => {}
                 ChildAgents::HostThreads => {
                     host_tools = crate::tools::agent::install_host_delegation(
@@ -232,8 +281,8 @@ pub(super) async fn build_session(
             }
             with_plan_exit(tools, build, agent, config)
         },
-        system_prompt_suffix: build.prompt_suffix,
-        approval: |inputs: ApprovalInputs| Ok(build.approvals.wire(inputs)),
+        system_prompt_suffix: build.launch.prompt_suffix,
+        approval: |inputs: ApprovalInputs| Ok(build.host.approvals.wire(inputs)),
         session_options,
     })
     .await?;
@@ -260,7 +309,10 @@ pub(super) fn with_plan_exit(
     agent: &BoundAgent,
     config: &Config,
 ) -> AppToolSet {
-    if !build.no_tools && agent.rho_capabilities().is_some() && build.approvals.offers_plan_exit() {
+    if !build.launch.no_tools
+        && agent.rho_capabilities().is_some()
+        && build.host.approvals.offers_plan_exit()
+    {
         tools.with_plan_exit_host(config, PlanExitHost::Permission)
     } else {
         tools

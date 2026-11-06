@@ -131,7 +131,7 @@ impl SessionRuntime {
                 bind_delegated_agent(
                     definition,
                     model_override.as_deref().map(ModelOverride::Reference),
-                    &build.launch_agent,
+                    &build.launch.agent,
                     base,
                 )
             },
@@ -244,12 +244,15 @@ impl SessionRuntime {
                 built.session.snapshot(),
             )
         });
+        // An ephemeral session has no file to record the rebind on.
         let rebound = self.stored().and_then(|stored| {
-            stored.rebind_fresh_delegated_agent(
-                bound.id().as_str(),
-                &bound.fingerprint().to_string(),
-                initial_snapshot.as_ref(),
-            )
+            stored.map_or(Ok(()), |stored| {
+                stored.rebind_fresh_delegated_agent(
+                    bound.id().as_str(),
+                    &bound.fingerprint().to_string(),
+                    initial_snapshot.as_ref(),
+                )
+            })
         });
         if let Err(error) = rebound {
             built.teardown().await;

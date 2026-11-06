@@ -172,7 +172,7 @@ impl SessionRuntime {
         AppCredentialStore::reread_external_logins();
         // A keyless login lives in config, which `logout` edits on disk.
         let login_config =
-            crate::app::endpoint_login::with_disk_login(&config, &self.build.config_path)?;
+            crate::app::endpoint_login::with_disk_login(&config, &self.build.launch.config_path)?;
         let provider = build_provider_from_config_ensuring_catalog(
             &login_config,
             Arc::new(AppCredentialStore),

@@ -10,7 +10,9 @@ use agent_client_protocol::{
     Error as AcpError,
 };
 
-use crate::session::{DeleteOptions, Session as StoredSession, SessionSummary, SessionTarget};
+use crate::session::{
+    DeleteOptions, Session as StoredSession, SessionListing, SessionSummary, SessionTarget,
+};
 
 /// Sessions per `session/list` page. Zed's thread import walks every page,
 /// and each page reads the whole session index again. Listing 445 saved
@@ -34,8 +36,10 @@ pub(super) async fn list(request: ListSessionsRequest) -> Result<ListSessionsRes
             // Listing creates the workspace's session directory, and a
             // session in a missing workspace cannot load anyway.
             Some(cwd) if !cwd.is_dir() => Vec::new(),
-            Some(cwd) => StoredSession::list(cwd).map_err(store_error)?,
-            None => StoredSession::list_all().map_err(store_error)?,
+            Some(cwd) => {
+                StoredSession::list(cwd, SessionListing::PersonFacing).map_err(store_error)?
+            }
+            None => StoredSession::list_all(SessionListing::PersonFacing).map_err(store_error)?,
         };
         page(summaries, request.cursor.as_deref())
     })
@@ -60,7 +64,7 @@ pub(super) async fn delete(session_id: SessionId) -> Result<DeleteSessionRespons
 /// name whole ids, and ids need not be UUIDs, so a store prefix lookup could
 /// match another session or stop at a longer id in one workspace.
 fn saved_target(id: &str) -> Result<Option<SessionTarget>, AcpError> {
-    let mut matches = StoredSession::list_all()
+    let mut matches = StoredSession::list_all(SessionListing::Everything)
         .map_err(store_error)?
         .into_iter()
         .filter(|summary| summary.id == id);

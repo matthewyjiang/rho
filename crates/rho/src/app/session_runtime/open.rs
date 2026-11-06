@@ -21,7 +21,9 @@ use crate::{
     agent::AgentCatalog,
     app::interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
     config::Config,
-    session::{tree::ProjectedMessage, NoSessionFound, Session as StoredSession},
+    session::{
+        tree::ProjectedMessage, NoSessionFound, Session as StoredSession, SessionPersistence,
+    },
     tools::mcp::config::McpConfig,
 };
 
@@ -41,6 +43,16 @@ pub(crate) struct SessionOpening<'a> {
     /// The host's logout count; the session's provider reads credentials
     /// as it opens.
     pub(crate) logouts: &'a Logouts,
+}
+
+/// Where a session opened as launched saves.
+enum NewStorage {
+    /// To the file a checkpointing run already wrote.
+    Saved(StoredSession),
+    /// To a file its first save creates.
+    Deferred,
+    /// Nowhere; see [`SessionPersistence::Ephemeral`].
+    Ephemeral,
 }
 
 /// A saved session's conversation, which its host may show its client,
@@ -71,10 +83,58 @@ impl<'a> SavedHistory<'a> {
 
 impl SessionRuntime {
     /// Opens a new session `id` as the build's launch agent. Its file is
-    /// created by its first save.
+    /// created by its first save, unless `persistence` says it is never
+    /// written.
     pub(crate) async fn open_new(
         opening: SessionOpening<'_>,
         id: rho_sdk::SessionId,
+        persistence: SessionPersistence,
+    ) -> anyhow::Result<Self> {
+        let storage = match persistence {
+            SessionPersistence::Saved => NewStorage::Deferred,
+            SessionPersistence::Ephemeral => NewStorage::Ephemeral,
+        };
+        Self::open_as_launched(opening, |_| Ok(session_options_for_id(id)), storage).await
+    }
+
+    /// Opens the session `snapshot` checkpointed, as the build's launch
+    /// agent, for a [`super::TurnStart::Continue`] turn to go on from. Its
+    /// turns save to the session file the checkpointing run wrote, or to a
+    /// new one under the snapshot's id when there is none.
+    // Temporary(reopen): goes with `SessionCheckpoint`, once workflow nodes
+    // reopen their saved session instead.
+    pub(crate) async fn open_from_checkpoint(
+        opening: SessionOpening<'_>,
+        snapshot: rho_sdk::SessionSnapshot,
+    ) -> anyhow::Result<Self> {
+        let stored = match StoredSession::open_by_id_with_histories(
+            opening.cwd,
+            snapshot.session_id().as_str(),
+        ) {
+            Ok((stored, _)) => Some(stored),
+            Err(error) if error.is::<NoSessionFound>() => None,
+            Err(error) => return Err(error),
+        };
+        let storage = match stored {
+            Some(stored) => NewStorage::Saved(stored),
+            None => NewStorage::Deferred,
+        };
+        Self::open_as_launched(
+            opening,
+            |_| Ok(SessionOptions::from_snapshot(snapshot)),
+            storage,
+        )
+        .await
+    }
+
+    /// Opens a session as the build's launch agent with `session_options`,
+    /// saving as `storage` says.
+    async fn open_as_launched(
+        opening: SessionOpening<'_>,
+        session_options: impl FnOnce(
+            std::sync::Arc<dyn rho_sdk::provider::ModelProvider>,
+        ) -> anyhow::Result<SessionOptions>,
+        storage: NewStorage,
     ) -> anyhow::Result<Self> {
         let SessionOpening {
             build,
@@ -85,18 +145,20 @@ impl SessionRuntime {
             logouts,
         } = opening;
         let config = session_config(process_config, &host_mcp);
-        let agent = build.launch_agent.clone();
-        let (built, permission) = build_session(&build, &agent, &config, cwd, &added_dirs, |_| {
-            Ok(session_options_for_id(id))
-        })
-        .await?;
-        let storage = SessionStorage::deferred(
-            cwd.to_path_buf(),
-            built.session.id().to_string(),
-            agent.id().to_string(),
-            agent.fingerprint().to_string(),
-            build.run.role.origin(),
-        );
+        let agent = build.launch.agent.clone();
+        let (built, permission) =
+            build_session(&build, &agent, &config, cwd, &added_dirs, session_options).await?;
+        let storage = match storage {
+            NewStorage::Saved(stored) => SessionStorage::saved(stored),
+            NewStorage::Deferred => SessionStorage::deferred(
+                cwd.to_path_buf(),
+                built.session.id().to_string(),
+                agent.id().to_string(),
+                agent.fingerprint().to_string(),
+                build.run.role.provenance(),
+            ),
+            NewStorage::Ephemeral => SessionStorage::ephemeral(cwd.to_path_buf()),
+        };
         Ok(Self::new(
             OpenedSession {
                 build,
@@ -126,7 +188,7 @@ impl SessionRuntime {
                 let Ok(id) = rho_sdk::SessionId::from_string(id) else {
                     return Err(error);
                 };
-                return Self::open_new(opening, id).await;
+                return Self::open_new(opening, id, SessionPersistence::Saved).await;
             }
             Err(error) => return Err(error),
         };
@@ -139,7 +201,7 @@ impl SessionRuntime {
             logouts,
         } = opening;
         let (agent, config) = loaded_agent(
-            &build.launch_agent,
+            &build.launch.agent,
             &stored,
             session_config(process_config, &host_mcp),
             || Ok(AgentCatalog::discover(cwd)?),

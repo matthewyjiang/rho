@@ -10,8 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    ApprovalPolicy, ChildAgents, Logouts, OpenedSession, QuestionSupport, RunShape, SessionBuild,
-    SessionPermission, SessionRole, SessionRuntime, SessionStorage,
+    ApprovalPolicy, ChildAgents, HostCapabilities, Logouts, OpenedSession, QuestionSupport,
+    RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole, SessionRuntime,
+    SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -61,7 +62,7 @@ fn idle_provider(config: &Config) -> Arc<dyn ModelProvider> {
 
 /// A provider whose every request waits until its run is cancelled, so a
 /// turn on it can only end cancelled.
-pub(super) struct HangUntilCancel;
+pub(in crate::app) struct HangUntilCancel;
 
 impl ModelProvider for HangUntilCancel {
     fn identity(&self) -> ModelIdentity {
@@ -92,6 +93,17 @@ pub(super) async fn built_on(
         .provider_shared(Arc::clone(&provider))
         .build()
         .expect("test runtime");
+    built_with(config, id, runtime, provider).await
+}
+
+/// A session `id` on the SDK `runtime`, built on `provider` with whatever
+/// tools and hooks the test gave it, and no host tools of its own.
+pub(super) async fn built_with(
+    config: &Config,
+    id: rho_sdk::SessionId,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> BuiltSession {
     let session = runtime
         .session(SessionOptions::new().id(id))
         .await
@@ -128,28 +140,54 @@ pub(super) async fn runtime_on(
     SessionRuntime::for_tests(built, SessionStorage::saved(stored), config)
 }
 
+/// A runtime around a [`built_with`] session on the SDK `runtime`, saved in
+/// a new file under `root`, which is also its workspace, for a host nobody
+/// watches that offers `questions`.
+pub(in crate::app) async fn unattended_runtime_on(
+    root: &Path,
+    config: &Config,
+    questions: QuestionSupport,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> SessionRuntime {
+    let stored = StoredSession::create_in_root(root, root).expect("test session file");
+    let id = rho_sdk::SessionId::from_string(stored.id()).expect("stored ids are session ids");
+    let built = built_with(config, id, runtime, provider).await;
+    let mut build = test_build(config, root);
+    build.host = HostCapabilities {
+        questions,
+        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
+    };
+    SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), config)
+}
+
 /// How a test session is built: as a [`root_agent`] whose host answers its
 /// approvals, configured from `workspace_root`.
-pub(super) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {
+pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {
     SessionBuild {
-        config_path: workspace_root.join("rho-test-config.toml"),
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        diagnostics: RuntimeDiagnostics::new(config),
-        questions: QuestionSupport::Unavailable,
-        children: ChildAgents::InProcess,
-        background_wait: BackgroundWait::HoldPrompt,
-        launch_agent: root_agent(config),
-        host_io: Default::default(),
+        launch: SessionLaunch {
+            config_path: workspace_root.join("rho-test-config.toml"),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            diagnostics: RuntimeDiagnostics::new(config),
+            agent: root_agent(config),
+            prompt_suffix: None,
+        },
+        host: HostCapabilities {
+            questions: QuestionSupport::Unavailable,
+            children: ChildAgents::InProcess,
+            background_wait: BackgroundWait::HoldPrompt,
+            host_io: Default::default(),
+            mcp_authorization: McpAuthorizationMode::NonInteractive,
+            approvals: ApprovalPolicy::Host,
+            parent_notices: None,
+        },
         run: RunShape {
             role: SessionRole::Acp,
             max_steps: None,
             hook_labels: Default::default(),
         },
-        prompt_suffix: None,
-        mcp_authorization: McpAuthorizationMode::NonInteractive,
-        approvals: ApprovalPolicy::Host,
     }
 }
 
@@ -197,7 +235,7 @@ impl SessionRuntime {
         auth: String,
         logouts: &Logouts,
     ) -> Self {
-        let agent = build.launch_agent.clone();
+        let agent = build.launch.agent.clone();
         Self::new(
             OpenedSession {
                 build,

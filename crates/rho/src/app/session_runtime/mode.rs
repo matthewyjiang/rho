@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use rho_sdk::SessionOptions;
 
 use super::{
-    model_context_window, model_scoped_config, RunShape, SessionRuntime, SettingChangeError,
+    ensure_auto_classifier_model, model_context_window, model_scoped_config, RunShape,
+    SessionRuntime, SettingChangeError,
 };
 use crate::{
     app::{
-        automation::ensure_headless_auto_classifier_model,
         policy::AppPolicy,
         runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         sdk_config::WorkspaceOptions,
@@ -47,7 +47,7 @@ impl SessionRuntime {
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
-        ensure_headless_auto_classifier_model(&config)
+        ensure_auto_classifier_model(&config)
             .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
 
         let writes = self
@@ -55,7 +55,7 @@ impl SessionRuntime {
             .writes
             .clone()
             .carried_across(self.permission.mode, mode);
-        let approval = self.build.approvals.wire(ApprovalInputs {
+        let approval = self.build.host.approvals.wire(ApprovalInputs {
             config: config.clone(),
             workspace_root: self.permission.workspace_root.clone(),
             usage_recording: self.built.runtime.usage_recording(),
@@ -90,7 +90,7 @@ impl SessionRuntime {
                     compaction: CompactionConfig::from(&config),
                     context_window: model_context_window(&config.provider, &config.model),
                     usage_purpose: role.usage_purpose(),
-                    usage_parent_session_id: role.usage_parent(),
+                    usage_parent_session_id: role.parent().cloned(),
                     usage_recording: self.built.runtime.usage_recording(),
                     hook_host_labels: hook_labels.clone(),
                     hooks: self.built.hooks.as_ref(),

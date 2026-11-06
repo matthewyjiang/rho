@@ -602,15 +602,150 @@ fn final_answer_is_the_only_stdout_content() {
     assert_eq!(stdout(&output), "answer for a pipeline\n");
     assert!(output.stderr.is_empty());
 
+    // The agent's request is the run's only one: no title-agent call.
     let ledger = rusqlite::Connection::open(root.path().join(".rho/usage.sqlite3")).unwrap();
-    let request: (String, String, String) = ledger
-        .query_row(
-            "SELECT provider, model, purpose FROM usage_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+    let requests = ledger
+        .prepare("SELECT provider, model, purpose FROM usage_events")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<(String, String, String)>>>()
         .unwrap();
-    assert_eq!(request, ("openai".into(), "gpt-5.5".into(), "agent".into()));
+    assert_eq!(
+        requests,
+        vec![("openai".into(), "gpt-5.5".into(), "agent".into())]
+    );
+}
+
+// Covers: `rho run` saves its session under the session root, recorded as
+// a run's; `rho sessions list` leaves it out, and it opens by id.
+// `--no-save` leaves no session behind to list or open.
+// Owner: rho run session storage (process contract)
+#[test]
+fn run_saves_its_session_as_a_hidden_run_unless_told_not_to() {
+    // (run flags, saved header origins, opens by id)
+    let cases: [(&[&str], Vec<Value>, bool); 2] = [
+        (&[], vec![Value::from("run")], true),
+        (&["--no-save"], Vec::new(), false),
+    ];
+    for (flags, origins, opens) in cases {
+        let root = TempDir::new().unwrap();
+        let mut run = command(&root, "fixed");
+        run.env(RESPONSE_ENV, "saved answer")
+            .args(["run", "--output", "jsonl"])
+            .args(flags)
+            .arg("remember this");
+        let output = run.output().unwrap();
+        assert_success(&output);
+        let events = jsonl_events(&output);
+        let session_id = events.first().unwrap()["session_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let mut list = command(&root, "fixed");
+        list.args(["sessions", "list", "--json"]);
+        let listed = list.output().unwrap();
+        assert_success(&listed);
+        let listing = inspection(&listed);
+        let exported = root.path().join("run-transcript.json");
+        let mut export = command(&root, "fixed");
+        export
+            .args(["sessions", "export", &session_id, "--output"])
+            .arg(&exported);
+        let opened = export.output().unwrap().status.success().then(|| {
+            let transcript: Value =
+                serde_json::from_str(&std::fs::read_to_string(&exported).unwrap()).unwrap();
+            (
+                transcript["id"].clone(),
+                transcript["messages"][0]["message"]["User"][0]["Text"].clone(),
+            )
+        });
+        assert_eq!(
+            (
+                listing["sessions"].as_array().unwrap().len(),
+                saved_session_headers(&root, &session_id)
+                    .into_iter()
+                    .map(|header| header["origin"].clone())
+                    .collect::<Vec<_>>(),
+                opened,
+            ),
+            (
+                0,
+                origins,
+                opens.then(|| (Value::from(session_id), Value::from("remember this"))),
+            ),
+            "{flags:?}"
+        );
+    }
+}
+
+/// The headers of the sessions saved under `root` as `session_id`.
+fn saved_session_headers(root: &TempDir, session_id: &str) -> Vec<Value> {
+    let sessions = root.path().join(".rho/sessions");
+    if !sessions.is_dir() {
+        return Vec::new();
+    }
+    std::fs::read_dir(sessions)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .flat_map(|workspace| std::fs::read_dir(workspace).unwrap())
+        .map(|session| session.unwrap().path())
+        .filter(|session| {
+            session
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&format!("_{session_id}")))
+        })
+        .map(|session| {
+            let transcript = std::fs::read_to_string(session.join("session.jsonl")).unwrap();
+            let header = transcript.lines().next().unwrap().to_owned();
+            serde_json::from_str::<Value>(&header).unwrap()
+        })
+        .collect()
+}
+
+// Covers: `rho run` resolves the slash commands it runs, such as a prompt
+// template, and rejects the ones it cannot run as configuration errors
+// before any model call.
+// Owner: rho run command resolution (process contract)
+#[test]
+fn resolves_slash_commands_and_rejects_the_ones_it_cannot_run() {
+    let root = TempDir::new().unwrap();
+    let prompts = root.path().join(".rho/prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::write(prompts.join("review.md"), "Review $ARGUMENTS carefully").unwrap();
+
+    let expanded = run(&root, "inspect", &["run", "/prompt:review the diff"], None);
+    assert_success(&expanded);
+    assert_eq!(user_prompt(&expanded), "Review the diff carefully");
+
+    for prompt in ["/compact", "/compact keep the plan"] {
+        let rejected = run(
+            &root,
+            "inspect",
+            &["run", "--output", "jsonl", prompt],
+            None,
+        );
+        assert_eq!(rejected.status.code(), Some(2), "{prompt}");
+        let events = jsonl_events(&rejected);
+        let terminal = events.last().unwrap();
+        assert_eq!(
+            (&terminal["type"], &terminal["reason"]),
+            (
+                &Value::from("run.failed"),
+                &Value::from("configuration_error")
+            ),
+            "{prompt}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["type"] == "assistant.text_delta"),
+            "{prompt} reached the model"
+        );
+    }
 }
 
 #[cfg(unix)]
