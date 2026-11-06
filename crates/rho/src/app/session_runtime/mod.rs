@@ -13,14 +13,15 @@
 //! with [`SessionRuntime::begin_prompt`] (see `prompt.rs`), whose
 //! [`PromptScope`] every in-prompt call takes, so only a begun prompt runs
 //! the command cores (`/compact`, `/workflow:`, `/agent:` rebinds) or a
-//! model turn. A host runs a prompt's model turn through [`run_prompt_turn`]
-//! (see `prompt_turn.rs`) with a [`TurnHost`], which opens each turn's
-//! [`TurnIo`] and, while the turn runs, shows the [`SessionEvent`]s it sends
-//! and answers its requests with [`TurnControl`]s (see `events.rs`). The
-//! turn saves itself, runs the session hooks, keeps background work going
-//! across prompts, and asks to name the session; `run_prompt_turn` then
-//! hands off a plan the turn answered and runs the implementation turn it
-//! may ask for. The host maps the prompt's end to its own reply.
+//! model turn. A host runs a prompt's model turn through
+//! [`SessionRuntime::run_prompt_turn`] (see `prompt_turn.rs`) with a
+//! [`TurnView`], which opens each turn's [`TurnIo`] and, while the turn runs,
+//! shows the [`SessionEvent`]s it sends and answers its requests with
+//! [`TurnControl`]s (see `events.rs`). The turn saves itself, runs the
+//! session hooks, keeps background work going across prompts, and asks to
+//! name the session; `run_prompt_turn` then hands off a plan the turn
+//! answered and runs the implementation turn it may ask for. The host maps
+//! the prompt's end to its own reply.
 //!
 //! A prompt's cancel goes through the runtime's [`SessionHandle`], which the
 //! host shares with whoever cancels prompts or retires the session, so a
@@ -78,7 +79,7 @@ pub(crate) use mode::SessionPermission;
 pub(crate) use persist::SessionStorage;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
-pub(crate) use prompt_turn::{run_prompt_turn, PlanReport, TurnHost};
+pub(crate) use prompt_turn::{PlanReport, TurnView};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;

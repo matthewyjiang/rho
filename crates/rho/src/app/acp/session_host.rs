@@ -12,9 +12,9 @@ use std::{future::Future, sync::atomic::AtomicU64};
 
 use agent_client_protocol::{
     schema::v1::{
-        PlanEntry, PromptRequest, PromptResponse, SessionConfigOption, SessionId,
-        SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-        StopReason,
+        CurrentModeUpdate, PlanEntry, PromptRequest, PromptResponse, SessionConfigOption,
+        SessionId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+        SetSessionConfigOptionResponse, StopReason,
     },
     Error as AcpError,
 };
@@ -27,7 +27,7 @@ use super::{
     config_options,
     events::EventMapper,
     fast_mode,
-    host_features::{Forms, Toggles},
+    host_features::{Forms, HostFeatures, Toggles},
     permission,
     prompt_acceptance::PromptAcceptance,
     signals::SessionSignals,
@@ -39,10 +39,9 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
-            model_scoped_config, run_prompt_turn, ChildAgents, CurrentModel, InsertedMessage,
-            OpenedSession, PlanReport, PromptScope, QuestionSupport, SessionBuild, SessionHandle,
-            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnHost, TurnIo, TurnOutcome,
-            WorkflowStart,
+            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
+            PlanReport, PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
+            SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, TurnView, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -64,8 +63,6 @@ mod convert;
 mod forward;
 #[path = "session_host_open.rs"]
 mod open;
-#[path = "session_host_plan_exit.rs"]
-mod plan_exit;
 #[path = "session_host_wake.rs"]
 mod wake;
 
@@ -147,7 +144,7 @@ impl SessionHost {
             )
             .await;
         let home = crate::paths::home_dir();
-        let scope = self.command_scope(home.as_deref(), &startup.config);
+        let scope = command_scope(&self.runtime, home.as_deref(), &startup.config);
         // A watcher a host restart cut off resumes its wait, whatever the prompt says.
         let action = if let Some(signal) = self.recorded_wake() {
             Some(Ok(AcpPrompt::AwaitWake(signal)))
@@ -282,31 +279,8 @@ impl SessionHost {
         })
     }
 
-    fn command_scope<'a>(
-        &'a self,
-        home: Option<&'a std::path::Path>,
-        process_config: &'a Config,
-    ) -> CommandScope<'a> {
-        CommandScope {
-            cwd: self.runtime.cwd(),
-            home,
-            tools: self.runtime.tools(),
-            config: process_config,
-            permission_mode: self.runtime.permission_mode(),
-        }
-    }
-
     pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
-        advertised_config_options(
-            &self.runtime.current_model(),
-            process_config,
-            CurrentSettings {
-                permission_mode: self.runtime.permission_mode(),
-                reasoning: self.runtime.reasoning_level(),
-                fast: self.runtime.fast_mode(),
-            },
-            self.host_features.toggles,
-        )
+        runtime_config_options(&self.runtime, process_config, self.host_features.toggles)
     }
 
     /// Resolves and applies `session/set_config_option` on this host. The caller
@@ -374,20 +348,9 @@ impl SessionHost {
         }
     }
 
-    /// Signal tracking for the next update, starting from the checklist the
-    /// client last saw. Hand the checklist back as `sent_plan` once sent;
-    /// one that never comes back only costs a resend of the current list.
-    fn signals(&mut self) -> SessionSignals {
-        SessionSignals::new(
-            self.runtime.context_gauge(),
-            self.runtime.tools().todo_state(),
-            std::mem::take(&mut self.sent_plan),
-        )
-    }
-
-    /// A prompt's model turns (see [`run_prompt_turn`]): `turn`, then the
-    /// implementation turn an approved plan asks for, each shown to
-    /// `client` as it runs.
+    /// A prompt's model turns (see [`SessionRuntime::run_prompt_turn`]):
+    /// `turn`, then the implementation turn an approved plan asks for, each
+    /// shown to `client` as it runs.
     async fn run_turn(
         &mut self,
         prompt: &PromptScope,
@@ -396,15 +359,22 @@ impl SessionHost {
         client: &dyn AcpClientPort,
     ) -> Shown<PromptResponse> {
         let mut turns = AcpTurns {
-            host: self,
+            session_id: &self.acp_session_id,
             client,
-            process_config,
+            features: self.host_features,
+            placeholders: &self.permission_placeholders,
+            acceptance: &mut self.prompt_acceptance,
+            sent_plan: &mut self.sent_plan,
+            advertisements: &mut self.advertisements,
+            missed_update: None,
         };
-        let end = run_prompt_turn(&mut turns, prompt, turn, process_config).await;
-        // The first turn's miss came first, so it is the one reported.
+        let ended = self
+            .runtime
+            .run_prompt_turn(&mut turns, prompt, turn, process_config)
+            .await;
         Shown {
-            ended: end.ended.map(prompt_response),
-            missed_update: end.turn.or(end.implementation.flatten()),
+            ended: ended.map(prompt_response),
+            missed_update: turns.missed_update,
         }
     }
 
@@ -437,60 +407,147 @@ impl SessionHost {
     }
 }
 
-/// One prompt's model turns on `host`, shown to `client`.
+/// How one prompt's model turns show to `client`: the host state a turn's
+/// forwarder reads and writes back, borrowed field by field so the runtime
+/// stays free to run the turns.
 struct AcpTurns<'a> {
-    host: &'a mut SessionHost,
+    session_id: &'a SessionId,
     client: &'a dyn AcpClientPort,
-    process_config: &'a Config,
+    features: HostFeatures,
+    placeholders: &'a AtomicU64,
+    acceptance: &'a mut PromptAcceptance,
+    /// The todo checklist the client last received as an ACP `plan`.
+    sent_plan: &'a mut Vec<PlanEntry>,
+    advertisements: &'a mut advertisements::Advertisements,
+    /// The first update of the prompt's turns the client missed, if any.
+    missed_update: Option<String>,
 }
 
-impl TurnHost for AcpTurns<'_> {
-    /// The first update of the turn the client missed, if any.
-    type Shown = Option<String>;
-
-    fn runtime(&mut self) -> &mut SessionRuntime {
-        &mut self.host.runtime
-    }
-
+impl<'a> TurnView for AcpTurns<'a> {
     /// Shows the turn through a forwarder (`session_host_forward.rs`).
-    fn open_turn(
-        &mut self,
-    ) -> (
-        &mut SessionRuntime,
-        TurnIo,
-        impl Future<Output = Self::Shown> + Send,
-    ) {
+    fn open_turn<'v>(
+        &'v mut self,
+        runtime: &SessionRuntime,
+    ) -> (TurnIo, impl Future<Output = ()> + Send + use<'v, 'a>) {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
-        let host = &mut *self.host;
-        // See `Forwarded::sent_plan` for when the checklist comes back.
-        let signals = host.signals();
         let forwarder = forward::Forwarder {
-            session_id: &host.acp_session_id,
+            session_id: self.session_id,
             client: self.client,
-            features: host.host_features,
+            features: self.features,
             mapper: EventMapper::new(
-                host.host_features,
-                host.runtime.cwd().to_path_buf(),
-                host.runtime.tools().mcp_report().tool_names(),
+                self.features,
+                runtime.cwd().to_path_buf(),
+                runtime.tools().mcp_report().tool_names(),
             ),
-            signals,
-            placeholders: &host.permission_placeholders,
-            acceptance: &mut host.prompt_acceptance,
+            // See `Forwarded::sent_plan` for when the checklist comes back.
+            signals: session_signals(runtime, self.sent_plan),
+            placeholders: self.placeholders,
+            acceptance: &mut *self.acceptance,
         };
-        let sent_plan = &mut host.sent_plan;
+        let sent_plan = &mut *self.sent_plan;
+        let missed_update = &mut self.missed_update;
         let showing = async move {
             let forwarded = forwarder.forward(event_receiver, control_sender).await;
             *sent_plan = forwarded.sent_plan.unwrap_or_default();
-            forwarded.failure
+            // The first turn's miss came first, so it is the one reported.
+            if missed_update.is_none() {
+                *missed_update = forwarded.failure;
+            }
         };
-        (&mut host.runtime, TurnIo { events, control }, showing)
+        (TurnIo { events, control }, showing)
     }
 
-    fn report_plan(&mut self, report: PlanReport) -> impl Future<Output = ()> + Send {
-        self.host
-            .report_plan(report, self.process_config, self.client)
+    /// Shows `report`: the notice, after a mode update and refreshed menus
+    /// when the mode switched. Updates the client misses are logged; the
+    /// prompt goes on either way.
+    fn report_plan(
+        &mut self,
+        runtime: &SessionRuntime,
+        process_config: &Config,
+        report: PlanReport,
+    ) -> impl Future<Output = ()> + Send {
+        let (session_id, client, features) = (self.session_id, self.client, self.features);
+        let (notice, switched) = match report {
+            PlanReport::Kept { notice } => (notice, None),
+            PlanReport::Switched { mode, notice } => {
+                let refresh = self.advertisements.refresh(
+                    session_id,
+                    runtime,
+                    features.toggles,
+                    process_config,
+                    client,
+                );
+                (notice, Some((mode, refresh)))
+            }
+        };
+        async move {
+            if let Some((mode, refresh)) = switched {
+                // Hosts learn of agent-initiated switches only from these
+                // updates; the config option form follows from the refresh.
+                let update = SessionNotification::new(
+                    session_id.clone(),
+                    SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(permission::mode_id(
+                        mode,
+                    ))),
+                );
+                if let Err(error) = send_notification(client, update).await {
+                    tracing::warn!(%error, "could not send ACP mode update");
+                }
+                refresh.await;
+            }
+            let notice = EventMapper::info_notice(session_id, features, &notice);
+            if let Err(error) = send_notification(client, notice).await {
+                tracing::debug!(%error, "could not send ACP plan notice");
+            }
+        }
     }
+}
+
+/// Signal tracking for the next update, starting from the checklist the
+/// client last saw, which this takes from `sent_plan`. Hand the checklist
+/// back once sent; one that never comes back only costs a resend of the
+/// current list.
+fn session_signals(runtime: &SessionRuntime, sent_plan: &mut Vec<PlanEntry>) -> SessionSignals {
+    SessionSignals::new(
+        runtime.context_gauge(),
+        runtime.tools().todo_state(),
+        std::mem::take(sent_plan),
+    )
+}
+
+/// What commands can see of `runtime`'s session.
+fn command_scope<'a>(
+    runtime: &'a SessionRuntime,
+    home: Option<&'a std::path::Path>,
+    process_config: &'a Config,
+) -> CommandScope<'a> {
+    CommandScope {
+        cwd: runtime.cwd(),
+        home,
+        tools: runtime.tools(),
+        config: process_config,
+        permission_mode: runtime.permission_mode(),
+    }
+}
+
+/// Every option `runtime`'s session advertises now; see
+/// [`advertised_config_options`].
+fn runtime_config_options(
+    runtime: &SessionRuntime,
+    process_config: &Config,
+    toggles: Toggles,
+) -> Vec<SessionConfigOption> {
+    advertised_config_options(
+        &runtime.current_model(),
+        process_config,
+        CurrentSettings {
+            permission_mode: runtime.permission_mode(),
+            reasoning: runtime.reasoning_level(),
+            fast: runtime.fast_mode(),
+        },
+        toggles,
+    )
 }
 
 /// How every build of a session this host opens is set up: the launch

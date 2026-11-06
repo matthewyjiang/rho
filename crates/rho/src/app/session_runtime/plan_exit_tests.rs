@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 
 use crate::{
     app::session_runtime::{
-        run_prompt_turn, test_support::built_on, PlanReport, SessionEvent, SessionRuntime,
-        SessionStorage, Turn, TurnControl, TurnHost, TurnIo, TurnOutcome,
+        test_support::built_on, PlanReport, SessionEvent, SessionRuntime, SessionStorage, Turn,
+        TurnControl, TurnIo, TurnOutcome, TurnView,
     },
     config::Config,
     permission::PermissionMode,
@@ -71,35 +71,25 @@ enum Hosted {
     Switched(PermissionMode),
 }
 
-/// A host that answers every plan approval with `answer` and logs what it
+/// A view that answers every plan approval with `answer` and logs what it
 /// shows. With `cancel_before_handoff`, it cancels the prompt as it
 /// finishes showing the first turn, before the handoff.
-struct PlanHost {
-    runtime: SessionRuntime,
+struct PlanView {
     answer: PlanPermissionAnswer,
     cancel_before_handoff: bool,
     hosted: Vec<Hosted>,
 }
 
-impl TurnHost for PlanHost {
-    type Shown = ();
-
-    fn runtime(&mut self) -> &mut SessionRuntime {
-        &mut self.runtime
-    }
-
-    fn open_turn(
-        &mut self,
-    ) -> (
-        &mut SessionRuntime,
-        TurnIo,
-        impl Future<Output = Self::Shown> + Send,
-    ) {
+impl TurnView for PlanView {
+    fn open_turn<'v>(
+        &'v mut self,
+        runtime: &SessionRuntime,
+    ) -> (TurnIo, impl Future<Output = ()> + Send + use<'v>) {
         let (events, mut shown) = mpsc::unbounded_channel();
         let (controls, control) = mpsc::unbounded_channel();
         let answer = self.answer;
         let cancel =
-            (self.cancel_before_handoff && self.hosted.is_empty()).then(|| self.runtime.handle());
+            (self.cancel_before_handoff && self.hosted.is_empty()).then(|| runtime.handle());
         let hosted = &mut self.hosted;
         let showing = async move {
             while let Some(event) = shown.recv().await {
@@ -112,10 +102,15 @@ impl TurnHost for PlanHost {
                 handle.cancel();
             }
         };
-        (&mut self.runtime, TurnIo { events, control }, showing)
+        (TurnIo { events, control }, showing)
     }
 
-    fn report_plan(&mut self, report: PlanReport) -> impl Future<Output = ()> + Send {
+    fn report_plan(
+        &mut self,
+        _runtime: &SessionRuntime,
+        _process_config: &Config,
+        report: PlanReport,
+    ) -> impl Future<Output = ()> + Send {
         self.hosted.push(match report {
             PlanReport::Kept { notice: _ } => Hosted::Kept,
             PlanReport::Switched { mode, notice: _ } => Hosted::Switched(mode),
@@ -209,13 +204,13 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
     ];
     for (label, turns, answer, cancel_before_handoff, expected) in cases {
         let root = tempfile::tempdir().unwrap();
-        let mut host = PlanHost {
-            runtime: plan_mode_runtime(root.path(), &config, turns).await,
+        let mut runtime = plan_mode_runtime(root.path(), &config, turns).await;
+        let mut view = PlanView {
             answer,
             cancel_before_handoff,
             hosted: Vec::new(),
         };
-        let prompt = host.runtime.begin_prompt(&config).await.unwrap();
+        let prompt = runtime.begin_prompt(&config).await.unwrap();
         let input = UserInput::text("plan it");
         let turn = Turn {
             display: input.clone(),
@@ -223,18 +218,16 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
             calls: Vec::new(),
         };
 
-        let end = run_prompt_turn(&mut host, &prompt, turn, &config).await;
+        let ended = runtime
+            .run_prompt_turn(&mut view, &prompt, turn, &config)
+            .await;
 
         assert_eq!(
-            (
-                std::mem::take(&mut host.hosted),
-                ended_as(&end.ended),
-                host.runtime.permission_mode(),
-            ),
+            (view.hosted, ended_as(&ended), runtime.permission_mode()),
             expected,
             "{label}"
         );
         drop(prompt);
-        host.runtime.shutdown().await;
+        runtime.shutdown().await;
     }
 }
