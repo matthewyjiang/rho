@@ -3,8 +3,9 @@
 //! `crate::daemon` is the generic transport (socket, lock, accept loop) and
 //! never learns what a session is; [`DaemonHost`] is the [`Service`] it routes
 //! requests to, and `app::daemon_cli` wires the two together. The host owns
-//! the job registry (`jobs/`), whose records outlive the daemon, and the
-//! sessions it has loaded (`sessions/`).
+//! the job registry (`jobs/`), whose records outlive the daemon, the
+//! sessions it has loaded (`sessions/`), and the budget their subagents
+//! share (`subagents.rs`).
 
 use std::{
     io,
@@ -25,6 +26,7 @@ use crate::daemon::DaemonLock;
 
 mod jobs;
 mod sessions;
+mod subagents;
 mod wire;
 
 use jobs::{JobRegistry, JobStore};
@@ -149,7 +151,15 @@ impl Service for DaemonHost {
 
     async fn list_jobs(&self) -> JobListResponse {
         JobListResponse {
-            jobs: self.jobs.list().into_iter().map(Into::into).collect(),
+            jobs: self
+                .jobs
+                .list()
+                .into_iter()
+                .map(|record| {
+                    let queue = self.sessions.subagents().queue_place(&record.id);
+                    wire::job_summary(record, queue)
+                })
+                .collect(),
         }
     }
 }

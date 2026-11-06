@@ -47,7 +47,10 @@ pub use event::{
     ContentBlock, Cursor, Location, MessageId, PlanEntry, PlanStatus, Seq, SessionEvent, StreamId,
     ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
-pub use job::{JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, JOB_LIST};
+pub use job::{
+    Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
+    JOB_LIST,
+};
 pub use session::{
     DetachReason, Replay, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
     SessionCancelResponse, SessionDetachParams, SessionDetachResponse, SessionDetachedParams,

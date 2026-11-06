@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "Budget": {
+      "anyOf": [
+        {
+          "const": "agent_concurrency",
+          "description": "Every subagent run of every session the daemon hosts:\n`behavior.agent_concurrency` in the daemon's config.",
+          "type": "string"
+        },
+        {
+          "const": "claude_agent_concurrency",
+          "description": "Claude-cli subagent runs, nested under [`Self::AgentConcurrency`]:\n`RHO_CLAUDE_AGENT_CONCURRENCY` in the daemon's environment.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A concurrency budget jobs wait on, named for the setting that sizes it.\nProtocol minors may add budgets."
+    },
     "ClientInfo": {
       "description": "Who is connecting. Logged by the daemon; never used for authorization.",
       "properties": {
@@ -230,6 +250,11 @@
           "type": "string"
         },
         {
+          "const": "subagent",
+          "description": "One subagent run, started by the session job that is its\n[`JobSummary::parent`].",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -273,6 +298,11 @@
           "type": "string"
         },
         {
+          "const": "queued",
+          "description": "A subagent run waiting for capacity; [`JobSummary::queue`] says\nwhere it stands.",
+          "type": "string"
+        },
+        {
           "const": "waiting_for_input",
           "description": "The turn waits for an approval, a plan approval, or a question to be\nanswered. Nothing is auto-denied because no client is attached; until\nclients can answer (#1660), only [`super::SESSION_CANCEL`] ends the\nwait.",
           "type": "string"
@@ -293,7 +323,7 @@
           "x-rho-other": true
         }
       ],
-      "description": "Where a job is. A session job's state is that of its current or last\nturn.\nProtocol minors may add states."
+      "description": "Where a job is. A session job's state is that of its current or last\nturn; a subagent job's is that of its one run.\nProtocol minors may add states."
     },
     "JobSummary": {
       "description": "One job, as [`JOB_LIST`] reports it.",
@@ -328,9 +358,27 @@
           ],
           "description": "The job that started this one; `None` for a job a client started."
         },
+        "queue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueuePlace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the job waits for capacity, when its state is\n[`JobState::Queued`]."
+        },
         "session": {
-          "$ref": "#/$defs/SessionId",
-          "description": "The session the job writes."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Rho session the job writes; `None` for a subagent run on another\nruntime (Claude, Cursor, Antigravity), which keeps its own."
         },
         "state": {
           "$ref": "#/$defs/JobState"
@@ -351,7 +399,6 @@
         "kind",
         "state",
         "workspace",
-        "session",
         "created_at",
         "updated_at"
       ],
@@ -434,6 +481,32 @@
       "required": [
         "major",
         "minor"
+      ],
+      "type": "object"
+    },
+    "QueuePlace": {
+      "description": "Where a queued job waits: the budget it waits on, that budget's limit,\nand its place in the budget's queue.",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "limit": {
+          "description": "How many runs the budget lets run at once.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "position": {
+          "description": "1 for the job that starts when the next slot frees.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "budget",
+        "limit",
+        "position"
       ],
       "type": "object"
     },

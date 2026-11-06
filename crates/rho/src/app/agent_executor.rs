@@ -10,7 +10,7 @@ use {
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    agent_concurrency::AgentConcurrency,
+    agent_concurrency::{AgentConcurrency, QueueWatch},
     headless_host::{self, ChildRun, ChildSession, ParentQuestions},
     session_runtime::{SessionRole, UnattendedApprovals},
     subagent_host_input::SubagentHostInputBridge,
@@ -128,6 +128,10 @@ pub(crate) struct AgentRunHandle {
     status: tokio::sync::watch::Receiver<RunStatus>,
     completion: tokio::sync::watch::Receiver<bool>,
     messaging: MessagingSupport,
+    /// Where the run waits for capacity, while it does.
+    queue: QueueWatch,
+    /// The Rho session the run writes; `None` on another runtime.
+    session: Option<rho_sdk::SessionId>,
 }
 
 impl AgentRunHandle {
@@ -150,6 +154,17 @@ impl AgentRunHandle {
             }
         }
         self.status()
+    }
+
+    /// Where the run waits for capacity; see [`QueueWatch::place`].
+    pub(crate) fn queue(&self) -> QueueWatch {
+        self.queue.clone()
+    }
+
+    /// The Rho session the run writes; `None` for a run on another runtime,
+    /// which keeps that runtime's own session.
+    pub(crate) fn session(&self) -> Option<&rho_sdk::SessionId> {
+        self.session.as_ref()
     }
 
     /// Clone of the live status watch used while the run is in flight.
@@ -195,6 +210,8 @@ impl AgentRunHandle {
             status,
             completion,
             messaging: MessagingSupport::Queued { messages },
+            queue: QueueWatch::default(),
+            session: None,
         }
     }
 
@@ -210,19 +227,23 @@ impl AgentRunHandle {
             status: status_rx,
             completion: completion_rx,
             messaging: MessagingSupport::Queued { messages },
+            queue: QueueWatch::default(),
+            session: None,
         }
     }
 }
 
 impl AgentExecutor {
+    /// An executor whose runs take capacity from `concurrency`: a pool of
+    /// their own, or one their host shares (see `subagent_host`).
     pub(crate) fn new(
         config: Config,
         config_path: PathBuf,
         cwd: PathBuf,
+        concurrency: AgentConcurrency,
         host_input: SubagentHostInputBridge,
         notices: SubagentNoticeBridge,
     ) -> Self {
-        let concurrency = AgentConcurrency::from_config(config.agent_concurrency);
         Self {
             config: Arc::new(std::sync::RwLock::new(config)),
             config_path,
@@ -458,7 +479,27 @@ impl AgentExecutor {
             parent_rx,
         } = MessagingSupport::for_runtime(bound.runtime());
 
+        // In line for capacity from now, so runs start in the order they
+        // were spawned.
+        let queued = self.concurrency.join(capacity_class);
+        let queue = queued.watch();
+        // A Rho child writes the session it was given; a run on another
+        // runtime keeps that runtime's own.
+        let child_session = match (bound.runtime(), &session) {
+            (
+                super::agent_binding::BoundRuntime::Rho { .. },
+                ChildSession::New(id) | ChildSession::Reopen(id),
+            ) => Some(id.clone()),
+            (
+                super::agent_binding::BoundRuntime::ClaudeCli { .. }
+                | super::agent_binding::BoundRuntime::Cursor { .. }
+                | super::agent_binding::BoundRuntime::Antigravity { .. },
+                _,
+            ) => None,
+        };
         let mut initial = bound.artifact_identity().starting_status();
+        initial.state = RunState::Queued;
+        initial.last_activity = Some("queued".into());
         initial.parent_session_id = role.parent().map(ToString::to_string);
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
@@ -480,7 +521,6 @@ impl AgentExecutor {
         let host_input = self.host_input.clone();
         let notices = self.notices.clone();
         let persisted_output = output_file.clone();
-        let concurrency = self.concurrency.clone();
         let approvals = self.approvals.clone();
         let task_steering_slot = steering_slot.clone();
 
@@ -497,10 +537,7 @@ impl AgentExecutor {
             // take Claude capacity first so queued Claude work cannot occupy
             // global permits while waiting on the nested pool; Rho takes only
             // the global pool. Dropping the guard returns every held permit.
-            let Some(_runtime_permits) = concurrency
-                .acquire(capacity_class, &task_cancellation)
-                .await
-            else {
+            let Some(_runtime_permits) = queued.acquire(&task_cancellation).await else {
                 let mut stopped = task_status_tx.borrow().clone();
                 stopped.state = RunState::Stopped;
                 stopped.last_activity = Some("cancelled before execution".into());
@@ -509,6 +546,11 @@ impl AgentExecutor {
                 subagent::write_status(&output_file, &stopped)?;
                 return Ok(());
             };
+            let mut starting = task_status_tx.borrow().clone();
+            starting.state = RunState::Starting;
+            starting.last_activity = Some("starting".into());
+            task_status_tx.send_replace(starting.clone());
+            subagent::write_status(&output_file, &starting)?;
 
             spawn_run_title(
                 &title_config,
@@ -635,6 +677,8 @@ impl AgentExecutor {
             cancellation,
             status,
             completion,
+            queue,
+            session: child_session,
             messaging,
         })
     }

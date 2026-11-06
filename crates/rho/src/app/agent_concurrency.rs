@@ -1,12 +1,22 @@
-//! Live-resizable concurrency pools for delegated agents.
+//! Live-resizable concurrency pools for delegated agents, granted in the
+//! order runs joined them.
 //!
-//! One global pool covers every delegated run (Rho, Claude, and Cursor).
-//! Claude-cli runs also take a nested Claude permit
-//! first so queued Claude work cannot occupy spare global slots.
+//! One global pool (`behavior.agent_concurrency`) covers every delegated run
+//! (Rho, Claude, Cursor, and Antigravity). Claude-cli runs also take a nested
+//! Claude permit first (`RHO_CLAUDE_AGENT_CONCURRENCY`) so queued Claude work
+//! cannot occupy spare global slots.
+//!
+//! A run joins its first queue when it is spawned ([`AgentConcurrency::join`]),
+//! so runs start in the order they were spawned, and its [`QueueWatch`] says
+//! where it stands while it waits: the budget, that budget's limit, and its
+//! position (#1658).
 
-use std::sync::{
-    atomic::{AtomicU64, AtomicUsize, Ordering},
-    Arc,
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex, MutexGuard, PoisonError,
+    },
 };
 
 use tokio::sync::Notify;
@@ -32,11 +42,30 @@ impl ConcurrencyLimits {
     }
 }
 
+/// A budget delegated runs wait on, named for the setting that sizes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Budget {
+    /// Every delegated run: `behavior.agent_concurrency`.
+    AgentConcurrency,
+    /// Claude-cli runs, nested under the global budget:
+    /// `RHO_CLAUDE_AGENT_CONCURRENCY`.
+    ClaudeAgentConcurrency,
+}
+
+/// Where a waiting run stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct QueuePlace {
+    pub(crate) budget: Budget,
+    pub(crate) limit: usize,
+    /// 1 for the run that takes the next free slot.
+    pub(crate) position: usize,
+}
+
 /// Shared, live-resizable capacity for delegated runs.
 #[derive(Clone)]
 pub(crate) struct AgentConcurrency {
-    total: Arc<AdjustablePool>,
-    claude: Arc<AdjustablePool>,
+    total: Arc<Pool>,
+    claude: Arc<Pool>,
     claude_requested: Arc<AtomicUsize>,
 }
 
@@ -45,156 +74,267 @@ pub(crate) struct RuntimePermits {
     _claude: Option<PoolPermit>,
 }
 
-/// Packed as `(limit << 32) | active` so resize and acquire CAS the same word.
-/// A lower cap that lands after a snapshot is loaded fails that CAS; the retry
-/// observes the new limit before it increments active work.
-const ACTIVE_BITS: u64 = 32;
-const ACTIVE_MASK: u64 = (1 << ACTIVE_BITS) - 1;
-
-fn pack(limit: usize, active: usize) -> u64 {
-    debug_assert!(u32::try_from(limit).is_ok(), "limit fits in 32 bits");
-    debug_assert!(u32::try_from(active).is_ok(), "active fits in 32 bits");
-    ((limit as u64) << ACTIVE_BITS) | (active as u64)
+/// One budget's slots and the runs waiting for one, first come first served.
+struct Pool {
+    budget: Budget,
+    state: Mutex<PoolState>,
 }
 
-fn unpack(state: u64) -> (usize, usize) {
-    (
-        (state >> ACTIVE_BITS) as usize,
-        (state & ACTIVE_MASK) as usize,
-    )
+struct PoolState {
+    limit: usize,
+    /// Slots granted and not yet returned. Above `limit` only after the
+    /// limit was lowered under work already running.
+    active: usize,
+    /// Runs waiting, in the order they joined. Never holds a run while a
+    /// slot is free: every change that frees one grants it to the front.
+    queue: VecDeque<Arc<Waiter>>,
 }
 
-struct AdjustablePool {
-    state: AtomicU64,
+/// One run's wait in one pool's queue.
+#[derive(Default)]
+struct Waiter {
+    /// Set, under the pool lock, once the pool grants this run a slot.
+    granted: AtomicBool,
     notify: Notify,
 }
 
+/// A held slot; dropping it returns the slot to the pool.
 struct PoolPermit {
-    pool: Arc<AdjustablePool>,
+    pool: Arc<Pool>,
 }
 
 impl Drop for PoolPermit {
     fn drop(&mut self) {
-        // Active occupies the low bits, so a saturating decrement cannot
-        // disturb `limit` while in-flight work still holds a permit.
-        self.pool.state.fetch_sub(1, Ordering::Release);
-        self.pool.notify.notify_waiters();
+        let mut state = self.pool.state();
+        state.active -= 1;
+        state.grant_waiters();
     }
 }
 
-impl AdjustablePool {
-    fn new(limit: usize) -> Arc<Self> {
+impl PoolState {
+    /// Grants free slots to the runs at the front of the queue.
+    fn grant_waiters(&mut self) {
+        while self.active < self.limit {
+            let Some(waiter) = self.queue.pop_front() else {
+                break;
+            };
+            self.active += 1;
+            waiter.granted.store(true, Ordering::Release);
+            // Stores the wake when the run is not waiting yet, so a grant
+            // between its check and its wait is not lost.
+            waiter.notify.notify_one();
+        }
+    }
+}
+
+impl Pool {
+    fn new(budget: Budget, limit: usize) -> Arc<Self> {
         Arc::new(Self {
-            state: AtomicU64::new(pack(limit, 0)),
-            notify: Notify::new(),
+            budget,
+            state: Mutex::new(PoolState {
+                limit,
+                active: 0,
+                queue: VecDeque::new(),
+            }),
         })
     }
 
-    fn limit(&self) -> usize {
-        unpack(self.state.load(Ordering::Acquire)).0
+    fn state(&self) -> MutexGuard<'_, PoolState> {
+        // Every update leaves the counts and the queue consistent before it
+        // can panic, so a poisoned lock still guards valid state.
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    #[cfg(test)]
-    fn active(&self) -> usize {
-        unpack(self.state.load(Ordering::Acquire)).1
+    fn limit(&self) -> usize {
+        self.state().limit
     }
 
     #[cfg(test)]
     fn available(&self) -> usize {
-        self.limit().saturating_sub(self.active())
+        let state = self.state();
+        state.limit.saturating_sub(state.active)
     }
 
     fn set_limit(&self, limit: usize) {
-        loop {
-            let state = self.state.load(Ordering::Acquire);
-            let active = unpack(state).1;
-            if self
-                .state
-                .compare_exchange(
-                    state,
-                    pack(limit, active),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                self.notify.notify_waiters();
-                return;
-            }
+        let mut state = self.state();
+        state.limit = limit;
+        state.grant_waiters();
+    }
+
+    /// Joins the back of the queue; a run that finds a free slot and nobody
+    /// ahead is granted it at once.
+    fn join(self: &Arc<Self>) -> Waiting {
+        let waiter = Arc::new(Waiter::default());
+        let mut state = self.state();
+        state.queue.push_back(Arc::clone(&waiter));
+        state.grant_waiters();
+        drop(state);
+        Waiting {
+            pool: Arc::clone(self),
+            waiter,
+            claimed: false,
         }
     }
 
-    fn try_acquire(self: &Arc<Self>) -> Option<PoolPermit> {
-        self.try_acquire_after_observe(|_| {})
+    /// Where `waiter` stands, while it is still in the queue.
+    fn place(&self, waiter: &Arc<Waiter>) -> Option<QueuePlace> {
+        let state = self.state();
+        let index = state
+            .queue
+            .iter()
+            .position(|queued| Arc::ptr_eq(queued, waiter))?;
+        Some(QueuePlace {
+            budget: self.budget,
+            limit: state.limit,
+            position: index + 1,
+        })
     }
+}
 
-    fn try_acquire_after_observe(
-        self: &Arc<Self>,
-        mut after_observe: impl FnMut(&Arc<Self>),
-    ) -> Option<PoolPermit> {
-        loop {
-            let state = self.state.load(Ordering::Acquire);
-            after_observe(self);
-            let (limit, active) = unpack(state);
-            if active >= limit {
-                return None;
-            }
-            if self
-                .state
-                .compare_exchange(
-                    state,
-                    pack(limit, active + 1),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                return Some(PoolPermit {
-                    pool: Arc::clone(self),
-                });
-            }
-        }
-    }
+/// A run's turn in one pool's queue. Dropped before its slot is claimed, it
+/// leaves the queue, or hands a slot granted meanwhile to the next run.
+struct Waiting {
+    pool: Arc<Pool>,
+    waiter: Arc<Waiter>,
+    claimed: bool,
+}
 
-    async fn acquire(self: &Arc<Self>, cancellation: &RunCancellation) -> Option<PoolPermit> {
+impl Waiting {
+    /// Waits for the pool to grant the slot. `None` once `cancellation`
+    /// trips, even when a slot is free.
+    async fn acquire(mut self, cancellation: &RunCancellation) -> Option<PoolPermit> {
         loop {
             if cancellation.is_cancelled() {
                 return None;
             }
-            if let Some(permit) = self.take_unless_cancelled(cancellation) {
-                return Some(permit);
-            }
-            let notified = self.notify.notified();
-            tokio::pin!(notified);
-            if let Some(permit) = self.take_unless_cancelled(cancellation) {
-                return Some(permit);
+            if self.waiter.granted.load(Ordering::Acquire) {
+                self.claimed = true;
+                return Some(PoolPermit {
+                    pool: Arc::clone(&self.pool),
+                });
             }
             tokio::select! {
                 biased;
                 () = cancellation.cancelled() => return None,
-                () = notified => {}
+                () = self.waiter.notify.notified() => {}
             }
         }
     }
+}
 
-    fn take_unless_cancelled(
-        self: &Arc<Self>,
-        cancellation: &RunCancellation,
-    ) -> Option<PoolPermit> {
-        let permit = self.try_acquire()?;
-        if cancellation.is_cancelled() {
-            None
-        } else {
-            Some(permit)
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        if self.claimed {
+            return;
         }
+        let mut state = self.pool.state();
+        // `granted` only changes under this lock, so it cannot flip here.
+        if self.waiter.granted.load(Ordering::Acquire) {
+            state.active -= 1;
+        } else {
+            state
+                .queue
+                .retain(|queued| !Arc::ptr_eq(queued, &self.waiter));
+        }
+        state.grant_waiters();
+    }
+}
+
+/// Where one run waits, shared by the run and those watching it.
+#[derive(Clone, Default)]
+pub(crate) struct QueueWatch(Arc<Mutex<Option<WaitingIn>>>);
+
+/// The pool a run waits in, and its wait there.
+type WaitingIn = (Arc<Pool>, Arc<Waiter>);
+
+impl QueueWatch {
+    fn waiting_on(&self, waiting: &Waiting) {
+        *self.slot() = Some((Arc::clone(&waiting.pool), Arc::clone(&waiting.waiter)));
+    }
+
+    fn clear(&self) {
+        *self.slot() = None;
+    }
+
+    /// Where the run stands while it waits for capacity; `None` once it
+    /// holds every slot it needs, or stopped waiting.
+    pub(crate) fn place(&self) -> Option<QueuePlace> {
+        let slot = self.slot();
+        let (pool, waiter) = slot.as_ref()?;
+        pool.place(waiter)
+    }
+
+    fn slot(&self) -> MutexGuard<'_, Option<WaitingIn>> {
+        // Only ever replaced whole.
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// A run in line for capacity since [`AgentConcurrency::join`]. Dropping
+/// it gives up its place.
+pub(crate) struct QueuedRun {
+    concurrency: AgentConcurrency,
+    class: CapacityClass,
+    first: Waiting,
+    watch: QueueWatch,
+}
+
+impl QueuedRun {
+    /// Where the run stands, for as long as it waits.
+    pub(crate) fn watch(&self) -> QueueWatch {
+        self.watch.clone()
+    }
+
+    /// Waits for capacity in runtime-aware order.
+    ///
+    /// - Rho, Cursor, Antigravity: one global permit only. No nested pool:
+    ///   unlike Claude, there is no measured subscription fan-out limit to
+    ///   size one against.
+    /// - Claude: the Claude permit first, then it joins the global queue.
+    ///
+    /// Claude-first ordering keeps queued Claude tasks off the global pool
+    /// until Claude capacity exists, so spare global slots stay available for
+    /// Rho. Cancellation at either stage returns `None` and drops any permit
+    /// already held so capacity cannot leak.
+    pub(crate) async fn acquire(self, cancellation: &RunCancellation) -> Option<RuntimePermits> {
+        let Self {
+            concurrency,
+            class,
+            first,
+            watch,
+        } = self;
+        let first = first.acquire(cancellation).await;
+        let permits = match (class, first) {
+            (_, None) => None,
+            (CapacityClass::Claude, Some(claude)) => {
+                let total = concurrency.total.join();
+                watch.waiting_on(&total);
+                total
+                    .acquire(cancellation)
+                    .await
+                    .map(|total| RuntimePermits {
+                        _total: total,
+                        _claude: Some(claude),
+                    })
+            }
+            (
+                CapacityClass::Rho | CapacityClass::Cursor | CapacityClass::Antigravity,
+                Some(total),
+            ) => Some(RuntimePermits {
+                _total: total,
+                _claude: None,
+            }),
+        };
+        watch.clear();
+        permits
     }
 }
 
 impl AgentConcurrency {
     pub(crate) fn new(limits: ConcurrencyLimits) -> Self {
         Self {
-            total: AdjustablePool::new(limits.total),
-            claude: AdjustablePool::new(limits.claude_nested()),
+            total: Pool::new(Budget::AgentConcurrency, limits.total),
+            claude: Pool::new(Budget::ClaudeAgentConcurrency, limits.claude_nested()),
             claude_requested: Arc::new(AtomicUsize::new(limits.claude_requested)),
         }
     }
@@ -227,34 +367,33 @@ impl AgentConcurrency {
         self.claude.available()
     }
 
-    /// Acquire concurrency for a delegated run in runtime-aware order.
-    ///
-    /// - Rho: one global permit only.
-    /// - Cursor, Antigravity: one global permit only. No nested pool: unlike
-    ///   Claude, there is no measured subscription fan-out limit to size one
-    ///   against.
-    /// - Claude: Claude nested permit first, then one global permit.
-    ///
-    /// Claude-first ordering keeps queued Claude tasks off the global pool until
-    /// Claude capacity exists, so spare global slots stay available for Rho.
-    /// Cancellation at either wait stage returns `Ok(None)` and drops any permit
-    /// already held so capacity cannot leak.
+    /// Puts a run of `class` in line for capacity now: runs get capacity in
+    /// the order they joined.
+    pub(crate) fn join(&self, class: CapacityClass) -> QueuedRun {
+        let first = match class {
+            CapacityClass::Claude => self.claude.join(),
+            CapacityClass::Rho | CapacityClass::Cursor | CapacityClass::Antigravity => {
+                self.total.join()
+            }
+        };
+        let watch = QueueWatch::default();
+        watch.waiting_on(&first);
+        QueuedRun {
+            concurrency: self.clone(),
+            class,
+            first,
+            watch,
+        }
+    }
+
+    /// Joins the line and waits for capacity; see [`QueuedRun::acquire`].
+    #[cfg(test)]
     pub(crate) async fn acquire(
         &self,
         capacity_class: CapacityClass,
         cancellation: &RunCancellation,
     ) -> Option<RuntimePermits> {
-        let claude = match capacity_class {
-            CapacityClass::Claude => Some(self.claude.acquire(cancellation).await?),
-            CapacityClass::Rho | CapacityClass::Cursor | CapacityClass::Antigravity => None,
-        };
-
-        let total = self.total.acquire(cancellation).await?;
-
-        Some(RuntimePermits {
-            _total: total,
-            _claude: claude,
-        })
+        self.join(capacity_class).acquire(cancellation).await
     }
 }
 

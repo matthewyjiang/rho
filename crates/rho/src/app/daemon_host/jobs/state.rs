@@ -7,6 +7,10 @@
 //! starts the next turn from any ended state. `interrupted` is how a turn
 //! ends when its daemon stops before the turn does.
 //!
+//! A subagent job is one run, which is one turn: `queued` while it waits
+//! for capacity in the daemon-wide budget, then `running`, then how it
+//! ended. It never waits for input itself: its questions go to its parent.
+//!
 //! A state changes only through a [`JobEvent`], so a failed turn always
 //! carries why it failed.
 
@@ -19,6 +23,8 @@ use serde::{Deserialize, Serialize};
 pub(in crate::app::daemon_host) enum JobState {
     /// Created; no turn has started.
     Idle,
+    /// A subagent run waiting for capacity.
+    Queued,
     Running,
     /// The running turn waits for someone to answer an approval, a plan
     /// approval, or a question.
@@ -43,7 +49,7 @@ pub(in crate::app::daemon_host) enum TurnEnd {
 /// Something that happened to a job's turn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app::daemon_host) enum JobEvent {
-    /// A prompt started a new turn.
+    /// A prompt started a new turn, or a queued run got capacity.
     TurnStarted,
     /// The turn asked for an approval, a plan approval, or a question while
     /// none was open.
@@ -68,14 +74,14 @@ impl JobState {
         event: JobEvent,
     ) -> Result<Self, TransitionRefused> {
         use JobEvent::{InputOpened, InputSettled, TurnEnded, TurnStarted};
-        use JobState::{Ended, Idle, Running, WaitingForInput};
+        use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
         match (self, event) {
-            (Idle | Ended(_), TurnStarted) => Ok(Running),
+            (Idle | Queued | Ended(_), TurnStarted) => Ok(Running),
             (Running, InputOpened) => Ok(WaitingForInput),
             (WaitingForInput, InputSettled) => Ok(Running),
-            (Running | WaitingForInput, TurnEnded(end)) => Ok(Ended(end)),
+            (Queued | Running | WaitingForInput, TurnEnded(end)) => Ok(Ended(end)),
             (
-                Idle | Running | WaitingForInput | Ended(_),
+                Idle | Queued | Running | WaitingForInput | Ended(_),
                 event @ (TurnStarted | InputOpened | InputSettled | TurnEnded(_)),
             ) => Err(TransitionRefused {
                 from: self.clone(),
@@ -84,10 +90,10 @@ impl JobState {
         }
     }
 
-    /// Whether a turn is under way: running or waiting for input.
+    /// Whether a turn is under way: queued, running, or waiting for input.
     pub(in crate::app::daemon_host) fn in_progress(&self) -> bool {
         match self {
-            Self::Running | Self::WaitingForInput => true,
+            Self::Queued | Self::Running | Self::WaitingForInput => true,
             Self::Idle | Self::Ended(_) => false,
         }
     }
@@ -96,6 +102,7 @@ impl JobState {
     pub(in crate::app::daemon_host) fn as_str(&self) -> &'static str {
         match self {
             Self::Idle => "idle",
+            Self::Queued => "queued",
             Self::Running => "running",
             Self::WaitingForInput => "waiting_for_input",
             Self::Ended(TurnEnd::Completed) => "completed",

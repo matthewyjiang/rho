@@ -38,6 +38,9 @@ fn status_write_lock() -> &'static Mutex<()> {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
+    /// Waiting for a slot in the delegated-agent budget.
+    Queued,
+    /// Has its slot and is launching.
     #[default]
     Starting,
     Running,
@@ -52,11 +55,12 @@ impl RunState {
     }
 
     pub fn is_live(self) -> bool {
-        matches!(self, Self::Starting | Self::Running)
+        matches!(self, Self::Queued | Self::Starting | Self::Running)
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Starting => "starting",
             Self::Running => "running",
             Self::Ok => "ok",

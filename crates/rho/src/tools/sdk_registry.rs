@@ -62,18 +62,22 @@ pub struct DelegationConfig {
     /// Catalog already discovered for `cwd`; the agent tool rediscovers when
     /// absent.
     catalog: Option<Arc<crate::agent::AgentCatalog>>,
+    /// Where the delegated agents take capacity, and who else hears of them.
+    host: crate::app::subagent_host::SubagentHost,
 }
 
 impl DelegationConfig {
-    pub fn new(
+    pub(crate) fn new(
         cwd: PathBuf,
         config_path: PathBuf,
         catalog: Option<Arc<crate::agent::AgentCatalog>>,
+        host: crate::app::subagent_host::SubagentHost,
     ) -> Self {
         Self {
             cwd,
             config_path,
             catalog,
+            host,
         }
     }
 }
@@ -370,6 +374,7 @@ impl AppToolSet {
                     config_path: delegation.config_path,
                     catalog: delegation.catalog,
                     host_io: tool_set.host_io.clone(),
+                    host: delegation.host,
                 },
                 tool_set.checkpoint_tracker.clone(),
             );

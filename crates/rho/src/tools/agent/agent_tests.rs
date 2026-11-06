@@ -64,6 +64,7 @@ impl ManagerFixture {
                 Config::default(),
                 root.join("rho.toml"),
                 root.to_path_buf(),
+                crate::app::subagent_host::SubagentHost::Alone,
             ),
             _rho_home: rho_home,
         }

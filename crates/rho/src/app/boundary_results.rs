@@ -102,7 +102,7 @@ fn subagent_result_card(
 ) -> NotificationCard {
     let snapshot = &notification.snapshot;
     let event = match snapshot.status.state {
-        RunState::Starting | RunState::Running => AgentEvent::Update,
+        RunState::Queued | RunState::Starting | RunState::Running => AgentEvent::Update,
         RunState::Ok => AgentEvent::Completed,
         RunState::Error => AgentEvent::Failed,
         RunState::Stopped => AgentEvent::Stopped,

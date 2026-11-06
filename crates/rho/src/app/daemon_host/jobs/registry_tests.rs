@@ -16,18 +16,19 @@ fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
 }
 
 // Covers: a daemon that starts over its predecessor's records lists every
-// one, records each job that was running or waiting for input as
+// one, records each job that was queued, running, or waiting for input as
 // interrupted, on disk as well as in memory, and leaves every other state
 // as it was.
 // Owner: daemon job registry startup.
 #[test]
 fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
-    use JobState::{Ended, Idle, Running, WaitingForInput};
+    use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
     let home = TempDir::new().unwrap();
     let store = JobStore::open(home.path()).unwrap();
     let failed = Ended(TurnEnd::Failed("provider refused the request".into()));
     let cases = [
         (Idle, Idle),
+        (Queued, Ended(TurnEnd::Interrupted)),
         (Running, Ended(TurnEnd::Interrupted)),
         (WaitingForInput, Ended(TurnEnd::Interrupted)),
         (Ended(TurnEnd::Completed), Ended(TurnEnd::Completed)),
@@ -39,7 +40,11 @@ fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
     for (saved, after) in cases {
         let record = JobRecord {
             state: saved,
-            ..JobRecord::new_session(PathBuf::from("/work"), rho_sdk::SessionId::new())
+            ..JobRecord::new_session(
+                JobId::generate(),
+                PathBuf::from("/work"),
+                rho_sdk::SessionId::new(),
+            )
         };
         expected.push((record.id.clone(), after));
         store.write(&record).unwrap();
@@ -61,7 +66,11 @@ fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
 fn a_turn_starts_only_when_none_is_in_progress() {
     let home = TempDir::new().unwrap();
     let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
-    let job = JobRecord::new_session(PathBuf::from("/work"), rho_sdk::SessionId::new());
+    let job = JobRecord::new_session(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        rho_sdk::SessionId::new(),
+    );
     let id = job.id.clone();
     registry.register(job).unwrap();
 

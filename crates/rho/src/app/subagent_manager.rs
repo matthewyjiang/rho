@@ -13,7 +13,9 @@ use std::{
 use {
     crate::agent::AgentDefinition,
     crate::app::{
+        agent_concurrency::AgentConcurrency,
         agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
+        subagent_host::{StartedSubagent, SubagentHost, SubagentObserver},
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
         subagent_messaging::{SubagentNotice, SubagentNoticeBridge},
     },
@@ -98,6 +100,9 @@ pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
     executor: AgentExecutor,
     parent: Arc<Mutex<ParentBinding>>,
+    /// Hears of each run this manager starts, when the host shares its
+    /// subagents (see `subagent_host`).
+    observer: Option<Arc<dyn SubagentObserver>>,
 }
 
 /// The session a manager's subagents report to.
@@ -115,13 +120,30 @@ struct ParentBinding {
 }
 
 impl SubagentManager {
-    pub fn new(config: crate::config::Config, config_path: PathBuf, cwd: PathBuf) -> Self {
+    /// A manager whose runs take capacity and report as `host` says.
+    pub(crate) fn new(
+        config: crate::config::Config,
+        config_path: PathBuf,
+        cwd: PathBuf,
+        host: SubagentHost,
+    ) -> Self {
+        let (concurrency, observer) = match host {
+            SubagentHost::Alone => (
+                AgentConcurrency::from_config(config.agent_concurrency),
+                None,
+            ),
+            SubagentHost::Shared {
+                concurrency,
+                observer,
+            } => (concurrency, Some(observer)),
+        };
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             executor: AgentExecutor::new(
                 config,
                 config_path,
                 cwd,
+                concurrency,
                 SubagentHostInputBridge::new(),
                 SubagentNoticeBridge::new(),
             ),
@@ -130,6 +152,7 @@ impl SubagentManager {
                 workspace: None,
                 persistence: SessionPersistence::Saved,
             })),
+            observer,
         }
     }
 
@@ -258,10 +281,11 @@ impl SubagentManager {
         };
         let parent_session_id = rho_sdk::SessionId::from_string(session_id.clone())
             .map_err(|error| anyhow::anyhow!("could not start subagent: {error}"))?;
-        let cwd = cwd.to_path_buf();
-        let (id, directory) =
-            tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement, &cwd))
-                .await??;
+        let run_cwd = cwd.to_path_buf();
+        let (id, directory) = tokio::task::spawn_blocking(move || {
+            subagent::reserve_run_directory(&placement, &run_cwd)
+        })
+        .await??;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
         let launch = AgentLaunchRequest {
             definition: Arc::new(definition.clone()),
@@ -290,6 +314,15 @@ impl SubagentManager {
                 return Err(error);
             }
         };
+        if let Some(observer) = &self.observer {
+            observer.started(StartedSubagent {
+                run_id: id.clone(),
+                session: handle.session().cloned(),
+                workspace: cwd.to_path_buf(),
+                status: handle.clone_status_watch(),
+                queue: handle.queue(),
+            });
+        }
         self.inner.lock().expect("delegated registry lock").insert(
             id.clone(),
             AgentEntry {

@@ -12,6 +12,7 @@ fn terminal_observation_reconciles_notices_and_cannot_be_undone_by_restore() {
         crate::config::Config::default(),
         root.path().join("config.toml"),
         root.path().to_path_buf(),
+        crate::app::subagent_host::SubagentHost::Alone,
     );
     manager.insert_completed_status_for_test(
         "abc123",
@@ -62,6 +63,7 @@ fn task_identity_prefers_nonblank_generated_titles() {
         crate::config::Config::default(),
         root.path().join("config.toml"),
         root.path().to_path_buf(),
+        crate::app::subagent_host::SubagentHost::Alone,
     );
     for (title, fallback, expected) in [
         (

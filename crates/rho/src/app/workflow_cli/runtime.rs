@@ -432,6 +432,11 @@ impl WorkflowRuntime {
                 config.clone(),
                 config_path,
                 cwd.clone(),
+                // The run's own pool until the daemon hosts workflow runs
+                // (#1658).
+                crate::app::agent_concurrency::AgentConcurrency::from_config(
+                    config.agent_concurrency,
+                ),
                 SubagentHostInputBridge::new(),
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )

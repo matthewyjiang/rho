@@ -163,17 +163,27 @@ async fn prompt(client: &Client, session: &SessionId) -> Result<(), Option<Error
 /// Polls `rho/job/list` until the job of `session`'s turns is in a state
 /// other than running or waiting for input, and returns the job then.
 async fn settled_job(sandbox: &Sandbox, client: &Client, session: &SessionId) -> JobSummary {
+    settled(sandbox, client, |job| job.session.as_ref() == Some(session)).await
+}
+
+/// Polls `rho/job/list` until the job `pick` picks is in a state other than
+/// queued, running, or waiting for input, and returns the job then.
+async fn settled(
+    sandbox: &Sandbox,
+    client: &Client,
+    pick: impl Fn(&JobSummary) -> bool,
+) -> JobSummary {
     sandbox
         .daemon
-        .poll_until("the turn to end", DEADLINE, async || {
+        .poll_until("the job to end", DEADLINE, async || {
             let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
             let job = jobs
                 .jobs
                 .into_iter()
-                .find(|job| &job.session == session)
-                .expect("the daemon lists the session's job");
+                .find(&pick)
+                .expect("the daemon lists the job");
             match job.state {
-                JobState::Running | JobState::WaitingForInput => None,
+                JobState::Queued | JobState::Running | JobState::WaitingForInput => None,
                 JobState::Idle
                 | JobState::Completed
                 | JobState::Failed
@@ -217,7 +227,7 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
             JobKind::Session,
             sandbox.workspace.clone(),
             None,
-            session.clone(),
+            Some(session.clone()),
             None,
             Err(Some(ErrorCode::SessionNotLoaded))
         ),
@@ -242,6 +252,64 @@ enum Ending {
     Stop,
     /// The daemon is killed, then a new daemon starts.
     Kill,
+}
+
+// Covers: a subagent a daemon session starts runs in the daemon and is
+// listed as a child job of the session's job, in the session's workspace,
+// completed once it finished, with the session it saved its reply in.
+// Owner: daemon subagent jobs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subagent_is_a_child_job_of_its_session() {
+    let sandbox = Sandbox::new();
+    // The fixture makes the call the prompt spells out as JSON.
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let call = serde_json::json!({
+        "id": "delegate",
+        "name": "agent",
+        "arguments": {"agent_id": "explorer", "prompt": "Look around."},
+    });
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+        })
+        .await
+        .unwrap();
+
+    let parent = settled_job(&sandbox, &client, &session).await;
+    let child = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&parent.id)
+    })
+    .await;
+    assert_eq!(
+        (
+            parent.state,
+            child.kind,
+            child.state,
+            child.workspace,
+            child.error,
+            child.queue,
+        ),
+        (
+            JobState::Completed,
+            JobKind::Subagent,
+            JobState::Completed,
+            sandbox.workspace.clone(),
+            None,
+            None,
+        ),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+    let child_session = child.session.expect("a Rho subagent writes a session");
+    let records = sandbox.session_records(&child_session);
+    assert!(
+        records
+            .iter()
+            .any(|record| record.to_string().contains(REPLY)),
+        "the subagent saved its reply: {records:#?}"
+    );
 }
 
 // Covers: a turn cancelled through `rho/session/cancel` is recorded

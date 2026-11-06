@@ -472,7 +472,9 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostB
             questions: question_support(startup.host_features.forms),
             // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
             children: match startup.host {
-                AcpHost::Generic => ChildAgents::InProcess,
+                AcpHost::Generic => {
+                    ChildAgents::InProcess(crate::app::subagent_host::SubagentHost::Alone)
+                }
                 AcpHost::T3Code => ChildAgents::HostThreads,
             },
             background_wait,

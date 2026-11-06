@@ -297,6 +297,7 @@ fn rail_identity(agent: &RunningSubagent, row_style: ratatui::style::Style) -> V
 
 fn agent_activity(agent: &RunningSubagent) -> (String, ratatui::style::Style) {
     match agent.state {
+        RunState::Queued => ("queued".into(), Theme::text()),
         RunState::Starting => ("starting".into(), Theme::text()),
         RunState::Running => (
             activity_label(agent.last_activity.as_deref()).to_owned(),
