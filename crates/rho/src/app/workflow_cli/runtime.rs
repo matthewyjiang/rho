@@ -345,11 +345,13 @@ pub(crate) async fn spawn_background_run(
     ) {
         Ok(runtime) => runtime,
         Err(error) => {
-            let reason = format!("{error:#}");
-            tracker.mark_failed(&run_id.to_string(), reason.clone());
+            // The tracker's notice reaches the model, so it keeps the top
+            // message; the full chain, which can name paths, goes only to
+            // the host following the run.
+            tracker.mark_failed(&run_id.to_string(), error.to_string());
             if let Some(end) = end {
                 // The host may already have stopped following the run.
-                let _ = end.send(WorkflowEnd::Failed(reason));
+                let _ = end.send(WorkflowEnd::Failed(format!("{error:#}")));
             }
             return Err(error);
         }
