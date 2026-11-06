@@ -1,0 +1,125 @@
+//! What a running turn reports to its host, and what the host answers.
+//!
+//! A turn sends [`SessionEvent`]s in the order things happen and reads
+//! [`TurnControl`]s for the requests it raised. Each request names its own
+//! id, so the host may answer in any order, and stops waiting on one when its
+//! matching withdrawal arrives.
+
+use rho_sdk::{
+    ApprovalDecision, ApprovalRequest, ContextEstimate, HostInputId, HostInputRefusal,
+    HostInputRequest, HostInputResponse, RunEvent, ToolCallId,
+};
+
+use crate::{
+    display_transcript::DisplayTranscript, permission::PermissionMode,
+    tools::plan_exit::PlanPermissionAnswer,
+};
+
+/// One tool approval a turn asked for, unique within the turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct ApprovalId(pub(super) u64);
+
+/// One plan approval a turn asked for, unique within the turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct PlanApprovalId(pub(super) u64);
+
+/// A plan `exit_plan_mode` asks the user to approve.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PlanApprovalRequest {
+    /// The `exit_plan_mode` call, so the host shows the prompt on its card.
+    pub(crate) call_id: ToolCallId,
+    pub(crate) plan: String,
+    /// The modes the user may approve into, in offer order.
+    pub(crate) targets: Vec<PermissionMode>,
+}
+
+/// What one turn reports, in order.
+pub(crate) enum SessionEvent {
+    /// The SDK run started. Nothing about the run precedes it; a notice
+    /// and the prompt's acceptance may.
+    RunStarted,
+    /// An SDK run event, as the run emitted it.
+    Run(RunEvent),
+    /// The rows to show for a background result the run is about to apply,
+    /// sent just before the [`RunEvent::BoundaryInputApplied`] that applies
+    /// it. The turn saves the same rows.
+    BoundaryApplied { transcript: DisplayTranscript },
+    /// A tool needs permission. Answer with [`TurnControl::RespondApproval`].
+    ApprovalRequested {
+        id: ApprovalId,
+        request: ApprovalRequest,
+    },
+    /// The turn no longer waits on approval `id`: it was cancelled, and the
+    /// tool was told so. Answers to it are ignored.
+    ApprovalWithdrawn { id: ApprovalId },
+    /// `exit_plan_mode` waits for the user to approve its plan. Answer with
+    /// [`TurnControl::AnswerPlan`].
+    PlanApprovalRequested {
+        id: PlanApprovalId,
+        request: PlanApprovalRequest,
+    },
+    /// The turn no longer waits on plan approval `id`: it was cancelled, or
+    /// the tool stopped waiting. Answers to it are ignored.
+    PlanApprovalWithdrawn { id: PlanApprovalId },
+    /// The run asks the user `request`, from the tool call `call_id` when a
+    /// tool asks. Answer with [`TurnControl::AnswerQuestion`]. Sent only to
+    /// hosts with [`super::QuestionSupport::Available`]; for others the
+    /// turn declines the question itself.
+    QuestionAsked {
+        id: HostInputId,
+        call_id: Option<ToolCallId>,
+        request: HostInputRequest,
+    },
+    /// The turn no longer waits on question `id`: it was cancelled or the
+    /// run ended. Answers to it are ignored.
+    QuestionWithdrawn { id: HostInputId },
+    /// Something to tell the user that is not part of the run, such as a
+    /// note found when the session was reopened.
+    Notice { text: String },
+    /// The run's event stream ended; anything it left open, such as tool
+    /// calls without a result, should close as `ending` says. Approvals
+    /// still open may follow, until each is answered or withdrawn.
+    RunClosed { ending: RunEnd },
+    /// The run ended, whether it completed, was cancelled, or failed, with
+    /// `context` as its settled context estimate. Sent before the turn is
+    /// saved; not sent when the host failed the turn.
+    RunFinished { context: ContextEstimate },
+}
+
+/// How the run left calls it never finished.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RunEnd {
+    /// It completed, was cancelled, or its stream ended without a terminal
+    /// event.
+    WithoutResult,
+    /// The turn failed with this message after the run started.
+    Failed(String),
+}
+
+/// A host's answer to one request a running turn raised. Answers to ids the
+/// turn does not know, or no longer waits on, are ignored.
+pub(crate) enum TurnControl {
+    RespondApproval {
+        id: ApprovalId,
+        decision: ApprovalDecision,
+    },
+    AnswerPlan {
+        id: PlanApprovalId,
+        answer: PlanPermissionAnswer,
+    },
+    AnswerQuestion {
+        id: HostInputId,
+        answer: Result<HostInputResponse, HostInputRefusal>,
+    },
+    /// The host could not deliver what the turn reported. The turn cancels
+    /// its run and fails with `message`.
+    HostFailed { message: String },
+}
+
+/// The decision for an approval that was cancelled before anyone answered:
+/// a prompt cancel, or a host that dismissed the request.
+pub(crate) fn cancelled_approval() -> ApprovalDecision {
+    ApprovalDecision::Deny {
+        reason: "permission request cancelled".into(),
+    }
+}

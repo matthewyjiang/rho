@@ -5,6 +5,19 @@
 //! today; the daemon and `rho run` host it next. Nothing here knows a wire
 //! protocol: hosts parse their own requests and map the runtime's results and
 //! errors back to theirs.
+//!
+//! Between prompts a host calls the runtime's settings and command cores
+//! directly: permission mode, model and provider switches, `/compact`,
+//! `/workflow:`, `/agent:` rebinds, and the session title. A model turn is
+//! [`SessionRuntime::run_turn`]: the host passes a [`TurnIo`] and, while the
+//! turn runs, shows the [`SessionEvent`]s it sends and answers its requests
+//! with [`TurnControl`]s (see `events.rs`). The turn saves itself, runs the
+//! session hooks, and keeps background work going across prompts; the host
+//! only maps the [`TurnOutcome`] to its own reply.
+//!
+//! A prompt's cancel goes through the [`PromptGate`], which the host may
+//! share with whoever cancels prompts, so a cancel that arrives while a
+//! prompt is still starting cancels its run once it exists.
 
 use std::{
     path::Path,
@@ -30,11 +43,14 @@ mod agent;
 mod build;
 mod compact;
 mod credentials;
+mod events;
 mod mode;
 mod persist;
 mod prompt_gate;
+mod pump;
 mod switch;
 mod title;
+mod turn;
 mod workflow;
 
 pub(crate) use acceptance::{InsertedMessage, MessageAcceptance};
@@ -46,11 +62,16 @@ pub(crate) use build::overlay_host_mcp;
 pub(crate) use build::{build_session, session_config, ChildAgents, QuestionSupport, SessionBuild};
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
+pub(crate) use events::{
+    cancelled_approval, ApprovalId, PlanApprovalId, PlanApprovalRequest, RunEnd, SessionEvent,
+    TurnControl,
+};
 pub(crate) use mode::{ModeChangeError, SessionPermission};
 pub(crate) use persist::HostStorage;
 pub(crate) use prompt_gate::{Closing, PromptGate, PromptGuard};
 pub(crate) use switch::ModelSwitchError;
 pub(crate) use title::TitleJob;
+pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
 pub(crate) use workflow::WorkflowStart;
 
 /// A request the session recognizes but cannot run, such as a TUI-only
