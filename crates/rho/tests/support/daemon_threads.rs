@@ -1,12 +1,11 @@
 //! Threads the daemon hosts, through the real binary and its socket: a
 //! turn outlives the client that started it, and every way a turn can end
 //! early is recorded on its job.
-#![cfg(unix)]
 
 use std::{
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
+    process::{Command, Stdio},
+    time::Duration,
 };
 
 use pretty_assertions::assert_eq;
@@ -15,16 +14,13 @@ use rho_protocol::{
     Client, ClientError, ClientInfo, ErrorCode, JobId, JobKind, JobState, JobSummary,
     JobsListParams, ThreadCancelParams, ThreadCreateParams, ThreadPromptParams,
 };
-use tempfile::TempDir;
 use tokio::net::UnixStream;
+
+use super::harness::{DaemonProcess, DaemonSandbox};
 
 /// Failure bound for each wait on the daemon. Every turn here answers from
 /// the fixture provider without network; this only stops a hung test.
 const DEADLINE: Duration = Duration::from_secs(60);
-/// How often a wait polls the daemon's socket or job list. The daemon
-/// pushes nothing to clients yet (2c-2), so polling is the only way to see
-/// a turn end.
-const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// The reply the fixture provider gives, which the test finds in the
 /// session file.
@@ -40,51 +36,35 @@ provider = "disabled"
 "#;
 
 struct Sandbox {
-    root: TempDir,
+    daemon: DaemonSandbox,
     /// The thread's workspace, canonicalized as the daemon records it.
     workspace: PathBuf,
 }
 
 impl Sandbox {
     fn new() -> Self {
-        let root = TempDir::new().unwrap();
-        std::fs::create_dir_all(root.path().join("home")).unwrap();
-        std::fs::write(root.path().join("home/config.toml"), CONFIG).unwrap();
-        let workspace = root.path().join("workspace");
+        let daemon = DaemonSandbox::new();
+        std::fs::write(daemon.home().join("config.toml"), CONFIG).unwrap();
+        let workspace = daemon.root().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
         let workspace = workspace.canonicalize().unwrap();
-        Self { root, workspace }
+        Self { daemon, workspace }
     }
 
-    fn home(&self) -> PathBuf {
-        self.root.path().join("home")
-    }
-
-    fn socket(&self) -> PathBuf {
-        self.home().join("run/daemon.sock")
-    }
-
-    /// `rho` with its data root, runtime directory, and credential store
-    /// inside the sandbox, and the fixture provider in `mode`. Only the
-    /// child's environment changes.
+    /// `rho` in the workspace with its credential store inside the sandbox
+    /// and the fixture provider in `mode`.
     fn rho(&self, mode: &str) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
+        let mut command = self.daemon.rho();
         command
             .current_dir(&self.workspace)
-            .env("HOME", self.root.path())
-            .env("RHO_HOME", self.home())
-            .env("XDG_RUNTIME_DIR", self.root.path().join("run"))
             // Fixture sessions must not query the developer's OS keyring.
             .env("RHO_CREDENTIAL_STORE", "file")
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_RESPONSE", REPLY)
             .env_remove("RHO_AUTOMATION_TEST_PATH")
-            .env_remove("JOURNAL_STREAM")
-            .env_remove("RHO_LOG")
             .env_remove("HERDR_ENV")
             .env_remove("HERDR_SOCKET_PATH")
             .env_remove("HERDR_PANE_ID")
-            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         command
@@ -96,18 +76,13 @@ impl Sandbox {
         let daemon = DaemonProcess(self.rho(mode).args(["daemon", "run"]).spawn().unwrap());
         // A daemon killed earlier left its socket file behind, so wait for
         // one that answers rather than one that exists.
-        let started = Instant::now();
-        loop {
-            if let Some(client) = self.try_connect().await {
-                return (daemon, client);
-            }
-            assert!(
-                started.elapsed() < DEADLINE,
-                "the daemon did not answer within {DEADLINE:?}; log:\n{}",
-                self.daemon_log()
-            );
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
+        let client = self
+            .daemon
+            .poll_until("the daemon to answer", DEADLINE, async || {
+                self.try_connect().await
+            })
+            .await;
+        (daemon, client)
     }
 
     async fn connect(&self) -> Client<UnixStream> {
@@ -115,7 +90,7 @@ impl Sandbox {
     }
 
     async fn try_connect(&self) -> Option<Client<UnixStream>> {
-        let stream = UnixStream::connect(self.socket()).await.ok()?;
+        let stream = UnixStream::connect(self.daemon.socket()).await.ok()?;
         let client = ClientInfo {
             name: "daemon-threads-test".into(),
             version: "0".into(),
@@ -127,7 +102,7 @@ impl Sandbox {
     }
 
     fn daemon_log(&self) -> String {
-        std::fs::read_to_string(self.home().join("logs/daemon.log")).unwrap_or_default()
+        self.daemon.daemon_log()
     }
 
     /// The records saved in session `session_id`'s file.
@@ -135,7 +110,7 @@ impl Sandbox {
         // Each session is a directory named for its id, below its
         // workspace's.
         let suffix = format!("_{session_id}");
-        let session = std::fs::read_dir(self.home().join("sessions"))
+        let session = std::fs::read_dir(self.daemon.home().join("sessions"))
             .unwrap()
             .flatten()
             .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
@@ -149,22 +124,6 @@ impl Sandbox {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
-    }
-}
-
-/// Kills the daemon if the test ends without stopping it.
-struct DaemonProcess(Child);
-
-impl DaemonProcess {
-    fn kill(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-impl Drop for DaemonProcess {
-    fn drop(&mut self) {
-        self.kill();
     }
 }
 
@@ -194,35 +153,37 @@ async fn prompt(client: &mut Client<UnixStream>, thread: &JobId) -> Result<(), O
 
 /// Polls `rho/jobs/list` until `thread` is in a state other than running
 /// or waiting for input, and returns the job then.
-async fn settled_job(client: &mut Client<UnixStream>, thread: &JobId) -> JobSummary {
-    let started = Instant::now();
-    loop {
-        let jobs = client
-            .request::<JobsList>(&JobsListParams {})
-            .await
-            .unwrap();
-        let job = jobs
-            .jobs
-            .into_iter()
-            .find(|job| &job.id == thread)
-            .expect("the daemon lists the thread");
-        match job.state {
-            JobState::Running | JobState::WaitingForInput => {}
-            JobState::Idle
-            | JobState::Completed
-            | JobState::Failed
-            | JobState::Cancelled
-            | JobState::Interrupted => return job,
-        }
-        assert!(
-            started.elapsed() < DEADLINE,
-            "the turn did not end within {DEADLINE:?}"
-        );
-        tokio::time::sleep(POLL_INTERVAL).await;
-    }
+async fn settled_job(
+    sandbox: &Sandbox,
+    client: &mut Client<UnixStream>,
+    thread: &JobId,
+) -> JobSummary {
+    sandbox
+        .daemon
+        .poll_until("the turn to end", DEADLINE, async || {
+            let jobs = client
+                .request::<JobsList>(&JobsListParams {})
+                .await
+                .unwrap();
+            let job = jobs
+                .jobs
+                .into_iter()
+                .find(|job| &job.id == thread)
+                .expect("the daemon lists the thread");
+            match job.state {
+                JobState::Running | JobState::WaitingForInput => None,
+                JobState::Idle
+                | JobState::Completed
+                | JobState::Failed
+                | JobState::Cancelled
+                | JobState::Interrupted => Some(job),
+                state => panic!("the daemon sent a job state this test does not know: {state:?}"),
+            }
+        })
+        .await
 }
 
-// Covers: a prompt returns once its turn started, the turn runs on in the
+// Covers: a prompt returns once its turn saved the prompt, the turn runs on in the
 // daemon after the client that sent it disconnects, a new client sees its
 // job completed with the thread's workspace and session, and the session
 // file holds the model's reply.
@@ -236,7 +197,7 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
     drop(client);
 
     let mut client = sandbox.connect().await;
-    let job = settled_job(&mut client, &thread).await;
+    let job = settled_job(&sandbox, &mut client, &thread).await;
 
     assert_eq!(
         (
@@ -334,7 +295,7 @@ async fn a_turn_ended_early_is_recorded_on_its_job() {
                 sandbox.start_daemon("delay").await
             }
         };
-        let state = settled_job(&mut client, &thread).await.state;
+        let state = settled_job(&sandbox, &mut client, &thread).await.state;
         let next_prompt = prompt(&mut client, &thread).await;
 
         assert_eq!(

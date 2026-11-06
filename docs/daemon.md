@@ -20,13 +20,17 @@ The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: i
 
 A thread is a conversation the daemon hosts: one saved session, prompted turn by turn. Its turns run in the daemon, so a turn keeps running when the client that started it disconnects, and another client can follow it later. The daemon tracks every unit of work it runs as a job; today every job is a thread.
 
+The [`rho-protocol` `methods` module](https://docs.rs/rho-protocol/latest/rho_protocol/methods/) is the full method reference. The thread and job methods:
+
 | Method | Params | What it does |
 | --- | --- | --- |
-| `rho/thread/create` | `cwd` | Opens a thread on a new session in `cwd`, an absolute path. Returns the thread's job id and session id. |
+| `rho/thread/create` | `cwd` | Opens a thread on a new session in `cwd`, an absolute path to an existing directory. Returns the thread's job id and session id. |
 | `rho/thread/prompt` | `thread`, `text` | Starts a turn and returns once the turn has saved the prompt. A thread runs one turn at a time; a prompt while a turn is under way is refused. |
-| `rho/thread/cancel` | `thread` | Cancels the turn under way, if any. |
+| `rho/thread/cancel` | `thread` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping. A cancel sent before a prompted turn begins still cancels it. |
 | `rho/thread/steer` | `thread`, `text` | Adds `text` to the running turn's next model request. Refused when no model request is running. |
 | `rho/jobs/list` | | Lists every job the daemon knows, including those earlier daemons ran. |
+
+A prompt whose turn ends before it saves the prompt returns an error instead of a result: `TurnFailed` (-32009) with the reason, `TurnCancelled` (-32010) when a cancel stopped it, or `DaemonStopping` (-32007) when the daemon is stopping.
 
 A thread opens with the configuration, agents, and instructions that `rho` launched in `cwd` would use, read when the thread is created. It runs as the default agent with the configured permission mode. `text` reaches the model as written: slash commands are not expanded yet.
 
@@ -44,15 +48,15 @@ A thread's job state is the state of its current or last turn:
 
 A new prompt moves a thread from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `running` or `waiting_for_input`.
 
-Clients cannot yet watch a turn's events or answer its requests. A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/thread/cancel` ends the wait.
+Clients cannot yet watch a turn's events ([#1657](https://github.com/matthewyjiang/rho/issues/1657)) or answer its requests ([#1660](https://github.com/matthewyjiang/rho/issues/1660)). A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/thread/cancel` ends the wait.
 
-Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet. A daemon lists the threads earlier daemons ran but cannot reopen them yet, so it refuses to prompt them with `thread is not loaded in this daemon`.
+Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet. A daemon lists the threads earlier daemons ran but cannot reopen them yet ([#1661](https://github.com/matthewyjiang/rho/issues/1661)), so it refuses to prompt them with `thread is not loaded in this daemon`.
 
-Tools in a thread run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment in a later release.
+Tools in a thread run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment later ([#1659](https://github.com/matthewyjiang/rho/issues/1659)).
 
 ## Starting automatically
 
-Frontends that use the daemon start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
+Frontends that use the daemon start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that starts one while the previous daemon is still shutting down can time out waiting for it; [#1657](https://github.com/matthewyjiang/rho/issues/1657) tracks waiting for the old daemon instead. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
 
 ## Versions
 
@@ -63,7 +67,7 @@ Every connection begins with a handshake that compares protocol versions. A fron
 
 ## Socket and permissions
 
-The daemon keeps its socket, lock, and info file in a runtime directory:
+The daemon keeps its socket and info file in a runtime directory:
 
 - `$RHO_HOME/run` when `RHO_HOME` is set. Each rho home gets its own daemon.
 - Otherwise `$XDG_RUNTIME_DIR/rho` when `XDG_RUNTIME_DIR` is set to an absolute path, as on most Linux desktops.
@@ -72,13 +76,14 @@ The daemon keeps its socket, lock, and info file in a runtime directory:
 | File | Purpose |
 | --- | --- |
 | `daemon.sock` | The socket frontends connect to. |
-| `daemon.lock` | Held by the running daemon; guarantees a single instance. |
 | `daemon.json` | The running daemon's pid, version, protocol, start time, and socket. |
 | `spawn.lock` | Lets concurrent frontends start exactly one daemon. |
 
+Its lock, `daemon.lock`, lives in the rho home instead: `~/.rho/daemon/daemon.lock` (`$RHO_HOME/daemon/daemon.lock` with `RHO_HOME`). The running daemon holds it, so only one daemon runs per rho home even when two are started with different runtime directories.
+
 Only your user can reach the daemon:
 
-- The runtime directory is created with mode `0700`. If it already exists, rho refuses to use it unless it is a real directory (not a symlink) that you own and that grants no group or other access.
+- The runtime directory and the lock's directory are created with mode `0700`. If it already exists, rho refuses to use it unless it is a real directory (not a symlink) that you own and that grants no group or other access.
 - The socket has mode `0600`.
 - The daemon checks the user id of every connecting process and closes connections from other users.
 - The daemon listens on no TCP port.
