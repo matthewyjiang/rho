@@ -2,11 +2,14 @@
 
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A protocol version. Minors add optional fields, methods, and error codes;
 /// majors may change anything.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ProtocolVersion {
     pub major: u16,
     pub minor: u16,
@@ -35,7 +38,7 @@ impl fmt::Display for ProtocolVersion {
 }
 
 /// Which side of an incompatible pair has to change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionFix {
     /// The running daemon is older than the client. Stopping it lets the next
@@ -48,7 +51,7 @@ pub enum VersionFix {
 /// An incompatible handshake. The daemon sends this as the `data` of a
 /// [`crate::ErrorCode::VersionMismatch`] error; its `Display` is the
 /// actionable message for users.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct VersionMismatch {
     pub daemon: ProtocolVersion,
     pub client: ProtocolVersion,

@@ -27,6 +27,9 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
 - The [`methods`](https://docs.rs/rho-protocol/latest/rho_protocol/methods/)
   module lists every method and notification with its params and result. A
   session's turns run in the daemon and outlive the client that started them.
+- `schema/protocol.json` is the protocol as JSON Schema, for clients in other
+  languages: every method, notification, and error code. CI keeps it current
+  and compatible with the last release's.
 - No dependency on `rho-sdk`, so an SDK major never breaks a frontend build.
 
 ```rust
@@ -46,5 +49,7 @@ async fn print_status(stream: UnixStream) -> Result<(), ClientError> {
 }
 ```
 
-The daemon socket location, permissions, and lifecycle are documented in the
+The wire protocol is documented in the
+[protocol reference](https://matthewyjiang.github.io/rho/protocol), and the
+daemon socket location, permissions, and lifecycle in the
 [daemon guide](https://matthewyjiang.github.io/rho/daemon).

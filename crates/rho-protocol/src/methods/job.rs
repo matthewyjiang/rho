@@ -4,24 +4,18 @@
 
 use std::{fmt, path::PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Method, SessionId};
+use super::SessionId;
 
 /// List every job the daemon knows.
 pub const JOB_LIST: &str = "rho/job/list";
 
-/// Marker for [`JOB_LIST`].
-pub struct JobList;
-
-impl Method for JobList {
-    const NAME: &'static str = JOB_LIST;
-    type Params = JobListParams;
-    type Result = JobListResponse;
-}
-
 /// A job's id. Opaque to clients: send back the string the daemon gave.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct JobId(String);
 
@@ -42,7 +36,7 @@ impl fmt::Display for JobId {
 }
 
 /// What a job runs. Protocol minors may add kinds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobKind {
@@ -52,13 +46,14 @@ pub enum JobKind {
     /// leniently keeps the rest of the job list usable; daemons never send
     /// it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// Where a job is. A session job's state is that of its current or last
 /// turn.
 /// Protocol minors may add states.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobState {
@@ -80,11 +75,12 @@ pub enum JobState {
     /// it leniently keeps the rest of the job list usable; daemons never
     /// send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// One job, as [`JOB_LIST`] reports it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobSummary {
     pub id: JobId,
     pub kind: JobKind,
@@ -92,6 +88,7 @@ pub struct JobSummary {
     /// The workspace the job runs in.
     pub workspace: PathBuf,
     /// The job that started this one; `None` for a job a client started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<JobId>,
     /// The session the job writes.
     pub session: SessionId,
@@ -100,15 +97,16 @@ pub struct JobSummary {
     /// Unix time, in seconds, of the job's last state change.
     pub updated_at: u64,
     /// Why the job failed, when its state is [`JobState::Failed`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 /// Params of [`JOB_LIST`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobListParams {}
 
 /// Result of [`JOB_LIST`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobListResponse {
     /// Every job, oldest first.
     pub jobs: Vec<JobSummary>,

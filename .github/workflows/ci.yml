@@ -38,6 +38,8 @@ jobs:
         uses: swatinem/rust-cache@v2
       - name: Test validation scripts
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Check protocol compatibility with the last release
+        run: python3 scripts/check_protocol_compat.py
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:

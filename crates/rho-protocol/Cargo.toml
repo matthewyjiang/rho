@@ -14,6 +14,8 @@ categories = ["asynchronous", "network-programming"]
 # not depend on rho-sdk: an SDK major must never break a frontend build.
 # scripts/architecture.json enforces that boundary.
 [dependencies]
+# Publishes the wire types as JSON Schema (`schema/protocol.json`).
+schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

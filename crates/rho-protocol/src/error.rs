@@ -1,12 +1,16 @@
 //! Stable JSON-RPC error codes.
 
-/// Declares [`ErrorCode`] and [`ALL`] from one list, so every variant is
-/// in the table [`ErrorCode::from_code`] searches.
+use schemars::{Schema, SchemaGenerator};
+
+/// Declares [`ErrorCode`], [`ALL`], and each code's name and `data` type
+/// from one list, so every variant is in the table [`ErrorCode::from_code`]
+/// searches and [`crate::schema`] publishes. `=> Type` names the shape of a
+/// code's `data`.
 macro_rules! error_codes {
     (
         $(#[$enum_meta:meta])*
         pub enum ErrorCode {
-            $($(#[$meta:meta])* $variant:ident = $code:literal,)+
+            $($(#[$meta:meta])* $variant:ident = $code:literal $(=> $data:ty)?,)+
         }
     ) => {
         $(#[$enum_meta])*
@@ -14,8 +18,35 @@ macro_rules! error_codes {
             $($(#[$meta])* $variant = $code,)+
         }
 
-        /// Every [`ErrorCode`], which [`ErrorCode::from_code`] searches.
-        const ALL: &[ErrorCode] = &[$(ErrorCode::$variant,)+];
+        /// Every [`ErrorCode`], which [`ErrorCode::from_code`] searches and
+        /// [`crate::schema`] publishes.
+        pub(crate) const ALL: &[ErrorCode] = &[$(ErrorCode::$variant,)+];
+
+        impl ErrorCode {
+            /// The variant's name, which the schema publishes with its code.
+            pub(crate) const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => stringify!($variant),)+
+                }
+            }
+
+            /// The schema of the error's `data`, for the codes whose `data`
+            /// has a shape.
+            pub(crate) fn data_schema(self, generator: &mut SchemaGenerator) -> Option<Schema> {
+                match self {
+                    $(Self::$variant => data_schema!(generator $($data)?),)+
+                }
+            }
+        }
+    };
+}
+
+macro_rules! data_schema {
+    ($generator:ident) => {
+        None
+    };
+    ($generator:ident $data:ty) => {
+        Some($generator.subschema_for::<$data>())
     };
 }
 
@@ -51,7 +82,7 @@ error_codes! {
         HandshakeRequired = -32000,
         /// `rho/hello` named an incompatible protocol major. `data` is a
         /// [`crate::VersionMismatch`] saying which side must change.
-        VersionMismatch = -32001,
+        VersionMismatch = -32001 => crate::VersionMismatch,
         /// This daemon has not loaded that session, so it cannot take a
         /// prompt, a cancel, or steering. The session may not exist: telling
         /// the two apart comes with reopen (#1661).

@@ -6,6 +6,7 @@
 
 use std::{fmt, path::PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::JobState;
@@ -15,7 +16,7 @@ use super::JobState;
 macro_rules! string_id {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
-        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
         #[serde(transparent)]
         pub struct $name(String);
 
@@ -59,19 +60,21 @@ string_id! {
 /// including this one, from 1. `Seq(0)` is not a position: a reset's
 /// transcript events carry it (see [`super::SessionEventParams::seq`]), and
 /// a cursor at 0 always resets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct Seq(pub u64);
 
 /// Where a client is in a session's stream; send it back to resume.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Cursor {
     pub stream: StreamId,
     pub seq: Seq,
 }
 
 /// One thing that happened in a session.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SessionEvent {
@@ -110,12 +113,13 @@ pub enum SessionEvent {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// Opens a tool call, or updates the one with the same `id`. Absent fields
 /// are unchanged.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ToolCallUpdate {
     pub id: ToolCallId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,7 +140,7 @@ pub struct ToolCallUpdate {
 }
 
 /// What a tool does, so a client can pick an icon or a layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ToolKind {
@@ -153,11 +157,12 @@ pub enum ToolKind {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// Where a tool call is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ToolStatus {
@@ -168,11 +173,12 @@ pub enum ToolStatus {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// One piece of what a tool call shows.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ToolContent {
@@ -194,11 +200,12 @@ pub enum ToolContent {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// One piece of a user message.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ContentBlock {
@@ -213,11 +220,12 @@ pub enum ContentBlock {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
 /// A file a tool call touches, and the line when one applies.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Location {
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -225,14 +233,14 @@ pub struct Location {
 }
 
 /// One step of the agent's plan.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlanEntry {
     pub content: String,
     pub status: PlanStatus,
 }
 
 /// Where a plan step is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PlanStatus {
@@ -242,6 +250,7 @@ pub enum PlanStatus {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 

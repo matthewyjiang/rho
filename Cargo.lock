@@ -4925,6 +4925,7 @@ name = "rho-protocol"
 version = "1.0.0"
 dependencies = [
  "pretty_assertions",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
