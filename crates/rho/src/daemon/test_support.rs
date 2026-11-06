@@ -37,7 +37,7 @@ impl Service for StopService {
         std::future::ready(test_status())
     }
 
-    fn stop(&self) -> impl Future<Output = ()> + Send {
-        async move { self.shutdown.cancel() }
+    async fn stop(&self) {
+        self.shutdown.cancel();
     }
 }

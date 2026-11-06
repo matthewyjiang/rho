@@ -56,8 +56,8 @@ fn buggy_status() -> DaemonStatus {
 }
 
 impl Service for PanickingService {
-    fn status(&self) -> impl Future<Output = DaemonStatus> + Send {
-        async { buggy_status() }
+    async fn status(&self) -> DaemonStatus {
+        buggy_status()
     }
 
     fn stop(&self) -> impl Future<Output = ()> + Send {
@@ -85,18 +85,14 @@ impl GatedService {
 }
 
 impl Service for GatedService {
-    fn status(&self) -> impl Future<Output = DaemonStatus> + Send {
-        async move {
-            self.release_status.notified().await;
-            test_status()
-        }
+    async fn status(&self) -> DaemonStatus {
+        self.release_status.notified().await;
+        test_status()
     }
 
-    fn stop(&self) -> impl Future<Output = ()> + Send {
-        async move {
-            self.stop_requested.notify_one();
-            self.shutdown_seen.notified().await;
-        }
+    async fn stop(&self) {
+        self.stop_requested.notify_one();
+        self.shutdown_seen.notified().await;
     }
 }
 
