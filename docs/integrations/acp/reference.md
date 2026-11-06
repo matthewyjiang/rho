@@ -127,7 +127,7 @@ Listing and deleting saved history do not start model discovery or require provi
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A checklist restored by the load, and a model-prompt change notice found at load, go out when the next prompt starts.
 
-A session open in another Rho process, such as a terminal TUI or another `rho acp`, fails to load with `invalid_request` (`-32600`) naming the session, because only one process writes a session file at a time. Loading a session already live on this connection replaces it instead (see [Sessions](/sessions#one-process-per-session)).
+A session open in another Rho process, such as a terminal TUI or another `rho acp`, fails to load with `invalid_request` (`-32600`) naming the session, because only one process writes a session file at a time. Loading a session already live on this connection replaces it instead (see [Sessions](/sessions#one-process-per-session)). `session/close` releases the session before it responds, so a host that restarts its agent can close a session in the old process and load it in the new one without waiting for the old process to exit.
 
 The load starts from the process default mode, model, reasoning, and fast mode, except that `/agent:` sessions rebind to their agent's prompt, tools, and model, and [per-call model](#per-call-model) children restore their saved selection. History restored on load may still mention a prior switch.
 

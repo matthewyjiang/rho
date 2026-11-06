@@ -188,10 +188,13 @@ fn resume_restores_the_saved_session_without_replay() {
 
 // Covers: a session live in one Rho process cannot be loaded, resumed or
 // deleted from another, so two processes never interleave writes to its
-// file; once the first process exits, the second loads the saved session.
+// file. Once the first process closes it, the second loads the saved
+// session while the first still runs: the order a host such as T3 Code
+// uses to restart an agent (`session/close`, then `session/load` in a new
+// process), with no wait for the old process to exit.
 // Owner: session single-writer lease, across real processes
 #[test]
-fn a_session_open_in_another_process_is_refused_until_that_process_exits() {
+fn a_session_open_in_another_process_is_refused_until_that_process_closes_it() {
     let workspace = Workspace::new();
     let (mut first, _) = initialized(&workspace);
     let session_id = new_session(&mut first, &workspace, json!([]));
@@ -221,9 +224,11 @@ fn a_session_open_in_another_process_is_refused_until_that_process_exits() {
         ]
     );
 
-    drop(first);
+    let (closed, _) = first.request("session/close", json!({"sessionId": session_id}));
+    closed.unwrap();
     let (loaded, replay) = second.request("session/load", reopen);
     loaded.unwrap();
+    drop(first);
     let replayed_prompts = replay
         .iter()
         .filter(|update| update["sessionUpdate"] == "user_message_chunk")
