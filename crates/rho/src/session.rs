@@ -94,7 +94,8 @@ pub struct SessionSummary {
 }
 
 /// Which host created a session, recorded on its header when its file is
-/// created, so listings can tell a person's sessions from headless ones.
+/// created for future listing filters (a person's sessions vs headless
+/// ones).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionOrigin {
@@ -108,6 +109,11 @@ pub(crate) enum SessionOrigin {
     Subagent,
     /// An agent node of a workflow run.
     WorkflowNode,
+    /// A host a later Rho records that this one does not know. Reading it
+    /// leniently keeps such sessions listable and resumable; this binary
+    /// never creates it.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Exact identity for a session within its owning workspace.
