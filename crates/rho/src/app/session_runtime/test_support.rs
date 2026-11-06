@@ -12,7 +12,7 @@ use rho_sdk::{
 use super::{
     ApprovalPolicy, ChildAgents, HostCapabilities, Logouts, OpenedSession, QuestionSupport,
     RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole, SessionRuntime,
-    SessionStorage,
+    SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -62,7 +62,7 @@ fn idle_provider(config: &Config) -> Arc<dyn ModelProvider> {
 
 /// A provider whose every request waits until its run is cancelled, so a
 /// turn on it can only end cancelled.
-pub(super) struct HangUntilCancel;
+pub(in crate::app) struct HangUntilCancel;
 
 impl ModelProvider for HangUntilCancel {
     fn identity(&self) -> ModelIdentity {
@@ -93,6 +93,17 @@ pub(super) async fn built_on(
         .provider_shared(Arc::clone(&provider))
         .build()
         .expect("test runtime");
+    built_with(config, id, runtime, provider).await
+}
+
+/// A session `id` on the SDK `runtime`, built on `provider` with whatever
+/// tools and hooks the test gave it, and no host tools of its own.
+pub(super) async fn built_with(
+    config: &Config,
+    id: rho_sdk::SessionId,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> BuiltSession {
     let session = runtime
         .session(SessionOptions::new().id(id))
         .await
@@ -127,6 +138,27 @@ pub(super) async fn runtime_on(
     let id = rho_sdk::SessionId::from_string(stored.id()).expect("stored ids are session ids");
     let built = built_on(config, id, provider).await;
     SessionRuntime::for_tests(built, SessionStorage::saved(stored), config)
+}
+
+/// A runtime around a [`built_with`] session on the SDK `runtime`, saved in
+/// a new file under `root`, which is also its workspace, for a host nobody
+/// watches that offers `questions`.
+pub(in crate::app) async fn unattended_runtime_on(
+    root: &Path,
+    config: &Config,
+    questions: QuestionSupport,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> SessionRuntime {
+    let stored = StoredSession::create_in_root(root, root).expect("test session file");
+    let id = rho_sdk::SessionId::from_string(stored.id()).expect("stored ids are session ids");
+    let built = built_with(config, id, runtime, provider).await;
+    let mut build = test_build(config, root);
+    build.host = HostCapabilities {
+        questions,
+        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
+    };
+    SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), config)
 }
 
 /// How a test session is built: as a [`root_agent`] whose host answers its

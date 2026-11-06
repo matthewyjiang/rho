@@ -14,7 +14,7 @@
 //! `automation.rs` runs `rho run` on it; `headless_host/child.rs` runs a
 //! delegated child or a workflow node.
 
-use std::{future::Future, pin::Pin, sync::OnceLock};
+use std::{fmt, future::Future, pin::Pin, sync::OnceLock};
 
 use rho_sdk::{CancellationToken, RunOutcome};
 use rho_tools::cancellation::RunCancellation;
@@ -34,9 +34,11 @@ pub(super) use reporter::RunReporter;
 pub(super) use view::{HeadlessView, ParentQuestions};
 
 /// What stops a headless prompt before it ends on its own. Signals are
-/// installed before the run is observable; see `shutdown_signal.rs`.
+/// installed before the run is observable; see `shutdown_signal.rs`. The
+/// default stops on nothing.
+#[derive(Default)]
 pub(super) struct Stops {
-    signals: ShutdownSignals,
+    signals: Option<ShutdownSignals>,
     deadline: Option<tokio::time::Instant>,
     cancellation: Option<RunCancellation>,
 }
@@ -51,13 +53,22 @@ pub(super) enum StopCause {
     Cancelled,
 }
 
+impl fmt::Display for StopCause {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Timeout => formatter.write_str("timed out"),
+            Self::Interrupted(signal) => write!(formatter, "interrupted by {signal}"),
+            Self::Cancelled => formatter.write_str("cancelled by its parent"),
+        }
+    }
+}
+
 impl Stops {
     /// Stops on `signals` only.
     pub(super) fn on_signals(signals: ShutdownSignals) -> Self {
         Self {
-            signals,
-            deadline: None,
-            cancellation: None,
+            signals: Some(signals),
+            ..Self::default()
         }
     }
 
@@ -94,12 +105,15 @@ impl Stops {
         };
         // A signal watch that fails stops watching signals, not the others.
         let signal = async {
-            match signals.recv().await {
-                Ok(signal) => signal,
-                Err(error) => {
-                    tracing::warn!(%error, "could not watch for shutdown signals");
-                    std::future::pending().await
-                }
+            match signals {
+                Some(signals) => match signals.recv().await {
+                    Ok(signal) => signal,
+                    Err(error) => {
+                        tracing::warn!(%error, "could not watch for shutdown signals");
+                        std::future::pending().await
+                    }
+                },
+                None => std::future::pending().await,
             }
         };
         tokio::select! {
@@ -123,7 +137,8 @@ pub(super) type PromptBody<'r> =
 /// and begins the prompt, then hands `body` the runtime, the view, the
 /// prompt's scope, and `process_config` to run within the prompt. A stop
 /// cancels the prompt, which reaches it however early it comes, and the
-/// session still tears down before this returns.
+/// session still tears down before this returns. A cancelled prompt ends
+/// the session as failed to its hooks, since nothing else reports it.
 pub(super) async fn run_prompt<'v>(
     stops: &mut Stops,
     view: &mut HeadlessView<'v>,
@@ -147,6 +162,13 @@ pub(super) async fn run_prompt<'v>(
             body(&mut runtime, &mut *view, &scope, process_config).await
         })
         .await;
+        if let Ok(TurnOutcome::Cancelled) = &ended {
+            let reason = match tripwire.cause() {
+                Some(cause) => cause.to_string(),
+                None => "cancelled".to_owned(),
+            };
+            runtime.end_stopped(&reason);
+        }
         runtime.shutdown().await;
         ended
     };

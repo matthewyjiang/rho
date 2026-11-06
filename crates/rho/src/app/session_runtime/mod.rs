@@ -95,7 +95,7 @@ pub(crate) use prompt_turn::{PlanReport, TurnView};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
-pub(in crate::app) use test_support::test_build;
+pub(in crate::app) use test_support::{test_build, unattended_runtime_on, HangUntilCancel};
 pub(crate) use title::TitleJob;
 use title::TitleState;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
@@ -267,6 +267,15 @@ impl SessionRuntime {
     pub(crate) async fn shutdown(self) {
         self.handle.cancel();
         self.built.teardown().await;
+    }
+
+    /// Reports to the session's hooks that it ends with its prompt stopped
+    /// for `reason`, as a failed run. A cancelled turn reports no session
+    /// end, since an attended session goes on after it; a headless host,
+    /// whose session ends with its one prompt, calls this before
+    /// [`Self::shutdown`] when that prompt was cancelled.
+    pub(crate) fn end_stopped(&self, reason: &str) {
+        self.dispatch_failed(&format!("stopped: {reason}"));
     }
 
     fn dispatch_failed(&self, message: &str) {
