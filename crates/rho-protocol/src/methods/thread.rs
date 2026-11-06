@@ -80,9 +80,13 @@ pub struct ThreadPromptParams {
     pub text: String,
 }
 
-/// Result of [`THREAD_PROMPT`]: the turn has started and its prompt is
-/// saved. It runs on in the daemon; [`super::JOBS_LIST`] reports how it
-/// ends.
+/// Result of [`THREAD_PROMPT`]: the prompt is saved and its turn is running.
+/// The turn runs on in the daemon; [`super::JOBS_LIST`] reports how it ends.
+///
+/// A turn that ends before its prompt is saved answers with an error
+/// instead: [`crate::ErrorCode::TurnFailed`] with the reason,
+/// [`crate::ErrorCode::TurnCancelled`] when a cancel stopped it, or
+/// [`crate::ErrorCode::DaemonStopping`] when the daemon stopped it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadPromptResponse {}
 
@@ -93,8 +97,11 @@ pub struct ThreadCancelParams {
 }
 
 /// Result of [`THREAD_CANCEL`]: the turn in progress, if any, has been
-/// asked to stop. It saves what it did and ends
-/// [`crate::JobState::Cancelled`].
+/// asked to stop. The turn saves what it did and ends
+/// [`crate::JobState::Cancelled`], or [`crate::JobState::Interrupted`] when
+/// the daemon is stopping. A cancel that arrives before a prompted turn
+/// begins still cancels it, and that prompt answers
+/// [`crate::ErrorCode::TurnCancelled`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadCancelResponse {}
 

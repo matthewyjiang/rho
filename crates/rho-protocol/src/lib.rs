@@ -25,13 +25,9 @@
 //!
 //! # Methods
 //!
-//! [`methods`] lists every method with its params and result types:
-//! the handshake, daemon status and stop, threads
-//! ([`methods::THREAD_CREATE`], [`methods::THREAD_PROMPT`],
-//! [`methods::THREAD_CANCEL`], [`methods::THREAD_STEER`]), and
-//! [`methods::JOBS_LIST`]. A thread's turn runs in the daemon and outlives
-//! the connection that started it; a client that reconnects follows it
-//! through `rho/jobs/list`.
+//! [`methods`] lists every method with its params and result types. A
+//! thread's turn runs in the daemon and outlives the connection that started
+//! it; a client that reconnects follows it through [`methods::JOBS_LIST`].
 //!
 //! # Versioning
 //!

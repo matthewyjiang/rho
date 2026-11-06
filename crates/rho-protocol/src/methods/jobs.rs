@@ -1,6 +1,6 @@
 //! Jobs: every unit of agent work the daemon knows, including the ones an
 //! earlier daemon ran. A thread is a job; subagent and workflow runs become
-//! jobs in a later protocol minor.
+//! jobs in a later protocol minor (#1658).
 
 use std::{fmt, path::PathBuf};
 
@@ -41,24 +41,33 @@ impl fmt::Display for JobId {
     }
 }
 
-/// What a job runs.
+/// What a job runs. Protocol minors may add kinds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JobKind {
     /// A conversation the daemon hosts; see [`super::THREAD_CREATE`].
     Thread,
+    /// A kind a newer daemon sends that this crate does not know. Reading it
+    /// leniently keeps the rest of the job list usable; daemons never send
+    /// it.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Where a job is. A thread's state is that of its current or last turn.
+/// Protocol minors may add states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JobState {
     /// Created; no turn has started.
     Idle,
     Running,
     /// The turn waits for an approval, a plan approval, or a question to be
     /// answered. Nothing is auto-denied because no client is attached; until
-    /// clients can answer, only [`super::THREAD_CANCEL`] ends the wait.
+    /// clients can answer (#1660), only [`super::THREAD_CANCEL`] ends the
+    /// wait.
     WaitingForInput,
     Completed,
     /// The turn failed; [`JobSummary::error`] says why.
@@ -66,6 +75,11 @@ pub enum JobState {
     Cancelled,
     /// The daemon stopped, or died, before the turn ended.
     Interrupted,
+    /// A state a newer daemon sends that this crate does not know. Reading
+    /// it leniently keeps the rest of the job list usable; daemons never
+    /// send it.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One job, as [`JOBS_LIST`] reports it.
@@ -98,3 +112,7 @@ pub struct JobsListResponse {
     /// Every job, oldest first.
     pub jobs: Vec<JobSummary>,
 }
+
+#[cfg(test)]
+#[path = "jobs_tests.rs"]
+mod tests;

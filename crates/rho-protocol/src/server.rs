@@ -60,8 +60,9 @@ pub trait Service: Send + Sync {
     ) -> impl Future<Output = Result<ThreadCreateResponse, RpcError>> + Send;
 
     /// Handles `rho/thread/prompt`: start a turn the service runs in a task
-    /// of its own, resolving once the turn has started. The turn outlives
-    /// the request and the connection.
+    /// of its own, resolving once the turn has saved its prompt (see
+    /// [`ThreadPromptResponse`]). The turn outlives the request and the
+    /// connection.
     fn prompt_thread(
         &self,
         params: ThreadPromptParams,
@@ -99,7 +100,7 @@ pub struct ServerInfo {
 /// answers. The socket is private to the daemon's user, so only a buggy
 /// frontend does that, and it costs memory rather than correctness.
 ///
-/// Pushed events (2c-2) change that premise. Before they reuse this writer,
+/// Pushed events (#1657) change that premise. Before they reuse this writer,
 /// the connection needs a handle a subscriber holds without keeping the
 /// writer alive (today the writer ends only when every sender is gone),
 /// services need to know which connection is calling, and a subscriber that
@@ -317,55 +318,30 @@ impl Connection {
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
-            (Self::Ready, DAEMON_STATUS) => {
-                let StatusParams {} = decode_params::<Status>(params)?;
-                Ok(Route::Call(ServiceCall::Status))
-            }
-            (Self::Ready, DAEMON_STOP) => {
-                let StopParams {} = decode_params::<Stop>(params)?;
-                Ok(Route::Call(ServiceCall::Stop))
-            }
-            (Self::Ready, THREAD_CREATE) => {
-                Ok(Route::Call(ServiceCall::CreateThread(decode_params::<
-                    ThreadCreate,
-                >(
-                    params
-                )?)))
-            }
-            (Self::Ready, THREAD_PROMPT) => {
-                Ok(Route::Call(ServiceCall::PromptThread(decode_params::<
-                    ThreadPrompt,
-                >(
-                    params
-                )?)))
-            }
-            (Self::Ready, THREAD_CANCEL) => {
-                Ok(Route::Call(ServiceCall::CancelThread(decode_params::<
-                    ThreadCancel,
-                >(
-                    params
-                )?)))
-            }
-            (Self::Ready, THREAD_STEER) => {
-                Ok(Route::Call(ServiceCall::SteerThread(decode_params::<
-                    ThreadSteer,
-                >(
-                    params
-                )?)))
-            }
-            (Self::Ready, JOBS_LIST) => {
-                let JobsListParams {} = decode_params::<JobsList>(params)?;
-                Ok(Route::Call(ServiceCall::ListJobs))
-            }
-            (Self::Ready, method) => Err(RpcError::new(
-                ErrorCode::MethodNotFound,
-                format!("unknown method {method}"),
-            )),
+            (Self::Ready, method) => ServiceCall::decode(method, params).map(Route::Call),
         }
     }
 }
 
 impl ServiceCall {
+    /// Decodes a post-handshake request for the service, or refuses a method
+    /// the protocol does not define.
+    fn decode(method: &str, params: Option<Value>) -> Result<Self, RpcError> {
+        match method {
+            DAEMON_STATUS => decode_params::<Status>(params).map(|StatusParams {}| Self::Status),
+            DAEMON_STOP => decode_params::<Stop>(params).map(|StopParams {}| Self::Stop),
+            THREAD_CREATE => decode_params::<ThreadCreate>(params).map(Self::CreateThread),
+            THREAD_PROMPT => decode_params::<ThreadPrompt>(params).map(Self::PromptThread),
+            THREAD_CANCEL => decode_params::<ThreadCancel>(params).map(Self::CancelThread),
+            THREAD_STEER => decode_params::<ThreadSteer>(params).map(Self::SteerThread),
+            JOBS_LIST => decode_params::<JobsList>(params).map(|JobsListParams {}| Self::ListJobs),
+            method => Err(RpcError::new(
+                ErrorCode::MethodNotFound,
+                format!("unknown method {method}"),
+            )),
+        }
+    }
+
     async fn run<Svc: Service>(self, service: &Svc) -> Result<Value, RpcError> {
         match self {
             Self::Status => encode_result::<Status>(&service.status().await),
