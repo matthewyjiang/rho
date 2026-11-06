@@ -3,9 +3,10 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    DaemonStatus, ErrorCode, JobListResponse, RpcError, Service, SessionCancelParams,
-    SessionCancelResponse, SessionNewParams, SessionNewResponse, SessionPromptParams,
-    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, PROTOCOL_VERSION,
+    DaemonStatus, ErrorCode, JobListResponse, RpcError, Service, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionNewParams,
+    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
+    SessionSteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -65,6 +66,13 @@ impl Service for StubHost {
     }
 
     async fn steer_session(&self, _: SessionSteerParams) -> Result<SessionSteerResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn attach_session(
+        &self,
+        _: SessionAttachParams,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         Err(no_sessions())
     }
 

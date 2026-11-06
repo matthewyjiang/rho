@@ -14,9 +14,10 @@ use std::{
 };
 
 use rho_protocol::{
-    DaemonStatus, JobListResponse, RpcError, Service, SessionCancelParams, SessionCancelResponse,
-    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionSteerParams, SessionSteerResponse, PROTOCOL_VERSION,
+    DaemonStatus, JobListResponse, RpcError, Service, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -55,9 +56,9 @@ pub(super) struct DaemonHost {
 
 impl DaemonHost {
     /// A host for the daemon listening on `socket` since `started_at` (Unix
-    /// seconds), keeping its jobs in `jobs`. `rho/daemon/stop` cancels
-    /// `shutdown`, which ends the transport's serve loop and refuses new
-    /// sessions and prompts; then call [`Self::stop_sessions`].
+    /// seconds), keeping its jobs in `jobs`. `rho/daemon/stop` calls
+    /// [`Self::begin_stop`], which cancels `shutdown`, the transport's; once
+    /// the transport stopped serving, call [`Self::stop_sessions`].
     pub(super) fn new(
         JobRecords(jobs): JobRecords,
         socket: PathBuf,
@@ -68,10 +69,24 @@ impl DaemonHost {
             socket,
             started_at,
             started: Instant::now(),
-            sessions: Sessions::new(Arc::clone(&jobs), shutdown.clone()),
+            sessions: Sessions::new(Arc::clone(&jobs)),
             shutdown,
             jobs,
         }
+    }
+
+    /// Starts the daemon's stop: refuses new sessions and prompts, detaches
+    /// every attached client as `daemon_stopping`, then cancels the
+    /// transport's `shutdown`, which closes the connections. How every stop
+    /// begins, from `rho/daemon/stop` or a signal.
+    pub(super) fn begin_stop(&self) {
+        self.sessions.begin_stop();
+        self.shutdown.cancel();
+    }
+
+    /// Whether the daemon's stop has begun.
+    pub(super) fn stopping(&self) -> bool {
+        self.shutdown.is_cancelled()
     }
 
     /// Stops the turns under way, waits for them to save, and records
@@ -97,7 +112,7 @@ impl Service for DaemonHost {
 
     async fn stop(&self) {
         tracing::info!("stop requested");
-        self.shutdown.cancel();
+        self.begin_stop();
     }
 
     async fn new_session(&self, params: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
@@ -123,6 +138,13 @@ impl Service for DaemonHost {
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
         self.sessions.steer(params)
+    }
+
+    async fn attach_session(
+        &self,
+        params: SessionAttachParams,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+        self.sessions.attach(params)
     }
 
     async fn list_jobs(&self) -> JobListResponse {

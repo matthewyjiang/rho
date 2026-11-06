@@ -81,7 +81,6 @@ impl JobRegistry {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(in crate::app::daemon_host) fn get(&self, id: &JobId) -> Option<JobRecord> {
         self.lock().get(id).cloned()
     }

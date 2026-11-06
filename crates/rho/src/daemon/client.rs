@@ -7,9 +7,6 @@ use tokio::net::UnixStream;
 
 use super::paths::DaemonPaths;
 
-/// A handshaken connection to the daemon.
-pub(crate) type DaemonClient = Client<UnixStream>;
-
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ConnectError {
     /// Nothing is listening on the socket.
@@ -30,11 +27,12 @@ pub(crate) fn cli_client_info() -> ClientInfo {
 }
 
 /// Connects to the running daemon and completes the handshake. Never starts
-/// a daemon.
+/// a daemon. The connection's notifications are dropped: the CLI attaches
+/// to no session.
 pub(crate) async fn connect(
     paths: &DaemonPaths,
     client: ClientInfo,
-) -> Result<(DaemonClient, HelloResponse), ConnectError> {
+) -> Result<(Client, HelloResponse), ConnectError> {
     let stream = match UnixStream::connect(&paths.socket).await {
         Ok(stream) => stream,
         // No socket, or a socket left by a daemon that died without cleanup.
@@ -53,5 +51,6 @@ pub(crate) async fn connect(
             })
         }
     };
-    Ok(Client::handshake(stream, client).await?)
+    let (client, _notifications, hello) = Client::handshake(stream, client).await?;
+    Ok((client, hello))
 }
