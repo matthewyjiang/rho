@@ -196,7 +196,9 @@ impl SessionRuntime {
             }
         };
         prompt.activate(run.cancellation_handle());
-        io.emit(SessionEvent::RunStarted);
+        io.emit(SessionEvent::RunStarted {
+            steering: run.steering_handle(),
+        });
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();
         // Plan approvals belong to the tool set, which outlives this prompt

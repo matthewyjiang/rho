@@ -47,7 +47,7 @@ fn seen(event: SessionEvent) -> Seen {
         SessionEvent::MessageInserted(_) => {
             unreachable!("the turn inserts the message, not the pump")
         }
-        SessionEvent::RunStarted => Seen::RunStarted,
+        SessionEvent::RunStarted { .. } => Seen::RunStarted,
         SessionEvent::Run(_) => Seen::Run,
         SessionEvent::BoundaryApplied { .. } => Seen::BoundaryApplied,
         SessionEvent::ApprovalRequested { id, .. } => Seen::ApprovalRequested(id),

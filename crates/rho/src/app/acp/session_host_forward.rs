@@ -171,7 +171,7 @@ impl<'a> Forwarding<'a> {
         let session_id = self.target.session_id;
         match event {
             SessionEvent::MessageInserted(inserted) => self.target.acceptance.accept(inserted),
-            SessionEvent::RunStarted => {
+            SessionEvent::RunStarted { .. } => {
                 self.started = true;
                 self.target
                     .signals
