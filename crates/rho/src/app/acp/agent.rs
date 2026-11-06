@@ -9,9 +9,10 @@ use std::{
 
 use super::{
     prompt_acceptance::PromptAcceptance,
-    session_host::{Closing, History, PromptGate, ReopenRequest, Reopened, SessionHost},
+    session_host::{History, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
+use crate::session_runtime::{Closing, PromptGate};
 use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
 use agent_client_protocol::schema::v1::{
     DeleteSessionRequest, DeleteSessionResponse, ResumeSessionRequest, ResumeSessionResponse,

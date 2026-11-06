@@ -69,6 +69,11 @@
       "sequences": [["stdin", "is_terminal"]],
       "allow": ["crates/rho/src/stdio.rs"],
       "reason": "on Windows a stdin probe waits behind the ACP transport's pending stdin read and hangs session startup; use crate::stdio::stdin_is_terminal"
+    },
+    {
+      "roots": ["crates/rho/src/session_runtime"],
+      "sequences": [["agent_client_protocol"], ["app", "::", "acp"]],
+      "reason": "the session runtime is UI- and protocol-free; ACP adapts it from app::acp, never the reverse"
     }
   ]
 }

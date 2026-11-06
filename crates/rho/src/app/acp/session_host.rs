@@ -49,6 +49,7 @@ use crate::{
     herdr::{HerdrReporter, HerdrSession, HerdrState},
     permission::PermissionMode,
     session::Session as StoredSession,
+    session_runtime::{PromptGate, PromptGuard},
 };
 
 #[path = "session_host_advertisements.rs"]
@@ -71,8 +72,6 @@ mod open;
 mod persist;
 #[path = "session_host_plan_exit.rs"]
 mod plan_exit;
-#[path = "session_host_prompt_gate.rs"]
-mod prompt_gate;
 #[path = "session_host_pump.rs"]
 mod pump;
 #[path = "session_host_title.rs"]
@@ -89,8 +88,6 @@ use credentials::SessionCredentials;
 use mode::SessionPermission;
 pub(super) use open::{History, ReopenRequest, Reopened};
 use persist::{HostStorage, TurnCheckpoint};
-use prompt_gate::PromptGuard;
-pub(super) use prompt_gate::{Closing, PromptGate};
 use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
 pub(super) use title::PendingTitle;
 
