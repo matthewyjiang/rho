@@ -39,10 +39,7 @@ jobs:
       - name: Test validation scripts
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Check protocol compatibility with the last release
-        run: |
-          tag="$(git ls-remote --tags --refs origin 'rho-coding-agent-v*' | sed 's|.*refs/tags/||' | sort -V | tail -n 1)"
-          git fetch --no-tags --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
-          python3 scripts/check_protocol_compat.py --baseline-ref "$tag"
+        run: python3 scripts/check_protocol_compat.py
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:

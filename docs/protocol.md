@@ -1,6 +1,6 @@
 # Daemon protocol
 
-Frontends drive the [daemon](/daemon) with rho's protocol: JSON-RPC 2.0 over the daemon's Unix socket. This page is the reference for client authors. Rust clients can use the [`rho-protocol`](https://crates.io/crates/rho-protocol) crate, whose `Client` handles framing, the handshake, and notifications. Clients in other languages can generate their types from the protocol's JSON Schema, [`crates/rho-protocol/schema/protocol.json`](https://github.com/matthewyjiang/rho/blob/main/crates/rho-protocol/schema/protocol.json), which lists every method's params and result, every notification, and every error code.
+Frontends drive the [daemon](/daemon) with rho's protocol: JSON-RPC 2.0 over the daemon's Unix socket. This page is the reference for client authors. Rust clients can use the [`rho-protocol`](https://crates.io/crates/rho-protocol) crate, whose `Client` handles framing, the handshake, and notifications. Clients in other languages can generate their types from the protocol's JSON Schema, [`crates/rho-protocol/schema/protocol.json`](https://github.com/matthewyjiang/rho/blob/main/crates/rho-protocol/schema/protocol.json), which lists every method's params and result, every notification, and every error code, keyed by its code.
 
 ## Connection
 
@@ -31,7 +31,7 @@ A prompt whose turn ends before it saves the prompt returns an error instead of 
 
 - `TurnCancelled` when a cancel arrived before the turn began. Nothing is saved and the model is not called.
 - `DaemonStopping` when the daemon starts stopping while the prompt waits for its turn to save it.
-- `TurnFailed` with the reason when the turn failed, such as unreadable provider credentials.
+- `TurnFailed` with the reason when the turn failed, such as unreadable provider credentials. A turn that stopped unexpectedly answers `the turn stopped unexpectedly; see the daemon log`.
 
 What a session runs, and what its job states mean, is described in [Sessions and jobs](/daemon#sessions-and-jobs).
 
@@ -92,6 +92,6 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 
 The protocol has its own version, `major.minor`, independent of rho's; `rho/hello` and `rho/daemon/status` report it. A client and daemon work together when their majors match.
 
-A protocol minor only adds: methods, notifications, error codes, optional fields, and values of enums that have an `unknown` value in the schema. So a client should ignore fields it does not know, read an enum value it does not know as `unknown`, and treat an error code it does not know by its message. Anything else, such as removing or retyping a field, making a field required, or adding a value to an enum without `unknown`, comes only with a new major.
+A protocol minor only adds: methods, notifications, error codes, optional fields, and values of enums marked `x-rho-open` in the schema, each of which has an `unknown` value. So a client should ignore fields it does not know, read an enum value it does not know as `unknown`, and treat an error code it does not know by its message. Anything else, such as removing, retyping, or constraining a field, making a field required or nullable, or adding a value to an enum not marked `x-rho-open`, comes only with a new major.
 
-CI holds the protocol to this. A test fails when `protocol.json` no longer matches the wire types, and a check compares it with the schema of the last rho release: a change a minor does not allow fails unless the major rises, and any other change, apart from descriptions, needs the minor to rise.
+CI holds the protocol to this. A test fails when `protocol.json` no longer matches the wire types, and a check compares it with the schema of the last rho release: a change a minor does not allow fails unless the major rises, and any other change to the wire, which excludes descriptions and names, needs the minor to rise.

@@ -19,43 +19,33 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     error::ALL,
-    methods::{
-        Hello, JobList, Method, Notification, SessionAttach, SessionCancel, SessionDetach,
-        SessionDetachedNotification, SessionEventNotification, SessionNew, SessionPrompt,
-        SessionSteer, Status, Stop,
-    },
-    ErrorCode, VersionMismatch, PROTOCOL_VERSION,
+    methods::{self, Method, Notification, Visitor},
+    PROTOCOL_VERSION,
 };
 
 /// The protocol's JSON Schema (draft 2020-12). Wire types are under
-/// `$defs`; `methods`, `notifications`, and `errors` name them.
+/// `$defs`; `methods` and `notifications` name them by method name, and
+/// `errors` by wire code.
 pub fn document() -> Value {
-    let mut generator = SchemaSettings::draft2020_12().into_generator();
-    let methods = Map::from_iter([
-        method::<Hello>(&mut generator),
-        method::<Status>(&mut generator),
-        method::<Stop>(&mut generator),
-        method::<SessionNew>(&mut generator),
-        method::<SessionPrompt>(&mut generator),
-        method::<SessionCancel>(&mut generator),
-        method::<SessionSteer>(&mut generator),
-        method::<SessionAttach>(&mut generator),
-        method::<SessionDetach>(&mut generator),
-        method::<JobList>(&mut generator),
-    ]);
-    let notifications = Map::from_iter([
-        notification::<SessionEventNotification>(&mut generator),
-        notification::<SessionDetachedNotification>(&mut generator),
-    ]);
+    let mut publisher = Publisher {
+        generator: SchemaSettings::draft2020_12().into_generator(),
+        methods: Map::new(),
+        notifications: Map::new(),
+    };
+    methods::visit(&mut publisher);
+    let Publisher {
+        mut generator,
+        methods,
+        notifications,
+    } = publisher;
     let errors: Map<String, Value> = ALL
         .iter()
         .map(|&code| {
-            let mut error = json!({ "code": code.code() });
-            // The only code whose `data` has a shape.
-            if code == ErrorCode::VersionMismatch {
-                error["data"] = generator.subschema_for::<VersionMismatch>().to_value();
+            let mut error = json!({ "name": code.name() });
+            if let Some(data) = code.data_schema(&mut generator) {
+                error["data"] = data.to_value();
             }
-            (format!("{code:?}"), error)
+            (code.code().to_string(), error)
         })
         .collect();
     json!({
@@ -69,17 +59,27 @@ pub fn document() -> Value {
     })
 }
 
-fn method<M: Method>(generator: &mut SchemaGenerator) -> (String, Value) {
-    let schema = json!({
-        "params": generator.subschema_for::<M::Params>().to_value(),
-        "result": generator.subschema_for::<M::Result>().to_value(),
-    });
-    (M::NAME.to_owned(), schema)
+/// Collects every method's and notification's schema; their types go to
+/// the generator's definitions.
+struct Publisher {
+    generator: SchemaGenerator,
+    methods: Map<String, Value>,
+    notifications: Map<String, Value>,
 }
 
-fn notification<N: Notification>(generator: &mut SchemaGenerator) -> (String, Value) {
-    let schema = json!({ "params": generator.subschema_for::<N::Params>().to_value() });
-    (N::NAME.to_owned(), schema)
+impl Visitor for Publisher {
+    fn method<M: Method>(&mut self) {
+        let schema = json!({
+            "params": self.generator.subschema_for::<M::Params>().to_value(),
+            "result": self.generator.subschema_for::<M::Result>().to_value(),
+        });
+        self.methods.insert(M::NAME.to_owned(), schema);
+    }
+
+    fn notification<N: Notification>(&mut self) {
+        let schema = json!({ "params": self.generator.subschema_for::<N::Params>().to_value() });
+        self.notifications.insert(N::NAME.to_owned(), schema);
+    }
 }
 
 #[cfg(test)]

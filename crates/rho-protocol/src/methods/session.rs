@@ -10,7 +10,7 @@ use std::{fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Cursor, JobState, Method, Notification, Seq, SessionEvent, StreamId};
+use super::{Cursor, JobState, Seq, SessionEvent, StreamId};
 
 /// Open a new session in a workspace, before its first prompt.
 pub const SESSION_NEW: &str = "rho/session/new";
@@ -52,76 +52,6 @@ impl fmt::Display for SessionId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
-}
-
-/// Marker for [`SESSION_NEW`].
-pub struct SessionNew;
-
-impl Method for SessionNew {
-    const NAME: &'static str = SESSION_NEW;
-    type Params = SessionNewParams;
-    type Result = SessionNewResponse;
-}
-
-/// Marker for [`SESSION_PROMPT`].
-pub struct SessionPrompt;
-
-impl Method for SessionPrompt {
-    const NAME: &'static str = SESSION_PROMPT;
-    type Params = SessionPromptParams;
-    type Result = SessionPromptResponse;
-}
-
-/// Marker for [`SESSION_CANCEL`].
-pub struct SessionCancel;
-
-impl Method for SessionCancel {
-    const NAME: &'static str = SESSION_CANCEL;
-    type Params = SessionCancelParams;
-    type Result = SessionCancelResponse;
-}
-
-/// Marker for [`SESSION_STEER`].
-pub struct SessionSteer;
-
-impl Method for SessionSteer {
-    const NAME: &'static str = SESSION_STEER;
-    type Params = SessionSteerParams;
-    type Result = SessionSteerResponse;
-}
-
-/// Marker for [`SESSION_ATTACH`].
-pub struct SessionAttach;
-
-impl Method for SessionAttach {
-    const NAME: &'static str = SESSION_ATTACH;
-    type Params = SessionAttachParams;
-    type Result = SessionAttachResponse;
-}
-
-/// Marker for [`SESSION_DETACH`].
-pub struct SessionDetach;
-
-impl Method for SessionDetach {
-    const NAME: &'static str = SESSION_DETACH;
-    type Params = SessionDetachParams;
-    type Result = SessionDetachResponse;
-}
-
-/// Marker for the [`SESSION_EVENT`] notification.
-pub struct SessionEventNotification;
-
-impl Notification for SessionEventNotification {
-    const NAME: &'static str = SESSION_EVENT;
-    type Params = SessionEventParams;
-}
-
-/// Marker for the [`SESSION_DETACHED`] notification.
-pub struct SessionDetachedNotification;
-
-impl Notification for SessionDetachedNotification {
-    const NAME: &'static str = SESSION_DETACHED;
-    type Params = SessionDetachedParams;
 }
 
 /// Params of [`SESSION_NEW`].
@@ -261,6 +191,7 @@ pub struct SessionDetachedParams {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum DetachReason {
     /// The client fell too far behind; reattach with its cursor.
     Lagged,

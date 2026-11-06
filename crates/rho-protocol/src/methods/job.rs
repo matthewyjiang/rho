@@ -7,19 +7,10 @@ use std::{fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Method, SessionId};
+use super::SessionId;
 
 /// List every job the daemon knows.
 pub const JOB_LIST: &str = "rho/job/list";
-
-/// Marker for [`JOB_LIST`].
-pub struct JobList;
-
-impl Method for JobList {
-    const NAME: &'static str = JOB_LIST;
-    type Params = JobListParams;
-    type Result = JobListResponse;
-}
 
 /// A job's id. Opaque to clients: send back the string the daemon gave.
 #[derive(
@@ -48,6 +39,7 @@ impl fmt::Display for JobId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum JobKind {
     /// The turns of a session the daemon hosts; see [`super::SESSION_NEW`].
     Session,
@@ -64,6 +56,7 @@ pub enum JobKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum JobState {
     /// Created; no turn has started.
     Idle,

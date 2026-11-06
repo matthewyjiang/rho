@@ -77,6 +77,7 @@ pub struct Cursor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum SessionEvent {
     /// The session's job changed state: a turn started (`running`), waits
     /// for input, or ended.
@@ -142,6 +143,7 @@ pub struct ToolCallUpdate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum ToolKind {
     Read,
     Edit,
@@ -163,6 +165,7 @@ pub enum ToolKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum ToolStatus {
     Pending,
     InProgress,
@@ -178,6 +181,7 @@ pub enum ToolStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum ToolContent {
     Text {
         text: String,
@@ -204,6 +208,7 @@ pub enum ToolContent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum ContentBlock {
     Text {
         text: String,
@@ -238,6 +243,7 @@ pub struct PlanEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+#[schemars(extend("x-rho-open" = true))]
 pub enum PlanStatus {
     Pending,
     InProgress,

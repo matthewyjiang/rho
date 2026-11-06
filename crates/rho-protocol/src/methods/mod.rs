@@ -17,8 +17,11 @@
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
 //!
-//! The daemon sends these notifications; clients send none. [`crate::schema`]
-//! publishes every type here as JSON Schema.
+//! The daemon sends these notifications; clients send none.
+//!
+//! [`crate::schema`] publishes every method and notification as JSON Schema.
+//! Enums that read values they do not know as `Unknown`, so a protocol minor
+//! may add values, are marked `x-rho-open` there.
 //!
 //! | Notification | Params |
 //! |---|---|
@@ -34,32 +37,29 @@ mod job;
 mod session;
 
 pub use daemon::{
-    ClientInfo, DaemonInfo, DaemonStatus, Hello, HelloParams, HelloResponse, Status, StatusParams,
-    Stop, StopParams, StopResponse, DAEMON_STATUS, DAEMON_STOP, HELLO,
+    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
+    StopResponse, DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
     ContentBlock, Cursor, Location, MessageId, PlanEntry, PlanStatus, Seq, SessionEvent, StreamId,
     ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
-pub use job::{
-    JobId, JobKind, JobList, JobListParams, JobListResponse, JobState, JobSummary, JOB_LIST,
-};
+pub use job::{JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, JOB_LIST};
 pub use session::{
-    DetachReason, Replay, SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
-    SessionCancelParams, SessionCancelResponse, SessionDetach, SessionDetachParams,
-    SessionDetachResponse, SessionDetachedNotification, SessionDetachedParams,
-    SessionEventNotification, SessionEventParams, SessionId, SessionNew, SessionNewParams,
-    SessionNewResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionSteer,
-    SessionSteerParams, SessionSteerResponse, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
-    SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+    DetachReason, Replay, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
+    SessionCancelResponse, SessionDetachParams, SessionDetachResponse, SessionDetachedParams,
+    SessionEventParams, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SESSION_ATTACH,
+    SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_PROMPT,
+    SESSION_STEER,
 };
 
 /// A request method with typed params and result.
 ///
-/// Implemented by zero-sized markers so [`crate::Client::request`] can check
-/// a call's types at compile time. Implementors pair `NAME` with the params
-/// and result types the daemon uses for that method, and list the marker in
-/// [`crate::schema`], which publishes both types.
+/// Implemented by the zero-sized markers this module declares, so
+/// [`crate::Client::request`] can check a call's types at compile time. Each
+/// pairs `NAME` with the params and result types the daemon uses for that
+/// method.
 pub trait Method {
     const NAME: &'static str;
     type Params: Serialize + DeserializeOwned + JsonSchema;
@@ -68,10 +68,75 @@ pub trait Method {
 
 /// A notification the daemon sends, typed like [`Method`].
 ///
-/// Implemented by zero-sized markers so the daemon encodes, and
-/// [`crate::Client`] decodes, each notification with one params type.
-/// List each marker in [`crate::schema`].
+/// Implemented by the zero-sized markers this module declares, so the
+/// daemon encodes, and [`crate::Client`] decodes, each notification with one
+/// params type.
 pub trait Notification {
     const NAME: &'static str;
     type Params: Serialize + DeserializeOwned + JsonSchema;
+}
+
+/// What [`visit`] calls for every method and notification; implemented by
+/// [`crate::schema`] to publish them.
+pub(crate) trait Visitor {
+    fn method<M: Method>(&mut self);
+    fn notification<N: Notification>(&mut self);
+}
+
+/// Declares the method and notification markers and [`visit`] from one list,
+/// so a method cannot exist without being published (#1657).
+macro_rules! protocol {
+    (
+        methods {
+            $($method:ident = $method_name:ident: $params:ty => $result:ty,)+
+        }
+        notifications {
+            $($notification:ident = $notification_name:ident: $notification_params:ty,)+
+        }
+    ) => {
+        $(
+            #[doc = concat!("Marker for [`", stringify!($method_name), "`].")]
+            pub struct $method;
+
+            impl Method for $method {
+                const NAME: &'static str = $method_name;
+                type Params = $params;
+                type Result = $result;
+            }
+        )+
+        $(
+            #[doc = concat!("Marker for the [`", stringify!($notification_name), "`] notification.")]
+            pub struct $notification;
+
+            impl Notification for $notification {
+                const NAME: &'static str = $notification_name;
+                type Params = $notification_params;
+            }
+        )+
+
+        /// Calls `visitor` for every method, then every notification.
+        pub(crate) fn visit(visitor: &mut impl Visitor) {
+            $(visitor.method::<$method>();)+
+            $(visitor.notification::<$notification>();)+
+        }
+    };
+}
+
+protocol! {
+    methods {
+        Hello = HELLO: HelloParams => HelloResponse,
+        Status = DAEMON_STATUS: StatusParams => DaemonStatus,
+        Stop = DAEMON_STOP: StopParams => StopResponse,
+        SessionNew = SESSION_NEW: SessionNewParams => SessionNewResponse,
+        SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse,
+        SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,
+        SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
+        SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
+        SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
+        JobList = JOB_LIST: JobListParams => JobListResponse,
+    }
+    notifications {
+        SessionEventNotification = SESSION_EVENT: SessionEventParams,
+        SessionDetachedNotification = SESSION_DETACHED: SessionDetachedParams,
+    }
 }

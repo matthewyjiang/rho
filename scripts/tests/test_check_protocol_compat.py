@@ -67,8 +67,47 @@ def add_method(document: dict) -> None:
     )
 
 
+def remove_error(document: dict) -> None:
+    del document["errors"]["-32010"]
+
+
+def refuse_unknown_fields(document: dict) -> None:
+    defs(document)["HelloResponse"]["additionalProperties"] = False
+
+
+def cap_length(document: dict) -> None:
+    defs(document)["SessionPromptParams"]["properties"]["text"]["maxLength"] = 10
+
+
 def reword(document: dict) -> None:
     defs(document)["SessionEvent"]["description"] = "Something that happened."
+
+
+def rename_error(document: dict) -> None:
+    document["errors"]["-32003"]["name"] = "SessionUnknown"
+
+
+def inline_option(document: dict) -> None:
+    """`Option<JobId>` written as a nullable string, as `Option<String>` is."""
+    parent = defs(document)["JobSummary"]["properties"]["parent"]
+    del parent["anyOf"]
+    parent["type"] = ["string", "null"]
+
+
+def reorder_option(document: dict) -> None:
+    defs(document)["ToolCallUpdate"]["properties"]["kind"]["anyOf"].reverse()
+
+
+def unmodelled_keyword(document: dict) -> None:
+    defs(document)["SessionPromptParams"]["properties"]["text"]["if"] = {"type": "string"}
+
+
+def recursive_type(document: dict) -> None:
+    defs(document)["Cursor"]["properties"]["next"] = {"$ref": "#/$defs/Cursor"}
+
+
+def open_without_unknown(document: dict) -> None:
+    defs(document)["Replay"]["x-rho-open"] = True
 
 
 class CompatibilityTests(unittest.TestCase):
@@ -99,7 +138,8 @@ class CompatibilityTests(unittest.TestCase):
             (
                 "a retyped field",
                 retype_field,
-                "notification rho/session/event params.seq: integer (uint64) became string (uint64)",
+                "notification rho/session/event params.seq: "
+                'integer (format "uint64", minimum 0) became string (format "uint64", minimum 0)',
             ),
             (
                 "a removed event field",
@@ -112,13 +152,24 @@ class CompatibilityTests(unittest.TestCase):
                 'method rho/session/attach result.replay: added "paused" to an enum without `unknown`',
             ),
             ("a removed method", remove_method, "method rho/session/steer params: removed"),
+            ("a removed error code", remove_error, "error -32010: removed"),
+            (
+                "unknown fields refused",
+                refuse_unknown_fields,
+                "method rho/hello result: object became object (no unknown fields)",
+            ),
+            (
+                "a constrained field",
+                cap_length,
+                "method rho/session/prompt params.text: string became string (maxLength 10)",
+            ),
         ]:
             with self.subTest(name):
                 problems = self.check(changed(change))
                 self.assertIn(f"{expected} (needs a new protocol major)", problems)
                 self.assertEqual(self.check(changed(change, major=1)), [])
 
-    def test_any_change_but_a_description_needs_a_new_minor(self) -> None:
+    def test_any_change_to_the_wire_needs_a_new_minor(self) -> None:
         self.assertEqual(
             self.check(changed(add_method, minor=0)),
             [
@@ -126,7 +177,41 @@ class CompatibilityTests(unittest.TestCase):
                 f"{MAJOR}.{MINOR}; raise the minor"
             ],
         )
-        self.assertEqual(self.check(changed(reword, minor=0)), [])
+
+    def test_rewrites_that_keep_the_wire_change_nothing(self) -> None:
+        for name, change in [
+            ("a description", reword),
+            ("an error's name", rename_error),
+            ("an option written as a nullable type", inline_option),
+            ("an option's variants reordered", reorder_option),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.check(changed(change, minor=0)), [])
+
+    def test_schemas_the_check_cannot_judge_fail_loudly(self) -> None:
+        for name, change, expected in [
+            (
+                "an unmodelled keyword",
+                unmodelled_keyword,
+                "method rho/session/prompt params.text: the check does not model if",
+            ),
+            (
+                "a recursive type",
+                recursive_type,
+                "method rho/session/attach params.after.next: Cursor contains itself; "
+                "the check does not model recursion",
+            ),
+            (
+                "an open enum without `unknown`",
+                open_without_unknown,
+                "method rho/session/attach result.replay: marked x-rho-open but has no "
+                "`unknown` value",
+            ),
+        ]:
+            with self.subTest(name):
+                with self.assertRaises(ValueError) as raised:
+                    self.check(changed(change))
+                self.assertEqual(str(raised.exception), expected)
 
     def test_the_version_never_goes_down(self) -> None:
         released = changed(lambda _: None, minor=3)
@@ -134,6 +219,18 @@ class CompatibilityTests(unittest.TestCase):
             check_protocol_compat.check(released, RELEASED, "the release"),
             [f"PROTOCOL_VERSION {MAJOR}.{MINOR} is below the release's {MAJOR}.{MINOR + 3}"],
         )
+
+
+class LatestReleaseTests(unittest.TestCase):
+    def test_picks_the_newest_version_not_the_last_in_text_order(self) -> None:
+        tags = [
+            "rho-coding-agent-v2.9.0",
+            "rho-coding-agent-v2.33.1",
+            "rho-coding-agent-v2.4.10",
+            "rho-sdk-v6.0.0",
+        ]
+        self.assertEqual(check_protocol_compat.latest_release(tags), "rho-coding-agent-v2.33.1")
+        self.assertIsNone(check_protocol_compat.latest_release(["rho-sdk-v6.0.0"]))
 
 
 if __name__ == "__main__":
