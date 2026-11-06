@@ -26,7 +26,8 @@ const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
 
 /// Every file the daemon and its clients use.
 ///
-/// [`DaemonPaths::resolve`] is pure. Both directories must be private:
+/// [`DaemonPaths::resolve`] only reads the filesystem to resolve the rho
+/// home's real path (see [`home_id`]). Both directories must be private:
 /// [`DaemonPaths::prepare_runtime_dir`] and [`DaemonPaths::prepare_state_dir`]
 /// create or verify them before anything is created inside.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,12 +186,18 @@ fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
 }
 
 /// Names a rho home's runtime subdirectory: the first 16 hex digits of the
-/// SHA-256 of its path, as given. Short, so the socket path stays far under
-/// the Unix socket limit, and stable across rho versions, so clients and
-/// daemons of different versions still find each other.
+/// SHA-256 of its real path. Short, so the socket path stays far under the
+/// Unix socket limit, and stable across rho versions, so clients and daemons
+/// of different versions still find each other.
+///
+/// Every spelling of one home (a trailing slash, `//`, `.`, a symlink) must
+/// name the same socket, because they all share the home's one lock. So the
+/// path is canonicalized, or, for a home that does not exist yet, cleaned of
+/// redundant separators and `.` components.
 fn home_id(rho_home: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
-    hex::encode(&Sha256::digest(rho_home.as_os_str().as_bytes())[..8])
+    let real = fs::canonicalize(rho_home).unwrap_or_else(|_| rho_home.components().collect());
+    hex::encode(&Sha256::digest(real.as_os_str().as_bytes())[..8])
 }
 
 /// The effective uid of this process.

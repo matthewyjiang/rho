@@ -138,3 +138,33 @@ fn prepare_runtime_dir_creates_private_dir_and_refuses_exposed_ones() {
         }
     }
 }
+
+// Covers: every spelling of one home names the same socket, since they share
+// its one lock; otherwise a client spelling RHO_HOME differently could not
+// reach the running daemon and a daemon it spawned would be refused the lock.
+// Owner: daemon path policy.
+#[test]
+fn every_spelling_of_a_home_names_the_same_socket() {
+    let root = TempDir::new().unwrap();
+    let home = root.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let link = root.path().join("link");
+    symlink(&home, &link).unwrap();
+    let missing = root.path().join("missing");
+    let xdg = Some("/run/user/1000");
+    let socket = |path: PathBuf| resolve(&path, xdg).unwrap().socket;
+
+    for spelling in [
+        home.join(""),
+        PathBuf::from(format!("{}//", home.display())),
+        home.join("."),
+        link,
+    ] {
+        assert_eq!(
+            socket(spelling.clone()),
+            socket(home.clone()),
+            "{spelling:?}"
+        );
+    }
+    assert_eq!(socket(missing.join("")), socket(missing.clone()));
+}
