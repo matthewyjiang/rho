@@ -1,4 +1,5 @@
-//! Saving ACP sessions so `session/load` and the TUI's `/resume` can replay them.
+//! Saving sessions so a host's reload (ACP `session/load`) and the TUI's
+//! `/resume` can replay them.
 //!
 //! A new session writes no file until it first saves. Hosts open sessions
 //! they never prompt (T3 Code's provider refresh runs `session/new` every few
@@ -6,7 +7,7 @@
 //! TUI defers its file the same way.
 //!
 //! Hosts restart agents by killing them: T3 Code sends SIGTERM, then SIGKILL
-//! one second later. `session/load` must still replay the whole conversation,
+//! one second later. A reload must still replay the whole conversation,
 //! so a turn saves at every SDK step boundary (before each provider request
 //! and after each model reply), not only when it ends. The first save also
 //! writes the user's message, so replay shows what was asked even when the
@@ -16,11 +17,11 @@
 //! Background results the run applied are saved as the rows the host was
 //! shown for them, in place of the model's copy.
 //!
-//! ACP `refusal` promises that the refused prompt and everything after it
-//! leave the next prompt. A turn that only produced model replies is rolled
-//! back after it is saved: the session moves back to the node it started
-//! from, so the refused turn stays in the file as an abandoned branch that
-//! neither the model nor `session/load` sees.
+//! A refusal (ACP's `refusal` stop reason) promises that the refused prompt
+//! and everything after it leave the next prompt. A turn that only produced
+//! model replies is rolled back after it is saved: the session moves back to
+//! the node it started from, so the refused turn stays in the file as an
+//! abandoned branch that neither the model nor a reload sees.
 
 use std::{
     collections::VecDeque,
@@ -36,7 +37,7 @@ use rho_sdk::{
     RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
-use super::{EventMapper, SessionHost};
+use super::{events::InsertedMessage, SessionRuntime};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
@@ -48,11 +49,11 @@ use crate::{
 };
 
 /// Creates a new session's file on its first save.
-pub(super) type CreateStoredSession = Box<dyn Fn() -> anyhow::Result<StoredSession> + Send + Sync>;
+pub(crate) type CreateStoredSession = Box<dyn Fn() -> anyhow::Result<StoredSession> + Send + Sync>;
 
-/// A host's workspace and session file. The file is absent until the first
-/// save of a new session.
-pub(super) struct HostStorage {
+/// A session's workspace and file. The file is absent until the first save
+/// of a new session.
+pub(crate) struct SessionStorage {
     cwd: PathBuf,
     file: SessionFile,
 }
@@ -62,9 +63,9 @@ enum SessionFile {
     Saved(StoredSession),
 }
 
-impl HostStorage {
+impl SessionStorage {
     /// Storage for a new session `id` in `cwd`, created on first save.
-    pub(super) fn deferred(
+    pub(crate) fn deferred(
         cwd: PathBuf,
         id: String,
         agent_id: String,
@@ -80,7 +81,7 @@ impl HostStorage {
     }
 
     /// Storage in `cwd` whose file `create` makes on first save.
-    pub(super) fn unsaved(cwd: PathBuf, create: CreateStoredSession) -> Self {
+    pub(crate) fn unsaved(cwd: PathBuf, create: CreateStoredSession) -> Self {
         Self {
             cwd,
             file: SessionFile::Unsaved(create),
@@ -88,7 +89,7 @@ impl HostStorage {
     }
 
     /// Storage for a session already on disk.
-    pub(super) fn saved(stored: StoredSession) -> Self {
+    pub(crate) fn saved(stored: StoredSession) -> Self {
         Self {
             cwd: stored.cwd().to_path_buf(),
             file: SessionFile::Saved(stored),
@@ -96,12 +97,12 @@ impl HostStorage {
     }
 
     /// The session's workspace directory.
-    pub(super) fn cwd(&self) -> &Path {
+    pub(crate) fn cwd(&self) -> &Path {
         &self.cwd
     }
 
     /// The session file, if it exists yet.
-    pub(super) fn file(&self) -> Option<&StoredSession> {
+    pub(crate) fn file(&self) -> Option<&StoredSession> {
         match &self.file {
             SessionFile::Saved(stored) => Some(stored),
             SessionFile::Unsaved(_) => None,
@@ -109,7 +110,7 @@ impl HostStorage {
     }
 }
 
-impl SessionHost {
+impl SessionRuntime {
     /// The session file, created now if this is the session's first save.
     pub(super) fn stored(&mut self) -> anyhow::Result<&StoredSession> {
         if let SessionFile::Unsaved(create) = &self.storage.file {
@@ -154,50 +155,39 @@ impl SessionHost {
         Ok(checkpoint)
     }
 
-    /// Saves the turn's user message before its run starts, so the prompt
-    /// can be accepted with the ID a load replays it with. Only ACP v2 needs
-    /// that; v1's first step save writes the message instead.
+    /// Saves the turn's user message before its run starts, and returns the
+    /// message as inserted.
     pub(super) fn insert_user_message(
         &mut self,
         checkpoint: &TurnCheckpoint,
-    ) -> anyhow::Result<()> {
-        if !self.acceptance.wants_id() {
-            return Ok(());
-        }
+    ) -> anyhow::Result<InsertedMessage> {
         let mut display = checkpoint.0.lock_display();
         let Some(user) = display.unsaved_user.clone() else {
-            self.acceptance.accept_unreplayed();
-            return Ok(());
+            return Ok(InsertedMessage::Unreplayed);
         };
-        self.save_prompt_rows(user, &[])?;
+        let inserted = self.save_prompt_rows(user, &[])?;
         display.mark_user_written();
-        Ok(())
+        Ok(inserted)
     }
 
     /// Saves the prompt's `user` message with the display rows `following`
-    /// it, and accepts the prompt with the ID a load replays that message
-    /// with: the first row of the node the save adds. A replaced host saves
-    /// nothing and accepts with an unreplayed ID.
-    pub(super) fn save_prompt_rows(
+    /// it, and returns the row a reload replays that message as: the first
+    /// row of the node the save adds. A replaced runtime saves nothing, so
+    /// its message is unreplayed.
+    pub(crate) fn save_prompt_rows(
         &mut self,
         user: Message,
         following: &[Message],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<InsertedMessage> {
         if self.is_replaced() {
-            self.acceptance.accept_unreplayed();
-            return Ok(());
+            return Ok(InsertedMessage::Unreplayed);
         }
         let rows: Vec<Message> = std::iter::once(user)
             .chain(following.iter().cloned())
             .collect();
         let snapshot = self.durable_snapshot();
         let node = self.stored()?.save_snapshot_node(&snapshot, &rows)?;
-        self.acceptance
-            .accept(EventMapper::saved_message_id(&DisplayRowOrigin {
-                node,
-                row: 0,
-            }));
-        Ok(())
+        Ok(InsertedMessage::Saved(DisplayRowOrigin { node, row: 0 }))
     }
 
     /// Saves the settled turn with the display rows its step checkpoints
@@ -226,8 +216,8 @@ impl SessionHost {
         Ok(())
     }
 
-    /// Saves a completed turn, then rolls back a refused prompt as ACP
-    /// `refusal` requires. A refused turn that ran tools or took other input
+    /// Saves a completed turn, then rolls back a refused prompt as a
+    /// refusal requires. A refused turn that ran tools or took other input
     /// stays, since its effects are already real.
     pub(super) fn settle_turn(
         &mut self,
@@ -257,10 +247,10 @@ impl SessionHost {
             }
             return Err(error.into());
         }
-        // A new node on the base keeps host state that changed since the base
+        // A new node on the base keeps session state that changed since the base
         // was saved, such as the selected model, without the refused rows. If
         // it fails, the file still selects the base, which matches the live
-        // history; only that host state waits for the next save.
+        // history; only that session state waits for the next save.
         stored.save_snapshot(&self.durable_snapshot(), &[])
     }
 
@@ -269,16 +259,16 @@ impl SessionHost {
     /// report, so a failed save is only logged.
     pub(super) fn persist_failed_turn(&mut self, checkpoint: &TurnCheckpoint) {
         if let Err(error) = self.persist_turn(checkpoint, /*assistant_text*/ None) {
-            tracing::warn!(%error, "could not save failed ACP turn");
+            tracing::warn!(%error, "could not save failed turn");
         }
     }
 
-    /// A replaced host must not write over its successor's session file.
+    /// A replaced runtime must not write over its successor's session file.
     pub(super) fn is_replaced(&self) -> bool {
         self.replaced.load(Ordering::Acquire)
     }
 
-    /// The live snapshot with the host state a later load restores.
+    /// The live snapshot with the session state a later load restores.
     pub(super) fn durable_snapshot(&self) -> SessionSnapshot {
         decorate(
             &self.built.prompt,
@@ -291,7 +281,7 @@ impl SessionHost {
     }
 }
 
-/// Adds the host state a load restores, including the direct tool loadout.
+/// Adds the session state a load restores, including the direct tool loadout.
 pub(super) fn decorate(
     prompt: &ActivePrompt,
     todo: &TodoState,
@@ -321,7 +311,7 @@ fn turn_base(
 }
 
 /// One turn's SDK checkpoint store, installed by
-/// [`SessionHost::install_turn_checkpoint`].
+/// [`SessionRuntime::install_turn_checkpoint`].
 pub(super) struct TurnCheckpoint(Arc<CheckpointStore>);
 
 impl TurnCheckpoint {
@@ -549,5 +539,5 @@ impl TurnDisplay {
 }
 
 #[cfg(test)]
-#[path = "session_host_persist_tests.rs"]
+#[path = "persist_tests.rs"]
 mod tests;

@@ -16,7 +16,7 @@ use rho_sdk::{
 use serde_json::json;
 
 use super::{apply_fast_mode, config_options, parse_fast_mode_request, FAST_MODE_ID};
-use crate::app::acp::{config_options::CurrentModel, host_features::Toggles};
+use crate::app::{acp::host_features::Toggles, session_runtime::CurrentModel};
 
 fn current(provider: &str, model: &str, auth: &str) -> CurrentModel {
     CurrentModel {

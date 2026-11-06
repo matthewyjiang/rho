@@ -14,11 +14,11 @@ use agent_client_protocol::{
 };
 use rho_providers::{
     auth::browser::BrowserAvailability,
-    model::ModelError,
     provider::{self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind},
 };
 
 use super::host_features::{Forms, HostFeatures};
+use crate::app::session_runtime::CredentialFailure;
 
 /// Whether a credential store has been chosen. A login must know where to
 /// save, so until the choice is made `authenticate` asks it as a form, and
@@ -170,65 +170,7 @@ pub(super) fn methods(request: &InitializeRequest, sign_in: SignIn) -> Vec<AuthM
         .collect()
 }
 
-/// A failure that signing in can fix. This follows the provider layer, which
-/// files each of these under `ProviderErrorKind::Authentication` when it
-/// converts them for the SDK, so startup and prompt failures agree.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CredentialFailure {
-    /// Nothing is saved or set in the environment for the selected auth. The
-    /// message comes from the provider descriptor table, never from a
-    /// credential, and names the provider and how to sign in.
-    Missing(&'static str),
-    /// The credential store failed to read or refresh the saved credentials;
-    /// signing in again saves a fresh copy.
-    Unreadable,
-    /// The provider answered 401/403 or reported an authentication failure:
-    /// an expired, revoked, or wrong token or key.
-    Refused,
-}
-
 impl CredentialFailure {
-    /// Finds a credential failure in `error`'s cause chain. Only typed causes
-    /// count, so rewording an error message cannot reclassify it.
-    pub(super) fn find(error: &anyhow::Error) -> Option<Self> {
-        error.chain().find_map(Self::of_cause)
-    }
-
-    fn of_cause(cause: &(dyn std::error::Error + 'static)) -> Option<Self> {
-        if let Some(error) = cause.downcast_ref::<ModelError>() {
-            return match error {
-                ModelError::MissingCredentials(message) => Some(Self::Missing(message)),
-                ModelError::Credentials(_) => Some(Self::Unreadable),
-                ModelError::HttpStatus { status, .. } if matches!(status.as_u16(), 401 | 403) => {
-                    Some(Self::Refused)
-                }
-                ModelError::Request(_)
-                | ModelError::HttpStatus { .. }
-                | ModelError::Io(_)
-                | ModelError::Interrupted
-                | ModelError::StreamIdleTimeout { .. }
-                | ModelError::StreamFailedAfterOutput { .. }
-                | ModelError::InvalidResponse(_)
-                | ModelError::RetryableInvalidResponse { .. }
-                | ModelError::ProviderReported { .. }
-                | ModelError::UnsupportedReasoning { .. }
-                | ModelError::UnsupportedProvider(_) => None,
-            };
-        }
-        // The SDK error no longer says which credential failure it was.
-        // `rho_sdk::Error` is non-exhaustive; other variants are not
-        // credential failures.
-        match cause.downcast_ref::<rho_sdk::Error>()? {
-            rho_sdk::Error::Authentication { .. } => Some(Self::Refused),
-            rho_sdk::Error::Provider(error)
-                if error.kind() == rho_sdk::ProviderErrorKind::Authentication =>
-            {
-                Some(Self::Refused)
-            }
-            _ => None,
-        }
-    }
-
     /// ACP `auth_required` with a Rho-owned message and no data. Provider
     /// messages and diagnostics may quote the request, so none reach the host.
     fn into_acp(self) -> AcpError {

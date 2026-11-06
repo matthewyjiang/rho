@@ -2,11 +2,9 @@
 //!
 //! Hosts such as T3 Code hand every session the MCP servers that expose host
 //! features (browser preview, orchestration). Rho connects them alongside the
-//! servers from its own config. A host entry whose name matches a config
-//! server replaces it for that session, because the host's entry carries
-//! session-specific credentials. That holds even when the host entry is
-//! invalid: the config server is suppressed rather than silently connected
-//! under an identity the host meant to replace.
+//! servers from its own config; the session runtime overlays them, so a host
+//! entry replaces a config server of the same name, even when it is invalid
+//! (`app::session_runtime::session_config`).
 
 use std::collections::BTreeMap;
 
@@ -20,22 +18,11 @@ use crate::tools::mcp::{
     parse_remote_url, validate_identity, validate_literal_headers, validate_stdio_environment,
 };
 
-/// Overlays host `mcpServers` onto the process MCP config for one session.
-pub(super) fn overlay_host_mcp(process: &mut McpConfig, servers: &[McpServer]) {
-    let host = host_mcp_config(servers);
-    for invalid in &host.invalid_servers {
-        if process.servers.remove(&invalid.identity).is_some() {
-            tracing::warn!(server = %invalid.identity, "host MCP entry is invalid; not connecting the configured server it replaces");
-        }
-    }
-    process.merge(host);
-}
-
 /// Builds the session's host MCP config. When a name repeats, the last entry
 /// wins whether it is valid or not. Invalid entries land in `invalid_servers`
 /// so the MCP report shows them; transports Rho cannot speak are logged and
 /// skipped.
-fn host_mcp_config(servers: &[McpServer]) -> McpConfig {
+pub(super) fn host_mcp_config(servers: &[McpServer]) -> McpConfig {
     let mut config = McpConfig::default();
     for server in servers {
         let (name, converted) = match server {

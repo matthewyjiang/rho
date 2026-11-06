@@ -1,5 +1,9 @@
 use crate::app::acp::prompt_acceptance::PromptAcceptance;
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -10,17 +14,20 @@ use agent_client_protocol::{
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
-    provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
+    model::{ContentBlock, Message, ModelIdentity, ModelRequest, ModelResponse, ToolCall},
+    provider::{
+        ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
+    },
     ProviderError, ProviderErrorKind, Retryability, SessionOptions,
 };
+use tokio::sync::oneshot;
 
-use super::super::{mode::SessionPermission, SessionHost};
-use super::{HostStorage, SaveScope, TurnDisplay};
+use super::SessionHost;
 use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         session_assembly::BuiltSession,
+        session_runtime::{OpenedSession, SessionPermission, SessionStorage},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -53,7 +60,7 @@ impl AcpClientPort for SilentPort {
 async fn host(
     workspace: &std::path::Path,
     id: &str,
-    storage: HostStorage,
+    storage: SessionStorage,
     provider: Arc<dyn ModelProvider>,
     tools: AppToolSet,
     startup: &AcpStartup,
@@ -80,16 +87,21 @@ async fn host(
     };
     SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(id)),
-        built,
-        storage,
-        Default::default(),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: workspace.to_path_buf(),
-        },
         startup,
-        Vec::new(),
+        OpenedSession {
+            built,
+            storage,
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: config.permission_mode,
+                writes: Default::default(),
+                workspace_root: workspace.to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     )
 }
 
@@ -114,9 +126,9 @@ fn provider_failure(message: &str) -> ScriptedTurn {
 }
 
 /// Storage for a new session `id` in `root`, created on first save.
-fn unsaved_storage(root: &std::path::Path, id: &str) -> HostStorage {
+fn unsaved_storage(root: &std::path::Path, id: &str) -> SessionStorage {
     let (root, id) = (root.to_path_buf(), id.to_owned());
-    HostStorage::unsaved(
+    SessionStorage::unsaved(
         root.clone(),
         Box::new(move || StoredSession::create_with_id_in_root_for_test(&root, &root, &id)),
     )
@@ -135,7 +147,7 @@ fn from_first_user(history: &[Message]) -> Vec<Message> {
 // Covers: hosts open sessions they never prompt (T3 Code's provider refresh),
 // and each must not leave an empty, unnamed row in /resume. The first prompt
 // creates the file with the whole turn.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn new_session_saves_nothing_until_its_first_prompt() {
     let home = tempfile::tempdir().unwrap();
@@ -174,7 +186,7 @@ async fn new_session_saves_nothing_until_its_first_prompt() {
 // Covers: a host that kills the agent mid-turn (T3 Code restarts) must still
 // find the user's message and the model's started work, tool calls included,
 // on session/load and TUI resume, though the end-of-turn save never ran.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn unfinished_turn_is_on_disk_for_session_load() {
     let home = tempfile::tempdir().unwrap();
@@ -194,7 +206,7 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
     let mut host = host(
         home.path(),
         &id,
-        HostStorage::saved(stored),
+        SessionStorage::saved(stored),
         provider,
         AppToolSet::disabled(),
         &startup,
@@ -227,167 +239,88 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
     );
 }
 
-// Covers: both mid-turn checkpoints and settled ACP saves restore loaded tool
-// schemas in a fresh tool host, even when MCP inventory arrives after restore.
-// Owner: ACP session persistence, independent of provider/credential startup.
-#[tokio::test]
-async fn acp_saves_retain_the_loaded_tool_schemas() {
-    use crate::tools::sdk_registry::StaticToolBundle;
-    use rho_sdk::{
-        model::ToolSpec,
-        tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
-        SessionStore, UserInput,
-    };
-    let name = "mcp__docs__lookup";
-    let bundle = || {
-        StaticToolBundle::new(vec![Arc::new(ScriptedTool::new(
-            ToolSpec {
-                name: name.into(),
-                description: "docs".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-            },
-            ScriptedToolOutcome::Success(ToolOutput::text("docs")),
-        ))])
-    };
-    for scope in [SaveScope::Step, SaveScope::Settle] {
-        let home = tempfile::tempdir().unwrap();
-        let startup = AcpStartup::for_tests(Config::default(), home.path());
-        let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
-        let id = stored.id().to_owned();
-        let provider = Arc::new(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "model"),
-            [],
-        ));
-        let mut tools = AppToolSet::disabled();
-        tools.add_bundle(bundle());
-        let mut host = host(
-            home.path(),
-            &id,
-            HostStorage::saved(stored),
-            provider.clone(),
-            tools,
-            &startup,
-        )
-        .await;
-        let input = UserInput::text("load docs");
-        let checkpoint = host.install_turn_checkpoint(&input, &input).unwrap();
-        host.built
-            .session
-            .append_message(Message::user_text("load docs"))
-            .unwrap();
-        host.built.tools.code_mode().search_and_load(name, 1);
-        match scope {
-            SaveScope::Step => checkpoint
-                .0
-                .save(host.built.session.snapshot())
-                .await
-                .unwrap(),
-            SaveScope::Settle => host
-                .persist_turn(&checkpoint, /*assistant_text*/ None)
-                .unwrap(),
-        }
-        host.shutdown().await;
+/// Holds its one model request open until released, then fails it.
+struct HeldProvider {
+    entered: Mutex<Option<oneshot::Sender<()>>>,
+    release: Mutex<Option<oneshot::Receiver<()>>>,
+}
 
-        let (stored, _) =
+impl ModelProvider for HeldProvider {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new("test", "test", "model")
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async { Err(ProviderError::interrupted("held provider is stream-only")) })
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        _request: ModelRequest<'a>,
+        _context: ProviderTurnContext,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let entered = self.entered.lock().unwrap().take();
+            if let Some(entered) = entered {
+                let _ = entered.send(());
+            }
+            let release = self.release.lock().unwrap().take();
+            if let Some(release) = release {
+                let _ = release.await;
+            }
+            Err(ProviderError::interrupted("released"))
+        })
+    }
+}
+
+// Covers: a host that kills the agent before the model's first answer (T3
+// Code restarts) must still find the user's message on session/load. ACP v1
+// prompts report nothing early, so only the save itself protects them.
+// Owner: session runtime turn persistence, driven through the ACP host
+#[tokio::test]
+async fn prompt_is_on_disk_before_the_model_answers() {
+    let home = tempfile::tempdir().unwrap();
+    let startup = AcpStartup::for_tests(Config::default(), home.path());
+    let (entered, model_asked) = oneshot::channel();
+    let (release, released) = oneshot::channel();
+    let provider: Arc<dyn ModelProvider> = Arc::new(HeldProvider {
+        entered: Mutex::new(Some(entered)),
+        release: Mutex::new(Some(released)),
+    });
+    let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let id = stored.id().to_owned();
+    let mut host = host(
+        home.path(),
+        &id,
+        SessionStorage::saved(stored),
+        provider,
+        AppToolSet::disabled(),
+        &startup,
+    )
+    .await;
+
+    let on_disk = async {
+        model_asked.await.expect("the model is asked");
+        let (_, histories) =
             StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id)
                 .unwrap();
-        let snapshot = stored
-            .snapshot_for_resume(provider.identity(), "restored".into())
-            .unwrap();
-        let mut restored = AppToolSet::disabled();
-        restored.code_mode().restore(&snapshot);
-        // A newly connected MCP bundle must not erase restored names.
-        restored.add_bundle(bundle());
-        assert_eq!(
-            restored
-                .specs()
-                .iter()
-                .map(|spec| spec.name.as_str())
-                .collect::<Vec<_>>(),
-            vec![name],
-            "{scope:?}"
-        );
-    }
-}
-
-// Covers: a compaction that rewrites history before or during the turn must
-// not make display copy unrelated rows, even once history grows past the
-// turn's old position; the turn then shows its final reply instead.
-// Owner: ACP session host turn persistence
-#[test]
-fn turn_display_follows_only_history_that_extends_the_turn() {
-    let earlier = Message::user_text("earlier");
-    let input = Message::user_text("input");
-    let reply = Message::assistant_text("reply");
-    let summary = Message::user_text("summary");
-    let later = Message::assistant_text("later");
-
-    let shown = Message::user_text("shown");
-
-    // Compacted mid-turn, after a save wrote the reply.
-    let mut display = TurnDisplay::new(shown.clone(), input.clone(), 1);
-    let extended = vec![earlier.clone(), input.clone(), reply.clone()];
-    let pending = display.pending_rows(&extended, SaveScope::Step);
-    assert_eq!(pending.rows, vec![shown.clone(), reply.clone()]);
-    display.mark_written(pending);
-    let compacted = vec![summary.clone(), reply.clone(), later.clone()];
-    assert!(!display.follows(&compacted));
-    assert_eq!(
-        display.pending_rows(&compacted, SaveScope::Settle).rows,
-        Vec::<Message>::new()
+        release.send(()).expect("release the model");
+        histories.display
+    };
+    let (sent, display) = tokio::join!(
+        send(&mut host, &id, "the codeword is zebra", &startup),
+        on_disk
     );
+    sent.expect_err("the held request fails");
+    host.shutdown().await;
 
-    // Compacted before the first save, then grown past the turn's position.
-    let mut display = TurnDisplay::new(shown.clone(), input, 1);
-    for (history, written) in [
-        (vec![summary.clone()], vec![shown]),
-        (vec![summary, reply, later.clone(), later], Vec::new()),
-    ] {
-        assert!(!display.follows(&history));
-        let pending = display.pending_rows(&history, SaveScope::Step);
-        assert_eq!(pending.rows, written);
-        display.mark_written(pending);
-    }
-}
-
-// Covers: a refusal rolls back only a turn that produced nothing but model
-// replies; a turn that ran tools or took other input keeps its history, and a
-// compacted turn cannot be cut at its old position.
-// Owner: ACP session host turn persistence
-#[test]
-fn only_a_prompt_answered_by_replies_alone_rolls_back() {
-    let earlier = Message::user_text("earlier");
-    let input = Message::user_text("input");
-    let reply = Message::assistant_text("refused");
-    let call = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
-        "call".into(),
-        "read_file".into(),
-        serde_json::json!({}),
-    ))]);
-    let result = Message::ToolResult(rho_sdk::model::ToolResult::succeeded("call", "file"));
-    let steer = Message::user_text("steer");
-    let display = TurnDisplay::new(input.clone(), input.clone(), 1);
-
-    for (history, expected) in [
-        (vec![earlier.clone(), input.clone(), reply.clone()], Some(1)),
-        (
-            vec![earlier.clone(), input.clone(), call, result, reply.clone()],
-            None,
-        ),
-        (
-            vec![earlier.clone(), input.clone(), steer, reply.clone()],
-            None,
-        ),
-        (vec![Message::user_text("summary"), reply], None),
-    ] {
-        assert_eq!(display.prompt_only_start(&history), expected, "{history:?}");
-    }
+    assert_eq!(display, vec![Message::user_text("the codeword is zebra")]);
 }
 
 // Covers: a refusal rollback whose durable leaf commit fails must leave the
 // live session on the refusal branch the file still selects, so the next turn
 // saves model history and replay that agree.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
     let home = tempfile::tempdir().unwrap();
@@ -411,7 +344,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
     let mut host = host(
         home.path(),
         &id,
-        HostStorage::saved(stored),
+        SessionStorage::saved(stored),
         provider,
         AppToolSet::disabled(),
         &startup,
@@ -422,7 +355,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
         .await
         .expect_err("the rollback's leaf commit fails");
     send(&mut host, &id, "follow-up", &startup).await.unwrap();
-    let live = host.built.session.history();
+    let live = host.runtime.built().session.history();
     host.shutdown().await;
 
     let (_, histories) =
@@ -444,36 +377,9 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
     );
 }
 
-// Covers: a background result reaches history before the pump records the
-// row shown for it, so a step save must wait for that row rather than write
-// the model's copy; once recorded, the shown row takes its place in order.
-// Owner: ACP session host turn persistence
-#[test]
-fn turn_display_shows_recorded_rows_for_background_results() {
-    let input = Message::user_text("input");
-    let result = Message::user_text("<background result>");
-    let card = Message::System("card".into());
-    let reply = Message::assistant_text("reply");
-    let history = vec![input.clone(), result.clone(), reply.clone()];
-    let mut display = TurnDisplay::new(input.clone(), input.clone(), 0);
-
-    let pending = display.pending_rows(&history, SaveScope::Step);
-    assert_eq!(pending.rows, vec![input]);
-    display.mark_written(pending);
-
-    display.applied.push_back((result, card.clone()));
-    let pending = display.pending_rows(&history, SaveScope::Step);
-    assert_eq!(pending.rows, vec![card, reply]);
-    display.mark_written(pending);
-    assert_eq!(
-        display.pending_rows(&history, SaveScope::Settle).rows,
-        Vec::<Message>::new()
-    );
-}
-
 // Covers: a background result shown to the host stays in the saved display
 // history when the turn then fails, so session/load still replays it.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn background_result_survives_a_failed_turn() {
     let home = tempfile::tempdir().unwrap();
@@ -502,7 +408,7 @@ async fn background_result_survives_a_failed_turn() {
     let mut host = host(
         home.path(),
         &id,
-        HostStorage::saved(stored),
+        SessionStorage::saved(stored),
         provider,
         tools,
         &startup,
@@ -543,7 +449,7 @@ fn recording(ids: &Arc<std::sync::Mutex<Vec<String>>>) -> PromptAcceptance {
 // was answered with: model turns, including one that ran a tool, and a
 // workflow start, which saves its prompt without a turn. A prompt retried
 // with the same text after a refusal rolled it back is a new message.
-// Owner: ACP session host prompt insertion
+// Owner: ACP prompt acceptance over the runtime's message insertion
 #[tokio::test]
 async fn accepted_user_message_ids_survive_replay() {
     let home = tempfile::tempdir().unwrap();
@@ -588,12 +494,14 @@ async fn accepted_user_message_ids_survive_replay() {
             .await
             .unwrap();
     }
-    host.acceptance = recording(&accepted);
-    host.save_prompt_rows(
-        Message::user_text("/workflow:nightly"),
-        &[Message::assistant_text("started")],
-    )
-    .unwrap();
+    let inserted = host
+        .runtime
+        .save_prompt_rows(
+            Message::user_text("/workflow:nightly"),
+            &[Message::assistant_text("started")],
+        )
+        .unwrap();
+    recording(&accepted).accept(inserted);
     host.shutdown().await;
 
     let (stored, _) =

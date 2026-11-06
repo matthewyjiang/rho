@@ -1,3 +1,13 @@
+//! One ACP session: the protocol side of a [`SessionRuntime`].
+//!
+//! The runtime owns the session itself: its build, file, settings, and
+//! turns. The host owns what only ACP has: the client and its features, the
+//! advertised menus, permission card placeholders, the checklist the client
+//! last saw, T3 Code's wake watchers, and Herdr state. A prompt resolves its
+//! command here, then calls the runtime's core for it; a model turn runs
+//! beside a forwarder that shows the turn's events to the client and answers
+//! its requests (`session_host_forward.rs`).
+
 use std::sync::{
     atomic::{AtomicBool, AtomicU64},
     Arc,
@@ -5,27 +15,22 @@ use std::sync::{
 
 use agent_client_protocol::{
     schema::v1::{
-        McpServer, PromptRequest, PromptResponse, SessionConfigOption, SessionId,
+        PlanEntry, PromptRequest, PromptResponse, SessionConfigOption, SessionId,
         SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        StopReason,
     },
     Error as AcpError,
 };
-use rho_providers::{
-    credentials::available_auth_modes,
-    model::{
-        catalog::{self, ModelSelection},
-        models_dev, ReasoningRequestSource,
-    },
-    provider::model_reference,
-};
-use rho_sdk::{ApprovalRequestReceiver, UserInput};
+use rho_providers::{credentials::available_auth_modes, model::catalog};
+use rho_sdk::UserInput;
+use tokio::sync::mpsc;
 
 use super::{
     commands::{self, CommandScope, PromptAction},
-    config_options::{self, CurrentModel},
-    events::{turn_answered, EventMapper, RunEnding},
+    config_options,
+    events::{turn_answered, EventMapper},
     fast_mode,
-    host_features::Toggles,
+    host_features::{Forms, Toggles},
     permission,
     prompt_acceptance::PromptAcceptance,
     signals::SessionSignals,
@@ -34,65 +39,77 @@ use super::{
 };
 use crate::{
     app::{
-        agent_binding::BoundAgent,
-        conversation_switch::{
-            apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
-            SwitchNotice,
+        headless_delegation::BackgroundWait,
+        session_runtime::{
+            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, ModelSwitchError,
+            OpenedSession, PromptGate, PromptGuard, QuestionSupport, SessionBuild, SessionRuntime,
+            TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
         },
-        headless_delegation::OfferedDisplays,
-        interactive_runtime::startup::session_options_for_id,
-        session_assembly::BuiltSession,
+        workflow_cli::discover::StartCommand,
     },
-    compaction::CompactionConfig,
     config::Config,
-    credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
+    credential_store::AppCredentialStore,
     herdr::{HerdrReporter, HerdrSession, HerdrState},
     permission::PermissionMode,
-    session::Session as StoredSession,
 };
 
 #[path = "session_host_advertisements.rs"]
 mod advertisements;
 #[path = "session_host_agent.rs"]
 mod agent;
-#[path = "session_host_build.rs"]
-mod build;
 #[path = "session_host_compact.rs"]
 mod compact;
 #[path = "session_host_convert.rs"]
 mod convert;
-#[path = "session_host_credentials.rs"]
-mod credentials;
+#[path = "session_host_forward.rs"]
+mod forward;
 #[path = "session_host_mode.rs"]
 mod mode;
 #[path = "session_host_open.rs"]
 mod open;
-#[path = "session_host_persist.rs"]
-mod persist;
 #[path = "session_host_plan_exit.rs"]
 mod plan_exit;
-#[path = "session_host_prompt_gate.rs"]
-mod prompt_gate;
-#[path = "session_host_pump.rs"]
-mod pump;
-#[path = "session_host_title.rs"]
-mod title;
 #[path = "session_host_wake.rs"]
 mod wake;
-#[path = "session_host_workflow.rs"]
-mod workflow;
 
-use build::{build_session, session_config};
 use convert::user_input_from_prompt;
 pub(super) use convert::RejectedDirectory;
-use credentials::SessionCredentials;
-use mode::SessionPermission;
 pub(super) use open::{History, ReopenRequest, Reopened};
-use persist::{HostStorage, TurnCheckpoint};
-use prompt_gate::PromptGuard;
-pub(super) use prompt_gate::{Closing, PromptGate};
-use pump::{pump_sources, AppliedDisplays, ApprovalSource, EventSource, PumpSources};
-pub(super) use title::PendingTitle;
+
+/// A title one host asked for, not yet generated.
+pub(in crate::app::acp) struct PendingTitle {
+    pub(in crate::app::acp) session_id: SessionId,
+    /// The asking host's prompt gate, which its published slot shares, so
+    /// the agent can tell that host from a successor with the same ID.
+    pub(in crate::app::acp) asking_gate: Arc<PromptGate>,
+    pub(in crate::app::acp) job: TitleJob,
+}
+
+/// How a prompt's work ended, before the prompt answers: the response the
+/// session settled on, and an update the client missed on the way. A turn
+/// that settled still counts as settled for the plan handoff and the title;
+/// the missed update fails the prompt only as it answers.
+struct Answered {
+    response: PromptResponse,
+    missed_update: Option<String>,
+}
+
+impl Answered {
+    fn delivered(response: PromptResponse) -> Self {
+        Self {
+            response,
+            missed_update: None,
+        }
+    }
+
+    /// The prompt's answer: the response, unless the client missed an update.
+    fn into_result(self) -> anyhow::Result<PromptResponse> {
+        match self.missed_update {
+            Some(message) => Err(anyhow::Error::msg(message)),
+            None => Ok(self.response),
+        }
+    }
+}
 
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
@@ -100,54 +117,27 @@ pub(super) struct SessionHost {
     /// the session builds.
     client_io: super::client_io::ClientIo,
     advertisements: advertisements::Advertisements,
-    built: BuiltSession,
-    storage: HostStorage,
-    agent: BoundAgent,
-    /// Retained so an agent rebind reconnects the session's host-supplied tools.
-    host_mcp_servers: Vec<McpServer>,
-    /// Launch `--add-dir` values plus the host's `additionalDirectories`.
-    /// Saved with every snapshot so a TUI resume restores them; a later
-    /// `session/load` takes only the roots its request names.
-    added_dirs: crate::added_dirs::AddedDirs,
-    permission: SessionPermission,
-    auth: String,
-    credentials: SessionCredentials,
-    prompt_gate: Arc<PromptGate>,
-    completed_runs: u64,
-    /// Whether this host asked the title agent to name the session.
-    title_requested: bool,
-    /// The title the last prompt asked for, until the agent takes it.
-    pending_title: Option<PendingTitle>,
     permission_placeholders: AtomicU64,
-    replaced: Arc<AtomicBool>,
-    /// Set when a compaction rewrote live state but could not be saved.
-    /// Later prompts are refused so the session never diverges further
-    /// from its file; `session/load` starts a fresh host from storage.
-    unsaved_compaction: bool,
     herdr: HerdrReporter,
     /// The todo checklist the client last received as an ACP `plan`.
-    sent_plan: Vec<agent_client_protocol::schema::v1::PlanEntry>,
-    /// Notice found while reopening (`session/load` or `session/resume`),
-    /// sent with the first prompt because hosts such as T3 Code discard live
-    /// updates while a load is in flight; resume defers it the same way.
-    load_notice: Option<String>,
-    /// Child notice binding kept between prompts, since children outlive them.
-    held_notices: Option<crate::app::headless_delegation::HeldNotices>,
+    sent_plan: Vec<PlanEntry>,
     /// T3 Code's wake watcher (`--t3code`): background work that outlives a
     /// prompt wakes the idle thread instead of holding the prompt open.
     t3_wake: Option<T3Wake>,
     /// Optional features the host advertised at `initialize`.
     host_features: super::HostFeatures,
-    /// How the running prompt reports its inserted user message; see
-    /// [`super::prompt_acceptance`].
-    acceptance: PromptAcceptance,
+    /// How the running prompt reports its inserted user message; set as
+    /// each prompt starts, and back to [`PromptAcceptance::Implicit`] after.
+    prompt_acceptance: PromptAcceptance,
+    runtime: SessionRuntime,
 }
 
 impl SessionHost {
     /// Runs one `session/prompt`: a slash command or a model turn. A
-    /// command that cannot run fails with [`commands::CommandRejected`].
-    /// `startup` supplies process defaults and the available root capabilities
-    /// when a fresh session binds an agent definition.
+    /// command that cannot run fails with
+    /// [`crate::app::session_runtime::CommandRejected`]. `startup` supplies
+    /// process defaults and the available root capabilities when a fresh
+    /// session binds an agent definition.
     ///
     /// `acceptance` reports the user message once it is inserted: when a
     /// model turn has saved it, or as a command without a turn starts. A
@@ -159,9 +149,9 @@ impl SessionHost {
         client: &dyn AcpClientPort,
         startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
-        self.acceptance = acceptance;
+        self.prompt_acceptance = acceptance;
         let result = self.dispatch_prompt(request, client, startup).await;
-        self.acceptance = PromptAcceptance::Implicit;
+        self.prompt_acceptance = PromptAcceptance::Implicit;
         result
     }
 
@@ -171,15 +161,12 @@ impl SessionHost {
         client: &dyn AcpClientPort,
         startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
-        if self.unsaved_compaction {
-            anyhow::bail!(
-                "could not continue session: its compacted context was not saved; load the session again"
-            );
-        }
+        self.runtime.ensure_saved_state()?;
         let input = user_input_from_prompt(&request.prompt)?;
-        let starting = self.prompt_gate.begin();
-        let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
-        self.renew_stale_credentials(&startup.config, &startup.config_path)
+        let starting = self.runtime.prompt_gate().begin();
+        let _guard = PromptGuard(self.runtime.cancel_handle());
+        self.runtime
+            .renew_stale_credentials(&startup.config, &startup.config_path)
             .await?;
         self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
@@ -210,11 +197,11 @@ impl SessionHost {
         let names_session = matches!(
             &action,
             Some(Ok(PromptAction::Turn { .. } | PromptAction::RunAsAgent(_)))
-        ) && !self.title_requested;
-        let result = match action {
-            None => Ok(PromptResponse::new(
-                agent_client_protocol::schema::v1::StopReason::Cancelled,
-            )),
+        ) && !self.runtime.title_requested();
+        let answered = match action {
+            None => Ok(Answered::delivered(PromptResponse::new(
+                StopReason::Cancelled,
+            ))),
             Some(Ok(PromptAction::Turn {
                 input: model,
                 calls,
@@ -226,37 +213,43 @@ impl SessionHost {
                 self.run_turn(&input, model, calls, client).await
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
-                self.acceptance.accept_unreplayed();
-                self.compact(instructions, client).await
-            }
-            Some(Ok(PromptAction::StartWorkflow(start))) => {
-                self.start_workflow(&input, start, &startup.config, &startup.config_path, client)
+                self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
+                self.compact(instructions, client)
                     .await
+                    .map(Answered::delivered)
             }
+            Some(Ok(PromptAction::StartWorkflow(start))) => self
+                .start_workflow(&input, start, startup, client)
+                .await
+                .map(Answered::delivered),
             Some(Ok(PromptAction::RunAsAgent(task))) => {
                 self.run_as_agent(&input, task, startup, client).await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
-                self.acceptance.accept_unreplayed();
-                self.await_wake(signal, &starting, client).await
+                self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
+                self.await_wake(signal, &starting, client)
+                    .await
+                    .map(Answered::delivered)
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
         // After the plan handoff, so the implementation turn's failure counts.
-        let result = self.finish_plan_exit(result, &startup.config, client).await;
+        let answered = self
+            .finish_plan_exit(answered, &startup.config, client)
+            .await;
+        let stop = answered
+            .as_ref()
+            .ok()
+            .map(|answered| answered.response.stop_reason);
+        let result = answered.and_then(Answered::into_result);
         // Every card update of the prompt went out, so terminals of finished
         // calls can go.
         self.client_io.release_finished_terminals().await;
-        self.note_credential_failure(&result);
+        self.runtime.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
-        self.wake_prompt_ended(
-            result.as_ref().ok().map(|response| response.stop_reason),
-            client,
-        )
-        .await;
-        let completed = result
-            .as_ref()
-            .is_ok_and(|response| turn_answered(response.stop_reason));
+        self.wake_prompt_ended(stop, client).await;
+        // A turn that settled is named even if the client missed an update.
+        let completed = stop.is_some_and(turn_answered);
         let _ = self
             .herdr
             .report_state(
@@ -269,7 +262,7 @@ impl SessionHost {
             .await;
         // Last, with no await after it, so the agent always takes the request.
         if names_session && completed {
-            self.request_title(&startup.config, &input);
+            self.runtime.request_title(&startup.config, &input);
         }
         result
     }
@@ -288,15 +281,19 @@ impl SessionHost {
             thought_level::THOUGHT_LEVEL_ID => {
                 let requested = thought_level::parse_thought_level_request(&request)?;
                 thought_level::apply_thought_level(
-                    &self.built,
-                    &self.thought_config(process_config),
+                    self.runtime.built(),
+                    &model_scoped_config(&self.runtime.current_model(), process_config),
                     requested,
                 )?;
             }
             fast_mode::FAST_MODE_ID => {
                 let enabled =
                     fast_mode::parse_fast_mode_request(&request, self.host_features.toggles)?;
-                fast_mode::apply_fast_mode(&self.built.session, &self.current_model(), enabled)?;
+                fast_mode::apply_fast_mode(
+                    &self.runtime.built().session,
+                    &self.runtime.current_model(),
+                    enabled,
+                )?;
             }
             _ => {
                 return Ok(SetSessionConfigOptionResponse::new(
@@ -311,11 +308,22 @@ impl SessionHost {
     }
 
     pub(super) fn cancel_handle(&self) -> Arc<PromptGate> {
-        Arc::clone(&self.prompt_gate)
+        self.runtime.cancel_handle()
     }
 
     pub(super) fn replaced_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.replaced)
+        self.runtime.replaced_flag()
+    }
+
+    /// The title the last prompt asked for, for the agent to generate and
+    /// report once the prompt returns.
+    pub(in crate::app::acp) fn take_title(&mut self) -> Option<PendingTitle> {
+        let job = self.runtime.take_title()?;
+        Some(PendingTitle {
+            session_id: self.acp_session_id.clone(),
+            asking_gate: self.runtime.cancel_handle(),
+            job,
+        })
     }
 
     fn command_scope<'a>(
@@ -324,22 +332,23 @@ impl SessionHost {
         process_config: &'a Config,
     ) -> CommandScope<'a> {
         CommandScope {
-            cwd: self.storage.cwd(),
+            cwd: self.runtime.cwd(),
             home,
-            tools: &self.built.tools,
+            tools: &self.runtime.built().tools,
             config: process_config,
-            permission_mode: self.permission.mode,
+            permission_mode: self.runtime.permission_mode(),
         }
     }
 
     pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
+        let session = &self.runtime.built().session;
         advertised_config_options(
-            &self.current_model(),
+            &self.runtime.current_model(),
             process_config,
             CurrentSettings {
-                permission_mode: self.permission.mode,
-                reasoning: self.built.session.reasoning_level(),
-                service_tier: self.built.session.service_tier(),
+                permission_mode: self.runtime.permission_mode(),
+                reasoning: session.reasoning_level(),
+                service_tier: session.service_tier(),
             },
             self.host_features.toggles,
         )
@@ -353,177 +362,79 @@ impl SessionHost {
         process_config: &Config,
         config_path: &std::path::Path,
     ) -> Result<Vec<SessionConfigOption>, AcpError> {
-        let current = self.current_model();
+        let current = self.runtime.current_model();
         let available_auths = available_auth_modes(&AppCredentialStore);
         let selection = config_options::resolve_model_value(request, &current, &available_auths)?;
-        if model_reference(&selection.provider, &selection.model)
-            != model_reference(&current.provider, &current.model)
-            || selection.auth != current.auth
-        {
-            let reasoning =
-                resolve_switch_reasoning(&selection, self.built.session.reasoning_level())?;
-            let mut config = process_config.clone();
-            config.provider = selection.provider.clone();
-            config.model = selection.model.clone();
-            config.auth = selection.auth.clone();
-            config.reasoning = reasoning;
-            self.validate_model_override_switch(&config)
-                .map_err(host_apply_error)?;
-            let read = self.credentials.before_read();
-            // A keyless login lives in config, which `logout` edits on disk.
-            let login_config = crate::app::endpoint_login::with_disk_login(&config, config_path)
-                .map_err(host_apply_error)?;
-            let provider = build_provider_from_config_ensuring_catalog(
-                &login_config,
-                Arc::new(AppCredentialStore),
-            )
+        self.runtime
+            .switch_model(&selection, process_config, config_path)
             .await
-            .map_err(host_apply_error)?;
-            self.switch_provider(provider, &config, read)?;
-        }
-        self.persist_model_override().map_err(|error| {
-            host_apply_error(anyhow::anyhow!(
-                "model changed but could not save session: {error}"
-            ))
-        })?;
+            .map_err(|error| match error {
+                ModelSwitchError::UnsupportedReasoning { .. } => {
+                    AcpError::invalid_params().data(error.to_string())
+                }
+                ModelSwitchError::Apply(_) => host_apply_error(error),
+            })?;
         Ok(self.config_options(process_config))
     }
 
-    /// Installs an already-resolved provider while the ACP host slot is held,
-    /// for a model switch or renewed credentials. Kept separate from credential
-    /// discovery so the session transaction can be exercised with a scripted
-    /// provider. `read` is [`SessionCredentials::before_read`] from before
-    /// `provider` was built.
-    fn switch_provider(
-        &mut self,
-        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
-        config: &Config,
-        read: crate::app::acp::auth_logout::LogoutCount,
-    ) -> Result<(), AcpError> {
-        let current = self.current_model();
-        let previous_context_window = model_context_window(&current.provider, &current.model);
-        let context_window = model_context_window(&config.provider, &config.model);
-        let prompt_model =
-            crate::model_identity::PromptModel::from_sdk_identity(&provider.identity());
-        // The prompt depends only on the model, so an auth-only change (such
-        // as renewed credentials) keeps the one the session already has.
-        let model_changed = prompt_model
-            != crate::model_identity::PromptModel::from_sdk_identity(
-                &self.built.provider.identity(),
-            );
-        let prepared_prompt = self
-            .built
-            .prompt_template
-            .as_ref()
-            .filter(|_| model_changed)
-            .map(|template| template.build(&prompt_model))
-            .transpose()
-            .map_err(host_apply_error)?;
-        // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
-        let _handoff = apply_conversation_switch(
-            ConversationSwitch {
-                prepared_prompt: prepared_prompt.as_ref(),
-                session: &self.built.session,
-                tools: &self.built.tools,
-                previous_provider: Arc::clone(&self.built.provider),
-                new_provider: Arc::clone(&provider),
-                new_reasoning: config.reasoning,
-                auth: &config.auth,
-                compaction: CompactionConfig::from(config),
-                context_window,
-                previous_context_window,
-                usage_recording: self.built.runtime.usage_recording(),
-                diagnostics: self.built.diagnostics.clone(),
-            },
-            SwitchNotice::SessionMessage,
-        )
-        .map_err(host_apply_error)?;
-        self.built.provider = provider;
-        self.credentials.mark_read(read);
-        if let Some(prompt) = prepared_prompt {
-            self.built.prompt.adopt(
-                crate::app::active_prompt::ActivePrompt::from_prepared(prompt),
-                &self.built.diagnostics,
-                self.built.tools.advisor(),
-            );
-        }
-        self.auth = config.auth.clone();
-        Ok(())
-    }
-
     pub(super) async fn shutdown(self) {
-        self.prompt_gate.cancel();
         let Self {
-            built,
+            runtime,
             herdr,
             client_io,
             ..
         } = self;
-        built.teardown().await;
+        runtime.shutdown().await;
         client_io.release_all_terminals().await;
         let _ = herdr.release().await;
     }
 
-    fn current_model(&self) -> CurrentModel {
-        let snapshot = self.built.session.snapshot();
-        let identity = snapshot.provider();
-        CurrentModel {
-            provider: identity.provider.clone(),
-            model: identity.model.clone(),
-            auth: self.auth.clone(),
-        }
-    }
-
-    fn thought_config(&self, process_config: &Config) -> Config {
-        model_scoped_config(&self.current_model(), process_config)
-    }
-
+    /// The host for `opened`, talking to its client through `client_io`.
     fn from_built(
         client_io: super::client_io::ClientIo,
-        built: BuiltSession,
-        storage: HostStorage,
-        added_dirs: crate::added_dirs::AddedDirs,
-        permission: SessionPermission,
         startup: &AcpStartup,
-        host_mcp_servers: Vec<McpServer>,
+        opened: OpenedSession,
     ) -> Self {
-        built.tools.bind_recall(storage.file());
+        let mut build = session_build(startup, &client_io);
+        let t3_wake = match build.background_wait {
+            BackgroundWait::HoldPrompt => None,
+            BackgroundWait::HostWakes => match super::t3_wake::signal_dir() {
+                Ok(dir) => Some(T3Wake::new(dir)),
+                Err(error) => {
+                    tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
+                    // Nothing would wake the idle session, so background
+                    // work holds the prompt open.
+                    build.background_wait = BackgroundWait::HoldPrompt;
+                    None
+                }
+            },
+        };
+        let runtime = SessionRuntime::new(opened, build, &startup.logouts);
         Self {
             acp_session_id: client_io.session_id.clone(),
             client_io,
             advertisements: Default::default(),
-            built,
-            storage,
-            agent: startup.agent.clone(),
-            host_mcp_servers,
-            added_dirs,
-            permission,
-            auth: startup.config.auth.clone(),
-            credentials: SessionCredentials::just_read(&startup.logouts),
-            prompt_gate: Arc::new(PromptGate::new()),
-            completed_runs: 0,
-            title_requested: false,
-            pending_title: None,
             permission_placeholders: AtomicU64::new(0),
-            replaced: Arc::new(AtomicBool::new(false)),
-            unsaved_compaction: false,
             herdr: startup.herdr.clone(),
             sent_plan: Vec::new(),
-            load_notice: None,
-            held_notices: None,
+            t3_wake,
             host_features: startup.host_features,
-            acceptance: PromptAcceptance::Implicit,
-            t3_wake: match startup.host {
-                AcpHost::Generic => None,
-                AcpHost::T3Code => match super::t3_wake::signal_dir() {
-                    Ok(dir) => Some(T3Wake::new(dir)),
-                    Err(error) => {
-                        tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
-                        None
-                    }
-                },
-            },
+            prompt_acceptance: PromptAcceptance::Implicit,
+            runtime,
         }
+    }
+
+    /// Signal tracking for the next update, starting from the checklist the
+    /// client last saw. Hand the checklist back as `sent_plan` once sent;
+    /// one that never comes back only costs a resend of the current list.
+    fn signals(&mut self) -> SessionSignals {
+        let built = self.runtime.built();
+        SessionSignals::new(
+            built.session.clone(),
+            built.tools.todo_state(),
+            self.runtime.context_window(),
+            std::mem::take(&mut self.sent_plan),
+        )
     }
 
     /// A model turn on `model`, saved for display as `display`, the prompt
@@ -535,209 +446,106 @@ impl SessionHost {
         model: UserInput,
         calls: Vec<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
-        let stored = self.stored()?.clone();
-        let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
-            &self.built.session,
-            crate::app::headless_delegation::BackgroundSources::of(&self.built.tools),
-            Some(&stored),
-            &mut self.held_notices,
-        )?;
-        if self.t3_wake.is_some() {
-            delegation
-                .set_background_wait(crate::app::headless_delegation::BackgroundWait::HostWakes);
-        }
-        let displays = delegation.offered_displays();
-        // Children outlive a cancelled, failed, or step-limited prompt, as they
-        // do across TUI turns: T3 Code cancels the open prompt to send each
-        // mid-turn message. The next prompt waits for and delivers them and
-        // their undelivered notices; only closing or replacing the session
-        // stops them.
-        let result = crate::app::headless_delegation::HeadlessDelegation::drive(
-            &mut delegation,
-            self.drive_prompt(display, model, calls, displays, client),
-        )
-        .await;
-        self.held_notices = delegation.hold_notices();
-        result
+    ) -> anyhow::Result<Answered> {
+        let (events, event_receiver) = mpsc::unbounded_channel();
+        let (control_sender, control) = mpsc::unbounded_channel();
+        // See `Forwarded::sent_plan` for when the checklist comes back.
+        let signals = self.signals();
+        let forwarder = forward::Forwarder {
+            session_id: &self.acp_session_id,
+            client,
+            features: self.host_features,
+            mapper: EventMapper::new(
+                self.host_features,
+                self.runtime.cwd().to_path_buf(),
+                self.runtime.built().tools.mcp_report().tool_names(),
+            ),
+            signals,
+            placeholders: &self.permission_placeholders,
+            acceptance: &mut self.prompt_acceptance,
+        };
+        let io = TurnIo { events, control };
+        let turn = Turn {
+            display: display.clone(),
+            model,
+            calls,
+        };
+        let (result, forwarded) = tokio::join!(
+            self.runtime.run_turn(turn, io),
+            forwarder.forward(event_receiver, control_sender),
+        );
+        self.sent_plan = forwarded.sent_plan.unwrap_or_default();
+        let stop = match result? {
+            TurnOutcome::Completed(outcome) => EventMapper::map_stop(&outcome),
+            TurnOutcome::Cancelled => StopReason::Cancelled,
+        };
+        // An update that failed after the turn settled still fails the
+        // prompt, as the client missed part of it, but the turn stands.
+        Ok(Answered {
+            response: PromptResponse::new(stop),
+            missed_update: forwarded.failure,
+        })
     }
 
-    async fn drive_prompt(
+    /// `/workflow:<name>`: starts the run in the background and answers with
+    /// the notice the prompt was saved with.
+    async fn start_workflow(
         &mut self,
         display: &UserInput,
-        model: UserInput,
-        calls: Vec<rho_sdk::model::ToolCall>,
-        displays: OfferedDisplays,
+        start: StartCommand,
+        startup: &AcpStartup,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let checkpoint = self.install_turn_checkpoint(display, &model)?;
-        let result = match self.insert_user_message(&checkpoint) {
-            Ok(()) => {
-                if let Some(notice) = self.load_notice.take() {
-                    let notice =
-                        EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
-                    if let Err(error) = send_notification(client, notice).await {
-                        tracing::debug!(%error, "could not send ACP load notice");
-                    }
-                }
-                self.drive_run(&checkpoint, model, calls, displays, client)
-                    .await
-            }
-            Err(error) => Err(error),
-        };
-        // The run is over, so the session is idle again.
-        if let Err(error) = self.built.session.set_checkpoint_store(None) {
-            tracing::warn!(%error, "could not remove ACP turn checkpoint store");
-        }
-        result
-    }
-
-    async fn drive_run(
-        &mut self,
-        checkpoint: &TurnCheckpoint,
-        model: UserInput,
-        calls: Vec<rho_sdk::model::ToolCall>,
-        displays: OfferedDisplays,
-        client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
-        let started = if calls.is_empty() {
-            self.built.session.start(model).await
-        } else {
-            self.built.session.start_with_tool_calls(model, calls).await
-        };
-        let mut run = match started {
-            Ok(run) => run,
-            Err(error) => {
-                self.dispatch_failed(&error.to_string());
-                return Err(error.into());
-            }
-        };
-        self.prompt_gate.activate(run.cancellation_handle());
-        let mut approval_receiver = self.built.approval_receiver.take();
-        let mut mapper = EventMapper::new(
-            self.host_features,
-            self.storage.cwd().to_path_buf(),
-            self.built.tools.mcp_report().tool_names(),
-        );
-        let mut signals = self.signals();
-        signals.send_plan_change(&self.acp_session_id, client).await;
-        let pump_result = self
-            .pump_run(
-                &mut run,
-                &mut mapper,
-                &mut signals,
-                client,
-                approval_receiver.as_mut(),
-                AppliedDisplays {
-                    offered: displays,
-                    checkpoint,
-                },
-            )
-            .await;
-        self.built.approval_receiver = approval_receiver;
-        if let Err(error) = pump_result {
-            run.cancel();
-            let _ = run.outcome().await;
-            // Best effort: the host may already be gone, and the pump error
-            // is the one the prompt reports.
-            for notification in
-                mapper.close_unfinished(&self.acp_session_id, RunEnding::Failed(&error.to_string()))
-            {
-                if send_notification(client, notification).await.is_err() {
-                    break;
-                }
-            }
-            self.persist_failed_turn(checkpoint);
-            self.dispatch_failed(&error.to_string());
-            return Err(error);
-        }
-        let outcome = run.outcome().await;
-        // The committed turn is the settled context; in-run updates were estimates.
-        signals.send_usage(&self.acp_session_id, client).await;
-        self.sent_plan = signals.into_sent_plan();
-        match outcome {
-            Ok(outcome) => {
-                if let Err(error) = self.settle_turn(checkpoint, &outcome) {
-                    self.dispatch_failed(&error.to_string());
-                    return Err(error);
-                }
-                self.completed_runs = self.completed_runs.saturating_add(1);
-                self.built
-                    .runtime
-                    .hooks()
-                    .session_completed(self.built.session.id(), self.completed_runs);
-                Ok(PromptResponse::new(EventMapper::map_stop(&outcome)))
-            }
-            Err(rho_sdk::Error::Cancelled) => {
-                if let Err(error) = self.persist_turn(checkpoint, None) {
-                    self.dispatch_failed(&error.to_string());
-                    return Err(error);
-                }
-                Ok(PromptResponse::new(
-                    agent_client_protocol::schema::v1::StopReason::Cancelled,
-                ))
-            }
-            Err(error) => {
-                self.persist_failed_turn(checkpoint);
-                self.dispatch_failed(&error.to_string());
-                Err(error.into())
+        let started = self
+            .runtime
+            .start_workflow(display, start, &startup.config, &startup.config_path)
+            .await?;
+        match started {
+            WorkflowStart::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
+            WorkflowStart::Started { notice, inserted } => {
+                self.prompt_acceptance.accept(inserted);
+                send_notification(
+                    client,
+                    EventMapper::agent_notice(&self.acp_session_id, &notice),
+                )
+                .await?;
+                Ok(PromptResponse::new(StopReason::EndTurn))
             }
         }
     }
+}
 
-    async fn pump_run(
-        &mut self,
-        run: &mut rho_sdk::Run,
-        mapper: &mut EventMapper,
-        signals: &mut SessionSignals,
-        client: &dyn AcpClientPort,
-        approval_receiver: Option<&mut ApprovalRequestReceiver>,
-        displays: AppliedDisplays<'_>,
-    ) -> anyhow::Result<()> {
-        let approvals_open = approval_receiver.is_some();
-        // Plan approvals belong to the tool set, which outlives this prompt
-        // and is swapped by an agent rebind, so they are handed back after.
-        let mut plan_approvals = self.built.tools.take_plan_permission_requests();
-        let result = pump_sources(PumpSources {
-            session_id: &self.acp_session_id,
-            cancel: run.cancellation_handle(),
-            mapper,
-            signals: Some(signals),
-            client,
-            placeholders: &self.permission_placeholders,
-            events: &mut EventSource::Run(run),
-            approvals: &mut ApprovalSource::Receiver(approval_receiver),
-            approvals_open,
-            plan_approvals: plan_approvals.as_mut(),
-            host_features: self.host_features,
-            displays: Some(displays),
-        })
-        .await;
-        self.built
-            .tools
-            .restore_plan_permission_requests(plan_approvals);
-        result
+/// How every build of a session this host opens is set up: the launch
+/// flags, and what this host does for its tools.
+fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> SessionBuild {
+    SessionBuild {
+        config_path: startup.config_path.clone(),
+        no_system_prompt: startup.no_system_prompt,
+        no_tools: startup.no_tools,
+        no_subagents: startup.no_subagents,
+        diagnostics: startup.diagnostics.clone(),
+        // Questions reach a person only through form elicitation.
+        questions: question_support(startup.host_features.forms),
+        // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
+        children: match startup.host {
+            AcpHost::Generic => ChildAgents::InProcess,
+            AcpHost::T3Code => ChildAgents::HostThreads,
+        },
+        // `--t3code`: a wake watcher wakes the idle thread when background
+        // work that outlived its prompt finishes.
+        background_wait: match startup.host {
+            AcpHost::Generic => BackgroundWait::HoldPrompt,
+            AcpHost::T3Code => BackgroundWait::HostWakes,
+        },
+        launch_agent: startup.agent.clone(),
+        host_io: io.host_io(),
     }
+}
 
-    /// Signal tracking for the next prompt, starting from the checklist the
-    /// client last saw. An early return before the prompt hands it back only
-    /// costs a resend of the current list.
-    fn signals(&mut self) -> SessionSignals {
-        let current = self.current_model();
-        SessionSignals::new(
-            self.built.session.clone(),
-            self.built.tools.todo_state(),
-            model_context_window(&current.provider, &current.model),
-            std::mem::take(&mut self.sent_plan),
-        )
-    }
-
-    fn dispatch_failed(&self, message: &str) {
-        self.built.runtime.hooks().session_failed(
-            self.built.session.id(),
-            rho_sdk::hooks::HookSessionFailureKind::RunFailed,
-            message,
-        );
+fn question_support(forms: Forms) -> QuestionSupport {
+    match forms {
+        Forms::Available(_) => QuestionSupport::Available,
+        Forms::Unavailable => QuestionSupport::Unavailable,
     }
 }
 
@@ -777,60 +585,8 @@ fn advertised_config_options(
     options
 }
 
-fn model_scoped_config(current: &CurrentModel, process_config: &Config) -> Config {
-    let mut config = process_config.clone();
-    config.provider = current.provider.clone();
-    config.model = current.model.clone();
-    config.auth = current.auth.clone();
-    config
-}
-
-fn model_context_window(provider: &str, model: &str) -> Option<u64> {
-    models_dev::cached_model_metadata(provider, model)
-        .and_then(|metadata| metadata.display_context_window())
-}
-
-fn resolve_switch_reasoning(
-    selection: &ModelSelection,
-    requested: rho_sdk::ReasoningLevel,
-) -> Result<rho_sdk::ReasoningLevel, AcpError> {
-    let capabilities =
-        models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
-    match resolve_model_switch_reasoning(
-        &capabilities,
-        requested,
-        ReasoningRequestSource::PersistedOrDefault,
-        crate::app::conversation_switch::ModelSwitchReasoningPolicy::PreserveExplicit,
-    ) {
-        Ok(resolved) => Ok(resolved.effective),
-        Err(level) => Err(AcpError::invalid_params().data(format!(
-            "reasoning level '{level}' is not supported for '{}'",
-            model_reference(&selection.provider, &selection.model)
-        ))),
-    }
-}
-
 fn host_apply_error(error: impl ToString) -> AcpError {
     AcpError::internal_error().data(error.to_string())
-}
-
-fn split_assembly(
-    assembly: crate::app::session_assembly::SessionAssembly,
-    mode: crate::permission::PermissionMode,
-) -> (BuiltSession, SessionPermission) {
-    let crate::app::session_assembly::SessionAssembly {
-        built,
-        workspace_root,
-        session_writes,
-    } = assembly;
-    (
-        built,
-        SessionPermission {
-            mode,
-            writes: session_writes,
-            workspace_root,
-        },
-    )
 }
 
 /// `input` with `text` as a final block.
@@ -862,6 +618,10 @@ impl SessionHost {
         id: rho_sdk::SessionId,
         provider: Arc<dyn rho_sdk::provider::ModelProvider>,
     ) -> Self {
+        use crate::app::{
+            session_assembly::BuiltSession,
+            session_runtime::{SessionPermission, SessionStorage},
+        };
         let runtime = rho_sdk::Rho::builder()
             .provider_shared(Arc::clone(&provider))
             .build()
@@ -872,10 +632,14 @@ impl SessionHost {
             .expect("test session");
         let id = session.id().to_string();
         let (store_root, store_id) = (root.to_path_buf(), id.clone());
-        let storage = HostStorage::unsaved(
+        let storage = SessionStorage::unsaved(
             root.to_path_buf(),
             Box::new(move || {
-                StoredSession::create_with_id_in_root_for_test(&store_root, &store_root, &store_id)
+                crate::session::Session::create_with_id_in_root_for_test(
+                    &store_root,
+                    &store_root,
+                    &store_id,
+                )
             }),
         );
         let built = BuiltSession {
@@ -896,12 +660,17 @@ impl SessionHost {
         };
         Self::from_built(
             super::client_io::ClientIo::local(SessionId::new(id)),
-            built,
-            storage,
-            Default::default(),
-            permission,
             startup,
-            Vec::new(),
+            OpenedSession {
+                built,
+                storage,
+                agent: startup.agent.clone(),
+                auth: startup.config.auth.clone(),
+                host_mcp: Default::default(),
+                added_dirs: Default::default(),
+                permission,
+                reopen_notice: None,
+            },
         )
     }
 }
@@ -909,10 +678,6 @@ impl SessionHost {
 #[cfg(test)]
 #[path = "session_host_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "session_host_model_prompt_tests.rs"]
-mod model_prompt_tests;
 
 #[cfg(test)]
 #[path = "session_host_delegation_tests.rs"]
@@ -925,3 +690,7 @@ mod tool_lifecycle_tests;
 #[cfg(test)]
 #[path = "session_host_questions_tests.rs"]
 mod questions_tests;
+
+#[cfg(test)]
+#[path = "session_host_persist_tests.rs"]
+mod persist_tests;

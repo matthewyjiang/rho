@@ -5,7 +5,8 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{model::ContentBlock, UserInput};
 use serde_json::json;
 
-use super::{available_commands, resolve, AgentTask, CommandScope, PromptAction};
+use super::{available_commands, resolve, CommandScope, PromptAction};
+use crate::app::session_runtime::AgentTask;
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     config::Config,

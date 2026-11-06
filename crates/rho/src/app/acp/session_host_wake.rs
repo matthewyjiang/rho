@@ -46,8 +46,9 @@ impl SessionHost {
         let Some(wake) = self.t3_wake.as_mut() else {
             return;
         };
-        let background = Background::of(&self.built.tools, self.built.session.id().to_string());
-        let Err(error) = wake.prompt_ended(&self.built.tools, background).await else {
+        let built = self.runtime.built();
+        let background = Background::of(&built.tools, built.session.id().to_string());
+        let Err(error) = wake.prompt_ended(&built.tools, background).await else {
             return;
         };
         if stop == Some(StopReason::Cancelled) {
@@ -91,7 +92,7 @@ impl SessionHost {
             // A session that goes on elsewhere, as when T3 Code restarts or
             // reloads it, keeps the wait for the prompt that resumes it. A
             // cancel or close, as T3's task_cancel sends, ends it.
-            if !self.prompt_gate.hands_off() {
+            if !self.runtime.prompt_gate().hands_off() {
                 signal.abandon(session_id);
             }
             return Ok(PromptResponse::new(StopReason::Cancelled));

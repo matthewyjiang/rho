@@ -22,7 +22,8 @@ use rho_sdk::{
 };
 use tokio::sync::Notify;
 
-use super::{mode::SessionPermission, persist::HostStorage, SessionHost};
+use super::SessionHost;
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,
@@ -118,7 +119,7 @@ fn tool_turn(id: &str, name: &str) -> ScriptedTurn {
 // failed "Tool call not found" card. Cancel interrupts a running call without
 // finishing it, and ACP asks agents to flush pending updates before the
 // `cancelled` prompt response, so the card must not stay in progress.
-// Owner: ACP session host prompt lifecycle.
+// Owner: ACP turn forwarder tool cards.
 #[tokio::test]
 async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let home = tempfile::tempdir().unwrap();
@@ -164,16 +165,21 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let acp_session_id = SessionId::new(stored.id());
     let mut host = SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(acp_session_id.clone()),
-        built,
-        HostStorage::saved(stored),
-        Default::default(),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: home.path().to_path_buf(),
-        },
         &startup,
-        Vec::new(),
+        OpenedSession {
+            built,
+            storage: SessionStorage::saved(stored),
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: config.permission_mode,
+                writes: Default::default(),
+                workspace_root: home.path().to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     );
     let gate = host.cancel_handle();
     let port = RecordingPort::default();

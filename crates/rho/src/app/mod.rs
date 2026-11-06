@@ -41,6 +41,7 @@ mod provider_controller;
 mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
+mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;
 pub(crate) mod side_chat;

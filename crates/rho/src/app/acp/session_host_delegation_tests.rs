@@ -16,7 +16,8 @@ use rho_sdk::{
 };
 use tokio::sync::mpsc;
 
-use super::{mode::SessionPermission, persist::HostStorage, SessionHost};
+use super::SessionHost;
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{
         acp::AcpClientPort,
@@ -74,7 +75,8 @@ async fn next_chunk(chunks: &mut mpsc::UnboundedReceiver<String>) -> String {
 // must deliver their queued notices, wait for them, and continue with their
 // result. The TUI keeps children and their inbox across cancelled turns the
 // same way.
-// Owner: ACP session host prompt lifecycle.
+// Owner: session runtime background delegation across prompts, driven
+// through the ACP host.
 #[tokio::test]
 async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     let home = tempfile::tempdir().unwrap();
@@ -127,16 +129,21 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(id.as_str())),
-        built,
-        HostStorage::saved(stored),
-        Default::default(),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: home.path().to_path_buf(),
-        },
         &startup,
-        Vec::new(),
+        OpenedSession {
+            built,
+            storage: SessionStorage::saved(stored),
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: config.permission_mode,
+                writes: Default::default(),
+                workspace_root: home.path().to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     );
     let gate = host.cancel_handle();
     let (sender, mut chunks) = mpsc::unbounded_channel();

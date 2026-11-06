@@ -13,22 +13,24 @@ use agent_client_protocol::schema::v1::{
 use rho_sdk::SessionOptions;
 
 use super::{
-    super::client_io::ClientIo,
-    agent,
-    build::{build_session, mode_state, session_config},
+    super::{client_io::ClientIo, host_mcp::host_mcp_config, permission},
     convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
-    persist::HostStorage,
-    send_notification, split_assembly, EventMapper, SessionHost,
+    send_notification, session_build, EventMapper, SessionHost,
 };
 use crate::{
     added_dirs::AddedDirs,
     app::{
         acp::{AcpClientPort, AcpStartup},
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
+        session_runtime::{
+            build_session, loaded_agent, session_config, split_assembly, OpenedSession,
+            SessionStorage,
+        },
     },
     config::Config,
+    permission::PermissionMode,
     session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
+    tools::{mcp::config::McpConfig, sdk_registry::AppToolSet},
 };
 
 impl SessionHost {
@@ -40,7 +42,8 @@ impl SessionHost {
         let root = std::fs::canonicalize(cwd)?;
         let added_dirs =
             session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
-        let config = session_config(&startup.config, &request.mcp_servers);
+        let host_mcp = host_mcp_config(&request.mcp_servers);
+        let config = session_config(&startup.config, &host_mcp);
         let host = Self::unsaved(
             startup,
             &config,
@@ -48,11 +51,11 @@ impl SessionHost {
             added_dirs,
             rho_sdk::SessionId::new(),
             &request.additional_directories,
-            request.mcp_servers,
+            host_mcp,
         )
         .await?;
         let response = NewSessionResponse::new(host.acp_session_id.clone())
-            .modes(mode_state(host.permission.mode))
+            .modes(mode_state(host.runtime.permission_mode()))
             .config_options(host.config_options(&startup.config));
         Ok((host, response))
     }
@@ -66,12 +69,11 @@ impl SessionHost {
         added_dirs: AddedDirs,
         sdk_id: rho_sdk::SessionId,
         host_dirs: &[PathBuf],
-        host_mcp_servers: Vec<McpServer>,
+        host_mcp: McpConfig,
     ) -> anyhow::Result<Self> {
         let io = ClientIo::new(startup, SessionId::new(sdk_id.as_str()), cwd, host_dirs);
         let assembly = build_session(
-            startup,
-            &io,
+            &session_build(startup, &io),
             &startup.agent,
             config,
             cwd,
@@ -80,7 +82,7 @@ impl SessionHost {
         )
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
-        let storage = HostStorage::deferred(
+        let storage = SessionStorage::deferred(
             cwd.to_path_buf(),
             built.session.id().to_string(),
             startup.agent.id().to_string(),
@@ -88,12 +90,17 @@ impl SessionHost {
         );
         Ok(Self::from_built(
             io,
-            built,
-            storage,
-            added_dirs,
-            permission,
             startup,
-            host_mcp_servers,
+            OpenedSession {
+                built,
+                storage,
+                agent: startup.agent.clone(),
+                auth: startup.config.auth.clone(),
+                host_mcp,
+                added_dirs,
+                permission,
+                reopen_notice: None,
+            },
         ))
     }
 
@@ -115,7 +122,8 @@ impl SessionHost {
         let root = std::fs::canonicalize(cwd)?;
         let added_dirs =
             session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
-        let config = session_config(&startup.config, &request.mcp_servers);
+        let host_mcp = host_mcp_config(&request.mcp_servers);
+        let config = session_config(&startup.config, &host_mcp);
         let (stored, _) =
             match StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref()) {
                 Ok(opened) => opened,
@@ -131,13 +139,13 @@ impl SessionHost {
                         added_dirs,
                         sdk_id,
                         &request.additional_directories,
-                        request.mcp_servers,
+                        host_mcp,
                     )
                     .await;
                 }
                 Err(error) => return Err(error),
             };
-        let (agent, config) = agent::loaded_agent(startup, &stored, config, || {
+        let (agent, config) = loaded_agent(&startup.agent, &stored, config, || {
             Ok(crate::agent::AgentCatalog::discover(cwd)?)
         })?;
         let io = ClientIo::new(
@@ -147,8 +155,7 @@ impl SessionHost {
             &request.additional_directories,
         );
         let assembly = build_session(
-            startup,
-            &io,
+            &session_build(startup, &io),
             &agent,
             &config,
             cwd,
@@ -170,7 +177,7 @@ impl SessionHost {
                 return Err(error);
             }
         }
-        let load_notice = built
+        let reopen_notice = built
             .prompt_template
             .is_some()
             .then(|| {
@@ -180,20 +187,22 @@ impl SessionHost {
                 )
             })
             .flatten();
-        let mut host = Self::from_built(
+        Ok(Self::from_built(
             io,
-            built,
-            HostStorage::saved(stored),
-            added_dirs,
-            permission,
             startup,
-            request.mcp_servers,
-        );
-        host.load_notice = load_notice;
-        // The restored child may use a different auth family than the process.
-        host.auth = config.auth;
-        host.agent = agent;
-        Ok(host)
+            OpenedSession {
+                built,
+                storage: SessionStorage::saved(stored),
+                agent,
+                // The restored child may use a different auth family than
+                // the process.
+                auth: config.auth,
+                host_mcp,
+                added_dirs,
+                permission,
+                reopen_notice,
+            },
+        ))
     }
 }
 
@@ -248,7 +257,7 @@ impl SessionHost {
     /// with.
     pub(in crate::app::acp) fn reopened(&self, process_config: &Config) -> Reopened {
         Reopened {
-            modes: mode_state(self.permission.mode),
+            modes: mode_state(self.runtime.permission_mode()),
             config_options: self.config_options(process_config),
         }
     }
@@ -268,6 +277,10 @@ impl From<Reopened> for ResumeSessionResponse {
             .modes(reopened.modes)
             .config_options(reopened.config_options)
     }
+}
+
+fn mode_state(mode: PermissionMode) -> SessionModeState {
+    SessionModeState::new(permission::mode_id(mode), permission::mode_list())
 }
 
 async fn replay_display_history(

@@ -1,22 +1,20 @@
-//! `/workflow:<name>` for ACP sessions: start a workspace workflow in the
-//! background and end the prompt without a model turn.
+//! `/workflow:<name>`: start a workspace workflow in the background and end
+//! the prompt without a model turn.
 //!
-//! ACP gives the agent no way to start a turn on its own, so the run's result
-//! cannot be announced when it finishes. It reaches the model at the first
+//! Hosts such as ACP give the agent no way to start a turn on its own, so the
+//! run's result cannot be announced when it finishes. It reaches the model at the first
 //! boundary of a later prompt, through the same headless delivery as other
 //! background work. The run id goes into context now, so the model can check
 //! on it with the `workflow` tool in the meantime.
 
 use std::path::Path;
 
-use agent_client_protocol::schema::v1::{PromptResponse, StopReason};
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
-use super::{send_notification, EventMapper, SessionHost};
+use super::{InsertedMessage, SessionRuntime};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
-        acp::AcpClientPort,
         workflow_cli::{self, discover::StartCommand, WorkflowOps},
         workflow_runtime::RecoveryDecision,
     },
@@ -24,20 +22,33 @@ use crate::{
     tools::workflow_tracker::start_context_prompts,
 };
 
-impl SessionHost {
+/// How a `/workflow:<name>` prompt ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum WorkflowStart {
+    /// Cancelled while planning; no run exists.
+    Cancelled,
+    /// The run is going in the background; `notice` is the reply the prompt
+    /// was saved with, for the host to show, and `inserted` the prompt's
+    /// user message as saved.
+    Started {
+        notice: String,
+        inserted: InsertedMessage,
+    },
+}
+
+impl SessionRuntime {
     /// Plans `start`, launches its run, records the run id in context, and
     /// saves the prompt. `display` is the command as the user sent it.
     ///
     /// A cancel stops planning. Once the run exists it keeps going: cancel
     /// it with the `workflow` tool or the CLI, like any background run.
-    pub(super) async fn start_workflow(
+    pub(crate) async fn start_workflow(
         &mut self,
         display: &UserInput,
         start: StartCommand,
         process_config: &Config,
         config_path: &Path,
-        client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
+    ) -> anyhow::Result<WorkflowStart> {
         let source = start.workflow.relative_path.clone();
         let failed = |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
         let cancel = CancellationToken::new();
@@ -58,7 +69,7 @@ impl SessionHost {
         );
         let prepared = tokio::select! {
             biased;
-            () = cancel.cancelled() => return Ok(PromptResponse::new(StopReason::Cancelled)),
+            () = cancel.cancelled() => return Ok(WorkflowStart::Cancelled),
             prepared = ops.prepare_local_json(
                 &start.workflow.absolute_path,
                 start.inputs,
@@ -92,37 +103,34 @@ impl SessionHost {
         })?;
 
         let (model, notice) = start_context_prompts(&run_id, &workflow_name, &program_digest);
-        self.record_started(display, model, &notice)?;
-        send_notification(
-            client,
-            EventMapper::agent_notice(&self.acp_session_id, &notice),
-        )
-        .await?;
-        Ok(PromptResponse::new(StopReason::EndTurn))
+        let inserted = self.record_started(display, model, &notice)?;
+        Ok(WorkflowStart::Started { notice, inserted })
     }
 
     /// Adds the run id to model context and saves the prompt with `notice` as
-    /// its reply, which accepts the prompt. A failed save rolls the context
-    /// back so the live session never holds history its file lacks. No SDK
-    /// run happens here, so no turn checkpoint is involved; a replaced host
-    /// leaves the file to its successor.
+    /// its reply, returning the prompt's user message as saved. A failed
+    /// save rolls the context back so the live session never holds history
+    /// its file lacks. No SDK run happens here, so no turn checkpoint is
+    /// involved; a replaced runtime leaves the file to its successor.
     fn record_started(
         &mut self,
         display: &UserInput,
         model: String,
         notice: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<InsertedMessage> {
         let session = self.built.session.clone();
         let before = session.history();
         session.append_message(Message::user_text(model))?;
-        if let Err(error) = self.save_prompt_rows(
+        let saved = self.save_prompt_rows(
             Message::User(display.blocks().to_vec()),
             &[Message::assistant_text(notice)],
-        ) {
+        );
+        if let Err(error) = &saved {
             session.replace_history(before)?;
-            // ACP shows only the outermost message, so keep the cause inline.
+            // Hosts such as ACP show only the outermost message, so keep the
+            // cause inline.
             anyhow::bail!("workflow started, but could not save its run id: {error:#}");
         }
-        Ok(())
+        saved
     }
 }

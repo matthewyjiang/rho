@@ -415,7 +415,7 @@ fn print_provider_diagnostic(error: &anyhow::Error) {
     }
 }
 
-pub(crate) async fn run_session(
+pub(super) async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
     reporter: Option<&mut RunReporter>,

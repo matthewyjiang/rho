@@ -23,7 +23,8 @@ use rho_sdk::{
     CapabilityRequest, CapabilitySource, PathScope, SessionOptions,
 };
 
-use super::{super::SessionHost, SessionPermission};
+use super::super::SessionHost;
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{
         acp::{agent::RhoAcpAgent, AcpClientPort, AcpStartup},
@@ -82,16 +83,21 @@ async fn host(
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home);
     SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
-        built,
-        super::super::persist::HostStorage::saved(stored),
-        Default::default(),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: home.to_path_buf(),
-        },
         &startup,
-        Vec::new(),
+        OpenedSession {
+            built,
+            storage: SessionStorage::saved(stored),
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: config.permission_mode,
+                writes: Default::default(),
+                workspace_root: home.to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     )
 }
 
@@ -419,7 +425,7 @@ async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
 // Covers: after session/set_mode, tool writes must obey the new mode: plan
 // denies without asking, supervised asks the host, bypass runs without asking.
 // The live conversation and session identity survive every swap.
-// Owner: ACP session transaction
+// Owner: session runtime mode change, through the ACP host's permission prompts
 #[tokio::test]
 async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     let home = tempfile::tempdir().unwrap();
@@ -433,8 +439,8 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe)]));
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = host(home.path(), &config, probe_turns(cases.len()), tools).await;
-    let session_id = host.built.session.id().clone();
-    let history = host.built.session.history();
+    let session_id = host.runtime.built().session.id().clone();
+    let history = host.runtime.built().session.history();
     let port = ApprovingPort::default();
 
     for (mode, host_prompts, status) in cases {
@@ -451,9 +457,9 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
         .await
         .unwrap();
         assert_eq!(port.take(), (host_prompts, vec![status]), "{mode:?}");
-        assert_eq!(host.built.session.id(), &session_id, "{mode:?}");
+        assert_eq!(host.runtime.built().session.id(), &session_id, "{mode:?}");
         assert_eq!(
-            host.built.session.history()[..history.len()],
+            host.runtime.built().session.history()[..history.len()],
             history[..],
             "{mode:?}"
         );
@@ -461,29 +467,10 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     host.shutdown().await;
 }
 
-// Covers: auto without a configured classifier model must be rejected as bad
-// params and leave the session in its previous mode, matching headless startup.
-// Owner: ACP session transaction
-#[tokio::test]
-async fn set_mode_auto_without_classifier_keeps_the_previous_mode() {
-    let home = tempfile::tempdir().unwrap();
-    let config = test_config();
-    let mut host = host(home.path(), &config, Vec::new(), AppToolSet::disabled()).await;
-
-    let error = host
-        .set_permission_mode(PermissionMode::Auto, &config)
-        .await
-        .expect_err("auto needs a classifier model");
-
-    assert_eq!(error.code, ErrorCode::InvalidParams);
-    assert_eq!(host.permission.mode, PermissionMode::Bypass);
-    host.shutdown().await;
-}
-
 // Covers: hosts that use config options (Zed) switch modes through the `mode`
 // option; it must apply like session/set_mode and echo the new mode, and an
 // unknown value must be rejected without changing the mode.
-// Owner: ACP session transaction
+// Owner: ACP config option mapping
 #[tokio::test]
 async fn mode_config_option_switches_the_permission_mode() {
     let home = tempfile::tempdir().unwrap();
@@ -506,13 +493,13 @@ async fn mode_config_option_switches_the_permission_mode() {
         panic!("expected a select option, got {:?}", mode.kind);
     };
     assert_eq!(select.current_value.0.as_ref(), "plan");
-    assert_eq!(host.permission.mode, PermissionMode::Plan);
+    assert_eq!(host.runtime.permission_mode(), PermissionMode::Plan);
 
     let error = host
         .set_config_option(request("yolo"), &config, &home.path().join("config.toml"))
         .await
         .expect_err("unknown mode");
     assert_eq!(error.code, ErrorCode::InvalidParams);
-    assert_eq!(host.permission.mode, PermissionMode::Plan);
+    assert_eq!(host.runtime.permission_mode(), PermissionMode::Plan);
     host.shutdown().await;
 }

@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use rho_providers::model::ModelError;
 
 // Covers: which typed failures ask the host to sign in, wherever they sit in
 // the cause chain, before (startup) or after (prompt) the provider layer

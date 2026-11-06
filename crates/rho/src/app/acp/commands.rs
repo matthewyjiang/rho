@@ -29,7 +29,10 @@ use super::{
 };
 use crate::{
     agent::{AgentCatalog, AgentRuntimeSpec},
-    app::workflow_cli::discover::{self as workflows, StartCommand},
+    app::{
+        session_runtime::{AgentTask, CommandRejected},
+        workflow_cli::discover::{self as workflows, StartCommand},
+    },
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError, COMMANDS},
     config::Config,
     permission::PermissionMode,
@@ -55,14 +58,6 @@ pub(super) struct CommandScope<'a> {
     pub(super) permission_mode: PermissionMode,
 }
 
-/// A delegated task keeps its per-call selection separate from the definition.
-#[derive(Debug, PartialEq)]
-pub(super) struct AgentTask {
-    pub(super) agent_id: String,
-    pub(super) model_override: Option<String>,
-    pub(super) input: UserInput,
-}
-
 /// What a prompt asks the session to do.
 #[derive(Debug, PartialEq)]
 pub(super) enum PromptAction {
@@ -80,12 +75,6 @@ pub(super) enum PromptAction {
     /// `/rho-wake <token>`: wait for a parent's wake signal, without a model turn.
     AwaitWake(WakeSignal),
 }
-
-/// A recognized command that cannot run, such as a TUI-only command or an
-/// MCP prompt missing arguments. The message is user-facing.
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub(super) struct CommandRejected(pub(super) String);
 
 /// Every command this session can run: built-ins, prompt templates, MCP
 /// prompts, workflows when the session has the workflow tool, `$skill`

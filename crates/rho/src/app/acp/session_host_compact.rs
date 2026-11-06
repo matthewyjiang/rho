@@ -1,11 +1,10 @@
-//! `/compact` for ACP sessions: compact history between turns, persist the
-//! result, and report it: as a compaction card on hosts that advertise
-//! compaction updates, else as an agent message.
+//! `/compact` for ACP sessions: the runtime compacts and saves; the host
+//! reports it, as a compaction card on hosts that advertise compaction
+//! updates, else as an agent message.
 
 use agent_client_protocol::schema::v1::{
     PromptResponse, SessionNotification, SessionUpdate, StopReason,
 };
-use rho_sdk::{CancellationToken, CompactionOutcome};
 
 use super::{send_notification, SessionHost};
 use crate::app::acp::{
@@ -26,7 +25,13 @@ impl SessionHost {
         if let Some(card) = &card {
             self.send_update(client, card.in_progress()).await?;
         }
-        let result = self.run_compaction(instructions, client).await;
+        let result = self.runtime.compact(instructions).await;
+        if let Ok(Some(_)) = &result {
+            // The context meter follows the committed history.
+            let signals = self.signals();
+            signals.send_usage(&self.acp_session_id, client).await;
+            self.sent_plan = signals.into_sent_plan();
+        }
         let report = match (card, &result) {
             (Some(card), Ok(Some(_))) => Some(card.completed()),
             (Some(card), Ok(None)) => Some(card.cancelled()),
@@ -53,67 +58,6 @@ impl SessionHost {
             None => StopReason::Cancelled,
         };
         Ok(PromptResponse::new(stop))
-    }
-
-    /// Runs and saves the compaction; `None` when it was cancelled first.
-    ///
-    /// The SDK commits replacement history before `compact` returns, so the
-    /// work runs as a task: a cancel aborts it only while it is still running.
-    /// A task that already finished has committed, and its outcome is saved
-    /// like any other, as the TUI's abort does.
-    async fn run_compaction(
-        &mut self,
-        instructions: Option<String>,
-        client: &dyn AcpClientPort,
-    ) -> anyhow::Result<Option<CompactionOutcome>> {
-        let cancel = CancellationToken::new();
-        self.prompt_gate.activate(cancel.clone());
-        let session = self.built.session.clone();
-        let mut task = tokio::spawn(async move {
-            match instructions {
-                Some(instructions) => session.compact_with_instructions(instructions).await,
-                None => session.compact().await,
-            }
-        });
-        let joined = tokio::select! {
-            biased;
-            () = cancel.cancelled() => {
-                task.abort();
-                (&mut task).await
-            }
-            joined = &mut task => joined,
-        };
-        let outcome = match joined {
-            // Keep the typed error in the chain, so a refused credential
-            // still asks the host to sign in.
-            Ok(outcome) => outcome.map_err(|error| {
-                let message = format!("could not compact context: {error}");
-                anyhow::Error::new(error).context(message)
-            })?,
-            Err(error) if error.is_cancelled() => return Ok(None),
-            Err(error) => return Err(anyhow::anyhow!("could not compact context: {error}")),
-        };
-        if self.is_replaced() {
-            // Load and shutdown cancel this prompt after snapshotting the
-            // file. The rewrite was not saved, so do not report it as done.
-            return Ok(None);
-        }
-        let snapshot = self.durable_snapshot();
-        let saved = self
-            .stored()
-            .and_then(|stored| stored.save_compaction_snapshot(&snapshot, &[], &outcome));
-        if let Err(error) = saved {
-            // Live history, compaction accounting, and metadata already
-            // moved on; refuse later prompts rather than run against
-            // state a reload would not see.
-            self.unsaved_compaction = true;
-            return Err(error.context("could not save compacted context"));
-        }
-        // The context meter follows the committed history.
-        let signals = self.signals();
-        signals.send_usage(&self.acp_session_id, client).await;
-        self.sent_plan = signals.into_sent_plan();
-        Ok(Some(outcome))
     }
 
     async fn send_update(

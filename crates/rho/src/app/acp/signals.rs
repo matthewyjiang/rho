@@ -99,9 +99,21 @@ impl SessionSignals {
         }
     }
 
-    /// Sends current context fill at turn end, outside the event stream.
+    /// Sends current context fill outside the event stream, as after a
+    /// compaction.
     pub(super) async fn send_usage(&self, session_id: &SessionId, client: &dyn AcpClientPort) {
         send(session_id, client, self.usage().await).await;
+    }
+
+    /// Sends context fill from `estimate` outside the event stream, as the
+    /// settled context a turn ended with.
+    pub(super) async fn send_usage_for(
+        &self,
+        estimate: rho_sdk::ContextEstimate,
+        session_id: &SessionId,
+        client: &dyn AcpClientPort,
+    ) {
+        send(session_id, client, self.usage_for(estimate).await).await;
     }
 
     /// The checklist the client last saw, for the next prompt's tracker.

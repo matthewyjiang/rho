@@ -88,7 +88,7 @@ pub(super) struct AcpStartup {
     /// Optional features the host advertised at `initialize`.
     pub(super) host_features: HostFeatures,
     /// `logout`s so far, which mark sessions' credentials stale.
-    pub(super) logouts: auth_logout::Logouts,
+    pub(super) logouts: crate::app::session_runtime::Logouts,
     /// The connection `initialize` arrived on, for host-served files and
     /// terminals. `None` until `initialize` runs.
     pub(super) client: Option<Arc<dyn AcpClientPort>>,
