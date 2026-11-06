@@ -16,10 +16,17 @@ use {
     },
 };
 
-use super::{
-    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli, refresh_model_cache,
-    validate,
-};
+use super::{apply_overrides, normalize_reasoning, refresh_model_cache, validate};
+
+/// Normalizes `config`'s persisted or default reasoning, as a launch
+/// without `--reasoning` does.
+fn normalize_persisted_reasoning(config: &mut Config) -> bool {
+    normalize_reasoning(
+        config,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
+    )
+    .expect("a persisted reasoning level is never refused")
+}
 
 pub(super) fn unique_cache_dir(name: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
@@ -497,11 +504,11 @@ fn authenticated_kimi_capabilities_normalize_stored_reasoning_without_disabling_
             ..Config::default()
         };
 
-        assert!(normalize_reasoning(&mut config));
+        assert!(normalize_persisted_reasoning(&mut config));
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
 
         config.reasoning = rho_sdk::ReasoningLevel::Off;
-        assert!(!normalize_reasoning(&mut config));
+        assert!(!normalize_persisted_reasoning(&mut config));
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::Off);
     });
     let _ = std::fs::remove_dir_all(cache_dir);
@@ -530,7 +537,7 @@ fn explicit_kimi_reasoning_is_preserved_without_authenticated_capabilities() {
             ..Config::default()
         };
 
-        assert!(!normalize_reasoning_for_cli(
+        assert!(!normalize_reasoning(
             &mut config,
             rho_providers::model::ReasoningRequestSource::Explicit,
         )
@@ -570,7 +577,7 @@ fn explicit_known_unsupported_reasoning_is_rejected() {
             ..Config::default()
         };
 
-        let error = normalize_reasoning_for_cli(
+        let error = normalize_reasoning(
             &mut config,
             rho_providers::model::ReasoningRequestSource::Explicit,
         )
@@ -607,9 +614,9 @@ fn not_configurable_models_retain_persisted_preference_and_reject_explicit_contr
             ..Config::default()
         };
 
-        assert!(!normalize_reasoning(&mut config));
+        assert!(!normalize_persisted_reasoning(&mut config));
         assert_eq!(config.reasoning, rho_sdk::ReasoningLevel::High);
-        let error = normalize_reasoning_for_cli(
+        let error = normalize_reasoning(
             &mut config,
             rho_providers::model::ReasoningRequestSource::Explicit,
         )

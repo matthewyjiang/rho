@@ -110,6 +110,10 @@ pub(crate) enum SessionOrigin {
     Interactive,
     /// An ACP client, such as Zed or T3 Code.
     Acp,
+    /// A session a daemon client started. Whether frontends pass their own
+    /// origin once the TUI (#1667) and ACP (#1670) run through the daemon is
+    /// decided there.
+    Daemon,
     /// `rho run`.
     Run,
     /// A Rho subagent a parent session started.
@@ -139,7 +143,7 @@ impl SessionOrigin {
     /// listed, like a file written before origins were recorded.
     pub(crate) fn is_person_facing(self) -> bool {
         match self {
-            Self::Interactive | Self::Acp | Self::Unknown => true,
+            Self::Interactive | Self::Acp | Self::Daemon | Self::Unknown => true,
             Self::Run | Self::Subagent | Self::WorkflowNode => false,
         }
     }

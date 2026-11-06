@@ -2,11 +2,16 @@
 
 use std::sync::Arc;
 
-use rho_protocol::{DaemonStatus, Service, PROTOCOL_VERSION};
+use rho_protocol::{
+    DaemonStatus, ErrorCode, JobListResponse, RpcError, Service, SessionCancelParams,
+    SessionCancelResponse, SessionNewParams, SessionNewResponse, SessionPromptParams,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, PROTOCOL_VERSION,
+};
 use rho_sdk::CancellationToken;
 
 /// Answers `status` with [`test_status`] and, like the real host, stops the
-/// daemon on `rho/daemon/stop` by cancelling its shutdown token.
+/// daemon on `rho/daemon/stop` by cancelling its shutdown token. It hosts no
+/// sessions.
 pub(super) struct StubHost {
     shutdown: CancellationToken,
 }
@@ -40,4 +45,37 @@ impl Service for StubHost {
     async fn stop(&self) {
         self.shutdown.cancel();
     }
+
+    async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn prompt_session(
+        &self,
+        _: SessionPromptParams,
+    ) -> Result<SessionPromptResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn cancel_session(
+        &self,
+        _: SessionCancelParams,
+    ) -> Result<SessionCancelResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn steer_session(&self, _: SessionSteerParams) -> Result<SessionSteerResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn list_jobs(&self) -> JobListResponse {
+        JobListResponse { jobs: Vec::new() }
+    }
+}
+
+fn no_sessions() -> RpcError {
+    RpcError::new(
+        ErrorCode::SessionNotLoaded,
+        "the stub host hosts no sessions",
+    )
 }

@@ -10,7 +10,10 @@ use crate::cli::{Command, DaemonCommand};
 
 #[cfg(unix)]
 use {
-    super::daemon_host::DaemonHost,
+    super::{
+        config_repository::ConfigRepository,
+        daemon_host::{DaemonHost, JobRecords},
+    },
     crate::daemon::{self, cli_client_info, DaemonPaths},
     crate::logging::{self, LogSink},
     anyhow::Context,
@@ -27,6 +30,8 @@ pub(super) async fn run(_command: Option<DaemonCommand>) -> anyhow::Result<()> {
 #[cfg(unix)]
 pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let rho_home = crate::paths::rho_dir()?;
+    let rho_home = daemon::real_home(&rho_home)
+        .with_context(|| format!("could not resolve rho home {}", rho_home.display()))?;
     let paths = DaemonPaths::resolve(&rho_home, |name| std::env::var_os(name))?;
     match command.unwrap_or(DaemonCommand::Run) {
         DaemonCommand::Run => run_foreground(&paths).await,
@@ -50,8 +55,11 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 /// acknowledges the request.
 //
 // Tripwire. Measured with the debug binary from `rho daemon stop` to process
-// exit, 15 runs each: median 20 ms idle, max 44 ms with all 24 cores
-// saturated. Turn draining (#1661) will need a separate, explicit budget.
+// exit with no sessions, 15 runs each: median 20 ms idle, max 44 ms with all
+// 24 cores saturated. A daemon with turns under way also waits up to
+// `DRAIN_TIMEOUT` (4 s, in `daemon_host::sessions`) for them to save, which
+// this covers: that wait runs from the stop request. Draining that lets turns
+// finish (#1661) needs its own budget.
 #[cfg(unix)]
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -87,6 +95,15 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     // Install handlers before the socket exists so an early SIGTERM still
     // shuts down cleanly.
     let mut signals = super::shutdown_signal::ShutdownSignals::install()?;
+    // Everything the host needs is open before the socket is published, so
+    // a client never reaches a daemon that cannot serve it.
+    open_credential_store();
+    let jobs = JobRecords::open(&lock, &paths.state_dir).with_context(|| {
+        format!(
+            "could not open the daemon's job records in {}",
+            paths.state_dir.display()
+        )
+    })?;
     let bound = daemon::bind(paths, lock)?;
     if !journald {
         eprintln!(
@@ -98,14 +115,16 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
 
     let shutdown = CancellationToken::new();
     let host = Arc::new(DaemonHost::new(
+        jobs,
         paths.socket.clone(),
         bound.started_at(),
         shutdown.clone(),
     ));
     let on_signal = shutdown.clone();
     // The first signal asks for a graceful shutdown. Shutdown waits for every
-    // request already read, so a signal that arrives once it is under way,
-    // whether a signal or `rho daemon stop` began it, forces the exit instead.
+    // request already read and for the turns under way to save, so a signal
+    // that arrives once it is under way, whether a signal or `rho daemon
+    // stop` began it, forces the exit instead.
     let signal_task = tokio::spawn(async move {
         loop {
             match signals.recv().await {
@@ -124,9 +143,44 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
             }
         }
     });
-    let served = bound.serve(host, shutdown).await;
+    // `stop_requested` is when the stop was asked for, whether by `rho
+    // daemon stop` or a signal: the turns' drain budget runs from then, not
+    // from when the requests in flight finished.
+    let (served, stop_requested) = tokio::join!(
+        async {
+            let served = bound.serve(Arc::clone(&host), shutdown.clone()).await;
+            // Serving ends only once the stop was asked for; cancelling
+            // again is a no-op that keeps the join from hanging if that
+            // ever changes.
+            shutdown.cancel();
+            served
+        },
+        async {
+            shutdown.cancelled().await;
+            tokio::time::Instant::now()
+        },
+    );
+    // Still holding the lock, so no other daemon starts, and `rho daemon
+    // stop` keeps waiting, until the turns are saved and recorded.
+    host.stop_sessions(stop_requested).await;
     signal_task.abort();
-    Ok(served?)
+    Ok(served.release()?)
+}
+
+/// Opens the credential store every session's provider reads, once, as the
+/// daemon starts: like every rho process, the daemon opens it at startup.
+/// A config that does not load is logged, and sessions then fail to open
+/// with the same error.
+#[cfg(unix)]
+fn open_credential_store() {
+    let repository = ConfigRepository::new(None);
+    let opened = repository.configured_path().and_then(|path| {
+        let mut config = repository.load()?;
+        crate::credential_store::initialize_from_config(&mut config, &path)
+    });
+    if let Err(error) = opened {
+        tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
+    }
 }
 
 /// Whether stderr is the journal stream systemd describes in `JOURNAL_STREAM`

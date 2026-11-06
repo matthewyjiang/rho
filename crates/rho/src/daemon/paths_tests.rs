@@ -6,48 +6,52 @@ use tempfile::TempDir;
 use super::*;
 
 fn resolve(rho_home: &Path, xdg_runtime_dir: Option<&str>) -> Result<DaemonPaths, DaemonPathError> {
-    resolve_with(rho_home, None, xdg_runtime_dir)
-}
-
-fn resolve_with(
-    rho_home: &Path,
-    rho_home_env: Option<&str>,
-    xdg_runtime_dir: Option<&str>,
-) -> Result<DaemonPaths, DaemonPathError> {
     DaemonPaths::resolve(rho_home, |name| match name {
-        "RHO_HOME" => rho_home_env.map(OsString::from),
         "XDG_RUNTIME_DIR" => xdg_runtime_dir.map(OsString::from),
         other => panic!("unexpected env lookup {other}"),
     })
 }
 
-// Covers: the default home's socket lives under $XDG_RUNTIME_DIR only when it
-// is a usable absolute path; an explicit RHO_HOME always keeps its own socket,
-// so two homes never share one daemon.
+// Covers: the socket lives under $XDG_RUNTIME_DIR, in a directory of its own
+// home, only when that variable is a usable absolute path; the lock and info
+// file stay in the home whatever the runtime directory, so daemons started
+// with different XDG_RUNTIME_DIRs for one home still exclude each other.
 // Owner: daemon path policy.
 #[test]
-fn runtime_dir_follows_the_rho_home_and_absolute_xdg_runtime_dir() {
+fn the_socket_follows_an_absolute_xdg_runtime_dir_and_the_lock_stays_home() {
     let home = Path::new("/home/user/.rho");
-    for (rho_home_env, xdg, expected) in [
-        (None, Some("/run/user/1000"), "/run/user/1000/rho"),
-        (None, Some(""), "/home/user/.rho/run"),
-        (None, Some("relative/run"), "/home/user/.rho/run"),
-        (None, None, "/home/user/.rho/run"),
-        (Some(""), Some("/run/user/1000"), "/run/user/1000/rho"),
-        (
-            Some("/home/user/.rho"),
-            Some("/run/user/1000"),
-            "/home/user/.rho/run",
-        ),
+    let in_xdg = PathBuf::from("/run/user/1000/rho").join(home_id(home));
+    for (xdg, expected) in [
+        (Some("/run/user/1000"), in_xdg.as_path()),
+        (Some(""), Path::new("/home/user/.rho/run")),
+        (Some("relative/run"), Path::new("/home/user/.rho/run")),
+        (None, Path::new("/home/user/.rho/run")),
     ] {
-        let paths = resolve_with(home, rho_home_env, xdg).unwrap();
-        assert_eq!(
-            paths.runtime_dir,
-            PathBuf::from(expected),
-            "RHO_HOME={rho_home_env:?} XDG_RUNTIME_DIR={xdg:?}"
-        );
+        let paths = resolve(home, xdg).unwrap();
+        assert_eq!(paths.runtime_dir, expected, "XDG_RUNTIME_DIR={xdg:?}");
         assert_eq!(paths.socket, paths.runtime_dir.join("daemon.sock"));
+        assert_eq!(
+            (paths.lock, paths.info_file),
+            (
+                PathBuf::from("/home/user/.rho/daemon/daemon.lock"),
+                PathBuf::from("/home/user/.rho/daemon/daemon.json"),
+            ),
+            "XDG_RUNTIME_DIR={xdg:?}"
+        );
     }
+}
+
+// Covers: two rho homes of one user share $XDG_RUNTIME_DIR but never a
+// socket, so neither daemon can reach, or remove, the other's.
+// Owner: daemon path policy.
+#[test]
+fn homes_sharing_an_xdg_runtime_dir_get_their_own_sockets() {
+    let xdg = Some("/run/user/1000");
+    let first = resolve(Path::new("/home/user/.rho"), xdg).unwrap();
+    let second = resolve(Path::new("/home/other/.rho"), xdg).unwrap();
+
+    assert_ne!(first.socket, second.socket);
+    assert_eq!(first.runtime_dir.parent(), second.runtime_dir.parent());
 }
 
 // Covers: a socket path bind(2) would truncate fails up front, naming the
@@ -95,6 +99,7 @@ fn prepare_runtime_dir_creates_private_dir_and_refuses_exposed_ones() {
         fs::create_dir(&xdg).unwrap();
         let paths = resolve(root.path(), xdg.to_str()).unwrap();
         let dir = &paths.runtime_dir;
+        fs::create_dir(dir.parent().unwrap()).unwrap();
         match setup {
             Setup::Missing => {}
             Setup::Dir(mode) => {
@@ -132,4 +137,39 @@ fn prepare_runtime_dir_creates_private_dir_and_refuses_exposed_ones() {
             (result, expected) => panic!("{name}: got {result:?}, expected {expected:?}"),
         }
     }
+}
+
+// Covers: every spelling of one home resolves to its one canonical path, so
+// they all name the same socket as they share its one lock; otherwise a
+// client spelling RHO_HOME differently could not reach the running daemon and
+// a daemon it spawned would be refused the lock. A home that does not exist
+// yet is created private first, so the daemon that creates it binds where its
+// later clients look.
+// Owner: daemon path policy (home resolution).
+#[test]
+fn every_spelling_of_a_home_resolves_to_its_canonical_path() {
+    let root = TempDir::new().unwrap();
+    let real_root = fs::canonicalize(root.path()).unwrap();
+    let home = root.path().join("home");
+    fs::create_dir_all(home.join("sub")).unwrap();
+    let link = root.path().join("link");
+    symlink(&home, &link).unwrap();
+
+    for (spelling, expected) in [
+        (home.clone(), real_root.join("home")),
+        (home.join(""), real_root.join("home")),
+        (
+            PathBuf::from(format!("{}//", home.display())),
+            real_root.join("home"),
+        ),
+        (home.join("."), real_root.join("home")),
+        (home.join("sub/.."), real_root.join("home")),
+        (link.clone(), real_root.join("home")),
+        // Missing, under a symlinked parent: created, then resolved.
+        (link.join("new"), real_root.join("home/new")),
+    ] {
+        assert_eq!(real_home(&spelling).unwrap(), expected, "{spelling:?}");
+    }
+    let mode = fs::metadata(home.join("new")).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
 }

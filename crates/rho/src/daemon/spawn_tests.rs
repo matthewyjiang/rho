@@ -28,8 +28,9 @@ impl DaemonSpawner for InProcessSpawner {
         self.spawns.fetch_add(1, Ordering::SeqCst);
         let lock = lock::acquire(paths).map_err(io::Error::other)?;
         let bound = server::bind(paths, lock)?;
-        let served =
-            tokio::spawn(bound.serve(StubHost::new(&self.shutdown), self.shutdown.clone()));
+        let host = StubHost::new(&self.shutdown);
+        let shutdown = self.shutdown.clone();
+        let served = tokio::spawn(async move { bound.serve(host, shutdown).await.release() });
         self.servers.lock().unwrap().push(served);
         Ok(())
     }

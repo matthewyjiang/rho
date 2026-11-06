@@ -23,6 +23,13 @@
 //! [`Client`] implements the frontend side; [`serve_connection`] implements
 //! the daemon side around a [`Service`].
 //!
+//! # Methods
+//!
+//! [`methods`] lists every method with its params and result types. A
+//! session's turn runs in the daemon and outlives the connection that
+//! started it; a client that reconnects follows it through
+//! [`methods::JOB_LIST`].
+//!
 //! # Versioning
 //!
 //! [`PROTOCOL_VERSION`] is independent of this crate's version. A protocol
@@ -43,7 +50,10 @@ pub use jsonrpc::{
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
 pub use methods::{
-    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
+    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, JobId, JobKind,
+    JobListParams, JobListResponse, JobState, JobSummary, SessionCancelParams,
+    SessionCancelResponse, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, StatusParams, StopParams,
     StopResponse,
 };
 pub use server::{serve_connection, ServerInfo, Service};

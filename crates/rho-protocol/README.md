@@ -16,6 +16,9 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   connection.
 - `serve_connection` implements the daemon side around a `Service` with one
   async method per protocol method.
+- The [`methods`](https://docs.rs/rho-protocol/latest/rho_protocol/methods/)
+  module lists every method with its params and result. A session's turns run
+  in the daemon and outlive the client that started them.
 - No dependency on `rho-sdk`, so an SDK major never breaks a frontend build.
 
 ```rust

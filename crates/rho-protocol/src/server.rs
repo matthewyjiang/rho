@@ -12,7 +12,13 @@ use tokio::{
 };
 
 use crate::{
-    methods::{Hello, Method, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO},
+    methods::{
+        Hello, JobList, JobListParams, JobListResponse, Method, SessionCancel, SessionCancelParams,
+        SessionCancelResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
+        SessionPromptParams, SessionPromptResponse, SessionSteer, SessionSteerParams,
+        SessionSteerResponse, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
+        SESSION_CANCEL, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+    },
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
     VersionMismatch, PROTOCOL_VERSION,
@@ -33,6 +39,9 @@ use crate::{
 /// implementor owns: a connection waits for its calls before it closes, even
 /// at shutdown, so a call that never resolves keeps its connection, and a
 /// stopping daemon, open.
+///
+/// A fallible method's error is sent to the client as is; use the
+/// [`ErrorCode`] that names the failure.
 pub trait Service: Send + Sync {
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -42,6 +51,38 @@ pub trait Service: Send + Sync {
     /// acknowledgement is written once this resolves, and that shutdown does
     /// not cancel it.
     fn stop(&self) -> impl Future<Output = ()> + Send;
+
+    /// Handles `rho/session/new`: open a session and register its job.
+    fn new_session(
+        &self,
+        params: SessionNewParams,
+    ) -> impl Future<Output = Result<SessionNewResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/prompt`: start a turn the service runs in a task
+    /// of its own, resolving once the turn has saved its prompt (see
+    /// [`SessionPromptResponse`]). The turn outlives the request and the
+    /// connection.
+    fn prompt_session(
+        &self,
+        params: SessionPromptParams,
+    ) -> impl Future<Output = Result<SessionPromptResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/cancel`: ask the session's turn in progress to
+    /// stop, without waiting for it to end.
+    fn cancel_session(
+        &self,
+        params: SessionCancelParams,
+    ) -> impl Future<Output = Result<SessionCancelResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/steer`: queue input for the running turn,
+    /// without waiting for the turn to apply it.
+    fn steer_session(
+        &self,
+        params: SessionSteerParams,
+    ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
+
+    /// Answers `rho/job/list`.
+    fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -58,7 +99,7 @@ pub struct ServerInfo {
 /// answers. The socket is private to the daemon's user, so only a buggy
 /// frontend does that, and it costs memory rather than correctness.
 ///
-/// Pushed events (2c-2) change that premise. Before they reuse this writer,
+/// Pushed events (#1657) change that premise. Before they reuse this writer,
 /// the connection needs a handle a subscriber holds without keeping the
 /// writer alive (today the writer ends only when every sender is gone),
 /// services need to know which connection is calling, and a subscriber that
@@ -235,6 +276,11 @@ enum Route {
 enum ServiceCall {
     Status,
     Stop,
+    NewSession(SessionNewParams),
+    PromptSession(SessionPromptParams),
+    CancelSession(SessionCancelParams),
+    SteerSession(SessionSteerParams),
+    ListJobs,
 }
 
 impl Connection {
@@ -271,23 +317,30 @@ impl Connection {
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
-            (Self::Ready, DAEMON_STATUS) => {
-                let StatusParams {} = decode_params::<Status>(params)?;
-                Ok(Route::Call(ServiceCall::Status))
-            }
-            (Self::Ready, DAEMON_STOP) => {
-                let StopParams {} = decode_params::<Stop>(params)?;
-                Ok(Route::Call(ServiceCall::Stop))
-            }
-            (Self::Ready, method) => Err(RpcError::new(
-                ErrorCode::MethodNotFound,
-                format!("unknown method {method}"),
-            )),
+            (Self::Ready, method) => ServiceCall::decode(method, params).map(Route::Call),
         }
     }
 }
 
 impl ServiceCall {
+    /// Decodes a post-handshake request for the service, or refuses a method
+    /// the protocol does not define.
+    fn decode(method: &str, params: Option<Value>) -> Result<Self, RpcError> {
+        match method {
+            DAEMON_STATUS => decode_params::<Status>(params).map(|StatusParams {}| Self::Status),
+            DAEMON_STOP => decode_params::<Stop>(params).map(|StopParams {}| Self::Stop),
+            SESSION_NEW => decode_params::<SessionNew>(params).map(Self::NewSession),
+            SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
+            SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
+            SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
+            JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
+            method => Err(RpcError::new(
+                ErrorCode::MethodNotFound,
+                format!("unknown method {method}"),
+            )),
+        }
+    }
+
     async fn run<Svc: Service>(self, service: &Svc) -> Result<Value, RpcError> {
         match self {
             Self::Status => encode_result::<Status>(&service.status().await),
@@ -295,6 +348,19 @@ impl ServiceCall {
                 service.stop().await;
                 encode_result::<Stop>(&StopResponse {})
             }
+            Self::NewSession(params) => {
+                encode_result::<SessionNew>(&service.new_session(params).await?)
+            }
+            Self::PromptSession(params) => {
+                encode_result::<SessionPrompt>(&service.prompt_session(params).await?)
+            }
+            Self::CancelSession(params) => {
+                encode_result::<SessionCancel>(&service.cancel_session(params).await?)
+            }
+            Self::SteerSession(params) => {
+                encode_result::<SessionSteer>(&service.steer_session(params).await?)
+            }
+            Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
         }
     }
 }

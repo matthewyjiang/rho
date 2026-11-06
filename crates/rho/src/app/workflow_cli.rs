@@ -356,7 +356,7 @@ async fn prepare_plan(
         cli,
         &crate::credential_store::AppCredentialStore,
     )?;
-    cli_config::normalize_reasoning_for_cli(
+    cli_config::normalize_reasoning(
         &mut config,
         if cli.reasoning.is_some() {
             rho_providers::model::ReasoningRequestSource::Explicit

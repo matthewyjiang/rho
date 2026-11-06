@@ -29,6 +29,8 @@ mod spawn;
 mod test_support;
 
 pub(crate) use client::{cli_client_info, connect, ConnectError};
-pub(crate) use lock::{acquire as acquire_lock, terminate_recorded_daemon, wait_until_released};
-pub(crate) use paths::DaemonPaths;
+pub(crate) use lock::{
+    acquire as acquire_lock, terminate_recorded_daemon, wait_until_released, DaemonLock,
+};
+pub(crate) use paths::{real_home, DaemonPaths};
 pub(crate) use server::bind;

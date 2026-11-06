@@ -101,6 +101,10 @@ pub(crate) enum SpawnError {
 ///
 /// Concurrent callers serialize on the spawn lock: the first starts the
 /// daemon, and the rest connect to it once they get the lock.
+///
+/// A daemon that is draining has already removed its socket but still holds
+/// the daemon lock, so the daemon spawned here exits as already running and
+/// this times out; waiting for the old daemon's lock instead is #1657's.
 pub(crate) async fn connect_or_spawn(
     paths: &DaemonPaths,
     client: ClientInfo,

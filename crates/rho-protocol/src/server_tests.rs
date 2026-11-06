@@ -35,6 +35,45 @@ fn test_info() -> ServerInfo {
     }
 }
 
+/// The error every test service answers session requests with.
+fn no_such_session() -> RpcError {
+    RpcError::new(ErrorCode::SessionNotLoaded, "no such session")
+}
+
+/// The session and job methods of a test service that hosts no sessions.
+macro_rules! hosts_no_sessions {
+    () => {
+        async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn prompt_session(
+            &self,
+            _: SessionPromptParams,
+        ) -> Result<SessionPromptResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn cancel_session(
+            &self,
+            _: SessionCancelParams,
+        ) -> Result<SessionCancelResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn steer_session(
+            &self,
+            _: SessionSteerParams,
+        ) -> Result<SessionSteerResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn list_jobs(&self) -> JobListResponse {
+            JobListResponse { jobs: Vec::new() }
+        }
+    };
+}
+
 /// Answers every request at once.
 struct FakeService;
 
@@ -44,6 +83,8 @@ impl Service for FakeService {
     }
 
     async fn stop(&self) {}
+
+    hosts_no_sessions!();
 }
 
 /// Panics in `status`, as a handler bug would.
@@ -59,6 +100,8 @@ impl Service for PanickingService {
     }
 
     async fn stop(&self) {}
+
+    hosts_no_sessions!();
 }
 
 /// `status` answers only once the test releases it. `stop` resolves the
@@ -90,6 +133,8 @@ impl Service for GatedService {
         self.stop_requested.notify_one();
         self.shutdown_seen.notified().await;
     }
+
+    hosts_no_sessions!();
 }
 
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -104,6 +149,10 @@ fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
 
 fn request_line(id: i64, method: &str) -> String {
     serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method}).to_string()
+}
+
+fn request_with_params(id: i64, method: &str, params: serde_json::Value) -> String {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string()
 }
 
 /// `Ok(())` for a success, `Err(code)` for an error, per response line.
@@ -210,6 +259,23 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             "invalid params",
             vec![request_line(1, HELLO)],
             vec![(id(1), Err(Some(ErrorCode::InvalidParams)))],
+        ),
+        (
+            "session params are decoded and service errors pass through",
+            vec![
+                hello_line(1, PROTOCOL_VERSION),
+                request_line(2, SESSION_PROMPT),
+                request_with_params(
+                    3,
+                    SESSION_PROMPT,
+                    serde_json::json!({"session": "s", "text": "hi", "later_field": 1}),
+                ),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::InvalidParams))),
+                (id(3), Err(Some(ErrorCode::SessionNotLoaded))),
+            ],
         ),
         (
             "parse errors keep the connection open",
