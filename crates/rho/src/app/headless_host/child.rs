@@ -31,6 +31,8 @@ use crate::{
 /// The session also saves to `store` at every step boundary. With `resume`,
 /// the run restores that snapshot and continues it instead of sending the
 /// prompt.
+// Temporary(reopen): goes once workflow nodes reopen their saved session
+// instead of restoring a checkpoint snapshot.
 #[derive(Clone)]
 pub(crate) struct SessionCheckpoint {
     pub(crate) store: Arc<dyn rho_sdk::SessionStore>,
@@ -103,6 +105,8 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         &prompt,
         Some(status_tx),
         Some(live_title),
+        // Temporary(handle-steering): goes once the parent steers through the
+        // session's handle.
         steering_slot.clone(),
     )?;
     let max_steps = std::num::NonZeroUsize::new(
@@ -172,6 +176,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         }
         anyhow::Ok(runtime)
     };
+    // Temporary(handle-steering): the slot goes with the reporter's.
     let mut view = HeadlessView::new(Some(&mut reporter), /*jsonl*/ None)
         .with_steering(steering_slot)
         .with_parent_questions(questions);

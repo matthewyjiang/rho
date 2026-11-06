@@ -172,6 +172,7 @@ pub(crate) struct SessionRuntime {
     held_notices: Option<HeldNotices>,
     /// Where step checkpoints are also saved; see
     /// [`Self::mirror_step_checkpoints`].
+    // Temporary(reopen): goes with `SessionCheckpoint`.
     step_mirror: Option<std::sync::Arc<dyn rho_sdk::SessionStore>>,
 }
 

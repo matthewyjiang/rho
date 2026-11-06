@@ -63,6 +63,8 @@ pub(crate) enum SessionEvent {
     /// The SDK run started. Nothing about the run precedes it; the inserted
     /// message and a notice may. `steering` stages messages into the run, as
     /// a delegated child's parent does.
+    // Temporary(handle-steering): `steering` goes once the parent steers
+    // through the session's handle.
     RunStarted { steering: SteeringHandle },
     /// An SDK run event, as the run emitted it.
     Run(RunEvent),

@@ -180,8 +180,8 @@ impl SessionRuntime {
 
     /// Also saves every step checkpoint to `store`, such as a workflow
     /// attempt's checkpoint that a resumed attempt continues from.
-    // Temporary: workflow nodes reopen their saved session instead once
-    // `SessionCheckpoint` goes, and this mirror with it.
+    // Temporary(reopen): goes with `SessionCheckpoint`, once workflow nodes
+    // reopen their saved session instead.
     pub(crate) fn mirror_step_checkpoints(&mut self, store: Arc<dyn SessionStore>) {
         self.step_mirror = Some(store);
     }
@@ -374,6 +374,7 @@ struct CheckpointStore {
     handle: SessionHandle,
     /// Where each step checkpoint is also saved; see
     /// [`SessionRuntime::mirror_step_checkpoints`].
+    // Temporary(reopen): goes with `SessionCheckpoint`.
     mirror: Option<Arc<dyn SessionStore>>,
     display: Mutex<TurnDisplay>,
 }
@@ -387,6 +388,8 @@ impl CheckpointStore {
 
     /// Saves `snapshot` to the session file, and returns it as saved, or
     /// `None` when a successor owns the file.
+    // Temporary(reopen): the returned snapshot only feeds `mirror`; this
+    // returns `()` once the mirror goes.
     fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<Option<SessionSnapshot>> {
         if self.handle.is_replaced() {
             return Ok(None);
@@ -420,6 +423,7 @@ impl SessionStore for CheckpointStore {
                     message: format!("{error:#}"),
                     source: None,
                 })?;
+            // Temporary(reopen): goes with `mirror`.
             match (&self.mirror, saved) {
                 (Some(mirror), Some(saved)) => mirror.save(saved).await,
                 (None, _) | (_, None) => Ok(()),

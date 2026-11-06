@@ -88,8 +88,8 @@ impl SessionRuntime {
     /// agent, for a [`super::TurnStart::Continue`] turn to go on from. Its
     /// turns save to the session file the checkpointing run wrote, or to a
     /// new one under the snapshot's id when there is none.
-    // Temporary: workflow nodes reopen their saved session instead once
-    // `SessionCheckpoint` goes.
+    // Temporary(reopen): goes with `SessionCheckpoint`, once workflow nodes
+    // reopen their saved session instead.
     pub(crate) async fn open_from_checkpoint(
         opening: SessionOpening<'_>,
         snapshot: rho_sdk::SessionSnapshot,

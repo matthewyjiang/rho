@@ -39,6 +39,8 @@ pub(crate) struct HeadlessView<'a> {
     reporter: Option<&'a mut RunReporter>,
     jsonl: Option<&'a mut JsonlAdapter>,
     /// The parent's port for steering a delegated child.
+    // Temporary(handle-steering): goes once the parent steers through the
+    // session's handle.
     steering: Option<SteeringSlot>,
     /// The parent that answers a delegated child's questions.
     parent: Option<ParentQuestions>,
@@ -61,6 +63,7 @@ impl<'a> HeadlessView<'a> {
     }
 
     /// Publishes each run's steering port to `slot`.
+    // Temporary(handle-steering): goes with `steering`.
     pub(crate) fn with_steering(mut self, slot: Option<SteeringSlot>) -> Self {
         self.steering = slot;
         self
