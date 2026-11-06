@@ -1,17 +1,37 @@
 //! The handle a host shares with whoever acts on a session without holding
-//! its runtime: cancelling its prompt, retiring it, or handing its file to a
-//! successor.
+//! its runtime: cancelling or steering its prompt, retiring it, or handing
+//! its file to a successor.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
+
+use rho_sdk::{SteeringId, UserInput};
 
 use super::prompt_gate::{Closing, PromptGate};
 
+/// Why [`SessionHandle::steer`] staged nothing.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SteerError {
+    /// No model run takes input: no prompt runs, it is still starting or
+    /// was cancelled, its run already ended, it runs a command such as
+    /// `/compact`, or another runtime replaced this one.
+    #[error("session has no running model turn to steer")]
+    NotRunning,
+    /// The running model turn refused the input, as when its command queue
+    /// is full.
+    #[error(transparent)]
+    Refused(rho_sdk::Error),
+}
+
 /// A cloneable handle on one runtime. A host keeps it beside the runtime,
-/// as ACP does in its session slot, so a cancel, close, or reload acts at
-/// once instead of waiting for the running prompt to give the runtime back.
+/// as ACP does in its session slot, so a cancel, steer, close, or reload
+/// acts at once instead of waiting for the running prompt to give the
+/// runtime back.
 /// Clones are the same handle; [`Self::same_runtime`] tells one runtime's
 /// handle from a successor's.
 #[derive(Clone)]
@@ -52,6 +72,29 @@ impl SessionHandle {
     /// Cancels the running prompt; a no-op while none runs.
     pub(crate) fn cancel(&self) {
         self.0.gate.cancel();
+    }
+
+    /// Stages `input` for the running prompt's next provider turn, as a
+    /// delegated child's parent does. The receipt resolves to the id the
+    /// run accepted it under, which its `SteeringApplied` event names, or
+    /// fails if the run ends first. Never waits, so a caller may hold a lock
+    /// across it.
+    pub(crate) fn steer(
+        &self,
+        input: UserInput,
+    ) -> Result<impl Future<Output = Result<SteeringId, rho_sdk::Error>> + Send + 'static, SteerError>
+    {
+        if self.is_replaced() {
+            return Err(SteerError::NotRunning);
+        }
+        self.0
+            .gate
+            .steer(input)
+            .ok_or(SteerError::NotRunning)?
+            .map_err(|error| match error {
+                rho_sdk::Error::RunFinished => SteerError::NotRunning,
+                error => SteerError::Refused(error),
+            })
     }
 
     /// Cancels the running prompt because another host takes the session
@@ -100,3 +143,7 @@ impl SessionHandle {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
+
+#[cfg(test)]
+#[path = "handle_tests.rs"]
+mod tests;

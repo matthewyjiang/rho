@@ -119,8 +119,10 @@ pub struct RunStatus {
     pub attachment_error: Option<String>,
     /// Session id the external runtime reported (the ACP session id). What it
     /// means depends on [`Self::runtime`]: a `claude-cli` id resumes with
-    /// `claude-agent-acp --cli --resume <id>`; Cursor and Antigravity ids are
-    /// protocol metadata only. Absent for Rho runtime runs.
+    /// `claude-agent-acp --cli --resume <id>`, unless the run discarded its
+    /// session, which this status does not record (see the live
+    /// `SubagentSnapshot::persistence`); Cursor and Antigravity
+    /// ids are protocol metadata only. Absent for Rho runtime runs.
     ///
     /// The alias reads `result.json` files written by rho 2.x; writes only
     /// use the new name.

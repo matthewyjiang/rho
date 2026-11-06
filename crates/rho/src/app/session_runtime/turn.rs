@@ -11,16 +11,15 @@ use rho_sdk::{model::ToolCall, RunOutcome, UserInput};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::{
+    delegation::{BackgroundSources, Delegation, OfferedDisplays},
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
+    prompt_gate::ActiveWork,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
     title::TitleState,
     PromptScope, SessionRuntime,
 };
-use crate::{
-    app::headless_delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays},
-    config::Config,
-};
+use crate::config::Config;
 
 /// A model turn: `model` is what the run sends, `display` the prompt as the
 /// user sent it, which the turn saves for display. `calls` run as one host
@@ -146,7 +145,7 @@ impl SessionRuntime {
         mut io: TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.cloned();
-        let mut delegation = HeadlessDelegation::attach(
+        let mut delegation = Delegation::attach(
             &self.built.session,
             BackgroundSources::of(&self.built.tools),
             stored.as_ref(),
@@ -160,7 +159,7 @@ impl SessionRuntime {
         // mid-turn message. The next prompt waits for and delivers them and
         // their undelivered notices; only closing or replacing the session
         // stops them.
-        let result = HeadlessDelegation::drive(
+        let result = Delegation::drive(
             &mut delegation,
             self.drive_prompt(prompt, start, displays, &mut io),
         )
@@ -232,10 +231,8 @@ impl SessionRuntime {
                 return Err(error.into());
             }
         };
-        prompt.activate(run.cancellation_handle());
-        io.emit(SessionEvent::RunStarted {
-            steering: run.steering_handle(),
-        });
+        prompt.activate(ActiveWork::model_run(&run));
+        io.emit(SessionEvent::RunStarted);
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();
         // Plan approvals belong to the tool set, which outlives this prompt

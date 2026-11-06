@@ -10,9 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    ApprovalPolicy, ChildAgents, HostCapabilities, Logouts, OpenedSession, QuestionSupport,
-    RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole, SessionRuntime,
-    SessionStorage, UnattendedApprovals,
+    ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, Logouts, OpenedSession,
+    QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole,
+    SessionRuntime, SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -21,7 +21,6 @@ use crate::{
     },
     app::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
-        headless_delegation::BackgroundWait,
         session_assembly::BuiltSession,
     },
     config::Config,

@@ -7,7 +7,7 @@ use rho_sdk::{
     BoundaryInputRequest, InputBoundary, Rho, RunEvent, SessionOptions, UserInput,
 };
 
-use super::{BackgroundSources, BackgroundWait, HeadlessDelegation};
+use super::{BackgroundSources, BackgroundWait, Delegation};
 use crate::{
     app::{agent_executor::AgentRunHandle, SubagentManager},
     subagent::{RunState, RunStatus},
@@ -38,7 +38,7 @@ struct Fixture {
     manager: SubagentManager,
     processes: ProcessManager,
     workflows: WorkflowRunTracker,
-    host: HeadlessDelegation,
+    host: Delegation,
     run: rho_sdk::Run,
     status: tokio::sync::watch::Sender<RunStatus>,
     completion: tokio::sync::watch::Sender<bool>,
@@ -78,7 +78,7 @@ impl Fixture {
             .session(SessionOptions::new().id(rho_sdk::SessionId::from_string(SESSION_ID).unwrap()))
             .await
             .unwrap();
-        let host = HeadlessDelegation::attach(
+        let host = Delegation::attach(
             &session,
             BackgroundSources {
                 subagents: Some(&manager),
@@ -142,7 +142,7 @@ impl Fixture {
         let Self {
             mut host, mut run, ..
         } = self;
-        let applied = HeadlessDelegation::drive(&mut host, async {
+        let applied = Delegation::drive(&mut host, async {
             let mut applied = Vec::new();
             while let Some(event) = run.next_event().await {
                 if let RunEvent::BoundaryInputApplied { input, .. } = event {
@@ -463,7 +463,7 @@ async fn accepted_boundary_is_reaped_when_event_pump_returns() {
         ..Default::default()
     });
     fixture.completion.send_replace(true);
-    HeadlessDelegation::drive(&mut fixture.host, async {
+    Delegation::drive(&mut fixture.host, async {
         loop {
             match fixture.run.next_event().await {
                 Some(RunEvent::BoundaryInputApplied { .. }) => break,
@@ -543,7 +543,7 @@ async fn failed_attach_keeps_held_notices() {
     let mut held = host.hold_notices();
     assert!(held.is_some());
     // The fixture's run is still active, so installing boundary inputs fails.
-    let attached = HeadlessDelegation::attach(
+    let attached = Delegation::attach(
         &session,
         BackgroundSources {
             subagents: Some(&manager),

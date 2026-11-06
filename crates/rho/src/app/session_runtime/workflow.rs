@@ -9,7 +9,7 @@
 
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
-use super::{InsertedMessage, PromptScope, SessionRuntime};
+use super::{prompt_gate::ActiveWork, InsertedMessage, PromptScope, SessionRuntime};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
@@ -51,7 +51,7 @@ impl SessionRuntime {
         let source = start.workflow.relative_path.clone();
         let failed = |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
         let cancel = CancellationToken::new();
-        prompt.activate(cancel.clone());
+        prompt.activate(ActiveWork::command(cancel.clone()));
 
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),

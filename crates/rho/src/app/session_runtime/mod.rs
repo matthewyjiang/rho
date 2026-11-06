@@ -25,10 +25,10 @@
 //! answered and runs the implementation turn it may ask for. The host maps
 //! the prompt's end to its own reply.
 //!
-//! A prompt's cancel goes through the runtime's [`SessionHandle`], which the
-//! host shares with whoever cancels prompts or retires the session, so a
-//! cancel that arrives while a prompt is still starting cancels its run once
-//! it exists.
+//! A prompt's cancel and steering go through the runtime's
+//! [`SessionHandle`], which the host shares with whoever cancels or steers
+//! prompts or retires the session, so a cancel that arrives while a prompt
+//! is still starting cancels its run once it exists.
 
 use std::path::Path;
 
@@ -36,9 +36,7 @@ use rho_providers::model::models_dev;
 
 use crate::{
     added_dirs::AddedDirs,
-    app::{
-        agent_binding::BoundAgent, headless_delegation::HeldNotices, session_assembly::BuiltSession,
-    },
+    app::{agent_binding::BoundAgent, session_assembly::BuiltSession},
     config::Config,
     permission::PermissionMode,
     tools::mcp::config::McpConfig,
@@ -49,6 +47,7 @@ mod approval_policy;
 mod build;
 mod compact;
 mod credentials;
+mod delegation;
 mod events;
 mod handle;
 mod mode;
@@ -81,11 +80,13 @@ pub(crate) use build::{
 };
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
+pub(crate) use delegation::BackgroundWait;
+use delegation::HeldNotices;
 pub(crate) use events::{
     cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest, RunEnd,
     SessionEvent, TurnControl,
 };
-pub(crate) use handle::SessionHandle;
+pub(crate) use handle::{SessionHandle, SteerError};
 pub(crate) use mode::SessionPermission;
 pub(crate) use open::{SavedHistory, SessionOpening};
 pub(crate) use persist::SessionStorage;

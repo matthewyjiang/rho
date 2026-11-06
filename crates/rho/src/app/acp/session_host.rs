@@ -36,13 +36,12 @@ use super::{
 };
 use crate::{
     app::{
-        headless_delegation::BackgroundWait,
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
-            model_scoped_config, ApprovalPolicy, ChildAgents, CurrentModel, HostCapabilities,
-            InsertedMessage, PromptScope, QuestionSupport, RunShape, SessionBuild, SessionHandle,
-            SessionLaunch, SessionRole, SessionRuntime, SettingChangeError, TitleJob, Turn,
-            TurnOutcome, WorkflowStart,
+            model_scoped_config, ApprovalPolicy, BackgroundWait, ChildAgents, CurrentModel,
+            HostCapabilities, InsertedMessage, PromptScope, QuestionSupport, RunShape,
+            SessionBuild, SessionHandle, SessionLaunch, SessionRole, SessionRuntime,
+            SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },

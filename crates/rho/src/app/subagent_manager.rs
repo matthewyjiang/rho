@@ -39,6 +39,9 @@ pub struct SubagentSnapshot {
     pub status: RunStatus,
     pub done: bool,
     pub prior_notices: Vec<String>,
+    /// Whether the run saves its own session, as its parent did when it
+    /// started. A Claude session it did not save cannot be resumed.
+    pub persistence: SessionPersistence,
 }
 
 /// Stable run identity and its best available task label for host presentation.
@@ -56,6 +59,8 @@ struct AgentEntry {
     handle: AgentRunHandle,
     /// The parent session the run reports to.
     session_id: String,
+    /// Whether the run saves its own session.
+    persistence: SessionPersistence,
     observed: bool,
     explicitly_observed: bool,
     /// Whether this run's terminal cost has already been folded into a parent
@@ -78,6 +83,7 @@ impl AgentEntry {
             done: self.handle.is_complete() && status.state.is_terminal(),
             status,
             prior_notices: Vec::new(),
+            persistence: self.persistence,
         }
     }
 }
@@ -296,6 +302,7 @@ impl SubagentManager {
                 started: Instant::now(),
                 handle,
                 session_id,
+                persistence,
                 observed: false,
                 explicitly_observed: false,
                 cost_accounted: false,
@@ -376,6 +383,7 @@ impl SubagentManager {
                 started: Instant::now(),
                 handle,
                 session_id: session_id.into(),
+                persistence: SessionPersistence::Saved,
                 observed: false,
                 explicitly_observed: false,
                 cost_accounted: false,

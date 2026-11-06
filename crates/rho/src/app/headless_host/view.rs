@@ -1,11 +1,10 @@
 //! How a headless prompt shows: the [`TurnView`] every headless host lends
 //! [`SessionRuntime::run_prompt_turn`]. It writes each run event to the
-//! JSONL stream and the status file, publishes the run's steering port to a
-//! delegated child's parent, and answers the turn's requests. Nobody is
-//! there to approve, so an approval or plan that reaches it anyway (an
-//! unattended session sends none) is refused. A delegated child whose
-//! parent listens forwards its questions there; any other question was
-//! declined by the turn already.
+//! JSONL stream and the status file, and answers the turn's requests.
+//! Nobody is there to approve, so an approval or plan that reaches it
+//! anyway (an unattended session sends none) is refused. A delegated child
+//! whose parent listens forwards its questions there; any other question
+//! was declined by the turn already.
 
 use std::{collections::HashMap, future::Future, io, pin::Pin};
 
@@ -25,7 +24,6 @@ use crate::{
             TurnView,
         },
         subagent_host_input::SubagentHostInputBridge,
-        subagent_messaging::SteeringSlot,
     },
     config::Config,
     tools::plan_exit::PlanPermissionAnswer,
@@ -38,10 +36,6 @@ const REPORT_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10)
 pub(crate) struct HeadlessView<'a> {
     reporter: Option<&'a mut RunReporter>,
     jsonl: Option<&'a mut JsonlAdapter>,
-    /// The parent's port for steering a delegated child.
-    // Temporary(handle-steering): goes once the parent steers through the
-    // session's handle.
-    steering: Option<SteeringSlot>,
     /// The parent that answers a delegated child's questions.
     parent: Option<ParentQuestions>,
     /// Why the JSONL stream stopped, once a write to it failed.
@@ -54,7 +48,6 @@ impl<'a> HeadlessView<'a> {
         Self {
             reporter: None,
             jsonl: None,
-            steering: None,
             parent: None,
             output_failure: None,
         }
@@ -69,13 +62,6 @@ impl<'a> HeadlessView<'a> {
     /// Also writes each run event to stdout as `adapter`'s JSONL stream.
     pub(crate) fn streaming_jsonl(mut self, adapter: &'a mut JsonlAdapter) -> Self {
         self.jsonl = Some(adapter);
-        self
-    }
-
-    /// Publishes each run's steering port to `slot`.
-    // Temporary(handle-steering): goes with `steering`.
-    pub(crate) fn with_steering(mut self, slot: Option<SteeringSlot>) -> Self {
-        self.steering = slot;
         self
     }
 
@@ -147,11 +133,6 @@ impl<'a> HeadlessView<'a> {
         asked: &mut ParentAsks,
     ) {
         match event {
-            SessionEvent::RunStarted { steering } => {
-                if let Some(slot) = &self.steering {
-                    slot.publish(steering);
-                }
-            }
             SessionEvent::Run(event) => self.show_run_event(&event, control),
             SessionEvent::ApprovalRequested { id, .. } => {
                 let _ = control.send(TurnControl::RespondApproval {
@@ -180,6 +161,7 @@ impl<'a> HeadlessView<'a> {
                 }
             }
             SessionEvent::MessageInserted(_)
+            | SessionEvent::RunStarted
             | SessionEvent::BoundaryApplied { .. }
             | SessionEvent::ApprovalWithdrawn { .. }
             | SessionEvent::PlanApprovalWithdrawn { .. }

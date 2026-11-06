@@ -4,7 +4,7 @@
 
 use rho_sdk::{CancellationToken, CompactionOutcome};
 
-use super::{PromptScope, SessionRuntime};
+use super::{prompt_gate::ActiveWork, PromptScope, SessionRuntime};
 
 impl SessionRuntime {
     /// Compacts within `prompt`, with optional `instructions` on what to
@@ -30,7 +30,7 @@ impl SessionRuntime {
         instructions: Option<String>,
     ) -> anyhow::Result<Option<CompactionOutcome>> {
         let cancel = CancellationToken::new();
-        prompt.activate(cancel.clone());
+        prompt.activate(ActiveWork::command(cancel.clone()));
         let session = self.built.session.clone();
         let mut task = tokio::spawn(async move {
             match instructions {

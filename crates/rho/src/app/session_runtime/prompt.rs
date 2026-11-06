@@ -9,7 +9,10 @@
 
 use rho_sdk::CancellationToken;
 
-use super::{prompt_gate::PromptGeneration, SessionHandle, SessionRuntime};
+use super::{
+    prompt_gate::{ActiveWork, PromptGeneration},
+    SessionHandle, SessionRuntime,
+};
 use crate::config::Config;
 
 /// One prompt the runtime started, held for the whole prompt. Dropping it
@@ -58,10 +61,11 @@ impl PromptScope {
         self.handle.gate().is_cancelled(self.generation)
     }
 
-    /// Makes `token` the cancellation of this prompt's current run, so a
-    /// cancel reaches it, and one that already landed cancels it at once.
-    pub(super) fn activate(&self, token: CancellationToken) {
-        self.handle.gate().activate(self.generation, token);
+    /// Makes `work` what this prompt runs now, so a cancel reaches it, and
+    /// one that already landed cancels it at once; a model run's steering
+    /// goes to [`SessionHandle::steer`].
+    pub(super) fn activate(&self, work: ActiveWork) {
+        self.handle.gate().activate(self.generation, work);
     }
 }
 
