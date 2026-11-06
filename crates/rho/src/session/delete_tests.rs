@@ -16,9 +16,10 @@ fn create_session(root: &Path, cwd: &Path, id: &str) -> Session {
 // Owner: session deletion
 #[test]
 fn delete_takes_child_sessions_recursively() {
-    // (label, targets, expected (deleted id, child sessions deleted with it),
-    // expected remaining ids)
-    let cases: [(&str, &[&str], Vec<(&str, usize)>, Vec<&str>); 3] = [
+    /// Each deleted id with the child sessions deleted along with it.
+    type Deleted<'a> = Vec<(&'a str, usize)>;
+    // (label, targets, expected deletions, expected remaining ids)
+    let cases: [(&str, &[&str], Deleted, Vec<&str>); 3] = [
         (
             "parent",
             &["parent"],
