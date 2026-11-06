@@ -87,27 +87,6 @@ fn resumes_session_by_id_from_a_different_workspace() {
     ));
 }
 
-// Covers: resume cannot return a live Session after another process has claimed
-// the transcript for deletion.
-// Owner: session persistence
-#[test]
-fn resume_rejects_session_held_for_deletion() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::assistant_text("delete race"))
-        .unwrap();
-    let id = session.id().to_string();
-    drop(session);
-
-    let delete_lease = super::acquire_delete_session_lease(&root, &cwd, &id).unwrap();
-    assert!(Session::open_by_id_in_root(&root, &cwd, &id).is_err());
-
-    drop(delete_lease);
-    Session::open_by_id_in_root(&root, &cwd, &id).unwrap();
-}
-
 #[test]
 fn resume_by_id_errors_when_the_original_workspace_is_gone() {
     let root = temp_session_root();

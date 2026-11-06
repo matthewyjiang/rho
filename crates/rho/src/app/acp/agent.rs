@@ -634,9 +634,12 @@ fn host_error(error: anyhow::Error) -> AcpError {
     super::auth::request_error(&error, || error.to_string())
 }
 
-/// A lifecycle request naming a root the session cannot grant is the
-/// caller's to fix.
+/// A lifecycle request naming a root the session cannot grant, or a session
+/// another Rho process has open, is the caller's to fix.
 fn session_start_error(error: anyhow::Error) -> AcpError {
+    if error.is::<crate::session::SessionInUse>() {
+        return AcpError::invalid_request().data(error.to_string());
+    }
     match error.downcast::<super::session_host::RejectedDirectory>() {
         Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
         Err(error) => host_error(error),
