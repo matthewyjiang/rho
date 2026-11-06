@@ -317,27 +317,14 @@ impl SessionHost {
         let _ = herdr.release().await;
     }
 
-    /// The host for `opened`, talking to its client through `client_io`.
-    /// Without a Rho home for T3's wake watchers, the runtime holds prompts
-    /// open for background work instead.
+    /// The host for `opened`, talking to its client through `client_io`,
+    /// with the wake watcher its [`session_build`] came with.
     fn from_built(
         client_io: super::client_io::ClientIo,
         startup: &AcpStartup,
-        mut opened: OpenedSession,
+        opened: OpenedSession,
+        t3_wake: Option<T3Wake>,
     ) -> Self {
-        let t3_wake = match opened.build.background_wait {
-            BackgroundWait::HoldPrompt => None,
-            BackgroundWait::HostWakes => match super::t3_wake::signal_dir() {
-                Ok(dir) => Some(T3Wake::new(dir)),
-                Err(error) => {
-                    tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
-                    // Nothing would wake the idle session, so background
-                    // work holds the prompt open.
-                    opened.build.background_wait = BackgroundWait::HoldPrompt;
-                    None
-                }
-            },
-        };
         let runtime = SessionRuntime::new(opened, &startup.logouts);
         Self {
             acp_session_id: client_io.session_id.clone(),
@@ -458,10 +445,37 @@ fn runtime_config_options(
     )
 }
 
+/// How every build of a session this host opens is set up, and the T3 wake
+/// watcher that wakes it.
+struct HostBuild {
+    build: SessionBuild,
+    /// Present exactly when the build waits for the host to wake it.
+    t3_wake: Option<T3Wake>,
+}
+
 /// How every build of a session this host opens is set up: the launch
-/// flags, and what this host does for its tools.
-fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> SessionBuild {
-    SessionBuild {
+/// flags, what this host does for its tools, and whether it wakes the
+/// session itself.
+fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostBuild {
+    // `--t3code`: a wake watcher wakes the idle thread when background work
+    // that outlived its prompt finishes. Without a Rho home for its signals
+    // nothing would wake the session, so background work holds the prompt
+    // open instead.
+    let t3_wake = match startup.host {
+        AcpHost::Generic => None,
+        AcpHost::T3Code => match super::t3_wake::signal_dir() {
+            Ok(dir) => Some(T3Wake::new(dir)),
+            Err(error) => {
+                tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
+                None
+            }
+        },
+    };
+    let background_wait = match t3_wake {
+        Some(_) => BackgroundWait::HostWakes,
+        None => BackgroundWait::HoldPrompt,
+    };
+    let build = SessionBuild {
         config_path: startup.config_path.clone(),
         no_system_prompt: startup.no_system_prompt,
         no_tools: startup.no_tools,
@@ -474,12 +488,7 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> Sessi
             AcpHost::Generic => ChildAgents::InProcess,
             AcpHost::T3Code => ChildAgents::HostThreads,
         },
-        // `--t3code`: a wake watcher wakes the idle thread when background
-        // work that outlived its prompt finishes.
-        background_wait: match startup.host {
-            AcpHost::Generic => BackgroundWait::HoldPrompt,
-            AcpHost::T3Code => BackgroundWait::HostWakes,
-        },
+        background_wait,
         launch_agent: startup.agent.clone(),
         host_io: io.host_io(),
         max_steps: None,
@@ -491,7 +500,8 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> Sessi
         mcp_authorization: McpAuthorizationMode::NonInteractive,
         // A person answers through the client's permission prompts.
         approvals: ApprovalPolicy::Host,
-    }
+    };
+    HostBuild { build, t3_wake }
 }
 
 fn question_support(forms: Forms) -> QuestionSupport {
@@ -654,7 +664,20 @@ impl SessionHost {
             workspace_root: root.to_path_buf(),
         };
         let io = super::client_io::ClientIo::local(SessionId::new(id));
-        let build = session_build(startup, &io);
+        Self::for_tests(io, startup, built, storage, permission)
+    }
+
+    /// A host for `built`, saved through `storage`, opened by `startup` with
+    /// `permission`, for fixtures that script their own session. It runs as
+    /// the launch agent, with none of the client's MCP servers or roots.
+    pub(super) fn for_tests(
+        io: super::client_io::ClientIo,
+        startup: &AcpStartup,
+        built: crate::app::session_assembly::BuiltSession,
+        storage: crate::app::session_runtime::SessionStorage,
+        permission: crate::app::session_runtime::SessionPermission,
+    ) -> Self {
+        let HostBuild { build, t3_wake } = session_build(startup, &io);
         Self::from_built(
             io,
             startup,
@@ -669,6 +692,7 @@ impl SessionHost {
                 permission,
                 reopen_notice: None,
             },
+            t3_wake,
         )
     }
 }

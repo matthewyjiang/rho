@@ -15,7 +15,7 @@ use rho_sdk::SessionOptions;
 use super::{
     super::{client_io::ClientIo, host_mcp::host_mcp_config, permission},
     convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
-    send_notification, session_build, EventMapper, SessionHost,
+    send_notification, session_build, EventMapper, HostBuild, SessionHost,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -71,7 +71,7 @@ impl SessionHost {
         host_mcp: McpConfig,
     ) -> anyhow::Result<Self> {
         let io = ClientIo::new(startup, SessionId::new(sdk_id.as_str()), cwd, host_dirs);
-        let build = session_build(startup, &io);
+        let HostBuild { build, t3_wake } = session_build(startup, &io);
         let (built, permission) =
             build_session(&build, &startup.agent, config, cwd, &added_dirs, |_| {
                 Ok(session_options_for_id(sdk_id))
@@ -97,6 +97,7 @@ impl SessionHost {
                 permission,
                 reopen_notice: None,
             },
+            t3_wake,
         ))
     }
 
@@ -150,7 +151,7 @@ impl SessionHost {
             cwd,
             &request.additional_directories,
         );
-        let build = session_build(startup, &io);
+        let HostBuild { build, t3_wake } = session_build(startup, &io);
         let (built, permission) =
             build_session(&build, &agent, &config, cwd, &added_dirs, |provider| {
                 let snapshot = stored
@@ -193,6 +194,7 @@ impl SessionHost {
                 permission,
                 reopen_notice,
             },
+            t3_wake,
         ))
     }
 }
