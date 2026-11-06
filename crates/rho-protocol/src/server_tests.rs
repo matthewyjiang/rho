@@ -35,6 +35,48 @@ fn test_info() -> ServerInfo {
     }
 }
 
+/// The error every test service answers thread requests with.
+fn no_such_thread() -> RpcError {
+    RpcError::new(ErrorCode::ThreadNotFound, "no such thread")
+}
+
+/// The thread and job methods of a test service that hosts no threads.
+macro_rules! hosts_no_threads {
+    () => {
+        async fn create_thread(
+            &self,
+            _: ThreadCreateParams,
+        ) -> Result<ThreadCreateResponse, RpcError> {
+            Err(no_such_thread())
+        }
+
+        async fn prompt_thread(
+            &self,
+            _: ThreadPromptParams,
+        ) -> Result<ThreadPromptResponse, RpcError> {
+            Err(no_such_thread())
+        }
+
+        async fn cancel_thread(
+            &self,
+            _: ThreadCancelParams,
+        ) -> Result<ThreadCancelResponse, RpcError> {
+            Err(no_such_thread())
+        }
+
+        async fn steer_thread(
+            &self,
+            _: ThreadSteerParams,
+        ) -> Result<ThreadSteerResponse, RpcError> {
+            Err(no_such_thread())
+        }
+
+        async fn list_jobs(&self) -> JobsListResponse {
+            JobsListResponse { jobs: Vec::new() }
+        }
+    };
+}
+
 /// Answers every request at once.
 struct FakeService;
 
@@ -44,6 +86,8 @@ impl Service for FakeService {
     }
 
     async fn stop(&self) {}
+
+    hosts_no_threads!();
 }
 
 /// Panics in `status`, as a handler bug would.
@@ -59,6 +103,8 @@ impl Service for PanickingService {
     }
 
     async fn stop(&self) {}
+
+    hosts_no_threads!();
 }
 
 /// `status` answers only once the test releases it. `stop` resolves the
@@ -90,6 +136,8 @@ impl Service for GatedService {
         self.stop_requested.notify_one();
         self.shutdown_seen.notified().await;
     }
+
+    hosts_no_threads!();
 }
 
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -104,6 +152,10 @@ fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
 
 fn request_line(id: i64, method: &str) -> String {
     serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method}).to_string()
+}
+
+fn request_with_params(id: i64, method: &str, params: serde_json::Value) -> String {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string()
 }
 
 /// `Ok(())` for a success, `Err(code)` for an error, per response line.
@@ -210,6 +262,23 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             "invalid params",
             vec![request_line(1, HELLO)],
             vec![(id(1), Err(Some(ErrorCode::InvalidParams)))],
+        ),
+        (
+            "thread params are decoded and service errors pass through",
+            vec![
+                hello_line(1, PROTOCOL_VERSION),
+                request_line(2, THREAD_PROMPT),
+                request_with_params(
+                    3,
+                    THREAD_PROMPT,
+                    serde_json::json!({"thread": "t", "text": "hi", "later_field": 1}),
+                ),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::InvalidParams))),
+                (id(3), Err(Some(ErrorCode::ThreadNotFound))),
+            ],
         ),
         (
             "parse errors keep the connection open",

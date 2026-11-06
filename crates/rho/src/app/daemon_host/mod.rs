@@ -10,10 +10,15 @@ use std::{
     time::Instant,
 };
 
-use rho_protocol::{DaemonStatus, Service, PROTOCOL_VERSION};
+use rho_protocol::{
+    DaemonStatus, ErrorCode, JobsListResponse, RpcError, Service, ThreadCancelParams,
+    ThreadCancelResponse, ThreadCreateParams, ThreadCreateResponse, ThreadPromptParams,
+    ThreadPromptResponse, ThreadSteerParams, ThreadSteerResponse, PROTOCOL_VERSION,
+};
 use rho_sdk::CancellationToken;
 
 mod jobs;
+mod wire;
 
 use jobs::{JobRegistry, JobStore};
 
@@ -66,4 +71,34 @@ impl Service for DaemonHost {
         tracing::info!("stop requested");
         self.shutdown.cancel();
     }
+
+    async fn create_thread(&self, _: ThreadCreateParams) -> Result<ThreadCreateResponse, RpcError> {
+        Err(no_threads_yet())
+    }
+
+    async fn prompt_thread(&self, _: ThreadPromptParams) -> Result<ThreadPromptResponse, RpcError> {
+        Err(no_threads_yet())
+    }
+
+    async fn cancel_thread(&self, _: ThreadCancelParams) -> Result<ThreadCancelResponse, RpcError> {
+        Err(no_threads_yet())
+    }
+
+    async fn steer_thread(&self, _: ThreadSteerParams) -> Result<ThreadSteerResponse, RpcError> {
+        Err(no_threads_yet())
+    }
+
+    async fn list_jobs(&self) -> JobsListResponse {
+        JobsListResponse {
+            jobs: self.jobs.list().into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Thread hosting lands in the next commit.
+fn no_threads_yet() -> RpcError {
+    RpcError::new(
+        ErrorCode::ThreadNotFound,
+        "this daemon hosts no threads yet",
+    )
 }

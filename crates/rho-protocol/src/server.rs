@@ -12,7 +12,13 @@ use tokio::{
 };
 
 use crate::{
-    methods::{Hello, Method, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO},
+    methods::{
+        Hello, JobsList, JobsListParams, JobsListResponse, Method, Status, Stop, ThreadCancel,
+        ThreadCancelParams, ThreadCancelResponse, ThreadCreate, ThreadCreateParams,
+        ThreadCreateResponse, ThreadPrompt, ThreadPromptParams, ThreadPromptResponse, ThreadSteer,
+        ThreadSteerParams, ThreadSteerResponse, DAEMON_STATUS, DAEMON_STOP, HELLO, JOBS_LIST,
+        THREAD_CANCEL, THREAD_CREATE, THREAD_PROMPT, THREAD_STEER,
+    },
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
     VersionMismatch, PROTOCOL_VERSION,
@@ -33,6 +39,9 @@ use crate::{
 /// implementor owns: a connection waits for its calls before it closes, even
 /// at shutdown, so a call that never resolves keeps its connection, and a
 /// stopping daemon, open.
+///
+/// A fallible method's error is sent to the client as is; use the
+/// [`ErrorCode`] that names the failure.
 pub trait Service: Send + Sync {
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -42,6 +51,38 @@ pub trait Service: Send + Sync {
     /// acknowledgement is written once this resolves, and that shutdown does
     /// not cancel it.
     fn stop(&self) -> impl Future<Output = ()> + Send;
+
+    /// Handles `rho/thread/create`: open a thread's session and register its
+    /// job.
+    fn create_thread(
+        &self,
+        params: ThreadCreateParams,
+    ) -> impl Future<Output = Result<ThreadCreateResponse, RpcError>> + Send;
+
+    /// Handles `rho/thread/prompt`: start a turn the service runs in a task
+    /// of its own, resolving once the turn has started. The turn outlives
+    /// the request and the connection.
+    fn prompt_thread(
+        &self,
+        params: ThreadPromptParams,
+    ) -> impl Future<Output = Result<ThreadPromptResponse, RpcError>> + Send;
+
+    /// Handles `rho/thread/cancel`: ask the thread's turn in progress to
+    /// stop, without waiting for it to end.
+    fn cancel_thread(
+        &self,
+        params: ThreadCancelParams,
+    ) -> impl Future<Output = Result<ThreadCancelResponse, RpcError>> + Send;
+
+    /// Handles `rho/thread/steer`: queue input for the running turn,
+    /// without waiting for the turn to apply it.
+    fn steer_thread(
+        &self,
+        params: ThreadSteerParams,
+    ) -> impl Future<Output = Result<ThreadSteerResponse, RpcError>> + Send;
+
+    /// Answers `rho/jobs/list`.
+    fn list_jobs(&self) -> impl Future<Output = JobsListResponse> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -235,6 +276,11 @@ enum Route {
 enum ServiceCall {
     Status,
     Stop,
+    CreateThread(ThreadCreateParams),
+    PromptThread(ThreadPromptParams),
+    CancelThread(ThreadCancelParams),
+    SteerThread(ThreadSteerParams),
+    ListJobs,
 }
 
 impl Connection {
@@ -279,6 +325,38 @@ impl Connection {
                 let StopParams {} = decode_params::<Stop>(params)?;
                 Ok(Route::Call(ServiceCall::Stop))
             }
+            (Self::Ready, THREAD_CREATE) => {
+                Ok(Route::Call(ServiceCall::CreateThread(decode_params::<
+                    ThreadCreate,
+                >(
+                    params
+                )?)))
+            }
+            (Self::Ready, THREAD_PROMPT) => {
+                Ok(Route::Call(ServiceCall::PromptThread(decode_params::<
+                    ThreadPrompt,
+                >(
+                    params
+                )?)))
+            }
+            (Self::Ready, THREAD_CANCEL) => {
+                Ok(Route::Call(ServiceCall::CancelThread(decode_params::<
+                    ThreadCancel,
+                >(
+                    params
+                )?)))
+            }
+            (Self::Ready, THREAD_STEER) => {
+                Ok(Route::Call(ServiceCall::SteerThread(decode_params::<
+                    ThreadSteer,
+                >(
+                    params
+                )?)))
+            }
+            (Self::Ready, JOBS_LIST) => {
+                let JobsListParams {} = decode_params::<JobsList>(params)?;
+                Ok(Route::Call(ServiceCall::ListJobs))
+            }
             (Self::Ready, method) => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -295,6 +373,19 @@ impl ServiceCall {
                 service.stop().await;
                 encode_result::<Stop>(&StopResponse {})
             }
+            Self::CreateThread(params) => {
+                encode_result::<ThreadCreate>(&service.create_thread(params).await?)
+            }
+            Self::PromptThread(params) => {
+                encode_result::<ThreadPrompt>(&service.prompt_thread(params).await?)
+            }
+            Self::CancelThread(params) => {
+                encode_result::<ThreadCancel>(&service.cancel_thread(params).await?)
+            }
+            Self::SteerThread(params) => {
+                encode_result::<ThreadSteer>(&service.steer_thread(params).await?)
+            }
+            Self::ListJobs => encode_result::<JobsList>(&service.list_jobs().await),
         }
     }
 }

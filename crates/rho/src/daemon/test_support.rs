@@ -2,11 +2,16 @@
 
 use std::sync::Arc;
 
-use rho_protocol::{DaemonStatus, Service, PROTOCOL_VERSION};
+use rho_protocol::{
+    DaemonStatus, ErrorCode, JobsListResponse, RpcError, Service, ThreadCancelParams,
+    ThreadCancelResponse, ThreadCreateParams, ThreadCreateResponse, ThreadPromptParams,
+    ThreadPromptResponse, ThreadSteerParams, ThreadSteerResponse, PROTOCOL_VERSION,
+};
 use rho_sdk::CancellationToken;
 
 /// Answers `status` with [`test_status`] and, like the real host, stops the
-/// daemon on `rho/daemon/stop` by cancelling its shutdown token.
+/// daemon on `rho/daemon/stop` by cancelling its shutdown token. It hosts no
+/// threads.
 pub(super) struct StubHost {
     shutdown: CancellationToken,
 }
@@ -40,4 +45,28 @@ impl Service for StubHost {
     async fn stop(&self) {
         self.shutdown.cancel();
     }
+
+    async fn create_thread(&self, _: ThreadCreateParams) -> Result<ThreadCreateResponse, RpcError> {
+        Err(no_threads())
+    }
+
+    async fn prompt_thread(&self, _: ThreadPromptParams) -> Result<ThreadPromptResponse, RpcError> {
+        Err(no_threads())
+    }
+
+    async fn cancel_thread(&self, _: ThreadCancelParams) -> Result<ThreadCancelResponse, RpcError> {
+        Err(no_threads())
+    }
+
+    async fn steer_thread(&self, _: ThreadSteerParams) -> Result<ThreadSteerResponse, RpcError> {
+        Err(no_threads())
+    }
+
+    async fn list_jobs(&self) -> JobsListResponse {
+        JobsListResponse { jobs: Vec::new() }
+    }
+}
+
+fn no_threads() -> RpcError {
+    RpcError::new(ErrorCode::ThreadNotFound, "the stub host hosts no threads")
 }

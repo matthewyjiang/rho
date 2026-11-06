@@ -23,6 +23,16 @@
 //! [`Client`] implements the frontend side; [`serve_connection`] implements
 //! the daemon side around a [`Service`].
 //!
+//! # Methods
+//!
+//! [`methods`] lists every method with its params and result types:
+//! the handshake, daemon status and stop, threads
+//! ([`methods::THREAD_CREATE`], [`methods::THREAD_PROMPT`],
+//! [`methods::THREAD_CANCEL`], [`methods::THREAD_STEER`]), and
+//! [`methods::JOBS_LIST`]. A thread's turn runs in the daemon and outlives
+//! the connection that started it; a client that reconnects follows it
+//! through `rho/jobs/list`.
+//!
 //! # Versioning
 //!
 //! [`PROTOCOL_VERSION`] is independent of this crate's version. A protocol
@@ -43,8 +53,10 @@ pub use jsonrpc::{
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
 pub use methods::{
-    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
-    StopResponse,
+    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, JobId, JobKind, JobState,
+    JobSummary, JobsListParams, JobsListResponse, StatusParams, StopParams, StopResponse,
+    ThreadCancelParams, ThreadCancelResponse, ThreadCreateParams, ThreadCreateResponse,
+    ThreadPromptParams, ThreadPromptResponse, ThreadSteerParams, ThreadSteerResponse,
 };
 pub use server::{serve_connection, ServerInfo, Service};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};

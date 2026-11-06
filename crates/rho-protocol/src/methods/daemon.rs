@@ -1,13 +1,10 @@
-//! Method names and their params and result types.
-//!
-//! Names are `rho/<area>/<verb>`, except the connection-level `rho/hello`.
-//! Params and results ignore unknown fields so a protocol minor can add
-//! optional fields without breaking older peers.
+//! The connection handshake and the daemon's own status and stop.
 
 use std::path::PathBuf;
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
+use super::Method;
 use crate::ProtocolVersion;
 
 /// Handshake. Must be the first request on every connection.
@@ -16,17 +13,6 @@ pub const HELLO: &str = "rho/hello";
 pub const DAEMON_STATUS: &str = "rho/daemon/status";
 /// Acknowledge, then shut the daemon down gracefully.
 pub const DAEMON_STOP: &str = "rho/daemon/stop";
-
-/// A request method with typed params and result.
-///
-/// Implemented by zero-sized markers so [`crate::Client::request`] can check
-/// a call's types at compile time. Implementors pair `NAME` with the params
-/// and result types the daemon uses for that method.
-pub trait Method {
-    const NAME: &'static str;
-    type Params: Serialize + DeserializeOwned;
-    type Result: Serialize + DeserializeOwned;
-}
 
 /// Marker for [`HELLO`].
 pub struct Hello;
@@ -105,7 +91,8 @@ pub struct DaemonStatus {
     /// Unix time, in seconds, when the daemon started.
     pub started_at: u64,
     pub uptime_secs: u64,
-    /// Agent jobs in progress.
+    /// Jobs with a turn in progress: [`crate::JobState::Running`] or
+    /// [`crate::JobState::WaitingForInput`].
     pub jobs: u64,
     /// The socket the daemon listens on.
     pub socket: PathBuf,
@@ -116,6 +103,7 @@ pub struct DaemonStatus {
 pub struct StopParams {}
 
 /// Result of [`DAEMON_STOP`]: the daemon has begun shutting down. It finishes
-/// in-flight responses, closes connections, and exits.
+/// in-flight responses, closes connections, interrupts running turns, and
+/// exits.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopResponse {}
