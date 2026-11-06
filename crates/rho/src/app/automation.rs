@@ -25,8 +25,7 @@ use super::{
     session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
     session_runtime::{
         CommandRejected, HostCapabilities, Logouts, RunShape, SessionBuild, SessionLaunch,
-        SessionOpening, SessionRole, SessionRuntime, TitleJob, Turn, TurnOutcome,
-        UnattendedApprovals,
+        SessionOpening, SessionRole, SessionRuntime, Turn, TurnOutcome, UnattendedApprovals,
     },
     shutdown_signal::{ShutdownSignal, ShutdownSignals},
 };
@@ -199,7 +198,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         }
     };
 
-    let (end, title) = run_session(
+    let end = run_session(
         prompt_text,
         &startup,
         &mut stops,
@@ -217,25 +216,20 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
             RunTerminal::Failed(error) => reporter.finish_error(error),
         }
     }
-    let exit = emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages);
-    // After the terminal event, so a reader of the output never waits on
-    // it; before exit, since nothing else names the session.
-    if let Some(title) = title {
-        title.generate().await;
-    }
-    exit
+    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages)
 }
 
 /// Runs the prompt on a new session saved as `rho run`'s, until it ends or
 /// `stops` stops it, and tears the session down. Returns how the prompt
-/// ended and, unless it was stopped, the title request its turn left.
+/// ended. The session is never titled: a model call per scripted run is not
+/// worth it, and listings fall back to its first message.
 async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
     stops: &mut Stops,
     reporter: Option<&mut RunReporter>,
     jsonl: Option<&mut JsonlAdapter>,
-) -> (PromptEnd, Option<TitleJob>) {
+) -> PromptEnd {
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path: startup.config_path.clone(),
@@ -277,28 +271,23 @@ async fn run_session(
             run_prompt(&mut runtime, &mut view, prompt_text, startup.config),
         )
         .await;
-        let title = runtime.take_title();
         runtime.shutdown().await;
         let _ = startup
             .herdr
             .report_state(HerdrState::Idle, None, None)
             .await;
         let _ = startup.herdr.release().await;
-        anyhow::Ok((ended, title))
+        anyhow::Ok(ended)
     };
     let (worked, cause) = until_stopped(stops, &stop, work).await;
     // A JSONL write that failed already failed the turn; the stream is gone.
     if let Some(message) = view.take_output_failure() {
         let failed = AutomationExit::new(1, TerminalReason::OutputError, message);
-        return (PromptEnd::Failed(failed.into()), None);
+        return PromptEnd::Failed(failed.into());
     }
     match worked {
-        // A stopped run exits now, without waiting on a title.
-        Ok((ended, title)) => (
-            PromptEnd::of(ended, cause),
-            title.filter(|_| cause.is_none()),
-        ),
-        Err(error) => (PromptEnd::of(Err(error), cause), None),
+        Ok(ended) => PromptEnd::of(ended, cause),
+        Err(error) => PromptEnd::of(Err(error), cause),
     }
 }
 

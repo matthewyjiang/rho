@@ -55,8 +55,8 @@ Use `rho --no-tools run "..."` to remove tool access. That flag does not suppres
 
 Each `rho run` saves its session like an interactive one, recorded as a `run`
 session, so `rho sessions list` shows it and `rho --resume <ID>` continues it in
-the TUI. Its title is generated after the run's final output, before the
-process exits; an interrupted or timed-out run skips it.
+the TUI. A run does not ask a model to title its session, so session lists
+show it by its first message; `rho sessions rename` names it.
 
 A prompt that starts with a slash command resolves the way it does in an ACP
 session: prompt templates (`/prompt:<name>`), MCP prompts, `/init`,

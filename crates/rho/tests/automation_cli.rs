@@ -602,15 +602,19 @@ fn final_answer_is_the_only_stdout_content() {
     assert_eq!(stdout(&output), "answer for a pipeline\n");
     assert!(output.stderr.is_empty());
 
+    // The agent's request is the run's only one: no title-agent call.
     let ledger = rusqlite::Connection::open(root.path().join(".rho/usage.sqlite3")).unwrap();
-    let request: (String, String, String) = ledger
-        .query_row(
-            "SELECT provider, model, purpose FROM usage_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+    let requests = ledger
+        .prepare("SELECT provider, model, purpose FROM usage_events")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<(String, String, String)>>>()
         .unwrap();
-    assert_eq!(request, ("openai".into(), "gpt-5.5".into(), "agent".into()));
+    assert_eq!(
+        requests,
+        vec![("openai".into(), "gpt-5.5".into(), "agent".into())]
+    );
 }
 
 // Covers: `rho run` saves its session under the session root, recorded as
