@@ -14,7 +14,7 @@ use super::{
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
-    QuestionSupport, SessionRuntime,
+    SessionRuntime,
 };
 use crate::app::headless_delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays};
 
@@ -33,9 +33,6 @@ pub(crate) struct Turn {
 pub(crate) struct TurnIo {
     pub(crate) events: UnboundedSender<SessionEvent>,
     pub(crate) control: UnboundedReceiver<TurnControl>,
-    /// Whether the host can put the run's questions to a person; a host
-    /// that cannot gets none, and the turn declines them.
-    pub(crate) questions: QuestionSupport,
     /// When the turn saves the prompt's user message.
     pub(crate) message_save: MessageSave,
 }
@@ -88,7 +85,7 @@ impl SessionRuntime {
             Some(&stored),
             &mut self.held_notices,
         )?;
-        delegation.set_background_wait(self.background_wait);
+        delegation.set_background_wait(self.build.background_wait);
         let displays = delegation.offered_displays();
         // Children outlive a cancelled, failed, or step-limited prompt, as they
         // do across TUI turns: T3 Code cancels the open prompt to send each
@@ -168,6 +165,9 @@ impl SessionRuntime {
         let pumped = pump(
             PumpSources {
                 cancel,
+                // A host that cannot ask a person gets no questions; the
+                // turn declines them.
+                questions: self.build.questions,
                 events: EventSource::Run(&mut run),
                 approvals: ApprovalSource::Receiver(approval_receiver.as_mut()),
                 plan_approvals: plan_approvals.as_mut(),

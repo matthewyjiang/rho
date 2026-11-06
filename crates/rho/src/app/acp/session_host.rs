@@ -360,25 +360,21 @@ impl SessionHost {
         startup: &AcpStartup,
         opened: OpenedSession,
     ) -> Self {
-        let t3_wake = match startup.host {
-            AcpHost::Generic => None,
-            AcpHost::T3Code => match super::t3_wake::signal_dir() {
+        let mut build = session_build(startup, &client_io);
+        let t3_wake = match build.background_wait {
+            BackgroundWait::HoldPrompt => None,
+            BackgroundWait::HostWakes => match super::t3_wake::signal_dir() {
                 Ok(dir) => Some(T3Wake::new(dir)),
                 Err(error) => {
                     tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
+                    // Nothing would wake the idle session, so background
+                    // work holds the prompt open.
+                    build.background_wait = BackgroundWait::HoldPrompt;
                     None
                 }
             },
         };
-        let runtime = SessionRuntime::new(
-            opened,
-            session_build(startup, &client_io),
-            &startup.logouts,
-            match t3_wake {
-                Some(_) => BackgroundWait::HostWakes,
-                None => BackgroundWait::HoldPrompt,
-            },
-        );
+        let runtime = SessionRuntime::new(opened, build, &startup.logouts);
         Self {
             acp_session_id: client_io.session_id.clone(),
             client_io,
@@ -430,7 +426,6 @@ impl SessionHost {
         let io = TurnIo {
             events,
             control,
-            questions: question_support(self.host_features.forms),
             message_save,
         };
         let turn = Turn {
@@ -499,6 +494,12 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> Sessi
         children: match startup.host {
             AcpHost::Generic => ChildAgents::InProcess,
             AcpHost::T3Code => ChildAgents::HostThreads,
+        },
+        // `--t3code`: a wake watcher wakes the idle thread when background
+        // work that outlived its prompt finishes.
+        background_wait: match startup.host {
+            AcpHost::Generic => BackgroundWait::HoldPrompt,
+            AcpHost::T3Code => BackgroundWait::HostWakes,
         },
         launch_agent: startup.agent.clone(),
         host_io: io.host_io(),

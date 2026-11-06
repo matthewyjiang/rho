@@ -88,12 +88,12 @@ impl Harness {
             let mut io = TurnIo {
                 events: events_tx,
                 control: control_rx,
-                questions,
                 message_save: MessageSave::AtFirstStep,
             };
             pump(
                 PumpSources {
                     cancel: pump_cancel,
+                    questions,
                     events: EventSource::Channel(&mut run_rx),
                     approvals: ApprovalSource::Channel(&mut approval_rx),
                     plan_approvals: Some(&mut plan_rx),

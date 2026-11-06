@@ -100,6 +100,8 @@ impl ApprovalSource<'_> {
 
 pub(super) struct PumpSources<'a> {
     pub(super) cancel: CancellationToken,
+    /// Whether the session's host can put the run's questions to a person.
+    pub(super) questions: QuestionSupport,
     pub(super) events: EventSource<'a>,
     pub(super) approvals: ApprovalSource<'a>,
     /// Plan approvals from `exit_plan_mode`; `None` when the session has no
@@ -153,6 +155,7 @@ struct Pending {
 pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::Result<()> {
     let PumpSources {
         cancel,
+        questions,
         mut events,
         mut approvals,
         mut plan_approvals,
@@ -209,7 +212,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 };
                 io.emit(SessionEvent::Run(event));
                 if let Some((request, call_id)) = asked {
-                    match (io.questions, cancelled) {
+                    match (questions, cancelled) {
                         (QuestionSupport::Available, false) => {
                             pending.questions.insert(request.id().clone());
                             io.emit(SessionEvent::QuestionAsked {

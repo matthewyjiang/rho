@@ -10,6 +10,7 @@ use crate::{
     app::{
         agent_binding::BoundAgent,
         automation::ensure_headless_auto_classifier_model,
+        headless_delegation::BackgroundWait,
         interactive_runtime::startup::{
             approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
         },
@@ -39,6 +40,9 @@ pub(crate) struct SessionBuild {
     pub(crate) questions: QuestionSupport,
     /// Who runs the `agent` tool's children.
     pub(crate) children: ChildAgents,
+    /// Whether background work that outlives a prompt holds it open, or the
+    /// host wakes the idle session when the work finishes.
+    pub(crate) background_wait: BackgroundWait,
     /// The agent the host launched with. A delegated rebind stays within its
     /// tools.
     pub(crate) launch_agent: BoundAgent,

@@ -30,7 +30,7 @@ use crate::{
     added_dirs::AddedDirs,
     app::{
         agent_binding::BoundAgent,
-        headless_delegation::{BackgroundWait, HeldNotices},
+        headless_delegation::HeldNotices,
         session_assembly::{BuiltSession, SessionAssembly},
     },
     config::Config,
@@ -140,20 +140,13 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
-    background_wait: BackgroundWait,
 }
 
 impl SessionRuntime {
     /// A runtime for `opened`, built as `build` says. `logouts` is the
     /// host's logout count; the session's provider has just read
-    /// credentials. `background_wait` says whether background work holds a
-    /// prompt open or the host wakes the idle session when it finishes.
-    pub(crate) fn new(
-        opened: OpenedSession,
-        build: SessionBuild,
-        logouts: &Logouts,
-        background_wait: BackgroundWait,
-    ) -> Self {
+    /// credentials.
+    pub(crate) fn new(opened: OpenedSession, build: SessionBuild, logouts: &Logouts) -> Self {
         let OpenedSession {
             built,
             storage,
@@ -183,7 +176,6 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
-            background_wait,
         }
     }
 
@@ -354,11 +346,11 @@ impl SessionRuntime {
                 diagnostics: crate::diagnostics::RuntimeDiagnostics::new(config),
                 questions: QuestionSupport::Unavailable,
                 children: ChildAgents::InProcess,
+                background_wait: crate::app::headless_delegation::BackgroundWait::HoldPrompt,
                 launch_agent: agent,
                 host_io: Default::default(),
             },
             &Logouts::default(),
-            BackgroundWait::HoldPrompt,
         )
     }
 
