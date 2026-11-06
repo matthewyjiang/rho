@@ -4,7 +4,12 @@ use pretty_assertions::assert_eq;
 
 use crate::workflow::*;
 
-use super::{PreparedExecution, PreparedInvocation};
+use super::{AgentSession, PreparedExecution, PreparedInvocation};
+
+/// The new session a Rho agent's first attempt runs in.
+fn session() -> AgentSession {
+    AgentSession::New(rho_sdk::SessionId::new())
+}
 
 fn node_id(value: &str) -> NodeId {
     NodeId::new(value).unwrap()
@@ -69,9 +74,13 @@ fn preparation_snapshots_selected_leaf_and_rejects_missing_bindings() {
     let (mut node, mut resolved) = agent_leaf();
     let mut outputs = outputs();
     let limits = crate::workflow::test_support::runtime_limits();
-    let prepared =
-        PreparedInvocation::prepare_node(Leaf::new(&node, &resolved).unwrap(), &limits, &outputs)
-            .unwrap();
+    let prepared = PreparedInvocation::prepare_node(
+        Leaf::new(&node, &resolved).unwrap(),
+        &limits,
+        &outputs,
+        session(),
+    )
+    .unwrap();
     let expected_agent = resolved.clone();
     let NodeExecution::Agent(agent_node) = &mut node.execution else {
         unreachable!()
@@ -83,7 +92,7 @@ fn preparation_snapshots_selected_leaf_and_rejects_missing_bindings() {
     agent.agent_id = "changed".into();
     outputs.clear();
 
-    let PreparedExecution::Agent(super::AgentInvocation { agent, prompt }) = prepared.execution
+    let PreparedExecution::Agent(super::AgentInvocation { agent, prompt, .. }) = prepared.execution
     else {
         panic!("expected agent")
     };
@@ -104,7 +113,12 @@ fn preparation_snapshots_selected_leaf_and_rejects_missing_bindings() {
     );
     let (node, resolved) = agent_leaf();
     assert!(matches!(
-        PreparedInvocation::prepare_node(Leaf::new(&node, &resolved).unwrap(), &limits, &outputs),
+        PreparedInvocation::prepare_node(
+            Leaf::new(&node, &resolved).unwrap(),
+            &limits,
+            &outputs,
+            session(),
+        ),
         Err(super::RuntimeError::Data(_))
     ));
 }
@@ -116,18 +130,26 @@ fn preparation_enforces_expansion_budgets() {
     let (node, resolved) = agent_leaf();
     let outputs = outputs();
     let mut limits = crate::workflow::test_support::runtime_limits();
-    let prepared =
-        PreparedInvocation::prepare_node(Leaf::new(&node, &resolved).unwrap(), &limits, &outputs)
-            .unwrap();
+    let prepared = PreparedInvocation::prepare_node(
+        Leaf::new(&node, &resolved).unwrap(),
+        &limits,
+        &outputs,
+        session(),
+    )
+    .unwrap();
     let PreparedExecution::Agent(super::AgentInvocation { prompt, .. }) = prepared.execution else {
         panic!("expected agent")
     };
     // Size the tripwire from the real prepared prompt, including its schema.
     limits.prompt_expansion_bytes = prompt.len() as u64 - 1;
-    let error =
-        PreparedInvocation::prepare_node(Leaf::new(&node, &resolved).unwrap(), &limits, &outputs)
-            .err()
-            .unwrap();
+    let error = PreparedInvocation::prepare_node(
+        Leaf::new(&node, &resolved).unwrap(),
+        &limits,
+        &outputs,
+        session(),
+    )
+    .err()
+    .unwrap();
     assert!(
         matches!(error, super::RuntimeError::Workflow(WorkflowError::BudgetExceeded { budget: "prompt expansion bytes", limit, actual }) if limit == limits.prompt_expansion_bytes && actual == prompt.len() as u64)
     );

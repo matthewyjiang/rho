@@ -29,7 +29,7 @@ mod child;
 mod reporter;
 mod view;
 
-pub(super) use child::{run_child, ChildRun, SessionCheckpoint};
+pub(super) use child::{run_child, ChildRun, ChildSession};
 pub(super) use reporter::RunReporter;
 pub(super) use view::{HeadlessView, ParentQuestions};
 

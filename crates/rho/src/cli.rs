@@ -525,7 +525,7 @@ pub enum WorkflowCommand {
         #[arg(long)]
         yes: bool,
         /// Confirm that no prior process remains and recover uncertain attempts.
-        /// A Rho agent attempt continues from its last checkpoint; others restart.
+        /// A Rho agent attempt continues its saved session; others restart.
         #[arg(long)]
         recover_uncertain: bool,
         /// Report how each uncertain attempt would recover without changing the run.

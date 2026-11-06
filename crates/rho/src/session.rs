@@ -358,6 +358,20 @@ impl Session {
         Self::open_target_with_histories_in_root(&session_root()?, target)
     }
 
+    /// Opens the session saved under exactly `id` in `cwd`'s workspace, or
+    /// `None` when nothing is. Unlike [`Self::open_by_id_with_histories`],
+    /// `id` is never read as a prefix and no other workspace is searched.
+    pub(crate) fn open_exact_in_workspace(
+        cwd: &Path,
+        id: &str,
+    ) -> anyhow::Result<Option<(Self, SessionHistories)>> {
+        let session_root = session_root()?;
+        let Some(resolved) = SessionStore::new(&session_root, cwd).resolve_exact_local(id)? else {
+            return Ok(None);
+        };
+        Self::open_resolved_with_histories(&session_root, resolved).map(Some)
+    }
+
     #[cfg(test)]
     fn open_by_id_in_root(
         session_root: &Path,

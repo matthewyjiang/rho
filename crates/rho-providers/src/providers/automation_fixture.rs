@@ -63,6 +63,9 @@ enum Mode {
     /// the fixed response.
     ToolCall,
     ProcessThenDelay,
+    /// Starts the command in `RHO_AUTOMATION_TEST_COMMAND` as a background
+    /// process, then gives the fixed response.
+    ProcessThenReply,
 }
 
 impl Mode {
@@ -80,6 +83,7 @@ impl Mode {
             "write-path" => Ok(Self::WritePath),
             "tool-call" => Ok(Self::ToolCall),
             "process-then-delay" => Ok(Self::ProcessThenDelay),
+            "process-then-reply" => Ok(Self::ProcessThenReply),
             _ => Err(format!("unknown {MODE_ENV} value '{value}'")),
         }
     }
@@ -180,15 +184,18 @@ impl ModelProvider for AutomationFixtureProvider {
                     }
                 }
                 Mode::ToolCall => completed(last_tool_result(&request)?),
-                Mode::ProcessThenDelay if turn == 0 => completed_tool_call(
-                    "fixture-process",
-                    "process",
-                    serde_json::json!({
-                        "action": "start",
-                        "command": required_env(COMMAND_ENV)?,
-                    }),
-                ),
+                Mode::ProcessThenDelay | Mode::ProcessThenReply if turn == 0 => {
+                    completed_tool_call(
+                        "fixture-process",
+                        "process",
+                        serde_json::json!({
+                            "action": "start",
+                            "command": required_env(COMMAND_ENV)?,
+                        }),
+                    )
+                }
                 Mode::ProcessThenDelay => delayed(request).await,
+                Mode::ProcessThenReply => completed(fixed_response()),
             }
         })
     }

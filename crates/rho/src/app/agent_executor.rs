@@ -11,7 +11,7 @@ use {
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     agent_concurrency::AgentConcurrency,
-    headless_host::{self, ChildRun, ParentQuestions, SessionCheckpoint},
+    headless_host::{self, ChildRun, ChildSession, ParentQuestions},
     session_runtime::{SessionRole, UnattendedApprovals},
     subagent_host_input::SubagentHostInputBridge,
     subagent_messaging::{
@@ -60,8 +60,9 @@ pub(crate) struct FrozenAgentLaunchRequest {
     pub(crate) run_id: String,
     pub(crate) output_file: PathBuf,
     pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    /// Step checkpoints for a Rho runtime agent. Claude and Cursor runs ignore it.
-    pub(crate) checkpoint: Option<SessionCheckpoint>,
+    /// The session a Rho runtime agent runs in, which its node recorded.
+    /// A Rho agent's launch needs one; agents on other runtimes have none.
+    pub(crate) session: Option<ChildSession>,
 }
 
 /// How a live handle can accept parent plain-text messages.
@@ -384,7 +385,7 @@ impl AgentExecutor {
             notice_target,
             frozen_cli: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            checkpoint: None,
+            session: ChildSession::New(rho_sdk::SessionId::new()),
         })
     }
 
@@ -402,11 +403,20 @@ impl AgentExecutor {
         current_tools.remove(&ToolCapability::Powershell);
         current_tools.remove(&ToolCapability::Questionnaire);
         let bound = AgentBinder::bind_frozen(&request.agent, &config, &current_tools)?;
-        let frozen_cli = match request.agent.runtime {
-            crate::workflow::AgentRuntime::Rho => None,
+        let (frozen_cli, session) = match request.agent.runtime {
+            crate::workflow::AgentRuntime::Rho => {
+                let session = request.session.ok_or_else(|| {
+                    anyhow::anyhow!("a Rho agent launch has no session to run in")
+                })?;
+                (None, session)
+            }
+            // The launch's session is a Rho child's; these runtimes ignore it.
             crate::workflow::AgentRuntime::ClaudeCli
             | crate::workflow::AgentRuntime::Cursor
-            | crate::workflow::AgentRuntime::Antigravity => Some(frozen_cli_launch(request.agent)?),
+            | crate::workflow::AgentRuntime::Antigravity => (
+                Some(frozen_cli_launch(request.agent)?),
+                ChildSession::New(rho_sdk::SessionId::new()),
+            ),
         };
         self.spawn_bound(BoundLaunchRequest {
             bound,
@@ -422,7 +432,7 @@ impl AgentExecutor {
             notice_target: None,
             frozen_cli,
             hook_host_labels: request.hook_host_labels,
-            checkpoint: request.checkpoint,
+            session,
         })
     }
 
@@ -438,7 +448,7 @@ impl AgentExecutor {
             notice_target,
             frozen_cli,
             hook_host_labels,
-            checkpoint,
+            session,
         } = request;
 
         let capacity_class = bound.runtime().capacity_class();
@@ -588,7 +598,7 @@ impl AgentExecutor {
                         live_title: task_live_title,
                         hook_host_labels,
                         approvals,
-                        checkpoint,
+                        session,
                         added_dirs,
                         host_io,
                     })
@@ -654,7 +664,8 @@ struct BoundLaunchRequest {
     notice_target: Option<rho_sdk::SessionId>,
     frozen_cli: Option<FrozenCliLaunch>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    checkpoint: Option<SessionCheckpoint>,
+    /// The session a Rho runtime child runs in; other runtimes ignore it.
+    session: ChildSession,
 }
 
 struct FrozenCliLaunch {

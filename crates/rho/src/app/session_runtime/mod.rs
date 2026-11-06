@@ -1,9 +1,10 @@
 //! The UI-free session runtime: one per thread, owning a built session, its
 //! file, and the state between prompts.
 //!
-//! A host opens it with [`SessionRuntime::open_new`] or
-//! [`SessionRuntime::reopen`] (see `open.rs`), drives it, and shows what it
-//! reports, holding it exclusively for each prompt or setting change.
+//! A host opens it with [`SessionRuntime::open_new`],
+//! [`SessionRuntime::reopen`], or [`SessionRuntime::open_saved`] (see
+//! `open.rs`), drives it, and shows what it reports, holding it exclusively
+//! for each prompt or setting change.
 //! Nothing here knows a wire protocol or a client: hosts parse their own
 //! requests and map the runtime's results, events, and errors back to
 //! theirs.
@@ -88,7 +89,7 @@ pub(crate) use events::{
 };
 pub(crate) use handle::{SessionHandle, SteerError};
 pub(crate) use mode::SessionPermission;
-pub(crate) use open::{SavedHistory, SessionOpening};
+pub(crate) use open::{NodeSession, SavedHistory, SessionOpening};
 pub(crate) use persist::SessionStorage;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
@@ -171,10 +172,6 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
-    /// Where step checkpoints are also saved; see
-    /// [`Self::mirror_step_checkpoints`].
-    // Temporary(reopen): goes with `SessionCheckpoint`.
-    step_mirror: Option<std::sync::Arc<dyn rho_sdk::SessionStore>>,
 }
 
 impl SessionRuntime {
@@ -209,7 +206,6 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
-            step_mirror: None,
         }
     }
 

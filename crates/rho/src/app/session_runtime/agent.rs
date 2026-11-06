@@ -4,7 +4,7 @@
 
 use std::{future::Future, sync::Arc};
 
-use rho_sdk::{model::Message, SessionOptions, UserInput};
+use rho_sdk::{SessionOptions, UserInput};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -166,24 +166,8 @@ impl SessionRuntime {
         Build: FnOnce(BoundAgent, Config, rho_sdk::SessionId) -> BuildFuture,
         BuildFuture: Future<Output = anyhow::Result<(BuiltSession, SessionPermission)>>,
     {
-        // The SDK stores its initial system prompt in history; that alone is
-        // not a conversation. Any other message must survive, never be dropped.
-        let has_history = self
-            .built
-            .session
-            .history()
-            .iter()
-            .any(|message| match message {
-                Message::System(_) | Message::ModelContext(_) | Message::ReasoningShift(_) => false,
-                Message::User(_)
-                | Message::Assistant(_)
-                | Message::EnrichedAssistant(_)
-                | Message::AbortedAssistant(_)
-                | Message::ToolResult(_)
-                | Message::CompactionSummary(_)
-                | Message::BoundaryInput(_) => true,
-            });
-        if self.completed_runs != 0 || has_history {
+        // A conversation must survive, never be dropped.
+        if self.completed_runs != 0 || self.has_conversation() {
             return Err(CommandRejected(
                 "/agent:<name> starts a fresh session only; create a new session".into(),
             )

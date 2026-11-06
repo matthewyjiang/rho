@@ -291,12 +291,14 @@ process ended without a clean ownership record, the run enters
 pass `--recover-uncertain`. Rho does not guess whether uncertain work completed.
 
 A Rho agent node saves its session at every step. After confirmation, such a
-node continues the same attempt from its last checkpoint. Read-only built-in
-tool calls that were in flight run again. Every other in-flight call, such as an
-edit, shell command, network call, or MCP tool, is reported to the agent as
-interrupted and is not run again. Command nodes, Claude and Cursor agents,
-agents without a checkpoint, and runs with a pending cancellation start a new
-attempt instead.
+node continues the same attempt by reopening its saved session, or finishes
+with the final reply the session already holds. Read-only built-in tool calls
+that were in flight run again. Every other in-flight call, such as an edit,
+shell command, network call, or MCP tool, is reported to the agent as
+interrupted and is not run again. Only Rho agents can continue: command nodes,
+agents on other runtimes, attempts whose session was never recorded (such as
+one a crash interrupted before its agent started, or one an earlier Rho
+started), and runs with a pending cancellation start a new attempt instead.
 
 `--dry-run` reports what resume would do with each uncertain attempt and changes
 nothing. With `--output jsonl` it prints one JSON document.
